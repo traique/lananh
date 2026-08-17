@@ -1,11 +1,4 @@
-"""Dịch Nhật↔Việt cho chat công việc (lệnh /dich) — port từ vietassist/services/translate.py.
-
-Khác vietassist (ai.router.translate() riêng, gọi thẳng provider chính thức),
-bản này dùng chung orchestrator.ask() nên đi qua ĐÚNG provider-chain (router9 ->
-api1 -> api2) như mọi lệnh khác trong repo - không có nhánh "provider riêng cho
-dịch". Đơn giản hơn vì repo này không có ai/contracts.py (AIResponse) như
-vietassist; response trả về .text như mọi hàm khác của ai/orchestrator.py.
-"""
+"""Dịch Nhật↔Việt cho chat công việc (lệnh /dich) """
 from __future__ import annotations
 
 import logging
