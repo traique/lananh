@@ -1,7 +1,7 @@
 # One Docker service runs Python/Telegram and the local Zalo gateway.
 services:
   - type: web
-    name: gemini-telegram-bot
+    name: lananh
     runtime: docker
     dockerfilePath: ./Dockerfile
     region: singapore

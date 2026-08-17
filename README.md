@@ -1,6 +1,8 @@
-# Gemini Personal Assistant — MVP một người dùng
+# Lananh — Trợ lý AI cá nhân (Telegram · Zalo · Zoom)
 
-Trợ lý AI cá nhân chạy trên Telegram và tùy chọn Zalo/Zoom, dùng chung Gemini, trí nhớ dài hạn, công cụ, nhắc việc và phân tích cổ phiếu Việt Nam.
+MVP một người dùng, chạy trên nền Gemini. Hoạt động trên Telegram và tùy chọn
+Zalo/Zoom, dùng chung provider chain Gemini, trí nhớ dài hạn, công cụ, nhắc
+việc và phân tích cổ phiếu Việt Nam.
 
 ## Trạng thái MVP
 
@@ -128,8 +130,8 @@ Xem `.env.example` và `render.yaml` để biết toàn bộ biến tùy chọn.
 ## Chạy local
 
 ```bash
-git clone https://github.com/traique/Gemini.git
-cd Gemini
+git clone https://github.com/<your-username>/lananh.git
+cd lananh
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
@@ -140,8 +142,8 @@ python main.py
 Docker:
 
 ```bash
-docker build -t gemini-assistant .
-docker run --env-file .env -p 10000:10000 gemini-assistant
+docker build -t lananh .
+docker run --env-file .env -p 10000:10000 lananh
 ```
 
 ## Deploy Render
