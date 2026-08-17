@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.venv
+venv
+media
+zalo-gateway/node_modules
+zalo-gateway/dist
+zalo-gateway/zalo-session.json
+zalo-gateway/zalo-qr.png
