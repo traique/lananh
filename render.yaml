@@ -16,17 +16,17 @@ services:
       - key: ROUTER9_API_KEY
         sync: false
       - key: ROUTER9_BASE_URL
-        value: https://api.nangdecor.com/v1
+        value: https://ninerouter-v2.onrender.com/auth/chatgpt/v1
       - key: ROUTER9_MODEL
-        value: gemini-2.5-flash
+        value: gpt-4o-mini
       - key: DATABASE_URL
         sync: false
       - key: WEBHOOK_SECRET
-        sync: false
+        generateValue: true
       - key: SETTINGS_ENC_KEY
         sync: false
       - key: DIAGNOSE_SECRET
-        sync: false
+        generateValue: true
       - key: GOOGLE_AI_STUDIO_API_KEY_1
         sync: false
       - key: GOOGLE_AI_STUDIO_API_KEY_2
@@ -46,7 +46,7 @@ services:
       - key: ZALO_BOT_ACCOUNT_ID
         value: zalo-bot
       - key: ZALO_BRIDGE_SECRET
-        sync: false
+        generateValue: true
       - key: ZALO_CONTROL_PORT
         value: "9901"
       - key: ZALO_GROUP_REFRESH_MS
