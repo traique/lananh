@@ -10,25 +10,25 @@ services:
     healthCheckPath: /
     envVars:
       - key: TELEGRAM_TOKEN
-        sync: false
+        value: 8720247393:AAHlFyFKVlLoOZHhSbEhHCrlAjy2cz-9dOw
       - key: ALLOWED_USER_ID
-        sync: false
+        value: 1274613019
       - key: ROUTER9_API_KEY
-        sync: false
+        value: pyOY6ihf5N+y9JIaauPi45PQXLpDkSB0jeSx6uah8Vs=
       - key: ROUTER9_BASE_URL
         value: https://ninerouter-v2.onrender.com/auth/chatgpt/v1
       - key: ROUTER9_MODEL
         value: gpt-4o-mini
       - key: DATABASE_URL
-        sync: false
+        value: postgresql://postgres.nxfykmeqeuiiguivwlyz:congtoai147369@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres
       - key: WEBHOOK_SECRET
         generateValue: true
       - key: SETTINGS_ENC_KEY
-        sync: false
+        value: 8wE4IXAtK6m2S6s0qDkOWK35P3vWmJTj9pn9m9z5mK8=
       - key: DIAGNOSE_SECRET
         generateValue: true
       - key: GOOGLE_AI_STUDIO_API_KEY_1
-        sync: false
+        value: AQ.Ab8RN6LRFpYzHe4bdxg2NUo3i7_lDBPcIHMWvRETnvncWnkldA
       - key: GOOGLE_AI_STUDIO_API_KEY_2
         sync: false
       - key: GOOGLE_AI_STUDIO_MODEL
@@ -44,7 +44,7 @@ services:
       - key: ZALO_CONTROLLER_ID
         sync: false
       - key: ZALO_BOT_ACCOUNT_ID
-        value: zalo-bot
+        value: 350994751580505507
       - key: ZALO_BRIDGE_SECRET
         generateValue: true
       - key: ZALO_CONTROL_PORT
@@ -85,14 +85,14 @@ services:
       - key: ZOOM_ENABLED
         value: "false"
       - key: ZOOM_CLIENT_ID
-        sync: false
+        value: EOeFHnZbQTCV9HXHSbuqQQ
       - key: ZOOM_CLIENT_SECRET
-        sync: false
+        value: xZ4PQUGXSeaWBWRUJGIZKuRiNJkJGe6M
       - key: ZOOM_BOT_JID
-        sync: false
+        value: v14etmmgdmrsih4ayyugnr3q@xmpp.zoom.us
       - key: ZOOM_SECRET_TOKEN
-        sync: false
+        value: AdIl9lkfSc60Auo7j_GDoA
       - key: ZOOM_VERIFICATION_TOKEN
-        sync: false
+        value: AdIl9lkfSc60Auo7j_GDoA
       - key: ZOOM_ACCOUNT_ID
-        sync: false
+        value: 6929080059
