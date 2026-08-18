@@ -64,6 +64,7 @@ không てください vì không nhắm 1 người. Khác (D): (E) không có y
 | Hãy làm list tốc độ line của SP có marking | マーキングがあるSPの線速のリストを作成して | (D) |
 | Quy định về phương pháp quấn, đóng gói Baizeru Oshidashi | バイゼル押出の巻き方、包装方法について規定する。 | (E) |
 | Buộc dây nylon trắng tại 3 vị trí cách đều nhau | 白いビニール紐を縛る（3か所の間隔が均等である事） | (E) |
+| Trang thoả thuận khách hàng của quy cách sản phẩm đang ghi là chỉ ASV màu đen có thể sử dụng *(không khai báo, nhưng câu hoàn chỉnh có chủ-vị "đang ghi là")* | 製品仕様の顧客合意書のページには、黒色のASVのみ使用可能と記載されています。 | (B), suy ra từ cấu trúc câu theo mục 6.1 |
 
 ## 6. Cách khai báo ngữ cảnh khi yêu cầu dịch
 
@@ -75,7 +76,30 @@ không てください vì không nhắm 1 người. Khác (D): (E) không có y
 [Loại: Văn bản quy định/SOP] Quy định về phương pháp quấn, đóng gói sản phẩm
 ```
 
-Không khai báo → mặc định coi là (A).
+Không khai báo → **trước tiên thử đoán văn phong dựa vào cấu trúc câu** (xem mục 6.1).
+Chỉ khi câu quá ngắn/cụt, không đủ tín hiệu để đoán → mới mặc định coi là (A).
+
+### 6.1. Cách đoán văn phong khi không khai báo
+
+Khi câu tiếng Việt không có khai báo `[Loại: ...]`, kiểm tra các tín hiệu cấu
+trúc sau theo thứ tự, dừng lại ở dấu hiệu đầu tiên khớp:
+
+| Tín hiệu trong câu tiếng Việt | Suy ra văn phong | Ví dụ |
+|---|---|---|
+| Có "đúng ko/phải ko/có phải...không" | (D) — dùng ですね？ | "...đúng ko?" |
+| Có "hãy/cần/đề nghị/yêu cầu" nhắm 1 người cụ thể | (C) — てください／お願いします | "Hãy xác nhận lại..." |
+| Câu quy tắc khách quan, không chủ ngữ cụ thể, mang tính quy định/tiêu chuẩn | (E) — thể thường, kết する。／事。 | "Buộc dây tại 3 vị trí cách đều..." |
+| Câu hoàn chỉnh có chủ ngữ + động từ chia thì rõ (đã/đang/sẽ làm gì, hoặc "X đang ghi/quy định là Y") — mô tả một hành động/trạng thái, không phải liệt kê mục | (B) — ですます/した | "Trang thỏa thuận khách hàng đang ghi là chỉ ASV đen được dùng" |
+| Câu ngắn, cụt, không chủ ngữ rõ, không chia được thì (giống tên cột, tiêu đề, mục checklist) | (A) — danh từ hóa | "Kiểm tra giấy in số lần NG đường kính" |
+
+**Nguyên tắc:** câu càng dài, càng có đầy đủ chủ-vị và mệnh đề phụ, càng khó
+co lại thành cụm danh từ mà không mất nghĩa → nghiêng về (B)/(C)/(D)/(E) tùy
+tín hiệu. Câu càng ngắn, cụt, mơ hồ, đứng độc lập như một nhãn/tiêu đề → mới
+rơi về mặc định (A).
+
+**Khi tín hiệu không rõ ràng (câu vừa ngắn vừa có thể hiểu 2 cách)** → nêu cả
+2 phương án khả dĩ nhất kèm điều kiện áp dụng, để người dùng chọn, thay vì tự
+chốt một bên.
 
 ## 7. Checklist tự kiểm tra trước khi dịch
 
