@@ -32,9 +32,9 @@ services:
       - key: GOOGLE_AI_STUDIO_API_KEY_2
         sync: false
       - key: GOOGLE_AI_STUDIO_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.5-flash-lite
       - key: ZALO_ENABLED
-        value: "false"
+        value: "true"
       - key: ZALO_COOKIE_JSON
         sync: false
       - key: ZALO_IMEI
@@ -87,7 +87,7 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: ZOOM_ENABLED
-        value: "false"
+        value: "true"
       - key: ZOOM_CLIENT_ID
         sync: false
       - key: ZOOM_CLIENT_SECRET
