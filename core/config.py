@@ -41,8 +41,8 @@ ALLOWED_USER_ID = _parse_allowed_user_id(_allowed_id_raw)
 # (router9 -> api1 -> api2), thay cho cookie tài khoản Gemini cá nhân trước đây.
 # Không rotate/hết hạn như cookie, chỉ cần 1 API key tĩnh.
 ROUTER9_API_KEY = os.getenv("ROUTER9_API_KEY", "").strip()
-ROUTER9_BASE_URL = os.getenv("ROUTER9_BASE_URL", "https://api.nangdecor.com/v1").strip()
-ROUTER9_MODEL = os.getenv("ROUTER9_MODEL", "gemini-2.5-flash").strip()
+ROUTER9_BASE_URL = os.getenv("ROUTER9_BASE_URL", "https://ninerouter-v2.onrender.com").strip()
+ROUTER9_MODEL = os.getenv("ROUTER9_MODEL", "gpt-4o-mini").strip()
 
 # 2 API key cho provider-chain (router9 -> api1 -> api2). GOOGLE_AI_STUDIO_API_KEY
 # (tên biến cũ) vẫn được đọc để tương thích ngược, coi như alias của _1 nếu
@@ -55,7 +55,7 @@ GOOGLE_AI_STUDIO_API_KEY_1 = (
 GOOGLE_AI_STUDIO_API_KEY_2 = os.getenv("GOOGLE_AI_STUDIO_API_KEY_2", "").strip() or None
 # Alias giữ tương thích ngược cho code/tài liệu cũ còn tham chiếu tên này.
 GOOGLE_AI_STUDIO_API_KEY = GOOGLE_AI_STUDIO_API_KEY_1
-GOOGLE_AI_STUDIO_MODEL = os.getenv("GOOGLE_AI_STUDIO_MODEL", "gemini-2.5-flash").strip()
+GOOGLE_AI_STUDIO_MODEL = os.getenv("GOOGLE_AI_STUDIO_MODEL", "gemini-3.5-flash").strip()
 
 HAS_ANY_AI_STUDIO_KEY = bool(GOOGLE_AI_STUDIO_API_KEY_1 or GOOGLE_AI_STUDIO_API_KEY_2)
 
