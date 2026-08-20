@@ -75,7 +75,7 @@ async def test_ask_strict_search_forces_tool_and_directive(monkeypatch):
         captured.update(idx=idx, prompt=prompt, kwargs=kwargs)
         return "ok"
 
-    async def fake_chain(*, router9_call, api_call, providers_override):
+    async def fake_chain(*, router9_call, api_call, providers_override, groq_call=None, openrouter_call=None):
         captured["providers"] = providers_override
         return await api_call(1)
 

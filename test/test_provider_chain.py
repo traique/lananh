@@ -84,7 +84,7 @@ def reset_state(monkeypatch, fake_store):
     key mặc định đã cấu hình (test tự override nếu cần khác)."""
     provider_state.active_provider = "router9"
     provider_state.router9_dead_since = None
-    provider_state.api_exhausted_until = {1: 0.0, 2: 0.0}
+    provider_state.api_exhausted_until = {"groq": 0.0, "openrouter": 0.0, "api1": 0.0, "api2": 0.0}
     provider_state._loaded = False
 
     monkeypatch.setattr(config, "GOOGLE_AI_STUDIO_API_KEY_1", "fake-key-1")
@@ -204,8 +204,8 @@ async def test_api1_het_quota_chuyen_api2_va_cooldown(fake_store):
 
     assert result == "api2-response"
     assert provider_state.active_provider == "api2"
-    assert provider_state.api_in_cooldown(1), "api1 phải được đánh dấu cooldown sau lỗi 429"
-    assert not provider_state.api_in_cooldown(2)
+    assert provider_state.api_in_cooldown("api1"), "api1 phải được đánh dấu cooldown sau lỗi 429"
+    assert not provider_state.api_in_cooldown("api2")
 
 
 @pytest.mark.asyncio
@@ -213,7 +213,7 @@ async def test_api1_dang_cooldown_bi_bo_qua_ngay_khong_goi_lai(fake_store):
     """api1 đang trong thời gian cooldown -> KHÔNG được gọi lại, nhảy thẳng
     sang api2 (khác với lỗi 429 mới - ở đây api_call(1) không được gọi)."""
     provider_state.router9_dead_since = time.time() - 100
-    provider_state.api_exhausted_until[1] = time.time() + 999  # đang cooldown
+    provider_state.api_exhausted_until["api1"] = time.time() + 999  # đang cooldown
     provider_state._loaded = True  # tránh ensure_loaded() nạp đè từ DB rỗng
 
     called_idx = []
@@ -258,7 +258,8 @@ async def test_moi_provider_deu_that_bai_thi_raise_loi_cuoi(fake_store):
     provider known-bad; nếu vẫn thất bại hết, phải raise lỗi (không được
     nuốt lỗi và trả None/im lặng)."""
     provider_state.router9_dead_since = time.time() - 100
-    provider_state.api_exhausted_until = {1: time.time() + 999, 2: time.time() + 999}
+    provider_state.api_exhausted_until["api1"] = time.time() + 999
+    provider_state.api_exhausted_until["api2"] = time.time() + 999
     provider_state._loaded = True
 
     async def api_call(idx):
@@ -315,3 +316,94 @@ async def test_co_api_van_retry_router9_1_lan_truoc_khi_khai_tu(fake_store):
     assert result == "router9-response-lan-2"
     assert len(attempts) == 2
     assert provider_state.router9_dead_since is None
+
+
+@pytest.mark.asyncio
+async def test_router9_va_api_deu_khong_kha_dung_thi_dung_groq(fake_store, monkeypatch):
+    """router9 đã chết + chưa cấu hình api1/api2 -> order router9,groq,api1,api2
+    phải rơi xuống groq_call."""
+    monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "groq", "api1", "api2"])
+    monkeypatch.setattr(config, "GROQ_API_KEY", "fake-groq-key")
+    monkeypatch.setattr(config, "GOOGLE_AI_STUDIO_API_KEY_1", None)
+    monkeypatch.setattr(config, "GOOGLE_AI_STUDIO_API_KEY_2", None)
+    provider_state.router9_dead_since = time.time() - 100
+    provider_state._loaded = True
+
+    async def groq_call():
+        return "groq-response"
+
+    async def api_call(idx):
+        raise AssertionError("Chưa cấu hình api1/api2 -> không được gọi")
+
+    result = await orchestrator._run_provider_chain(
+        router9_call=_failing_router9_call(), api_call=api_call, groq_call=groq_call
+    )
+
+    assert result == "groq-response"
+    assert provider_state.active_provider == "groq"
+
+
+@pytest.mark.asyncio
+async def test_groq_het_quota_chuyen_openrouter_va_cooldown(fake_store, monkeypatch):
+    """groq lỗi 429 -> cooldown + chuyển sang openrouter, giữ nguyên hành vi
+    cooldown-on-quota như api1/api2 nhưng key là string "groq"."""
+    from ai import openai_compatible
+
+    monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "groq", "openrouter", "api1", "api2"])
+    monkeypatch.setattr(config, "GROQ_API_KEY", "fake-groq-key")
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", "fake-openrouter-key")
+    provider_state.router9_dead_since = time.time() - 100
+    provider_state._loaded = True
+
+    async def groq_call():
+        raise openai_compatible.OpenAICompatibleError("Groq HTTP 429: rate limited")
+
+    async def openrouter_call():
+        return "openrouter-response"
+
+    async def api_call(idx):
+        raise AssertionError("openrouter đã thành công -> không được rơi xuống api")
+
+    result = await orchestrator._run_provider_chain(
+        router9_call=_failing_router9_call(),
+        api_call=api_call,
+        groq_call=groq_call,
+        openrouter_call=openrouter_call,
+    )
+
+    assert result == "openrouter-response"
+    assert provider_state.active_provider == "openrouter"
+    assert provider_state.api_in_cooldown("groq")
+    assert not provider_state.api_in_cooldown("openrouter")
+
+
+def test_search_only_providers_router9_truoc_roi_groq_realtime_roi_gemini(monkeypatch):
+    """require_real_search: router9 đứng đầu (đã tự bật search phía server,
+    xem app/realtime.py bên repo 9Router), rồi groq (compound-mini), rồi
+    api1/api2. openrouter không bao giờ xuất hiện (nhánh OpenRouter của
+    lananh gọi thẳng API, không đi qua 9Router, không đảm bảo tool search)."""
+    from ai import official_client
+
+    monkeypatch.setattr(config, "ROUTER9_API_KEY", "fake-router9-key")
+    monkeypatch.setattr(config, "GROQ_API_KEY", "fake-groq-key")
+    monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "groq", "openrouter", "api1", "api2"])
+    monkeypatch.setattr(official_client, "api_key_for", lambda idx: "k" if idx in (1, 2) else None)
+
+    order = orchestrator._search_only_providers()
+
+    assert order == ["router9", "groq", "api1", "api2"]
+
+
+def test_search_only_providers_khong_co_router9_key_thi_bo_qua(monkeypatch):
+    """Chưa cấu hình ROUTER9_API_KEY -> rơi thẳng xuống groq/api1/api2 như cũ,
+    không raise chỉ vì thiếu mỗi router9."""
+    from ai import official_client
+
+    monkeypatch.setattr(config, "ROUTER9_API_KEY", "")
+    monkeypatch.setattr(config, "GROQ_API_KEY", "fake-groq-key")
+    monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "groq", "openrouter", "api1", "api2"])
+    monkeypatch.setattr(official_client, "api_key_for", lambda idx: "k" if idx in (1, 2) else None)
+
+    order = orchestrator._search_only_providers()
+
+    assert order == ["groq", "api1", "api2"]
