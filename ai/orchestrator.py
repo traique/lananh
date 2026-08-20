@@ -1,19 +1,22 @@
-"""Facade công khai của package `ai`: kết hợp nhánh 9Router (ai/router9_client.py)
-và nhánh api1/api2 (ai/official_client.py) thành provider-chain có fallback,
-theo thứ tự core.config.PROVIDER_ORDER (mặc định router9 -> api1 -> api2).
+"""Facade công khai của package `ai`: kết hợp nhánh 9Router (ai/router9_client.py),
+Groq (ai/groq_client.py), OpenRouter (ai/openrouter_client.py) và nhánh
+api1/api2 (ai/official_client.py) thành provider-chain có fallback, theo thứ
+tự core.config.PROVIDER_ORDER (mặc định router9 -> groq -> openrouter -> api1
+-> api2 - toàn bộ đều miễn phí, Gemini official đứng cuối làm lưới an toàn).
 
-- 9Router chết -> chuyển hẳn sang API, KHÔNG thử lại router9 mọi tin nhắn nữa.
-  Chỉ 3 cách quay lại router9: probe nền định kỳ, đổi ROUTER9_API_KEY, lệnh
-  /userouter9 (xem init_provider_state()/start_background_tasks()/try_router9_now()).
-- api1 hết quota (429/ResourceExhausted) -> cooldown API_QUOTA_COOLDOWN_SEC rồi
-  tự thử lại; trong lúc đó dùng api2 nếu có.
+- 9Router chết -> chuyển hẳn sang provider kế tiếp, KHÔNG thử lại router9 mọi
+  tin nhắn nữa. Chỉ 3 cách quay lại router9: probe nền định kỳ, đổi
+  ROUTER9_API_KEY, lệnh /userouter9 (xem
+  init_provider_state()/start_background_tasks()/try_router9_now()).
+- groq/openrouter/api1/api2 hết quota (429) -> cooldown API_QUOTA_COOLDOWN_SEC
+  rồi tự thử lại; trong lúc đó dùng provider kế tiếp trong order.
 """
 import asyncio
 import logging
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 from core import config, database as db
-from ai import router9_client, official_client
+from ai import openai_compatible, router9_client, groq_client, openrouter_client, official_client
 from ai import provider_state as provider_state_module
 from ai.provider_state import ProviderStateSnapshot, provider_state
 
@@ -42,24 +45,41 @@ def get_provider_state_snapshot() -> ProviderStateSnapshot:
 
 
 class RealSearchUnavailableError(RuntimeError):
-    """Strict grounded search has no configured official API provider."""
+    """Strict grounded search has no configured provider with a real search tool."""
 
 
 def _search_only_providers() -> list[str]:
-    """Return configured official providers or fail closed.
+    """Return the provider order for require_real_search, router9 first.
 
-    9Router requests cannot guarantee a real Google Search tool, so strict
-    search must never silently fall back to that provider.
+    9Router giờ tự phát hiện nhu cầu search server-side (regex realtime trên
+    toàn bộ messages) và tự bật tool tương ứng (ChatGPT web_search / Groq
+    compound-mini bên trong 9Router) - _FORCED_SEARCH_DIRECTIVE bên dưới luôn
+    chèn cụm "Google Search" vào prompt gửi đi nên chắc chắn khớp regex đó dù
+    câu hỏi gốc không có từ khoá thời gian (vd tên sản phẩm trần cho /gia).
+    Chỉ khi router9 lỗi KẾT NỐI (Router9Error, xử lý retry-rồi-fallback ở
+    _run_provider_chain) mới rơi xuống 2 tầng guaranteed-search không phụ
+    thuộc bên thứ 3: Groq compound-mini (qua groq_client.generate_realtime)
+    rồi Gemini grounding (api1/api2, official Google Search tool).
+
+    OpenRouter vẫn bị loại khỏi order này: nhánh OpenRouter của lananh gọi
+    thẳng OpenRouter API (ai/openrouter_client.py), không đi qua 9Router, nên
+    không có gì đảm bảo model ":free" đang dùng có tool search.
     """
-    available = {
-        "api1": bool(official_client.api_key_for(1)),
-        "api2": bool(official_client.api_key_for(2)),
-    }
-    order = [provider for provider in config.PROVIDER_ORDER if available.get(provider, False)]
+    order: list[str] = []
+    if config.ROUTER9_API_KEY:
+        order.append("router9")
+    if config.GROQ_API_KEY:
+        order.append("groq")
+    order.extend(
+        provider
+        for provider in config.PROVIDER_ORDER
+        if provider in ("api1", "api2")
+        and official_client.api_key_for(1 if provider == "api1" else 2)
+    )
     if not order:
         raise RealSearchUnavailableError(
             "Tác vụ yêu cầu Google Search thật nhưng chưa cấu hình "
-            "GOOGLE_AI_STUDIO_API_KEY_1/2."
+            "ROUTER9_API_KEY, GROQ_API_KEY hoặc GOOGLE_AI_STUDIO_API_KEY_1/2."
         )
     return order
 
@@ -79,10 +99,33 @@ _FORCED_SEARCH_DIRECTIVE = (
 )
 
 
-async def _run_provider_chain(*, router9_call, api_call, providers_override: Optional[list[str]] = None):
-    """Run router9/api providers in configured order with persisted health state."""
+_GENERIC_PROVIDER_CONFIGURED: dict[str, Callable[[], bool]] = {
+    "groq": lambda: bool(config.GROQ_API_KEY),
+    "openrouter": lambda: bool(config.OPENROUTER_API_KEY),
+}
+
+
+async def _run_provider_chain(
+    *,
+    router9_call,
+    api_call,
+    groq_call: Optional[Callable[[], Awaitable]] = None,
+    openrouter_call: Optional[Callable[[], Awaitable]] = None,
+    providers_override: Optional[list[str]] = None,
+):
+    """Run providers in configured order with persisted health state.
+
+    router9 dùng cơ chế dead/retry/probe riêng (mark_router9_dead/alive).
+    api1/api2/groq/openrouter đều single-try + cooldown-on-quota giống nhau,
+    chỉ khác api_call() nhận idx (int) còn groq_call/openrouter_call() không
+    nhận tham số - do api_call() đã có contract cũ (test_provider_chain.py).
+    """
     await provider_state.ensure_loaded()
     order = providers_override if providers_override is not None else config.PROVIDER_ORDER
+    generic_calls: dict[str, Optional[Callable[[], Awaitable]]] = {
+        "groq": groq_call,
+        "openrouter": openrouter_call,
+    }
 
     async def _attempt_router9():
         result = await _run_with_call_timeout(router9_call)
@@ -95,6 +138,19 @@ async def _run_provider_chain(*, router9_call, api_call, providers_override: Opt
         await provider_state.set_active_provider(f"api{idx}")
         return result
 
+    async def _attempt_generic(name: str):
+        result = await generic_calls[name]()
+        await provider_state.set_active_provider(name)
+        return result
+
+    def _has_any_fallback_configured() -> bool:
+        if official_client.api_key_for(1) or official_client.api_key_for(2):
+            return True
+        return any(
+            generic_calls.get(name) is not None and is_configured()
+            for name, is_configured in _GENERIC_PROVIDER_CONFIGURED.items()
+        )
+
     async with call_lock:
         last_exc: Optional[BaseException] = None
         known_bad_skipped: list[str] = []
@@ -104,7 +160,7 @@ async def _run_provider_chain(*, router9_call, api_call, providers_override: Opt
                 if provider_state.router9_dead_since is not None:
                     known_bad_skipped.append("router9")
                     continue
-                has_api = bool(official_client.api_key_for(1) or official_client.api_key_for(2))
+                has_fallback = _has_any_fallback_configured()
                 try:
                     return await _attempt_router9()
                 except Exception as exc:
@@ -117,25 +173,42 @@ async def _run_provider_chain(*, router9_call, api_call, providers_override: Opt
                         return await _attempt_router9()
                     except Exception as retry_exc:
                         last_exc = retry_exc
-                        if not has_api:
+                        if not has_fallback:
                             raise
                         logger.warning(
                             "9Router vẫn lỗi sau retry; chuyển provider.",
                             exc_info=True,
                         )
                         await provider_state.mark_router9_dead()
-            else:
+            elif provider in ("api1", "api2"):
                 idx = 1 if provider == "api1" else 2
                 if not official_client.api_key_for(idx):
                     continue
-                if provider_state.api_in_cooldown(idx):
+                if provider_state.api_in_cooldown(provider):
                     known_bad_skipped.append(provider)
                     continue
                 try:
                     return await _attempt_api(idx)
                 except Exception as exc:
                     if official_client.is_quota_exhausted_error(exc):
-                        await provider_state.mark_api_exhausted(idx)
+                        await provider_state.mark_api_exhausted(provider)
+                        last_exc = exc
+                        continue
+                    logger.exception("%s lỗi (không phải hết quota).", provider)
+                    last_exc = exc
+            else:
+                call = generic_calls.get(provider)
+                is_configured = _GENERIC_PROVIDER_CONFIGURED.get(provider)
+                if call is None or (is_configured and not is_configured()):
+                    continue
+                if provider_state.api_in_cooldown(provider):
+                    known_bad_skipped.append(provider)
+                    continue
+                try:
+                    return await _attempt_generic(provider)
+                except Exception as exc:
+                    if openai_compatible.is_rate_limited(exc):
+                        await provider_state.mark_api_exhausted(provider)
                         last_exc = exc
                         continue
                     logger.exception("%s lỗi (không phải hết quota).", provider)
@@ -145,15 +218,18 @@ async def _run_provider_chain(*, router9_call, api_call, providers_override: Opt
             try:
                 if provider == "router9":
                     return await _attempt_router9()
-                return await _attempt_api(1 if provider == "api1" else 2)
+                if provider in ("api1", "api2"):
+                    return await _attempt_api(1 if provider == "api1" else 2)
+                if generic_calls.get(provider) is not None:
+                    return await _attempt_generic(provider)
             except Exception as exc:
                 last_exc = exc
 
         if last_exc is not None:
             raise last_exc
         raise RuntimeError(
-            "Không có provider nào khả dụng (9Router lỗi, chưa cấu hình API, "
-            "hoặc API đang cooldown quota)."
+            "Không có provider nào khả dụng (tất cả lỗi, chưa cấu hình, "
+            "hoặc đang cooldown quota)."
         )
 
 
@@ -165,8 +241,11 @@ async def ask(
 ):
     """Run a one-turn task through the provider chain.
 
-    ``require_real_search`` is a strict contract: it forces the official
-    Google Search tool, excludes router9, and raises when no official key exists.
+    ``require_real_search`` forces a directive that reliably triggers real
+    web search regardless of provider (see _search_only_providers): router9
+    trước (đã tự bật search phía server), fail kết nối mới rơi xuống Groq
+    compound-mini / Gemini grounding. Raises RealSearchUnavailableError khi
+    không có provider nào cấu hình.
     """
     providers_override = _search_only_providers() if require_real_search else None
     effective_prompt = (
@@ -176,6 +255,16 @@ async def ask(
 
     async def _router9_call():
         return await router9_client.generate(effective_prompt, model=model_name)
+
+    async def _groq_call():
+        # require_real_search dùng model compound-mini (tool search tích hợp)
+        # thay vì model chat thường - xem groq_client.generate_realtime.
+        if require_real_search:
+            return await groq_client.generate_realtime(effective_prompt)
+        return await groq_client.generate(effective_prompt, model=model)
+
+    async def _openrouter_call():
+        return await openrouter_client.generate(effective_prompt, model=model)
 
     async def _api_call(idx: int):
         # KHÔNG truyền model_name (tên model của catalog 9Router, có thể mang
@@ -194,6 +283,8 @@ async def ask(
     return await _run_provider_chain(
         router9_call=_router9_call,
         api_call=_api_call,
+        groq_call=_groq_call,
+        openrouter_call=_openrouter_call,
         providers_override=providers_override,
     )
 
@@ -231,6 +322,32 @@ async def chat(
             temperature=0.95,
         )
 
+    async def _groq_call():
+        if require_real_search:
+            return await groq_client.generate_realtime(full_prompt)
+        history = await db.get_session_messages(
+            user_id, config.CHAT_HISTORY_TURNS, config.CHAT_SESSION_TIMEOUT_SEC
+        )
+        prompt_with_time = f"{official_client.now_vn_context()}\n{full_prompt}"
+        return await groq_client.generate(
+            prompt_with_time,
+            system_instruction=config.load_chat_skill(),
+            history=history,
+            temperature=0.95,
+        )
+
+    async def _openrouter_call():
+        history = await db.get_session_messages(
+            user_id, config.CHAT_HISTORY_TURNS, config.CHAT_SESSION_TIMEOUT_SEC
+        )
+        prompt_with_time = f"{official_client.now_vn_context()}\n{full_prompt}"
+        return await openrouter_client.generate(
+            prompt_with_time,
+            system_instruction=config.load_chat_skill(),
+            history=history,
+            temperature=0.95,
+        )
+
     async def _api_call(idx: int):
         history = await db.get_session_messages(
             user_id, config.CHAT_HISTORY_TURNS, config.CHAT_SESSION_TIMEOUT_SEC
@@ -252,6 +369,8 @@ async def chat(
     return await _run_provider_chain(
         router9_call=_router9_call,
         api_call=_api_call,
+        groq_call=_groq_call,
+        openrouter_call=_openrouter_call,
         providers_override=providers_override,
     )
 
@@ -269,10 +388,21 @@ async def analyze_image(instruction: str, image_path: str):
     async def _router9_call():
         return await router9_client.generate_image_prompt(instruction, image_path)
 
+    async def _groq_call():
+        return await groq_client.generate_image_prompt(instruction, image_path)
+
+    async def _openrouter_call():
+        return await openrouter_client.generate_image_prompt(instruction, image_path)
+
     async def _api_call(idx: int):
         return await official_client.generate_image_prompt(idx, instruction, image_path)
 
-    return await _run_provider_chain(router9_call=_router9_call, api_call=_api_call)
+    return await _run_provider_chain(
+        router9_call=_router9_call,
+        api_call=_api_call,
+        groq_call=_groq_call,
+        openrouter_call=_openrouter_call,
+    )
 
 
 async def check_router9_status() -> tuple[bool, str]:
@@ -282,6 +412,14 @@ async def check_router9_status() -> tuple[bool, str]:
         timeout_sec = _call_timeout_sec()
         logger.warning("Probe 9Router quá %ss.", timeout_sec)
         return False, f"TimeoutError: ping 9Router quá {timeout_sec}s"
+
+
+async def check_groq_status() -> tuple[bool, str]:
+    return await groq_client.check_status()
+
+
+async def check_openrouter_status() -> tuple[bool, str]:
+    return await openrouter_client.check_status()
 
 
 async def check_ai_studio_status(idx: int) -> tuple[bool, str]:

@@ -20,11 +20,16 @@ logger = logging.getLogger(__name__)
 _STATE_ACTIVE_PROVIDER = "provider_active"
 _STATE_ROUTER9_DEAD_SINCE = "provider_router9_dead_since"
 _STATE_API_EXHAUSTED_PREFIX = "provider_api_exhausted_until_"
+# 4 provider có cooldown-on-quota (mọi provider trừ router9, dùng cơ chế
+# dead/probe riêng - xem mark_router9_dead/alive bên dưới).
+_COOLDOWN_PROVIDERS = ("groq", "openrouter", "api1", "api2")
 
 
 class ProviderStateSnapshot(TypedDict):
     active_provider: str
     router9_dead_since: Optional[float]
+    groq_exhausted_until: float
+    openrouter_exhausted_until: float
     api1_exhausted_until: float
     api2_exhausted_until: float
 
@@ -57,7 +62,8 @@ class ProviderChainState:
     def __init__(self) -> None:
         self.active_provider: str = "router9"
         self.router9_dead_since: Optional[float] = None  # epoch seconds, None = sống/chưa biết
-        self.api_exhausted_until: dict[int, float] = {1: 0.0, 2: 0.0}  # epoch seconds
+        # key: "groq"|"openrouter"|"api1"|"api2", value: epoch seconds
+        self.api_exhausted_until: dict[str, float] = {name: 0.0 for name in _COOLDOWN_PROVIDERS}
         self._lock = asyncio.Lock()
         self._loaded = False
 
@@ -76,7 +82,9 @@ class ProviderChainState:
             # 9Router) -> coi như "router9".
             if raw_active == "cookie":
                 raw_active = "router9"
-            self.active_provider = raw_active if raw_active in ("router9", "api1", "api2") else "router9"
+            self.active_provider = (
+                raw_active if raw_active in ("router9", *_COOLDOWN_PROVIDERS) else "router9"
+            )
 
             raw_dead = await db.get_setting(_STATE_ROUTER9_DEAD_SINCE)
             try:
@@ -84,12 +92,12 @@ class ProviderChainState:
             except ValueError:
                 self.router9_dead_since = None
 
-            for idx in (1, 2):
-                raw = await db.get_setting(f"{_STATE_API_EXHAUSTED_PREFIX}{idx}")
+            for name in _COOLDOWN_PROVIDERS:
+                raw = await db.get_setting(f"{_STATE_API_EXHAUSTED_PREFIX}{name}")
                 try:
-                    self.api_exhausted_until[idx] = float(raw) if raw else 0.0
+                    self.api_exhausted_until[name] = float(raw) if raw else 0.0
                 except ValueError:
-                    self.api_exhausted_until[idx] = 0.0
+                    self.api_exhausted_until[name] = 0.0
 
             self._loaded = True
             logger.info(
@@ -118,14 +126,14 @@ class ProviderChainState:
         if was_dead:
             send_alert(messages.ROUTER9_ALIVE_ALERT)
 
-    async def mark_api_exhausted(self, idx: int) -> None:
+    async def mark_api_exhausted(self, provider: str) -> None:
         until = time.time() + config.API_QUOTA_COOLDOWN_SEC
-        self.api_exhausted_until[idx] = until
-        await db.set_setting(f"{_STATE_API_EXHAUSTED_PREFIX}{idx}", str(until))
-        logger.warning("api%s hết quota (429), cooldown %ss.", idx, config.API_QUOTA_COOLDOWN_SEC)
+        self.api_exhausted_until[provider] = until
+        await db.set_setting(f"{_STATE_API_EXHAUSTED_PREFIX}{provider}", str(until))
+        logger.warning("%s hết quota (429), cooldown %ss.", provider, config.API_QUOTA_COOLDOWN_SEC)
 
-    def api_in_cooldown(self, idx: int) -> bool:
-        return time.time() < self.api_exhausted_until.get(idx, 0.0)
+    def api_in_cooldown(self, provider: str) -> bool:
+        return time.time() < self.api_exhausted_until.get(provider, 0.0)
 
     def snapshot(self) -> ProviderStateSnapshot:
         """Snapshot state hiện tại (RAM) - dùng cho /status. Không await DB
@@ -133,8 +141,10 @@ class ProviderChainState:
         return ProviderStateSnapshot(
             active_provider=self.active_provider,
             router9_dead_since=self.router9_dead_since,
-            api1_exhausted_until=self.api_exhausted_until.get(1, 0.0),
-            api2_exhausted_until=self.api_exhausted_until.get(2, 0.0),
+            groq_exhausted_until=self.api_exhausted_until.get("groq", 0.0),
+            openrouter_exhausted_until=self.api_exhausted_until.get("openrouter", 0.0),
+            api1_exhausted_until=self.api_exhausted_until.get("api1", 0.0),
+            api2_exhausted_until=self.api_exhausted_until.get("api2", 0.0),
         )
 
 
