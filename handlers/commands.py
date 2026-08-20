@@ -745,9 +745,17 @@ _status_cache: tuple[float, str] | None = None
 
 
 async def _build_status_text() -> str:
-    """Ping thật cả 3 provider rồi dựng text trạng thái (HTML parse_mode)."""
-    (router9_ok, router9_detail), api1_status, api2_status = await asyncio.gather(
+    """Ping thật cả 5 provider rồi dựng text trạng thái (HTML parse_mode)."""
+    (
+        (router9_ok, router9_detail),
+        groq_status,
+        openrouter_status,
+        api1_status,
+        api2_status,
+    ) = await asyncio.gather(
         orchestrator.check_router9_status(),
+        orchestrator.check_groq_status() if config.GROQ_API_KEY else _noop_ai_status(),
+        orchestrator.check_openrouter_status() if config.OPENROUTER_API_KEY else _noop_ai_status(),
         orchestrator.check_ai_studio_status(1) if config.GOOGLE_AI_STUDIO_API_KEY_1 else _noop_ai_status(),
         orchestrator.check_ai_studio_status(2) if config.GOOGLE_AI_STUDIO_API_KEY_2 else _noop_ai_status(),
     )
@@ -755,29 +763,38 @@ async def _build_status_text() -> str:
     state = orchestrator.get_provider_state_snapshot()
     now = time.time()
 
-    active_map = {"router9": "9Router", "api1": "API 1", "api2": "API 2"}
+    active_map = {"router9": "9Router", "groq": "Groq", "openrouter": "OpenRouter", "api1": "API 1", "api2": "API 2"}
     active_line = f"🔀 Provider đang dùng: <b>{html.escape(active_map.get(state['active_provider'], state['active_provider']))}</b>"
 
     router9_line = "✅ 9Router: OK" if router9_ok else f"❌ 9Router: lỗi ({html.escape(router9_detail)})"
     if state["router9_dead_since"]:
         router9_line += f"\n   ⥅ chết lúc {_fmt_epoch_vn(state['router9_dead_since'])}"
 
-    def _api_line(idx, key, status, exhausted_until):
-        if not key: return f"⚪ API {idx}: chưa cấu hình"
+    def _provider_line(label, key, status, exhausted_until):
+        if not key: return f"⚪ {label}: chưa cấu hình"
         ok, detail = status
-        line = f"✅ API {idx}: OK" if ok else f"❌ API {idx}: lỗi ({html.escape(detail)})"
+        line = f"✅ {label}: OK" if ok else f"❌ {label}: lỗi ({html.escape(detail)})"
         if exhausted_until > now:
             line += f"\n   ⥅ cooldown tới {_fmt_epoch_vn(exhausted_until)}"
         return line
 
-    api1_line = _api_line(1, config.GOOGLE_AI_STUDIO_API_KEY_1, api1_status, state["api1_exhausted_until"])
-    api2_line = _api_line(2, config.GOOGLE_AI_STUDIO_API_KEY_2, api2_status, state["api2_exhausted_until"])
+    groq_line = _provider_line("Groq", config.GROQ_API_KEY, groq_status, state["groq_exhausted_until"])
+    openrouter_line = _provider_line("OpenRouter", config.OPENROUTER_API_KEY, openrouter_status, state["openrouter_exhausted_until"])
+    api1_line = _provider_line("API 1", config.GOOGLE_AI_STUDIO_API_KEY_1, api1_status, state["api1_exhausted_until"])
+    api2_line = _provider_line("API 2", config.GOOGLE_AI_STUDIO_API_KEY_2, api2_status, state["api2_exhausted_until"])
 
     preferred = await router9_client.get_preferred_model_name()
-    model_line = f"🧠 Model chat: {html.escape(preferred or 'tự động')} (9Router: {html.escape(config.ROUTER9_MODEL)}, API: {html.escape(config.GOOGLE_AI_STUDIO_MODEL)})"
+    model_line = (
+        f"🧠 Model chat: {html.escape(preferred or 'tự động')} "
+        f"(9Router: {html.escape(config.ROUTER9_MODEL)}, Groq: {html.escape(config.GROQ_MODEL)}, "
+        f"OpenRouter: {html.escape(config.OPENROUTER_MODEL)}, API: {html.escape(config.GOOGLE_AI_STUDIO_MODEL)})"
+    )
     order_line = "🔢 PROVIDER_ORDER: " + " → ".join(config.PROVIDER_ORDER)
 
-    lines = ["📡 <b>Trạng thái bot</b>", "", active_line, order_line, "", router9_line, api1_line, api2_line, "", model_line]
+    lines = [
+        "📡 <b>Trạng thái bot</b>", "", active_line, order_line, "",
+        router9_line, groq_line, openrouter_line, api1_line, api2_line, "", model_line,
+    ]
     return "\n".join(lines)
 
 
