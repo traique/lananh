@@ -92,10 +92,45 @@ ROUTER9_CALL_TIMEOUT_SEC = _env_int(
 )
 ROUTER9_MAX_CONCURRENCY = _env_int("ROUTER9_MAX_CONCURRENCY", 4)
 
-# ─── Provider-chain (router9 -> api1 -> api2) + trí nhớ hội thoại ───────────
-# 9Router chết -> chuyển hẳn sang API (không thử lại router9 mỗi tin, chỉ có
-# background probe + /userouter9 + đổi env mới kích hoạt thử lại router9).
-# API hết quota (429) -> cooldown cố định rồi tự thử lại.
+# Groq — gateway OpenAI-compatible miễn phí, provider thứ 2 của provider-chain
+# (router9 -> groq -> openrouter -> api1 -> api2). Model mặc định nằm trong
+# free tier của Groq (console.groq.com); GROQ_REALTIME_MODEL (compound-mini)
+# có tool tìm kiếm web tích hợp, chỉ dùng cho tác vụ require_real_search.
+# Danh mục model free đổi theo thời gian - xem README mục Provider-chain nếu
+# model mặc định ngừng hoạt động.
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip()
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
+# meta-llama/llama-4-scout-17b-16e-instruct (giá trị cũ) đã bị Groq khai tử
+# (shutdown 17/07/2026, xem console.groq.com/docs/deprecations) - request sẽ
+# lỗi 400/404 nếu còn dùng model đó. qwen/qwen3.6-27b hiện là model vision
+# DUY NHẤT Groq liệt kê ở console.groq.com/docs/vision, miễn phí (free tier).
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b").strip()
+GROQ_REALTIME_MODEL = os.getenv("GROQ_REALTIME_MODEL", "groq/compound-mini").strip()
+GROQ_CALL_TIMEOUT_SEC = _env_int("GROQ_CALL_TIMEOUT_SEC", 30)
+GROQ_MAX_CONCURRENCY = _env_int("GROQ_MAX_CONCURRENCY", 4)
+
+# OpenRouter — gateway OpenAI-compatible miễn phí, provider thứ 3 của
+# provider-chain. Model mặc định có hậu tố ":free" (không tốn phí) - danh mục
+# model free trên OpenRouter đổi theo thời gian, xem README nếu model mặc
+# định ngừng hoạt động.
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free").strip()
+# google/gemma-4-31b-it:free (giá trị cũ) không phải tên model có thật trên
+# OpenRouter (không khớp bất kỳ slug nào trong openrouter.ai/collections/free-models
+# - mọi request sẽ trả 400 "model not found"). google/gemma-4-26b-a4b-it:free
+# là model Gemma 4 free hiện có, hỗ trợ vision (ảnh + video) trên OpenRouter.
+OPENROUTER_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", "google/gemma-4-26b-a4b-it:free").strip()
+OPENROUTER_CALL_TIMEOUT_SEC = _env_int("OPENROUTER_CALL_TIMEOUT_SEC", 30)
+OPENROUTER_MAX_CONCURRENCY = _env_int("OPENROUTER_MAX_CONCURRENCY", 4)
+
+# ─── Provider-chain (router9 -> groq -> openrouter -> api1 -> api2) + trí nhớ
+# hội thoại ────────────────────────────────────────────────────────────────
+# 9Router chết -> chuyển hẳn sang provider kế tiếp (không thử lại router9 mỗi
+# tin, chỉ có background probe + /userouter9 + đổi env mới kích hoạt thử lại
+# router9). Groq/OpenRouter/API hết quota (429) -> cooldown cố định rồi tự
+# thử lại (xem ai/provider_state.py).
 CHAT_HISTORY_TURNS = _env_int("CHAT_HISTORY_TURNS", 8)
 CHAT_SESSION_TIMEOUT_SEC = _env_int("CHAT_SESSION_TIMEOUT_SEC", 21600)  # 6 giờ
 ROUTER9_PROBE_INTERVAL_SEC = _env_int(
@@ -104,14 +139,15 @@ ROUTER9_PROBE_INTERVAL_SEC = _env_int(
 API_QUOTA_COOLDOWN_SEC = _env_int("API_QUOTA_COOLDOWN_SEC", 3600)  # 60 phút
 
 # Thứ tự ưu tiên thử provider, đọc từ env PROVIDER_ORDER (vd "api1,api2,router9"
-# để dùng API chính thức làm xương sống, 9Router chỉ là bonus - xem README
-# mục Provider-chain để cân nhắc trước khi đổi). Mặc định giữ hành vi cũ:
-# router9 -> api1 -> api2.
-_PROVIDER_ORDER_RAW = os.getenv("PROVIDER_ORDER", "router9,api1,api2").strip()
+# để dùng API chính thức làm xương sống - xem README mục Provider-chain để
+# cân nhắc trước khi đổi). Mặc định: router9 -> groq -> openrouter -> api1 ->
+# api2 (toàn bộ chuỗi mặc định là các provider miễn phí, Gemini official đứng
+# cuối làm lưới an toàn).
+_PROVIDER_ORDER_RAW = os.getenv("PROVIDER_ORDER", "router9,groq,openrouter,api1,api2").strip()
 
 
 def _parse_provider_order(raw: str) -> list[str]:
-    valid = {"router9", "api1", "api2"}
+    valid = {"router9", "groq", "openrouter", "api1", "api2"}
     order = [p.strip().lower() for p in raw.split(",") if p.strip()]
     # Tương thích ngược: cấu hình cũ còn ghi "cookie" (Render env đã lưu từ
     # trước khi đổi sang 9Router) -> coi như "router9".
@@ -123,9 +159,9 @@ def _parse_provider_order(raw: str) -> list[str]:
         if p not in seen:
             seen.add(p)
             deduped.append(p)
-    # Đảm bảo đủ cả 3 provider (thêm provider bị thiếu vào cuối theo thứ tự
+    # Đảm bảo đủ cả 5 provider (thêm provider bị thiếu vào cuối theo thứ tự
     # mặc định), để không vô tình loại hẳn 1 provider chỉ vì gõ thiếu trong env.
-    for p in ("router9", "api1", "api2"):
+    for p in ("router9", "groq", "openrouter", "api1", "api2"):
         if p not in deduped:
             deduped.append(p)
     return deduped
