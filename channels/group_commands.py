@@ -9,7 +9,7 @@ import asyncpg
 
 from channels import zalo_repository
 from channels.zalo_summary import resolve_window, summarize_group, today_discussion
-from services.channel_chat_service import ChannelResult
+from services.channel_result import ChannelResult
 
 
 async def maybe_handle_group_command(account_id: str, text: str) -> ChannelResult | None:
