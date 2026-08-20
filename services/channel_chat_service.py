@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from dataclasses import dataclass
 
 import messages
 from ai import orchestrator
@@ -10,16 +9,11 @@ from core import database as db
 from services import memory_service, portfolio_service, tools
 from services.background_tasks import stop_tracked_tasks
 from services.channel_command_service import maybe_handle_command
+from services.channel_result import ChannelResult
 from services.telemetry import telemetry
 from stock import analysis as stock_analysis
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class ChannelResult:
-    messages: list[str]
-    provider: str | None = None
 
 
 _background_tasks: set[asyncio.Task] = set()
