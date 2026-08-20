@@ -24,8 +24,9 @@ Repository được thiết kế cho **một chủ sở hữu**:
 
 ### Trợ lý chung
 
-- Provider chain: 9Router (gateway OpenAI-compatible) → AI Studio key 1 → key 2.
-- Tự cooldown API hết quota và probe lại 9Router.
+- Provider chain: 9Router (gateway OpenAI-compatible) → Groq (miễn phí) → OpenRouter (miễn phí) → AI Studio key 1 → key 2.
+- Tự cooldown provider hết quota và probe lại 9Router.
+- Tác vụ cần Google Search thật (`require_real_search`) dùng riêng 1 chuỗi: Groq `compound-mini` (tool search tích hợp, miễn phí) → Gemini grounding (API key 1/2) - bỏ qua 9Router và OpenRouter vì không đảm bảo có tool search thật.
 - Lịch sử theo phiên và trí nhớ dài hạn trên Supabase Postgres.
 - Ghi chú, reminder và facts danh mục qua ngôn ngữ tự nhiên.
 - Tìm giá sản phẩm bằng grounded search chính thức.
@@ -102,7 +103,7 @@ Zalo control server chỉ bind `127.0.0.1:9901`.
 - Supabase Postgres Session Pooler URL
 - API key 9Router (gateway OpenAI-compatible)
 - Fernet encryption key
-- Tùy chọn: Google AI Studio keys, tài khoản Zalo bot riêng, app Zoom Marketplace
+- Tùy chọn: Groq API key, OpenRouter API key, Google AI Studio keys, tài khoản Zalo bot riêng, app Zoom Marketplace
 
 ## Cấu hình bắt buộc
 
@@ -291,7 +292,7 @@ CI chạy các kiểm tra Python và TypeScript trên push và pull request.
 ## Cấu trúc repository
 
 ```text
-ai/                 Gemini clients và provider routing (9Router + AI Studio)
+ai/                 Provider routing (9Router + Groq + OpenRouter + AI Studio)
 channels/           Channel contracts, Zalo và Zoom persistence
 core/               Config, encryption và database
 handlers/           Telegram handlers

@@ -10,25 +10,25 @@ services:
     healthCheckPath: /
     envVars:
       - key: TELEGRAM_TOKEN
-        value: 8720247393:AAHlFyFKVlLoOZHhSbEhHCrlAjy2cz-9dOw
+        sync: false
       - key: ALLOWED_USER_ID
         value: 1274613019
       - key: ROUTER9_API_KEY
-        value: pyOY6ihf5N+y9JIaauPi45PQXLpDkSB0jeSx6uah8Vs=
+        sync: false
       - key: ROUTER9_BASE_URL
         value: https://ninerouter-v2.onrender.com/auth/chatgpt/v1
       - key: ROUTER9_MODEL
         value: gpt-4o-mini
       - key: DATABASE_URL
-        value: postgresql://postgres.nxfykmeqeuiiguivwlyz:congtoai147369@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres
+        sync: false
       - key: WEBHOOK_SECRET
         generateValue: true
       - key: SETTINGS_ENC_KEY
-        value: 8wE4IXAtK6m2S6s0qDkOWK35P3vWmJTj9pn9m9z5mK8=
+        sync: false
       - key: DIAGNOSE_SECRET
         generateValue: true
       - key: GOOGLE_AI_STUDIO_API_KEY_1
-        value: AQ.Ab8RN6LRFpYzHe4bdxg2NUo3i7_lDBPcIHMWvRETnvncWnkldA
+        sync: false
       - key: GOOGLE_AI_STUDIO_API_KEY_2
         sync: false
       - key: GOOGLE_AI_STUDIO_MODEL
@@ -82,17 +82,21 @@ services:
         value: "30"
       - key: ROUTER9_MAX_CONCURRENCY
         value: "4"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
       - key: ZOOM_ENABLED
         value: "false"
       - key: ZOOM_CLIENT_ID
-        value: EOeFHnZbQTCV9HXHSbuqQQ
+        sync: false
       - key: ZOOM_CLIENT_SECRET
-        value: xZ4PQUGXSeaWBWRUJGIZKuRiNJkJGe6M
+        sync: false
       - key: ZOOM_BOT_JID
-        value: v14etmmgdmrsih4ayyugnr3q@xmpp.zoom.us
+        sync: false
       - key: ZOOM_SECRET_TOKEN
-        value: AdIl9lkfSc60Auo7j_GDoA
+        sync: false
       - key: ZOOM_VERIFICATION_TOKEN
-        value: AdIl9lkfSc60Auo7j_GDoA
+        sync: false
       - key: ZOOM_ACCOUNT_ID
-        value: 6929080059
+        sync: false

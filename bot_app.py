@@ -9,7 +9,7 @@ from telegram.request import HTTPXRequest
 
 import scheduler
 import tg_format
-from ai import orchestrator, router9_client
+from ai import orchestrator, router9_client, groq_client, openrouter_client
 from channels import zalo_users
 from core import config, database as db, idempotency
 from handlers import chat_router, commands, media_handler, portfolio_commands, zalo_login
@@ -98,6 +98,8 @@ async def _post_shutdown(app):
     )
 
     await run_step("9Router client", router9_client.close())
+    await run_step("Groq client", groq_client.close())
+    await run_step("OpenRouter client", openrouter_client.close())
 
     await run_step("stock HTTP client", stock_providers.close_http_client())
     await run_step("database pool", db.close_pool())
