@@ -45,6 +45,14 @@ class _RedactFilter(logging.Filter):
         return True
 
 
+class _HealthCheckFilter(logging.Filter):
+    """Ẩn access-log của uvicorn cho GET / (Render health check gọi liên
+    tục mỗi vài giây, không mang thông tin gì hữu ích, chỉ làm loãng log)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return '"GET / HTTP/' not in record.getMessage()
+
+
 # Tham chiếu tới filter đang chạy, để module khác có thể đăng ký thêm secret
 # mới phát sinh lúc runtime qua add_redacted_secret().
 _active_filter: Optional[_RedactFilter] = None
@@ -62,6 +70,7 @@ def configure_logging() -> None:
         level=logging.INFO,
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").addFilter(_HealthCheckFilter())
     _active_filter = _RedactFilter()
     # QUAN TRỌNG: gắn filter vào HANDLER của root logger, không phải vào root
     # logger. logger.addFilter() chỉ chạy khi log trực tiếp qua logger đó -
