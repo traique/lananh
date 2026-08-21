@@ -16,7 +16,7 @@ services:
       - key: ROUTER9_API_KEY
         sync: false
       - key: ROUTER9_BASE_URL
-        value: https://ninerouter-v2.onrender.com/auth/chatgpt/v1
+        value: https://ninerouter-v2.onrender.com/v1
       - key: ROUTER9_MODEL
         value: gpt-4o-mini
       - key: DATABASE_URL
@@ -32,9 +32,9 @@ services:
       - key: GOOGLE_AI_STUDIO_API_KEY_2
         sync: false
       - key: GOOGLE_AI_STUDIO_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.5-flash-lite
       - key: ZALO_ENABLED
-        value: "false"
+        value: "true"
       - key: ZALO_COOKIE_JSON
         sync: false
       - key: ZALO_IMEI
@@ -86,8 +86,10 @@ services:
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
+      - key: TAVILY_API_KEY
+        sync: false
       - key: ZOOM_ENABLED
-        value: "false"
+        value: "true"
       - key: ZOOM_CLIENT_ID
         sync: false
       - key: ZOOM_CLIENT_SECRET
