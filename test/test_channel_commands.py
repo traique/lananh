@@ -33,6 +33,28 @@ async def test_userouter9_denied_for_non_admin():
 
 
 @pytest.mark.asyncio
+async def test_router9_denied_for_non_admin():
+    result, provider = await service.maybe_handle_command(1, "/router9 off", is_admin=False)
+    assert result == ["Lệnh này chỉ dành cho admin."]
+
+
+@pytest.mark.asyncio
+async def test_router9_toggle_on_off(monkeypatch):
+    calls = []
+
+    async def fake_set_enabled(enabled):
+        calls.append(enabled)
+
+    monkeypatch.setattr(service.orchestrator, "set_router9_enabled", fake_set_enabled)
+
+    result, _ = await service.maybe_handle_command(1, "/router9 off")
+    assert "Đã tắt 9Router" in result[0]
+    result, _ = await service.maybe_handle_command(1, "/router9 on")
+    assert "Đã bật 9Router" in result[0]
+    assert calls == [False, True]
+
+
+@pytest.mark.asyncio
 async def test_model_denied_for_non_admin():
     result, provider = await service.maybe_handle_command(1, "/model auto", is_admin=False)
     assert result == ["Lệnh này chỉ dành cho admin."]
@@ -48,7 +70,7 @@ async def test_status_allowed_for_admin_by_default():
 @pytest.mark.asyncio
 async def test_normal_commands_still_allowed_for_non_admin(monkeypatch):
     """Thành viên thường (is_admin=False) vẫn dùng được tính năng bình thường -
-    chỉ 3 lệnh cấu hình toàn cục (/status, /userouter9, /model) mới bị chặn."""
+    chỉ 4 lệnh cấu hình toàn cục (/status, /userouter9, /router9, /model) mới bị chặn."""
     async def fake_clear(user_id):
         return None
     monkeypatch.setattr(service.orchestrator, "reset_chat", lambda: _noop())

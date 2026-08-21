@@ -84,6 +84,7 @@ def reset_state(monkeypatch, fake_store):
     key mặc định đã cấu hình (test tự override nếu cần khác)."""
     provider_state.active_provider = "router9"
     provider_state.router9_dead_since = None
+    provider_state.router9_enabled = True
     provider_state.api_exhausted_until = {"groq": 0.0, "openrouter": 0.0, "api1": 0.0, "api2": 0.0}
     provider_state._loaded = False
 
@@ -377,33 +378,80 @@ async def test_groq_het_quota_chuyen_openrouter_va_cooldown(fake_store, monkeypa
     assert not provider_state.api_in_cooldown("openrouter")
 
 
-def test_search_only_providers_router9_truoc_roi_groq_realtime_roi_gemini(monkeypatch):
-    """require_real_search: router9 đứng đầu (đã tự bật search phía server,
-    xem app/realtime.py bên repo 9Router), rồi groq (compound-mini), rồi
-    api1/api2. openrouter không bao giờ xuất hiện (nhánh OpenRouter của
-    lananh gọi thẳng API, không đi qua 9Router, không đảm bảo tool search)."""
+def test_search_only_providers_api1_truoc_api2_roi_openrouter(monkeypatch):
+    """require_real_search: api1 trước (Google Search tool bật sẵn), lỗi/hết
+    quota mới rớt api2, cuối cùng mới openrouter làm lưới an toàn. router9 và
+    groq không xuất hiện trong nhánh này (xem docstring _search_only_providers)."""
     from ai import official_client
 
     monkeypatch.setattr(config, "ROUTER9_API_KEY", "fake-router9-key")
     monkeypatch.setattr(config, "GROQ_API_KEY", "fake-groq-key")
-    monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "groq", "openrouter", "api1", "api2"])
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", "fake-openrouter-key")
     monkeypatch.setattr(official_client, "api_key_for", lambda idx: "k" if idx in (1, 2) else None)
 
     order = orchestrator._search_only_providers()
 
-    assert order == ["router9", "groq", "api1", "api2"]
+    assert order == ["api1", "api2", "openrouter"]
 
 
-def test_search_only_providers_khong_co_router9_key_thi_bo_qua(monkeypatch):
-    """Chưa cấu hình ROUTER9_API_KEY -> rơi thẳng xuống groq/api1/api2 như cũ,
-    không raise chỉ vì thiếu mỗi router9."""
+def test_search_only_providers_khong_co_api1_thi_bo_qua(monkeypatch):
+    """Chưa cấu hình GOOGLE_AI_STUDIO_API_KEY_1 -> rơi thẳng xuống api2 rồi
+    openrouter, không raise chỉ vì thiếu mỗi api1."""
     from ai import official_client
 
-    monkeypatch.setattr(config, "ROUTER9_API_KEY", "")
-    monkeypatch.setattr(config, "GROQ_API_KEY", "fake-groq-key")
-    monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "groq", "openrouter", "api1", "api2"])
-    monkeypatch.setattr(official_client, "api_key_for", lambda idx: "k" if idx in (1, 2) else None)
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", "fake-openrouter-key")
+    monkeypatch.setattr(official_client, "api_key_for", lambda idx: "k" if idx == 2 else None)
 
     order = orchestrator._search_only_providers()
 
-    assert order == ["groq", "api1", "api2"]
+    assert order == ["api2", "openrouter"]
+
+
+def test_search_only_providers_khong_cau_hinh_gi_thi_raise(monkeypatch):
+    from ai import official_client
+
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", "")
+    monkeypatch.setattr(official_client, "api_key_for", lambda idx: None)
+
+    with pytest.raises(orchestrator.RealSearchUnavailableError):
+        orchestrator._search_only_providers()
+
+
+@pytest.mark.asyncio
+async def test_router9_off_thu_cong_bi_loai_khoi_chain_du_dang_song(fake_store, monkeypatch):
+    """/router9 off -> router9 bị bỏ qua hoàn toàn, kể cả khi router9_dead_since
+    là None (đang "sống") - không rơi vào known_bad_skipped để retry cuối cùng."""
+    monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "api1", "api2"])
+    provider_state.router9_dead_since = None
+    provider_state.router9_enabled = False
+    provider_state._loaded = True
+
+    async def router9_call():
+        raise AssertionError("router9 đang tắt thủ công -> không được gọi")
+
+    async def api_call(idx):
+        return f"api{idx}-response"
+
+    result = await orchestrator._run_provider_chain(router9_call=router9_call, api_call=api_call)
+
+    assert result == "api1-response"
+    assert provider_state.active_provider == "api1"
+
+
+@pytest.mark.asyncio
+async def test_router9_on_lai_thi_dung_binh_thuong(fake_store, monkeypatch):
+    monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "api1", "api2"])
+    provider_state.router9_dead_since = None
+    provider_state.router9_enabled = True
+    provider_state._loaded = True
+
+    async def router9_call():
+        return "router9-response"
+
+    async def api_call(idx):
+        raise AssertionError("router9 đang bật -> không được rơi xuống api")
+
+    result = await orchestrator._run_provider_chain(router9_call=router9_call, api_call=api_call)
+
+    assert result == "router9-response"
+    assert provider_state.active_provider == "router9"
