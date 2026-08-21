@@ -1,0 +1,147 @@
+# Hướng dẫn dịch Việt → Nhật (phân biệt văn phong theo ngữ cảnh)
+
+Cùng một câu tiếng Việt có thể dịch thành nhiều kiểu tiếng Nhật khác nhau tùy
+loại tài liệu chứa câu đó. Luôn xác định văn phong (A–E) trước khi dịch.
+
+## 1. Năm văn phong
+
+| Ký hiệu | Tên | Đặc điểm | Dùng khi | Nhận diện |
+|---|---|---|---|---|
+| (A) | 体言止め (danh từ hóa) | Kết bằng danh từ hóa động từ (確認/実施/交換/除去...), không chia động từ, không を | Tiêu đề, tên cột bảng, checklist, routine card | Câu ngắn, không chủ ngữ, không rõ ai đang/đã làm. **Mặc định khi không rõ ngữ cảnh.** |
+| (B) | ですます/した (miêu tả hành động) | Động từ chia đầy đủ, có を, thì rõ | Nhật ký PM, báo cáo tiến độ | Mô tả việc đã/đang làm, chêm được "tôi đã..." |
+| (C) | てください／お願いします (yêu cầu) | Chỉ thị gửi người cụ thể | Chỉ thị công việc, email yêu cầu | Có ý "hãy/yêu cầu/đề nghị/cần" |
+| (D) | Chat nội bộ | Hỏi–đáp, xác nhận lại (ですね？/のですか？), có thể lược ください, từ đệm khẩu ngữ | Zalo/chat nhóm, trao đổi qua lại | Đoạn hội thoại, có "đúng ko/phải ko" |
+| (E) | SOP/quy định (だ・である／する。／〜事。) | Thể thường, không kính ngữ, không nhắm ai cụ thể | Quy trình, tiêu chuẩn chất lượng, văn bản chính thức | Câu quy định khách quan, đề mục La Mã (I, II...) |
+
+## 2. Trợ từ khi có tên máy: の vs にて
+
+- **の**: phía sau chỉ là số liệu/thuộc tính quan sát, không phải hành động chủ động.
+  `[Máy]の[hiện tượng]不良回数確認` — VD: イベントプリンター**の**外径不良回数確認
+- **にて**: phía sau có hành động chủ động (loại bỏ, xử lý...) thực hiện tại máy đó.
+  `[Máy]にて[hiện tượng][hành động]回数確認` — VD: イベントプリンター**にて**外径不良除去回数確認
+- Mẹo: có động từ hành động rõ (loại bỏ, xử lý, thao tác) → にて; chỉ đếm/quan sát NG → の.
+
+## 3. Mẫu văn phong (D) — Chat nội bộ
+
+| Hiện tượng | Ví dụ | Cách dùng |
+|---|---|---|
+| Báo cáo đã làm (ngắn hơn B) | バイゼルはマーキング監視計を取り付けました | ですます+た/ました |
+| Nhờ vả nhẹ | 技術に試作設計伝票を発行お願いします | 〜お願いします |
+| Chỉ thị thân mật (trên→dưới) | マーキングがあるSPの線速のリストを作成して | Te-form, có thể lược ください |
+| Xác nhận lại ý hiểu | 運転中はカバーを外す必要がないということですね？ | 〜ということですね？ |
+| Hỏi trạng thái, khẩu ngữ | このカバー取り外しできるようになってるのですか？ | の/んですか |
+| Câu hỏi khẩu ngữ | あれ？さっきみたときカバーなかったけど？ | あれ, けど, không chia đầy đủ |
+| Nhận xét nhẹ | それじゃあカバーの意味ないですね | それじゃあ + ですね |
+
+**"Đúng ko/phải ko"** → luôn dịch bằng **ですね？** (xác nhận điều đã đoán), không dùng か đơn thuần (hỏi mở).
+
+## 4. Mẫu văn phong (E) — SOP/quy định
+
+| Hiện tượng | Ví dụ | Ghi chú |
+|---|---|---|
+| Câu mục đích mở đầu | バイゼル押出の巻き方について規定する。 | Thể thường, KHÔNG ですます |
+| Quy tắc liệt kê | パラソルで束巻きを実施する。 | Kết bằng する。 |
+| Điều kiện bắt buộc | 3か所の間隔が均等である事 | Kết bằng 事／こと |
+| Lệnh khách quan | ラップをボビンの外側に約5~8回巻く。 | Không chủ ngữ, không kính ngữ |
+| Ghi chú ngoại lệ | ※については別に規定されている品番はその規定を適用する。 | Vẫn thể thường |
+| Đề mục | I．適用： / II．方法 | Số La Mã, phân cấp chính thức |
+
+Khác (A): câu hoàn chỉnh có động từ, không chỉ danh từ hóa. Khác (B): (E) dùng
+thể thường vì khách quan, (B) dùng ですます vì là báo cáo cá nhân. Khác (C): (E)
+không てください vì không nhắm 1 người. Khác (D): (E) không có yếu tố hội thoại.
+
+## 5. Bảng đối chiếu tổng hợp (few-shot)
+
+| Tiếng Việt | Tiếng Nhật | Văn phong |
+|---|---|---|
+| Kiểm tra giấy in số lần NG đường kính | イベントプリンターの外径不良回数確認 | (A) の |
+| Kiểm tra giấy in số lần loại bỏ NG đường kính | イベントプリンターにて外径不良除去回数確認 | (A) にて |
+| Số lượng tiêu chuẩn/bobin (taba) | 基準数量/ボビン（束） | (A) |
+| Xác nhận bảng điều kiện *(tên hạng mục)* | 条件表確認 | (A) |
+| Xác nhận bảng điều kiện *(nhật ký: đã làm gì)* | 条件表を確認する／確認しました | (B) |
+| Xác nhận bảng điều kiện *(dặn người khác)* | 条件表を確認してください | (C) |
+| Có nghĩa là vận hành thì ko cần tháo nắp đúng ko? | 運転中はカバーを外す必要がないということですね？ | (D) |
+| Hãy làm list tốc độ line của SP có marking | マーキングがあるSPの線速のリストを作成して | (D) |
+| Quy định về phương pháp quấn, đóng gói Baizeru Oshidashi | バイゼル押出の巻き方、包装方法について規定する。 | (E) |
+| Buộc dây nylon trắng tại 3 vị trí cách đều nhau | 白いビニール紐を縛る（3か所の間隔が均等である事） | (E) |
+| Trang thoả thuận khách hàng của quy cách sản phẩm đang ghi là chỉ ASV màu đen có thể sử dụng *(không khai báo, nhưng câu hoàn chỉnh có chủ-vị "đang ghi là")* | 製品仕様の顧客合意書のページには、黒色のASVのみ使用可能と記載されています。 | (B), suy ra từ cấu trúc câu theo mục 6.1 |
+
+## 6. Cách khai báo ngữ cảnh khi yêu cầu dịch
+
+```
+[Loại: Tên hạng mục/checklist] Kiểm tra giấy in số lần NG đường kính
+[Loại: Nhật ký PM] Đã xác nhận bảng điều kiện với khách hàng
+[Loại: Chỉ thị công việc] Xác nhận lại bảng điều kiện trước khi giao hàng
+[Loại: Chat nội bộ] Có nghĩa là vận hành thì ko cần tháo nắp đúng ko?
+[Loại: Văn bản quy định/SOP] Quy định về phương pháp quấn, đóng gói sản phẩm
+```
+
+Không khai báo → **trước tiên thử đoán văn phong dựa vào cấu trúc câu** (xem mục 6.1).
+Chỉ khi câu quá ngắn/cụt, không đủ tín hiệu để đoán → mới mặc định coi là (A).
+
+### 6.1. Cách đoán văn phong khi không khai báo
+
+Khi câu tiếng Việt không có khai báo `[Loại: ...]`, kiểm tra các tín hiệu cấu
+trúc sau theo thứ tự, dừng lại ở dấu hiệu đầu tiên khớp:
+
+| Tín hiệu trong câu tiếng Việt | Suy ra văn phong | Ví dụ |
+|---|---|---|
+| Có "đúng ko/phải ko/có phải...không" | (D) — dùng ですね？ | "...đúng ko?" |
+| Có "hãy/cần/đề nghị/yêu cầu" nhắm 1 người cụ thể | (C) — てください／お願いします | "Hãy xác nhận lại..." |
+| Câu quy tắc khách quan, không chủ ngữ cụ thể, mang tính quy định/tiêu chuẩn | (E) — thể thường, kết する。／事。 | "Buộc dây tại 3 vị trí cách đều..." |
+| Câu hoàn chỉnh có chủ ngữ + động từ chia thì rõ (đã/đang/sẽ làm gì, hoặc "X đang ghi/quy định là Y") — mô tả một hành động/trạng thái, không phải liệt kê mục | (B) — ですます/した | "Trang thỏa thuận khách hàng đang ghi là chỉ ASV đen được dùng" |
+| Câu ngắn, cụt, không chủ ngữ rõ, không chia được thì (giống tên cột, tiêu đề, mục checklist) | (A) — danh từ hóa | "Kiểm tra giấy in số lần NG đường kính" |
+
+**Nguyên tắc:** câu càng dài, càng có đầy đủ chủ-vị và mệnh đề phụ, càng khó
+co lại thành cụm danh từ mà không mất nghĩa → nghiêng về (B)/(C)/(D)/(E) tùy
+tín hiệu. Câu càng ngắn, cụt, mơ hồ, đứng độc lập như một nhãn/tiêu đề → mới
+rơi về mặc định (A).
+
+**Khi tín hiệu không rõ ràng (câu vừa ngắn vừa có thể hiểu 2 cách)** → nêu cả
+2 phương án khả dĩ nhất kèm điều kiện áp dụng, để người dùng chọn, thay vì tự
+chốt một bên.
+
+## 7. Checklist tự kiểm tra trước khi dịch
+
+1. Câu thuộc loại nào: (A) tiêu đề, (B) nhật ký, (C) chỉ thị, (D) chat, (E) SOP?
+2. Có tên máy đi kèm? Có hành động chủ động (loại bỏ, xử lý) → にて; chỉ số liệu/hiện tượng → の.
+3. Thuật ngữ có trong từ điển mục 8 không? Nếu có, dùng đúng từ đó, không tự thay đồng nghĩa.
+4. (A): bỏ hết trợ từ を, kết bằng danh từ hóa động từ.
+5. (B): đúng thì (đã làm → した／しました, đang làm → している／しています).
+6. (C): てください hoặc お願いします, giọng lịch sự công sở.
+7. (D): "đúng ko/phải ko" → ですね？; hỏi mở → か／のですか. Có thể lược ください nếu thân mật, giữ ですます nếu là báo cáo/nhờ vả.
+8. (E): thể thường (だ・である／する。／〜事。), không kính ngữ, không nhắm ai cụ thể, giữ cấu trúc đề mục.
+
+## 8. Từ điển thuật ngữ theo công đoạn
+
+### 8.1. Oshidashi (押出 — đúc ép/tạo dây)
+
+| Tiếng Việt | Tiếng Nhật | Ghi chú |
+|---|---|---|
+| Xác nhận | 確認 | |
+| Kiểm tra | チェック／検査 | |
+| Số lần NG | 不良回数 | |
+| Số lần loại bỏ | 除去回数 | dùng にて khi có tên máy |
+| Kiểm tra kobu | コブ検 | |
+| Kiểm tra spark | スパークテスト | |
+| Loại bỏ mối nối | ツナギ除去 | |
+| Số lượng tiêu chuẩn (m) | 標準数量(m) | |
+| Tiêu chuẩn chất lượng oshidashi | 押出の品質基準 | |
+
+### 8.2. Yokomaki (横巻 — quấn ngang dây điện trở)
+
+| Tiếng Việt | Tiếng Nhật | Ghi chú |
+|---|---|---|
+| Giá trị điện trở | 抵抗値 | |
+| Kiểm tra thiết bị | 設備点検 | |
+| Phán đoán Lot | ロット判定 | |
+| Quấn chuyển | 巻き返し | |
+| Xử lý Vanish | ワニス処理 | |
+| Tháo xoắn | 撚り戻し | |
+| Aniru (Anneal) | アニール | |
+
+### 8.3. Khác (điền theo dự án — AI ưu tiên dùng đúng từ trong bảng này thay vì tự dịch)
+
+| Tiếng Việt | Tiếng Nhật quy định | Ghi chú |
+|---|---|---|
+| | | |
