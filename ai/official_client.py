@@ -23,8 +23,7 @@ _VN_WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu"
 _official_clients: dict[int, object] = {}
 _PERSONA_TEMPERATURE = 0.95
 _PERSONA_TOP_P = 0.95
-_EMBEDDING_MODEL = "gemini-embedding-001"
-_EMBEDDING_DIMENSIONS = 768  # khớp cột `vector(768)` (chat_embeddings) - đổi số này bắt buộc kèm migrate DB.
+_EMBEDDING_MODEL = "text-embedding-004"
 
 
 def api_key_for(idx: int) -> Optional[str]:
@@ -179,15 +178,9 @@ async def embed_text(text: str) -> Optional[list[float]]:
         if not api_key_for(idx):
             continue
         try:
-            from google.genai import types
-
             client = _get_official_client(idx)
             result = await with_timeout(
-                client.aio.models.embed_content(
-                    model=_EMBEDDING_MODEL,
-                    contents=text,
-                    config=types.EmbedContentConfig(output_dimensionality=_EMBEDDING_DIMENSIONS),
-                ),
+                client.aio.models.embed_content(model=_EMBEDDING_MODEL, contents=text),
                 OFFICIAL_EMBED_TIMEOUT_SEC,
                 f"api{idx} embedding",
             )
