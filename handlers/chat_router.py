@@ -7,7 +7,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import messages
-from ai import orchestrator
+from ai import orchestrator, tavily_client
 from core import database as db
 from handlers import common, stock_handler
 from services import memory_service, portfolio_service, tools
@@ -44,6 +44,16 @@ async def stop_background_tasks() -> None:
     )
 
 
+async def _maybe_tavily_search(text: str) -> str:
+    if not await tavily_client.get_enabled():
+        return ""
+    try:
+        return await tavily_client.search(text)
+    except Exception:
+        logger.warning("Tavily search lỗi, bỏ qua grounding.", exc_info=True)
+        return ""
+
+
 @common.restricted
 async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.message.text or "").strip()
@@ -64,11 +74,10 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     prompt_id = await telemetry.start(user_id, "chat", text)
     try:
         tool_result = await tools.maybe_run_tool(user_id, text)
-        combined_grounding = route.grounding
-        if tool_result:
-            combined_grounding = (
-                f"{route.grounding}\n\n{tool_result}" if route.grounding else tool_result
-            )
+        search_result = await _maybe_tavily_search(text)
+        combined_grounding = "\n\n".join(
+            part for part in (route.grounding, tool_result, search_result) if part
+        )
 
         memory_context = await memory_service.build_memory_context(user_id, query_text=text)
         response = await orchestrator.chat(

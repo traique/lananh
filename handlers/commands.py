@@ -11,7 +11,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import messages
-from ai import orchestrator, router9_client
+from ai import orchestrator, router9_client, tavily_client
 from channels import group_commands, zalo_repository, zalo_users
 from core import config, database as db
 from handlers import common
@@ -192,6 +192,8 @@ HELP_TEXT = (
     "/model — xem/đổi model chat\n"
     "/status — xem trạng thái provider\n"
     "/userouter9 — ép thử lại 9Router ngay\n"
+    "/router9 on|off — bật/tắt 9Router thủ công\n"
+    "/tavily on|off — bật/tắt tra web Tavily trước khi trả lời\n"
     "/zoompair, /zoomxoa, /zoomstatus — quản lý pairing Zoom\n"
     "/nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo\n"
     "/zalopair, /zaloadmin, /zalohaquyen, /zalokhoa, /zalomokhoa, /zaloxoa, /zalodanhsach — quản lý user Zalo\n"
@@ -485,6 +487,48 @@ async def userouter9_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         await update.message.reply_text(f"❌ 9Router vẫn đang lỗi ({html.escape(detail)}).")
 
+_ROUTER9_ON_ARGS = {"on", "bat", "bật"}
+_ROUTER9_OFF_ARGS = {"off", "tat", "tắt"}
+
+
+@common.restricted
+async def router9_toggle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    arg = common.extract_arg(context).strip().lower()
+    if arg in _ROUTER9_ON_ARGS:
+        await orchestrator.set_router9_enabled(True)
+        await update.message.reply_text("✅ Đã bật 9Router.")
+        return
+    if arg in _ROUTER9_OFF_ARGS:
+        await orchestrator.set_router9_enabled(False)
+        await update.message.reply_text(
+            "🔴 Đã tắt 9Router. Bot sẽ bỏ qua 9Router trong provider-chain "
+            "cho tới khi gõ /router9 on."
+        )
+        return
+    enabled = orchestrator.get_provider_state_snapshot()["router9_enabled"]
+    status = "🟢 đang BẬT" if enabled else "🔴 đang TẮT"
+    await update.message.reply_text(
+        f"9Router {status}.\nDùng /router9 on hoặc /router9 off để đổi."
+    )
+
+
+@common.restricted
+async def tavily_toggle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    arg = common.extract_arg(context).strip().lower()
+    if arg in _ROUTER9_ON_ARGS:
+        await tavily_client.set_enabled(True)
+        await update.message.reply_text("✅ Đã bật tra web Tavily trước khi trả lời.")
+        return
+    if arg in _ROUTER9_OFF_ARGS:
+        await tavily_client.set_enabled(False)
+        await update.message.reply_text("🔴 Đã tắt Tavily, chat trở lại luồng bình thường.")
+        return
+    enabled = await tavily_client.get_enabled()
+    status = "🟢 đang BẬT" if enabled else "🔴 đang TẮT"
+    await update.message.reply_text(
+        f"Tavily {status}.\nDùng /tavily on hoặc /tavily off để đổi."
+    )
+
 
 @common.restricted
 async def zoompair_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -767,6 +811,8 @@ async def _build_status_text() -> str:
     active_line = f"🔀 Provider đang dùng: <b>{html.escape(active_map.get(state['active_provider'], state['active_provider']))}</b>"
 
     router9_line = "✅ 9Router: OK" if router9_ok else f"❌ 9Router: lỗi ({html.escape(router9_detail)})"
+    if not state["router9_enabled"]:
+        router9_line += "\n   ⛔ đang TẮT thủ công (/router9 on để bật lại)"
     if state["router9_dead_since"]:
         router9_line += f"\n   ⥅ chết lúc {_fmt_epoch_vn(state['router9_dead_since'])}"
 
