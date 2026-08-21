@@ -1,5 +1,5 @@
 """Text command implementation for non-Telegram channels."""
-from ai import orchestrator, router9_client
+from ai import orchestrator, router9_client, tavily_client
 from core import config, database as db
 from handlers import commands as telegram_commands
 from services import memory_service, translate_service
@@ -17,6 +17,8 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /model [tên|auto] — xem hoặc đổi model (chỉ admin)
 /status — xem trạng thái provider (chỉ admin)
 /userouter9 — thử lại 9Router (chỉ admin)
+/router9 on|off — bật/tắt 9Router thủ công (chỉ admin)
+/tavily on|off — bật/tắt tra web Tavily trước khi trả lời (chỉ admin)
 /nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo
   (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom, chỉ admin)"""
 
@@ -152,7 +154,7 @@ async def maybe_handle_command(
     # gõ lệnh. Chỉ admin (Zalo: role=admin; Zoom/kênh khác chỉ có đúng 1 người
     # pair nên is_admin mặc định True) mới được đổi, để 1 thành viên thường
     # không thể vô tình/cố ý phá cấu hình chung của cả bot.
-    if command in {"/status", "/userouter9", "/model"} and not is_admin:
+    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model"} and not is_admin:
         return ["Lệnh này chỉ dành cho admin."], None
     if command == "/status":
         state = orchestrator.get_provider_state_snapshot()
@@ -160,6 +162,26 @@ async def maybe_handle_command(
     if command == "/userouter9":
         ok, detail = await orchestrator.try_router9_now()
         return (["✅ 9Router hoạt động, đã chuyển về 9Router."] if ok else [f"❌ 9Router vẫn lỗi: {detail[:250]}"]), None
+    if command == "/router9":
+        lowered = argument.strip().lower()
+        if lowered in telegram_commands._ROUTER9_ON_ARGS:
+            await orchestrator.set_router9_enabled(True)
+            return ["✅ Đã bật 9Router."], None
+        if lowered in telegram_commands._ROUTER9_OFF_ARGS:
+            await orchestrator.set_router9_enabled(False)
+            return ["🔴 Đã tắt 9Router cho tới khi bật lại bằng /router9 on."], None
+        enabled = orchestrator.get_provider_state_snapshot()["router9_enabled"]
+        return [f"9Router đang {'BẬT' if enabled else 'TẮT'}. Dùng /router9 on hoặc /router9 off để đổi."], None
+    if command == "/tavily":
+        lowered = argument.strip().lower()
+        if lowered in telegram_commands._ROUTER9_ON_ARGS:
+            await tavily_client.set_enabled(True)
+            return ["✅ Đã bật tra web Tavily trước khi trả lời."], None
+        if lowered in telegram_commands._ROUTER9_OFF_ARGS:
+            await tavily_client.set_enabled(False)
+            return ["🔴 Đã tắt Tavily, chat trở lại luồng bình thường."], None
+        enabled = await tavily_client.get_enabled()
+        return [f"Tavily đang {'BẬT' if enabled else 'TẮT'}. Dùng /tavily on hoặc /tavily off để đổi."], None
     if command == "/model":
         if not argument:
             current = await router9_client.get_preferred_model_name()

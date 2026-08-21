@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 import messages
-from ai import orchestrator
+from ai import orchestrator, tavily_client
 from core import database as db
 from services import memory_service, portfolio_service, tools
 from services.background_tasks import stop_tracked_tasks
@@ -64,6 +64,16 @@ def split_for_zalo(text: str, limit: int = 1800) -> list[str]:
     if remaining:
         chunks.append(remaining)
     return chunks
+
+
+async def _maybe_tavily_search(text: str) -> str:
+    if not await tavily_client.get_enabled():
+        return ""
+    try:
+        return await tavily_client.search(text)
+    except Exception:
+        logger.warning("Tavily search lỗi, bỏ qua grounding.", exc_info=True)
+        return ""
 
 
 async def _handle_stock(user_id: int, text: str) -> tuple[ChannelResult | None, str]:
@@ -129,11 +139,8 @@ async def handle_channel_text(user_id: int, text: str, is_admin: bool = True) ->
     prompt_id = await telemetry.start(user_id, "chat", text)
     try:
         tool_result = await tools.maybe_run_tool(user_id, text)
-        combined = (
-            f"{grounding}\n\n{tool_result}"
-            if grounding and tool_result
-            else (tool_result or grounding)
-        )
+        search_result = await _maybe_tavily_search(text)
+        combined = "\n\n".join(part for part in (grounding, tool_result, search_result) if part)
         memory = await memory_service.build_memory_context(user_id, query_text=text)
         response = await orchestrator.chat(
             user_id,
