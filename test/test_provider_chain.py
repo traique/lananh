@@ -46,7 +46,10 @@ async def test_ask_does_not_leak_router9_model_name_to_official_api_fallback(mon
     monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "api1", "api2"])
     monkeypatch.setattr(orchestrator.router9_client, "generate", fake_router9_call)
     monkeypatch.setattr(orchestrator.router9_client, "get_preferred_model_name", fake_get_preferred_model_name)
-    monkeypatch.setattr(orchestrator.official_client, "api_key_for", lambda idx: "k" if idx == 1 else None)
+    async def fake_api_key_for(idx):
+        return "k" if idx == 1 else None
+
+    monkeypatch.setattr(orchestrator.official_client, "api_key_for", fake_api_key_for)
     monkeypatch.setattr(orchestrator.official_client, "generate", fake_official_generate)
 
     response = await orchestrator.ask("câu hỏi bất kỳ")
@@ -378,43 +381,55 @@ async def test_groq_het_quota_chuyen_openrouter_va_cooldown(fake_store, monkeypa
     assert not provider_state.api_in_cooldown("openrouter")
 
 
-def test_search_only_providers_api1_truoc_api2_roi_openrouter(monkeypatch):
+@pytest.mark.asyncio
+async def test_search_only_providers_api1_truoc_api2_roi_openrouter(monkeypatch):
     """require_real_search: api1 trước (Google Search tool bật sẵn), lỗi/hết
     quota mới rớt api2, cuối cùng mới openrouter làm lưới an toàn. router9 và
     groq không xuất hiện trong nhánh này (xem docstring _search_only_providers)."""
     from ai import official_client
 
+    async def fake_api_key_for(idx):
+        return "k" if idx in (1, 2) else None
+
     monkeypatch.setattr(config, "ROUTER9_API_KEY", "fake-router9-key")
     monkeypatch.setattr(config, "GROQ_API_KEY", "fake-groq-key")
     monkeypatch.setattr(config, "OPENROUTER_API_KEY", "fake-openrouter-key")
-    monkeypatch.setattr(official_client, "api_key_for", lambda idx: "k" if idx in (1, 2) else None)
+    monkeypatch.setattr(official_client, "api_key_for", fake_api_key_for)
 
-    order = orchestrator._search_only_providers()
+    order = await orchestrator._search_only_providers()
 
     assert order == ["api1", "api2", "openrouter"]
 
 
-def test_search_only_providers_khong_co_api1_thi_bo_qua(monkeypatch):
+@pytest.mark.asyncio
+async def test_search_only_providers_khong_co_api1_thi_bo_qua(monkeypatch):
     """Chưa cấu hình GOOGLE_AI_STUDIO_API_KEY_1 -> rơi thẳng xuống api2 rồi
     openrouter, không raise chỉ vì thiếu mỗi api1."""
     from ai import official_client
 
-    monkeypatch.setattr(config, "OPENROUTER_API_KEY", "fake-openrouter-key")
-    monkeypatch.setattr(official_client, "api_key_for", lambda idx: "k" if idx == 2 else None)
+    async def fake_api_key_for(idx):
+        return "k" if idx == 2 else None
 
-    order = orchestrator._search_only_providers()
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", "fake-openrouter-key")
+    monkeypatch.setattr(official_client, "api_key_for", fake_api_key_for)
+
+    order = await orchestrator._search_only_providers()
 
     assert order == ["api2", "openrouter"]
 
 
-def test_search_only_providers_khong_cau_hinh_gi_thi_raise(monkeypatch):
+@pytest.mark.asyncio
+async def test_search_only_providers_khong_cau_hinh_gi_thi_raise(monkeypatch):
     from ai import official_client
 
+    async def fake_api_key_for(idx):
+        return None
+
     monkeypatch.setattr(config, "OPENROUTER_API_KEY", "")
-    monkeypatch.setattr(official_client, "api_key_for", lambda idx: None)
+    monkeypatch.setattr(official_client, "api_key_for", fake_api_key_for)
 
     with pytest.raises(orchestrator.RealSearchUnavailableError):
-        orchestrator._search_only_providers()
+        await orchestrator._search_only_providers()
 
 
 @pytest.mark.asyncio
@@ -455,3 +470,26 @@ async def test_router9_on_lai_thi_dung_binh_thuong(fake_store, monkeypatch):
 
     assert result == "router9-response"
     assert provider_state.active_provider == "router9"
+
+
+@pytest.mark.asyncio
+async def test_reset_api_cooldown_xoa_cooldown_va_cho_goi_lai(fake_store):
+    provider_state.router9_dead_since = time.time() - 100
+    provider_state.api_exhausted_until["api1"] = time.time() + 999
+    provider_state._loaded = True
+
+    await orchestrator.reset_api_cooldown("api1")
+    assert not provider_state.api_in_cooldown("api1")
+
+    called_idx = []
+
+    async def api_call(idx):
+        called_idx.append(idx)
+        return f"api{idx}-response"
+
+    result = await orchestrator._run_provider_chain(
+        router9_call=_failing_router9_call(), api_call=api_call
+    )
+
+    assert result == "api1-response"
+    assert called_idx == [1], "cooldown đã reset -> api1 phải được thử lại"

@@ -6,8 +6,8 @@ from cryptography.fernet import Fernet
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ai import orchestrator
-from core import config, crypto
+from ai import orchestrator, provider_overrides
+from core import config, crypto, database as db
 from core.repositories import settings as settings_repository
 
 
@@ -46,18 +46,30 @@ def test_crypto_round_trip(monkeypatch):
     assert crypto.decrypt(encrypted) == "secret"
 
 
-def test_strict_search_fails_without_official_api_key(monkeypatch):
+@pytest.mark.asyncio
+async def test_strict_search_fails_without_official_api_key(monkeypatch):
     monkeypatch.setattr(config, "GOOGLE_AI_STUDIO_API_KEY_1", None)
     monkeypatch.setattr(config, "GOOGLE_AI_STUDIO_API_KEY_2", None)
+    monkeypatch.setattr(provider_overrides, "_api_key_cache", {})
+    async def fake_get_setting(key):
+        return None
+
+    monkeypatch.setattr(db, "get_setting", fake_get_setting)
     with pytest.raises(orchestrator.RealSearchUnavailableError):
-        orchestrator._search_only_providers()
+        await orchestrator._search_only_providers()
 
 
-def test_strict_search_keeps_only_configured_official_providers(monkeypatch):
+@pytest.mark.asyncio
+async def test_strict_search_keeps_only_configured_official_providers(monkeypatch):
     monkeypatch.setattr(config, "GOOGLE_AI_STUDIO_API_KEY_1", "key-1")
     monkeypatch.setattr(config, "GOOGLE_AI_STUDIO_API_KEY_2", None)
     monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "api2", "api1"])
-    assert orchestrator._search_only_providers() == ["api1"]
+    monkeypatch.setattr(provider_overrides, "_api_key_cache", {})
+    async def fake_get_setting(key):
+        return None
+
+    monkeypatch.setattr(db, "get_setting", fake_get_setting)
+    assert await orchestrator._search_only_providers() == ["api1"]
 
 
 @pytest.mark.asyncio

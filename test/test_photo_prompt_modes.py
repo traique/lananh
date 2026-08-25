@@ -1,5 +1,10 @@
 """Test cho 3 dạng ảnh -> prompt trong handlers/media_handler.py.
 
+Đọc IMAGE_ANALYZE_INSTRUCTION_BASE bằng ast thay vì `import handlers.media_handler`,
+vì module đó import python-telegram-bot - không có trong môi trường test này.
+Cách này cũng buộc test đi qua đúng resolve_prompt_identity + render_instruction
+(con đường code thật dùng) thay vì tự .format() tay với field tự chọn.
+
 Điểm mấu chốt: mỗi dạng lấy khuôn mặt từ một nguồn khác nhau, nên prompt
 mẫu phải tả chủ thể theo một cách khác nhau:
   1. không caption -> tả người trong ảnh thành chữ
@@ -14,54 +19,57 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from handlers import media_handler as mh  # noqa: E402
-from handlers.commands import (  # noqa: E402
+from _prompt_render import ROOT, read_string_constant  # noqa: E402
+from handlers.prompt_identity import (  # noqa: E402
     GIRL_KEYWORDS,
     IDENTITY_LOCK_GIRL,
     IDENTITY_LOCK_REFERENCE,
     KEEP_FACE_KEYWORDS,
-    _IDENTITY_RULE_LOCK,
+    render_instruction,
+    resolve_prompt_identity,
 )
 
+IMAGE_ANALYZE_INSTRUCTION_BASE = read_string_constant("handlers/media_handler.py", "IMAGE_ANALYZE_INSTRUCTION_BASE")
 
-def _render(identity_lock_block, subject_phrase, identity_rule, subject_rule):
-    return mh.IMAGE_ANALYZE_INSTRUCTION_BASE.format(
-        identity_lock_block=identity_lock_block,
-        subject_phrase=subject_phrase,
-        identity_rule=identity_rule,
-        subject_rule=subject_rule,
-    )
+CAPTION_DESCRIBED = ""
+CAPTION_GIRL = "cô gái 20"
+CAPTION_REFERENCE = "giữ mặt nha"
+
+
+def _render(caption: str) -> str:
+    identity = resolve_prompt_identity(caption)
+    return render_instruction(IMAGE_ANALYZE_INSTRUCTION_BASE, identity)
 
 
 def _render_described():
-    return _render(
-        "",
-        mh._SUBJECT_PHRASE_DESCRIBED,
-        mh._PHOTO_IDENTITY_RULE_NONE,
-        mh._PHOTO_SUBJECT_RULE_DESCRIBED,
-    )
+    return _render(CAPTION_DESCRIBED)
 
 
 def _render_girl():
-    return _render(
-        f"{IDENTITY_LOCK_GIRL}\n\n",
-        mh._SUBJECT_PHRASE_GIRL,
-        _IDENTITY_RULE_LOCK,
-        mh._PHOTO_SUBJECT_RULE_GIRL,
-    )
+    return _render(CAPTION_GIRL)
 
 
 def _render_reference():
-    return _render(
-        f"{IDENTITY_LOCK_REFERENCE}\n\n",
-        mh._SUBJECT_PHRASE_REFERENCE,
-        _IDENTITY_RULE_LOCK,
-        mh._PHOTO_SUBJECT_RULE_REFERENCE,
-    )
+    return _render(CAPTION_REFERENCE)
 
 
 _ALL_MODES = (_render_described, _render_girl, _render_reference)
+
+
+# ─── Regression: bug NameError từng lọt qua test ────
+def test_photo_msg_khong_dung_bien_chua_gan_gia_tri():
+    """subject_phrase/identity_rule/subject_rule từng được truyền vào .format()
+    dưới dạng biến trần chưa hề gán trong photo_msg(), gây NameError bị except
+    chung nuốt và hiện nhầm thành lỗi Gemini - tính năng ảnh->prompt trên
+    Telegram chết hoàn toàn mà test cũ không phát hiện được vì nó tự dựng
+    field bằng tay thay vì gọi qua render_instruction()."""
+    source = (ROOT / "handlers/media_handler.py").read_text()
+    assert "subject_phrase=subject_phrase" not in source
+    assert "identity_rule=identity_rule" not in source
+    assert "subject_rule=subject_rule" not in source
+    assert "render_instruction(IMAGE_ANALYZE_INSTRUCTION_BASE, identity)" in source
 
 
 # ─── Template chung ─────────────────────────────────
@@ -84,7 +92,7 @@ def test_khong_con_co_phap_cua_tool_khac():
         text = render()
         example = text.split("---")[1]
         assert "--ar" not in example
-    assert "DO NOT append any tool-specific flags" in _render_described()
+    assert "no tool-specific flags" in _render_described()
 
 
 def test_vi_du_da_trung_tinh_khong_con_canh_mua_dem():
@@ -126,18 +134,17 @@ def test_bat_buoc_ta_dang_nguoi_chi_tiet():
 
 def test_vi_du_co_doan_ta_dang_nguoi():
     example = _render_described().split("---")[1]
-    assert "elbows barely bent" in example
-    assert "hip height" in example
-    assert "palms turned inwards" in example
+    assert "elbows slightly relaxed" in example
+    assert "hands near hip level" in example
+    assert "weight is distributed naturally" in example
 
 
 # ─── Chất ảnh ───────────────────────────────────────
 def test_chat_anh_bam_theo_anh_goc():
     for render in _ALL_MODES:
         text = render()
-        assert "THE FINISH MUST MATCH THE REFERENCE IMAGE" in text
-        assert "softly retouched" in text
-        assert "gentle beauty-filter finish" in text
+        assert "LIGHTING AND FINISH MUST MATCH THE REFERENCE" in text
+        assert "contradictory raw and beauty-filter" in text
 
 
 def test_khong_con_ep_cung_visible_pores():
@@ -150,14 +157,15 @@ def test_khong_con_ep_cung_visible_pores():
 def test_ong_kinh_suy_tu_anh_goc():
     for render in _ALL_MODES:
         text = render()
-        assert "CAMERA AND LENS MUST BE INFERRED FROM THE REFERENCE IMAGE" in text
+        assert "CAMERA AND LENS MUST BE INFERRED FROM PERSPECTIVE" in text
         assert "70-135mm" in text
-        assert "never copied from the example" in text
+        assert "40-55mm" in text
+        assert "24-35mm" in text
 
 
-def test_canh_bao_khong_chep_ong_kinh_cua_vi_du():
-    text = _render_described()
-    assert "the 48mm lens" in text
+def test_canh_bao_khong_tu_bia_camera_model():
+    for render in _ALL_MODES:
+        assert "Do not invent a camera brand or exact model" in render()
 
 
 # ─── Dạng 1: không caption ──────────────────────────
@@ -169,21 +177,21 @@ def test_dang_1_khong_co_dong_identity_lock():
 
 def test_dang_1_khong_tro_toi_anh_trong_vi_du():
     text = _render_described()
-    assert "Raw, candid smartphone photo of a woman in her early 20s" in text
+    assert "Photographic portrait of a woman in her early 20s" in text
     assert "photo of the subject from" not in text
 
 
 def test_dang_1_bat_buoc_ta_du_dac_diem_khuon_mat():
-    rule = mh._PHOTO_SUBJECT_RULE_DESCRIBED.lower()
+    rule = resolve_prompt_identity(CAPTION_DESCRIBED).subject_rule.lower()
     for feature in (
-        "age", "face shape", "eye shape", "eyebrow", "nose", "lip",
+        "age", "face shape", "eye geometry", "eyebrow", "nose", "lip",
         "jawline", "skin tone", "hair colour",
     ):
         assert feature in rule, f"rule thiếu yêu cầu tả {feature}"
 
 
 def test_dang_1_vi_du_chu_the_co_san_mo_ta_mat():
-    phrase = mh._SUBJECT_PHRASE_DESCRIBED.lower()
+    phrase = resolve_prompt_identity(CAPTION_DESCRIBED).subject_phrase.lower()
     for feature in ("face", "eyes", "eyebrows", "nose", "lips", "skin", "hair"):
         assert feature in phrase
 
@@ -194,21 +202,22 @@ def test_dang_2_giu_nguyen_khoi_lock_co_dinh():
 
 
 def test_dang_2_ta_lai_khuon_mat_da_khoa_thanh_chu():
-    phrase = mh._SUBJECT_PHRASE_GIRL.lower()
-    for feature in ("heart-shaped face", "jawline", "doe eyes", "nose", "lips", "20-year-old"):
+    identity = resolve_prompt_identity(CAPTION_GIRL)
+    phrase = identity.subject_phrase.lower()
+    for feature in ("soft oval-to-heart-shaped face", "smooth tapered jawline", "almond-shaped eyes", "natural double eyelids", "nasal bridge", "lips", "rounded chin"):
         assert feature in phrase, f"câu tả chủ thể thiếu {feature}"
-    assert "restate that locked face" in mh._PHOTO_SUBJECT_RULE_GIRL
+    assert "restat" in identity.subject_rule.lower()
 
 
 def test_dang_2_khong_tro_toi_anh_dinh_kem():
     text = _render_girl()
-    assert "photo of the same 20-year-old Vietnamese woman defined in the Identity Lock above" in text
+    assert "the same adult Vietnamese woman defined by the Identity Lock above" in text
     assert "photo of the subject from" not in text
 
 
 def test_dang_2_cam_ta_mat_nguoi_trong_anh():
-    rule = mh._PHOTO_SUBJECT_RULE_GIRL
-    assert "DO NOT describe the face of the person in the reference image" in rule
+    rule = resolve_prompt_identity(CAPTION_GIRL).subject_rule
+    assert "Never describe or copy the face" in rule
     assert "pose" in rule and "outfit" in rule
 
 
@@ -218,13 +227,13 @@ def test_dang_3_giu_lock_reference():
 
 
 def test_dang_3_noi_ro_la_anh_dinh_kem():
-    assert "photo of the subject from the attached reference image" in _render_reference()
-    assert "must match the attached photo exactly" in mh._PHOTO_SUBJECT_RULE_REFERENCE
+    assert "the subject from the attached reference image" in _render_reference()
+    assert "must match the attached photo exactly" in resolve_prompt_identity(CAPTION_REFERENCE).subject_rule
 
 
 def test_dang_3_cam_bia_dac_diem_khuon_mat():
-    rule = mh._PHOTO_SUBJECT_RULE_REFERENCE
-    assert "DO NOT invent" in rule
+    rule = resolve_prompt_identity(CAPTION_REFERENCE).subject_rule
+    assert "DO NOT invent concrete facial features" in rule
     assert "eye colour" in rule and "face shape" in rule
 
 
