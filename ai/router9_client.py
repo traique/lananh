@@ -11,7 +11,7 @@ không có khái niệm ChatSession/Gem như cookie_client cũ.
 import logging
 from typing import Optional
 
-from ai import openai_compatible
+from ai import openai_compatible, provider_overrides
 from ai.openai_compatible import Response
 from core import config, database as db
 
@@ -30,6 +30,10 @@ async def close() -> None:
     await _pool.close()
 
 
+async def _api_key() -> str:
+    return await provider_overrides.get_api_key_override("router9") or config.ROUTER9_API_KEY
+
+
 async def generate(
     prompt: str,
     *,
@@ -41,7 +45,8 @@ async def generate(
 ) -> Response:
     """Gọi 1 lượt chat/completions. `history` là list (role, content) với role
     "user"/"model" (giữ đúng quy ước của official_client.generate)."""
-    if not config.ROUTER9_API_KEY:
+    api_key = await _api_key()
+    if not api_key:
         raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
     messages = openai_compatible.build_messages(prompt, system_instruction, history)
     async with _pool.get_semaphore():
@@ -49,7 +54,7 @@ async def generate(
             text = await openai_compatible.post_chat_completion(
                 _pool.get_client(),
                 base_url=config.ROUTER9_BASE_URL,
-                api_key=config.ROUTER9_API_KEY,
+                api_key=api_key,
                 messages=messages,
                 model=model or config.ROUTER9_MODEL,
                 temperature=temperature,
@@ -62,13 +67,14 @@ async def generate(
 
 
 async def generate_image_prompt(instruction: str, image_path: str) -> Response:
-    if not config.ROUTER9_API_KEY:
+    api_key = await _api_key()
+    if not api_key:
         raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
     try:
         return await openai_compatible.generate_image_prompt(
             _pool,
             base_url=config.ROUTER9_BASE_URL,
-            api_key=config.ROUTER9_API_KEY,
+            api_key=api_key,
             vision_model=config.ROUTER9_MODEL,
             provider_label="9Router",
             instruction=instruction,
@@ -81,9 +87,10 @@ async def generate_image_prompt(instruction: str, image_path: str) -> Response:
 async def list_models() -> list[str]:
     """Danh sách model 9Router quảng cáo qua GET /models (chuẩn OpenAI). Một
     số gateway có thể không hỗ trợ endpoint này - trả về [] thay vì lỗi."""
-    if not config.ROUTER9_API_KEY:
+    api_key = await _api_key()
+    if not api_key:
         return []
-    headers = {"Authorization": f"Bearer {config.ROUTER9_API_KEY}"}
+    headers = {"Authorization": f"Bearer {api_key}"}
     client = _pool.get_client()
     try:
         response = await client.get(
@@ -121,7 +128,7 @@ async def set_preferred_model_name(name: Optional[str]) -> None:
 async def check_status() -> tuple[bool, str]:
     return await openai_compatible.check_status(
         generate,
-        api_key=config.ROUTER9_API_KEY,
+        api_key=await _api_key(),
         missing_key_msg="Chưa cấu hình ROUTER9_API_KEY",
         expected_error=Router9Error,
     )

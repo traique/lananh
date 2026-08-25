@@ -22,6 +22,7 @@ from typing import Awaitable, Callable, Optional
 
 from core import config, database as db
 from ai import openai_compatible, router9_client, groq_client, openrouter_client, official_client
+from ai import provider_overrides
 from ai import provider_state as provider_state_module
 from ai.provider_state import ProviderStateSnapshot, provider_state
 
@@ -54,11 +55,16 @@ async def set_router9_enabled(enabled: bool) -> None:
     await provider_state.set_router9_enabled(enabled)
 
 
+async def reset_api_cooldown(provider: str) -> None:
+    await provider_state.ensure_loaded()
+    await provider_state.reset_api_cooldown(provider)
+
+
 class RealSearchUnavailableError(RuntimeError):
     """Strict grounded search has no configured provider with a real search tool."""
 
 
-def _search_only_providers() -> list[str]:
+async def _search_only_providers() -> list[str]:
     """Return the provider order for require_real_search: api1 -> api2 -> openrouter.
 
     Mọi tìm kiếm thật (chat cần dữ liệu ngoài sàn VN, /gia) BẮT BUỘC đi qua
@@ -72,7 +78,7 @@ def _search_only_providers() -> list[str]:
     order = [
         provider
         for provider in ("api1", "api2")
-        if official_client.api_key_for(1 if provider == "api1" else 2)
+        if await official_client.api_key_for(1 if provider == "api1" else 2)
     ]
     if config.OPENROUTER_API_KEY:
         order.append("openrouter")
@@ -143,8 +149,8 @@ async def _run_provider_chain(
         await provider_state.set_active_provider(name)
         return result
 
-    def _has_any_fallback_configured() -> bool:
-        if official_client.api_key_for(1) or official_client.api_key_for(2):
+    async def _has_any_fallback_configured() -> bool:
+        if await official_client.api_key_for(1) or await official_client.api_key_for(2):
             return True
         return any(
             generic_calls.get(name) is not None and is_configured()
@@ -162,7 +168,7 @@ async def _run_provider_chain(
                 if provider_state.router9_dead_since is not None:
                     known_bad_skipped.append("router9")
                     continue
-                has_fallback = _has_any_fallback_configured()
+                has_fallback = await _has_any_fallback_configured()
                 try:
                     return await _attempt_router9()
                 except Exception as exc:
@@ -184,7 +190,9 @@ async def _run_provider_chain(
                         await provider_state.mark_router9_dead()
             elif provider in ("api1", "api2"):
                 idx = 1 if provider == "api1" else 2
-                if not official_client.api_key_for(idx):
+                if not await provider_overrides.is_enabled(provider):
+                    continue
+                if not await official_client.api_key_for(idx):
                     continue
                 if provider_state.api_in_cooldown(provider):
                     known_bad_skipped.append(provider)
@@ -202,6 +210,8 @@ async def _run_provider_chain(
                 call = generic_calls.get(provider)
                 is_configured = _GENERIC_PROVIDER_CONFIGURED.get(provider)
                 if call is None or (is_configured and not is_configured()):
+                    continue
+                if not await provider_overrides.is_enabled(provider):
                     continue
                 if provider_state.api_in_cooldown(provider):
                     known_bad_skipped.append(provider)
@@ -249,7 +259,7 @@ async def ask(
     compound-mini / Gemini grounding. Raises RealSearchUnavailableError khi
     không có provider nào cấu hình.
     """
-    providers_override = _search_only_providers() if require_real_search else None
+    providers_override = await _search_only_providers() if require_real_search else None
     effective_prompt = (
         f"{_FORCED_SEARCH_DIRECTIVE}\n\n{prompt}" if require_real_search else prompt
     )
@@ -367,7 +377,7 @@ async def chat(
             enable_search=True,
         )
 
-    providers_override = _search_only_providers() if require_real_search else None
+    providers_override = await _search_only_providers() if require_real_search else None
     return await _run_provider_chain(
         router9_call=_router9_call,
         api_call=_api_call,

@@ -9,6 +9,7 @@ from typing import Optional
 
 import httpx
 
+from ai import provider_overrides
 from core import config, database as db
 
 logger = logging.getLogger(__name__)
@@ -45,15 +46,20 @@ async def set_enabled(enabled: bool) -> None:
     logger.info("Tavily search %s.", "bật" if enabled else "tắt")
 
 
+async def _api_key() -> str:
+    return await provider_overrides.get_api_key_override("tavily") or config.TAVILY_API_KEY
+
+
 async def search(query: str, max_results: int = 0) -> str:
     """Tra Tavily, trả về text đã format để chèn làm grounding. Raise
     TavilyError nếu chưa cấu hình TAVILY_API_KEY hoặc gọi lỗi."""
-    if not config.TAVILY_API_KEY:
+    api_key = await _api_key()
+    if not api_key:
         raise TavilyError("Chưa cấu hình TAVILY_API_KEY")
 
     response = await _get_client().post(
         f"{config.TAVILY_BASE_URL}/search",
-        headers={"Authorization": f"Bearer {config.TAVILY_API_KEY}"},
+        headers={"Authorization": f"Bearer {api_key}"},
         json={
             "query": query,
             "max_results": max_results or config.TAVILY_MAX_RESULTS,

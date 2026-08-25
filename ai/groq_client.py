@@ -8,11 +8,19 @@ Không dùng cho ask()/chat() thường vì compound-mini chậm hơn model chat
 """
 from typing import Optional
 
-from ai import openai_compatible
+from ai import openai_compatible, provider_overrides
 from ai.openai_compatible import Response
 from core import config
 
 _pool = openai_compatible.ClientPool(config.GROQ_CALL_TIMEOUT_SEC, config.GROQ_MAX_CONCURRENCY)
+
+
+async def _api_key() -> str:
+    return await provider_overrides.get_api_key_override("groq") or config.GROQ_API_KEY
+
+
+async def _model() -> str:
+    return await provider_overrides.get_model_override("groq") or config.GROQ_MODEL
 
 
 class RealtimeNoEvidenceError(openai_compatible.OpenAICompatibleError):
@@ -34,16 +42,17 @@ async def generate(
     temperature: float = 0.7,
     max_tokens: int = 4096,
 ) -> Response:
-    if not config.GROQ_API_KEY:
+    api_key = await _api_key()
+    if not api_key:
         raise openai_compatible.OpenAICompatibleError("Chưa cấu hình GROQ_API_KEY")
     messages = openai_compatible.build_messages(prompt, system_instruction, history)
     async with _pool.get_semaphore():
         text = await openai_compatible.post_chat_completion(
             _pool.get_client(),
             base_url=config.GROQ_BASE_URL,
-            api_key=config.GROQ_API_KEY,
+            api_key=api_key,
             messages=messages,
-            model=model or config.GROQ_MODEL,
+            model=model or await _model(),
             temperature=temperature,
             max_tokens=max_tokens,
             provider_label="Groq",
@@ -52,12 +61,13 @@ async def generate(
 
 
 async def generate_image_prompt(instruction: str, image_path: str) -> Response:
-    if not config.GROQ_API_KEY:
+    api_key = await _api_key()
+    if not api_key:
         raise openai_compatible.OpenAICompatibleError("Chưa cấu hình GROQ_API_KEY")
     return await openai_compatible.generate_image_prompt(
         _pool,
         base_url=config.GROQ_BASE_URL,
-        api_key=config.GROQ_API_KEY,
+        api_key=api_key,
         vision_model=config.GROQ_VISION_MODEL,
         provider_label="Groq vision",
         instruction=instruction,
@@ -79,14 +89,15 @@ async def generate_realtime(
     temperature: float = 0.3,
     max_tokens: int = 2048,
 ) -> Response:
-    if not config.GROQ_API_KEY:
+    api_key = await _api_key()
+    if not api_key:
         raise openai_compatible.OpenAICompatibleError("Chưa cấu hình GROQ_API_KEY")
     messages = openai_compatible.build_messages(prompt)
     async with _pool.get_semaphore():
         text = await openai_compatible.post_chat_completion(
             _pool.get_client(),
             base_url=config.GROQ_BASE_URL,
-            api_key=config.GROQ_API_KEY,
+            api_key=api_key,
             messages=messages,
             model=config.GROQ_REALTIME_MODEL,
             temperature=temperature,
@@ -100,5 +111,5 @@ async def generate_realtime(
 
 async def check_status() -> tuple[bool, str]:
     return await openai_compatible.check_status(
-        generate, api_key=config.GROQ_API_KEY, missing_key_msg="Chưa cấu hình GROQ_API_KEY"
+        generate, api_key=await _api_key(), missing_key_msg="Chưa cấu hình GROQ_API_KEY"
     )

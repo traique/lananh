@@ -143,6 +143,11 @@ class ProviderChainState:
         await db.set_setting(f"{_STATE_API_EXHAUSTED_PREFIX}{provider}", str(until))
         logger.warning("%s hết quota (429), cooldown %ss.", provider, config.API_QUOTA_COOLDOWN_SEC)
 
+    async def reset_api_cooldown(self, provider: str) -> None:
+        self.api_exhausted_until[provider] = 0.0
+        await db.set_setting(f"{_STATE_API_EXHAUSTED_PREFIX}{provider}", "")
+        logger.info("%s: cooldown reset thủ công.", provider)
+
     def api_in_cooldown(self, provider: str) -> bool:
         return time.time() < self.api_exhausted_until.get(provider, 0.0)
 

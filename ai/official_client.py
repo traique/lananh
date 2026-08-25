@@ -15,31 +15,44 @@ from ai.timeouts import (
     OFFICIAL_VISION_TIMEOUT_SEC,
     with_timeout,
 )
+from ai import provider_overrides
 from core import config
 
 logger = logging.getLogger(__name__)
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _VN_WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
-_official_clients: dict[int, object] = {}
+_official_clients: dict[tuple[int, str], object] = {}
 _PERSONA_TEMPERATURE = 0.95
 _PERSONA_TOP_P = 0.95
 _EMBEDDING_MODEL = "gemini-embedding-001"
 _EMBEDDING_DIMENSIONS = 768  # khớp cột `vector(768)` (chat_embeddings) - đổi số này bắt buộc kèm migrate DB.
 
 
-def api_key_for(idx: int) -> Optional[str]:
+async def api_key_for(idx: int) -> Optional[str]:
+    provider = f"api{idx}"
+    override = await provider_overrides.get_api_key_override(provider)
+    if override:
+        return override
     return config.GOOGLE_AI_STUDIO_API_KEY_1 if idx == 1 else config.GOOGLE_AI_STUDIO_API_KEY_2
 
 
-def _get_official_client(idx: int):
-    if idx not in _official_clients:
+async def _model_for(idx: int) -> str:
+    return await provider_overrides.get_model_override(f"api{idx}") or config.GOOGLE_AI_STUDIO_MODEL
+
+
+async def _get_official_client(idx: int):
+    key = await api_key_for(idx)
+    if not key:
+        raise RuntimeError(f"Chưa cấu hình GOOGLE_AI_STUDIO_API_KEY_{idx}")
+    cache_key = (idx, key)
+    if cache_key not in _official_clients:
         from google import genai
 
-        key = api_key_for(idx)
-        if not key:
-            raise RuntimeError(f"Chưa cấu hình GOOGLE_AI_STUDIO_API_KEY_{idx}")
-        _official_clients[idx] = genai.Client(api_key=key)
-    return _official_clients[idx]
+        # Đổi API key qua trang admin -> cache_key đổi theo -> client cũ (key
+        # cũ) bị bỏ, không cần cơ chế invalidate riêng.
+        _official_clients.clear()
+        _official_clients[cache_key] = genai.Client(api_key=key)
+    return _official_clients[cache_key]
 
 
 def now_vn_context() -> str:
@@ -80,7 +93,7 @@ async def generate(
 ) -> FallbackResponse:
     from google.genai import types
 
-    client = _get_official_client(idx)
+    client = await _get_official_client(idx)
     prompt_with_time = f"{now_vn_context()}\n{prompt}"
     if history:
         contents = [
@@ -102,7 +115,7 @@ async def generate(
 
     response = await with_timeout(
         client.aio.models.generate_content(
-            model=model or config.GOOGLE_AI_STUDIO_MODEL,
+            model=model or await _model_for(idx),
             contents=contents,
             config=types.GenerateContentConfig(**cfg_kwargs),
         ),
@@ -115,7 +128,7 @@ async def generate(
 async def generate_image_prompt(idx: int, instruction: str, image_path: str) -> FallbackResponse:
     from google.genai import types
 
-    client = _get_official_client(idx)
+    client = await _get_official_client(idx)
 
     def _read_bytes() -> bytes:
         with open(image_path, "rb") as file:
@@ -125,7 +138,7 @@ async def generate_image_prompt(idx: int, instruction: str, image_path: str) -> 
     mime_type = mimetypes.guess_type(image_path)[0] or "image/jpeg"
     response = await with_timeout(
         client.aio.models.generate_content(
-            model=config.GOOGLE_AI_STUDIO_MODEL,
+            model=await _model_for(idx),
             contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type), instruction],
         ),
         OFFICIAL_VISION_TIMEOUT_SEC,
@@ -141,13 +154,13 @@ async def generate_utility_json(prompt: str) -> Optional[dict]:
 
     last_exc: Optional[BaseException] = None
     for idx in (1, 2):
-        if not api_key_for(idx):
+        if not await api_key_for(idx):
             continue
         try:
-            client = _get_official_client(idx)
+            client = await _get_official_client(idx)
             response = await with_timeout(
                 client.aio.models.generate_content(
-                    model=config.GOOGLE_AI_STUDIO_MODEL,
+                    model=await _model_for(idx),
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.1,
@@ -176,12 +189,12 @@ async def embed_text(text: str) -> Optional[list[float]]:
     if not config.HAS_ANY_AI_STUDIO_KEY:
         return None
     for idx in (1, 2):
-        if not api_key_for(idx):
+        if not await api_key_for(idx):
             continue
         try:
             from google.genai import types
 
-            client = _get_official_client(idx)
+            client = await _get_official_client(idx)
             result = await with_timeout(
                 client.aio.models.embed_content(
                     model=_EMBEDDING_MODEL,
@@ -202,7 +215,7 @@ async def embed_text(text: str) -> Optional[list[float]]:
 
 
 async def check_ai_studio_status(idx: int) -> tuple[bool, str]:
-    key = api_key_for(idx)
+    key = await api_key_for(idx)
     if not key:
         return False, f"Chưa cấu hình GOOGLE_AI_STUDIO_API_KEY_{idx}"
     try:
@@ -210,10 +223,10 @@ async def check_ai_studio_status(idx: int) -> tuple[bool, str]:
     except ImportError:
         return False, "Chưa cài package google-genai"
     try:
-        client = _get_official_client(idx)
+        client = await _get_official_client(idx)
         await with_timeout(
             client.aio.models.generate_content(
-                model=config.GOOGLE_AI_STUDIO_MODEL,
+                model=await _model_for(idx),
                 contents="ping",
                 config=types.GenerateContentConfig(max_output_tokens=1),
             ),
