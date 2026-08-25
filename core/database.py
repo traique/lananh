@@ -139,6 +139,15 @@ async def init_db() -> None:
             )
             """
         )
+        # channel: 'telegram'|'zalo'|'zoom' - thêm sau khi bảng đã chạy production
+        # nên dùng ALTER thay vì sửa CREATE TABLE (không re-run trên bảng có sẵn).
+        # Dùng cho thống kê lượt gọi AI theo kênh/người dùng ở trang admin.
+        await conn.execute(
+            "ALTER TABLE prompts ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'telegram'"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_prompts_channel ON prompts (channel, created_at DESC)"
+        )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_prompts_user_id ON prompts (telegram_user_id, id DESC)"
         )
@@ -214,6 +223,26 @@ async def init_db() -> None:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
+        )
+
+        # "Nhật ký ý quan trọng": thay cho semantic recall (chat_embeddings, đã
+        # ngưng dùng - xem services/memory_service.py) - N dòng gần nhất/user,
+        # trích cùng lượt gọi generate_utility_json() đã có sẵn (không tốn
+        # thêm lượt gọi AI nào), KHÔNG bị "nén" lại như user_memory_summary
+        # nên giữ nguyên chi tiết cụ thể (số liệu, ngày tháng, tên mã...).
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_memory_highlights (
+                id SERIAL PRIMARY KEY,
+                telegram_user_id BIGINT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_memory_highlights_user "
+            "ON user_memory_highlights (telegram_user_id, created_at DESC)"
         )
 
         # Function calling (xem services/tools.py): ghi chú tự do + nhắc việc,
@@ -295,16 +324,17 @@ async def init_db() -> None:
 
 
 @_with_reconnect
-async def save_prompt(telegram_user_id: int, command_type: str, prompt: str) -> int:
+async def save_prompt(telegram_user_id: int, command_type: str, prompt: str, channel: str = "telegram") -> int:
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(
-                "INSERT INTO prompts (telegram_user_id, command_type, prompt) "
-                "VALUES ($1, $2, $3) RETURNING id",
+                "INSERT INTO prompts (telegram_user_id, command_type, prompt, channel) "
+                "VALUES ($1, $2, $3, $4) RETURNING id",
                 telegram_user_id,
                 command_type,
                 prompt,
+                channel,
             )
             # Chỉ giữ HISTORY_RETENTION_LIMIT prompt gần nhất của user này -
             # chạy ngay sau mỗi insert nên bảng không bao giờ phình quá giới
@@ -324,6 +354,26 @@ async def save_prompt(telegram_user_id: int, command_type: str, prompt: str) -> 
                 HISTORY_RETENTION_LIMIT,
             )
     return row["id"]
+
+
+@_with_reconnect
+async def usage_by_user(since_hours: int = 24 * 7) -> list[dict]:
+    """Số lượt gọi AI (bảng prompts) theo (channel, telegram_user_id), dùng
+    cho trang admin. telegram_user_id âm = tài khoản Zalo đã pair (xem
+    channels/zalo_users.py); dương = chủ bot (Telegram/Zoom dùng chung
+    config.ALLOWED_USER_ID vì Zoom hiện chỉ có 1 pairing)."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT channel, telegram_user_id, COUNT(*) AS calls, MAX(created_at) AS last_call_at
+        FROM prompts
+        WHERE created_at >= now() - ($1 || ' hours')::interval
+        GROUP BY channel, telegram_user_id
+        ORDER BY calls DESC
+        """,
+        str(since_hours),
+    )
+    return [dict(row) for row in rows]
 
 
 @_with_reconnect
@@ -514,6 +564,55 @@ async def trim_facts(telegram_user_id: int, keep_n: int) -> None:
 async def clear_facts(telegram_user_id: int) -> None:
     pool = await get_pool()
     await pool.execute("DELETE FROM user_facts WHERE telegram_user_id = $1", telegram_user_id)
+
+
+@_with_reconnect
+async def add_highlight(telegram_user_id: int, content: str, keep_n: int) -> None:
+    """Thêm 1 dòng "ý quan trọng" mới, rồi cắt về `keep_n` dòng mới nhất/user
+    (dòng cũ nhất tự rơi ra) - xem services/memory_service.py."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "INSERT INTO user_memory_highlights (telegram_user_id, content) VALUES ($1, $2)",
+                telegram_user_id,
+                content,
+            )
+            await conn.execute(
+                """
+                DELETE FROM user_memory_highlights
+                WHERE telegram_user_id = $1
+                  AND id NOT IN (
+                      SELECT id FROM user_memory_highlights
+                      WHERE telegram_user_id = $1
+                      ORDER BY created_at DESC
+                      LIMIT $2
+                  )
+                """,
+                telegram_user_id,
+                keep_n,
+            )
+
+
+@_with_reconnect
+async def get_highlights(telegram_user_id: int, limit: int) -> list[str]:
+    """Trả về nội dung, CŨ -> MỚI (thứ tự đọc tự nhiên khi chèn vào prompt)."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT content FROM user_memory_highlights WHERE telegram_user_id = $1 "
+        "ORDER BY created_at DESC LIMIT $2",
+        telegram_user_id,
+        limit,
+    )
+    return [r["content"] for r in reversed(rows)]
+
+
+@_with_reconnect
+async def clear_highlights(telegram_user_id: int) -> None:
+    pool = await get_pool()
+    await pool.execute(
+        "DELETE FROM user_memory_highlights WHERE telegram_user_id = $1", telegram_user_id
+    )
 
 
 @_with_reconnect

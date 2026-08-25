@@ -132,6 +132,13 @@ OPENROUTER_MAX_CONCURRENCY = _env_int("OPENROUTER_MAX_CONCURRENCY", 4)
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 TAVILY_BASE_URL = os.getenv("TAVILY_BASE_URL", "https://api.tavily.com").strip()
 TAVILY_CALL_TIMEOUT_SEC = _env_int("TAVILY_CALL_TIMEOUT_SEC", 20)
+
+# Agnes AI (gateway bên thứ ba, tương thích OpenAI - xem ai/agnes_client.py) -
+# dùng riêng cho lệnh /anh (tạo ảnh), KHÔNG thuộc provider-chain chat chính.
+AGNES_API_KEY = os.getenv("AGNES_API_KEY", "").strip()
+AGNES_BASE_URL = os.getenv("AGNES_BASE_URL", "https://apihub.agnes-ai.com/v1").strip()
+AGNES_IMAGE_MODEL = os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash").strip()
+AGNES_CALL_TIMEOUT_SEC = _env_int("AGNES_CALL_TIMEOUT_SEC", 90)
 TAVILY_MAX_RESULTS = _env_int("TAVILY_MAX_RESULTS", 5)
 
 # ─── Provider-chain (router9 -> groq -> openrouter -> api1 -> api2) + trí nhớ
@@ -295,6 +302,12 @@ SETTINGS_ENC_KEY = os.getenv("SETTINGS_ENC_KEY", "").strip() or None
 # Secret riêng cho endpoint /diagnose (KHÔNG dùng chung với WEBHOOK_SECRET), truyền
 # qua header X-Diagnose-Token thay vì query string để tránh lộ qua access log.
 DIAGNOSE_SECRET = os.getenv("DIAGNOSE_SECRET", "").strip() or None
+
+# Đăng nhập trang /admin (xem web.py). ADMIN_PASS đồng thời làm khoá ký cookie
+# phiên đăng nhập (HMAC) - đổi ADMIN_PASS sẽ tự vô hiệu mọi phiên đang mở.
+ADMIN_USER = os.getenv("ADMIN_USER", "").strip() or None
+ADMIN_PASS = os.getenv("ADMIN_PASS", "").strip() or None
+ADMIN_SESSION_TTL_SEC = _env_int("ADMIN_SESSION_TTL_SEC", 12 * 3600)
 
 
 def validate(require_webhook: bool = False) -> None:
