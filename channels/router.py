@@ -165,6 +165,7 @@ async def receive(
         response = ZaloMessageResponse(
             messages=_zalo_chunks(result.messages),
             provider=result.provider,
+            image_b64=result.image_b64,
         )
         await idempotency.save_zalo_response(
             payload.account_id,

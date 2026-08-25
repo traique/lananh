@@ -269,6 +269,83 @@ async def send_message(
         )
 
 
+async def _post_image_message_once(
+    to_jid: str, image_url: str, caption: str, user_jid: str, account_id: str
+) -> None:
+    """Chatbot API hỗ trợ 1 block content kiểu "attachments" nhận thẳng
+    img_url - ZOOM TỰ TẢI ảnh về từ URL đó, bot không cần upload/host lại
+    (khác endpoint /chat/users/{userId}/messages/files - endpoint đó thuộc
+    Zoom Chat API user-based, KHÔNG dùng robot_jid như chatbot app này).
+    Xem: https://devforum.zoom.us/t/chatbot-im-chat-messages-apis-attachments/82258"""
+    token = await _access_token()
+    body = {
+        "robot_jid": config.ZOOM_BOT_JID,
+        "to_jid": to_jid,
+        "user_jid": user_jid,
+        "account_id": account_id,
+        "content": {
+            "body": [
+                {
+                    "type": "attachments",
+                    "resource_url": image_url,
+                    "img_url": image_url,
+                    "information": {
+                        "title": {"text": (caption.strip()[:200] or "Ảnh do Agnes AI tạo")}
+                    },
+                }
+            ]
+        },
+    }
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        response = await client.post(
+            _MESSAGE_URL, json=body, headers={"Authorization": f"Bearer {token}"}
+        )
+    if response.status_code >= 400:
+        logger.error(
+            "Zoom send image failed (%s) to_jid=%s user_jid=%s account_id=%s: %s",
+            response.status_code,
+            to_jid,
+            user_jid,
+            account_id,
+            response.text,
+        )
+    response.raise_for_status()
+
+
+async def send_image_message(
+    to_jid: str,
+    image_url: str,
+    caption: str = "",
+    user_jid: str | None = None,
+    account_id: str | None = None,
+) -> None:
+    """Gửi 1 ảnh qua URL công khai (xem lệnh /anh - services/channel_command_service.py).
+    Cùng retry-3-lần như send_message(), nhưng KHÔNG cắt đoạn (1 ảnh = 1 lần
+    gọi API, không có khái niệm "quá dài" như text)."""
+    effective_user_jid = user_jid or to_jid
+    effective_account_id = account_id or config.ZOOM_ACCOUNT_ID
+    last_exc: Exception | None = None
+    for attempt in range(1, _CHUNK_RETRY_ATTEMPTS + 1):
+        try:
+            await _post_image_message_once(
+                to_jid, image_url, caption, effective_user_jid, effective_account_id
+            )
+            return
+        except (httpx.HTTPStatusError, httpx.TransportError) as exc:
+            last_exc = exc
+            if attempt < _CHUNK_RETRY_ATTEMPTS:
+                logger.warning(
+                    "Zoom send image retry %s/%s to_jid=%s: %s",
+                    attempt,
+                    _CHUNK_RETRY_ATTEMPTS,
+                    to_jid,
+                    exc,
+                )
+                await asyncio.sleep(_CHUNK_RETRY_BACKOFF_SEC * attempt)
+    assert last_exc is not None
+    raise ZoomSendError(f"Gửi ảnh qua Zoom thất bại: {last_exc}")
+
+
 def parse_event(payload: dict[str, object]) -> ZoomEvent | None:
     """Rút sự kiện tin nhắn/slash command từ webhook payload Zoom.
 
