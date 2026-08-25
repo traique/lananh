@@ -5,6 +5,7 @@ import contextvars
 from ai import agnes_client, orchestrator, router9_client, tavily_client
 from core import config, database as db
 from handlers import commands as telegram_commands
+from handlers.prompt_identity import render_instruction, resolve_prompt_identity
 from services import memory_service, translate_service
 from services.telemetry import telemetry
 
@@ -65,21 +66,11 @@ def _arg(text: str) -> str:
 async def _prompt(user_id: int, description: str, channel: str = "zalo") -> tuple[list[str], str | None]:
     if not description:
         return ["Cú pháp: /prompt <mô tả muốn tạo prompt>"], None
-    lower = description.lower()
-    c = telegram_commands
-    if any(keyword in lower for keyword in c.KEEP_FACE_KEYWORDS):
-        lock, rule, subject, subject_rule = c.IDENTITY_LOCK_REFERENCE + "\n\n", c._IDENTITY_RULE_LOCK, c._TEXT_SUBJECT_PHRASE_REFERENCE, c._TEXT_SUBJECT_RULE_REFERENCE
-        hint = "📎 Hãy đính kèm ảnh gốc cùng prompt này trên app Gemini."
-    elif any(keyword in lower for keyword in c.GIRL_KEYWORDS):
-        lock, rule, subject, subject_rule = c.IDENTITY_LOCK_GIRL + "\n\n", c._IDENTITY_RULE_LOCK, c._TEXT_SUBJECT_PHRASE_GIRL, c._TEXT_SUBJECT_RULE_GIRL
-        hint = "🔒 Prompt dùng khóa khuôn mặt cố định, không cần đính kèm ảnh."
-    else:
-        lock, rule, subject, subject_rule = "", c._IDENTITY_RULE_NONE, c._TEXT_SUBJECT_PHRASE_DESCRIBED, c._TEXT_SUBJECT_RULE_DESCRIBED
-        hint = "🖼️ Prompt tự mô tả khuôn mặt bằng chữ."
-    instruction = c.TEXT_PROMPT_INSTRUCTION_BASE.format(
-        identity_lock_block=lock, identity_rule=rule, subject_phrase=subject,
-        subject_rule=subject_rule, user_desc=description,
+    identity = resolve_prompt_identity(description, context="text")
+    instruction = render_instruction(
+        telegram_commands.TEXT_PROMPT_INSTRUCTION_BASE, identity, user_desc=description
     )
+    hint = identity.mode_hint
     prompt_id = await telemetry.start(user_id, "prompt_generator", description, channel=channel)
     try:
         response = await orchestrator.ask(instruction)
