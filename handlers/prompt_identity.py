@@ -22,21 +22,23 @@ IDENTITY_LOCK_REFERENCE = (
 )
 
 IDENTITY_LOCK_GIRL = (
-    "Identity lock: every image shows the same adult Vietnamese woman, with an "
-    "identical face in every generation - do not redesign, beautify, age or "
-    "reinterpret it. She has a soft oval-to-heart-shaped face with a smooth "
-    "tapered jawline and a small rounded chin, large almond-shaped eyes with a "
-    "subtly rounded appearance, natural double eyelids and natural eyelashes, "
-    "medium-thin mostly straight eyebrows with a subtle outer arch, a delicate "
-    "straight nasal bridge with a small softly rounded nose tip, naturally soft "
-    "medium-full lips with a slightly fuller lower lip, and softly rounded cheeks "
-    "with moderate cheekbones. Her skin is a light fair-to-light-medium "
-    "warm-neutral tone with authentic, natural skin texture: visible pores, "
-    "subtle tonal variation and realistic specular highlights, never airbrushed "
-    "or porcelain-smooth. This facial geometry and skin character never change; "
-    "only her hairstyle, expression, makeup, clothing, accessories, pose, "
-    "lighting, camera, environment and photographic finish are variable "
-    "attributes, free to change from image to image."
+    "Identity lock: every image shows the same adult Vietnamese woman in her "
+    "early 20s, with an identical face in every generation - do not redesign, "
+    "beautify, age or reinterpret it. She has a soft round-oval face with "
+    "youthful fullness, full softly rounded cheeks, a smooth softly rounded "
+    "jawline and a small rounded chin, large almond-shaped eyes with a subtly "
+    "rounded appearance, natural double eyelids and natural eyelashes, "
+    "medium-thin eyebrows with a soft gentle arch, a delicate straight nasal "
+    "bridge with a small softly rounded nose tip, naturally full soft lips with "
+    "a well-defined cupid's bow and a slightly fuller lower lip, and soft "
+    "subtle cheekbones rather than pronounced bone structure. Her skin is a "
+    "light fair-to-light-medium warm-neutral tone with authentic, natural skin "
+    "texture: visible pores, subtle tonal variation and realistic specular "
+    "highlights, never airbrushed or porcelain-smooth. This facial geometry and "
+    "skin character never change; only her hairstyle, expression, makeup, "
+    "clothing, accessories, pose, lighting, camera, environment and "
+    "photographic finish are variable attributes, free to change from image to "
+    "image."
 )
 
 # Photo mode (media_handler.py/channel_image_service.py): PHOTO_SUBJECT_RULE_GIRL
@@ -44,11 +46,13 @@ IDENTITY_LOCK_GIRL = (
 # the source photo, so the phrase must actually carry that full description.
 PHOTO_SUBJECT_PHRASE_GIRL = (
     "the same adult Vietnamese woman defined by the Identity Lock above, with a "
-    "soft oval-to-heart-shaped face, a smooth tapered jawline, large almond-shaped "
-    "eyes with a subtly rounded appearance, natural double eyelids, medium-thin "
-    "mostly straight eyebrows, a delicate straight nasal bridge, a small softly "
-    "rounded nose tip, naturally soft medium-full lips with a slightly fuller lower "
-    "lip, softly rounded cheeks and a small rounded chin,"
+    "soft round-oval face carrying youthful, early-20s fullness, full softly "
+    "rounded cheeks, a smooth softly rounded jawline, large almond-shaped eyes "
+    "with a subtly rounded appearance, natural double eyelids, medium-thin "
+    "eyebrows with a soft gentle arch, a delicate straight nasal bridge, a small "
+    "softly rounded nose tip, naturally full soft lips with a well-defined "
+    "cupid's bow and a slightly fuller lower lip, soft subtle cheekbones and a "
+    "small rounded chin,"
 )
 
 # Text mode (/prompt): nothing to override, so no need to restate the face here -
