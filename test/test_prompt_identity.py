@@ -7,6 +7,7 @@ from handlers.prompt_identity import (
     GIRL_KEYWORDS,
     KEEP_FACE_KEYWORDS,
     IDENTITY_LOCK_GIRL,
+    PHOTO_SUBJECT_PHRASE_GIRL,
     TEXT_SUBJECT_PHRASE_GIRL,
     resolve_prompt_identity,
 )
@@ -27,7 +28,20 @@ def test_girl_identity_matches_reference_facial_geometry():
 
     for feature in expected_features:
         assert feature in IDENTITY_LOCK_GIRL
-        assert feature in TEXT_SUBJECT_PHRASE_GIRL
+        # PHOTO_SUBJECT_PHRASE_GIRL restates the face on purpose (see
+        # PHOTO_SUBJECT_RULE_GIRL: it must override what's visible in the
+        # source photo), so it's the one that still carries every feature.
+        assert feature in PHOTO_SUBJECT_PHRASE_GIRL
+
+
+def test_text_girl_phrase_does_not_duplicate_identity_lock():
+    """/prompt (context="text") has no source photo to override, so the
+    subject phrase must NOT restate the identity lock's face description -
+    doing so just duplicated the same face twice in the same output."""
+    assert "identity lock" in TEXT_SUBJECT_PHRASE_GIRL.lower()
+    assert "heart-shaped" not in TEXT_SUBJECT_PHRASE_GIRL
+    assert "almond-shaped" not in TEXT_SUBJECT_PHRASE_GIRL
+    assert len(TEXT_SUBJECT_PHRASE_GIRL) < len(PHOTO_SUBJECT_PHRASE_GIRL)
 
 
 def test_girl_identity_does_not_lock_styling():

@@ -120,17 +120,20 @@ def test_bat_buoc_ta_dang_nguoi_chi_tiet():
 
 
 def test_vi_du_co_doan_ta_dang_nguoi():
+    """Ví dụ trong template phải minh hoạ dáng đứng tả bằng hình học cụ thể
+    (đúng tinh thần rule 5), không cần khớp chữ y hệt bản cũ."""
     example = _render_described().split("---")[1]
-    assert "elbows slightly relaxed" in example
-    assert "hands near hip level" in example
-    assert "weight is distributed naturally" in example
+    assert "elbows barely bent" in example
+    assert "hands at hip height" in example
+    assert "weight rests on her left leg" in example
 
 
 def test_chat_anh_bam_theo_yeu_cau_cua_user():
     for render in _ALL_MODES:
         text = render()
-        assert "LIGHTING AND FINISH MUST MATCH" in text
-        assert "Never mix contradictory finish instructions" in text
+        assert "LIGHTING AND GRAIN MUST MATCH THE SCENE" in text
+        assert "THE FINISH MUST MATCH THE LOOK THE USER ASKS FOR" in text
+        assert "you MUST NOT write" in text
 
 
 def test_khong_con_ep_cung_visible_pores():
