@@ -5,7 +5,6 @@ import contextvars
 from ai import agnes_client, orchestrator, router9_client, tavily_client
 from core import config, database as db
 from handlers import commands as telegram_commands
-from handlers.prompt_identity import render_instruction, resolve_prompt_identity
 from services import memory_service, translate_service
 from services.telemetry import telemetry
 
@@ -66,16 +65,27 @@ def _arg(text: str) -> str:
 async def _prompt(user_id: int, description: str, channel: str = "zalo") -> tuple[list[str], str | None]:
     if not description:
         return ["Cú pháp: /prompt <mô tả muốn tạo prompt>"], None
-    identity = resolve_prompt_identity(description)
-    mode_hint = identity.mode_hint
-    instruction = render_instruction(telegram_commands.TEXT_PROMPT_INSTRUCTION_BASE, identity, user_desc=description)
-
+    lower = description.lower()
+    c = telegram_commands
+    if any(keyword in lower for keyword in c.KEEP_FACE_KEYWORDS):
+        lock, rule, subject, subject_rule = c.IDENTITY_LOCK_REFERENCE + "\n\n", c._IDENTITY_RULE_LOCK, c._TEXT_SUBJECT_PHRASE_REFERENCE, c._TEXT_SUBJECT_RULE_REFERENCE
+        hint = "📎 Hãy đính kèm ảnh gốc cùng prompt này trên app Gemini."
+    elif any(keyword in lower for keyword in c.GIRL_KEYWORDS):
+        lock, rule, subject, subject_rule = c.IDENTITY_LOCK_GIRL + "\n\n", c._IDENTITY_RULE_LOCK, c._TEXT_SUBJECT_PHRASE_GIRL, c._TEXT_SUBJECT_RULE_GIRL
+        hint = "🔒 Prompt dùng khóa khuôn mặt cố định, không cần đính kèm ảnh."
+    else:
+        lock, rule, subject, subject_rule = "", c._IDENTITY_RULE_NONE, c._TEXT_SUBJECT_PHRASE_DESCRIBED, c._TEXT_SUBJECT_RULE_DESCRIBED
+        hint = "🖼️ Prompt tự mô tả khuôn mặt bằng chữ."
+    instruction = c.TEXT_PROMPT_INSTRUCTION_BASE.format(
+        identity_lock_block=lock, identity_rule=rule, subject_phrase=subject,
+        subject_rule=subject_rule, user_desc=description,
+    )
     prompt_id = await telemetry.start(user_id, "prompt_generator", description, channel=channel)
     try:
         response = await orchestrator.ask(instruction)
         output = (response.text or "").strip()
         await telemetry.success(prompt_id, "prompt_generator", output or "(không có nội dung)")
-        return ([f"{mode_hint}\n\n{output}"] if output else ["Gemini không trả về prompt, hãy thử lại."]), ("api" if getattr(response, "used_fallback", False) else None)
+        return ([f"{hint}\n\n{output}"] if output else ["Gemini không trả về prompt, hãy thử lại."]), ("api" if getattr(response, "used_fallback", False) else None)
     except Exception as exc:
         await telemetry.failure(prompt_id, "prompt_generator", exc)
         return ["❌ Có lỗi khi tạo prompt. Hãy thử lại sau."], None
@@ -159,19 +169,18 @@ async def _generate_image(argument: str, is_admin: bool, channel: str) -> tuple[
     except agnes_client.AgnesError as exc:
         return [f"❌ Không tạo được ảnh: {exc}"], None
 
-    caption = f"🖼️ {argument.strip()[:200]}"
     if channel == "zoom":
         # Zoom gửi ảnh qua URL công khai (Zoom tự tải), KHÔNG qua base64 -
         # xem channels/zoom.py::send_image_message + web.py::_process_zoom_event.
         if not image.url:
             return ["❌ Tạo ảnh thành công nhưng thiếu URL để gửi qua Zoom - thử lại nhé."], None
         _pending_image_url.set(image.url)
-        return [caption], None
+        return [], None
 
     # Zalo (và mọi kênh khác dùng ChannelResult.image_b64 sau này): gửi qua
     # base64 để zalo-gateway tự dựng Buffer, xem take_pending_image() đầu file.
     _pending_image.set(base64.b64encode(image.data).decode("ascii"))
-    return [caption], None
+    return [], None
 
 
 async def maybe_handle_command(
