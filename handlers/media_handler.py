@@ -45,13 +45,7 @@ import messages
 from core import config
 from ai import orchestrator
 from handlers import common
-from handlers.commands import (
-    IDENTITY_LOCK_GIRL,
-    IDENTITY_LOCK_REFERENCE,
-    KEEP_FACE_KEYWORDS,
-    GIRL_KEYWORDS,
-    _IDENTITY_RULE_LOCK,
-)
+from handlers.prompt_identity import render_instruction, resolve_prompt_identity
 from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -69,107 +63,36 @@ def _short_error(exc: BaseException) -> str:
     return detail
 
 
-# ---------------------------------------------------------------------------
-# Rule 1 - có chen dòng [Identity Lock] hay không
-# ---------------------------------------------------------------------------
-# Dạng 1 (không từ khoá, gồm cả ảnh không caption): không có dòng lock.
-_PHOTO_IDENTITY_RULE_NONE = (
-    '1. DO NOT include an "[Identity Lock: ...]" line at all, under any '
-    'circumstances. Start the prompt directly with the scene description, '
-    'even if the reference image clearly contains a person or a face.'
-)
+IMAGE_ANALYZE_INSTRUCTION_BASE = """You are an expert prompt engineer for AI image generation. Analyze the attached reference photograph and produce ONE complete English prompt that reconstructs the visible composition as closely as possible while respecting the selected identity mode.
 
-# ---------------------------------------------------------------------------
-# Cách tả chủ thể ngay trong prompt mẫu (đây là đòn bẩy chính: Gemini bắt
-# chước y nguyên cách gọi chủ thể của ví dụ)
-# ---------------------------------------------------------------------------
-# Dạng 1: tả người TRONG ẢNH bằng chữ.
-_SUBJECT_PHRASE_DESCRIBED = (
-    "a woman in her early 20s with long dark brown hair parted in the middle, "
-    "an oval face with a soft jawline, almond-shaped dark brown eyes, softly "
-    "arched thin eyebrows, a small straight nose, full natural lips and fair "
-    "warm-toned skin,"
-)
-# Dạng 2: tả khuôn mặt ĐÃ BỊ KHOÁ bằng chữ (lấy từ IDENTITY_LOCK_GIRL),
-# không phải người trong ảnh.
-_SUBJECT_PHRASE_GIRL = (
-    "the same 20-year-old Vietnamese woman defined in the Identity Lock above "
-    "- heart-shaped face with a smooth jawline, large round doe eyes with "
-    "natural eyelashes, a delicate nose and natural soft lips,"
-)
-# Dạng 3: có ảnh thật đính kèm trên app Gemini -> không tả mặt.
-_SUBJECT_PHRASE_REFERENCE = "the subject from the attached reference image"
-
-# ---------------------------------------------------------------------------
-# Rule 2 - khuôn mặt lấy từ đâu và tả như thế nào
-# ---------------------------------------------------------------------------
-_PHOTO_SUBJECT_RULE_DESCRIBED = (
-    '2. CRITICAL - this prompt will be pasted as PLAIN TEXT with NO image '
-    'attached. Therefore you must NEVER write "the subject from the reference '
-    'image", "the person in the photo", or any phrase pointing at an image: '
-    'with nothing attached such a phrase is empty and the generator will '
-    'invent a random face. Instead REPLACE the subject with a dense written '
-    'description of the person you actually see in the reference image, so '
-    'that the prompt reproduces them on its own. You MUST state all of: '
-    'approximate age, ethnicity or facial character, face shape, eye shape and '
-    'eye colour, eyebrow shape, nose shape, lip shape, jawline and chin, skin '
-    'tone and skin texture, and hair colour, length, texture and parting. Put '
-    'this description in the very first sentence, exactly like the example.'
-)
-_PHOTO_SUBJECT_RULE_GIRL = (
-    "2. CRITICAL - the face is FIXED by the Identity Lock above and must be "
-    "identical in every generation. You MUST also restate that locked face as "
-    "a written description inside the first sentence of the prompt (face "
-    "shape, jawline, eye shape, eyelashes, nose, lips, age, ethnicity), copied "
-    "faithfully from the Identity Lock block, exactly like the example. DO NOT "
-    "describe the face of the person in the reference image, and DO NOT copy "
-    "their age, ethnicity, hair colour, eye colour or any facial feature. Take "
-    "ONLY the pose, framing, outfit, accessories, setting, lighting and mood "
-    "from the reference image."
-)
-_PHOTO_SUBJECT_RULE_REFERENCE = (
-    '2. CRITICAL - the user will attach the reference photo together with this '
-    'prompt, so the identity is carried by that attachment. Refer to the '
-    'subject as "the subject from the attached reference image" and state '
-    'that her face must match the attached photo exactly. DO NOT invent '
-    'concrete facial features (eye colour, face shape, nose or lip shape, hair '
-    'colour): inventing them fights the attached photo and changes the face. '
-    'Describe only pose, expression, outfit, setting and lighting.'
-)
-
-IMAGE_ANALYZE_INSTRUCTION_BASE = """You are an expert prompt engineer for AI image generation tools, specialized in writing "identity-preserving" prompts that reproduce a reference photograph as closely as possible: the same framing, the same pose and the same visual finish, not just the same person.
-
-Look at the attached reference image and write ONE complete, ready-to-use English prompt following EXACTLY this structure and style (this is a NEUTRAL example showing the expected format, level of detail and how to name the subject - match its structure, but invent NEW content taken from the reference photo):
+Use this neutral example only as a structural reference. Replace every scene-specific detail with information actually visible in the reference image. Never copy the example's framing, clothing, camera, lighting or setting unless the reference genuinely matches them.
 
 ---
-{identity_lock_block}Raw, candid smartphone photo of {subject_phrase} standing on a quiet residential sidewalk in the late afternoon. Vertical 9:16 portrait orientation, three-quarter body shot framed from mid-thigh up, camera held at the subject's chest height and perfectly level with her, roughly two metres away, so she fills most of the frame height with only a little headroom.
+{identity_lock_block}Photographic portrait of {subject_phrase} in a simple outdoor setting. Vertical 9:16 portrait orientation, three-quarter body shot framed from mid-thigh upward, camera at chest height and level with the subject, approximately two metres away, with the subject filling most of the frame and modest headroom.
 
-Her arms hang relaxed and almost straight down at her sides, elbows barely bent, both hands at hip height with the palms turned inwards towards her thighs. Her weight rests on her left leg, her shoulders are square to the camera, her head is tilted very slightly to her right with the chin level, and she looks a little off-camera. Her lips are closed in a small natural smile, and a few loose strands of hair fall across her cheek.
+Her arms rest naturally beside her body, elbows slightly relaxed, hands near hip level. Her weight is distributed naturally between both legs, shoulders aligned with the camera, head turned slightly to one side, chin level, gaze directed just off-camera, mouth closed with a restrained natural expression. Her hair follows the requested hairstyle naturally.
 
-She is wearing a plain oversized grey cotton t-shirt and simple straight-leg jeans, with natural fabric folds and everyday creases.
+She wears simple everyday clothing appropriate to the described setting, with realistic fabric texture, folds and construction.
 
-The background is an ordinary street with a low garden wall and parked cars, moderately out of focus.
+The background contains only environmental elements appropriate to the described setting, with depth and perspective consistent with the camera position.
 
-Shot on an iPhone 15 Pro Max, 48mm-equivalent lens at f/1.8, matching the plain everyday snapshot look of this scene.
+Use a focal length and aperture consistent with the requested framing and perspective, with depth of field matching the visible photographic look.
 
-Soft, warm late-afternoon daylight. Natural skin texture with visible pores and slight imperfections. Subtle chromatic aberration, fine film grain. Authentic, raw, documentary photography style.
+Use lighting, colour, contrast, grain and photographic treatment appropriate to the reference image. Keep the result photographic and physically plausible.
 ---
-
-⚠️ The example above demonstrates FORMAT, LEVEL OF DETAIL and HOW TO NAME THE SUBJECT only. The framing, pose, scene, setting, outfit, lighting, lens and finish MUST all be read off the reference image, NOT copied from the example. Do NOT reuse the sidewalk, the grey t-shirt, the jeans, the 9:16 vertical framing, the 48mm lens or the late-afternoon light unless the reference image actually shows them.
 
 Rules for what you generate:
 {identity_rule}
 {subject_rule}
-3. ACCURATELY describe the outfit, accessories and vibe of the reference image. If it's a sensual/wet look, describe it accurately using anatomical and clothing terms without being explicitly pornographic.
-4. FRAMING IS MANDATORY - never omit it. In the first paragraph you MUST state, in plain words: (a) the orientation and aspect ratio you can see in the reference image, written out as "vertical 9:16 portrait orientation", "vertical 4:5 portrait orientation", "square 1:1 framing" or "horizontal 16:9 landscape orientation"; (b) the shot size (extreme close-up, head-and-shoulders portrait, waist-up, three-quarter body, full body, or wide environmental shot); (c) the camera height and angle (at eye level, at chest height, low angle looking up, high angle looking down, tilted); (d) roughly how far the camera is from the subject; and (e) how much of the frame the subject occupies and how much headroom there is. A generator given no framing information defaults to a wide horizontal image with a small, distant subject, which will not match the reference at all.
-5. POSE MUST BE GEOMETRICALLY PRECISE - vague phrases such as "arms outstretched", "posing naturally" or "hands out" get misread ("arms outstretched with open palms" is commonly rendered as a shrug with bent elbows and palms up at shoulder height). Devote a short paragraph to the body and state: the angle of each arm relative to the torso, whether each elbow is straight or bent, the height of each hand (hip, waist, chest, shoulder, above the head), which way each palm faces, what the hands are touching or holding, the stance and weight distribution, the shoulder and torso rotation, the head tilt and chin height, the direction of the gaze, whether the mouth is closed or open, and how the hair falls or is blown.
-6. LIGHTING AND GRAIN MUST MATCH THE ACTUAL SCENE of the reference image. Only write "low-light noise" for a genuine night or dim indoor scene; for daylight, overcast or bright indoor scenes write the correct light and use "fine film grain" or "subtle sensor noise" instead. Contradictory lighting terms make the generator drift away from the reference.
-7. CAMERA AND LENS MUST BE INFERRED FROM THE REFERENCE IMAGE, never copied from the example. Judge them from the perspective you actually see: a tight portrait with a compressed, strongly blurred background implies a longer lens (roughly 70-135mm equivalent at a wide aperture); a normal half-body snapshot implies around 40-55mm; only a deliberately wide, environment-heavy shot implies 24-35mm. State the focal length and aperture that match, and describe the depth of field you can see (background strongly blurred, softly blurred, or mostly sharp). A wide focal length pushes the subject away and shrinks them in the frame, so do not use one for a close portrait.
-8. THE FINISH MUST MATCH THE REFERENCE IMAGE, and this overrides any default preference for raw photography. First decide which the reference is. If it is a genuine unpolished snapshot, use terms like "candid", "unretouched", "raw photo", "natural skin texture", "visible pores", "film grain", "amateur lighting". If instead it is visibly polished or heavily edited - smooth glowing skin, vivid saturated colour, strong background blur, a beauty-filtered or stylised look - then say so plainly: "softly retouched", "smooth luminous skin", "gentle beauty-filter finish", "rich saturated colour", "strong creamy background blur", and in that case you MUST NOT write "visible pores", "unretouched", "skin imperfections" or "zero airbrushing", because those terms fight the reference and change the whole look. Whichever branch you choose, always keep the shot reading as a real photograph.
-9. DO NOT append any tool-specific flags or parameters such as "--ar 4:5", "--v 6", "--style raw" or "::". These belong to other tools and are meaningless here; the aspect ratio belongs in the framing sentence required by rule 4, written in plain words.
-10. FORBIDDEN WORDS: NEVER use terms like "masterpiece", "8k", "ultra-photorealistic", "perfect", "flawless" or "editorial". These are empty booster words and make the image look fake.
-11. Output ONLY the final prompt as plain text, no markdown headers, no preamble."""
-
+3. REFERENCE PRIORITY: extract scene, pose, framing, clothing, accessories, environment, lighting, mood, perspective and photographic finish from the attached image. Do not import those details from the example.
+4. IDENTITY PRIORITY: when the selected mode has an identity lock, facial geometry and facial proportions outrank every variable visual attribute. Never copy a different person's face from the reference into a locked identity mode. When the mode uses the attached photo as identity, the attachment is the sole facial source.
+5. FRAMING IS MANDATORY. State the visible orientation/aspect ratio in plain words, using one of: "vertical 9:16 portrait orientation", "vertical 4:5 portrait orientation", "square 1:1 framing" or "horizontal 16:9 landscape orientation". Also state the shot size, camera height and angle, approximate camera distance, subject occupancy and headroom. Use only what the reference supports; estimate broad camera distance when exact distance is unknowable.
+6. POSE MUST BE GEOMETRICALLY PRECISE but evidence-based. Describe visible arm/elbow positions, hand height and palm direction when visible, stance, weight distribution, shoulder/torso rotation, head tilt, chin height, gaze and mouth state. Do not invent hidden anatomy or exact degree measurements that cannot be observed.
+7. OUTFIT AND MATERIALS: describe visible clothing, accessories, fit, fabric texture, seams, folds, wetness and contact with the body. Do not add garments or accessories that are not visible.
+8. LIGHTING AND FINISH MUST MATCH THE REFERENCE. For genuinely raw/candid photography, use natural skin texture and restrained processing. For visibly polished beauty/fashion imagery, use the appropriate refined treatment. Never combine contradictory raw and beauty-filter instructions.
+9. CAMERA AND LENS MUST BE INFERRED FROM PERSPECTIVE AND DEPTH OF FIELD. Use approximately 70-135mm for tight compressed portraits, 40-55mm for normal half-body/three-quarter views, and 24-35mm only when the environment is intentionally prominent. State an equivalent focal length, aperture and depth of field consistent with the reference. Do not invent a camera brand or exact model unless it is provided.
+10. REALISM CHECK: preserve believable anatomy, perspective, skin texture, fabric behaviour, water/rain behaviour, reflections, shadows and depth of field. Avoid generic AI embellishment and details not supported by the reference.
+11. OUTPUT ONLY the final English image prompt as plain text. No markdown, no headings, no explanations, no negative-prompt section and no tool-specific flags."""
 
 @common.restricted
 async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -183,31 +106,9 @@ async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     filename = f"promptify_{prompt_id}.jpg"
     local_path = config.MEDIA_DIR / filename
 
-    # Xác định nguồn khuôn mặt theo 3 dạng (xem docstring đầu file):
-    # - giữ mặt / mặt tôi ... -> mặt nằm ở ảnh user đính kèm trên app Gemini
-    # - cô gái 20 / gái 20   -> mặt nằm ở khối lock cố định, phải tả ra chữ
-    # - không từ khoá        -> mặt nằm ở ảnh gốc, phải tả ra chữ
-    caption_lower = caption.lower()
-    if any(kw in caption_lower for kw in KEEP_FACE_KEYWORDS):
-        identity_lock_block = f"{IDENTITY_LOCK_REFERENCE}\n\n"
-        identity_rule = _IDENTITY_RULE_LOCK
-        subject_phrase = _SUBJECT_PHRASE_REFERENCE
-        subject_rule = _PHOTO_SUBJECT_RULE_REFERENCE
-        mode_hint = "\n\n📎 Nhớ đính kèm lại ảnh gốc cùng prompt này trên app Gemini nha anh."
-    elif any(kw in caption_lower for kw in GIRL_KEYWORDS):
-        identity_lock_block = f"{IDENTITY_LOCK_GIRL}\n\n"
-        identity_rule = _IDENTITY_RULE_LOCK
-        subject_phrase = _SUBJECT_PHRASE_GIRL
-        subject_rule = _PHOTO_SUBJECT_RULE_GIRL
-        mode_hint = "\n\n🔒 Khoá khuôn mặt cố định - dán prompt KHÔNG kèm ảnh để giữ đúng nhân vật."
-    else:
-        # Không caption hoặc caption không có từ khoá -> bỏ hẳn dòng Identity Lock,
-        # bù lại bằng mô tả khuôn mặt bằng chữ để prompt tự đứng được một mình.
-        identity_lock_block = ""
-        identity_rule = _PHOTO_IDENTITY_RULE_NONE
-        subject_phrase = _SUBJECT_PHRASE_DESCRIBED
-        subject_rule = _PHOTO_SUBJECT_RULE_DESCRIBED
-        mode_hint = "\n\n🖼️ Prompt tự tả khuôn mặt bằng chữ - dán là dùng được, không cần đính kèm ảnh."
+    identity = resolve_prompt_identity(caption)
+    mode_hint = f"\n\n{identity.mode_hint}"
+
 
     # Hỗ trợ cả ảnh gửi dạng nén (photo) lẫn dạng file (document)
     if update.message.photo:
@@ -239,12 +140,7 @@ async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # try/except nên khi lỗi không tài nào biết được là Gemini hỏng hay
     # Telegram hỏng, và thông báo cũ nuốt sạch chi tiết lỗi.
     try:
-        instruction = IMAGE_ANALYZE_INSTRUCTION_BASE.format(
-            identity_lock_block=identity_lock_block,
-            subject_phrase=subject_phrase,
-            identity_rule=identity_rule,
-            subject_rule=subject_rule,
-        )
+        instruction = render_instruction(IMAGE_ANALYZE_INSTRUCTION_BASE, identity)
         if caption:
             instruction += f"\n\nAdditional user instruction: {caption}"
 

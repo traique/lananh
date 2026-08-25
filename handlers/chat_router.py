@@ -79,7 +79,7 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             part for part in (route.grounding, tool_result, search_result) if part
         )
 
-        memory_context = await memory_service.build_memory_context(user_id, query_text=text)
+        memory_context = await memory_service.build_memory_context(user_id)
         response = await orchestrator.chat(
             user_id,
             text,
