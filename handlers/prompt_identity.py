@@ -15,29 +15,34 @@ KEEP_FACE_KEYWORDS: tuple[str, ...] = (
 GIRL_KEYWORDS: tuple[str, ...] = ("cô gái 20", "gái 20")
 
 IDENTITY_LOCK_REFERENCE = (
-    "[Identity Lock: The attached reference image is the sole identity source. "
-    "Preserve the person's exact facial geometry, facial proportions, skin tone, "
-    "age presentation and natural skin character. Do not redesign, beautify, age, "
-    "or reinterpret the face. DO NOT smooth or airbrush the face.]"
+    "Identity lock: the attached reference photo is the sole source of the subject's "
+    "identity. Keep her exact facial geometry, facial proportions, skin tone and age "
+    "presentation exactly as shown in that photo. Do not redesign, beautify, age or "
+    "reinterpret the face, and do not smooth or airbrush the skin."
 )
 
-IDENTITY_LOCK_GIRL = """[IDENTITY LOCK — FACIAL IDENTITY HAS HIGHEST PRIORITY
-The subject is the same adult Vietnamese woman in every generation. Preserve the same facial geometry and proportions across every image. Do not redesign, beautify, age, or reinterpret her face.
+IDENTITY_LOCK_GIRL = (
+    "Identity lock: every image shows the same adult Vietnamese woman, with an "
+    "identical face in every generation - do not redesign, beautify, age or "
+    "reinterpret it. She has a soft oval-to-heart-shaped face with a smooth "
+    "tapered jawline and a small rounded chin, large almond-shaped eyes with a "
+    "subtly rounded appearance, natural double eyelids and natural eyelashes, "
+    "medium-thin mostly straight eyebrows with a subtle outer arch, a delicate "
+    "straight nasal bridge with a small softly rounded nose tip, naturally soft "
+    "medium-full lips with a slightly fuller lower lip, and softly rounded cheeks "
+    "with moderate cheekbones. Her skin is a light fair-to-light-medium "
+    "warm-neutral tone with authentic, natural skin texture: visible pores, "
+    "subtle tonal variation and realistic specular highlights, never airbrushed "
+    "or porcelain-smooth. This facial geometry and skin character never change; "
+    "only her hairstyle, expression, makeup, clothing, accessories, pose, "
+    "lighting, camera, environment and photographic finish are variable "
+    "attributes, free to change from image to image."
+)
 
-Face shape: soft oval-to-heart-shaped face, slightly wider upper face tapering gradually toward a small rounded chin. Smooth tapered jawline with no sharp angularity.
-Eyes: large almond-shaped eyes with a subtly rounded appearance, natural double eyelids, balanced eye spacing and natural eyelashes. Keep the eyes proportionally large without making them anime-like or exaggerated.
-Eyebrows: medium-thin mostly straight eyebrows, naturally shaped, with a very subtle arch toward the outer ends.
-Nose: delicate straight nasal bridge, relatively narrow nose, small softly rounded nose tip and compact nasal wings.
-Lips: naturally soft medium-full lips, slightly fuller lower lip, soft cupid's bow and moderate mouth width.
-Cheeks: softly rounded cheeks with subtle natural volume and moderate cheekbones.
-Chin and jaw: small rounded chin and smooth tapered jawline.
-Facial proportions: harmonious spacing between eyes, nose and lips; delicate nose and mouth relative to the eyes; stable overall facial silhouette.
-Skin: light fair-to-light-medium warm-neutral skin tone with authentic natural skin texture, fine pores, subtle tonal variation and realistic specular highlights.
-
-IMMUTABLE IDENTITY: facial geometry, facial proportions, eye geometry, eyelid structure, eyebrow shape, nose geometry, lip geometry, cheek structure, jawline and chin shape.
-VARIABLE ATTRIBUTES: hairstyle, hair arrangement, expression, makeup, clothing, accessories, pose, lighting, camera, environment and photographic finish. Changing these must never change the facial identity.]"""
-
-TEXT_SUBJECT_PHRASE_GIRL = (
+# Photo mode (media_handler.py/channel_image_service.py): PHOTO_SUBJECT_RULE_GIRL
+# below tells the model to restate the locked face to override what's visible in
+# the source photo, so the phrase must actually carry that full description.
+PHOTO_SUBJECT_PHRASE_GIRL = (
     "the same adult Vietnamese woman defined by the Identity Lock above, with a "
     "soft oval-to-heart-shaped face, a smooth tapered jawline, large almond-shaped "
     "eyes with a subtly rounded appearance, natural double eyelids, medium-thin "
@@ -45,6 +50,10 @@ TEXT_SUBJECT_PHRASE_GIRL = (
     "rounded nose tip, naturally soft medium-full lips with a slightly fuller lower "
     "lip, softly rounded cheeks and a small rounded chin,"
 )
+
+# Text mode (/prompt): nothing to override, so no need to restate the face here -
+# the identity lock block already sits right above with the full description.
+TEXT_SUBJECT_PHRASE_GIRL = "the same woman described by the identity lock above,"
 
 SUBJECT_PHRASE_REFERENCE = "the subject from the attached reference image"
 
@@ -84,6 +93,30 @@ PHOTO_SUBJECT_RULE_REFERENCE = (
     'expression, outfit, setting, lighting and camera only when they are not already '
     'determined by the reference.'
 )
+
+# Text-mode rules (used by /prompt: there is no source photo, so unlike the PHOTO_*
+# rules above there is nothing to override - restating the locked face in "girl"
+# mode would just duplicate the identity lock block that already sits right above it.
+TEXT_SUBJECT_RULE_DESCRIBED = (
+    '2. CRITICAL - this prompt will be pasted as plain text with no image attached. '
+    'Never point to a reference image. If the user\'s description involves a person, '
+    'fully specify that person in words inside the first sentence as a complete '
+    'written identity blueprint: approximate age, ethnicity or facial character, '
+    'face shape, eye shape and colour, eyebrow shape, nose shape, lip shape, jawline '
+    'and chin, skin tone and texture, and hair colour, length, texture and parting - '
+    'inventing plausible details that fit the description. If the description '
+    'contains no person, skip the face description entirely.'
+)
+
+TEXT_SUBJECT_RULE_GIRL = (
+    "2. CRITICAL - the face is fixed by the identity lock above and has higher "
+    "priority than every scene instruction. Do NOT redescribe her facial features "
+    "again - refer to her only as \"the same woman described by the identity lock "
+    "above\" and take the pose, outfit, setting and mood entirely from the user's "
+    "description. Never let scene details alter the locked face."
+)
+
+TEXT_SUBJECT_RULE_REFERENCE = PHOTO_SUBJECT_RULE_REFERENCE
 
 IDENTITY_RULE_LOCK = (
     "1. ALWAYS place the exact identity lock text provided above at the start of the "
@@ -125,8 +158,42 @@ def render_instruction(template: str, identity: PromptIdentityConfig, **extra_fi
     )
 
 
-def resolve_prompt_identity(description: str) -> PromptIdentityConfig:
+PromptIdentityContext = Literal["photo", "text"]
+
+_SUBJECT_RULES: dict[PromptIdentityContext, dict[PromptIdentityMode, str]] = {
+    "photo": {
+        "reference": PHOTO_SUBJECT_RULE_REFERENCE,
+        "girl": PHOTO_SUBJECT_RULE_GIRL,
+        "described": PHOTO_SUBJECT_RULE_DESCRIBED,
+    },
+    "text": {
+        "reference": TEXT_SUBJECT_RULE_REFERENCE,
+        "girl": TEXT_SUBJECT_RULE_GIRL,
+        "described": TEXT_SUBJECT_RULE_DESCRIBED,
+    },
+}
+
+# Only "girl" mode's phrase differs by context (see PHOTO_SUBJECT_PHRASE_GIRL /
+# TEXT_SUBJECT_PHRASE_GIRL above); "reference" and "described" phrases are the
+# same invented-or-attached wording regardless of where they're rendered.
+_GIRL_SUBJECT_PHRASES: dict[PromptIdentityContext, str] = {
+    "photo": PHOTO_SUBJECT_PHRASE_GIRL,
+    "text": TEXT_SUBJECT_PHRASE_GIRL,
+}
+
+
+def resolve_prompt_identity(
+    description: str, context: PromptIdentityContext = "photo"
+) -> PromptIdentityConfig:
+    """Resolve which identity applies to `description`.
+
+    `context` picks the matching subject_rule wording: "photo" (default) is for
+    call sites that analyze an attached image (media_handler.py,
+    channel_image_service.py); "text" is for /prompt, which has no source image
+    and must not tell the model to look at or restate anything from one.
+    """
     normalized_description = description.lower()
+    rules = _SUBJECT_RULES[context]
 
     if any(keyword in normalized_description for keyword in KEEP_FACE_KEYWORDS):
         return PromptIdentityConfig(
@@ -134,7 +201,7 @@ def resolve_prompt_identity(description: str) -> PromptIdentityConfig:
             identity_lock=IDENTITY_LOCK_REFERENCE,
             identity_rule=IDENTITY_RULE_LOCK,
             subject_phrase=SUBJECT_PHRASE_REFERENCE,
-            subject_rule=PHOTO_SUBJECT_RULE_REFERENCE,
+            subject_rule=rules["reference"],
             mode_hint="📎 Hãy đính kèm ảnh gốc cùng prompt này trên app Gemini.",
         )
 
@@ -143,8 +210,8 @@ def resolve_prompt_identity(description: str) -> PromptIdentityConfig:
             mode="girl",
             identity_lock=IDENTITY_LOCK_GIRL,
             identity_rule=IDENTITY_RULE_LOCK,
-            subject_phrase=TEXT_SUBJECT_PHRASE_GIRL,
-            subject_rule=PHOTO_SUBJECT_RULE_GIRL,
+            subject_phrase=_GIRL_SUBJECT_PHRASES[context],
+            subject_rule=rules["girl"],
             mode_hint="🔒 Prompt dùng khóa khuôn mặt cố định, không cần đính kèm ảnh.",
         )
 
@@ -153,6 +220,6 @@ def resolve_prompt_identity(description: str) -> PromptIdentityConfig:
         identity_lock="",
         identity_rule=IDENTITY_RULE_NONE,
         subject_phrase=TEXT_SUBJECT_PHRASE_DESCRIBED,
-        subject_rule=PHOTO_SUBJECT_RULE_DESCRIBED,
+        subject_rule=rules["described"],
         mode_hint="🖼️ Prompt tự mô tả khuôn mặt bằng chữ, không cần đính kèm ảnh.",
     )

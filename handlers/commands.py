@@ -15,6 +15,7 @@ from ai import agnes_client, orchestrator, router9_client, tavily_client
 from channels import group_commands, zalo_repository, zalo_users
 from core import config, database as db
 from handlers import common
+from handlers.prompt_identity import render_instruction, resolve_prompt_identity
 from services import memory_service
 from services.telemetry import telemetry
 
@@ -23,75 +24,9 @@ logger = logging.getLogger(__name__)
 HISTORY_PROMPT_PREVIEW_MAX = 60
 HISTORY_LIMIT = 10
 
-# ---------------------------------------------------------------------------
-# Identity lock constants — dùng chung cho /prompt và media_handler.py
-# ---------------------------------------------------------------------------
-KEEP_FACE_KEYWORDS = ["giữ mặt", "giữ khuôn mặt", "mặt tôi", "mặt anh", "mặt em"]
-GIRL_KEYWORDS = ["cô gái 20", "gái 20"]
-
-IDENTITY_LOCK_REFERENCE = "[Identity Lock: Strictly maintain the exact facial features, skin tone, age, ethnicity, and facial proportions of the person in the reference image. Preserve natural skin texture and visible pores; DO NOT smooth or airbrush the face]"
-IDENTITY_LOCK_GIRL = """[IDENTITY LOCK (ABSOLUTE CONSISTENCY)
-The subject is the exact same 20-year-old Vietnamese woman in every generation. Preserve her facial identity with zero variation.
-Heart-shaped face with a smooth jawline, large round doe eyes, natural eyelashes, delicate nose, natural soft lips. Authentic Vietnamese beauty.
-CRUCIAL FOR REALISM: Unretouched natural skin texture, visible facial pores, subtle natural skin variations, realistic specular highlights on skin. ABSOLUTELY NO airbrushing, NO flawless porcelain skin, NO plastic smoothing.
-Maintain identical facial structure, facial proportions, eye shape, eyebrow shape, nose, lips, jawline, chin, skin tone, and overall identity across every image.]"""
-
-_IDENTITY_RULE_LOCK = "1. ALWAYS start with the exact identity lock text provided in the prompt structure above."
-_IDENTITY_RULE_NONE = (
-    "1. DO NOT include an \"[Identity Lock: ...]\" line at all, under any "
-    "circumstances. Start the prompt directly with the scene description."
-)
-
-# ---------------------------------------------------------------------------
-# /prompt — 3 trường hợp, mỗi trường hợp lấy khuôn mặt từ một nguồn khác
-# nhau nên phải tả chủ thể theo một cách khác nhau (giống media_handler.py):
-#   1. không từ khoá -> tự dựng khuôn mặt và tả thành chữ trong prompt
-#   2. "cô gái 20"    -> tả lại khuôn mặt trong IDENTITY_LOCK_GIRL thành chữ
-#   3. "mặt tôi"      -> khoá theo ảnh user đính kèm trên app Gemini
-# ---------------------------------------------------------------------------
-_TEXT_SUBJECT_PHRASE_DESCRIBED = (
-    "a woman in her early 20s with long dark brown hair parted in the middle, "
-    "an oval face with a soft jawline, almond-shaped dark brown eyes, softly "
-    "arched thin eyebrows, a small straight nose, full natural lips and fair "
-    "warm-toned skin,"
-)
-_TEXT_SUBJECT_PHRASE_GIRL = (
-    "the same 20-year-old Vietnamese woman defined in the Identity Lock above "
-    "- heart-shaped face with a smooth jawline, large round doe eyes with "
-    "natural eyelashes, a delicate nose and natural soft lips,"
-)
-_TEXT_SUBJECT_PHRASE_REFERENCE = "the subject from the attached reference image"
-
-_TEXT_SUBJECT_RULE_DESCRIBED = (
-    "2. CRITICAL - there is NO image anywhere in this workflow, so you must "
-    "NEVER write \"the reference image\", \"the attached photo\" or any phrase "
-    "pointing at an image. If the user's description involves a person, you "
-    "MUST fully specify that person in words inside the first sentence - "
-    "approximate age, ethnicity or facial character, face shape, eye shape and "
-    "eye colour, eyebrow shape, nose shape, lip shape, jawline and chin, skin "
-    "tone and skin texture, and hair colour, length, texture and parting - "
-    "inventing plausible details that fit the description, exactly like the "
-    "example. If the description contains no person (a scene, object or "
-    "landscape), skip the face description entirely."
-)
-_TEXT_SUBJECT_RULE_GIRL = (
-    "2. CRITICAL - the face is FIXED by the Identity Lock above and must be "
-    "identical in every generation. You MUST also restate that locked face as "
-    "a written description inside the first sentence of the prompt (face "
-    "shape, jawline, eye shape, eyelashes, nose, lips, age, ethnicity), copied "
-    "faithfully from the Identity Lock block, exactly like the example. Take "
-    "only the pose, outfit, setting and mood from the user's description, and "
-    "never let the description override the locked face."
-)
-_TEXT_SUBJECT_RULE_REFERENCE = (
-    "2. CRITICAL - the user will attach their own photo together with this "
-    "prompt, so the identity is carried by that attachment. Refer to the "
-    "subject as \"the subject from the attached reference image\" and state "
-    "that the face must match the attached photo exactly. DO NOT invent "
-    "concrete facial features (eye colour, face shape, nose or lip shape, hair "
-    "colour): inventing them fights the attached photo and changes the face. "
-    "Describe only pose, expression, outfit, setting and lighting."
-)
+# Identity lock / keyword-mode logic (giữ mặt / cô gái 20 / tự mô tả) sống ở
+# handlers/prompt_identity.py - dùng chung cho /prompt, channel_command_service.py
+# và media_handler.py để không lệch nhau giữa các nơi gọi.
 
 # ---------------------------------------------------------------------------
 # Cache ngắn hạn cho /gia
@@ -214,7 +149,7 @@ She is wearing a plain oversized grey cotton t-shirt and simple straight-leg jea
 
 The background is an ordinary street with a low garden wall and parked cars, moderately out of focus.
 
-Shot on an iPhone 15 Pro Max, 48mm-equivalent lens at f/1.8, matching the plain everyday snapshot look of this scene.
+Shot on a smartphone camera, 48mm-equivalent lens at f/1.8, matching the plain everyday snapshot look of this scene.
 
 Soft, warm late-afternoon daylight. Natural skin texture with visible pores and slight imperfections. Subtle chromatic aberration, fine film grain. Authentic, raw, documentary photography style.
 ---
@@ -225,14 +160,14 @@ Rules for what you generate:
 {identity_rule}
 {subject_rule}
 3. ACCURATELY describe the outfit, accessories and vibe based on the user's description.
-4. FRAMING IS MANDATORY - never omit it. In the first paragraph you MUST state, in plain words: (a) the orientation and aspect ratio, written out as "vertical 9:16 portrait orientation", "vertical 4:5 portrait orientation", "square 1:1 framing" or "horizontal 16:9 landscape orientation"; (b) the shot size (extreme close-up, head-and-shoulders portrait, waist-up, three-quarter body, full body, or wide environmental shot); (c) the camera height and angle (at eye level, at chest height, low angle looking up, high angle looking down); (d) roughly how far the camera is from the subject; and (e) how much of the frame the subject occupies and how much headroom there is. Follow the user's description when it says anything about framing; when it does not, choose sensibly - a vertical 9:16 portrait orientation with the person filling most of the frame for a shot of a person, and a horizontal orientation only for a landscape or a wide scene. A generator given no framing information defaults to a wide horizontal image with a small, distant subject, which is almost never what the user wants.
+4. FRAMING IS MANDATORY - never omit it. In the first paragraph you MUST state, in plain words: (a) the orientation and aspect ratio, written out as "vertical 9:16 portrait orientation", "vertical 4:5 portrait orientation", "square 1:1 framing" or "horizontal 16:9 landscape orientation"; (b) the shot size (extreme close-up, head-and-shoulders portrait, waist-up, three-quarter body, full body, or wide environmental shot); (c) the camera height and angle (at eye level, at chest height, low angle looking up, high angle looking down); (d) roughly how far the camera is from the subject; and (e) how much of the frame the subject occupies and how much headroom there is. Follow the user's description when it says anything about framing; when it does not, choose a sensible framing - a vertical 9:16 portrait orientation with the person filling most of the frame for a shot of a person, and a horizontal orientation only for a landscape or a wide scene. A generator given no framing information defaults to a wide horizontal image with a small, distant subject, which is almost never what the user wants.
 5. POSE MUST BE GEOMETRICALLY PRECISE - vague phrases such as "arms outstretched", "posing naturally" or "hands out" get misread ("arms outstretched with open palms" is commonly rendered as a shrug with bent elbows and palms up at shoulder height). Devote a short paragraph to the body and state: the angle of each arm relative to the torso, whether each elbow is straight or bent, the height of each hand (hip, waist, chest, shoulder, above the head), which way each palm faces, what the hands are touching or holding, the stance and weight distribution, the shoulder and torso rotation, the head tilt and chin height, the direction of the gaze, whether the mouth is closed or open, and how the hair falls or is blown. Invent plausible specifics that fit the user's description rather than leaving any of these vague.
 6. LIGHTING AND GRAIN MUST MATCH THE SCENE the user describes. Only write "low-light noise" for a genuine night or dim indoor scene; for daylight, overcast or bright indoor scenes write the correct light and use "fine film grain" or "subtle sensor noise" instead. Contradictory lighting terms make the result look wrong.
-7. CAMERA AND LENS MUST MATCH THE SHOT YOU ARE DESCRIBING, never copied from the example. A tight portrait with a compressed, strongly blurred background implies a longer lens (roughly 70-135mm equivalent at a wide aperture); a normal half-body shot implies around 40-55mm; only a deliberately wide, environment-heavy shot implies 24-35mm. State the focal length and aperture that match, and describe the depth of field (background strongly blurred, softly blurred, or mostly sharp). A wide focal length pushes the subject away and shrinks them in the frame, so do not use one for a close portrait.
+7. CAMERA AND LENS MUST MATCH THE SHOT YOU ARE DESCRIBING, never copied from the example. A tight portrait with a compressed, strongly blurred background implies a longer lens (roughly 70-135mm equivalent at a wide aperture); a normal half-body shot implies around 40-55mm; only a deliberately wide, environment-heavy shot implies 24-35mm. State the focal length and aperture that match, and describe the depth of field (background strongly blurred, softly blurred, or mostly sharp). A wide focal length pushes the subject away and shrinks them in the frame, so do not use one for a close portrait. Do not invent a camera brand or exact model unless the user's description names one - describe the camera generically instead ("a smartphone camera", "a full-frame camera").
 8. THE FINISH MUST MATCH THE LOOK THE USER ASKS FOR, and this overrides any default preference for raw photography. If the user wants an ordinary unpolished snapshot, use terms like "candid", "unretouched", "raw photo", "natural skin texture", "visible pores", "film grain", "amateur lighting". If instead the user asks for something polished, glamorous, dreamy, cinematic or social-media styled, say so plainly: "softly retouched", "smooth luminous skin", "gentle beauty-filter finish", "rich saturated colour", "strong creamy background blur", and in that case you MUST NOT write "visible pores", "unretouched", "skin imperfections" or "zero airbrushing", because those terms fight the requested look. Whichever branch you choose, always keep the shot reading as a real photograph.
 9. DO NOT append any tool-specific flags or parameters such as "--ar 4:5", "--v 6", "--style raw" or "::". These belong to other tools and are meaningless here; the aspect ratio belongs in the framing sentence required by rule 4, written in plain words.
 10. FORBIDDEN WORDS: NEVER use terms like "masterpiece", "8k", "ultra-photorealistic", "perfect", "flawless" or "editorial". These are empty booster words and make the image look fake.
-11. Output ONLY the final prompt as plain text, no markdown headers, no preamble.
+11. Output ONLY the final prompt as plain text: no markdown headers, no preamble, no tool-specific flags.
 
 User's basic description: {user_desc}"""
 
@@ -291,38 +226,8 @@ async def prompt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     prompt_id = await telemetry.start(user_id, "prompt_generator", user_desc)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    # Xác định nguồn khuôn mặt theo từ khoá (3 trường hợp, xem phần hằng số
-    # _TEXT_SUBJECT_* ở đầu file):
-    # - giữ mặt / mặt tôi ... -> mặt nằm ở ảnh user đính kèm trên app Gemini
-    # - cô gái 20 / gái 20   -> mặt nằm ở khối lock cố định, phải tả ra chữ
-    # - không từ khoá        -> tự dựng khuôn mặt và tả ra chữ
-    desc_lower = user_desc.lower()
-    if any(kw in desc_lower for kw in KEEP_FACE_KEYWORDS):
-        identity_lock_block = f"{IDENTITY_LOCK_REFERENCE}\n\n"
-        identity_rule = _IDENTITY_RULE_LOCK
-        subject_phrase = _TEXT_SUBJECT_PHRASE_REFERENCE
-        subject_rule = _TEXT_SUBJECT_RULE_REFERENCE
-        mode_hint = "\n\n📎 Nhớ đính kèm ảnh của anh cùng prompt này trên app Gemini nha."
-    elif any(kw in desc_lower for kw in GIRL_KEYWORDS):
-        identity_lock_block = f"{IDENTITY_LOCK_GIRL}\n\n"
-        identity_rule = _IDENTITY_RULE_LOCK
-        subject_phrase = _TEXT_SUBJECT_PHRASE_GIRL
-        subject_rule = _TEXT_SUBJECT_RULE_GIRL
-        mode_hint = "\n\n🔒 Khoá khuôn mặt cố định - dán prompt KHÔNG kèm ảnh để giữ đúng nhân vật."
-    else:
-        identity_lock_block = ""
-        identity_rule = _IDENTITY_RULE_NONE
-        subject_phrase = _TEXT_SUBJECT_PHRASE_DESCRIBED
-        subject_rule = _TEXT_SUBJECT_RULE_DESCRIBED
-        mode_hint = "\n\n🖼️ Prompt tự tả khuôn mặt bằng chữ - dán là dùng được, không cần đính kèm ảnh."
-
-    instruction = TEXT_PROMPT_INSTRUCTION_BASE.format(
-        identity_lock_block=identity_lock_block,
-        subject_phrase=subject_phrase,
-        identity_rule=identity_rule,
-        subject_rule=subject_rule,
-        user_desc=user_desc,
-    )
+    identity = resolve_prompt_identity(user_desc, context="text")
+    instruction = render_instruction(TEXT_PROMPT_INSTRUCTION_BASE, identity, user_desc=user_desc)
 
     try:
         response = await orchestrator.ask(instruction)
@@ -340,7 +245,7 @@ async def prompt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         header = "📝 <b>Prompt gợi ý</b> — chạm vào khối bên dưới để chép:"
         if getattr(response, "used_fallback", False):
             header += "  ⚙️ API"
-        header += mode_hint
+        header += f"\n\n{identity.mode_hint}"
         await update.message.reply_text(header, parse_mode="HTML")
         await common.reply_code_block(update.message, result_text)
     except Exception as e:
