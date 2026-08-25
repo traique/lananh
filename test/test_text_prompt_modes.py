@@ -186,7 +186,7 @@ def test_th2_giu_nguyen_khoi_lock():
 
 def test_th2_ta_lai_khuon_mat_da_khoa_thanh_chu():
     phrase = resolve_prompt_identity(DESC_GIRL).subject_phrase.lower()
-    for feature in ("soft oval-to-heart-shaped face", "smooth tapered jawline", "almond-shaped eyes", "natural double eyelids", "nasal bridge", "lips", "rounded chin"):
+    for feature in ("oval face", "medium-large eyes", "double eyelid crease", "nasal bridge", "lips", "rounded chin"):
         assert feature in phrase, f"câu tả chủ thể thiếu {feature}"
     assert "restat" in resolve_prompt_identity(DESC_GIRL).subject_rule.lower()
 

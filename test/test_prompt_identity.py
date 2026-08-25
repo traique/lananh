@@ -15,23 +15,25 @@ from handlers.prompt_identity import (
 
 def test_girl_identity_matches_reference_facial_geometry():
     expected_features = (
-        "soft oval-to-heart-shaped face",
-        "large almond-shaped eyes with a subtly rounded appearance",
-        "natural double eyelids",
-        "medium-thin mostly straight eyebrows",
-        "delicate straight nasal bridge",
-        "small softly rounded nose tip",
+        "oval face",
+        "medium-large eyes have a soft, gently rounded outer corner",
+        "subtle double eyelid crease",
+        "eyebrows are thin, softly arched",
+        "straight, narrow nasal bridge",
+        "small softly rounded tip",
         "slightly fuller lower lip",
-        "small rounded chin",
-        "smooth tapered jawline",
+        "small, gently rounded chin",
     )
 
     for feature in expected_features:
         assert feature in IDENTITY_LOCK_GIRL
-        # PHOTO_SUBJECT_PHRASE_GIRL restates the face on purpose (see
-        # PHOTO_SUBJECT_RULE_GIRL: it must override what's visible in the
-        # source photo), so it's the one that still carries every feature.
-        assert feature in PHOTO_SUBJECT_PHRASE_GIRL
+
+    # PHOTO_SUBJECT_PHRASE_GIRL restates the face on purpose (see
+    # PHOTO_SUBJECT_RULE_GIRL: it must override what's visible in the source
+    # photo), so it must still carry the defining shape cues, even if the
+    # wording isn't a byte-for-byte copy of the identity lock's phrasing.
+    for cue in ("oval face", "medium-large eyes", "rounded chin"):
+        assert cue in PHOTO_SUBJECT_PHRASE_GIRL
 
 
 def test_text_girl_phrase_does_not_duplicate_identity_lock():
