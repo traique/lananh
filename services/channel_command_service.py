@@ -1,17 +1,22 @@
 """Text command implementation for non-Telegram channels."""
-from ai import orchestrator, router9_client, tavily_client
+import base64
+import contextvars
+
+from ai import agnes_client, orchestrator, router9_client, tavily_client
 from core import config, database as db
 from handlers import commands as telegram_commands
+from handlers.prompt_identity import render_instruction, resolve_prompt_identity
 from services import memory_service, translate_service
 from services.telemetry import telemetry
 
 HELP = """📖 Lệnh trên Zalo/Zoom
 /prompt <mô tả> — viết prompt tạo ảnh
+/anh <mô tả> — tạo ảnh thật (Agnes AI)
 /gia <sản phẩm> — tìm và so sánh giá
 /dich [ja>vi|vi>ja] <nội dung> — dịch chat công việc Nhật-Việt
 /reset — xoá ngữ cảnh chat
 /history — xem 10 lượt gần nhất
-/memory — xem trí nhớ dài hạn
+/memory [on|off] — xem, bật hoặc tắt trí nhớ dài hạn
 /forget — xoá trí nhớ dài hạn
 /notes — xem ghi chú
 /model [tên|auto] — xem hoặc đổi model (chỉ admin)
@@ -19,50 +24,70 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /userouter9 — thử lại 9Router (chỉ admin)
 /router9 on|off — bật/tắt 9Router thủ công (chỉ admin)
 /tavily on|off — bật/tắt tra web Tavily trước khi trả lời (chỉ admin)
+/anh on|off — bật/tắt tạo ảnh Agnes AI (chỉ admin)
 /nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo
   (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom, chỉ admin)"""
+
+# Ảnh do lệnh /anh tạo ra được "gửi kèm" bằng ContextVar thay vì đổi kiểu trả
+# về của maybe_handle_command() (đang là tuple[list[str], str|None] và có
+# ~30 điểm return rải khắp file) - ContextVar cô lập đúng theo từng asyncio
+# Task, nên nhiều request Zalo/Zoom chạy đồng thời KHÔNG ghi đè ảnh của nhau,
+# khác với 1 biến module thường. Nơi gọi maybe_handle_command() (xem
+# services/channel_chat_service.py) phải gọi take_pending_image() ngay sau
+# để lấy (và xoá) ảnh, nếu có.
+_pending_image: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_pending_image_b64", default=None
+)
+# Riêng cho Zoom: Chatbot API của Zoom nhận thẳng URL ảnh công khai (Zoom tự
+# tải về), KHÔNG cần base64/Buffer như Zalo - xem channels/zoom.py::send_image_message.
+_pending_image_url: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_pending_image_url", default=None
+)
+
+
+def take_pending_image() -> str | None:
+    image = _pending_image.get()
+    if image is not None:
+        _pending_image.set(None)
+    return image
+
+
+def take_pending_image_url() -> str | None:
+    url = _pending_image_url.get()
+    if url is not None:
+        _pending_image_url.set(None)
+    return url
 
 
 def _arg(text: str) -> str:
     return text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) == 2 else ""
 
 
-async def _prompt(user_id: int, description: str) -> tuple[list[str], str | None]:
+async def _prompt(user_id: int, description: str, channel: str = "zalo") -> tuple[list[str], str | None]:
     if not description:
         return ["Cú pháp: /prompt <mô tả muốn tạo prompt>"], None
-    lower = description.lower()
-    c = telegram_commands
-    if any(keyword in lower for keyword in c.KEEP_FACE_KEYWORDS):
-        lock, rule, subject, subject_rule = c.IDENTITY_LOCK_REFERENCE + "\n\n", c._IDENTITY_RULE_LOCK, c._TEXT_SUBJECT_PHRASE_REFERENCE, c._TEXT_SUBJECT_RULE_REFERENCE
-        hint = "📎 Hãy đính kèm ảnh gốc cùng prompt này trên app Gemini."
-    elif any(keyword in lower for keyword in c.GIRL_KEYWORDS):
-        lock, rule, subject, subject_rule = c.IDENTITY_LOCK_GIRL + "\n\n", c._IDENTITY_RULE_LOCK, c._TEXT_SUBJECT_PHRASE_GIRL, c._TEXT_SUBJECT_RULE_GIRL
-        hint = "🔒 Prompt dùng khóa khuôn mặt cố định, không cần đính kèm ảnh."
-    else:
-        lock, rule, subject, subject_rule = "", c._IDENTITY_RULE_NONE, c._TEXT_SUBJECT_PHRASE_DESCRIBED, c._TEXT_SUBJECT_RULE_DESCRIBED
-        hint = "🖼️ Prompt tự mô tả khuôn mặt bằng chữ."
-    instruction = c.TEXT_PROMPT_INSTRUCTION_BASE.format(
-        identity_lock_block=lock, identity_rule=rule, subject_phrase=subject,
-        subject_rule=subject_rule, user_desc=description,
-    )
-    prompt_id = await telemetry.start(user_id, "prompt_generator", description)
+    identity = resolve_prompt_identity(description)
+    mode_hint = identity.mode_hint
+    instruction = render_instruction(telegram_commands.TEXT_PROMPT_INSTRUCTION_BASE, identity, user_desc=description)
+
+    prompt_id = await telemetry.start(user_id, "prompt_generator", description, channel=channel)
     try:
         response = await orchestrator.ask(instruction)
         output = (response.text or "").strip()
         await telemetry.success(prompt_id, "prompt_generator", output or "(không có nội dung)")
-        return ([f"{hint}\n\n{output}"] if output else ["Gemini không trả về prompt, hãy thử lại."]), ("api" if getattr(response, "used_fallback", False) else None)
+        return ([f"{mode_hint}\n\n{output}"] if output else ["Gemini không trả về prompt, hãy thử lại."]), ("api" if getattr(response, "used_fallback", False) else None)
     except Exception as exc:
         await telemetry.failure(prompt_id, "prompt_generator", exc)
         return ["❌ Có lỗi khi tạo prompt. Hãy thử lại sau."], None
 
 
-async def _price(user_id: int, product: str) -> tuple[list[str], str | None]:
+async def _price(user_id: int, product: str, channel: str = "zalo") -> tuple[list[str], str | None]:
     if not product:
         return ["Cú pháp: /gia <tên sản phẩm>, ví dụ /gia iPhone 16 Pro"], None
     cached = telegram_commands._get_cached_price(product)
     if cached:
         return [cached], None
-    prompt_id = await telemetry.start(user_id, "price_search", product)
+    prompt_id = await telemetry.start(user_id, "price_search", product, channel=channel)
     try:
         response = await orchestrator.ask(
             telegram_commands.PRICE_SEARCH_SYSTEM.format(product_name=product),
@@ -79,7 +104,7 @@ async def _price(user_id: int, product: str) -> tuple[list[str], str | None]:
         return ["❌ Có lỗi khi tìm giá sản phẩm."], None
 
 
-async def _translate(user_id: int, argument: str) -> tuple[list[str], str | None]:
+async def _translate(user_id: int, argument: str, channel: str = "zalo") -> tuple[list[str], str | None]:
     if not argument.strip():
         return [
             "Cú pháp: /dich [ja>vi|vi>ja] <nội dung>\n"
@@ -93,7 +118,7 @@ async def _translate(user_id: int, argument: str) -> tuple[list[str], str | None
     if not text.strip():
         return ["Cú pháp: /dich [ja>vi|vi>ja] <nội dung>"], None
 
-    prompt_id = await telemetry.start(user_id, "translate", text)
+    prompt_id = await telemetry.start(user_id, "translate", text, channel=channel)
     try:
         result, resolved, response = await translate_service.translate(text, direction)
     except ValueError as exc:
@@ -112,8 +137,45 @@ async def _translate(user_id: int, argument: str) -> tuple[list[str], str | None
     return [f"🇯🇵↔🇻🇳 {label}\n\n{result}"], provider
 
 
+async def _generate_image(argument: str, is_admin: bool, channel: str) -> tuple[list[str], str | None]:
+    lowered = argument.strip().lower()
+    if lowered in telegram_commands._ROUTER9_ON_ARGS or lowered in telegram_commands._ROUTER9_OFF_ARGS:
+        if not is_admin:
+            return ["Lệnh này chỉ dành cho admin."], None
+        enabled = lowered in telegram_commands._ROUTER9_ON_ARGS
+        await agnes_client.set_enabled(enabled)
+        return (
+            ["✅ Đã bật tạo ảnh (Agnes AI)."] if enabled
+            else ["🔴 Đã tắt tạo ảnh cho tới khi bật lại bằng /anh on."]
+        ), None
+    if not argument.strip():
+        enabled = await agnes_client.get_enabled()
+        return [
+            f"🖼️ Tạo ảnh (Agnes AI) đang {'BẬT' if enabled else 'TẮT'}.\n"
+            "Dùng /anh <mô tả> để tạo ảnh, hoặc /anh on|off để bật/tắt (admin)."
+        ], None
+    try:
+        image = await agnes_client.generate_image(argument.strip())
+    except agnes_client.AgnesError as exc:
+        return [f"❌ Không tạo được ảnh: {exc}"], None
+
+    caption = f"🖼️ {argument.strip()[:200]}"
+    if channel == "zoom":
+        # Zoom gửi ảnh qua URL công khai (Zoom tự tải), KHÔNG qua base64 -
+        # xem channels/zoom.py::send_image_message + web.py::_process_zoom_event.
+        if not image.url:
+            return ["❌ Tạo ảnh thành công nhưng thiếu URL để gửi qua Zoom - thử lại nhé."], None
+        _pending_image_url.set(image.url)
+        return [caption], None
+
+    # Zalo (và mọi kênh khác dùng ChannelResult.image_b64 sau này): gửi qua
+    # base64 để zalo-gateway tự dựng Buffer, xem take_pending_image() đầu file.
+    _pending_image.set(base64.b64encode(image.data).decode("ascii"))
+    return [caption], None
+
+
 async def maybe_handle_command(
-    user_id: int, text: str, is_admin: bool = True
+    user_id: int, text: str, is_admin: bool = True, channel: str = "zalo"
 ) -> tuple[list[str], str | None] | None:
     if not text.startswith("/"):
         return None
@@ -123,21 +185,33 @@ async def maybe_handle_command(
     if command in {"/start", "/help"}:
         return [HELP], None
     if command == "/prompt":
-        return await _prompt(user_id, argument)
+        return await _prompt(user_id, argument, channel)
     if command == "/gia":
-        return await _price(user_id, argument)
+        return await _price(user_id, argument, channel)
     if command == "/dich":
-        return await _translate(user_id, argument)
+        return await _translate(user_id, argument, channel)
+    if command == "/anh":
+        return await _generate_image(argument, is_admin, channel)
     if command == "/reset":
         await orchestrator.reset_chat(); await db.clear_chat(user_id)
         return ["🔄 Đã xoá ngữ cảnh hội thoại."], None
     if command == "/memory":
+        lowered = argument.strip().lower()
+        if lowered in telegram_commands._ROUTER9_ON_ARGS:
+            await memory_service.set_enabled(user_id, True)
+            return ["✅ Đã bật trí nhớ dài hạn."], None
+        if lowered in telegram_commands._ROUTER9_OFF_ARGS:
+            await memory_service.set_enabled(user_id, False)
+            return ["🔴 Đã tắt trí nhớ dài hạn. Dùng /memory on để bật lại."], None
         facts, summary = await db.get_facts(user_id), await db.get_summary(user_id)
+        enabled = await memory_service.is_enabled(user_id)
+        status_line = f"\nTrạng thái: {'BẬT' if enabled else 'TẮT'} (/memory on|off để đổi)"
         if not facts and not summary:
-            return ["🧠 Chưa có trí nhớ dài hạn."], None
+            return [f"🧠 Chưa có trí nhớ dài hạn.{status_line}"], None
         lines = ["🧠 Trí nhớ dài hạn:"]
         if summary: lines.append(f"\nTóm tắt: {summary}")
         lines.extend(f"• {key}: {value}" for key, value in facts)
+        lines.append(status_line)
         return ["\n".join(lines)], None
     if command == "/forget":
         await memory_service.clear_memory(user_id)

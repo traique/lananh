@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 class TelemetryService:
-    async def start(self, telegram_user_id: int, action_type: str, prompt_text: str) -> int:
-        return await db.save_prompt(telegram_user_id, action_type, prompt_text)
+    async def start(self, telegram_user_id: int, action_type: str, prompt_text: str, channel: str = "telegram") -> int:
+        return await db.save_prompt(telegram_user_id, action_type, prompt_text, channel=channel)
 
     async def success(self, prompt_id: int, action_type: str, content_text: str) -> None:
         await db.save_result(prompt_id, action_type, content_text=content_text)

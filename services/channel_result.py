@@ -13,3 +13,5 @@ from dataclasses import dataclass
 class ChannelResult:
     messages: list[str]
     provider: str | None = None
+    image_b64: str | None = None
+    image_url: str | None = None

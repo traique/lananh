@@ -8,7 +8,7 @@ from ai import orchestrator, tavily_client
 from core import database as db
 from services import memory_service, portfolio_service, tools
 from services.background_tasks import stop_tracked_tasks
-from services.channel_command_service import maybe_handle_command
+from services import channel_command_service
 from services.channel_result import ChannelResult
 from services.telemetry import telemetry
 from stock import analysis as stock_analysis
@@ -117,7 +117,7 @@ async def _handle_stock(user_id: int, text: str) -> tuple[ChannelResult | None, 
     return None, await stock_analysis.build_price_grounding(symbols)
 
 
-async def handle_channel_text(user_id: int, text: str, is_admin: bool = True) -> ChannelResult:
+async def handle_channel_text(user_id: int, text: str, is_admin: bool = True, channel: str = "zalo") -> ChannelResult:
     text = (text or "").strip()
     if not text:
         return ChannelResult([])
@@ -125,10 +125,15 @@ async def handle_channel_text(user_id: int, text: str, is_admin: bool = True) ->
     portfolio_command = await portfolio_service.handle_command(user_id, text)
     if portfolio_command is not None:
         return ChannelResult([portfolio_command])
-    command_result = await maybe_handle_command(user_id, text, is_admin)
+    command_result = await channel_command_service.maybe_handle_command(user_id, text, is_admin, channel)
     if command_result is not None:
         outputs, provider = command_result
-        return ChannelResult(outputs, provider)
+        return ChannelResult(
+            outputs,
+            provider,
+            channel_command_service.take_pending_image(),
+            channel_command_service.take_pending_image_url(),
+        )
     portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
     if portfolio_result is not None:
         return ChannelResult([portfolio_result])
@@ -136,12 +141,12 @@ async def handle_channel_text(user_id: int, text: str, is_admin: bool = True) ->
     stock_result, grounding = await _handle_stock(user_id, text)
     if stock_result is not None:
         return stock_result
-    prompt_id = await telemetry.start(user_id, "chat", text)
+    prompt_id = await telemetry.start(user_id, "chat", text, channel=channel)
     try:
         tool_result = await tools.maybe_run_tool(user_id, text)
         search_result = await _maybe_tavily_search(text)
         combined = "\n\n".join(part for part in (grounding, tool_result, search_result) if part)
-        memory = await memory_service.build_memory_context(user_id, query_text=text)
+        memory = await memory_service.build_memory_context(user_id)
         response = await orchestrator.chat(
             user_id,
             text,
