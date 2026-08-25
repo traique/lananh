@@ -9,7 +9,7 @@ from telegram.request import HTTPXRequest
 
 import scheduler
 import tg_format
-from ai import orchestrator, router9_client, groq_client, openrouter_client, tavily_client
+from ai import agnes_client, orchestrator, router9_client, groq_client, openrouter_client, tavily_client
 from channels import zalo_users
 from core import config, database as db, idempotency
 from handlers import chat_router, commands, media_handler, portfolio_commands, zalo_login
@@ -43,6 +43,7 @@ COMMANDS = [
     BotCommand("userouter9", "Thử lại 9Router"),
     BotCommand("router9", "Bật/tắt 9Router (on|off)"),
     BotCommand("tavily", "Bật/tắt tra web Tavily (on|off)"),
+    BotCommand("anh", "Tạo ảnh thật từ mô tả (Agnes AI)"),
     BotCommand("zoompair", "Cấp quyền 1 jid Zoom"),
     BotCommand("zoomxoa", "Gỡ pairing Zoom"),
     BotCommand("zoomstatus", "Xem jid Zoom đã pair"),
@@ -103,6 +104,7 @@ async def _post_shutdown(app):
     await run_step("Groq client", groq_client.close())
     await run_step("OpenRouter client", openrouter_client.close())
     await run_step("Tavily client", tavily_client.close())
+    await run_step("Agnes AI client", agnes_client.close())
 
     await run_step("stock HTTP client", stock_providers.close_http_client())
     await run_step("database pool", db.close_pool())
@@ -146,6 +148,7 @@ def build_application():
         ("userouter9", commands.userouter9_cmd),
         ("router9", commands.router9_toggle_cmd),
         ("tavily", commands.tavily_toggle_cmd),
+        ("anh", commands.anh_cmd),
         ("zoompair", commands.zoompair_cmd),
         ("zoomxoa", commands.zoomxoa_cmd),
         ("zoomstatus", commands.zoomstatus_cmd),

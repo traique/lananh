@@ -27,6 +27,10 @@ services:
         sync: false
       - key: DIAGNOSE_SECRET
         generateValue: true
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASS
+        sync: false
       - key: GOOGLE_AI_STUDIO_API_KEY_1
         sync: false
       - key: GOOGLE_AI_STUDIO_API_KEY_2
@@ -88,6 +92,14 @@ services:
         sync: false
       - key: TAVILY_API_KEY
         sync: false
+      - key: AGNES_API_KEY
+        sync: false
+      - key: AGNES_BASE_URL
+        value: https://apihub.agnes-ai.com/v1
+      - key: AGNES_IMAGE_MODEL
+        value: agnes-image-2.1-flash
+      - key: AGNES_CALL_TIMEOUT_SEC
+        value: "90"
       - key: ZOOM_ENABLED
         value: "true"
       - key: ZOOM_CLIENT_ID
