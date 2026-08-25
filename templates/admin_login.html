@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Đăng nhập Admin</title>
+<style>
+  :root{
+    --text:#1c1c1e; --muted:#6e6e73;
+    --glass-bg:rgba(255,255,255,.5); --glass-border:rgba(255,255,255,.55);
+    --glass-shadow:0 8px 30px rgba(31,38,90,.14), 0 1px 1px rgba(31,38,90,.06);
+    --accent-a:#0a84ff; --accent-b:#5e5ce6; --bad-fg:#b3261e; --bad-bg:rgba(255,69,58,.14);
+    --radius-lg:28px; --radius-sm:12px;
+  }
+  *{box-sizing:border-box}
+  html{background:#dfe6f5}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;
+    color:var(--text); margin:0; min-height:100vh;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+    position:relative; overflow:hidden;
+  }
+  body::before{
+    content:""; position:fixed; inset:-10%; z-index:-1;
+    background:
+      radial-gradient(38% 34% at 12% 8%, #7bd7ff 0%, transparent 70%),
+      radial-gradient(42% 38% at 88% 12%, #c9a8ff 0%, transparent 70%),
+      radial-gradient(46% 42% at 20% 92%, #ffb4d0 0%, transparent 70%),
+      radial-gradient(50% 46% at 90% 88%, #9fe6c8 0%, transparent 70%),
+      linear-gradient(160deg, #eef2fb, #dfe6f5 60%, #e8e4fb);
+  }
+  .card{
+    width:100%; max-width:340px; padding:32px 28px;
+    background:var(--glass-bg); -webkit-backdrop-filter:blur(28px) saturate(180%);
+    backdrop-filter:blur(28px) saturate(180%);
+    border:1px solid var(--glass-border); border-radius:var(--radius-lg);
+    box-shadow:var(--glass-shadow);
+  }
+  h1{font-size:20px; margin:0 0 4px; letter-spacing:-.02em}
+  p.sub{color:var(--muted); font-size:13px; margin:0 0 22px}
+  label{display:block; font-size:12px; font-weight:600; color:var(--muted); margin:14px 0 6px}
+  input{
+    width:100%; padding:10px 12px; border:1px solid rgba(60,60,67,.16);
+    border-radius:var(--radius-sm); font-size:14px; background:rgba(255,255,255,.6);
+  }
+  input:focus{outline:2px solid var(--accent-a); outline-offset:-1px; background:rgba(255,255,255,.9)}
+  button{
+    width:100%; margin-top:22px; padding:11px; border:none; border-radius:999px;
+    font-size:14px; font-weight:600; color:#fff; cursor:pointer;
+    background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
+    box-shadow:0 4px 14px rgba(94,92,230,.35);
+  }
+  .err{background:var(--bad-bg); color:var(--bad-fg); font-size:13px; padding:8px 12px; border-radius:var(--radius-sm); margin-top:16px}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Provider Chain Admin</h1>
+    <p class="sub">Đăng nhập để quản lý provider và xem thống kê sử dụng.</p>
+    <form method="post" action="/admin/login">
+      <label for="username">Tài khoản</label>
+      <input id="username" name="username" autocomplete="username" required autofocus>
+      <label for="password">Mật khẩu</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Đăng nhập</button>
+    </form>
+    <!--ERROR-->
+  </div>
+</body>
+</html>
