@@ -210,6 +210,18 @@
     <table id="usage-table"></table>
   </section>
 
+  <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>Lượt gọi theo model</h2>
+    <div class="actions" style="margin-top:0;margin-bottom:14px">
+      <select id="usage-models-range">
+        <option value="24">24 giờ qua</option>
+        <option value="168" selected>7 ngày qua</option>
+        <option value="720">30 ngày qua</option>
+      </select>
+    </div>
+    <table id="usage-models-table"></table>
+  </section>
+
 </div>
 </div>
 
@@ -533,6 +545,19 @@ async function loadUsage() {
 }
 document.getElementById('usage-range').onchange = () => loadUsage().catch(e => msg(e.message, true));
 
+async function loadUsageModels() {
+  const hours = document.getElementById('usage-models-range').value;
+  const rows = await api(`/admin/api/usage/models?hours=${hours}`);
+  const table = document.getElementById('usage-models-table');
+  if (!rows.length) {
+    table.innerHTML = '<tr><td class="muted">Chưa có lượt gọi nào trong khoảng thời gian này.</td></tr>';
+    return;
+  }
+  table.innerHTML = '<tr><th>Provider</th><th>Model</th><th>Lượt gọi</th><th>Gần nhất</th></tr>' +
+    rows.map(r => `<tr><td>${r.provider}</td><td class="muted" style="font-family:var(--mono)">${r.model}</td><td>${r.calls}</td><td>${fmtDate(r.last_call_at)}</td></tr>`).join('');
+}
+document.getElementById('usage-models-range').onchange = () => loadUsageModels().catch(e => msg(e.message, true));
+
 document.getElementById('logout-link').onclick = async (e) => {
   e.preventDefault();
   await fetch('/admin/logout', { method: 'POST' });
@@ -545,6 +570,7 @@ loadTavily().catch(e => msg(e.message, true));
 loadAgnes().catch(e => msg(e.message, true));
 loadMemory().catch(e => msg(e.message, true));
 loadUsage().catch(e => msg(e.message, true));
+loadUsageModels().catch(e => msg(e.message, true));
 setInterval(() => loadState().catch(() => {}), 10000);
 </script>
 </body>
