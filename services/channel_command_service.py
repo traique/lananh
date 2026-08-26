@@ -90,16 +90,12 @@ async def _price(user_id: int, product: str, channel: str = "zalo") -> tuple[lis
         return [cached], None
     prompt_id = await telemetry.start(user_id, "price_search", product, channel=channel)
     try:
-        response = await orchestrator.ask(
-            telegram_commands.PRICE_SEARCH_SYSTEM.format(product_name=product),
-            enable_search=True,
-            require_real_search=True,
-        )
-        output = await telegram_commands._verify_links((response.text or "").strip())
+        output, used_fallback = await telegram_commands._search_price(product)
+        output = await telegram_commands._verify_links(output)
         if output:
             telegram_commands._set_cached_price(product, output)
         await telemetry.success(prompt_id, "price_search", output or "(không có nội dung)")
-        return [output or "Không tìm được giá lúc này."], ("api" if getattr(response, "used_fallback", False) else None)
+        return [output or "Không tìm được giá lúc này."], ("api" if used_fallback else None)
     except Exception as exc:
         await telemetry.failure(prompt_id, "price_search", exc)
         return ["❌ Có lỗi khi tìm giá sản phẩm."], None
