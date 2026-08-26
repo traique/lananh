@@ -571,7 +571,11 @@ loadAgnes().catch(e => msg(e.message, true));
 loadMemory().catch(e => msg(e.message, true));
 loadUsage().catch(e => msg(e.message, true));
 loadUsageModels().catch(e => msg(e.message, true));
-setInterval(() => loadState().catch(() => {}), 10000);
+setInterval(() => {
+  loadState().catch(() => {});
+  loadUsage().catch(() => {});
+  loadUsageModels().catch(() => {});
+}, 10000);
 </script>
 </body>
 </html>
