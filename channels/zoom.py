@@ -276,7 +276,14 @@ async def _post_image_message_once(
     img_url - ZOOM TỰ TẢI ảnh về từ URL đó, bot không cần upload/host lại
     (khác endpoint /chat/users/{userId}/messages/files - endpoint đó thuộc
     Zoom Chat API user-based, KHÔNG dùng robot_jid như chatbot app này).
-    Xem: https://devforum.zoom.us/t/chatbot-im-chat-messages-apis-attachments/82258"""
+
+    QUAN TRỌNG: theo đúng schema chính thức của Zoom (xem ví dụ mẫu chính chủ
+    github.com/zoom/unsplash-chatbot), block "attachments" BẮT BUỘC phải nằm
+    LỒNG bên trong 1 item kiểu "section" (field "sections"), KHÔNG được đặt
+    trực tiếp ở top-level "body" - nếu đặt sai chỗ (như code cũ ở đây từng
+    làm), Zoom không nhận diện được đây là ảnh và chỉ hiện link thô cho
+    người dùng dù request vẫn trả 200 OK. Xem thêm:
+    https://developers.zoom.us/docs/chat/customizing-messages/"""
     token = await _access_token()
     body = {
         "robot_jid": config.ZOOM_BOT_JID,
@@ -286,12 +293,17 @@ async def _post_image_message_once(
         "content": {
             "body": [
                 {
-                    "type": "attachments",
-                    "resource_url": image_url,
-                    "img_url": image_url,
-                    "information": {
-                        "title": {"text": (caption.strip()[:200] or "Ảnh do Agnes AI tạo")}
-                    },
+                    "type": "section",
+                    "sections": [
+                        {
+                            "type": "attachments",
+                            "resource_url": image_url,
+                            "img_url": image_url,
+                            "information": {
+                                "title": {"text": (caption.strip()[:200] or "Ảnh do Agnes AI tạo")}
+                            },
+                        }
+                    ],
                 }
             ]
         },
