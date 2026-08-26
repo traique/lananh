@@ -1,0 +1,581 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lan Anh Bot Admin</title>
+<style>
+  :root{
+    --text:#1c1c1e;
+    --muted:#6e6e73;
+    --glass-bg:rgba(255,255,255,.46);
+    --glass-border:rgba(255,255,255,.55);
+    --glass-shadow:0 8px 30px rgba(31,38,90,.14), 0 1px 1px rgba(31,38,90,.06);
+    --accent-a:#0a84ff;
+    --accent-b:#5e5ce6;
+    --ok-fg:#0d7a3d;
+    --ok-bg:rgba(52,199,89,.16);
+    --bad-fg:#b3261e;
+    --bad-bg:rgba(255,69,58,.16);
+    --radius-lg:28px;
+    --radius-md:18px;
+    --radius-sm:12px;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{background:#dfe6f5}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;
+    color:var(--text);
+    margin:0;
+    padding:36px 20px 90px;
+    min-height:100vh;
+    position:relative;
+    overflow-x:hidden;
+  }
+  body::before{
+    content:"";
+    position:fixed;
+    inset:-10%;
+    z-index:-1;
+    background:
+      radial-gradient(38% 34% at 12% 8%, #7bd7ff 0%, transparent 70%),
+      radial-gradient(42% 38% at 88% 12%, #c9a8ff 0%, transparent 70%),
+      radial-gradient(46% 42% at 20% 92%, #ffb4d0 0%, transparent 70%),
+      radial-gradient(50% 46% at 90% 88%, #9fe6c8 0%, transparent 70%),
+      linear-gradient(160deg, #eef2fb, #dfe6f5 60%, #e8e4fb);
+    animation:drift 26s ease-in-out infinite alternate;
+  }
+  @keyframes drift{
+    0%{transform:scale(1) translate(0,0)}
+    100%{transform:scale(1.06) translate(-1.5%, 1.5%)}
+  }
+  @media (prefers-reduced-motion:reduce){ body::before{animation:none} }
+
+  .page{max-width:880px;margin:0 auto}
+
+  header.hero{
+    display:flex;align-items:center;justify-content:space-between;gap:16px;
+    padding:22px 28px;margin-bottom:22px;
+  }
+  h1{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:0}
+  .subtitle{color:var(--muted);font-size:13.5px;margin:3px 0 0}
+  #msg{font-size:13px;font-weight:600;min-height:18px;text-align:right}
+  .logout{color:var(--muted);font-size:12.5px;text-decoration:none;margin-left:14px}
+  .logout:hover{color:var(--text)}
+
+  .glass{
+    position:relative;
+    background:var(--glass-bg);
+    -webkit-backdrop-filter:blur(28px) saturate(180%);
+    backdrop-filter:blur(28px) saturate(180%);
+    border:1px solid var(--glass-border);
+    border-radius:var(--radius-lg);
+    box-shadow:var(--glass-shadow);
+  }
+  .glass::before{
+    content:"";
+    position:absolute;inset:0;
+    border-radius:inherit;
+    padding:1px;
+    background:linear-gradient(160deg, rgba(255,255,255,.9), rgba(255,255,255,0) 40%, rgba(255,255,255,0) 70%, rgba(255,255,255,.35));
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+    mask-composite:exclude;
+    pointer-events:none;
+  }
+
+  .stack{display:flex;flex-direction:column;gap:18px}
+  .tile{padding:22px 24px}
+
+  h2.tile-title{
+    font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--muted);margin:0 0 14px;display:flex;align-items:center;gap:8px
+  }
+  h2.tile-title .dot{width:7px;height:7px;border-radius:50%;background:linear-gradient(135deg,var(--accent-a),var(--accent-b))}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  td,th{text-align:left;padding:9px 8px;border-bottom:1px solid rgba(60,60,67,.1);vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700}
+
+  button{
+    padding:8px 18px;border-radius:999px;border:1px solid transparent;
+    font-size:13px;font-weight:600;cursor:pointer;color:#fff;
+    background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
+    box-shadow:0 4px 14px rgba(94,92,230,.35);
+    transition:transform .12s,box-shadow .12s;
+  }
+  button:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(94,92,230,.45)}
+  button.secondary{
+    background:rgba(255,255,255,.55);color:var(--text);
+    border:1px solid rgba(60,60,67,.16);box-shadow:none;
+  }
+  button.secondary:hover{background:rgba(255,255,255,.85);box-shadow:none}
+  button.small{padding:5px 12px;font-size:11.5px}
+  button:disabled{opacity:.5;cursor:default;transform:none}
+
+  .actions{display:flex;align-items:center;gap:10px;margin-top:20px;flex-wrap:wrap}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700}
+  .ok{background:var(--ok-bg);color:var(--ok-fg)}
+  .bad{background:var(--bad-bg);color:var(--bad-fg)}
+  .muted{color:var(--muted);font-size:12.5px}
+
+  .provider-card{border-bottom:1px solid rgba(60,60,67,.1);padding:14px 0}
+  .provider-card:last-child{border-bottom:none}
+  .provider-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .provider-name{font-weight:700;font-size:14px;text-transform:capitalize}
+  .field-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .field-row input{
+    flex:1;min-width:160px;padding:8px 10px;border:1px solid rgba(60,60,67,.16);
+    border-radius:var(--radius-sm);font-family:var(--mono);font-size:12.5px;
+    background:rgba(255,255,255,.55);
+  }
+  .field-row input:focus{outline:2px solid var(--accent-a);outline-offset:-1px;background:rgba(255,255,255,.85)}
+  .field-label{font-size:11px;color:var(--muted);width:100%;margin-top:6px}
+
+  select{
+    padding:6px 10px;border-radius:var(--radius-sm);border:1px solid rgba(60,60,67,.16);
+    background:rgba(255,255,255,.6);font-size:12.5px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="hero glass">
+  <div>
+    <h1>Lan Anh Bot Admin</h1>
+    <div class="subtitle">Trợ lý cá nhân đa lĩnh vực.</div>
+  </div>
+  <div>
+    <span id="msg"></span>
+    <a class="logout" href="#" id="logout-link">Đăng xuất</a>
+  </div>
+</header>
+
+<div class="stack">
+
+  <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>9Router</h2>
+    <table>
+      <tr><th>Active provider</th><td id="active-provider">-</td></tr>
+      <tr><th>9Router</th><td id="router9-status">-</td></tr>
+    </table>
+    <div class="actions">
+      <button id="router9-toggle" class="secondary" disabled>-</button>
+      <button id="router9-retry" disabled>Retry 9Router now</button>
+    </div>
+  </section>
+
+  <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>Cooldowns</h2>
+    <table id="cooldown-table"></table>
+  </section>
+
+  <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>Providers - model &amp; API key</h2>
+    <div id="providers-list" class="muted">Đang tải...</div>
+  </section>
+
+  <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>Tavily web search</h2>
+    <div id="tavily-box" class="muted">Đang tải...</div>
+  </section>
+
+  <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>Agnes AI (lệnh /anh - tạo ảnh)</h2>
+    <div id="agnes-box" class="muted">Đang tải...</div>
+  </section>
+
+  <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>Trí nhớ dài hạn theo user</h2>
+    <div class="muted" style="margin-bottom:12px">
+      Mỗi tin nhắn khi trí nhớ đang bật sẽ tốn thêm 2-3 lượt gọi Google AI Studio
+      (trích xuất fact + tóm tắt + lưu/nhớ lại theo ngữ nghĩa). Tắt cho user nào
+      không cần cá nhân hoá sẽ giảm hẳn số lượt gọi đó.
+    </div>
+    <table id="memory-table"></table>
+  </section>
+
+  <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>Lượt gọi AI theo user</h2>
+    <div class="actions" style="margin-top:0;margin-bottom:14px">
+      <select id="usage-range">
+        <option value="24">24 giờ qua</option>
+        <option value="168" selected>7 ngày qua</option>
+        <option value="720">30 ngày qua</option>
+      </select>
+    </div>
+    <table id="usage-table"></table>
+  </section>
+
+  <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>Lượt gọi theo model</h2>
+    <div class="actions" style="margin-top:0;margin-bottom:14px">
+      <select id="usage-models-range">
+        <option value="24">24 giờ qua</option>
+        <option value="168" selected>7 ngày qua</option>
+        <option value="720">30 ngày qua</option>
+      </select>
+    </div>
+    <table id="usage-models-table"></table>
+  </section>
+
+</div>
+</div>
+
+<script>
+const COOLDOWN_PROVIDERS = ['groq', 'openrouter', 'api1', 'api2'];
+let current = null;
+
+function msg(text, isError) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.style.color = isError ? 'var(--bad-fg)' : 'var(--ok-fg)';
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (res.status === 403) { window.location.reload(); throw new Error('phiên đăng nhập hết hạn'); }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || res.statusText);
+  }
+  return res.json();
+}
+
+function fmtCooldown(untilEpochSec) {
+  const remaining = untilEpochSec - Date.now() / 1000;
+  if (remaining <= 0) return { label: 'ready', ok: true };
+  return { label: `cooldown ${Math.ceil(remaining)}s`, ok: false };
+}
+
+function renderState(s) {
+  current = s;
+  document.getElementById('active-provider').textContent = s.active_provider;
+  const routerOk = !s.router9_dead_since;
+  document.getElementById('router9-status').innerHTML =
+    `<span class="pill ${s.router9_enabled ? 'ok' : 'bad'}">${s.router9_enabled ? 'enabled' : 'disabled'}</span> ` +
+    `<span class="pill ${routerOk ? 'ok' : 'bad'}">${routerOk ? 'alive' : 'dead'}</span>`;
+
+  const toggleBtn = document.getElementById('router9-toggle');
+  toggleBtn.textContent = s.router9_enabled ? 'Turn off' : 'Turn on';
+  toggleBtn.disabled = false;
+  document.getElementById('router9-retry').disabled = false;
+
+  const table = document.getElementById('cooldown-table');
+  table.innerHTML = '<tr><th>Provider</th><th>Status</th><th></th></tr>' +
+    COOLDOWN_PROVIDERS.map(name => {
+      const { label, ok } = fmtCooldown(s[`${name}_exhausted_until`] || 0);
+      const resetBtn = ok ? '' : `<button class="secondary small cooldown-reset" data-provider="${name}">Reset</button>`;
+      return `<tr><td>${name}</td><td><span class="pill ${ok ? 'ok' : 'bad'}">${label}</span></td><td>${resetBtn}</td></tr>`;
+    }).join('');
+  table.querySelectorAll('.cooldown-reset').forEach(btn => {
+    btn.onclick = () => resetCooldown(btn.dataset.provider);
+  });
+}
+
+async function loadState() {
+  renderState(await api('/admin/api/state'));
+}
+
+async function resetCooldown(provider) {
+  try {
+    renderState(await api('/admin/api/cooldown/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    }));
+    msg(`${provider}: cooldown reset.`);
+  } catch (e) { msg('Reset failed: ' + e.message, true); }
+}
+
+document.getElementById('router9-toggle').onclick = async () => {
+  try {
+    renderState(await api('/admin/api/router9', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: current.router9_enabled ? 'off' : 'on' }),
+    }));
+    msg('9Router ' + (current.router9_enabled ? 'enabled' : 'disabled') + '.');
+  } catch (e) { msg('Failed: ' + e.message, true); }
+};
+
+document.getElementById('router9-retry').onclick = async () => {
+  try {
+    const result = await api('/admin/api/router9', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'retry' }),
+    });
+    renderState(result);
+    msg(result.ok ? '9Router sống, đã chuyển về dùng.' : `9Router vẫn lỗi: ${result.detail}`, !result.ok);
+  } catch (e) { msg('Failed: ' + e.message, true); }
+};
+
+function providerCard(p) {
+  const enableControl = p.enabled_editable
+    ? `<button class="secondary small provider-toggle" data-provider="${p.provider}">${p.enabled ? 'Tắt' : 'Bật'}</button>`
+    : `<span class="pill ${p.enabled ? 'ok' : 'bad'}">${p.enabled ? 'bật' : 'tắt'}</span>`;
+  return `
+    <div class="provider-card" data-provider="${p.provider}">
+      <div class="provider-head">
+        <span class="provider-name">${p.provider}</span>
+        <span>
+          <span class="pill ${p.api_key_configured ? 'ok' : 'bad'}">${p.api_key_configured ? 'key OK' : 'chưa có key'}</span>
+          ${enableControl}
+        </span>
+      </div>
+      <div class="field-row">
+        <input class="model-input" placeholder="model (để trống = mặc định)" value="${p.model_overridden ? p.model : ''}" data-default="${p.model}">
+        <button class="secondary small save-model" data-provider="${p.provider}">Lưu model</button>
+      </div>
+      <div class="field-label">Model hiện dùng: ${p.model}${p.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
+      <div class="field-row">
+        <input class="key-input" type="password" placeholder="${p.api_key_masked || 'API key (để trống = giữ nguyên)'}" data-provider="${p.provider}">
+        <button class="secondary small save-key" data-provider="${p.provider}">Lưu key</button>
+      </div>
+      <div class="field-label">${p.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
+    </div>`;
+}
+
+async function loadProviders() {
+  const providers = await api('/admin/api/providers');
+  document.getElementById('providers-list').innerHTML = providers.map(providerCard).join('');
+
+  document.querySelectorAll('.save-model').forEach(btn => {
+    btn.onclick = async () => {
+      const card = btn.closest('.provider-card');
+      const input = card.querySelector('.model-input');
+      try {
+        await api('/admin/api/providers/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: btn.dataset.provider, model: input.value.trim() }),
+        });
+        msg(`${btn.dataset.provider}: đã lưu model.`);
+        loadProviders();
+      } catch (e) { msg('Lưu model thất bại: ' + e.message, true); }
+    };
+  });
+  document.querySelectorAll('.save-key').forEach(btn => {
+    btn.onclick = async () => {
+      const card = btn.closest('.provider-card');
+      const input = card.querySelector('.key-input');
+      if (!input.value.trim()) { msg('Nhập API key trước khi lưu.', true); return; }
+      try {
+        await api('/admin/api/providers/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: btn.dataset.provider, api_key: input.value.trim() }),
+        });
+        msg(`${btn.dataset.provider}: đã lưu API key.`);
+        loadProviders();
+      } catch (e) { msg('Lưu API key thất bại: ' + e.message, true); }
+    };
+  });
+  document.querySelectorAll('.provider-toggle').forEach(btn => {
+    btn.onclick = async () => {
+      const provider = btn.dataset.provider;
+      const p = providers.find(x => x.provider === provider);
+      try {
+        await api('/admin/api/providers/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider, enabled: !p.enabled }),
+        });
+        msg(`${provider}: ${p.enabled ? 'đã tắt' : 'đã bật'}.`);
+        loadProviders();
+      } catch (e) { msg('Thao tác thất bại: ' + e.message, true); }
+    };
+  });
+}
+
+function fmtDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function tavilyBox(t) {
+  return `
+    <div class="provider-card" style="border-bottom:none;padding-top:0">
+      <div class="provider-head">
+        <span class="provider-name">tavily</span>
+        <span>
+          <span class="pill ${t.api_key_configured ? 'ok' : 'bad'}">${t.api_key_configured ? 'key OK' : 'chưa có key'}</span>
+          <button class="secondary small" id="tavily-toggle">${t.enabled ? 'Tắt' : 'Bật'}</button>
+        </span>
+      </div>
+      <div class="field-row">
+        <input type="password" id="tavily-key-input" placeholder="${t.api_key_masked || 'API key (để trống = giữ nguyên)'}">
+        <button class="secondary small" id="tavily-save-key">Lưu key</button>
+      </div>
+      <div class="field-label">${t.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
+    </div>`;
+}
+
+async function loadTavily() {
+  const t = await api('/admin/api/tavily');
+  document.getElementById('tavily-box').innerHTML = tavilyBox(t);
+  document.getElementById('tavily-toggle').onclick = async () => {
+    try {
+      await api('/admin/api/tavily/update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !t.enabled }),
+      });
+      msg(`Tavily: ${t.enabled ? 'đã tắt' : 'đã bật'}.`);
+      loadTavily();
+    } catch (e) { msg('Thao tác thất bại: ' + e.message, true); }
+  };
+  document.getElementById('tavily-save-key').onclick = async () => {
+    const input = document.getElementById('tavily-key-input');
+    if (!input.value.trim()) { msg('Nhập API key trước khi lưu.', true); return; }
+    try {
+      await api('/admin/api/tavily/update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: input.value.trim() }),
+      });
+      msg('Tavily: đã lưu API key.');
+      loadTavily();
+    } catch (e) { msg('Lưu API key thất bại: ' + e.message, true); }
+  };
+}
+
+function agnesBox(a) {
+  return `
+    <div class="provider-card" style="border-bottom:none;padding-top:0">
+      <div class="provider-head">
+        <span class="provider-name">agnes (/anh)</span>
+        <span>
+          <span class="pill ${a.api_key_configured ? 'ok' : 'bad'}">${a.api_key_configured ? 'key OK' : 'chưa có key'}</span>
+          <button class="secondary small" id="agnes-toggle">${a.enabled ? 'Tắt' : 'Bật'}</button>
+        </span>
+      </div>
+      <div class="field-row">
+        <input id="agnes-model-input" placeholder="model (để trống = mặc định)" value="${a.model_overridden ? a.model : ''}">
+        <button class="secondary small" id="agnes-save-model">Lưu model</button>
+      </div>
+      <div class="field-label">Model hiện dùng: ${a.model}${a.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
+      <div class="field-row">
+        <input type="password" id="agnes-key-input" placeholder="${a.api_key_masked || 'API key (để trống = giữ nguyên)'}">
+        <button class="secondary small" id="agnes-save-key">Lưu key</button>
+      </div>
+      <div class="field-label">${a.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
+    </div>`;
+}
+
+async function loadAgnes() {
+  const a = await api('/admin/api/agnes');
+  document.getElementById('agnes-box').innerHTML = agnesBox(a);
+  document.getElementById('agnes-toggle').onclick = async () => {
+    try {
+      await api('/admin/api/agnes/update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !a.enabled }),
+      });
+      msg(`Agnes AI: ${a.enabled ? 'đã tắt' : 'đã bật'}.`);
+      loadAgnes();
+    } catch (e) { msg('Thao tác thất bại: ' + e.message, true); }
+  };
+  document.getElementById('agnes-save-model').onclick = async () => {
+    const input = document.getElementById('agnes-model-input');
+    try {
+      await api('/admin/api/agnes/update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: input.value.trim() }),
+      });
+      msg('Agnes AI: đã lưu model.');
+      loadAgnes();
+    } catch (e) { msg('Lưu model thất bại: ' + e.message, true); }
+  };
+  document.getElementById('agnes-save-key').onclick = async () => {
+    const input = document.getElementById('agnes-key-input');
+    if (!input.value.trim()) { msg('Nhập API key trước khi lưu.', true); return; }
+    try {
+      await api('/admin/api/agnes/update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: input.value.trim() }),
+      });
+      msg('Agnes AI: đã lưu API key.');
+      loadAgnes();
+    } catch (e) { msg('Lưu API key thất bại: ' + e.message, true); }
+  };
+}
+
+
+async function loadMemory() {
+  const users = await api('/admin/api/memory');
+  const table = document.getElementById('memory-table');
+  if (!users.length) {
+    table.innerHTML = '<tr><td class="muted">Chưa có user nào.</td></tr>';
+    return;
+  }
+  table.innerHTML = '<tr><th>User</th><th>Trạng thái</th><th></th></tr>' +
+    users.map(u => `
+      <tr>
+        <td>${u.label}</td>
+        <td><span class="pill ${u.enabled ? 'ok' : 'bad'}">${u.enabled ? 'bật' : 'tắt'}</span></td>
+        <td><button class="secondary small memory-toggle" data-user="${u.user_id}" data-enabled="${u.enabled}">${u.enabled ? 'Tắt' : 'Bật'}</button></td>
+      </tr>`).join('');
+  table.querySelectorAll('.memory-toggle').forEach(btn => {
+    btn.onclick = async () => {
+      const userId = parseInt(btn.dataset.user, 10);
+      const enabled = btn.dataset.enabled === 'true';
+      try {
+        await api('/admin/api/memory/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId, enabled: !enabled }),
+        });
+        msg(`User ${userId}: trí nhớ ${enabled ? 'đã tắt' : 'đã bật'}.`);
+        loadMemory();
+      } catch (e) { msg('Thao tác thất bại: ' + e.message, true); }
+    };
+  });
+}
+
+async function loadUsage() {
+  const hours = document.getElementById('usage-range').value;
+  const rows = await api(`/admin/api/usage?hours=${hours}`);
+  const table = document.getElementById('usage-table');
+  if (!rows.length) {
+    table.innerHTML = '<tr><td class="muted">Chưa có lượt gọi nào trong khoảng thời gian này.</td></tr>';
+    return;
+  }
+  table.innerHTML = '<tr><th>Kênh</th><th>User</th><th>Lượt gọi</th><th>Gần nhất</th></tr>' +
+    rows.map(r => `<tr><td>${r.channel_label}</td><td>${r.label}</td><td>${r.calls}</td><td>${fmtDate(r.last_call_at)}</td></tr>`).join('');
+}
+document.getElementById('usage-range').onchange = () => loadUsage().catch(e => msg(e.message, true));
+
+async function loadUsageModels() {
+  const hours = document.getElementById('usage-models-range').value;
+  const rows = await api(`/admin/api/usage/models?hours=${hours}`);
+  const table = document.getElementById('usage-models-table');
+  if (!rows.length) {
+    table.innerHTML = '<tr><td class="muted">Chưa có lượt gọi nào trong khoảng thời gian này.</td></tr>';
+    return;
+  }
+  table.innerHTML = '<tr><th>Provider</th><th>Model</th><th>Lượt gọi</th><th>Gần nhất</th></tr>' +
+    rows.map(r => `<tr><td>${r.provider}</td><td class="muted" style="font-family:var(--mono)">${r.model}</td><td>${r.calls}</td><td>${fmtDate(r.last_call_at)}</td></tr>`).join('');
+}
+document.getElementById('usage-models-range').onchange = () => loadUsageModels().catch(e => msg(e.message, true));
+
+document.getElementById('logout-link').onclick = async (e) => {
+  e.preventDefault();
+  await fetch('/admin/logout', { method: 'POST' });
+  window.location.reload();
+};
+
+loadState().catch(e => msg(e.message, true));
+loadProviders().catch(e => msg(e.message, true));
+loadTavily().catch(e => msg(e.message, true));
+loadAgnes().catch(e => msg(e.message, true));
+loadMemory().catch(e => msg(e.message, true));
+loadUsage().catch(e => msg(e.message, true));
+loadUsageModels().catch(e => msg(e.message, true));
+setInterval(() => {
+  loadState().catch(() => {});
+  loadUsage().catch(() => {});
+  loadUsageModels().catch(() => {});
+}, 10000);
+</script>
+</body>
+</html>
