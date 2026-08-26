@@ -178,6 +178,7 @@ YÊU CẦU QUAN TRỌNG:
 2. BẮT BUỘC phải trích xuất URL (đường link) gốc của trang sản phẩm để người dùng bấm vào xem.
 3. Không tự bịa giá. Nếu hệ thống báo hết hàng hoặc không có giá, hãy ghi chú rõ.
 4. BẮT BUỘC dùng công cụ Google Search TRƯỚC, rồi mới trả lời - không được trả lời dựa trên trí nhớ/kiến thức đã học sẵn của bạn. Kiến thức nội bộ của bạn có thể đã LỖI THỜI (sản phẩm mới ra mắt sau thời điểm bạn được huấn luyện). Nếu kết quả tìm kiếm cho thấy sản phẩm đã có bán/có giá, PHẢI tin theo kết quả tìm kiếm dù điều đó trái với những gì bạn "nhớ". Chỉ được kết luận "chưa ra mắt" hoặc "chưa có giá" khi kết quả tìm kiếm thực sự không tìm thấy thông tin nào về sản phẩm này.
+5. ƯU TIÊN SO SÁNH NHIỀU CỬA HÀNG KHÁC NHAU (vd Thế Giới Di Động, CellphoneS, FPT Shop, Hoàng Hà Mobile...) - hãy chủ động tìm kiếm thêm để có giá từ ít nhất 2-3 cửa hàng khác nhau nếu có thể. CHỈ liệt kê nhiều dòng của CÙNG 1 cửa hàng (vd nhiều dung lượng/màu) khi thực sự không tìm được cửa hàng nào khác bán sản phẩm này.
 
 Trình bày kết quả theo ĐÚNG định dạng list (KHÔNG dùng bảng markdown vì Telegram không hiển thị được bảng) và văn phong sau:
 
@@ -211,6 +212,7 @@ YÊU CẦU QUAN TRỌNG:
 2. So khớp CHÍNH XÁC phiên bản/dung lượng.
 3. BẮT BUỘC trích xuất đúng URL (đường link) gốc của trang sản phẩm có trong kết quả tìm kiếm để người dùng bấm vào xem.
 4. Nếu kết quả tìm kiếm không đủ dữ liệu giá cho một shop, bỏ qua shop đó thay vì đoán. Nếu KHÔNG có shop nào đủ dữ liệu, nói thẳng là chưa tra được giá.
+5. Kết quả tìm kiếm bên dưới có thể đến từ NHIỀU cửa hàng khác nhau. HÃY SO SÁNH GIÁ TỪ CÀNG NHIỀU CỬA HÀNG KHÁC NHAU CÀNG TỐT - liệt kê MỖI CỬA HÀNG khác nhau tìm được tối đa 1 dòng (chọn phiên bản/dung lượng phổ biến nhất của cửa hàng đó nếu có nhiều lựa chọn). CHỈ liệt kê nhiều dòng của CÙNG 1 cửa hàng khi kết quả tìm kiếm thực sự chỉ có đúng 1 cửa hàng bán sản phẩm này.
 
 Trình bày kết quả theo ĐÚNG định dạng list (KHÔNG dùng bảng markdown vì Telegram không hiển thị được bảng) và văn phong sau:
 
@@ -297,10 +299,16 @@ async def prompt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 _PRICE_FALLBACK_PROVIDERS = ["api1", "api2"]
 
 
+_PRICE_FALLBACK_PROVIDERS = ["api1", "api2"]
+
+
 async def _search_price(product_name: str) -> tuple[str, bool]:
-    """Tìm giá sản phẩm: Tavily trước, lỗi/rỗng thì fallback công cụ Google
-    Search (Gemini) qua api1 -> api2. Dùng chung cho cả Telegram (price_cmd)
-    và Zalo/Zoom (services/channel_command_service.py::_price).
+    """Tìm giá sản phẩm: Tavily trước (1 request duy nhất, search_depth="advanced"
+    để có nguồn đa dạng hơn basic, kèm giới hạn tối đa 2 kết quả/domain để 1
+    shop SEO mạnh không chiếm hết top-N - xem tavily_client.search()), lỗi/
+    rỗng thì fallback công cụ Google Search (Gemini) qua api1 -> api2. Dùng
+    chung cho cả Telegram (price_cmd) và Zalo/Zoom
+    (services/channel_command_service.py::_price).
 
     Trả về (text, used_fallback) - used_fallback True nghĩa là nhánh
     api1/api2 (không phải nhánh mặc định router9/groq/...) đã được dùng, để
@@ -308,7 +316,12 @@ async def _search_price(product_name: str) -> tuple[str, bool]:
     """
     search_results: str | None = None
     try:
-        search_results = await tavily_client.search(f"giá {product_name} chính hãng Việt Nam")
+        search_results = await tavily_client.search(
+            f"giá {product_name} chính hãng Việt Nam mua ở đâu",
+            max_results=12,
+            search_depth="advanced",
+            max_results_per_domain=2,
+        )
     except tavily_client.TavilyError:
         logger.warning("Tavily lỗi khi tìm giá %r, chuyển sang Google Search tool.", product_name, exc_info=True)
 
