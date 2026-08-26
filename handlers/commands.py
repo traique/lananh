@@ -200,6 +200,42 @@ Dạ em lượn một vòng các đại lý lớn để khảo giá cho anh rồ
 
 QUAN TRỌNG VỀ LINK: mỗi link BẮT BUỘC viết đúng cú pháp markdown [Chữ hiển thị](https://url-that-page), không được dán URL trần, không được để URL trong ngoặc đơn kèm mô tả."""
 
+# Biến thể của PRICE_SEARCH_SYSTEM dùng khi đã có sẵn kết quả tìm kiếm thật
+# (từ Tavily, xem _search_price() bên dưới) thay vì yêu cầu model tự gọi
+# công cụ Google Search - giữ đúng văn phong/định dạng trả lời, chỉ đổi phần
+# nguồn dữ liệu và nhắc model không tự bịa từ trí nhớ.
+PRICE_SEARCH_SYSTEM_FROM_RESULTS = """Bạn là trợ lý Lan Anh. Dưới đây là kết quả tìm kiếm web THẬT (qua Tavily) cho sản phẩm "{product_name}" tại các hệ thống bán lẻ uy tín ở Việt Nam.
+
+YÊU CẦU QUAN TRỌNG:
+1. CHỈ được dùng thông tin có trong KẾT QUẢ TÌM KIẾM bên dưới. TUYỆT ĐỐI KHÔNG dùng trí nhớ/kiến thức đã học sẵn, không tự bịa giá, không ước lượng.
+2. So khớp CHÍNH XÁC phiên bản/dung lượng.
+3. BẮT BUỘC trích xuất đúng URL (đường link) gốc của trang sản phẩm có trong kết quả tìm kiếm để người dùng bấm vào xem.
+4. Nếu kết quả tìm kiếm không đủ dữ liệu giá cho một shop, bỏ qua shop đó thay vì đoán. Nếu KHÔNG có shop nào đủ dữ liệu, nói thẳng là chưa tra được giá.
+
+Trình bày kết quả theo ĐÚNG định dạng list (KHÔNG dùng bảng markdown vì Telegram không hiển thị được bảng) và văn phong sau:
+
+**{product_name}** — giá cập nhật mới nhất
+
+Dạ em lượn một vòng các đại lý lớn để khảo giá cho anh rồi đây nha:
+
+🏨 **[Tên shop 1]** — **[Giá]đ**
+[Màu sắc/Khuyến mãi ngắn gọn]. [Xem sản phẩm]([Link trực tiếp đến sản phẩm])
+
+🏨 **[Tên shop 2]** — **[Giá]đ**
+[Màu sắc/Khuyến mãi ngắn gọn]. [Xem sản phẩm]([Link trực tiếp đến sản phẩm])
+
+(lặp lại 1 khối như trên cho mỗi shop tìm được, tối đa 5 shop)
+
+🔥 **Chỗ rẻ nhất em thấy:**
+👉 **[Tên shop rẻ nhất]**: [Giá rẻ nhất]đ cho [Màu/phiên bản].
+
+*(Lưu ý nhỏ: Giá này em tra cứu online ngay lúc này, có thể thay đổi tùy tồn kho từng chi nhánh hoặc flash sale anh nhé).*
+
+QUAN TRỌNG VỀ LINK: mỗi link BẮT BUỘC viết đúng cú pháp markdown [Chữ hiển thị](https://url-that-page), không được dán URL trần, không được để URL trong ngoặc đơn kèm mô tả.
+
+KẾT QUẢ TÌM KIẾM (Tavily):
+{search_results}"""
+
 @common.restricted
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
@@ -253,6 +289,53 @@ async def prompt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await telemetry.failure(prompt_id, "prompt_generator", e)
         await update.message.reply_text("❌ Có lỗi khi tạo prompt. Hãy thử lại sau giây lát.")
 
+# Nhánh Google Search tool (Gemini) dùng làm lưới an toàn khi Tavily lỗi/rỗng
+# - giới hạn chỉ api1 -> api2 (KHÔNG có openrouter) vì bản thân Tavily đã là
+# lưới an toàn đầu tiên đứng trước, xem docstring providers_override trong
+# ai/orchestrator.py::ask(). Nếu về sau muốn thêm openrouter làm lưới cuối,
+# chỉ cần thêm "openrouter" vào list này.
+_PRICE_FALLBACK_PROVIDERS = ["api1", "api2"]
+
+
+async def _search_price(product_name: str) -> tuple[str, bool]:
+    """Tìm giá sản phẩm: Tavily trước, lỗi/rỗng thì fallback công cụ Google
+    Search (Gemini) qua api1 -> api2. Dùng chung cho cả Telegram (price_cmd)
+    và Zalo/Zoom (services/channel_command_service.py::_price).
+
+    Trả về (text, used_fallback) - used_fallback True nghĩa là nhánh
+    api1/api2 (không phải nhánh mặc định router9/groq/...) đã được dùng, để
+    caller gắn nhãn "⚙️ API" giống các lệnh khác.
+    """
+    search_results: str | None = None
+    try:
+        search_results = await tavily_client.search(f"giá {product_name} chính hãng Việt Nam")
+    except tavily_client.TavilyError:
+        logger.warning("Tavily lỗi khi tìm giá %r, chuyển sang Google Search tool.", product_name, exc_info=True)
+
+    if search_results:
+        try:
+            instruction = PRICE_SEARCH_SYSTEM_FROM_RESULTS.format(
+                product_name=product_name, search_results=search_results
+            )
+            response = await orchestrator.ask(instruction)
+            result_text = (response.text or "").strip()
+            if result_text:
+                return result_text, bool(getattr(response, "used_fallback", False))
+            logger.warning("Tavily có kết quả nhưng model không trả lời được cho %r, chuyển sang Google Search tool.", product_name)
+        except Exception:
+            logger.exception("Lỗi khi định dạng giá từ kết quả Tavily cho %r, chuyển sang Google Search tool.", product_name)
+
+    instruction = PRICE_SEARCH_SYSTEM.format(product_name=product_name)
+    response = await orchestrator.ask(
+        instruction,
+        enable_search=True,
+        require_real_search=True,
+        providers_override=_PRICE_FALLBACK_PROVIDERS,
+    )
+    result_text = (response.text or "").strip()
+    return result_text, bool(getattr(response, "used_fallback", False))
+
+
 @common.restricted
 async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     product_name = common.extract_arg(context)
@@ -274,11 +357,8 @@ async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     status = await update.message.reply_text(f"🔍 Đang dạo siêu thị tìm giá {product_name} cho anh...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    instruction = PRICE_SEARCH_SYSTEM.format(product_name=product_name)
-
     try:
-        response = await orchestrator.ask(instruction, enable_search=True, require_real_search=True)
-        result_text = (response.text or "").strip()
+        result_text, used_fallback = await _search_price(product_name)
 
         if not result_text:
             await telemetry.success(prompt_id, "price_search", "(Gemini không trả về nội dung)")
@@ -288,7 +368,7 @@ async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await telemetry.success(prompt_id, "price_search", result_text)
         result_text = await _verify_links(result_text)
         _set_cached_price(product_name, result_text)
-        suffix = "\n\n⚙️ API" if getattr(response, "used_fallback", False) else ""
+        suffix = "\n\n⚙️ API" if used_fallback else ""
 
         await common.reply_long_text_edit_first(status, result_text + suffix)
     except Exception as e:
