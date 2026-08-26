@@ -457,6 +457,26 @@ async def admin_usage(request: Request) -> Response:
     return JSONResponse(result)
 
 
+@api.get("/admin/api/usage/models")
+async def admin_usage_models(request: Request) -> Response:
+    """Lượt gọi thành công theo (provider, model) - xem
+    ai/orchestrator.py::_record_provider_call, ghi mỗi khi 1 provider trong
+    provider-chain trả lời thành công (router9/groq/openrouter/api1/api2)."""
+    if not _admin_session_valid(request):
+        return Response(status_code=403)
+    since_hours = int(request.query_params.get("hours", "168"))
+    rows = await db.usage_by_model(since_hours)
+    return JSONResponse([
+        {
+            "provider": row["provider"],
+            "model": row["model"],
+            "calls": row["calls"],
+            "last_call_at": row["last_call_at"].isoformat() if row["last_call_at"] else None,
+        }
+        for row in rows
+    ])
+
+
 @api.post(config.WEBHOOK_PATH)
 async def telegram_webhook(request: Request) -> Response:
     secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
