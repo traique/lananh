@@ -250,6 +250,7 @@ async def ask(
     model: Optional[str] = None,
     enable_search: bool = False,
     require_real_search: bool = False,
+    providers_override: Optional[list[str]] = None,
 ):
     """Run a one-turn task through the provider chain.
 
@@ -258,8 +259,15 @@ async def ask(
     trước (đã tự bật search phía server), fail kết nối mới rơi xuống Groq
     compound-mini / Gemini grounding. Raises RealSearchUnavailableError khi
     không có provider nào cấu hình.
+
+    ``providers_override`` cho phép caller tự chỉ định thứ tự provider thay
+    vì để require_real_search tự suy ra qua _search_only_providers() (vd
+    /gia muốn giới hạn nhánh Google Search tool chỉ còn api1 -> api2, không
+    có openrouter, vì bước Tavily đứng trước đã là lưới an toàn đầu tiên -
+    xem handlers/commands.py::_search_price).
     """
-    providers_override = await _search_only_providers() if require_real_search else None
+    if require_real_search and providers_override is None:
+        providers_override = await _search_only_providers()
     effective_prompt = (
         f"{_FORCED_SEARCH_DIRECTIVE}\n\n{prompt}" if require_real_search else prompt
     )
