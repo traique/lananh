@@ -173,6 +173,26 @@ async def init_db() -> None:
             """
         )
 
+        # Lượt gọi thành công tới từng provider/model trong provider-chain
+        # (router9/groq/openrouter/api1/api2, xem ai/orchestrator.py -
+        # _run_provider_chain ghi 1 dòng mỗi lần 1 provider trả lời thành
+        # công) - dùng cho thống kê "lượt gọi theo model" ở trang admin.
+        # Tách khỏi bảng prompts (đó là lượt gọi theo user/kênh, không biết
+        # provider/model nào đã thực sự trả lời).
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS provider_calls (
+                id SERIAL PRIMARY KEY,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provider_calls_provider ON provider_calls (provider, created_at DESC)"
+        )
+
         # Trí nhớ hội thoại (Phương án B - cửa sổ trượt + session timeout).
         # Ghi lại MỌI lượt chat bất kể đang dùng provider nào (router9/api1/
         # api2), để khi provider-chain đổi provider giữa chừng, nhánh API vẫn
@@ -369,6 +389,40 @@ async def usage_by_user(since_hours: int = 24 * 7) -> list[dict]:
         FROM prompts
         WHERE created_at >= now() - ($1 || ' hours')::interval
         GROUP BY channel, telegram_user_id
+        ORDER BY calls DESC
+        """,
+        str(since_hours),
+    )
+    return [dict(row) for row in rows]
+
+
+@_with_reconnect
+async def record_provider_call(provider: str, model: str) -> None:
+    """Ghi 1 lượt gọi thành công của provider/model (bảng provider_calls) -
+    gọi từ ai/orchestrator.py::_run_provider_chain ngay sau mỗi lần 1
+    provider trả lời thành công. Lỗi DB ở đây KHÔNG được để văng lên caller
+    (chỉ là số liệu thống kê cho trang admin, không phải luồng chính) -
+    caller (orchestrator) tự bọc try/except khi gọi hàm này."""
+    pool = await get_pool()
+    await pool.execute(
+        "INSERT INTO provider_calls (provider, model) VALUES ($1, $2)",
+        provider,
+        model,
+    )
+
+
+@_with_reconnect
+async def usage_by_model(since_hours: int = 24 * 7) -> list[dict]:
+    """Số lượt gọi thành công (bảng provider_calls) theo (provider, model),
+    dùng cho trang admin - khác usage_by_user() ở chỗ đây là góc nhìn theo
+    HẠ TẦNG AI đang trả lời, không phải theo user/kênh nào đang hỏi."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT provider, model, COUNT(*) AS calls, MAX(created_at) AS last_call_at
+        FROM provider_calls
+        WHERE created_at >= now() - ($1 || ' hours')::interval
+        GROUP BY provider, model
         ORDER BY calls DESC
         """,
         str(since_hours),
