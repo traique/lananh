@@ -99,6 +99,12 @@ async def generate_image(prompt: str, *, size: str = "1024x1024") -> GeneratedIm
     if not items:
         raise AgnesError("Agnes AI không trả về ảnh nào")
 
+    async def _record_call() -> None:
+        try:
+            await db.record_provider_call("agnes", await _model())
+        except Exception:
+            logger.warning("Không ghi được lượt gọi Agnes AI vào DB.", exc_info=True)
+
     item = items[0]
     image_url = item.get("url")
     b64 = item.get("b64_json")
@@ -106,9 +112,11 @@ async def generate_image(prompt: str, *, size: str = "1024x1024") -> GeneratedIm
         image_response = await _get_client().get(image_url)
         if image_response.status_code != 200:
             raise AgnesError(f"Không tải được ảnh từ Agnes AI (HTTP {image_response.status_code})")
+        await _record_call()
         return GeneratedImage(data=image_response.content, url=image_url)
     if b64:
         import base64
 
+        await _record_call()
         return GeneratedImage(data=base64.b64decode(b64), url=None)
     raise AgnesError("Agnes AI trả về ảnh không có url hoặc b64_json")
