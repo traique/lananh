@@ -111,6 +111,36 @@ _GENERIC_PROVIDER_CONFIGURED: dict[str, Callable[[], bool]] = {
 }
 
 
+async def _effective_model(provider: str) -> str:
+    """Tên model THỰC SỰ đang dùng cho provider tại thời điểm gọi - cùng
+    logic web.py::_provider_info() dùng để hiển thị ở trang admin (phần
+    "Providers - model & API key"), tái dùng ở đây để log_lượt gọi theo
+    đúng model admin đang thấy, kể cả khi có override qua provider_overrides
+    hoặc /model."""
+    if provider == "router9":
+        return await router9_client.get_preferred_model_name() or config.ROUTER9_MODEL
+    if provider == "groq":
+        return await groq_client._model()
+    if provider == "openrouter":
+        return await openrouter_client._model()
+    if provider == "api1":
+        return await official_client._model_for(1)
+    if provider == "api2":
+        return await official_client._model_for(2)
+    return provider
+
+
+async def _record_provider_call(provider: str) -> None:
+    """Ghi 1 lượt gọi thành công vào bảng provider_calls (thống kê "lượt gọi
+    theo model" ở trang admin). Lỗi DB ở đây KHÔNG được làm hỏng câu trả lời
+    thật cho người dùng - chỉ log cảnh báo rồi bỏ qua."""
+    try:
+        model = await _effective_model(provider)
+        await db.record_provider_call(provider, model)
+    except Exception:
+        logger.warning("Không ghi được lượt gọi provider=%s vào DB.", provider, exc_info=True)
+
+
 async def _run_provider_chain(
     *,
     router9_call,
@@ -137,16 +167,20 @@ async def _run_provider_chain(
         result = await _run_with_call_timeout(router9_call)
         await provider_state.mark_router9_alive()
         await provider_state.set_active_provider("router9")
+        await _record_provider_call("router9")
         return result
 
     async def _attempt_api(idx: int):
         result = await api_call(idx)
-        await provider_state.set_active_provider(f"api{idx}")
+        provider_name = f"api{idx}"
+        await provider_state.set_active_provider(provider_name)
+        await _record_provider_call(provider_name)
         return result
 
     async def _attempt_generic(name: str):
         result = await generic_calls[name]()
         await provider_state.set_active_provider(name)
+        await _record_provider_call(name)
         return result
 
     async def _has_any_fallback_configured() -> bool:
