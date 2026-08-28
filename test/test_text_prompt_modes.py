@@ -184,11 +184,16 @@ def test_th2_giu_nguyen_khoi_lock():
     assert IDENTITY_LOCK_GIRL in _render_girl()
 
 
-def test_th2_ta_lai_khuon_mat_da_khoa_thanh_chu():
-    phrase = resolve_prompt_identity(DESC_GIRL).subject_phrase.lower()
-    for feature in ("oval face", "medium-large eyes", "double eyelid crease", "nasal bridge", "lips", "rounded chin"):
-        assert feature in phrase, f"câu tả chủ thể thiếu {feature}"
-    assert "restat" in resolve_prompt_identity(DESC_GIRL).subject_rule.lower()
+def test_th2_khong_ta_lai_khuon_mat_da_khoa_thanh_chu():
+    """/prompt (context="text") không có ảnh nguồn để ghi đè, nên câu tả chủ
+    thể KHÔNG cần lặp lại mô tả khuôn mặt của identity lock - việc gọi thiếu
+    context="text" trước đây khiến test này vô tình kiểm tra nhánh photo."""
+    identity = resolve_prompt_identity(DESC_GIRL, context="text")
+    phrase = identity.subject_phrase.lower()
+    assert "identity lock" in phrase
+    for feature in ("oval face", "medium-large eyes", "double eyelid crease", "nasal bridge", "rounded chin"):
+        assert feature not in phrase, f"câu tả chủ thể lặp lại {feature}"
+    assert "not" in identity.subject_rule.lower() and "redescribe" in identity.subject_rule.lower()
 
 
 def test_th2_khong_cho_mo_ta_user_ghi_de_khuon_mat():

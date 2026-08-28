@@ -15,14 +15,15 @@ from handlers.prompt_identity import (
 
 def test_girl_identity_matches_reference_facial_geometry():
     expected_features = (
-        "oval face",
-        "medium-large eyes have a soft, gently rounded outer corner",
+        "gently rounded oval face",
+        "naturally full cheeks",
+        "almond-shaped eyes taper gently at the outer corner",
         "subtle double eyelid crease",
-        "eyebrows are thin, softly arched",
+        "eyebrows are naturally full with only a slight arch",
         "straight, narrow nasal bridge",
         "small softly rounded tip",
         "slightly fuller lower lip",
-        "small, gently rounded chin",
+        "small, softly rounded chin",
     )
 
     for feature in expected_features:
