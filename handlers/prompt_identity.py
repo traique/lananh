@@ -41,10 +41,13 @@ IDENTITY_LOCK_REFERENCE = (
 
 IDENTITY_LOCK_GIRL = (
     "Identity lock: every image shows the same adult Vietnamese woman, with an "
-    "identical face in every generation - do not redesign, beautify, age or "
-    "reinterpret it. She has a soft, gently rounded oval face with naturally full "
-    "cheeks, tapering to a small, softly rounded chin and a smooth soft jawline - "
-    "not a narrow or sharply tapered face. Her medium almond-shaped eyes taper "
+    "identical face and body build in every generation - do not redesign, "
+    "beautify, age, slim down or add extra weight to her. She has a slender, "
+    "average-height build with narrow shoulders and a slim waist and arms - not "
+    "a stocky or heavier-set figure. She has a softly rounded oval face with "
+    "moderate, naturally soft cheek definition - neither full or chubby nor "
+    "sharply angular - tapering to a small, softly rounded chin and a "
+    "well-defined, gently narrow jawline. Her medium almond-shaped eyes taper "
     "gently at the outer corner, with a subtle double eyelid crease sitting close "
     "to the lash line, warm brown irises and natural eyelashes, giving a warm "
     "gentle gaze rather than a wide-open doe-eyed look. Her eyebrows are "
@@ -56,10 +59,10 @@ IDENTITY_LOCK_GIRL = (
     "undertone and a smooth, luminous, dewy quality, rendered with authentic, "
     "natural skin texture: visible pores, subtle tonal variation and realistic "
     "specular highlights, never airbrushed or porcelain-smooth. This facial "
-    "geometry and skin character never change; only her hairstyle, expression, "
-    "makeup, clothing, accessories, pose, lighting, camera, environment and "
-    "photographic finish are variable attributes, free to change from image to "
-    "image."
+    "geometry, body build and skin character never change; only her hairstyle, "
+    "expression, makeup, clothing, accessories, pose, lighting, camera, "
+    "environment and photographic finish are variable attributes, free to "
+    "change from image to image."
 )
 
 # Photo mode (media_handler.py/channel_image_service.py): the source photo shows a
