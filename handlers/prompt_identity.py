@@ -14,6 +14,24 @@ KEEP_FACE_KEYWORDS: tuple[str, ...] = (
 )
 GIRL_KEYWORDS: tuple[str, ...] = ("cô gái 20", "gái 20")
 
+# Khóa phụ: cộng dồn vào identity_lock bất kể đang ở mode mặt nào (reference/
+# girl/described), vì "giữ trang phục"/"giữ sản phẩm" là một trục độc lập với
+# việc chọn khóa mặt.
+OUTFIT_KEYWORDS: tuple[str, ...] = ("giữ trang phục", "giữ đồ", "giữ quần áo", "giữ outfit")
+PRODUCT_KEYWORDS: tuple[str, ...] = ("giữ sản phẩm", "giữ logo", "giữ bao bì", "giữ nhãn")
+
+OUTFIT_LOCK = (
+    "Outfit lock: keep the exact clothing style, cut, colour, material, pattern and "
+    "accessories visible in the reference unchanged; only pose, setting and lighting "
+    "may vary."
+)
+
+PRODUCT_LOCK = (
+    "Product lock: keep the exact product shape, proportions, colour, material, "
+    "packaging, logo, label, printed text and quantity visible in the reference "
+    "unchanged; never invent or alter any product detail."
+)
+
 IDENTITY_LOCK_REFERENCE = (
     "Identity lock: the attached reference photo is the sole source of the subject's "
     "identity. Keep her exact facial geometry, facial proportions, skin tone and age "
@@ -43,17 +61,14 @@ IDENTITY_LOCK_GIRL = (
     "image."
 )
 
-# Photo mode (media_handler.py/channel_image_service.py): PHOTO_SUBJECT_RULE_GIRL
-# below tells the model to restate the locked face to override what's visible in
-# the source photo, so the phrase must actually carry that full description.
+# Photo mode (media_handler.py/channel_image_service.py): the source photo shows a
+# different face, so the rule must still override it - but it now only POINTS BACK
+# to the Identity Lock block (already placed at the top of the output by rule 1)
+# instead of repeating the full facial blueprint a second time, which used to
+# generate the same ~70-word description twice in one prompt.
 PHOTO_SUBJECT_PHRASE_GIRL = (
-    "the same adult Vietnamese woman defined by the Identity Lock above, with an "
-    "oval face narrowing softly to a small rounded chin, medium-large eyes with "
-    "a soft gently rounded outer corner and a subtle double eyelid crease, thin "
-    "softly arched eyebrows sitting close above the eyes, a straight narrow "
-    "nasal bridge with a small softly rounded tip, medium-full lips with a "
-    "clearly defined cupid's bow and a slightly fuller lower lip, and soft "
-    "rounded cheeks,"
+    "the same woman defined by the Identity Lock above, not the face visible in "
+    "the source photo,"
 )
 
 # Text mode (/prompt): nothing to override, so no need to restate the face here -
@@ -81,12 +96,14 @@ PHOTO_SUBJECT_RULE_DESCRIBED = (
 )
 
 PHOTO_SUBJECT_RULE_GIRL = (
-    '2. CRITICAL - the face is FIXED by the Identity Lock above and has higher priority '
-    'than every scene instruction. Restate the locked facial blueprint in the first '
-    'sentence using the same geometry and proportions. Never describe or copy the face '
-    'of the person in the source image. Use the source image only for pose, framing, '
-    'outfit, accessories, setting, lighting, mood and photographic finish. Never let '
-    'hairstyle, clothing, expression, camera angle or scene details alter the locked face.'
+    '2. CRITICAL - the face is FIXED by the Identity Lock text already placed at the '
+    'start of the prompt (rule 1) and has higher priority than every scene instruction. '
+    'Name the subject only as "the same woman defined by the Identity Lock above" - do '
+    'NOT restate the facial blueprint again elsewhere in the prompt, that would just '
+    'duplicate the Identity Lock paragraph. Never describe or copy the face of the '
+    'person in the source image. Use the source image only for pose, framing, outfit, '
+    'accessories, setting, lighting, mood and photographic finish. Never let hairstyle, '
+    'clothing, expression, camera angle or scene details alter the locked face.'
 )
 
 PHOTO_SUBJECT_RULE_REFERENCE = (
@@ -124,10 +141,13 @@ TEXT_SUBJECT_RULE_GIRL = (
 TEXT_SUBJECT_RULE_REFERENCE = PHOTO_SUBJECT_RULE_REFERENCE
 
 IDENTITY_RULE_LOCK = (
-    "1. ALWAYS place the exact identity lock text provided above at the start of the "
-    "prompt. Facial geometry and facial proportions have higher priority than hairstyle, "
-    "expression, clothing, pose, lighting, camera or environment. Never allow variable "
-    "scene details to rewrite the immutable face."
+    "1. ALWAYS place the exact lock text provided above at the start of the prompt, "
+    "exactly as given, with nothing paraphrased or repeated later. When a facial "
+    "identity lock is present, facial geometry and facial proportions have higher "
+    "priority than hairstyle, expression, clothing, pose, lighting, camera or "
+    "environment. When an outfit or product lock is present, its locked details carry "
+    "the same override priority. Never allow variable scene details to rewrite a "
+    "locked element."
 )
 
 IDENTITY_RULE_NONE = (
@@ -201,30 +221,41 @@ def resolve_prompt_identity(
     rules = _SUBJECT_RULES[context]
 
     if any(keyword in normalized_description for keyword in KEEP_FACE_KEYWORDS):
-        return PromptIdentityConfig(
-            mode="reference",
-            identity_lock=IDENTITY_LOCK_REFERENCE,
-            identity_rule=IDENTITY_RULE_LOCK,
-            subject_phrase=SUBJECT_PHRASE_REFERENCE,
-            subject_rule=rules["reference"],
-            mode_hint="📎 Hãy đính kèm ảnh gốc cùng prompt này trên app Gemini.",
-        )
+        mode: PromptIdentityMode = "reference"
+        face_lock = IDENTITY_LOCK_REFERENCE
+        subject_phrase = SUBJECT_PHRASE_REFERENCE
+        subject_rule = rules["reference"]
+        mode_hint = "📎 Hãy đính kèm ảnh gốc cùng prompt này trên app Gemini."
+    elif any(keyword in normalized_description for keyword in GIRL_KEYWORDS):
+        mode = "girl"
+        face_lock = IDENTITY_LOCK_GIRL
+        subject_phrase = _GIRL_SUBJECT_PHRASES[context]
+        subject_rule = rules["girl"]
+        mode_hint = "🔒 Prompt dùng khóa khuôn mặt cố định, không cần đính kèm ảnh."
+    else:
+        mode = "described"
+        face_lock = ""
+        subject_phrase = TEXT_SUBJECT_PHRASE_DESCRIBED
+        subject_rule = rules["described"]
+        mode_hint = "🖼️ Prompt tự mô tả khuôn mặt bằng chữ, không cần đính kèm ảnh."
 
-    if any(keyword in normalized_description for keyword in GIRL_KEYWORDS):
-        return PromptIdentityConfig(
-            mode="girl",
-            identity_lock=IDENTITY_LOCK_GIRL,
-            identity_rule=IDENTITY_RULE_LOCK,
-            subject_phrase=_GIRL_SUBJECT_PHRASES[context],
-            subject_rule=rules["girl"],
-            mode_hint="🔒 Prompt dùng khóa khuôn mặt cố định, không cần đính kèm ảnh.",
+    matched_extras = [
+        (name, lock)
+        for name, keywords, lock in (
+            ("trang phục", OUTFIT_KEYWORDS, OUTFIT_LOCK),
+            ("sản phẩm", PRODUCT_KEYWORDS, PRODUCT_LOCK),
         )
+        if any(keyword in normalized_description for keyword in keywords)
+    ]
+    if matched_extras:
+        mode_hint += f" (khóa thêm: {', '.join(name for name, _ in matched_extras)})"
+    identity_lock = "\n\n".join(lock for lock in (face_lock, *(l for _, l in matched_extras)) if lock)
 
     return PromptIdentityConfig(
-        mode="described",
-        identity_lock="",
-        identity_rule=IDENTITY_RULE_NONE,
-        subject_phrase=TEXT_SUBJECT_PHRASE_DESCRIBED,
-        subject_rule=rules["described"],
-        mode_hint="🖼️ Prompt tự mô tả khuôn mặt bằng chữ, không cần đính kèm ảnh.",
+        mode=mode,
+        identity_lock=identity_lock,
+        identity_rule=IDENTITY_RULE_LOCK if identity_lock else IDENTITY_RULE_NONE,
+        subject_phrase=subject_phrase,
+        subject_rule=subject_rule,
+        mode_hint=mode_hint,
     )

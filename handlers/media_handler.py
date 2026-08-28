@@ -92,7 +92,8 @@ Rules for what you generate:
 8. LIGHTING AND FINISH MUST MATCH THE REFERENCE. For genuinely raw/candid photography, use natural skin texture and restrained processing. For visibly polished beauty/fashion imagery, use the appropriate refined treatment. Never combine contradictory raw and beauty-filter instructions.
 9. CAMERA AND LENS MUST BE INFERRED FROM PERSPECTIVE AND DEPTH OF FIELD. Use approximately 70-135mm for tight compressed portraits, 40-55mm for normal half-body/three-quarter views, and 24-35mm only when the environment is intentionally prominent. State an equivalent focal length, aperture and depth of field consistent with the reference. Do not invent a camera brand or exact model unless it is provided.
 10. REALISM CHECK: preserve believable anatomy, perspective, skin texture, fabric behaviour, water/rain behaviour, reflections, shadows and depth of field. Avoid generic AI embellishment and details not supported by the reference.
-11. OUTPUT ONLY the final English image prompt as plain text. No markdown, no headings, no explanations, no negative-prompt section and no tool-specific flags."""
+11. CLOSE WITH ONE SHORT EXCLUSION SENTENCE: end the prompt with a single concise sentence naming only the safeguards genuinely relevant to this scene (choose from: natural hand and finger anatomy, no extra or missing fingers, no warped or duplicated facial features, no distorted body proportions, no altered locked identity/outfit/product details, no watermark or stray text). Pick 2 to 4 relevant items - do not pad with irrelevant ones and do not repeat wording already used earlier in the prompt.
+12. OUTPUT ONLY the final English image prompt as plain text. No markdown, no headings, no explanations, no separate negative-prompt section and no tool-specific flags."""
 
 @common.restricted
 async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
