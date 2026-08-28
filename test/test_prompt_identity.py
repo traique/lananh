@@ -16,9 +16,9 @@ from handlers.prompt_identity import (
 def test_girl_identity_matches_reference_facial_geometry():
     expected_features = (
         "softly rounded oval face",
-        "slender, average-height build",
-        "not a stocky or heavier-set figure",
-        "almond-shaped eyes taper gently at the outer corner",
+        "hourglass-leaning build",
+        "not a stocky, heavier-set or straight-line figure",
+        "almond-shaped eyes, not large or wide-open, taper gently at the outer corner",
         "subtle double eyelid crease",
         "eyebrows are naturally full with only a slight arch",
         "straight, narrow nasal bridge",
