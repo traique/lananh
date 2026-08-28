@@ -79,10 +79,10 @@ def test_ca_3_dang_deu_format_duoc_khong_thieu_placeholder():
         assert "{" not in text and "}" not in text
 
 
-def test_du_11_rule():
+def test_du_12_rule():
     for render in _ALL_MODES:
         text = render()
-        for n in range(1, 12):
+        for n in range(1, 13):
             assert f"\n{n}. " in text, f"thiếu rule {n}"
 
 
@@ -201,17 +201,21 @@ def test_dang_2_giu_nguyen_khoi_lock_co_dinh():
     assert IDENTITY_LOCK_GIRL in _render_girl()
 
 
-def test_dang_2_ta_lai_khuon_mat_da_khoa_thanh_chu():
+def test_dang_2_khong_ta_lai_khuon_mat_da_khoa_thanh_chu():
+    """Mặt đã có nguyên khối Identity Lock ở đầu prompt rồi, câu tả chủ thể chỉ
+    cần trỏ lại khối đó, không lặp lại các đặc điểm khuôn mặt lần 2 - tránh
+    trùng lặp ~70 từ trong cùng một prompt."""
     identity = resolve_prompt_identity(CAPTION_GIRL)
     phrase = identity.subject_phrase.lower()
-    for feature in ("oval face", "medium-large eyes", "double eyelid crease", "nasal bridge", "lips", "rounded chin"):
-        assert feature in phrase, f"câu tả chủ thể thiếu {feature}"
-    assert "restat" in identity.subject_rule.lower()
+    assert "identity lock" in phrase
+    for feature in ("oval face", "medium-large eyes", "double eyelid crease", "nasal bridge", "rounded chin"):
+        assert feature not in phrase, f"câu tả chủ thể lặp lại {feature}"
+    assert "not restate" in identity.subject_rule.lower()
 
 
 def test_dang_2_khong_tro_toi_anh_dinh_kem():
     text = _render_girl()
-    assert "the same adult Vietnamese woman defined by the Identity Lock above" in text
+    assert "the same woman defined by the Identity Lock above" in text
     assert "photo of the subject from" not in text
 
 

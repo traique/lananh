@@ -28,12 +28,15 @@ def test_girl_identity_matches_reference_facial_geometry():
     for feature in expected_features:
         assert feature in IDENTITY_LOCK_GIRL
 
-    # PHOTO_SUBJECT_PHRASE_GIRL restates the face on purpose (see
-    # PHOTO_SUBJECT_RULE_GIRL: it must override what's visible in the source
-    # photo), so it must still carry the defining shape cues, even if the
-    # wording isn't a byte-for-byte copy of the identity lock's phrasing.
-    for cue in ("oval face", "medium-large eyes", "rounded chin"):
-        assert cue in PHOTO_SUBJECT_PHRASE_GIRL
+
+def test_photo_girl_phrase_does_not_duplicate_identity_lock():
+    """PHOTO_SUBJECT_RULE_GIRL must still override what's visible in the source
+    photo, but it now does so by pointing back to the Identity Lock block
+    already placed at the top of the output (rule 1), instead of restating the
+    full facial blueprint a second time in the same prompt."""
+    assert "identity lock" in PHOTO_SUBJECT_PHRASE_GIRL.lower()
+    for cue in ("oval face", "medium-large eyes", "rounded chin", "nasal bridge"):
+        assert cue not in PHOTO_SUBJECT_PHRASE_GIRL
 
 
 def test_text_girl_phrase_does_not_duplicate_identity_lock():
@@ -43,7 +46,6 @@ def test_text_girl_phrase_does_not_duplicate_identity_lock():
     assert "identity lock" in TEXT_SUBJECT_PHRASE_GIRL.lower()
     assert "heart-shaped" not in TEXT_SUBJECT_PHRASE_GIRL
     assert "almond-shaped" not in TEXT_SUBJECT_PHRASE_GIRL
-    assert len(TEXT_SUBJECT_PHRASE_GIRL) < len(PHOTO_SUBJECT_PHRASE_GIRL)
 
 
 def test_girl_identity_does_not_lock_styling():
