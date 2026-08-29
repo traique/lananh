@@ -193,6 +193,31 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_provider_calls_provider ON provider_calls (provider, created_at DESC)"
         )
 
+        # Lượt gọi AI theo (channel, user) - dùng cho /thongke và trang admin
+        # (usage_by_user() bên dưới). TÁCH KHỎI bảng `prompts` một cách CỐ Ý:
+        # `prompts` bị dọn xuống còn HISTORY_RETENTION_LIMIT (20) dòng gần
+        # nhất/user ngay sau MỖI lần insert (phục vụ /history, xem cuối
+        # save_prompt()) - nếu đếm COUNT(*) trực tiếp trên `prompts` như bản cũ,
+        # số liệu "lượt gọi theo user" sẽ bị KHOÁ CỨNG ở 20 vĩnh viễn ngay khi
+        # 1 user vượt quá 20 lượt trong đời (mọi dòng cũ hơn bị xoá), trong khi
+        # MAX(created_at) vẫn tiếp tục nhảy vì dòng mới nhất luôn đổi - đúng
+        # triệu chứng "lượt gọi không nhảy số, chỉ thời gian nhảy". Bảng này
+        # (giống provider_calls) KHÔNG bị dọn theo số lượng, chỉ ghi thêm mỗi
+        # lượt (xem save_prompt()), nên COUNT(*) luôn phản ánh đúng thực tế.
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_calls (
+                id SERIAL PRIMARY KEY,
+                channel TEXT NOT NULL,
+                telegram_user_id BIGINT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_calls_user ON user_calls (channel, telegram_user_id, created_at DESC)"
+        )
+
         # Trí nhớ hội thoại (Phương án B - cửa sổ trượt + session timeout).
         # Ghi lại MỌI lượt chat bất kể đang dùng provider nào (router9/api1/
         # api2), để khi provider-chain đổi provider giữa chừng, nhánh API vẫn
@@ -356,9 +381,20 @@ async def save_prompt(telegram_user_id: int, command_type: str, prompt: str, cha
                 prompt,
                 channel,
             )
+            # Ghi song song vào user_calls (KHÔNG bị dọn theo số lượng như
+            # `prompts` bên dưới) - đây là nguồn số liệu thật cho
+            # usage_by_user()/`/thongke`, xem docstring bảng user_calls trong
+            # init_db().
+            await conn.execute(
+                "INSERT INTO user_calls (channel, telegram_user_id) VALUES ($1, $2)",
+                channel,
+                telegram_user_id,
+            )
             # Chỉ giữ HISTORY_RETENTION_LIMIT prompt gần nhất của user này -
             # chạy ngay sau mỗi insert nên bảng không bao giờ phình quá giới
-            # hạn, dù bot chạy liên tục trong thời gian dài.
+            # hạn, dù bot chạy liên tục trong thời gian dài. Việc dọn này CHỈ
+            # phục vụ /history (xem lại nội dung prompt gần đây) - KHÔNG được
+            # dùng để đếm usage (xem user_calls ở trên).
             await conn.execute(
                 """
                 DELETE FROM prompts
@@ -378,15 +414,17 @@ async def save_prompt(telegram_user_id: int, command_type: str, prompt: str, cha
 
 @_with_reconnect
 async def usage_by_user(since_hours: int = 24 * 7) -> list[dict]:
-    """Số lượt gọi AI (bảng prompts) theo (channel, telegram_user_id), dùng
-    cho trang admin. telegram_user_id âm = tài khoản Zalo đã pair (xem
-    channels/zalo_users.py); dương = chủ bot (Telegram/Zoom dùng chung
-    config.ALLOWED_USER_ID vì Zoom hiện chỉ có 1 pairing)."""
+    """Số lượt gọi AI (bảng user_calls - KHÔNG phải `prompts`, xem docstring
+    bảng user_calls trong init_db() để biết lý do) theo (channel,
+    telegram_user_id), dùng cho trang admin và /thongke. telegram_user_id âm =
+    tài khoản Zalo đã pair (xem channels/zalo_users.py); dương = chủ bot
+    (Telegram/Zoom dùng chung config.ALLOWED_USER_ID vì Zoom hiện chỉ có 1
+    pairing)."""
     pool = await get_pool()
     rows = await pool.fetch(
         """
         SELECT channel, telegram_user_id, COUNT(*) AS calls, MAX(created_at) AS last_call_at
-        FROM prompts
+        FROM user_calls
         WHERE created_at >= now() - ($1 || ' hours')::interval
         GROUP BY channel, telegram_user_id
         ORDER BY calls DESC
