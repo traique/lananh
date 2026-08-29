@@ -31,6 +31,7 @@ Repository được thiết kế cho **một chủ sở hữu**:
 - Ghi chú, reminder và facts danh mục qua ngôn ngữ tự nhiên.
 - Tìm giá sản phẩm bằng grounded search chính thức.
 - Phân tích ảnh và tạo prompt.
+- Thống kê lượt gọi AI theo user/kênh và theo model (`/thongke` trên chat, hoặc trang `/admin`).
 
 ### Telegram
 
@@ -256,6 +257,7 @@ Gateway chỉ lưu text mới từ nhóm allowlist, không backfill, không lưu
 | `/notes` | Xem ghi chú |
 | `/model` | Xem hoặc đổi model 9Router |
 | `/status` | Xem provider chain |
+| `/thongke [Nd\|Ngiờ]` | Thống kê lượt gọi theo user/kênh và theo model (mặc định 7 ngày, chỉ admin) |
 | `/userouter9` | Thử lại 9Router provider |
 | `/zoompair <jid> [tên]` | Cấp quyền 1 jid Zoom nói chuyện với bot |
 | `/zoomxoa` | Gỡ pairing Zoom hiện tại |
@@ -272,6 +274,46 @@ Gateway chỉ lưu text mới từ nhóm allowlist, không backfill, không lưu
 | `/zalomokhoa <id_zalo>` | Mở khóa 1 tài khoản Zalo |
 | `/zaloxoa <id_zalo>` | Xóa pairing 1 tài khoản Zalo |
 | `/zalodanhsach` | Xem danh sách tài khoản Zalo đã pair |
+
+## Trang quản trị (Admin dashboard)
+
+`web.py` phục vụ 1 trang HTML tại `/admin` (đăng nhập bằng `ADMIN_USER`/`ADMIN_PASS`,
+phiên đăng nhập ký bằng HMAC dựa trên `ADMIN_PASS` — đổi `ADMIN_PASS` sẽ tự
+vô hiệu mọi phiên đang mở). Không đặt 2 biến này thì `/admin` luôn từ chối
+truy cập. Trang cho phép:
+
+- Bật/tắt 9Router, Tavily, Agnes AI (tạo ảnh) và trí nhớ dài hạn theo từng user.
+- Reset cooldown provider, đổi `PROVIDER_ORDER`.
+- Xem thống kê **lượt gọi theo user/kênh** và **theo model** (`/admin/api/usage`,
+  `/admin/api/usage/models`) — cùng số liệu với lệnh `/thongke` ở trên, chỉ
+  khác là xem trên web thay vì chat.
+
+## Giữ Render Free không bị ngủ (UptimeRobot)
+
+Render Free tier tự **sleep sau ~15 phút không có request nào tới** — lần
+request tiếp theo (vd Telegram gửi webhook) phải đợi service "cold start"
+lại, có thể mất vài chục giây tới hơn 1 phút, dẫn tới bot phản hồi trễ hoặc
+Telegram coi webhook timeout. Endpoint `/` (health check, không cần auth,
+xem `web.py::health`) luôn trả `{"status": "ok"}` với `200`, dùng để ping giữ
+service thức:
+
+1. Tạo tài khoản miễn phí tại [UptimeRobot](https://dashboard.uptimerobot.com/login?rt=true).
+2. Vào **Add New Monitor**:
+   - **Monitor Type**: `HTTP(s)`
+   - **Friendly Name**: `lananh` (hoặc tên bất kỳ)
+   - **URL**: `https://<tên-service-render>.onrender.com/` (dùng đúng
+     `WEBHOOK_BASE_URL` đã cấu hình, có dấu `/` ở cuối)
+   - **Monitoring Interval**: `5 minutes` (gói free hỗ trợ tối thiểu 5 phút -
+     đủ ngắn để luôn ping trước khi Render kịp sleep sau 15 phút)
+3. Lưu monitor. UptimeRobot sẽ tự động gửi GET tới `/` mỗi 5 phút, giữ
+   service luôn ở trạng thái "awake".
+4. (Tuỳ chọn) Bật thông báo qua email/Telegram/Slack trong UptimeRobot để
+   được báo ngay nếu service down thật (không phải do sleep).
+
+Lưu ý: cách này chỉ giữ service khỏi sleep, **không** thay thế việc theo dõi
+lỗi thật — vẫn nên kiểm tra log Render định kỳ. Nếu trước đây có dùng
+GitHub Actions keep-alive workflow riêng, có thể tắt hẳn vì UptimeRobot làm
+đúng việc này mà không cần thêm secret/CI trong repository.
 
 ## Kiểm tra chất lượng
 
@@ -327,7 +369,7 @@ sự kiện thử trên Marketplace để xác nhận, chỉnh lại `channels/z
 nếu cần trước khi deploy thật.
 
 Mọi lệnh CÁ NHÂN (`/prompt`, `/gia`, `/dich`, `/reset`, `/history`, `/memory`,
-`/forget`, `/notes`, `/model`, `/status`, `/userouter9`) hoạt động GIỐNG HỆT
+`/forget`, `/notes`, `/model`, `/status`, `/thongke`, `/userouter9`) hoạt động GIỐNG HỆT
 trên Zalo và Zoom vì cả hai đều đi qua chung `services/channel_chat_service.py`.
 
 Các lệnh QUẢN LÝ/XEM LẠI NHÓM ZALO (`/nhom`, `/themnhom`, `/xoanhom`,
@@ -370,7 +412,7 @@ gửi trực tiếp/@mention cho bot), nên KHÔNG có `/tongket`/`/dangnoi` tư
 - Stock module là research assistant, không phải broker hoặc tư vấn viên được cấp phép.
 - Backtest phụ thuộc độ phủ provider và không bảo đảm hiệu suất tương lai.
 - Dự án cố ý chỉ hỗ trợ một người dùng; không có tenant isolation, billing, roles hoặc horizontal scaling.
-- Render Free có thể sleep; keep-alive workflow cần repository variable `RENDER_APP_URL`.
+- Render Free tự sleep sau ~15 phút không có request — xem mục "Giữ Render Free không bị ngủ (UptimeRobot)" ở trên để giữ service luôn thức.
 
 ## Tài liệu bổ sung
 
