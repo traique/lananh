@@ -40,6 +40,14 @@ async def _model_for(idx: int) -> str:
     return await provider_overrides.get_model_override(f"api{idx}") or config.GOOGLE_AI_STUDIO_MODEL
 
 
+async def get_client_and_model(idx: int):
+    """Truy cập genai client + tên model đã cache cho api{idx} - dùng cho
+    ai/agent_service.py (vòng lặp function-calling tự làm việc trực tiếp với
+    google.genai types, không đi qua generate() vì generate() không hỗ trợ
+    khai báo tool tuỳ ý/nhiều lượt gọi tool)."""
+    return await _get_official_client(idx), await _model_for(idx)
+
+
 async def _get_official_client(idx: int):
     key = await api_key_for(idx)
     if not key:
