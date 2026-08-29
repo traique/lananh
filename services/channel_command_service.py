@@ -21,6 +21,7 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /notes — xem ghi chú
 /model [tên|auto] — xem hoặc đổi model (chỉ admin)
 /status — xem trạng thái provider (chỉ admin)
+/thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày (chỉ admin)
 /userouter9 — thử lại 9Router (chỉ admin)
 /router9 on|off — bật/tắt 9Router thủ công (chỉ admin)
 /tavily on|off — bật/tắt tra web Tavily trước khi trả lời (chỉ admin)
@@ -224,11 +225,16 @@ async def maybe_handle_command(
     # gõ lệnh. Chỉ admin (Zalo: role=admin; Zoom/kênh khác chỉ có đúng 1 người
     # pair nên is_admin mặc định True) mới được đổi, để 1 thành viên thường
     # không thể vô tình/cố ý phá cấu hình chung của cả bot.
-    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model"} and not is_admin:
+    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model", "/thongke"} and not is_admin:
         return ["Lệnh này chỉ dành cho admin."], None
     if command == "/status":
         state = orchestrator.get_provider_state_snapshot()
         return [f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}"], None
+    if command == "/thongke":
+        # Dùng chung logic/format với Telegram (handlers/commands.py) - xem
+        # docstring _build_thongke_text ở đó.
+        hours = telegram_commands._parse_thongke_hours(argument)
+        return [await telegram_commands._build_thongke_text(hours, use_html=False)], None
     if command == "/userouter9":
         ok, detail = await orchestrator.try_router9_now()
         return (["✅ 9Router hoạt động, đã chuyển về 9Router."] if ok else [f"❌ 9Router vẫn lỗi: {detail[:250]}"]), None
