@@ -127,6 +127,7 @@ HELP_TEXT = (
     "/model — xem/đổi model chat\n"
     "/status — xem trạng thái provider\n"
     "/thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày\n"
+    "/agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm)\n"
     "/userouter9 — ép thử lại 9Router ngay\n"
     "/router9 on|off — bật/tắt 9Router thủ công\n"
     "/tavily on|off — bật/tắt tra web Tavily trước khi trả lời\n"
@@ -1002,6 +1003,35 @@ async def thongke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     hours = _parse_thongke_hours(common.extract_arg(context))
     text = await _build_thongke_text(hours, use_html=True)
     await update.message.reply_text(text, parse_mode="HTML")
+
+
+# ---------------------------------------------------------------------------
+# /agent - AI agent thật (xem ai/agent_service.py): model tự quyết định gọi
+# tool nào (tim_gia, xem_thong_ke...) bao nhiêu lần để trả lời, khác mọi lệnh
+# khác trong file này (pipeline cố định). Thử nghiệm - chỉ bật ở Telegram,
+# chỉ admin, vì mỗi câu hỏi có thể tốn tới MAX_AGENT_STEPS lượt gọi api1/api2
+# (quota thấp nhất trong provider-chain).
+# ---------------------------------------------------------------------------
+@common.restricted
+async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    question = common.extract_arg(context)
+    if not question:
+        await update.message.reply_text("Dùng: /agent <câu hỏi>\nVí dụ: /agent so sánh giá iPhone 15 và iPhone 15 Pro")
+        return
+
+    await update.message.reply_text("🤖 Đang suy nghĩ (agent có thể tự tra cứu vài bước)...")
+    try:
+        from ai import agent_service
+
+        text, provider = await agent_service.ask_agent(question)
+    except Exception:
+        logger.exception("Agent lỗi với câu hỏi: %r", question)
+        await update.message.reply_text("Agent gặp lỗi, thử lại sau hoặc dùng lệnh thường (/gia, /thongke...) nhé.")
+        return
+
+    # reply_long_text nhận markdown-lite (xem tg_format.py), KHÔNG phải HTML -
+    # dùng cú pháp _italic_ chứ không phải thẻ <i>.
+    await common.reply_long_text(update.message, f"{text}\n\n_⚙️ {provider}_")
 
 
 @common.restricted
