@@ -154,6 +154,13 @@ ROUTER9_PROBE_INTERVAL_SEC = _env_int(
 )  # 15 phút
 API_QUOTA_COOLDOWN_SEC = _env_int("API_QUOTA_COOLDOWN_SEC", 3600)  # 60 phút
 
+# services/monitor_service.py::_monitor_loop() - chu kỳ kiểm tra "TOÀN BỘ
+# provider trong PROVIDER_ORDER cùng lúc không dùng được" (router9 chết/tắt
+# VÀ mọi provider cooldown còn lại đều đang exhausted). Chỉ đọc state trong
+# RAM (provider_state), không gọi API nào nên có thể để ngắn (mặc định 5
+# phút) mà không tốn quota.
+MONITOR_INTERVAL_SEC = _env_int("MONITOR_INTERVAL_SEC", 300)  # 5 phút
+
 # Thứ tự ưu tiên thử provider, đọc từ env PROVIDER_ORDER (vd "api1,api2,router9"
 # để dùng API chính thức làm xương sống - xem README mục Provider-chain để
 # cân nhắc trước khi đổi). Mặc định: router9 -> groq -> openrouter -> api1 ->
