@@ -126,6 +126,7 @@ HELP_TEXT = (
     "/notes — xem ghi chú đã lưu\n"
     "/model — xem/đổi model chat\n"
     "/status — xem trạng thái provider\n"
+    "/thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày\n"
     "/userouter9 — ép thử lại 9Router ngay\n"
     "/router9 on|off — bật/tắt 9Router thủ công\n"
     "/tavily on|off — bật/tắt tra web Tavily trước khi trả lời\n"
