@@ -11,6 +11,18 @@ ROUTER9_DEAD_ALERT = (
 )
 ROUTER9_ALIVE_ALERT = "✅ 9Router đã hoạt động trở lại, em quay về dùng 9Router nhé."
 
+# services/monitor_service.py - cảnh báo khi TOÀN BỘ provider trong
+# PROVIDER_ORDER cùng lúc không dùng được (khác ROUTER9_DEAD_ALERT ở trên -
+# cái đó chỉ báo router9 chết, còn lananh vẫn trả lời bình thường qua
+# api1/api2; cảnh báo này báo tình huống nặng hơn: KHÔNG provider nào trả
+# lời được, mọi lệnh AI sẽ lỗi cho tới khi có provider hồi phục).
+ALL_PROVIDERS_DOWN_ALERT = (
+    "🚨 TOÀN BỘ provider trong PROVIDER_ORDER hiện đều không dùng được "
+    "(9Router chết/tắt + các provider còn lại đều đang cooldown hết quota). "
+    "Mọi lệnh AI sẽ báo lỗi cho tới khi có provider hồi phục - gõ /status để xem chi tiết."
+)
+ALL_PROVIDERS_RECOVERED_ALERT = "✅ Đã có ít nhất 1 provider dùng lại được, bot hoạt động bình thường trở lại."
+
 # ─── Zalo Team Chat (nhiều tài khoản, phân quyền admin/user) ───────────────
 ZALO_LOCKED_REPLY = "Tài khoản Zalo đang bị tạm khóa."
 

@@ -1,0 +1,6 @@
+# Dùng riêng cho mcp_server.py (chạy ở máy cá nhân, không deploy lên Render
+# cùng web service). Cài: pip install -r requirements.txt -r requirements-mcp.txt
+# Không ghim version chính xác (môi trường soạn code này không có mạng để xác
+# minh bản mới nhất) - `pip install` sẽ tự lấy bản ổn định mới nhất, cân nhắc
+# ghim lại sau khi cài thử thành công.
+mcp>=1.2

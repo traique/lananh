@@ -14,6 +14,7 @@ from channels import zalo_users
 from core import config, database as db, idempotency
 from handlers import chat_router, commands, media_handler, portfolio_commands, zalo_login
 from services import channel_chat_service
+from services import monitor_service
 from services.background_tasks import stop_tracked_tasks
 from stock import portfolio
 from stock import providers as stock_providers
@@ -41,6 +42,7 @@ COMMANDS = [
     BotCommand("model", "Xem/đổi model"),
     BotCommand("status", "Xem provider"),
     BotCommand("thongke", "Thống kê lượt gọi theo user/model"),
+    BotCommand("agent", "Hỏi agent tự tra cứu nhiều bước (thử nghiệm)"),
     BotCommand("userouter9", "Thử lại 9Router"),
     BotCommand("router9", "Bật/tắt 9Router (on|off)"),
     BotCommand("tavily", "Bật/tắt tra web Tavily (on|off)"),
@@ -71,6 +73,7 @@ async def _post_init(app):
     await app.bot.set_my_commands(COMMANDS)
     await orchestrator.init_provider_state()
     orchestrator.start_background_tasks()
+    monitor_service.start()
     scheduler.start(config.ALLOWED_USER_ID)
 
 
@@ -82,6 +85,7 @@ async def _post_shutdown(app):
             logger.exception("Shutdown step lỗi: %s", label)
 
     await run_step("Telegram scheduler", scheduler.stop())
+    await run_step("provider monitor task", monitor_service.stop())
     await run_step("Telegram memory tasks", chat_router.stop_background_tasks())
     await run_step("channel memory tasks", channel_chat_service.stop_background_tasks())
 
@@ -147,6 +151,7 @@ def build_application():
         ("model", commands.model_cmd),
         ("status", commands.status_cmd),
         ("thongke", commands.thongke_cmd),
+        ("agent", commands.agent_cmd),
         ("userouter9", commands.userouter9_cmd),
         ("router9", commands.router9_toggle_cmd),
         ("tavily", commands.tavily_toggle_cmd),
