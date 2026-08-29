@@ -61,6 +61,47 @@ async def test_model_denied_for_non_admin():
 
 
 @pytest.mark.asyncio
+async def test_thongke_denied_for_non_admin():
+    result, provider = await service.maybe_handle_command(1, "/thongke", is_admin=False)
+    assert result == ["Lệnh này chỉ dành cho admin."]
+
+
+@pytest.mark.asyncio
+async def test_thongke_admin_plain_text_no_html(monkeypatch):
+    """Zalo/Zoom chỉ hiển thị plain text (channels/zalo_text.py) - kết quả
+    /thongke qua kênh này KHÔNG được chứa thẻ HTML như <b>."""
+    tc = service.telegram_commands
+
+    async def fake_usage_by_user(since_hours):
+        return [{
+            "channel": "zalo", "telegram_user_id": -1, "calls": 3, "last_call_at": None,
+        }]
+
+    async def fake_usage_by_model(since_hours):
+        return [{"provider": "groq", "model": "llama", "calls": 5, "last_call_at": None}]
+
+    async def fake_list_users():
+        return []
+
+    monkeypatch.setattr(tc.db, "usage_by_user", fake_usage_by_user)
+    monkeypatch.setattr(tc.db, "usage_by_model", fake_usage_by_model)
+    monkeypatch.setattr(tc.zalo_users, "list_users", fake_list_users)
+
+    result, provider = await service.maybe_handle_command(1, "/thongke", is_admin=True)
+    text = result[0]
+    assert "<b>" not in text
+    assert "3" in text and "groq/llama" in text
+
+
+@pytest.mark.asyncio
+async def test_thongke_hours_parsing():
+    assert service.telegram_commands._parse_thongke_hours("") == 24 * 7
+    assert service.telegram_commands._parse_thongke_hours("3d") == 72
+    assert service.telegram_commands._parse_thongke_hours("48") == 48
+    assert service.telegram_commands._parse_thongke_hours("bậy bạ") == 24 * 7
+
+
+@pytest.mark.asyncio
 async def test_status_allowed_for_admin_by_default():
     result, provider = await service.maybe_handle_command(1, "/status")
     assert result != ["Lệnh này chỉ dành cho admin."]
