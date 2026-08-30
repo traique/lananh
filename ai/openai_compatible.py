@@ -29,6 +29,19 @@ class Response:
         self.text = text
 
 
+class ToolCallResponse:
+    """Kết quả 1 lượt /chat/completions có gửi kèm `tools` (OpenAI function-
+    calling): hoặc có `tool_calls` (model muốn gọi tool, chưa phải câu trả
+    lời cuối), hoặc có `text` (câu trả lời cuối, không cần tool nào nữa).
+    Dùng riêng, KHÔNG dùng chung class `Response` ở trên, vì caller (agent
+    loop) cần phân biệt rõ 2 trường hợp này để quyết định lặp tiếp hay dừng."""
+
+    def __init__(self, text: str, tool_calls: list[dict[str, Any]]) -> None:
+        self.text = text
+        # Mỗi item: {"id": str, "name": str, "arguments": dict}
+        self.tool_calls = tool_calls
+
+
 class ClientPool:
     """1 httpx.AsyncClient + 1 Semaphore dùng chung cho 1 nhánh provider,
     khởi tạo lười ở lần gọi đầu (event loop chưa chạy lúc import module)."""
@@ -137,6 +150,92 @@ async def post_chat_completion(
     if not text:
         raise OpenAICompatibleError(f"{provider_label} trả kết quả rỗng")
     return text.strip()
+
+
+def _parse_tool_calls(raw_tool_calls: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Chuyển `message.tool_calls` chuẩn OpenAI (mỗi item có `function.name` +
+    `function.arguments` là JSON string) thành list dict gọn: {id, name,
+    arguments (đã parse JSON)}. Bỏ qua item thiếu name hoặc arguments không
+    parse được (coi như [] cho item đó, không raise - để 1 tool_call hỏng
+    không làm hỏng cả response)."""
+    if not raw_tool_calls:
+        return []
+    parsed: list[dict[str, Any]] = []
+    for call in raw_tool_calls:
+        function = call.get("function") or {}
+        name = function.get("name")
+        if not name:
+            continue
+        raw_args = function.get("arguments")
+        try:
+            args = json.loads(raw_args) if isinstance(raw_args, str) and raw_args else {}
+        except json.JSONDecodeError:
+            args = {}
+        parsed.append({"id": call.get("id") or f"call_{len(parsed)}", "name": name, "arguments": args})
+    return parsed
+
+
+async def post_chat_completion_with_tools(
+    client: httpx.AsyncClient,
+    *,
+    base_url: str,
+    api_key: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    provider_label: str,
+) -> ToolCallResponse:
+    """Giống post_chat_completion() nhưng gửi kèm `tools` (function-calling
+    chuẩn OpenAI) và trả về ToolCallResponse (text + tool_calls) thay vì chỉ
+    str. Tách riêng khỏi post_chat_completion() thay vì thêm tham số optional
+    vào đó - contract trả về khác hẳn nhau (str vs có tool_calls), gộp lại sẽ
+    bắt mọi caller cũ (groq_client/openrouter_client/router9_client.generate)
+    phải xử lý thêm 1 nhánh không liên quan tới họ.
+
+    KHÔNG xử lý nhánh SSE dự phòng như post_chat_completion() (tool_calls
+    xuất hiện dạng chunk rời rạc trong stream, ghép lại phức tạp và ít gateway
+    stream khi đã tắt `stream`) - nếu gateway trả SSE dù đã xin JSON thường,
+    `response.json()` sẽ raise ValueError -> OpenAICompatibleError, caller tự
+    fallback provider kế tiếp như mọi lỗi khác.
+
+    CẢNH BÁO QUAN TRỌNG (đọc kỹ trước khi tin tưởng nhánh này ở production):
+    một số gateway OpenAI-compatible bên thứ ba (vd 9Router) có thể ÂM THẦM
+    bỏ qua `tools` (không lỗi, chỉ trả lời chữ bình thường) nếu backend thật
+    sự đứng sau không hỗ trợ function-calling. Hàm này không có cách nào tự
+    phát hiện được sự khác biệt giữa "model chủ động thấy không cần tool" và
+    "gateway lờ tools đi" - cả 2 đều trả tool_calls rỗng. Xem log ở
+    ai/agent_service.py::_run_router9 để tự kiểm chứng bằng traffic thật.
+    """
+    headers = {"Authorization": f"Bearer {api_key}"}
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": False,
+        "tools": tools,
+    }
+    try:
+        response = await client.post(
+            f"{base_url.rstrip('/')}/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+        response.raise_for_status()
+        completion_payload = response.json()
+        message = ((completion_payload.get("choices") or [{}])[0]).get("message") or {}
+        text = (message.get("content") or "").strip()
+        tool_calls = _parse_tool_calls(message.get("tool_calls"))
+    except httpx.HTTPStatusError as exc:
+        body = exc.response.text[:500]
+        raise OpenAICompatibleError(f"{provider_label} HTTP {exc.response.status_code}: {body}") from exc
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+        raise OpenAICompatibleError(f"{provider_label}: {type(exc).__name__}: {exc}") from exc
+    if not text and not tool_calls:
+        raise OpenAICompatibleError(f"{provider_label} trả kết quả rỗng (không text, không tool_calls)")
+    return ToolCallResponse(text, tool_calls)
 
 
 def is_rate_limited(exc: BaseException) -> bool:

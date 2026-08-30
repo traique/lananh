@@ -66,6 +66,43 @@ async def generate(
     return Response(text)
 
 
+async def generate_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.7,
+    max_tokens: int = 4096,
+):
+    """Lượt gọi /chat/completions có kèm `tools` (function-calling chuẩn
+    OpenAI) - dùng cho ai/agent_service.py, KHÁC generate() ở trên (không
+    dùng build_messages()/prompt+history, vì agent loop cần tự quản lý toàn
+    bộ messages list, kể cả các message role "assistant" mang tool_calls và
+    role "tool" mang kết quả tool, qua nhiều bước).
+
+    Trả về openai_compatible.ToolCallResponse. Xem cảnh báo quan trọng ở
+    docstring openai_compatible.post_chat_completion_with_tools() về việc
+    9Router có thể âm thầm bỏ qua `tools`."""
+    api_key = await _api_key()
+    if not api_key:
+        raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
+    async with _pool.get_semaphore():
+        try:
+            return await openai_compatible.post_chat_completion_with_tools(
+                _pool.get_client(),
+                base_url=config.ROUTER9_BASE_URL,
+                api_key=api_key,
+                messages=messages,
+                tools=tools,
+                model=model or config.ROUTER9_MODEL,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider_label="9Router",
+            )
+        except openai_compatible.OpenAICompatibleError as exc:
+            raise Router9Error(str(exc)) from exc
+
+
 async def generate_image_prompt(instruction: str, image_path: str) -> Response:
     api_key = await _api_key()
     if not api_key:
