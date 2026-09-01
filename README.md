@@ -258,7 +258,7 @@ Gateway chỉ lưu text mới từ nhóm allowlist, không backfill, không lưu
 | `/model` | Xem hoặc đổi model 9Router |
 | `/status` | Xem provider chain |
 | `/thongke [Nd\|Ngiờ]` | Thống kê lượt gọi theo user/kênh và theo model (mặc định 7 ngày, chỉ admin) |
-| `/agent <câu hỏi>` | Agent tự tra cứu nhiều bước để trả lời (thử nghiệm, chỉ Telegram, chỉ admin) |
+| `/agent <câu hỏi>` | Agent tự tra cứu nhiều bước để trả lời (thử nghiệm, chỉ admin) |
 | `/userouter9` | Thử lại 9Router provider |
 | `/zoompair <jid> [tên]` | Cấp quyền 1 jid Zoom nói chuyện với bot |
 | `/zoomxoa` | Gỡ pairing Zoom hiện tại |
@@ -292,40 +292,12 @@ hỏi>` (`ai/agent_service.py`) để MODEL tự quyết định:
   của Gemini) — đây cũng là 2 provider quota thấp nhất trong provider-chain,
   nên `/agent` **tốn quota nhanh hơn** lệnh thường, dùng cân nhắc.
 - Tool hiện có: `tim_gia` (tái dùng logic `/gia`), `xem_thong_ke` (tái dùng
-  `/thongke`). Thêm tool mới: viết 1 async function trong `ai/agent_service.py`
-  rồi khai báo vào dict `_TOOLS` - vòng lặp tự dùng được, không cần sửa gì khác.
-- Hiện chỉ bật ở Telegram (chưa nối vào Zalo/Zoom qua
-  `services/channel_command_service.py`) vì đây là tính năng thử nghiệm.
-
-## MCP Server (điều khiển lananh từ Claude Desktop/Claude Code)
-
-`mcp_server.py` phơi 1 vài khả năng ĐỌC (read-only, an toàn) của bot qua
-[Model Context Protocol](https://modelcontextprotocol.io) — để Claude
-Desktop, Claude Code, hoặc bất kỳ MCP client nào gọi thẳng vào `lananh` mà
-không cần mở Telegram/Zalo/Zoom. Chạy ở máy cá nhân, dùng chung
-`DATABASE_URL`/API key với bot thật (đọc từ `.env` như bình thường) để số
-liệu luôn khớp.
-
-Tool hiện có: `tim_gia`, `xem_thong_ke`, `xem_trang_thai_provider` — CỐ Ý
-không có tool ghi/phá huỷ nào (không đổi provider, không xoá trí nhớ...).
-
-Cài đặt:
-```bash
-pip install -r requirements.txt -r requirements-mcp.txt
-```
-
-Cấu hình trong Claude Desktop/Claude Code (đường dẫn tới `mcp_server.py`
-trong repo bạn):
-```json
-{
-  "mcpServers": {
-    "lananh": {
-      "command": "python",
-      "args": ["/đường/dẫn/tới/lananh/mcp_server.py"]
-    }
-  }
-}
-```
+  `/thongke`), `xem_gia_co_phieu` (tái dùng `stock_analysis.quick_quote`).
+  Thêm tool mới: viết 1 async function trong `ai/agent_service.py` rồi khai
+  báo vào dict `_TOOLS` - vòng lặp tự dùng được, không cần sửa gì khác.
+- Bật trên cả Telegram, Zalo và Zoom (`services/channel_command_service.py`),
+  chỉ admin (Zalo: role=admin; Zoom/Telegram chỉ có 1 owner được phép dùng)
+  vì tốn quota nhanh hơn lệnh thường.
 
 ## Trang quản trị (Admin dashboard)
 
@@ -396,7 +368,6 @@ zalo-gateway/        Node.js Zalo listener
 web.py               FastAPI webhook entrypoint (Telegram + Zoom)
 main.py              Local long-polling entrypoint
 bot_app.py           Telegram app factory và lifecycle
-mcp_server.py        MCP server (Claude Desktop/Claude Code) - xem mục "MCP Server"
 ```
 
 ## Zoom Team Chat
@@ -466,7 +437,7 @@ gửi trực tiếp/@mention cho bot), nên KHÔNG có `/tongket`/`/dangnoi` tư
 - Backtest phụ thuộc độ phủ provider và không bảo đảm hiệu suất tương lai.
 - Dự án cố ý chỉ hỗ trợ một người dùng; không có tenant isolation, billing, roles hoặc horizontal scaling.
 - Render Free tự sleep sau ~15 phút không có request — xem mục "Giữ Render Free không bị ngủ (UptimeRobot)" ở trên để giữ service luôn thức.
-- `/agent` và `mcp_server.py` là tính năng mới, mới kiểm tra bằng biên dịch cú pháp (`py_compile`), CHƯA chạy thử end-to-end với API key/DB thật — test kỹ trước khi dùng cho việc quan trọng, đặc biệt vòng lặp function-calling trong `ai/agent_service.py`.
+- `/agent` là tính năng mới, mới kiểm tra bằng biên dịch cú pháp (`py_compile`), CHƯA chạy thử end-to-end với API key/DB thật — test kỹ trước khi dùng cho việc quan trọng, đặc biệt vòng lặp function-calling trong `ai/agent_service.py`.
 - Cảnh báo "toàn bộ provider down" (`services/monitor_service.py`) chỉ phát hiện được tình huống router9 chết/tắt CỘNG mọi provider cooldown khác đều exhausted cùng lúc — không phát hiện được lỗi khác (vd DB mất kết nối, code lỗi logic) không liên quan tới provider AI.
 
 ## Tài liệu bổ sung
