@@ -250,3 +250,49 @@ async def test_ca_3_provider_loi_thi_raise_runtimeerror(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Cả router9, api1 và api2 đều lỗi"):
         await agent_service.ask_agent("câu hỏi")
+
+
+@pytest.mark.asyncio
+async def test_tool_doc_link_duoc_dang_ky_va_goi_dung(monkeypatch):
+    from services import web_reader
+
+    async def fake_read_url(url: str) -> str:
+        assert url == "https://vnexpress.net/bai-viet"
+        return "Nội dung bài báo đã đọc."
+
+    monkeypatch.setattr(web_reader, "read_url", fake_read_url)
+
+    assert "doc_link" in agent_service._TOOLS
+    result = await agent_service._call_tool("doc_link", {"url": "https://vnexpress.net/bai-viet"})
+
+    assert result == "Nội dung bài báo đã đọc."
+
+
+@pytest.mark.asyncio
+async def test_tool_doc_link_bao_loi_ssrf_khong_crash_agent(monkeypatch):
+    assert "doc_link" in agent_service._TOOLS
+    # Không patch gì - dùng thẳng normalize_public_http_url() thật để xác
+    # nhận URL nội bộ bị chặn và _call_tool() trả text lỗi (không raise, để
+    # model tự xử lý) thay vì làm sập cả agent loop.
+    result = await agent_service._call_tool("doc_link", {"url": "http://localhost/admin"})
+
+    assert "Không đọc được link" in result
+
+
+@pytest.mark.asyncio
+async def test_tool_xem_rss_duoc_dang_ky_va_goi_dung(monkeypatch):
+    from services import web_reader
+
+    async def fake_read_rss(url: str, limit: int = 0) -> str:
+        assert url == "https://vnexpress.net/rss/kinh-doanh.rss"
+        assert limit == 3
+        return "[Feed: Kinh doanh]\n1. Tin A\n2. Tin B"
+
+    monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
+
+    assert "xem_rss" in agent_service._TOOLS
+    result = await agent_service._call_tool(
+        "xem_rss", {"url": "https://vnexpress.net/rss/kinh-doanh.rss", "so_muc": 3}
+    )
+
+    assert "Tin A" in result
