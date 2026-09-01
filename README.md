@@ -294,6 +294,8 @@ hỏi>` (`ai/agent_service.py`) để MODEL tự quyết định:
 - Tool hiện có: `tim_gia` (tái dùng logic `/gia`), `xem_thong_ke` (tái dùng
   `/thongke`), `xem_gia_co_phieu` (tái dùng `stock_analysis.quick_quote`),
   `doc_link` (đọc 1 URL bất kỳ qua Jina Reader, có SSRF guard - xem
+  services/web_reader.py; 1 số trang tự chặn riêng Jina thì tự rơi xuống
+  fetch trực tiếp + bóc text bằng BeautifulSoup),
   `services/web_reader.py`), `xem_rss` (đọc mục mới nhất từ 1 feed RSS/Atom).
   Thêm tool mới: viết 1 async function trong `ai/agent_service.py` rồi khai
   báo vào dict `_TOOLS` - vòng lặp tự dùng được, không cần sửa gì khác.
