@@ -26,6 +26,7 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /router9 on|off — bật/tắt 9Router thủ công (chỉ admin)
 /tavily on|off — bật/tắt tra web Tavily trước khi trả lời (chỉ admin)
 /anh on|off — bật/tắt tạo ảnh Agnes AI (chỉ admin)
+/agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm, chỉ admin)
 /nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo
   (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom, chỉ admin)"""
 
@@ -135,6 +136,21 @@ async def _translate(user_id: int, argument: str, channel: str = "zalo") -> tupl
     return [f"🇯🇵↔🇻🇳 {label}\n\n{result}"], provider
 
 
+async def _agent(user_id: int, question: str, channel: str = "zalo") -> tuple[list[str], str | None]:
+    if not question:
+        return ["Dùng: /agent <câu hỏi>\nVí dụ: /agent so sánh giá iPhone 15 và iPhone 15 Pro"], None
+    from ai import agent_service
+
+    prompt_id = await telemetry.start(user_id, "agent", question, channel=channel)
+    try:
+        text, provider = await agent_service.ask_agent(question)
+        await telemetry.success(prompt_id, "agent", text)
+        return [f"{text}\n\n⚙️ {provider}"], None
+    except Exception as exc:
+        await telemetry.failure(prompt_id, "agent", exc)
+        return ["Agent gặp lỗi, thử lại sau hoặc dùng lệnh thường (/gia, /thongke...) nhé."], None
+
+
 async def _generate_image(argument: str, is_admin: bool, channel: str) -> tuple[list[str], str | None]:
     lowered = argument.strip().lower()
     if lowered in telegram_commands._ROUTER9_ON_ARGS or lowered in telegram_commands._ROUTER9_OFF_ARGS:
@@ -225,8 +241,10 @@ async def maybe_handle_command(
     # gõ lệnh. Chỉ admin (Zalo: role=admin; Zoom/kênh khác chỉ có đúng 1 người
     # pair nên is_admin mặc định True) mới được đổi, để 1 thành viên thường
     # không thể vô tình/cố ý phá cấu hình chung của cả bot.
-    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model", "/thongke"} and not is_admin:
+    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model", "/thongke", "/agent"} and not is_admin:
         return ["Lệnh này chỉ dành cho admin."], None
+    if command == "/agent":
+        return await _agent(user_id, argument, channel)
     if command == "/status":
         state = orchestrator.get_provider_state_snapshot()
         return [f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}"], None
