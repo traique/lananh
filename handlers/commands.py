@@ -1020,12 +1020,16 @@ async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await update.message.reply_text("🤖 Đang suy nghĩ (agent có thể tự tra cứu vài bước)...")
+    user_id = update.effective_user.id
+    prompt_id = await telemetry.start(user_id, "agent", question)
     try:
         from ai import agent_service
 
         text, provider = await agent_service.ask_agent(question)
-    except Exception:
+        await telemetry.success(prompt_id, "agent", text)
+    except Exception as exc:
         logger.exception("Agent lỗi với câu hỏi: %r", question)
+        await telemetry.failure(prompt_id, "agent", exc)
         await update.message.reply_text("Agent gặp lỗi, thử lại sau hoặc dùng lệnh thường (/gia, /thongke...) nhé.")
         return
 
