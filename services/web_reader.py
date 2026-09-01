@@ -106,18 +106,67 @@ def normalize_public_http_url(raw_url: str) -> str:
     return raw_url
 
 
-async def read_url(raw_url: str) -> str:
-    """Đọc 1 URL, trả về text đã làm sạch (cắt ở WEB_READER_MAX_CHARS ký tự).
-    Raise WebReaderError nếu URL không hợp lệ/bị chặn hoặc fetch lỗi."""
-    url = normalize_public_http_url(raw_url)
+_FALLBACK_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+_STRIP_TAGS = ("script", "style", "nav", "header", "footer", "aside", "noscript", "form", "svg")
 
-    response = await _get_client().get(f"{_JINA_READER_BASE_URL}{url}")
+
+def _extract_readable_text(html: str) -> str:
+    """Bóc text đọc được từ HTML thô, bỏ script/style/nav/menu... - dùng khi
+    Jina Reader lỗi (xem _fetch_direct)."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup.find_all(_STRIP_TAGS):
+        tag.decompose()
+    lines = (line.strip() for line in soup.get_text("\n").splitlines())
+    return "\n".join(line for line in lines if line)
+
+
+async def _fetch_direct(url: str) -> str:
+    """Fallback khi Jina Reader lỗi/rỗng: 1 số trang (đặc biệt tin tức VN)
+    chặn/rate-limit riêng IP hoặc User-Agent của các dịch vụ reader/proxy
+    như Jina bằng WAF, dù vẫn cho trình duyệt (hoặc fetcher có User-Agent
+    giống trình duyệt) truy cập nội dung công khai bình thường - tự fetch
+    HTML thô với User-Agent giả trình duyệt rồi bóc text bằng BeautifulSoup
+    (đã có sẵn qua dependency của vnstock, không thêm gánh nặng RAM đáng kể
+    trên Render free)."""
+    response = await _get_client().get(url, headers={"User-Agent": _FALLBACK_USER_AGENT})
     if response.status_code != 200:
         raise WebReaderError(f"Không đọc được link (HTTP {response.status_code}).")
 
-    text = response.text.strip()
+    text = _extract_readable_text(response.text)
     if not text:
         raise WebReaderError("Trang này không có nội dung đọc được (có thể chặn bot).")
+    return text
+
+
+async def read_url(raw_url: str) -> str:
+    """Đọc 1 URL, trả về text đã làm sạch (cắt ở WEB_READER_MAX_CHARS ký tự).
+    Thử Jina Reader trước; nếu lỗi/rỗng (1 số trang tin VN chặn riêng IP/UA
+    của các dịch vụ reader/proxy như Jina dù vẫn cho trình duyệt thường
+    truy cập bình thường) thì rơi xuống _fetch_direct() - tự fetch HTML rồi
+    bóc text bằng BeautifulSoup. Raise WebReaderError nếu URL không hợp lệ/
+    bị chặn, hoặc CẢ 2 cách đều lỗi."""
+    url = normalize_public_http_url(raw_url)
+
+    text = ""
+    status_code: Optional[int] = None
+    try:
+        response = await _get_client().get(f"{_JINA_READER_BASE_URL}{url}")
+        status_code = response.status_code
+        if status_code == 200:
+            text = response.text.strip()
+    except httpx.HTTPError as exc:
+        logger.warning("Jina Reader lỗi mạng cho '%s' (%s), thử fetch trực tiếp.", url, exc)
+
+    if not text:
+        if status_code is not None and status_code != 200:
+            logger.warning("Jina Reader trả HTTP %d cho '%s', thử fetch trực tiếp.", status_code, url)
+        logger.info("Jina Reader không đọc được '%s', thử fetch trực tiếp.", url)
+        text = await _fetch_direct(url)
 
     if len(text) > config.WEB_READER_MAX_CHARS:
         text = text[: config.WEB_READER_MAX_CHARS] + "\n\n[... đã cắt bớt, nội dung dài hơn]"
