@@ -141,6 +141,14 @@ AGNES_IMAGE_MODEL = os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash").stri
 AGNES_CALL_TIMEOUT_SEC = _env_int("AGNES_CALL_TIMEOUT_SEC", 90)
 TAVILY_MAX_RESULTS = _env_int("TAVILY_MAX_RESULTS", 5)
 
+# Web reader (đọc link/RSS bất kỳ cho /agent) - dùng Jina Reader (r.jina.ai,
+# miễn phí, không cần key) để lấy text sạch từ 1 URL, và feedparser để đọc
+# RSS/Atom. Xem services/web_reader.py.
+WEB_READER_TIMEOUT_SEC = _env_int("WEB_READER_TIMEOUT_SEC", 20)
+WEB_READER_MAX_CHARS = _env_int("WEB_READER_MAX_CHARS", 6000)
+RSS_READER_MAX_ITEMS = _env_int("RSS_READER_MAX_ITEMS", 8)
+
+
 # ─── Provider-chain (router9 -> groq -> openrouter -> api1 -> api2) + trí nhớ
 # hội thoại ────────────────────────────────────────────────────────────────
 # 9Router chết -> chuyển hẳn sang provider kế tiếp (không thử lại router9 mỗi
