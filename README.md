@@ -292,7 +292,9 @@ hỏi>` (`ai/agent_service.py`) để MODEL tự quyết định:
   của Gemini) — đây cũng là 2 provider quota thấp nhất trong provider-chain,
   nên `/agent` **tốn quota nhanh hơn** lệnh thường, dùng cân nhắc.
 - Tool hiện có: `tim_gia` (tái dùng logic `/gia`), `xem_thong_ke` (tái dùng
-  `/thongke`), `xem_gia_co_phieu` (tái dùng `stock_analysis.quick_quote`).
+  `/thongke`), `xem_gia_co_phieu` (tái dùng `stock_analysis.quick_quote`),
+  `doc_link` (đọc 1 URL bất kỳ qua Jina Reader, có SSRF guard - xem
+  `services/web_reader.py`), `xem_rss` (đọc mục mới nhất từ 1 feed RSS/Atom).
   Thêm tool mới: viết 1 async function trong `ai/agent_service.py` rồi khai
   báo vào dict `_TOOLS` - vòng lặp tự dùng được, không cần sửa gì khác.
 - Bật trên cả Telegram, Zalo và Zoom (`services/channel_command_service.py`),

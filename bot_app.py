@@ -15,6 +15,7 @@ from core import config, database as db, idempotency
 from handlers import chat_router, commands, media_handler, portfolio_commands, zalo_login
 from services import channel_chat_service
 from services import monitor_service
+from services import web_reader
 from services.background_tasks import stop_tracked_tasks
 from stock import portfolio
 from stock import providers as stock_providers
@@ -109,6 +110,7 @@ async def _post_shutdown(app):
     await run_step("Groq client", groq_client.close())
     await run_step("OpenRouter client", openrouter_client.close())
     await run_step("Tavily client", tavily_client.close())
+    await run_step("Web reader client", web_reader.close())
     await run_step("Agnes AI client", agnes_client.close())
 
     await run_step("stock HTTP client", stock_providers.close_http_client())
