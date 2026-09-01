@@ -123,6 +123,68 @@ async def test_read_url_cat_bot_khi_qua_dai(monkeypatch):
     assert "đã cắt bớt" in text
 
 
+@pytest.mark.asyncio
+async def test_read_url_rot_xuong_fetch_truc_tiep_khi_jina_rong(monkeypatch):
+    # Jina Reader trả 200 nhưng rỗng (trang chặn riêng Jina) - phải tự fetch
+    # trực tiếp URL gốc rồi bóc text bằng BeautifulSoup thay vì báo lỗi luôn.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "r.jina.ai":
+            return httpx.Response(200, text="")
+        return httpx.Response(
+            200,
+            text="<html><body><nav>menu</nav><article>Nội dung đọc trực tiếp được.</article></body></html>",
+        )
+
+    monkeypatch.setattr(
+        web_reader, "_get_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    text = await web_reader.read_url("https://vietstock.vn/bai-viet")
+    assert "Nội dung đọc trực tiếp được" in text
+    assert "menu" not in text
+
+
+@pytest.mark.asyncio
+async def test_read_url_rot_xuong_fetch_truc_tiep_khi_jina_loi_http(monkeypatch):
+    # Jina Reader trả lỗi HTTP (vd 403 - bị WAF chặn riêng) - vẫn thử fetch
+    # trực tiếp thay vì báo lỗi ngay.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "r.jina.ai":
+            return httpx.Response(403)
+        return httpx.Response(200, text="<html><body><p>Bài viết đọc được.</p></body></html>")
+
+    monkeypatch.setattr(
+        web_reader, "_get_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    text = await web_reader.read_url("https://vietstock.vn/bai-viet-2")
+    assert "Bài viết đọc được" in text
+
+
+@pytest.mark.asyncio
+async def test_read_url_bao_loi_khi_ca_2_cach_deu_that_bai(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403)
+
+    monkeypatch.setattr(
+        web_reader, "_get_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    with pytest.raises(web_reader.WebReaderError):
+        await web_reader.read_url("https://vietstock.vn/khong-doc-duoc-ca-2-cach")
+
+
+def test_extract_readable_text_bo_script_va_nav():
+    html = (
+        "<html><head><script>alert(1)</script><style>.a{}</style></head>"
+        "<body><nav>Menu chính</nav><header>Header</header>"
+        "<article>Nội dung chính cần giữ lại.</article>"
+        "<footer>Footer</footer></body></html>"
+    )
+    text = web_reader._extract_readable_text(html)
+    assert "Nội dung chính cần giữ lại" in text
+    assert "Menu chính" not in text
+    assert "Footer" not in text
+    assert "alert(1)" not in text
+
+
 # ─── read_rss ───────────────────────────────────────────────────────────────
 
 _SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
