@@ -106,6 +106,14 @@ async def _tool_xem_thong_ke(so_gio: int = 168) -> str:
     return await telegram_commands._build_thongke_text(so_gio, use_html=False)
 
 
+async def _tool_xem_gia_co_phieu(ma_co_phieu: str) -> str:
+    from stock import analysis as stock_analysis
+
+    if not ma_co_phieu or not ma_co_phieu.strip():
+        return "Lỗi: thiếu mã cổ phiếu."
+    return await stock_analysis.quick_quote(ma_co_phieu.strip())
+
+
 # name -> (mô tả cho model, JSON schema tham số kiểu OpenAPI, hàm thực thi)
 _TOOLS: dict[str, tuple[str, dict, callable]] = {
     "tim_gia": (
@@ -128,6 +136,17 @@ _TOOLS: dict[str, tuple[str, dict, callable]] = {
             },
         },
         _tool_xem_thong_ke,
+    ),
+    "xem_gia_co_phieu": (
+        "Xem giá cổ phiếu Việt Nam hiện tại theo mã (vd 'FPT', 'VNM'), lấy trực tiếp từ DNSE.",
+        {
+            "type": "object",
+            "properties": {
+                "ma_co_phieu": {"type": "string", "description": "Mã cổ phiếu, vd 'FPT'"},
+            },
+            "required": ["ma_co_phieu"],
+        },
+        _tool_xem_gia_co_phieu,
     ),
 }
 
