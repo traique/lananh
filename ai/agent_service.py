@@ -114,6 +114,28 @@ async def _tool_xem_gia_co_phieu(ma_co_phieu: str) -> str:
     return await stock_analysis.quick_quote(ma_co_phieu.strip())
 
 
+async def _tool_doc_link(url: str) -> str:
+    from services import web_reader
+
+    if not url or not url.strip():
+        return "Lỗi: thiếu URL."
+    try:
+        return await web_reader.read_url(url.strip())
+    except web_reader.WebReaderError as exc:
+        return f"Không đọc được link: {exc}"
+
+
+async def _tool_xem_rss(url: str, so_muc: int = 0) -> str:
+    from services import web_reader
+
+    if not url or not url.strip():
+        return "Lỗi: thiếu URL feed."
+    try:
+        return await web_reader.read_rss(url.strip(), so_muc)
+    except web_reader.WebReaderError as exc:
+        return f"Không đọc được feed: {exc}"
+
+
 # name -> (mô tả cho model, JSON schema tham số kiểu OpenAPI, hàm thực thi)
 _TOOLS: dict[str, tuple[str, dict, callable]] = {
     "tim_gia": (
@@ -147,6 +169,29 @@ _TOOLS: dict[str, tuple[str, dict, callable]] = {
             "required": ["ma_co_phieu"],
         },
         _tool_xem_gia_co_phieu,
+    ),
+    "doc_link": (
+        "Đọc nội dung 1 trang web/bài báo cụ thể theo URL người dùng đưa, trả về text sạch để tóm tắt/trả lời.",
+        {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL đầy đủ (bắt đầu bằng http:// hoặc https://) cần đọc"},
+            },
+            "required": ["url"],
+        },
+        _tool_doc_link,
+    ),
+    "xem_rss": (
+        "Đọc các mục mới nhất từ 1 feed RSS/Atom theo URL người dùng đưa.",
+        {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL feed RSS/Atom"},
+                "so_muc": {"type": "integer", "description": "Số mục mới nhất muốn xem, mặc định 8"},
+            },
+            "required": ["url"],
+        },
+        _tool_xem_rss,
     ),
 }
 
