@@ -132,9 +132,27 @@ async def test_run_once_gui_ca_zalo_va_zoom(monkeypatch):
 
     result = await morning_news.run_once(force=True)
 
-    assert result == "nội dung bản tin"
+    assert result.content == "nội dung bản tin"
+    assert result.sent_zalo is True
+    assert result.sent_zoom is True
     assert enqueued["args"] == ("zalo-bot", "controller-1", "nội dung bản tin")
     assert sent_zoom["args"] == ("jid-1", "nội dung bản tin")
+
+
+@pytest.mark.asyncio
+async def test_run_once_bao_dung_that_bai_khi_khong_gui_duoc_kenh_nao(monkeypatch):
+    # Bug đã xảy ra thật: build_digest() thành công (có content) nhưng CẢ 2
+    # kênh gửi thất bại - kết quả PHẢI phản ánh đúng là chưa gửi được gì, để
+    # /bantinsang không báo "✅ Đã gửi" trong khi thực ra không có gì tới nơi.
+    monkeypatch.setattr(morning_news, "build_digest", lambda: _async_return("nội dung"))
+    monkeypatch.setattr(zalo_session, "load_controller", lambda: _async_return(""))
+    monkeypatch.setattr(db, "zoom_get_pairing", lambda: _async_return(None))
+
+    result = await morning_news.run_once(force=True)
+
+    assert result.content == "nội dung"
+    assert result.sent_zalo is False
+    assert result.sent_zoom is False
 
 
 @pytest.mark.asyncio
@@ -169,8 +187,9 @@ async def test_run_once_khong_gui_lai_trong_ngay_neu_da_gui_roi(monkeypatch):
     first = await morning_news.run_once(force=False)
     second = await morning_news.run_once(force=False)
 
-    assert first == "nội dung"
-    assert second is None  # đã gửi hôm nay rồi, không gửi/tổng hợp lại
+    assert first.content == "nội dung"
+    assert first.sent_zalo is True
+    assert second.content is None  # đã gửi hôm nay rồi, không gửi/tổng hợp lại
     assert calls["n"] == 1
 
 
