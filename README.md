@@ -259,6 +259,7 @@ Gateway chỉ lưu text mới từ nhóm allowlist, không backfill, không lưu
 | `/status` | Xem provider chain |
 | `/thongke [Nd\|Ngiờ]` | Thống kê lượt gọi theo user/kênh và theo model (mặc định 7 ngày, chỉ admin) |
 | `/agent <câu hỏi>` | Agent tự tra cứu nhiều bước để trả lời (thử nghiệm, chỉ admin) |
+| `/bantinsang` | Gửi thử ngay bản tin buổi sáng (Zalo+Zoom, chỉ admin; bình thường tự gửi 8h) |
 | `/userouter9` | Thử lại 9Router provider |
 | `/zoompair <jid> [tên]` | Cấp quyền 1 jid Zoom nói chuyện với bot |
 | `/zoomxoa` | Gỡ pairing Zoom hiện tại |
@@ -295,13 +296,39 @@ hỏi>` (`ai/agent_service.py`) để MODEL tự quyết định:
   `/thongke`), `xem_gia_co_phieu` (tái dùng `stock_analysis.quick_quote`),
   `doc_link` (đọc 1 URL bất kỳ qua Jina Reader, có SSRF guard - xem
   services/web_reader.py; 1 số trang tự chặn riêng Jina thì tự rơi xuống
-  fetch trực tiếp + bóc text bằng BeautifulSoup),
-  `services/web_reader.py`), `xem_rss` (đọc mục mới nhất từ 1 feed RSS/Atom).
-  Thêm tool mới: viết 1 async function trong `ai/agent_service.py` rồi khai
-  báo vào dict `_TOOLS` - vòng lặp tự dùng được, không cần sửa gì khác.
+  fetch trực tiếp + bóc text bằng BeautifulSoup), `xem_rss` (đọc mục mới
+  nhất từ 1 feed RSS/Atom). Thêm tool mới: viết 1 async function trong
+  `ai/agent_service.py` rồi khai báo vào dict `_TOOLS` - vòng lặp tự dùng
+  được, không cần sửa gì khác.
 - Bật trên cả Telegram, Zalo và Zoom (`services/channel_command_service.py`),
   chỉ admin (Zalo: role=admin; Zoom/Telegram chỉ có 1 owner được phép dùng)
   vì tốn quota nhanh hơn lệnh thường.
+- Native tool-calling (Google GenAI function calling qua api1/api2) VÀ
+  nhánh router9 native đều tồn tại song song; `_ROUTER9_NATIVE_TOOLS_ENABLED`
+  trong `ai/agent_service.py` đang **tắt** vì router9 (gateway bên thứ 3)
+  từng bị phát hiện âm thầm bỏ qua tham số `tools` - xem docstring đầu file
+  trước khi bật lại.
+
+## Bản tin buổi sáng (RSS → Zalo + Zoom)
+
+`services/morning_news.py`: mỗi ngày lúc `MORNING_NEWS_HOUR_VN` (mặc định 8h
+giờ VN), tự đọc các feed RSS trong `MORNING_NEWS_RSS_FEEDS` (mặc định:
+VnExpress Kinh doanh, CafeF Thị trường chứng khoán, Vietstock Cổ phiếu -
+đổi qua env, phân cách bằng dấu phẩy), tổng hợp bằng AI thành 1 bản tin gọn,
+gửi cho chủ bot qua **cả Zalo và Zoom** (không gửi Telegram - dùng đúng 2
+kênh bạn yêu cầu).
+
+- Gửi Zalo qua `zalo_outbox` (cùng cơ chế digest nhóm ở
+  `channels/zalo_scheduler.py`) tới Zalo controller đã pair
+  (`channels/zalo_session.py`); gửi Zoom qua `channels/zoom.send_message`
+  tới JID đã pair (`core.database.zoom_get_pairing`). Thiếu pairing kênh nào
+  thì bỏ qua kênh đó, không lỗi cả tiến trình.
+- Có guard idempotent qua `core.database.get_setting/set_setting` (key
+  `morning_news:last_sent_date`) - tránh gửi trùng nếu Render restart đúng
+  lúc quanh giờ chạy (free tier có thể spin down/redeploy).
+- `/bantinsang` (chỉ admin, Zalo/Zoom) gửi thử ngay lập tức, bỏ qua guard
+  "đã gửi hôm nay" - dùng để test mà không cần đợi tới 8h sáng hôm sau.
+- Tắt hẳn tính năng: set `MORNING_NEWS_ENABLED=false`.
 
 ## Trang quản trị (Admin dashboard)
 

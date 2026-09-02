@@ -26,6 +26,7 @@ from channels.router import router as zalo_router
 from core import config, database as db, idempotency
 from diagnose_router9 import main as diagnose_main
 from services import memory_service
+from services import morning_news
 from services.background_tasks import stop_tracked_tasks
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.concurrency import assistant_turn
@@ -123,10 +124,12 @@ async def lifespan(_: FastAPI):
         )
         logger.info("Webhook đã set tới: %s", webhook_url)
         zalo_scheduler.start()
+        morning_news.start()
         yield
     finally:
         logger.info("Đang tắt bot...")
         await _safe_shutdown("Zalo scheduler", zalo_scheduler.stop())
+        await _safe_shutdown("Morning news scheduler", morning_news.stop())
         await _safe_shutdown("webhook tasks", _stop_webhook_tasks())
         if app_started:
             await _safe_shutdown("Telegram application stop", application.stop())
