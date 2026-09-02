@@ -27,6 +27,7 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /tavily on|off — bật/tắt tra web Tavily trước khi trả lời (chỉ admin)
 /anh on|off — bật/tắt tạo ảnh Agnes AI (chỉ admin)
 /agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm, chỉ admin)
+/bantinsang — gửi ngay bản tin buổi sáng (test thủ công, chỉ admin; bình thường tự gửi lúc 8h)
 /nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo
   (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom, chỉ admin)"""
 
@@ -151,6 +152,15 @@ async def _agent(user_id: int, question: str, channel: str = "zalo") -> tuple[li
         return ["Agent gặp lỗi, thử lại sau hoặc dùng lệnh thường (/gia, /thongke...) nhé."], None
 
 
+async def _morning_news_now() -> list[str]:
+    from services import morning_news
+
+    content = await morning_news.run_once(force=True)
+    if content is None:
+        return ["Không có nội dung để gửi (chưa cấu hình feed RSS, tất cả feed lỗi, hoặc bot chưa pair Zalo lẫn Zoom)."]
+    return ["✅ Đã gửi bản tin buổi sáng."]
+
+
 async def _generate_image(argument: str, is_admin: bool, channel: str) -> tuple[list[str], str | None]:
     lowered = argument.strip().lower()
     if lowered in telegram_commands._ROUTER9_ON_ARGS or lowered in telegram_commands._ROUTER9_OFF_ARGS:
@@ -241,10 +251,12 @@ async def maybe_handle_command(
     # gõ lệnh. Chỉ admin (Zalo: role=admin; Zoom/kênh khác chỉ có đúng 1 người
     # pair nên is_admin mặc định True) mới được đổi, để 1 thành viên thường
     # không thể vô tình/cố ý phá cấu hình chung của cả bot.
-    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model", "/thongke", "/agent"} and not is_admin:
+    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model", "/thongke", "/agent", "/bantinsang"} and not is_admin:
         return ["Lệnh này chỉ dành cho admin."], None
     if command == "/agent":
         return await _agent(user_id, argument, channel)
+    if command == "/bantinsang":
+        return await _morning_news_now(), None
     if command == "/status":
         state = orchestrator.get_provider_state_snapshot()
         return [f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}"], None
