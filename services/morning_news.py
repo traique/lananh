@@ -35,6 +35,7 @@ class RunResult(NamedTuple):
     sent_zalo: bool
     sent_zoom: bool
 
+
 _GROUNDING = (
     "Bên dưới LUÔN có ít nhất 1 nguồn tin RSS thật với tiêu đề cụ thể - PHẢI "
     "tổng hợp thành bản tin từ đúng những gì đã cho. TUYỆT ĐỐI không được trả "
@@ -43,10 +44,18 @@ _GROUNDING = (
     "lại, không bịa thêm số liệu/sự kiện không có trong nguồn."
 )
 _STYLE = (
-    "Viết tiếng Việt, giọng bản tin buổi sáng ngắn gọn dễ đọc trên điện thoại. "
-    "Gom các tin trùng chủ đề lại thay vì liệt kê riêng lẻ. Mỗi tin 1-2 dòng. "
-    "Ưu tiên tin kinh tế/chứng khoán/thời sự quan trọng lên đầu. Không dùng "
-    "markdown (**, #, bảng). Không thêm lời chào mở đầu/kết thúc."
+    "Viết tiếng Việt, giọng bản tin buổi sáng ngắn gọn dễ đọc trên điện thoại - "
+    "như 1 người dẫn chương trình tường thuật lại bằng lời của mình, KHÔNG phải "
+    "kiểu liệt kê nghiên cứu có trích dẫn. Diễn đạt lại hoàn toàn bằng câu văn "
+    "của bạn, không giữ nguyên cấu trúc câu gốc.\n"
+    "TUYỆT ĐỐI KHÔNG được thêm ngoặc trích dẫn/tên nguồn vào cuối câu hay cuối "
+    "đoạn kiểu [CafeF], [VnExpress], [1], (theo Vietstock), 'nguồn tin cho biết'... "
+    "- không nhắc tên nguồn RSS ở bất kỳ đâu trong bài, chỉ có duy nhất 1 dòng "
+    "'Nguồn: ...' liệt kê tên các nguồn ở CUỐI CÙNG bài (sau khi hết tin).\n"
+    "Gom các tin trùng chủ đề lại thành 1 đoạn liền mạch thay vì liệt kê rời "
+    "rạc từng tin 1-2 dòng. Ưu tiên tin kinh tế/chứng khoán/thời sự quan trọng "
+    "lên đầu. Không dùng markdown (**, #, bảng). Không thêm lời chào mở đầu/"
+    "kết thúc."
 )
 # Nếu response ngắn hơn ngưỡng này dù feed_texts có dữ liệu thật, coi là AI đã
 # "bịa" từ chối/nói không có tin thay vì tổng hợp đúng - không phải lỗi feed.
