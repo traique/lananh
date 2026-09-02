@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from ai import orchestrator
@@ -23,6 +24,16 @@ logger = logging.getLogger(__name__)
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _LAST_SENT_KEY = "morning_news:last_sent_date"
 _task: asyncio.Task | None = None
+
+
+class RunResult(NamedTuple):
+    """Kết quả 1 lượt run_once(). `content` khác None chỉ có nghĩa là ĐÃ
+    TỔNG HỢP được bản tin - phải xem sent_zalo/sent_zoom để biết có thực sự
+    GỬI tới nơi hay không (xem docstring run_once)."""
+
+    content: str | None
+    sent_zalo: bool
+    sent_zoom: bool
 
 _GROUNDING = (
     "Bên dưới LUÔN có ít nhất 1 nguồn tin RSS thật với tiêu đề cụ thể - PHẢI "
@@ -130,18 +141,20 @@ async def _mark_sent(now: datetime) -> None:
     await db.set_setting(_LAST_SENT_KEY, now.date().isoformat())
 
 
-async def run_once(force: bool = False) -> str | None:
+async def run_once(force: bool = False) -> RunResult:
     """Tạo + gửi 1 lượt bản tin sáng. `force=True` bỏ qua guard "đã gửi hôm
-    nay" (dùng cho lệnh test thủ công). Trả về nội dung đã gửi, hoặc None
-    nếu không có gì để gửi/đã gửi rồi hôm nay."""
+    nay" (dùng cho lệnh test thủ công). QUAN TRỌNG: `result.content` khác
+    None không có nghĩa là đã GỬI được - luôn kiểm tra `sent_zalo`/`sent_zoom`
+    (bug cũ: trả content dù cả 2 kênh đều gửi thất bại, khiến /bantinsang báo
+    "✅ Đã gửi" trong khi thực ra chẳng có gì tới nơi)."""
     now = datetime.now(_VN_TZ)
     if not force and await _already_sent_today(now):
-        return None
+        return RunResult(content=None, sent_zalo=False, sent_zoom=False)
 
     content = await build_digest()
     if not content:
         logger.info("morning_news: không có nội dung để gửi (thiếu feed hoặc tất cả feed lỗi).")
-        return None
+        return RunResult(content=None, sent_zalo=False, sent_zoom=False)
 
     sent_zalo = await _send_to_zalo(content)
     sent_zoom = await _send_to_zoom(content)
@@ -149,7 +162,7 @@ async def run_once(force: bool = False) -> str | None:
         await _mark_sent(now)
     else:
         logger.info("morning_news: có nội dung nhưng chưa pair Zalo lẫn Zoom, chưa gửi được đâu cả.")
-    return content
+    return RunResult(content=content, sent_zalo=sent_zalo, sent_zoom=sent_zoom)
 
 
 def _seconds_until_next_hour(hour: int) -> float:

@@ -155,9 +155,19 @@ async def _agent(user_id: int, question: str, channel: str = "zalo") -> tuple[li
 async def _morning_news_now() -> list[str]:
     from services import morning_news
 
-    content = await morning_news.run_once(force=True)
-    if content is None:
-        return ["Không có nội dung để gửi (chưa cấu hình feed RSS, tất cả feed lỗi, hoặc bot chưa pair Zalo lẫn Zoom)."]
+    result = await morning_news.run_once(force=True)
+    if result.content is None:
+        return ["Không có nội dung để gửi (tất cả nguồn RSS đều lỗi, hoặc model tổng hợp trả lời bất thường - xem log)."]
+    if not result.sent_zalo and not result.sent_zoom:
+        return ["Đã tổng hợp được bản tin nhưng KHÔNG gửi được tới đâu cả (chưa pair Zalo lẫn Zoom, hoặc gửi bị lỗi - xem log)."]
+    kenh = []
+    if result.sent_zalo:
+        kenh.append("Zalo")
+    if result.sent_zoom:
+        kenh.append("Zoom")
+    if len(kenh) < 2:
+        thieu = "Zoom" if "Zoom" not in kenh else "Zalo"
+        return [f"✅ Đã gửi bản tin buổi sáng qua {' và '.join(kenh)} (KHÔNG gửi được {thieu} - chưa pair hoặc lỗi, xem log)."]
     return ["✅ Đã gửi bản tin buổi sáng."]
 
 
