@@ -48,7 +48,9 @@ async def test_build_digest_goi_ai_tong_hop_tu_rss(monkeypatch):
 
     async def fake_ask(prompt: str):
         assert "Tin A" in prompt
-        return SimpleNamespace(text="Bản tin tổng hợp: Tin A và Tin B.")
+        return SimpleNamespace(
+            text="Thị trường sáng nay có 2 tin đáng chú ý: Tin A và Tin B, cả hai đều liên quan tới kinh doanh."
+        )
 
     monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
     monkeypatch.setattr(orchestrator, "ask", fake_ask)
@@ -56,7 +58,7 @@ async def test_build_digest_goi_ai_tong_hop_tu_rss(monkeypatch):
     digest = await morning_news.build_digest()
 
     assert "TIN TỨC BUỔI SÁNG" in digest
-    assert "Bản tin tổng hợp: Tin A và Tin B." in digest
+    assert "Thị trường sáng nay có 2 tin đáng chú ý" in digest
 
 
 @pytest.mark.asyncio
@@ -69,14 +71,14 @@ async def test_build_digest_bo_qua_feed_loi_van_tong_hop_feed_con_lai(monkeypatc
         return "[Feed: B]\n1. Tin B"
 
     async def fake_ask(prompt: str):
-        return SimpleNamespace(text="Tổng hợp có Tin B.")
+        return SimpleNamespace(text="Bản tin sáng nay chỉ có 1 tin từ nguồn B: cập nhật tình hình kinh doanh mới nhất.")
 
     monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
     monkeypatch.setattr(orchestrator, "ask", fake_ask)
 
     digest = await morning_news.build_digest()
 
-    assert "Tổng hợp có Tin B" in digest
+    assert "Bản tin sáng nay chỉ có 1 tin từ nguồn B" in digest
 
 
 @pytest.mark.asyncio
@@ -85,6 +87,23 @@ async def test_build_digest_tra_ve_none_khi_tat_ca_feed_loi(monkeypatch):
         raise web_reader.WebReaderError("feed lỗi")
 
     monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
+
+    assert await morning_news.build_digest() is None
+
+
+@pytest.mark.asyncio
+async def test_build_digest_bo_qua_khi_model_tra_loi_qua_ngan(monkeypatch):
+    # Feed đọc được thật (feed_texts không rỗng) nhưng model lại trả lời
+    # kiểu "không có tin" bất thường - phải coi là lỗi tổng hợp, KHÔNG gửi
+    # bản tin vô nghĩa, dù bản thân feed hoàn toàn không lỗi.
+    async def fake_read_rss(url: str) -> str:
+        return "[Feed: Kinh doanh]\n1. Tin A thật sự tồn tại\nTóm tắt A\nhttps://a"
+
+    async def fake_ask(prompt: str):
+        return SimpleNamespace(text="Không có tin nào hết")
+
+    monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
+    monkeypatch.setattr(orchestrator, "ask", fake_ask)
 
     assert await morning_news.build_digest() is None
 
