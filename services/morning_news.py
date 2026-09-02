@@ -25,9 +25,11 @@ _LAST_SENT_KEY = "morning_news:last_sent_date"
 _task: asyncio.Task | None = None
 
 _GROUNDING = (
-    "Chỉ dùng đúng các tin đã cho bên dưới, không bịa thêm số liệu/sự kiện "
-    "không có trong nguồn. Đây là tiêu đề + tóm tắt ngắn lấy từ RSS (không phải "
-    "bài đầy đủ) - không suy diễn chi tiết ngoài những gì đã cho."
+    "Bên dưới LUÔN có ít nhất 1 nguồn tin RSS thật với tiêu đề cụ thể - PHẢI "
+    "tổng hợp thành bản tin từ đúng những gì đã cho. TUYỆT ĐỐI không được trả "
+    "lời kiểu 'không có tin nào', 'không có thông tin', hay từ chối vì bất kỳ "
+    "lý do gì - dữ liệu chắc chắn có sẵn ngay bên dưới, chỉ cần đọc và tóm tắt "
+    "lại, không bịa thêm số liệu/sự kiện không có trong nguồn."
 )
 _STYLE = (
     "Viết tiếng Việt, giọng bản tin buổi sáng ngắn gọn dễ đọc trên điện thoại. "
@@ -35,6 +37,9 @@ _STYLE = (
     "Ưu tiên tin kinh tế/chứng khoán/thời sự quan trọng lên đầu. Không dùng "
     "markdown (**, #, bảng). Không thêm lời chào mở đầu/kết thúc."
 )
+# Nếu response ngắn hơn ngưỡng này dù feed_texts có dữ liệu thật, coi là AI đã
+# "bịa" từ chối/nói không có tin thay vì tổng hợp đúng - không phải lỗi feed.
+_MIN_VALID_DIGEST_CHARS = 80
 
 
 def _build_prompt(feed_texts: list[str]) -> str:
@@ -44,8 +49,10 @@ def _build_prompt(feed_texts: list[str]) -> str:
 
 async def build_digest() -> str | None:
     """Đọc các feed cấu hình, tổng hợp bằng AI. Trả None nếu chưa cấu hình
-    feed nào hoặc TẤT CẢ feed đều lỗi (không phải lỗi từng phần - đọc được
-    ít nhất 1 feed là vẫn tổng hợp bình thường)."""
+    feed nào, TẤT CẢ feed đều lỗi (không phải lỗi từng phần - đọc được ít
+    nhất 1 feed là vẫn tổng hợp bình thường), hoặc model trả lời bất thường
+    (quá ngắn/kiểu "không có tin" dù đã đưa dữ liệu thật - xem
+    _MIN_VALID_DIGEST_CHARS)."""
     feeds = config.MORNING_NEWS_RSS_FEEDS
     if not feeds:
         return None
@@ -53,7 +60,9 @@ async def build_digest() -> str | None:
     feed_texts: list[str] = []
     for url in feeds:
         try:
-            feed_texts.append(await web_reader.read_rss(url))
+            text = await web_reader.read_rss(url)
+            feed_texts.append(text)
+            logger.info("morning_news: đọc feed '%s' OK (%d ký tự).", url, len(text))
         except web_reader.WebReaderError as exc:
             logger.warning("morning_news: lỗi đọc feed '%s': %s", url, exc)
 
@@ -64,6 +73,15 @@ async def build_digest() -> str | None:
     response = await orchestrator.ask(_build_prompt(feed_texts))
     body = (getattr(response, "text", None) or "").strip()
     if not body:
+        return None
+    if len(body) < _MIN_VALID_DIGEST_CHARS:
+        # Đã đọc được ít nhất 1 feed thật (feed_texts không rỗng) nhưng model
+        # trả lời bất thường ngắn/kiểu từ chối - coi là lỗi tổng hợp, không
+        # phải lỗi feed, để không gửi 1 bản tin vô nghĩa cho người dùng.
+        logger.warning(
+            "morning_news: model trả lời bất thường (%d ký tự: %r) dù có %d feed đọc được - bỏ, không gửi.",
+            len(body), body, len(feed_texts),
+        )
         return None
 
     now = datetime.now(_VN_TZ)
