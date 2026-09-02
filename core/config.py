@@ -205,6 +205,20 @@ REMINDER_CHECK_INTERVAL_SEC = _env_int("REMINDER_CHECK_INTERVAL_SEC", 30)
 ENABLE_DAILY_DIGEST = _env_bool("ENABLE_DAILY_DIGEST", True)
 DAILY_DIGEST_HOUR_VN = _env_int("DAILY_DIGEST_HOUR_VN", 8)
 
+# Bản tin buổi sáng tổng hợp từ RSS, gửi qua Zalo + Zoom cho chủ bot lúc
+# MORNING_NEWS_HOUR_VN giờ VN - xem services/morning_news.py. Nguồn RSS mặc
+# định là tin kinh doanh/chứng khoán VN; đổi qua env MORNING_NEWS_RSS_FEEDS
+# (phân cách bằng dấu phẩy) nếu muốn nguồn khác.
+MORNING_NEWS_ENABLED = _env_bool("MORNING_NEWS_ENABLED", True)
+MORNING_NEWS_HOUR_VN = _env_int("MORNING_NEWS_HOUR_VN", 8)
+_MORNING_NEWS_RSS_FEEDS_RAW = os.getenv(
+    "MORNING_NEWS_RSS_FEEDS",
+    "https://vnexpress.net/rss/kinh-doanh.rss,"
+    "https://cafef.vn/thi-truong-chung-khoan.rss,"
+    "https://vietstock.vn/830/chung-khoan/co-phieu.rss",
+)
+MORNING_NEWS_RSS_FEEDS = [url.strip() for url in _MORNING_NEWS_RSS_FEEDS_RAW.split(",") if url.strip()]
+
 CHAT_SKILL_PATH = Path(os.getenv("CHAT_SKILL_PATH", "chat_skill.yaml").strip())
 # File tham chiếu văn phong/thuật ngữ dịch Nhật-Việt cho lệnh /dich (tùy chọn,
 # fail-open nếu thiếu - xem services/translate_service.py::_reference_guide).
