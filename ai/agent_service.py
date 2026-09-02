@@ -77,7 +77,7 @@ _ROUTER9_AGENT_ENABLED = True
 # xác nhận qua log router9 đang lờ `tools` đi - xem cảnh báo ở docstring
 # module. Nhánh JSON-router (_run_router9_json_router) không bị ảnh hưởng
 # bởi cờ này, vẫn thử trước khi rơi xuống api1/api2.
-_ROUTER9_NATIVE_TOOLS_ENABLED = True
+_ROUTER9_NATIVE_TOOLS_ENABLED = False
 
 _SYSTEM_INSTRUCTION = (
     "Bạn là trợ lý của lananh, 1 bot Telegram/Zalo/Zoom cá nhân. Bạn có các "
