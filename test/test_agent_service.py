@@ -38,6 +38,11 @@ def reset_state(monkeypatch):
     monkeypatch.setattr(db, "set_setting", store.set)
     provider_state.router9_dead_since = None
     provider_state.router9_enabled = True
+    # Cờ này mặc định False ở production (router9 lờ tham số `tools` - xem
+    # docstring module), nhưng nhánh native tool-calling vẫn còn code và cần
+    # test - đa số test trong file này giả lập router9_client.generate_with_tools
+    # nên cần bật cờ để ask_agent() thật sự đi vào nhánh đó.
+    monkeypatch.setattr(agent_service, "_ROUTER9_NATIVE_TOOLS_ENABLED", True)
     # _loaded=True (KHÔNG phải False như test_provider_chain.py): ask_agent()
     # gọi ensure_loaded(), nếu _loaded=False nó sẽ load() lại từ fake_store
     # (rỗng) và GHI ĐÈ mất 2 giá trị vừa set ở trên/trong test bằng
