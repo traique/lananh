@@ -133,6 +133,12 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 TAVILY_BASE_URL = os.getenv("TAVILY_BASE_URL", "https://api.tavily.com").strip()
 TAVILY_CALL_TIMEOUT_SEC = _env_int("TAVILY_CALL_TIMEOUT_SEC", 20)
 
+# vnstock — API key MIỄN PHÍ (gói Community, đăng ký tại vnstocks.com/login)
+# nâng rate limit 20 -> 60 request/phút và số kỳ BCTC 4 -> 8 kỳ so với chế độ
+# khách. Không set thì vnstock vẫn chạy ở mức Guest như trước (xem
+# stock/providers.py::ensure_vnstock_api_key()).
+VNSTOCK_API_KEY = os.getenv("VNSTOCK_API_KEY", "").strip()
+
 # Agnes AI (gateway bên thứ ba, tương thích OpenAI - xem ai/agnes_client.py) -
 # dùng riêng cho lệnh /anh (tạo ảnh), KHÔNG thuộc provider-chain chat chính.
 AGNES_API_KEY = os.getenv("AGNES_API_KEY", "").strip()
