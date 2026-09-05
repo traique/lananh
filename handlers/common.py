@@ -16,6 +16,7 @@ from telegram.ext import ContextTypes
 import tg_format
 import tg_format_codeblock
 from core import config
+from core.text_normalize import nfc
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,10 @@ def restricted(handler):
 
 
 def extract_arg(context: ContextTypes.DEFAULT_TYPE) -> str:
-    return " ".join(context.args).strip() if context.args else ""
+    # nfc(): tham số lệnh (/dich, /prompt, /gia...) có thể vào ở dạng NFD
+    # (bàn phím macOS, copy-paste PDF) - chuẩn hoá ngay tại đây, điểm dùng
+    # chung cho mọi handler lệnh, để match/tìm kiếm phía sau luôn nhất quán.
+    return nfc(" ".join(context.args).strip()) if context.args else ""
 
 
 async def read_file_bytes(path) -> bytes:

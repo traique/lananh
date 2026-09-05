@@ -43,6 +43,7 @@ from telegram.ext import ContextTypes
 
 import messages
 from core import config
+from core.text_normalize import nfc
 from ai import orchestrator
 from handlers import common
 from handlers.prompt_identity import render_instruction, resolve_prompt_identity
@@ -98,7 +99,7 @@ Rules for what you generate:
 @common.restricted
 async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    caption = (update.message.caption or "").strip()
+    caption = nfc((update.message.caption or "").strip())
     prompt_label = caption or "(gửi ảnh, không có caption)"
     prompt_id = await telemetry.start(user_id, "promptify", prompt_label)
 

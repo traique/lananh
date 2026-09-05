@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 import messages
 from ai import orchestrator, tavily_client
 from core import database as db
+from core.text_normalize import nfc
 from handlers import common, stock_handler
 from services import memory_service, portfolio_service, tools
 from services.background_tasks import stop_tracked_tasks
@@ -56,7 +57,8 @@ async def _maybe_tavily_search(text: str) -> str:
 
 @common.restricted
 async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = (update.message.text or "").strip()
+    # nfc(): boundary nhận tin nhắn Telegram - xem core/text_normalize.py.
+    text = nfc((update.message.text or "").strip())
     if not text:
         return
     user_id = update.effective_user.id
