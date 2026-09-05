@@ -368,9 +368,21 @@ def _fetch_foreign_sync(symbol: str) -> ForeignFlowReal | None:
     sell_a = _val("foreign", "sell", "vol")
     sell_b = _val("foreign", "sell")
     sell = sell_a if sell_a is not None else sell_b
-    room_a = _val("foreign", "room")
-    room_b = _val("room")
-    room = room_a if room_a is not None else room_b
+    # "room" không kèm "pct/ratio/%/tỷ lệ" rất dễ khớp nhầm cột room CÒN LẠI
+    # THEO SỐ CỔ PHIẾU (raw, có thể hàng chục/trăm triệu) thay vì tỷ lệ % -
+    # đã quan sát thấy giá trị garbage kiểu 1.37e+08% trong production do lỗi
+    # này. Ưu tiên cột rõ ràng là %, chỉ fallback về "room" trần khi không có
+    # cột nào khớp, và luôn chặn giá trị ngoài khoảng 0-100 (không phải %).
+    room_idx = _find_col_any(
+        flat_cols,
+        ("room", "pct"), ("room", "ratio"), ("room", "%"), ("room", "tỷ lệ"),
+    )
+    room = _to_float(row.iloc[room_idx]) if room_idx is not None else None
+    if room is None:
+        room_fallback = _val("room")
+        room = room_fallback if room_fallback is not None and 0 <= room_fallback <= 100 else None
+    elif not (0 <= room <= 100):
+        room = None
     net = None
     if buy is not None and sell is not None:
         net = round(buy - sell, 2)
