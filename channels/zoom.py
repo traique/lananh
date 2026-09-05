@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import httpx
 
 from core import config
+from core.text_normalize import nfc
 
 logger = logging.getLogger(__name__)
 
@@ -369,9 +370,12 @@ def parse_event(payload: dict[str, object]) -> ZoomEvent | None:
     event_payload = payload.get("payload")
     if not isinstance(event_payload, dict):
         return None
-    text = str(
-        event_payload.get("cmd") or event_payload.get("message") or event_payload.get("content") or ""
-    ).strip()
+    # nfc(): boundary nhận tin nhắn Zoom - xem core/text_normalize.py.
+    text = nfc(
+        str(
+            event_payload.get("cmd") or event_payload.get("message") or event_payload.get("content") or ""
+        ).strip()
+    )
     sender_jid = str(
         event_payload.get("userJid") or event_payload.get("user_jid") or ""
     ).strip()
