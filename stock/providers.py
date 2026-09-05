@@ -225,9 +225,9 @@ def provider_health_snapshot(): return dict(_provider_failures)
 def _fetch_ohlcv_vnstock_sync(symbol, days):
     try:
         ensure_vnstock_api_key()
-        from vnstock import Vnstock
+        from vnstock.explorer.vci import Quote
         end=datetime.now(_VN_TZ).date(); start=end-timedelta(days=int(days*1.7)+30)
-        df=Vnstock().stock(symbol=dnse_symbol(symbol), source="VCI").quote.history(start=start.isoformat(), end=end.isoformat(), interval="1D")
+        df=Quote(symbol=dnse_symbol(symbol), show_log=False).history(start=start.isoformat(), end=end.isoformat(), interval="1D")
         if df is None or df.empty: return OhlcvSeries(symbol=symbol, source="vnstock-vci")
         cols={str(c).strip().lower():c for c in df.columns}
         def pick(*names): return next((cols[n] for n in names if n in cols), None)

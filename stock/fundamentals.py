@@ -166,23 +166,36 @@ def _percentile_rank(current: float, history: list[float]) -> float:
 
 
 def _fetch_valuation_sync(symbol: str) -> Valuation | None:
+    """Dùng thẳng vnstock.explorer.vci.Finance thay vì facade Vnstock().stock().
+
+    ĐÃ XÁC MINH bằng traceback thật từ production (ReadTimeoutError tới
+    trading.vietcap.com.vn): facade Vnstock().stock(symbol, source="VCI")
+    khi khởi tạo sẽ eager-fetch CẢ Company LẪN Finance LẪN Quote/Trading
+    (StockComponents._initialize_components), dù ở đây chỉ cần
+    finance.ratio(). Tệ hơn, Finance.__init__ tự nó CŨNG gọi thêm 1 lần
+    Company(...)._fetch_data() riêng (để lấy mã ngành ICB4) - tức dùng
+    facade tốn tới 2 lần fetch Company không cần thiết trước khi chạm được
+    tới dữ liệu ratio() thật sự muốn lấy. Gọi Finance(symbol) trực tiếp vẫn
+    còn 1 lần fetch Company (không tránh được, nằm sâu trong thư viện), nhưng
+    bớt được lần thứ 2 - giảm ~50% số request/khả năng timeout cho hàm này.
+    """
     try:
         ensure_vnstock_api_key()
-        from vnstock import Vnstock
+        from vnstock.explorer.vci import Finance
     except ImportError:
         logger.warning("Chưa cài thư viện vnstock (pip install vnstock).")
         return None
 
     try:
-        stock = Vnstock().stock(symbol=symbol, source="VCI")
+        finance = Finance(symbol=symbol, show_log=False)
     except Exception:
-        logger.warning("vnstock: không khởi tạo được cho %s", symbol, exc_info=True)
+        logger.warning("vnstock: không khởi tạo được Finance cho %s", symbol, exc_info=True)
         return None
 
     df = None
     for kwargs in ({"period": "quarter"}, {}):
         try:
-            df = stock.finance.ratio(**kwargs)
+            df = finance.ratio(**kwargs)
             if df is not None and not df.empty:
                 break
         except Exception:
@@ -272,13 +285,13 @@ def _fetch_valuation_sync(symbol: str) -> Valuation | None:
 def _fetch_growth_sync(symbol: str) -> GrowthTrend | None:
     try:
         ensure_vnstock_api_key()
-        from vnstock import Vnstock
+        from vnstock.explorer.vci import Finance
     except ImportError:
         return None
 
     try:
-        stock = Vnstock().stock(symbol=symbol, source="VCI")
-        df = stock.finance.income_statement(period="quarter")
+        finance = Finance(symbol=symbol, show_log=False)
+        df = finance.income_statement(period="quarter")
     except Exception:
         logger.warning("vnstock: income_statement lỗi cho %s", symbol, exc_info=True)
         return None
@@ -322,15 +335,20 @@ def _fetch_growth_sync(symbol: str) -> GrowthTrend | None:
 
 
 def _fetch_foreign_sync(symbol: str) -> ForeignFlowReal | None:
+    """Dùng thẳng vnstock.explorer.vci.Trading thay vì facade Vnstock().stock().
+
+    Trading không eager-fetch gì ở __init__ (khác Company/Finance) - đây là
+    chỗ tiết kiệm nhiều nhất trong 5 hàm fetch: dùng facade sẽ tốn thêm 2
+    lần fetch Company + khởi tạo Finance thừa dù chỉ cần price_board()."""
     try:
         ensure_vnstock_api_key()
-        from vnstock import Vnstock
+        from vnstock.explorer.vci import Trading
     except ImportError:
         return None
 
     try:
-        stock = Vnstock().stock(symbol=symbol, source="VCI")
-        board = stock.trading.price_board(symbols_list=[symbol])
+        trading = Trading(symbol=symbol, show_log=False)
+        board = trading.price_board(symbols_list=[symbol])
     except Exception:
         logger.warning("vnstock: price_board lỗi cho %s", symbol, exc_info=True)
         return None
@@ -373,20 +391,19 @@ def _fetch_events_sync(symbol: str, limit: int = 3) -> list[UpcomingEvent] | Non
       vnstock. Đổi sang source="VCI": lớp Company của VCI có sẵn method
       events() thật (vnstock/explorer/vci/company.py), khớp đúng 1 trong các
       tên hàm candidate bên dưới.
+    - Dùng thẳng vnstock.explorer.vci.Company thay vì facade Vnstock().stock()
+      (facade eager-init thừa cả Finance/Quote/Trading dù ở đây chỉ cần
+      Company).
     """
     try:
         ensure_vnstock_api_key()
-        from vnstock import Vnstock
+        from vnstock.explorer.vci import Company
     except ImportError:
         return None
 
     try:
-        stock = Vnstock().stock(symbol=symbol, source="VCI")
+        company = Company(symbol=symbol, show_log=False)
     except Exception:
-        return None
-
-    company = getattr(stock, "company", None)
-    if company is None:
         return None
 
     df = None
@@ -434,20 +451,21 @@ def _fetch_company_news_sync(symbol: str, limit: int = 5) -> list[NewsHeadline] 
     trong tiêu đề như tin cào từ Google News (rfmt.title_mentions_symbol) -
     luôn đánh dấu confirmed=True. Đây là nguồn BỔ SUNG cho
     providers.fetch_news(), không thay thế (tin VCI có thể ít/chậm hơn báo
-    chí, nhưng độ chính xác gắn đúng mã cao hơn)."""
+    chí, nhưng độ chính xác gắn đúng mã cao hơn). Dùng thẳng
+    vnstock.explorer.vci.Company thay vì facade Vnstock().stock() (facade
+    eager-init thừa cả Finance/Quote/Trading dù ở đây chỉ cần Company)."""
     try:
         ensure_vnstock_api_key()
-        from vnstock import Vnstock
+        from vnstock.explorer.vci import Company
     except ImportError:
         return None
 
     try:
-        stock = Vnstock().stock(symbol=symbol, source="VCI")
+        company = Company(symbol=symbol, show_log=False)
     except Exception:
         return None
 
-    company = getattr(stock, "company", None)
-    news_fn = getattr(company, "news", None) if company is not None else None
+    news_fn = getattr(company, "news", None)
     if not callable(news_fn):
         return None
     try:
