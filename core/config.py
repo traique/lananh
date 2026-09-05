@@ -88,9 +88,15 @@ def _env_int(name: str, default: int) -> int:
 # chưa set riêng, để không phá cấu hình Render đã lưu sẵn từ trước).
 ROUTER9_CALL_TIMEOUT_SEC = _env_int(
     "ROUTER9_CALL_TIMEOUT_SEC",
-    _env_int("GEMINI_COOKIE_CALL_TIMEOUT_SEC", 30),
+    _env_int("GEMINI_COOKIE_CALL_TIMEOUT_SEC", 45),
 )
 ROUTER9_MAX_CONCURRENCY = _env_int("ROUTER9_MAX_CONCURRENCY", 4)
+
+# Khoảng nghỉ (giây) giữa các lệnh gọi LLM liên tiếp trong 1 lượt phân tích
+# (news -> bull -> bear -> manager -> tổng hợp cuối, xem stock/debate.py và
+# stock/analysis.py::analyze_symbol) - giãn tải cho gateway 9Router, không
+# ảnh hưởng call_lock (vẫn chỉ 1 request in-flight tại 1 thời điểm).
+ROUTER9_STEP_DELAY_SEC = _env_int("ROUTER9_STEP_DELAY_SEC", 3)
 
 # Groq — gateway OpenAI-compatible miễn phí, provider thứ 2 của provider-chain
 # (router9 -> groq -> openrouter -> api1 -> api2). Model mặc định nằm trong
