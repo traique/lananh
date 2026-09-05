@@ -203,7 +203,10 @@ async def test_anh_command_tao_anh_thanh_cong_dua_qua_pending_image(monkeypatch)
 
     result, provider = await service.maybe_handle_command(1, "/anh mèo phi hành gia")
 
-    assert "mèo phi hành gia" in result[0]
+    # Tạo ảnh thành công KHÔNG kèm caption text - chỉ gửi ảnh qua
+    # pending_image, danh sách tin nhắn rỗng (đúng hành vi hiện tại của
+    # _generate_image()/handle_channel_text(), xem services/channel_command_service.py).
+    assert result == []
     assert provider is None
 
     image_b64 = service.take_pending_image()
@@ -227,7 +230,8 @@ async def test_anh_command_tren_zoom_dung_url_khong_dung_base64(monkeypatch):
 
     result, provider = await service.maybe_handle_command(1, "/anh mèo", channel="zoom")
 
-    assert "mèo" in result[0]
+    # Cùng quy tắc: chỉ gửi ảnh, không kèm caption text.
+    assert result == []
     assert service.take_pending_image_url() == "https://cdn.agnes-ai.com/x.png"
     # Zoom dùng URL, KHÔNG được đụng tới pending_image (base64, dành cho Zalo).
     assert service.take_pending_image() is None

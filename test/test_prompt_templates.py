@@ -18,12 +18,16 @@ def test_text_prompt_template_has_identity_and_realism_controls():
         user_desc="cô gái 20 đứng dưới mưa",
     )
 
-    assert "IDENTITY PRIORITY" in rendered
-    assert "REALISM CHECK" in rendered
+    # Identity priority ở đây do {identity_rule} (IDENTITY_RULE_LOCK trong
+    # handlers/prompt_identity.py) đảm nhiệm - không còn tiêu đề chữ hoa
+    # "IDENTITY PRIORITY"/"REALISM CHECK" như bản cũ, khác với template ảnh
+    # tham chiếu ở media_handler.py (test riêng bên dưới).
+    assert "higher priority than hairstyle" in rendered
+    assert "ALWAYS place the exact lock text" in rendered
     assert "FRAMING IS MANDATORY" in rendered
     assert "POSE MUST BE GEOMETRICALLY PRECISE" in rendered
-    assert "CAMERA AND LENS MUST MATCH THE FRAMING" in rendered
-    assert "OUTPUT ONLY" in rendered
+    assert "CAMERA AND LENS MUST MATCH THE SHOT" in rendered
+    assert "Output ONLY" in rendered
     assert "{identity_lock_block}" not in rendered
 
 

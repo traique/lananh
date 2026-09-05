@@ -97,6 +97,41 @@ def test_duplicate_disclaimer_is_removed():
     assert "Nội dung phân tích chính." in out
 
 
+def test_ensure_disclaimer_appends_when_missing():
+    """LLM đôi khi bỏ quên hoàn toàn disclaimer - phải tự thêm, không được
+    im lặng gửi báo cáo BUY/SELL không kèm cảnh báo rủi ro."""
+    text = "Nội dung phân tích chính, không có dòng tham khảo nào."
+    out = rf.ensure_disclaimer(text)
+    assert "Nội dung phân tích chính" in out
+    assert rf.STANDARD_DISCLAIMER in out
+    assert out.count(rf.STANDARD_DISCLAIMER) == 1
+
+
+def test_ensure_disclaimer_does_not_duplicate_when_already_present():
+    text = (
+        "Nội dung phân tích chính.\n\n"
+        "Đây chỉ là tham khảo, không phải khuyến nghị đầu tư nha anh."
+    )
+    out = rf.ensure_disclaimer(text)
+    assert out == text
+    assert rf.STANDARD_DISCLAIMER not in out
+
+
+def test_ensure_disclaimer_recognizes_past_performance_wording():
+    """Disclaimer do LLM tự viết dùng đúng cụm 'không đảm bảo kết quả' -
+    không được thêm chồng thêm 1 dòng cố định nữa."""
+    text = (
+        "Backtest cho tỷ lệ thắng 62%.\n\n"
+        "Kết quả backtest trong quá khứ không đảm bảo kết quả tương lai."
+    )
+    out = rf.ensure_disclaimer(text)
+    assert out == text
+
+
+def test_ensure_disclaimer_handles_empty_text():
+    assert rf.ensure_disclaimer("") == ""
+
+
 def test_self_intro_and_pet_name_are_removed():
     """Mọi báo cáo đều mở bằng "em Lan Anh đây ạ", CII còn kết "anh yêu"."""
     text = "Anh ơi, em Lan Anh đây ạ! Cập nhật dữ liệu lúc 11:21 cho CII, anh yêu."
