@@ -30,6 +30,38 @@ logger = logging.getLogger(__name__)
 call_lock = asyncio.Lock()
 
 
+class OutputContaminatedError(RuntimeError):
+    """Output lẫn ký tự CJK (Trung/Nhật/Hàn) - dấu hiệu model fallback (thường
+    gặp ở Gemini flash-lite, provider api1/api2) bị lỗi tạo văn bản, sinh ra
+    câu trả lời lẫn ngôn ngữ dù prompt yêu cầu tiếng Việt. Coi như provider
+    này lỗi ở lượt gọi này, KHÔNG đánh dấu hết quota/dead - để provider chain
+    tự chuyển sang provider kế tiếp thử lại."""
+
+
+# Phạm vi Unicode của chữ Hán, Kana (Nhật) và Hangul (Hàn). Văn bản tiếng
+# Việt hợp lệ không bao giờ chứa các ký tự này, nên chỉ cần xuất hiện 1 ký tự
+# cũng đủ là dấu hiệu output bị lẫn ngôn ngữ - không cần ngưỡng phức tạp.
+_CJK_RANGES = (
+    (0x4E00, 0x9FFF),   # CJK Unified Ideographs (Hán)
+    (0x3040, 0x30FF),   # Hiragana + Katakana (Nhật)
+    (0xAC00, 0xD7A3),   # Hangul syllables (Hàn)
+)
+
+
+def _contains_cjk(text: str) -> bool:
+    return any(any(lo <= ord(ch) <= hi for lo, hi in _CJK_RANGES) for ch in text)
+
+
+def _assert_output_clean(result, provider: str):
+    if isinstance(result, str) and _contains_cjk(result):
+        logger.warning(
+            "%s trả output lẫn ký tự CJK (Trung/Nhật/Hàn) - coi như lỗi, chuyển provider kế tiếp.",
+            provider,
+        )
+        raise OutputContaminatedError(f"{provider} trả output lẫn ký tự CJK")
+    return result
+
+
 def _call_timeout_sec() -> float:
     return config.ROUTER9_CALL_TIMEOUT_SEC
 
@@ -165,6 +197,7 @@ async def _run_provider_chain(
 
     async def _attempt_router9():
         result = await _run_with_call_timeout(router9_call)
+        _assert_output_clean(result, "router9")
         await provider_state.mark_router9_alive()
         await provider_state.set_active_provider("router9")
         await _record_provider_call("router9")
@@ -173,12 +206,14 @@ async def _run_provider_chain(
     async def _attempt_api(idx: int):
         result = await api_call(idx)
         provider_name = f"api{idx}"
+        _assert_output_clean(result, provider_name)
         await provider_state.set_active_provider(provider_name)
         await _record_provider_call(provider_name)
         return result
 
     async def _attempt_generic(name: str):
         result = await generic_calls[name]()
+        _assert_output_clean(result, name)
         await provider_state.set_active_provider(name)
         await _record_provider_call(name)
         return result
