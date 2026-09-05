@@ -3,6 +3,7 @@
 import re
 
 from stock import portfolio, providers
+from stock.report_format import fmt_price as _fmt
 from stock.sector import ALL_KNOWN_SYMBOLS
 
 _NUMBER_RE = r"[\d.,]+(?:k|nghìn|nghin|tr|triệu|trieu|m)?"
@@ -36,10 +37,6 @@ def parse_number(raw: str) -> float:
     elif text.count(".") > 1:
         text = text.replace(".", "")
     return float(text) * multiplier
-
-
-def _fmt(value: float) -> str:
-    return f"{value:,.0f}".replace(",", ".")
 
 
 async def _validate_symbol(symbol: str) -> str | None:
