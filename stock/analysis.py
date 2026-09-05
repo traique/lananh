@@ -771,6 +771,9 @@ async def analyze_symbol(symbol: str, user_text: str = "", *, force_refresh: boo
         )
 
     from ai import orchestrator
+    from core import config
+    if config.ROUTER9_STEP_DELAY_SEC:
+        await asyncio.sleep(config.ROUTER9_STEP_DELAY_SEC)
     try:
         response = await orchestrator.ask(prompt)
         # Làm sạch trước khi trả về: bỏ câu tự giới thiệu, bỏ danh xưng thân

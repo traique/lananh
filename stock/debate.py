@@ -28,10 +28,12 @@ debate (xem stock_analysis_prompt.j2, các block đều bọc trong {% if %}).
 """
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from stock import report_format as rfmt
 from stock.schemas import BearCase, BullCase, FinalDecision, NewsAnalysis, ask_structured
+from core import config
 
 if TYPE_CHECKING:
     from stock.analysis import StockContext
@@ -146,9 +148,17 @@ async def run_manager_step(
 async def run_debate(
     ctx: "StockContext",
 ) -> tuple[NewsAnalysis | None, BullCase | None, BearCase | None, FinalDecision | None]:
-    """Chạy đúng 4 bước TUẦN TỰ (không asyncio.gather) - mỗi bước cần thấy bước trước."""
+    """Chạy đúng 4 bước TUẦN TỰ (không asyncio.gather) - mỗi bước cần thấy bước trước.
+    Có nghỉ ROUTER9_STEP_DELAY_SEC giây giữa mỗi bước để giãn tải gateway LLM."""
+    delay = config.ROUTER9_STEP_DELAY_SEC
     news = await run_news_step(ctx)
+    if delay:
+        await asyncio.sleep(delay)
     bull = await run_bull_step(ctx, news)
+    if delay:
+        await asyncio.sleep(delay)
     bear = await run_bear_step(ctx, news, bull)
+    if delay:
+        await asyncio.sleep(delay)
     final_decision = await run_manager_step(ctx, news, bull, bear)
     return news, bull, bear, final_decision
