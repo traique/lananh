@@ -708,6 +708,7 @@ async def analyze_portfolio(symbols: list[str], user_text: str, *, user_id: int 
     try:
         response = await orchestrator.ask(prompt)
         result = rfmt.clean_analysis_output((response.text or "").strip())
+        result = rfmt.ensure_disclaimer(result)
         if result and getattr(response, "used_fallback", False): result += "\n\n⚙️ API"
         return result
     except Exception:
@@ -752,6 +753,8 @@ async def analyze_symbol(symbol: str, user_text: str = "", *, force_refresh: boo
     except Exception:
         logger.exception("Gemini lỗi khi phân tích %s", symbol)
         result = _fallback_text(ctx)
+
+    result = rfmt.ensure_disclaimer(result)
 
     if not user_text:
         _cache_set(symbol, holding, result)

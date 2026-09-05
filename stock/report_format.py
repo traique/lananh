@@ -263,6 +263,22 @@ _DISCLAIMER_HINTS = (
     "quyết định cuối cùng",
     "cân nhắc kỹ trước khi",
     "khuyến nghị đầu tư",
+    "không đảm bảo kết quả",
+    "trong quá khứ không đảm bảo",
+)
+
+# Disclaimer CỐ ĐỊNH, không phụ thuộc LLM diễn giải lại mỗi lần. Bám theo
+# Luật Chứng khoán Điều 12 (cấm ngôn từ cam kết lợi nhuận/chắc chắn sinh
+# lời) và thông lệ "kết quả quá khứ không đảm bảo tương lai" - quan trọng
+# với Lan Anh vì báo cáo có thể trích tỷ lệ thắng từ backtest lịch sử
+# (stock/backtest.py), dễ bị đọc nhầm thành lời hứa cho tương lai nếu không
+# nói rõ. clean_analysis_output() đã lo việc LLM tự thêm/lặp disclaimer -
+# hàm ensure_disclaimer() bên dưới lo trường hợp ngược lại: LLM QUÊN không
+# thêm dòng nào cả.
+STANDARD_DISCLAIMER = (
+    "Thông tin trên chỉ mang tính tham khảo, không phải khuyến nghị đầu tư; "
+    "số liệu backtest/thắng thua trong quá khứ không đảm bảo kết quả tương lai. "
+    "Quyết định cuối cùng và rủi ro thuộc về anh nha."
 )
 
 # Đoạn dài hơn ngưỡng này được coi là nội dung phân tích thật, không phải
@@ -302,3 +318,20 @@ def clean_analysis_output(text: str) -> str:
             seen_disclaimer = True
         result.append(stripped)
     return "\n\n".join(result).strip()
+
+
+def ensure_disclaimer(text: str) -> str:
+    """Đảm bảo LUÔN có đúng 1 dòng disclaimer chuẩn ở cuối báo cáo.
+
+    Gọi SAU clean_analysis_output(). clean_analysis_output() xử lý trường
+    hợp LLM thêm disclaimer NHIỀU LẦN; hàm này xử lý trường hợp ngược lại -
+    LLM bỏ quên hoàn toàn, hoặc kết quả rơi vào nhánh fallback không qua
+    LLM. Không đụng vào bất kỳ con số/kết luận nào, chỉ thêm 1 dòng cố định
+    nếu chưa có block nào khớp _DISCLAIMER_HINTS.
+    """
+    if not text:
+        return text
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
+    if any(_is_disclaimer(b) for b in blocks):
+        return text
+    return f"{text}\n\n{STANDARD_DISCLAIMER}"
