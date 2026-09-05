@@ -389,7 +389,7 @@ async def _safe_sector_prompt(symbol: str) -> str:
 async def _safe_fundamentals_prompt(symbol: str) -> str:
     try:
         bundle = await fundamentals.fetch_fundamentals(symbol)
-        return fundamentals.build_fundamentals_prompt_section(bundle.valuation, bundle.foreign, symbol, foreign_trend=bundle.foreign_trend, growth=bundle.growth, events=bundle.events, sector_pe_avg=bundle.sector_pe_avg, sector_pe_sample=bundle.sector_pe_sample, sector_pe_label=bundle.sector_pe_label, sector_profile=bundle.sector_profile, sector_benchmark=bundle.sector_benchmark)
+        return fundamentals.build_fundamentals_prompt_section(bundle.valuation, bundle.foreign, symbol, growth=bundle.growth, events=bundle.events, sector_pe_avg=bundle.sector_pe_avg, sector_pe_sample=bundle.sector_pe_sample, sector_pe_label=bundle.sector_pe_label, sector_profile=bundle.sector_profile, sector_benchmark=bundle.sector_benchmark)
     except Exception:
         return ""
 

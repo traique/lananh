@@ -27,27 +27,28 @@ gom dữ liệu công khai từ VCI/TCBS.
   31/08/2025 (tự in cảnh báo mỗi lần gọi, khuyến nghị chuyển sang
   `vnstock.api.*`) - vẫn chạy được ở bản đang pin, nhưng có thể bị gỡ hẳn ở
   bản vnstock sau này.
-- `_fetch_foreign_history_sync` (khối ngoại NHIỀU phiên) và `_fetch_events_sync`
-  (lịch sự kiện KQKD/ĐHCĐ/cổ tức): ĐÃ XÁC MINH bằng cách đọc mã nguồn
-  vnstock đã cài (môi trường viết/sửa code này không có mạng ra ngoài tới
-  API thật của VCI/TCBS, nên không gọi thử end-to-end được, nhưng việc đọc
-  source đã đủ để xác nhận nguyên nhân, xem docstring từng hàm để biết chi
-  tiết):
-    - `_fetch_events_sync`: source="TCBS" (bản cũ) LUÔN lỗi vì TCBS đã bị gỡ
-      khỏi StockComponents.SUPPORTED_SOURCES - đã sửa sang source="VCI" (có
-      method events() thật). Vẫn chưa chắc chắn 100% vì chưa gọi mạng thật
-      để xem tên cột (title/date) thực tế trả về có khớp `_find_col_any` bên
-      dưới không - nếu vẫn trả "chưa có dữ liệu" sau khi deploy, hãy chạy
-      thử trên máy có mạng:
-          from vnstock import Vnstock
-          df = Vnstock().stock(symbol="FPT", source="VCI").company.events()
-          print(df.columns.tolist())
-      rồi bổ sung tên cột thực tế vào `_find_col_any(...)` trong
-      `_fetch_events_sync`.
-    - `_fetch_foreign_history_sync`: hiện KHÔNG có endpoint nào hoạt động ở
-      cả facade cũ lẫn `vnstock.api.trading.foreign_trade` (chỉ là stub rỗng
-      chưa có provider implement) - đây là giới hạn thật của thư viện, không
-      phải thiếu sót có thể tự sửa ở tầng bot lúc này.
+- `_fetch_events_sync` (lịch sự kiện KQKD/ĐHCĐ/cổ tức): ĐÃ XÁC MINH bằng cách
+  đọc mã nguồn vnstock đã cài (môi trường viết/sửa code này không có mạng ra
+  ngoài tới API thật của VCI/TCBS, nên không gọi thử end-to-end được, nhưng
+  việc đọc source đã đủ để xác nhận nguyên nhân): source="TCBS" (bản cũ) LUÔN
+  lỗi vì TCBS đã bị gỡ khỏi StockComponents.SUPPORTED_SOURCES - đã sửa sang
+  source="VCI" (có method events() thật). Vẫn chưa chắc chắn 100% vì chưa gọi
+  mạng thật để xem tên cột (title/date) thực tế trả về có khớp
+  `_find_col_any` bên dưới không - nếu vẫn trả "chưa có dữ liệu" sau khi
+  deploy, hãy chạy thử trên máy có mạng:
+      from vnstock import Vnstock
+      df = Vnstock().stock(symbol="FPT", source="VCI").company.events()
+      print(df.columns.tolist())
+  rồi bổ sung tên cột thực tế vào `_find_col_any(...)` trong
+  `_fetch_events_sync`.
+- Khối ngoại NHIỀU phiên (lịch sử mua/bán ròng theo chuỗi ngày) ĐÃ BỊ BỎ
+  KHỎI module này: cả facade cũ (`vnstock/explorer/vci/trading.py`, chỉ có
+  đúng 1 method công khai là price_board()) lẫn API mới
+  (`vnstock.api.trading.foreign_trade()`) đều không có provider nào implement
+  thật (chỉ là stub `pass`) - đã xác minh lại trên vnstock 3.5.1, không phải
+  giới hạn riêng của bản đang pin. Chỉ còn `_fetch_foreign_sync` (khối ngoại
+  PHIÊN GẦN NHẤT, qua price_board() - có hoạt động thật) là nguồn khối ngoại
+  duy nhất trong bot này.
 """
 from __future__ import annotations
 
@@ -57,6 +58,7 @@ from dataclasses import dataclass
 
 from stock import features as feat
 from stock import fundamental_profiles
+from stock.providers import ensure_vnstock_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -83,16 +85,6 @@ class ForeignFlowReal:
     foreign_sell_vol: float | None = None
     foreign_net_vol: float | None = None
     foreign_room_pct: float | None = None
-
-
-@dataclass
-class ForeignFlowTrend:
-    """Khối ngoại nhiều phiên (mặc định 10 phiên) - THỬ NGHIỆM, xem ghi chú đầu file."""
-    days: int
-    net_total: float | None = None
-    buy_days: int | None = None
-    sell_days: int | None = None
-    streak: int = 0  # dương = số phiên mua ròng liên tục gần nhất, âm = bán ròng liên tục
 
 
 @dataclass
@@ -175,6 +167,7 @@ def _percentile_rank(current: float, history: list[float]) -> float:
 
 def _fetch_valuation_sync(symbol: str) -> Valuation | None:
     try:
+        ensure_vnstock_api_key()
         from vnstock import Vnstock
     except ImportError:
         logger.warning("Chưa cài thư viện vnstock (pip install vnstock).")
@@ -278,6 +271,7 @@ def _fetch_valuation_sync(symbol: str) -> Valuation | None:
 
 def _fetch_growth_sync(symbol: str) -> GrowthTrend | None:
     try:
+        ensure_vnstock_api_key()
         from vnstock import Vnstock
     except ImportError:
         return None
@@ -329,6 +323,7 @@ def _fetch_growth_sync(symbol: str) -> GrowthTrend | None:
 
 def _fetch_foreign_sync(symbol: str) -> ForeignFlowReal | None:
     try:
+        ensure_vnstock_api_key()
         from vnstock import Vnstock
     except ImportError:
         return None
@@ -367,98 +362,6 @@ def _fetch_foreign_sync(symbol: str) -> ForeignFlowReal | None:
     return ForeignFlowReal(foreign_buy_vol=buy, foreign_sell_vol=sell, foreign_net_vol=net, foreign_room_pct=room)
 
 
-def _fetch_foreign_history_sync(symbol: str, days: int = 10) -> ForeignFlowTrend | None:
-    """1 phiên đơn lẻ dễ nhiễu; broker thường nhìn chuỗi 5-10 phiên để xác
-    nhận dòng tiền có bền không.
-
-    ĐÃ XÁC MINH (kiểm tra mã nguồn vnstock đã cài, không cần gọi mạng thật):
-    hiện KHÔNG có endpoint nào hoạt động cho lịch sử khối ngoại nhiều phiên
-    trong bản vnstock đang pin (xem requirements.txt):
-    - Lớp Trading cũ của VCI (vnstock/explorer/vci/trading.py) chỉ có đúng 1
-      method công khai là price_board() (bảng giá realtime, không có cột
-      mua/bán khối ngoại nhiều phiên) - không khớp bất kỳ candidate nào
-      dưới đây.
-    - Lớp Trading mới (vnstock/api/trading.py) CÓ khai báo method
-      foreign_trade(), nhưng đây chỉ là stub rỗng (@dynamic_method, thân hàm
-      `pass`) - không có provider nào (kể cả VCI) thực sự implement nó ở
-      bản đang cài.
-    Giữ nguyên hành vi trả None (không raise, không chặn phần phân tích còn
-    lại) - đây là giới hạn thật của thư viện vnstock hiện tại, không phải lỗi
-    có thể tự sửa ở tầng bot. Cần theo dõi khi vnstock cập nhật thêm provider
-    cho foreign_trade(), hoặc tìm nguồn dữ liệu khác cho tính năng này."""
-    try:
-        from vnstock import Vnstock
-    except ImportError:
-        return None
-
-    try:
-        stock = Vnstock().stock(symbol=symbol, source="VCI")
-    except Exception:
-        return None
-
-    df = None
-    candidates = []
-    trading = getattr(stock, "trading", None)
-    if trading is not None:
-        for name in ("foreign_trade", "foreign_trading", "foreign_trade_data"):
-            fn = getattr(trading, name, None)
-            if callable(fn):
-                candidates.append(fn)
-    for fn in candidates:
-        try:
-            result = fn()
-            if result is not None and not result.empty:
-                df = result
-                break
-        except Exception:
-            continue
-
-    if df is None or df.empty:
-        logger.info(
-            "vnstock: không lấy được lịch sử khối ngoại nhiều phiên cho %s "
-            "(API trading.foreign_trade*() có thể chưa tồn tại/đã đổi tên ở "
-            "version vnstock đang cài - xem ghi chú đầu file stock_fundamentals.py)",
-            symbol,
-        )
-        return None
-
-    flat_cols = _flatten_columns(df.columns)
-    buy_idx = _find_col(flat_cols, "buy")
-    sell_idx = _find_col(flat_cols, "sell")
-    if buy_idx is None or sell_idx is None:
-        return None
-
-    window = df.iloc[:days]
-    daily_net: list[float] = []
-    for _, r in window.iterrows():
-        b = _to_float(r.iloc[buy_idx])
-        s = _to_float(r.iloc[sell_idx])
-        if b is not None and s is not None:
-            daily_net.append(round(b - s, 2))
-    if not daily_net:
-        return None
-
-    buy_days = sum(1 for v in daily_net if v > 0)
-    sell_days = sum(1 for v in daily_net if v < 0)
-    # streak: số phiên liên tục cùng chiều tính từ phiên gần nhất (daily_net[0]).
-    streak = 0
-    for v in daily_net:
-        if v == 0:
-            break
-        direction = 1 if v > 0 else -1
-        if streak == 0:
-            streak = direction
-        elif (direction > 0) == (streak > 0):
-            streak += direction
-        else:
-            break
-
-    return ForeignFlowTrend(
-        days=len(daily_net), net_total=round(sum(daily_net), 2),
-        buy_days=buy_days, sell_days=sell_days, streak=streak,
-    )
-
-
 def _fetch_events_sync(symbol: str, limit: int = 3) -> list[UpcomingEvent] | None:
     """Lịch KQKD/ĐHCĐ/chia cổ tức/phát hành thêm - thứ hay gây bất ngờ giá.
 
@@ -472,6 +375,7 @@ def _fetch_events_sync(symbol: str, limit: int = 3) -> list[UpcomingEvent] | Non
       tên hàm candidate bên dưới.
     """
     try:
+        ensure_vnstock_api_key()
         from vnstock import Vnstock
     except ImportError:
         return None
@@ -583,7 +487,6 @@ async def fetch_sector_benchmark(symbol, sample_size=8):
 class FundamentalsBundle:
     valuation: Valuation | None = None
     foreign: ForeignFlowReal | None = None
-    foreign_trend: ForeignFlowTrend | None = None
     growth: GrowthTrend | None = None
     events: list[UpcomingEvent] | None = None
     sector_pe_avg: float | None = None
@@ -606,10 +509,9 @@ async def fetch_fundamentals(symbol: str) -> FundamentalsBundle:
             logger.warning("stock_fundamentals lỗi cho %s (%s)", symbol, fn.__name__, exc_info=True)
             return None
 
-    valuation, foreign, foreign_trend, growth, events, benchmark = await asyncio.gather(
+    valuation, foreign, growth, events, benchmark = await asyncio.gather(
         _safe(_fetch_valuation_sync, symbol),
         _safe(_fetch_foreign_sync, symbol),
-        _safe(_fetch_foreign_history_sync, symbol),
         _safe(_fetch_growth_sync, symbol),
         _safe(_fetch_events_sync, symbol),
         fetch_sector_benchmark(symbol),
@@ -619,7 +521,7 @@ async def fetch_fundamentals(symbol: str) -> FundamentalsBundle:
     sector_pe_sample=benchmark.sample if sector_pe_avg is not None else 0
     sector_pe_label=benchmark.label if sector_pe_avg is not None else None
     return FundamentalsBundle(
-        valuation=valuation, foreign=foreign, foreign_trend=foreign_trend,
+        valuation=valuation, foreign=foreign,
         growth=growth, events=events, sector_pe_avg=sector_pe_avg,
         sector_pe_sample=sector_pe_sample, sector_pe_label=sector_pe_label, sector_profile=profile, sector_benchmark=benchmark,
     )
@@ -633,7 +535,6 @@ def build_fundamentals_prompt_section(
     valuation: Valuation | None,
     foreign: ForeignFlowReal | None,
     symbol: str,
-    foreign_trend: ForeignFlowTrend | None = None,
     growth: GrowthTrend | None = None,
     events: list[UpcomingEvent] | None = None,
     sector_pe_avg: float | None = None,
@@ -642,7 +543,7 @@ def build_fundamentals_prompt_section(
     sector_profile: fundamental_profiles.FundamentalProfile | None = None,
     sector_benchmark: SectorBenchmark | None = None,
 ) -> str:
-    if not any([valuation, foreign, foreign_trend, growth, events, sector_pe_avg]):
+    if not any([valuation, foreign, growth, events, sector_pe_avg]):
         return ""
     profile=sector_profile or fundamental_profiles.get_profile(symbol)
     lines=[f"[ĐỊNH GIÁ & DÒNG TIỀN THẬT — {symbol}, nguồn công khai VCI/TCBS qua vnstock]"]
@@ -694,17 +595,6 @@ def build_fundamentals_prompt_section(
             f"Bán: {_fmt(foreign.foreign_sell_vol)} | "
             f"Ròng: {_fmt(foreign.foreign_net_vol)} | "
             f"Room ngoại còn lại: {_fmt(foreign.foreign_room_pct, '%')}"
-        )
-    if foreign_trend and foreign_trend.net_total is not None:
-        streak_note = ""
-        if foreign_trend.streak > 1:
-            streak_note = f" — đang MUA RÒNG liên tục {foreign_trend.streak} phiên"
-        elif foreign_trend.streak < -1:
-            streak_note = f" — đang BÁN RÒNG liên tục {abs(foreign_trend.streak)} phiên"
-        lines.append(
-            f"Khối ngoại {foreign_trend.days} phiên gần nhất — Tổng ròng: {_fmt(foreign_trend.net_total)} "
-            f"({foreign_trend.buy_days} phiên mua ròng / {foreign_trend.sell_days} phiên bán ròng)"
-            f"{streak_note}. (1 phiên đơn lẻ dễ nhiễu — nhìn chuỗi này để biết dòng tiền có bền không.)"
         )
     if events:
         lines.append("Sự kiện sắp tới: " + "; ".join(

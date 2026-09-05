@@ -48,6 +48,32 @@ async def close_http_client() -> None:
         _client = None
 
 
+_vnstock_auth_attempted = False
+
+
+def ensure_vnstock_api_key() -> None:
+    """Đăng ký VNSTOCK_API_KEY (nếu có set) cho gói Community (60 req/phút,
+    8 kỳ BCTC) thay vì mặc định Guest (20 req/phút, 4 kỳ). Gọi 1 lần duy
+    nhất (guard bằng flag, không cần lock - gọi trùng ở 2 luồng cùng lúc lúc
+    khởi động chỉ tốn 1 lần đăng ký thừa, vô hại) trước bất kỳ lệnh gọi
+    `vnstock` nào trong process. Không set biến môi trường -> no-op, vnstock
+    chạy Guest như cũ. Yêu cầu vnstock>=3.5.1 (bản đang pin trước đó,
+    3.2.0, chưa có module xác thực này)."""
+    global _vnstock_auth_attempted
+    if _vnstock_auth_attempted:
+        return
+    _vnstock_auth_attempted = True
+    import os
+    api_key = os.getenv("VNSTOCK_API_KEY", "").strip()
+    if not api_key:
+        return
+    try:
+        from vnstock.core.utils.auth import register_user
+        register_user(api_key=api_key)
+    except Exception:
+        logger.warning("vnstock: đăng ký API key thất bại, tiếp tục ở mức Guest.", exc_info=True)
+
+
 def is_index_symbol(symbol: str) -> bool:
     return symbol.upper().replace("-", "").replace("^", "") in _INDEX_SYMBOLS
 
@@ -179,6 +205,7 @@ def provider_health_snapshot(): return dict(_provider_failures)
 
 def _fetch_ohlcv_vnstock_sync(symbol, days):
     try:
+        ensure_vnstock_api_key()
         from vnstock import Vnstock
         end=datetime.now(_VN_TZ).date(); start=end-timedelta(days=int(days*1.7)+30)
         df=Vnstock().stock(symbol=dnse_symbol(symbol), source="VCI").quote.history(start=start.isoformat(), end=end.isoformat(), interval="1D")
@@ -204,6 +231,7 @@ _fetch_ohlcv_uncached = _fetch_ohlcv_dnse
 
 def _fetch_symbol_universe_sync():
     try:
+        ensure_vnstock_api_key()
         from vnstock import Listing
         df=Listing(source="VCI").all_symbols(); cols={str(c).lower():c for c in df.columns}
         c=next((cols[k] for k in ("symbol","ticker","code") if k in cols),None)
