@@ -79,6 +79,41 @@ _SCHEMA_T = TypeVar("_SCHEMA_T", bound=BaseModel)
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
+def _type_skeleton(schema: type[BaseModel]) -> str:
+    """Skeleton giá trị đơn giản thay vì dump nguyên JSON-schema properties.
+
+    Bỏ nguyên `{'relevant': {'description': '...', 'type': 'boolean'}, ...}`
+    vào prompt khiến model yếu copy ĐÚNG cấu trúc đó làm GIÁ TRỊ trả về (bug
+    quan sát trên Render 05/09: mọi bước debate nhận ValidationError kiểu
+    `Input should be a valid boolean, input_value={'description': ...}`), đốt
+    quota oan 2 lần gọi/bước. Skeleton `{"relevant": true, ...}` khó nhầm hơn
+    và token rẻ hơn hẳn."""
+    props = schema.model_json_schema().get("properties", {})
+
+    def placeholder(prop: dict) -> object:
+        if "anyOf" in prop:
+            for variant in prop["anyOf"]:
+                if variant.get("type") and variant["type"] != "null":
+                    return placeholder(variant)
+            return None
+        json_type = prop.get("type")
+        if json_type == "boolean":
+            return True
+        if json_type == "integer":
+            return 1
+        if json_type == "number":
+            return 0.5
+        if json_type == "array":
+            items = prop.get("items", {})
+            if items.get("type") == "number":
+                return [0.5]
+            return ["nội dung ý 1"]
+        return "nội dung text"
+
+    skeleton = {name: placeholder(prop) for name, prop in props.items()}
+    return json.dumps(skeleton, ensure_ascii=False)
+
+
 def _extract_json(text: str) -> str:
     """LLM hay bọc JSON trong ```json ... ``` hoặc thêm lời dẫn trước/sau -
     lấy khối {...} ngoài cùng đầu tiên thay vì json.loads() thẳng cả text."""
@@ -103,11 +138,11 @@ async def ask_structured(
     """
     from ai import orchestrator
 
-    schema_hint = json.dumps(schema.model_json_schema().get("properties", {}), ensure_ascii=False)
+    schema_hint = _type_skeleton(schema)
     full_prompt = (
         f"{prompt}\n\n"
         f"CHỈ trả về DUY NHẤT một object JSON hợp lệ, không thêm lời dẫn, không dùng markdown code block. "
-        f"Các field bắt buộc và mô tả: {schema_hint}"
+        f"Format JSON chính xác với CÁC GIÁ TRỊ THẬT (không phải mô tả field, không copy chữ 'nội dung'): {schema_hint}"
     )
 
     last_error: str | None = None
@@ -116,7 +151,9 @@ async def ask_structured(
         if last_error:
             current_prompt += (
                 f"\n\nLần trước bạn trả JSON KHÔNG hợp lệ, lỗi: {last_error}\n"
-                f"Trả lại ĐÚNG format JSON, sửa lỗi trên."
+                f"LƯU Ý: giá trị của mỗi field phải là NỘI DUNG THẬT (boolean/string/list giá trị), "
+                f"TUYỆT ĐỐI không trả lại định nghĩa field kiểu {{'description': ..., 'type': ...}} "
+                f"lấy từ mô tả ở trên. Trả lại ĐÚNG format JSON, sửa lỗi trên."
             )
         try:
             response = await orchestrator.ask(current_prompt)
