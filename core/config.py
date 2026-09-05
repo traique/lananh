@@ -145,6 +145,12 @@ TAVILY_CALL_TIMEOUT_SEC = _env_int("TAVILY_CALL_TIMEOUT_SEC", 20)
 # stock/providers.py::ensure_vnstock_api_key()).
 VNSTOCK_API_KEY = os.getenv("VNSTOCK_API_KEY", "").strip()
 
+# Giới hạn số request đồng thời tới VCI/vnstock trên toàn app (xem
+# stock/providers.py::get_vnstock_semaphore()) - tránh bắn hơn chục request
+# song song cho 1 lượt phân tích khiến VCI rate-limit/chặn tạm thời, làm cả
+# valuation lẫn khối ngoại đều rỗng cùng lúc.
+VNSTOCK_MAX_CONCURRENCY = _env_int("VNSTOCK_MAX_CONCURRENCY", 3)
+
 # Agnes AI (gateway bên thứ ba, tương thích OpenAI - xem ai/agnes_client.py) -
 # dùng riêng cho lệnh /anh (tạo ảnh), KHÔNG thuộc provider-chain chat chính.
 AGNES_API_KEY = os.getenv("AGNES_API_KEY", "").strip()
