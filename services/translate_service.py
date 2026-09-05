@@ -30,6 +30,32 @@ _DIRECTION_LABEL: dict[str, str] = {
     "vi_ja": "Tiếng Việt → Tiếng Nhật",
 }
 
+# Chữ Latin có dấu tiếng Việt - phân biệt tiếng Việt thật với chuỗi Latin
+# thuần (tiếng Anh) khi tự nhận diện chiều dịch.
+_VIETNAMESE_DIACRITICS_RE = re.compile(
+    r"[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ"
+    r"ĂÂĐÊÔƠƯÁÀẢÃẠẤẦẨẪẬẮẰẲẴẶÉÈẺẼẸẾỀỂỄỆÍÌỈĨỊÓÒỎÕỌỐỒỔỖỘỚỜỞỠỢÚÙỦŨỤỨỪỬỮỰÝỲỶỸỴ]"
+)
+
+
+class TextTooLongError(ValueError):
+    """Nội dung /dich vượt TRANSLATE_MAX_CHARS - chặn trước khi gửi LLM."""
+
+
+def looks_english(text: str) -> bool:
+    """Chuỗi Latin thuần KHÔNG dấu tiếng Việt (khả năng cao là tiếng Anh).
+
+    Trước đây detect_direction() coi mọi thứ không có chữ Nhật là tiếng Việt,
+    nên khi dán câu tiếng Anh vào, nó bị dịch ngược "Việt→Nhật" từ nguyên văn
+    tiếng Anh - kết quả không đoán được. Text tiếng Anh nên do người dùng chỉ
+    định chiều thay vì để hệ thống đoán mò."""
+    if _JAPANESE_RE.search(text):
+        return False
+    if _VIETNAMESE_DIACRITICS_RE.search(text):
+        return False
+    letters = sum(1 for ch in text if ch.isascii() and ch.isalpha())
+    return letters >= 4 and letters >= len(text.strip()) * 0.5
+
 
 def parse_explicit_direction(token: str) -> str | None:
     """Nếu từ đầu tiên của argument khớp 1 trong các cách viết chiều dịch (vd
@@ -107,20 +133,36 @@ async def translate(text: str, direction: str | None = None):
     """Dịch `text`. `direction` là 'ja_vi'/'vi_ja' nếu người dùng chỉ định
     tường minh, None để tự nhận diện qua detect_direction(). Trả
     (bản_dịch, direction_đã_dùng, response) - response giữ nguyên object gốc
-    (có .used_fallback) để hàm gọi biết đang chạy qua router9 hay API dự phòng."""
+    (có .used_fallback) để hàm gọi biết đang chạy qua router9 hay API dự phòng.
+
+    Raise TextTooLongError khi text vượt config.TRANSLATE_MAX_CHARS."""
     text = text.strip()
     if not text:
         raise ValueError("Thiếu nội dung cần dịch")
+    if len(text) > config.TRANSLATE_MAX_CHARS:
+        raise TextTooLongError(
+            f"Nội dung {len(text)} ký tự, vượt giới hạn {config.TRANSLATE_MAX_CHARS} "
+            "(đoạn quá dài dễ vượt timeout LLM và bị cắt giữa chừng). Anh tách thành vài phần nhỏ hơn nhé."
+        )
     resolved = direction or detect_direction(text)
     prompt = build_translation_prompt(text, resolved)
     response = await orchestrator.ask(prompt)
-    return (response.text or "").strip(), resolved, response
+    translated = (response.text or "").strip()
+    if not translated:
+        # Provider flash-lite (fallback) thỉnh thoảng trả text rỗng - thử lại
+        # 1 lần thay vì trả tin nhắn trắng cho người dùng.
+        logger.warning("Bản dịch rỗng từ provider, thử lại 1 lần.")
+        response = await orchestrator.ask(prompt)
+        translated = (response.text or "").strip()
+    return translated, resolved, response
 
 
 __all__ = [
+    "TextTooLongError",
     "build_translation_prompt",
     "detect_direction",
     "direction_label",
+    "looks_english",
     "parse_explicit_direction",
     "reference_loaded",
     "translate",

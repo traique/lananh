@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets & runtime (chỉ commit .env.example)
+.env
+.env.*
+!.env.example
+media/
+
+# Artifact train/backtest sinh cục bộ (binary lớn; stats JSON vẫn commit)
+*.joblib
+
+# Node (zalo-gateway)
+node_modules/
+zalo-gateway/dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp

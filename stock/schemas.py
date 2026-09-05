@@ -71,7 +71,6 @@ class FinalDecision(BaseModel):
 
     action: _ACTIONS = Field(description="BUY / HOLD / WATCH / SELL / NO_TRADE")
     confidence: float = Field(ge=0.0, le=1.0, description="0.0 đến 1.0, mức tự tin của Manager vào action này")
-    agrees_with_system: bool = Field(description="action này có trùng với action hệ thống (rule-based) đã chốt không")
     reasoning: str = Field(description="2-3 câu giải thích vì sao chọn action này, đặc biệt PHẢI giải thích rõ nếu khác action hệ thống")
 
 

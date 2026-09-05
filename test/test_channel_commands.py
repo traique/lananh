@@ -150,10 +150,50 @@ async def test_dich_command_translates_via_translate_service(monkeypatch):
             used_fallback = False
         return "hello", "ja_vi", FakeResponse()
 
+    # telemetry.start -> db.save_prompt cần Postgres thật; test này chỉ kiểm
+    # tra luồng translate nên mock telemetry để chạy được ở máy không có DB.
+    async def fake_telemetry_start(user_id, action_type, prompt_text, channel="telegram"):
+        return 1
+
+    async def fake_telemetry_success(prompt_id, action_type, content_text):
+        return None
+
+    async def fake_telemetry_failure(prompt_id, action_type, error):
+        return None
+
+    monkeypatch.setattr(service.telemetry, "start", fake_telemetry_start)
+    monkeypatch.setattr(service.telemetry, "success", fake_telemetry_success)
+    monkeypatch.setattr(service.telemetry, "failure", fake_telemetry_failure)
     monkeypatch.setattr(service.translate_service, "translate", fake_translate)
     result, provider = await service.maybe_handle_command(1, "/dich こんにちは")
     assert "hello" in result[0]
     assert "Tiếng Nhật" in result[0]
+    assert provider is None
+
+
+@pytest.mark.asyncio
+async def test_dich_tieng_anh_khong_doan_chieu_hoi_lai():
+    # Text Latin thuần không dấu tiếng Việt -> KHÔNG dịch mò "Việt→Nhật",
+    # trả lời hỏi lại chiều (trước đây bị dịch ngược từ nguyên văn tiếng Anh).
+    result, provider = await service.maybe_handle_command(1, "/dich Could you check the report tomorrow?")
+    assert any("ja>vi" in r for r in result)
+    assert provider is None
+
+
+@pytest.mark.asyncio
+async def test_dich_tieng_anh_co_chi_dinh_chieu_van_dich(monkeypatch):
+    async def fake_translate(text, direction=None):
+        class FakeResponse:
+            used_fallback = False
+        return "report", direction, FakeResponse()
+
+    async def fake_telemetry_start(user_id, action_type, prompt_text, channel="telegram"):
+        return 1
+
+    monkeypatch.setattr(service.telemetry, "start", fake_telemetry_start)
+    monkeypatch.setattr(service.translate_service, "translate", fake_translate)
+    result, provider = await service.maybe_handle_command(1, "/dich ja>vi Could you check the report?")
+    assert any("report" in r for r in result)
     assert provider is None
 
 

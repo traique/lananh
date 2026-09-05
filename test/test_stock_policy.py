@@ -225,6 +225,8 @@ def test_build_trade_plan_thieu_resistance_fallback_target_price():
 
 
 def test_build_trade_plan_co_resistance_dung_key_levels():
+    # T1 luôn trùng target_price đã qua Gate D (1 nguồn số duy nhất cho
+    # Decision và TradePlan); T2 = kháng cự thật kế tiếp TRÊN T1.
     levels = feat.KeyLevels(
         supports=[],
         resistances=[
@@ -234,8 +236,8 @@ def test_build_trade_plan_co_resistance_dung_key_levels():
     )
     plan = pol.build_trade_plan(price=50_000, stop=49_000, target_price=51_000, confidence=0.9, key_levels=levels, liquidity=None)
     assert plan is not None
-    assert plan.target1 == 52_000
-    assert plan.target2 == 55_000
+    assert plan.target1 == 51_000
+    assert plan.target2 == 52_000
 
 
 def test_build_trade_plan_stop_khong_hop_le_tra_none():

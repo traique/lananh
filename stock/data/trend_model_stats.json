@@ -1,0 +1,18 @@
+{
+  "auc": 0.6069,
+  "accuracy": 0.5578,
+  "n_train": 2436,
+  "n_test": 1038,
+  "split_date": "2026-02-12",
+  "test_start_date": "2026-02-13",
+  "baseline_mean_fwd_ret_pct": -0.008,
+  "top_decile_mean_fwd_ret_pct": 2.036,
+  "bottom_decile_mean_fwd_ret_pct": -0.596,
+  "class_balance_pct_up": 42.7,
+  "model_saved": true,
+  "horizon": 5,
+  "n_features": 30,
+  "trained_at_vn": "2026-09-05 23:56",
+  "n_symbols": 8,
+  "note": "AUC/accuracy là out-of-sample theo ngày, embargo H phiên; KHÔNG bảo đảm hiệu suất tương lai."
+}

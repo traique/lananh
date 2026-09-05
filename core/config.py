@@ -241,6 +241,9 @@ CHAT_SKILL_PATH = Path(os.getenv("CHAT_SKILL_PATH", "chat_skill.yaml").strip())
 # File tham chiếu văn phong/thuật ngữ dịch Nhật-Việt cho lệnh /dich (tùy chọn,
 # fail-open nếu thiếu - xem services/translate_service.py::_reference_guide).
 TRANSLATE_REFERENCE_PATH = os.getenv("TRANSLATE_REFERENCE_PATH", "translate_reference.txt").strip()
+# Giới hạn độ dài nội dung /dich (ký tự): đoạn quá dài dễ vượt timeout 9Router
+# và chết giữa chừng - chặn trước với thông báo thân thiện thay vì lỗi mờ nhạt.
+TRANSLATE_MAX_CHARS = _env_int("TRANSLATE_MAX_CHARS", 4000)
 _CHAT_SKILL_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "chat_skill_prompt.j2"
 
 # Jinja Environment dựng 1 lần ở module level (thay vì mỗi lần render), giống

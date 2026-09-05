@@ -109,6 +109,7 @@ async def _translate(user_id: int, argument: str, channel: str = "zalo") -> tupl
         return [
             "Cú pháp: /dich [ja>vi|vi>ja] <nội dung>\n"
             "Không chỉ định chiều thì tự nhận diện theo chữ Nhật trong câu.\n"
+            "Câu tiếng Anh (không dấu) em sẽ không tự đoán chiều - anh chỉ định giúp em.\n"
             "Ví dụ: /dich お世話になります。確認お願いします。"
         ], None
 
@@ -118,9 +119,21 @@ async def _translate(user_id: int, argument: str, channel: str = "zalo") -> tupl
     if not text.strip():
         return ["Cú pháp: /dich [ja>vi|vi>ja] <nội dung>"], None
 
+    # Text Latin thuần không dấu tiếng Việt (tiếng Anh...) - KHÔNG đoán mò
+    # chiều "Việt→Nhật" như trước, hỏi lại để người dùng chủ động chọn.
+    if direction is None and translate_service.looks_english(text):
+        return [
+            "Câu này là tiếng Anh nên em không tự đoán được anh cần dịch sang ngôn ngữ nào.\n"
+            "Anh chỉ định giúp em nhé:\n"
+            "• /dich ja>vi <nội dung> — dịch sang tiếng Việt\n"
+            "• /dich vi>ja <nội dung> — dịch sang tiếng Nhật"
+        ], None
+
     prompt_id = await telemetry.start(user_id, "translate", text, channel=channel)
     try:
         result, resolved, response = await translate_service.translate(text, direction)
+    except translate_service.TextTooLongError as exc:
+        return [str(exc)], None
     except ValueError as exc:
         return [f"Cú pháp: /dich [ja>vi|vi>ja] <nội dung>\n({exc})"], None
     except Exception as exc:

@@ -149,16 +149,19 @@ async def run_debate(
     ctx: "StockContext",
 ) -> tuple[NewsAnalysis | None, BullCase | None, BearCase | None, FinalDecision | None]:
     """Chạy đúng 4 bước TUẦN TỰ (không asyncio.gather) - mỗi bước cần thấy bước trước.
-    Có nghỉ ROUTER9_STEP_DELAY_SEC giây giữa mỗi bước để giãn tải gateway LLM."""
+    Có nghỉ ROUTER9_STEP_DELAY_SEC giây giữa mỗi bước để giãn tải gateway LLM,
+    CHỈ khi bước trước đã thật sự gọi LLM (bước trả None = không gọi, không ngủ)."""
     delay = config.ROUTER9_STEP_DELAY_SEC
+
+    async def _pace(previous_ran: bool) -> None:
+        if delay and previous_ran:
+            await asyncio.sleep(delay)
+
     news = await run_news_step(ctx)
-    if delay:
-        await asyncio.sleep(delay)
+    await _pace(news is not None)
     bull = await run_bull_step(ctx, news)
-    if delay:
-        await asyncio.sleep(delay)
+    await _pace(bull is not None)
     bear = await run_bear_step(ctx, news, bull)
-    if delay:
-        await asyncio.sleep(delay)
+    await _pace(bear is not None)
     final_decision = await run_manager_step(ctx, news, bull, bear)
     return news, bull, bear, final_decision

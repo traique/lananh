@@ -105,7 +105,9 @@ async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    filename = f"promptify_{prompt_id}.jpg"
+    # prompt_id có thể là None khi DB lỗi (telemetry fail-open) - không được
+    # để tên file thành "promptify_None.jpg".
+    filename = f"promptify_{prompt_id if prompt_id is not None else 'img'}.jpg"
     local_path = config.MEDIA_DIR / filename
 
     identity = resolve_prompt_identity(caption)

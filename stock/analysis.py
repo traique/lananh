@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import jinja2
 
 from stock import backtest
+from stock import corporate_actions
 from stock import features as feat
 from stock import fundamentals
 from stock import policy
@@ -62,7 +63,7 @@ _COMMON_WORD_EXCLUDE = {
 # Chỉ áp dụng cho token VIẾT THƯỜNG (xem detect_symbol_candidates). Tiếng Việt
 # không dấu sinh ra khá nhiều token 3-4 ký tự vô hại; loại sẵn nhóm hay gặp
 # nhất để đỡ tốn request verify tới DNSE. Tính đúng đắn vẫn do DNSE quyết
-# định - list này thuần tuú là tối ưu, không phải rào chắn.
+# định - list này thuần túy là tối ưu, không phải rào chắn.
 _LOWERCASE_NOISE_EXCLUDE = {
     "BAO", "HOM", "MAI", "QUA", "DANG", "CHUA", "HAY", "TOI", "MINH",
     "VAN", "CON", "THI", "MOI", "BAY", "MUA", "BAN", "GIU", "SAN",
@@ -376,6 +377,10 @@ class StockContext:
     # Cảnh báo chuỗi giá có thể chưa điều chỉnh sau chia tách/cổ tức/thưởng.
     # Rỗng = không phát hiện gap bất thường nào (xem stock/price_adjust.py).
     adjustment_note: str = ""
+    # Xác suất tăng sau 5 phiên theo model thống kê walk-forward
+    # (stock/trend_model.py). CHỈ tham khảo trong prompt, KHÔNG phải gate;
+    # None khi chưa train model / sklearn không có.
+    ml_prob_up: float | None = None
 
 async def _safe_sector_prompt(symbol: str) -> str:
     try:
@@ -384,6 +389,10 @@ async def _safe_sector_prompt(symbol: str) -> str:
         ctx = await sector.build_sector_context(sector_keys)
         return sector.build_sector_prompt_section(ctx, symbol)
     except Exception:
+        # Nuốt exception để không sập pipeline, nhưng PHẢI log - nếu sector
+        # chết hẳn (đổi format nguồn...), prompt thiếu ngành vĩnh viễn mà log
+        # không có dấu vết thì không bao giờ phát hiện được.
+        logger.warning("_safe_sector_prompt lỗi cho %s", symbol, exc_info=True)
         return ""
 
 async def _safe_fundamentals_prompt(symbol: str) -> str:
@@ -391,6 +400,7 @@ async def _safe_fundamentals_prompt(symbol: str) -> str:
         bundle = await fundamentals.fetch_fundamentals(symbol)
         return fundamentals.build_fundamentals_prompt_section(bundle.valuation, bundle.foreign, symbol, growth=bundle.growth, events=bundle.events, sector_pe_avg=bundle.sector_pe_avg, sector_pe_sample=bundle.sector_pe_sample, sector_pe_label=bundle.sector_pe_label, sector_profile=bundle.sector_profile, sector_benchmark=bundle.sector_benchmark)
     except Exception:
+        logger.warning("_safe_fundamentals_prompt lỗi cho %s", symbol, exc_info=True)
         return ""
 
 def _trend_pct(closes: list[float]) -> float:
@@ -434,14 +444,29 @@ async def _is_holding_symbol(user_id: int | None, symbol: str) -> bool:
 
 async def build_context(symbol: str, *, user_id: int | None = None, is_holding: bool | None = None) -> StockContext | None:
     results = await asyncio.gather(
-        providers.fetch_ohlcv(symbol, days=90), providers.fetch_ohlcv("VNINDEX", days=90),
+        providers.fetch_ohlcv(symbol, days=260), providers.fetch_ohlcv("VNINDEX", days=260),
         providers.fetch_quote(symbol), providers.fetch_news(symbol),
         _safe_sector_prompt(symbol), _safe_fundamentals_prompt(symbol),
         fundamentals.fetch_company_news(symbol),
         return_exceptions=True
     )
-    for r in results:
-        if isinstance(r, BaseException): raise r
+    # Chỉ exception của OHLCV mã chính (task 0) mới làm chết pipeline - đây
+    # là dữ liệu bắt buộc duy nhất. VNINDEX/quote/news/company_news là dữ liệu
+    # TÙY CHỌN (downstream có guard cho thiếu): trước đây 1 timeout của Google
+    # News là toàn bộ /phantich trả lỗi dù mọi chỉ báo chính vẫn tính được.
+    _OPTIONAL_FALLBACKS = {
+        1: providers.OhlcvSeries(symbol="VNINDEX"),
+        2: None,          # quote -> realtime_quote_line = None
+        3: [],            # news -> không có tin
+        5: "",            # fundamentals prompt -> rỗng
+        6: [],            # company news -> rỗng
+    }
+    for idx, r in enumerate(results):
+        if isinstance(r, BaseException):
+            if idx == 0:
+                raise r
+            logger.warning("Task dữ liệu phụ #%s lỗi cho %s - bỏ qua: %s", idx, symbol, r)
+            results[idx] = _OPTIONAL_FALLBACKS.get(idx, [] if idx in (3, 6) else "")
     symbol_series, vnindex_series, quote, news, sector_prompt, fundamentals_prompt, company_news = results
     # Tin công ty CHÍNH CHỦ từ VCI (đã confirmed=True) + tin cào Google News,
     # loại trùng theo tiêu đề (không phân biệt hoa/thường).
@@ -455,9 +480,26 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
     # trước đây hệ thống hoàn toàn không biết SMA50/Donchian/ATR14/trend 3
     # tháng có đang tính trên một gap giả của ngày GDKHQ hay không.
     audit = price_adjust.audit_series(symbol, symbol_series.source, symbol_series.closes, symbol_series.dates)
-    symbol_series.is_adjusted = audit.is_adjusted
     if audit.gaps:
         logger.warning("Chuỗi giá %s (nguồn %s) có %d gap nghi điều chỉnh giá", symbol, symbol_series.source, len(audit.gaps))
+    adjustment_note = audit.note
+    # Nếu có gap, thử lấy lịch cổ tức tiền (corporate actions) để ĐIỀU CHỈNH
+    # chuỗi - chỉ áp dụng khi ngày VÀ độ lớn gap khớp với cổ tức. Lưu ý: tạo
+    # series MỚI thay vì mutate object cũ - object này đang nằm trong cache
+    # 90s của providers, mutate sẽ làm các lượt phân tích kế tiếp nhận luôn
+    # chuỗi đã điều chỉnh mà không kiểm lại.
+    if audit.gaps:
+        outcome = await corporate_actions.adjust_with_dividends(
+            symbol, symbol_series.closes, symbol_series.highs, symbol_series.lows, symbol_series.dates,
+        )
+        if outcome.events_applied:
+            logger.info("Đã điều chỉnh %d cổ tức cho %s (nguồn %s)", outcome.events_applied, symbol, symbol_series.source)
+            symbol_series = providers.OhlcvSeries(
+                symbol, outcome.closes, outcome.highs, outcome.lows,
+                symbol_series.volumes, symbol_series.dates, symbol_series.source, is_adjusted=True,
+            )
+            adjustment_note = outcome.note or adjustment_note
+    symbol_series.is_adjusted = audit.is_adjusted if not adjustment_note.startswith("ℹ️") else True
     # analysis_price = close của phiên gần nhất trong CHUỖI OHLCV - toàn bộ
     # feature/policy (Donchian, Bollinger, S/R, session...) phải nhìn CÙNG
     # một thời điểm để không tự mâu thuẫn nhau (P0-3). quote.price là tick
@@ -498,9 +540,19 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
 
     holding = is_holding if is_holding is not None else await _is_holding_symbol(user_id, symbol)
     decision = policy.evaluate_policy(policy.PolicyInputs(price=analysis_price, stats=stats, enhanced=enhanced, ma_alignment=ma_alignment, support_resistance=support_resistance, liquidity=liquidity, session=session, relative_strength=relative_strength, trend_score=trend_score, news_impact=news_impact, quality=quality, vnindex_multi_tf=vnindex_multi_tf, vnindex_adx=vnindex_adx, vnindex_distribution_days=vnindex_distribution_days, key_levels=key_levels, is_holding=holding))
+
+    # Model thống kê walk-forward (chỉ tham khảo, không phải gate). Tự vô hiệu
+    # khi chưa train model hoặc máy không có sklearn - không bao giờ raise.
+    ml_prob_up = None
+    try:
+        from stock import trend_model
+        ml_prob_up = trend_model.prob_up_for_series(symbol_series, vnindex_series)
+    except Exception:
+        logger.debug("trend_model không khả dụng cho %s", symbol, exc_info=True)
+
     fetched_at_vn = datetime.now(_VN_TZ).strftime("%H:%M ngày %d/%m/%Y")
 
-    return StockContext(symbol, analysis_price, fetched_at_vn, stats, decision, enhanced, indicator_summary, support_resistance, key_levels, ma_alignment, sector_prompt, fundamentals_prompt, news, relative_strength, liquidity, quality, realtime_quote_line, last_bar_date, audit.note)
+    return StockContext(symbol, analysis_price, fetched_at_vn, stats, decision, enhanced, indicator_summary, support_resistance, key_levels, ma_alignment, sector_prompt, fundamentals_prompt, news, relative_strength, liquidity, quality, realtime_quote_line, last_bar_date, adjustment_note, ml_prob_up)
 
 def _fmt_price(v: float | None) -> str:
     # Nguồn duy nhất cho định dạng giá: stock/report_format.fmt_price (chuẩn VN,
@@ -607,6 +659,7 @@ def build_prompt(
         ma_distance_line = (
             f"Giá vs đường trung bình: SMA20 {rfmt.format_level(price, e.sma20)}, "
             f"SMA50 {rfmt.format_level(price, e.sma50)}"
+            + (f", SMA200 {rfmt.format_level(price, e.sma200)} (xu hướng dài hạn)" if e.sma200 is not None else "")
         )
 
     data_as_of_line = None
@@ -615,6 +668,21 @@ def build_prompt(
             f"Toàn bộ chỉ báo kỹ thuật bên dưới được tính trên NẾN ĐÓNG CỬA ngày "
             f"{ctx.last_bar_date}, KHÔNG phải giá đang khớp - khi mô tả chỉ báo phải "
             f"gắn mốc thời gian này."
+        )
+
+    # Xác suất từ model thống kê walk-forward - chỉ hiện khi đã train model.
+    # Ghi rõ AUC out-of-sample và "không phải gate" để LLM không trình bày
+    # như một khuyến nghị định lượng của hệ thống.
+    ml_prob_line = None
+    if ctx.ml_prob_up is not None:
+        from stock import trend_model as _trend_model
+        stats_meta = _trend_model.model_stats()
+        auc_note = f", AUC out-of-sample {stats_meta['auc']}" if stats_meta.get("auc") else ""
+        pct = f"{ctx.ml_prob_up * 100:.0f}%"
+        ml_prob_line = (
+            f"[MODEL THỐNG KÊ — CHỈ THAM KHẢO]: xác suất model dự báo close TĂNG sau 5 phiên: {pct}"
+            f" (gradient boosting walk-forward{auc_note}; không phải gate định lượng, KHÔNG được dùng"
+            " như lý do chính để đổi action hệ thống; nêu nếu hữu ích, bỏ qua nếu xung đột với dữ liệu thật)."
         )
 
     trade_plan = None
@@ -646,7 +714,7 @@ def build_prompt(
         realtime_quote_line=ctx.realtime_quote_line, key_levels_line=key_levels_line,
         nearest_levels_line=nearest_levels_line, momentum_detail_line=momentum_detail_line,
         ma_distance_line=ma_distance_line, data_as_of_line=data_as_of_line,
-        adjustment_note=ctx.adjustment_note,
+        adjustment_note=ctx.adjustment_note, ml_prob_line=ml_prob_line,
         trade_plan=trade_plan, scenarios=scenarios, backtest_stats_line=backtest_stats_line,
         news_analysis=news_analysis, bull_case=bull_case, bear_case=bear_case,
         final_decision=final_decision, decision_diverges=decision_diverges,
@@ -669,6 +737,7 @@ def _fallback_text(ctx: StockContext) -> str:
         f"RSI14 {rfmt.fmt_number(ctx.stats.rsi14, 1) if ctx.stats.rsi14 is not None else 'chưa đủ dữ liệu'} | Trend ~3M {rfmt.fmt_number(ctx.stats.trend_3m)}% | Risk: {d.risk_level}",
     ]
     if ctx.last_bar_date: lines.append(f"Chỉ báo tính trên nến đóng cửa ngày {ctx.last_bar_date}.")
+    if ctx.ml_prob_up is not None: lines.append(f"Model thống kê (tham khảo): xác suất tăng sau 5 phiên ~{ctx.ml_prob_up * 100:.0f}%.")
     if d.reasons: lines.append("Lý do: " + "; ".join(d.reasons[:4]))
     if d.invalidation_reason: lines.append(f"Lưu ý: {d.invalidation_reason}")
     if ctx.realtime_quote_line: lines.append(ctx.realtime_quote_line)
@@ -695,6 +764,11 @@ async def analyze_portfolio(symbols: list[str], user_text: str, *, user_id: int 
     tasks = [build_context(sym, user_id=user_id, is_holding=holding) for sym, holding in zip(symbols, holdings)]
     contexts = await asyncio.gather(*tasks, return_exceptions=True)
     valid_contexts = [ctx for ctx in contexts if not isinstance(ctx, BaseException) and ctx is not None]
+    failed_symbols = [sym for sym, ctx in zip(symbols, contexts) if isinstance(ctx, BaseException) or ctx is None]
+    if failed_symbols:
+        # Không âm thầm bỏ mã lỗi: user hỏi cơ cấu 5 mã mà báo cáo chỉ còn 3
+        # mã mà không một chữ nào giải thích là thiếu dữ liệu sai lệch nhận định.
+        logger.warning("analyze_portfolio: không lấy được dữ liệu cho %s", ", ".join(failed_symbols))
     if not valid_contexts:
         return "Em không lấy được dữ liệu của các mã này lúc này, anh thử lại sau xíu nha."
 
@@ -716,6 +790,11 @@ async def analyze_portfolio(symbols: list[str], user_text: str, *, user_id: int 
         combined_data.append(f"Mã {ctx.symbol}: Giá {_fmt_price(ctx.price)} | Tín hiệu hệ thống: {d.action} (Độ tin cậy: {d.confidence}) | {trend_line} | {sr_line}{bar_note}{adjust_note}")
 
     data_text = "\n".join(combined_data)
+    failed_note = (
+        f"\n\n[LƯU Ý]: Không lấy được dữ liệu cho mã {', '.join(failed_symbols)} - "
+        f"KHÔNG xếp hạng hay nhận định gì về các mã này, nêu rõ chúng chưa được phân tích."
+        if failed_symbols else ""
+    )
     prompt = (
         f"[DỮ LIỆU KỸ THUẬT DANH MỤC LÚC NÀY]:\n{data_text}\n\n"
         f"[CÂU HỎI TỪ NGƯỌI DÙNG]:\n\"{user_text}\"\n\n"
@@ -723,6 +802,7 @@ async def analyze_portfolio(symbols: list[str], user_text: str, *, user_id: int 
         f"So sánh sức mạnh các mã, khuyên mã nào nên giữ/gồng lãi, mã nào vi phạm kỹ thuật cần hạ tỷ trọng/cắt lỗ. "
         f"Mọi mốc giá nhắc tới phải kèm khoảng cách % đã cho ở trên, không tự tính lại. "
         f"Mã nào có cảnh báo giá chưa điều chỉnh thì phải nói rõ hạn chế đó khi so sánh, không xếp hạng như số liệu sạch. "
+        f"{failed_note} "
         f"Số viết theo chuẩn Việt Nam (dấu chấm nghìn, dấu phẩy thập phân). "
         f"Văn phong: xưng em/anh tự nhiên, rõ ràng, không tự giới thiệu, không dùng danh xưng thân mật quá đà. "
         f"Chỉ MỘT câu nhắc đây là thông tin tham khảo ở cuối tin nhắn."
@@ -732,9 +812,11 @@ async def analyze_portfolio(symbols: list[str], user_text: str, *, user_id: int 
     try:
         response = await orchestrator.ask(prompt)
         result = rfmt.clean_analysis_output((response.text or "").strip())
-        result = rfmt.ensure_disclaimer(result)
-        if result and getattr(response, "used_fallback", False): result += "\n\n⚙️ API"
-        return result
+        if result and getattr(response, "used_fallback", False):
+            result += "\n\n⚙️ _Báo cáo do API dự phòng trả về, ngôn ngữ có thể thô hơn bình thường._"
+        # Disclaimer phải là dòng cuối - marker API nối TRƯỚC ensure_disclaimer
+        # (trước đây nối sau, làm disclaimer không còn kết thúc tin nhắn).
+        return rfmt.ensure_disclaimer(result)
     except Exception:
         logger.exception("Lỗi khi tổng hợp danh mục")
         return "Em đang gặp chút sự cố khi phân tích danh mục, anh chờ chút thử lại nha."
@@ -772,7 +854,7 @@ async def analyze_symbol(symbol: str, user_text: str = "", *, force_refresh: boo
         prompt += (
             f"\n\n[LƯU Ý QUAN TRỌNG TỪ HỆ THỐNG]:\n"
             f"Người dùng vừa hỏi: \"{user_text}\"\n"
-            f"Lan Anh hãy phân tích kỹ thuật ở trên, ĐỒNG THỮI phải trả lời trực tiếp "
+            f"Lan Anh hãy phân tích kỹ thuật ở trên, ĐỒNG THỜI phải trả lời trực tiếp "
             f"vào tình huống này của anh ấy: tính mức lời/lỗ BẮNG SỐ dựa trên giá đã cho, "
             f"nêu hướng xử lý cụ thể dựa trên Action đã chốt. TUYỆT ĐỐI không tự giới thiệu, "
             f"không đoán cảm xúc của anh ấy, không dùng danh xưng thân mật quá đà."
@@ -780,7 +862,10 @@ async def analyze_symbol(symbol: str, user_text: str = "", *, force_refresh: boo
 
     from ai import orchestrator
     from core import config
-    if config.ROUTER9_STEP_DELAY_SEC:
+    # Nhịp giãn tải trước bước tổng hợp cuối - chỉ cần khi debate đã chạy ít
+    # nhất 1 bước; nếu cả 4 bước đều None thì không có lệnh LLM nào vừa gọi,
+    # ngủ 3s là chết thời gian thuần.
+    if config.ROUTER9_STEP_DELAY_SEC and any([news_analysis, bull_case, bear_case, final_decision]):
         await asyncio.sleep(config.ROUTER9_STEP_DELAY_SEC)
     try:
         response = await orchestrator.ask(prompt)
@@ -790,7 +875,8 @@ async def analyze_symbol(symbol: str, user_text: str = "", *, force_refresh: boo
         # lần còn CII thì không.
         text = rfmt.clean_analysis_output((response.text or "").strip())
         result = text or _fallback_text(ctx)
-        if text and getattr(response, "used_fallback", False): result += "\n\n⚙️ API"
+        if text and getattr(response, "used_fallback", False):
+            result += "\n\n⚙️ _Báo cáo do API dự phòng trả về, ngôn ngữ có thể thô hơn bình thường._"
     except Exception:
         logger.exception("Gemini lỗi khi phân tích %s", symbol)
         result = _fallback_text(ctx)

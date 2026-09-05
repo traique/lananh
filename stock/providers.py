@@ -157,8 +157,12 @@ async def fetch_ohlcv(symbol: str, days: int = 90) -> OhlcvSeries:
         else:
             _provider_failures["vnstock"] += 1
             series = OhlcvSeries(symbol=sym, source="unavailable")
-    _evict_expired(_ohlcv_cache, _OHLCV_CACHE_TTL)
-    _ohlcv_cache[key] = (time.monotonic(), series)
+    # Chỉ cache khi có dữ liệu THẬT - cache cả series rỗng "unavailable" sẽ
+    # khiến mọi lượt phân tích trong 90s kế tiếp nhận ngay kết quả fail của
+    # một lỗi mạng tạm thời mà không hề thử lại nguồn.
+    if series.closes:
+        _evict_expired(_ohlcv_cache, _OHLCV_CACHE_TTL)
+        _ohlcv_cache[key] = (time.monotonic(), series)
     return series
 
 
@@ -197,16 +201,21 @@ async def _fetch_ohlcv_dnse(symbol: str, days: int = 90) -> OhlcvSeries:
     scale = 1 if is_index else PRICE_SCALE
     bars = []
     for i in range(len(t)):
+        # Bọc TẤT CẢ các phép ép kiểu (trước đây chỉ close nằm trong try) -
+        # 1 giá trị lạ từ DNSE (chuỗi không số, timestamp hỏng) phải bỏ đúng
+        # bar đó, không được raise xuyên qua fetch_ohlcv làm chết failover
+        # sang vnstock/VCI và toàn lượt phân tích.
         try:
             close = float(c[i])
+            high = float(h[i]) if i < len(h) and h[i] else close
+            low = float(l[i]) if i < len(l) and l[i] else close
+            vol = float(v[i]) if i < len(v) and v[i] else 0.0
+            ts = int(t[i])
         except (IndexError, TypeError, ValueError):
             continue
         if not (close > 0):
             continue
-        high = float(h[i]) if i < len(h) and h[i] else close
-        low = float(l[i]) if i < len(l) and l[i] else close
-        vol = float(v[i]) if i < len(v) and v[i] else 0.0
-        bars.append((int(t[i]), high, low, close, vol))
+        bars.append((ts, high, low, close, vol))
 
     bars.sort(key=lambda b: b[0])
     bars = bars[-days:]
@@ -272,19 +281,25 @@ async def fetch_current_price(symbol: str) -> float:
     return series.price
 
 
-_VERIFY_CACHE_TTL = 24 * 3600  # giây - cache riêng cho verify (khác cache OHLCV 90s dùng cho phân tích)
-_verify_cache: dict[str, tuple[float, bool]] = {}
+_VERIFY_CACHE_TTL_POS = 24 * 3600    # kết quả TỒN TẠI - cache 24h như cũ
+_VERIFY_CACHE_TTL_NEG = 10 * 60      # kết quả "không tồn tại" - chỉ cache 10 phút
+_verify_cache: dict[str, tuple[float, bool, int]] = {}  # (ts, result, ttl)
 
 
 async def verify_symbol_exists(symbol: str) -> bool:
+    """Kết quả âm dựa trên fetch_current_price (cùng chuỗi failover DNSE →
+    vnstock) - một lỗi mạng/rate-limit tạm thời sẽ trả giá 0. Nếu cache âm
+    dài như kết quả dương, mã hợp lệ bị coi là "không tồn tại" suốt 24h sau
+    một gián đoạn vài giây, nên TTL âm ngắn hơn hẳn."""
     sym = symbol.strip().upper()
     cached = _verify_cache.get(sym)
-    if cached and time.monotonic() - cached[0] < _VERIFY_CACHE_TTL:
+    if cached and time.monotonic() - cached[0] < cached[2]:
         return cached[1]
     price = await fetch_current_price(sym)
     result = price > 0
-    _evict_expired(_verify_cache, _VERIFY_CACHE_TTL)
-    _verify_cache[sym] = (time.monotonic(), result)
+    ttl = _VERIFY_CACHE_TTL_POS if result else _VERIFY_CACHE_TTL_NEG
+    _evict_expired(_verify_cache, _VERIFY_CACHE_TTL_POS)
+    _verify_cache[sym] = (time.monotonic(), result, ttl)
     return result
 
 
@@ -341,11 +356,13 @@ async def fetch_realtime_tick(symbol: str) -> float | None:
 
 async def fetch_quote(symbol: str) -> Quote | None:
     sym = symbol.strip().upper()
-    series = await fetch_ohlcv(sym, days=5)
+    # OHLCV và realtime tick là 2 request độc lập - chạy song song thay vì
+    # await tuần tự (trước đây tốn thêm một RTT mạng mỗi lần quote).
+    series, realtime_price = await asyncio.gather(
+        fetch_ohlcv(sym, days=5), fetch_realtime_tick(sym),
+    )
     if not series.closes:
         return None
-
-    realtime_price = await fetch_realtime_tick(sym)
     is_realtime = realtime_price is not None
     today_str = datetime.now(_VN_TZ).strftime("%Y-%m-%d")
 

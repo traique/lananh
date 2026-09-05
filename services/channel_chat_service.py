@@ -66,8 +66,28 @@ def split_for_zalo(text: str, limit: int = 1800) -> list[str]:
     return chunks
 
 
+def _looks_like_search_question(text: str) -> bool:
+    """Tin nhắn có cần tìm kiếm web không. Tavily được bật qua admin toggle
+    sẽ bắn request cho MỌI tin nhắn nếu không gate - kể cả "ừm", tám chuyện -
+    tốn quota + độ trễ + nhiễu prompt. Chỉ search khi câu hỏi thực sự gợi ý
+    cần dữ liệu ngoài: đủ dài và có dấu hiệu nghi vấn/tra cứu. Bỏ sót 1-2 câu
+    cần search thì Google model (api1/api2) vẫn tự search được bù lại."""
+    lower = text.lower()
+    if len(lower.split()) <= 3 and "?" not in lower:
+        return False
+    markers = (
+        "?", "bao nhiêu", "bao giờ", "thế nào", "như thế nào", "là gì", "ở đâu",
+        "khi nào", "vì sao", "tại sao", "giá", "tỷ giá", "giá vàng", "bitcoin",
+        "crypto", "tin", "mới nhất", "hiện tại", "hôm nay", "tuần này", "check",
+        "tra giúp", "tìm giúp", "search",
+    )
+    return any(marker in lower for marker in markers)
+
+
 async def _maybe_tavily_search(text: str) -> str:
     if not await tavily_client.get_enabled():
+        return ""
+    if not _looks_like_search_question(text):
         return ""
     try:
         return await tavily_client.search(text)
@@ -143,10 +163,15 @@ async def handle_channel_text(user_id: int, text: str, is_admin: bool = True, ch
         return stock_result
     prompt_id = await telemetry.start(user_id, "chat", text, channel=channel)
     try:
-        tool_result = await tools.maybe_run_tool(user_id, text)
-        search_result = await _maybe_tavily_search(text)
+        # 3 nguồn ngữ cảnh độc lập nhau - chạy song song thay vì tuần tự
+        # (trước đây Tavily + memory nối tiếp, thêm vài trăm ms - vài giây
+        # độ trễ cho mọi tin nhắn).
+        tool_result, search_result, memory = await asyncio.gather(
+            tools.maybe_run_tool(user_id, text),
+            _maybe_tavily_search(text),
+            memory_service.build_memory_context(user_id),
+        )
         combined = "\n\n".join(part for part in (grounding, tool_result, search_result) if part)
-        memory = await memory_service.build_memory_context(user_id)
         response = await orchestrator.chat(
             user_id,
             text,
@@ -165,7 +190,7 @@ async def handle_channel_text(user_id: int, text: str, is_admin: bool = True, ch
         )
         fallback = bool(getattr(response, "used_fallback", False))
         return ChannelResult(
-            [reply + ("\n\n⚙️ API" if fallback else "")],
+            [reply + ("\n\n⚙️ _Câu trả lời do API dự phòng trả về, ngôn ngữ có thể khác thường ngày._" if fallback else "")],
             "api" if fallback else None,
         )
     except Exception as exc:

@@ -40,7 +40,10 @@ def calc_rsi(closes: list[float], period: int = 14) -> float | None:
         avg_gain = (avg_gain * (period - 1) + gain) / period
         avg_loss = (avg_loss * (period - 1) + loss) / period
     if avg_loss == 0:
-        return 100.0
+        # Mọi phiên đều tăng (avg_gain > 0) -> RSI = 100 đúng nghĩa. Nhưng nếu
+        # chuỗi phẳng hoàn toàn (avg_gain == 0 luôn) thì RSI không xác định -
+        # trả None thay vì 100 để không bị đọc như "quá mua".
+        return 100.0 if avg_gain > 0 else None
     rs = avg_gain / avg_loss
     return 100 - 100 / (1 + rs)
 
@@ -61,9 +64,12 @@ def calc_momentum_slope(closes: list[float], period: int = 10) -> float:
 
 # ─── SMA / EMA ───────────────────────────────────────────────────────────────
 
-def calc_sma(closes: list[float], period: int) -> float:
+def calc_sma(closes: list[float], period: int) -> float | None:
+    """Trả None khi chưa đủ `period` phiên - KHÔNG trả close hiện tại làm
+    "SMA" (trước đây nhánh thiếu dữ liệu trả closes[-1], khiến SMA50 của mã
+    mới niêm yết hiển thị đúng bằng giá hiện tại, trông như chỉ báo thật)."""
     if len(closes) < period:
-        return closes[-1] if closes else 0.0
+        return None
     sl = closes[-period:]
     return sum(sl) / period
 
@@ -85,9 +91,11 @@ def _ema_series(closes: list[float], period: int) -> list[float]:
     return result
 
 
-def calc_ema(closes: list[float], period: int) -> float:
-    series = _ema_series(closes, period)
-    return series[-1] if series else 0.0
+def calc_ema(closes: list[float], period: int) -> float | None:
+    """Trả None khi chưa đủ `period` phiên - cùng lý do calc_sma không bịa."""
+    if len(closes) < period:
+        return None
+    return _ema_series(closes, period)[-1]
 
 
 # ─── MACD(12,26,9) ───────────────────────────────────────────────────────────
@@ -156,9 +164,12 @@ def calc_bollinger(closes: list[float], price: float) -> BollingerResult:
     lower = middle - 2 * std_dev
     width = ((upper - lower) / middle) * 100 if middle > 0 else 5.0
     pct_b = ((price - lower) / (upper - lower)) * 100 if upper != lower else 50.0
+    # KHÔNG clamp %B về 0-100: giá vượt dải (%B < 0 hoặc > 100) là thông tin
+    # thật ("vượt band"), clamp sẽ làm %B=100 mâu thuẫn với Donchian báo
+    # breakout cùng lúc.
     return BollingerResult(
         round(upper), round(middle), round(lower), round(width, 2),
-        round(clamp(pct_b, 0, 100), 1), width < 5, available=True,
+        round(pct_b, 1), width < 5, available=True,
     )
 
 
@@ -171,6 +182,8 @@ class MultiTimeframe:
     trend_3m: float
     alignment: str  # bullish | bearish | mixed
     bars_used_3m: int = 0  # số phiên thật sự dùng để tính trend_3m (< 65 nếu dữ liệu ngắn)
+    trend_1y: float = 0.0  # % thay đổi ~250 phiên; chỉ có nghĩa khi bars_used_1y >= 250
+    bars_used_1y: int = 0
 
 
 def calc_multi_timeframe(closes: list[float]) -> MultiTimeframe:
@@ -182,7 +195,9 @@ def calc_multi_timeframe(closes: list[float]) -> MultiTimeframe:
         return ((curr - past) / past) * 100 if past > 0 else 0.0
 
     bars_3m = min(len(closes) - 1, 65) if closes else 0
+    bars_1y = min(len(closes) - 1, 250) if closes else 0
     t1w, t1m, t3m = pct(5), pct(22), pct(bars_3m)
+    t1y = pct(250)
     vals = [t1w, t1m, t3m]
     if all(v > 0 for v in vals):
         alignment = "bullish"
@@ -190,7 +205,7 @@ def calc_multi_timeframe(closes: list[float]) -> MultiTimeframe:
         alignment = "bearish"
     else:
         alignment = "mixed"
-    return MultiTimeframe(round(t1w, 2), round(t1m, 2), round(t3m, 2), alignment, bars_used_3m=max(bars_3m, 0))
+    return MultiTimeframe(round(t1w, 2), round(t1m, 2), round(t3m, 2), alignment, bars_used_3m=max(bars_3m, 0), trend_1y=round(t1y, 2), bars_used_1y=max(bars_1y, 0))
 
 
 # ─── SMA cross (golden/death) ────────────────────────────────────────────────
@@ -201,12 +216,16 @@ class CrossSignal:
     death_cross: bool
     above_sma20: bool
     above_sma50: bool
+    # False khi chuỗi < 52 phiên: above_sma20/50 khi đó là False "vì thiếu
+    # dữ liệu", KHÔNG phải "giá dưới MA" - consumer (agreement, session guard)
+    # phải bỏ qua thay vì đọc thành tín hiệu giảm thật (bug agreement -1.0).
+    available: bool = True
 
 
 def calc_cross_signal(closes: list[float]) -> CrossSignal:
     price = closes[-1] if closes else 0.0
     if len(closes) < 52:
-        return CrossSignal(False, False, False, False)
+        return CrossSignal(False, False, False, False, available=False)
     sma20 = calc_sma(closes, 20)
     sma50 = calc_sma(closes, 50)
     window = 3
@@ -296,7 +315,13 @@ def calc_adx(closes: list[float], highs: list[float] | None = None, lows: list[f
     valid_dx = dx_series[period - 1:]
     if len(valid_dx) < period:
         return ADXResult(0.0, 0.0, 0.0, False, available=False)
-    adx = sum(valid_dx[-period:]) / period
+    # ADX = Wilder RMA của DX (seed bằng SMA `period` giá trị DX đầu, rồi đệ
+    # quy (adx*(p-1)+dx)/p) - trước đây dùng SMA của `period` DX CUỐI, số ADX
+    # nhạy/nhiễu hơn và lệch chuẩn so với TradingView/TA-Lib, trong khi ngưỡng
+    # trending (adx > 25) áp trên nền này.
+    adx = sum(valid_dx[:period]) / period
+    for dx in valid_dx[period:]:
+        adx = (adx * (period - 1) + dx) / period
     di_plus = di_plus_series[-1] if di_plus_series else 0.0
     di_minus = di_minus_series[-1] if di_minus_series else 0.0
 
@@ -407,8 +432,8 @@ def _find_swing_pivots(highs: list[float], lows: list[float], window: int) -> tu
 
 
 def _cluster_pivots(pivots: list[float], cluster_pct: float) -> list[tuple[float, int]]:
-    """Gom cụm các pivot cách nhau <= cluster_pct%: giá cụm = trung bình có
-    trọng số theo số lần test, touches cộng dồn. Trả list (giá_cụm, touches)."""
+    """Gom cụm các pivot cách nhau <= cluster_pct%: giá cụm = trung bình cộng
+    các pivot trong cụm, touches cộng dồn. Trả list (giá_cụm, touches)."""
     if not pivots:
         return []
     clusters: list[list[float]] = []
@@ -588,7 +613,9 @@ def calc_liquidity(volumes: list[float], min_avg_volume: float = 100_000, percen
     """
     if not volumes:
         return None
-    window = volumes[-20:] if len(volumes) >= 20 else volumes
+    # avg20 loại trừ phiên hiện tại (20 phiên TRƯỚC đó) - nếu gồm cả bar cuối,
+    # volume hiện tại tự pha loãng mẫu mà nó đang được so sánh với.
+    window = volumes[-21:-1] if len(volumes) >= 21 else (volumes[:-1] if len(volumes) > 1 else volumes)
     if not window:
         return None
     avg20 = sum(window) / len(window)
@@ -620,7 +647,11 @@ def calc_signal_stats(closes: list[float], volumes: list[float], price: float) -
     if not closes or price <= 0:
         return SignalStats(0, 2, 0, 0, None)
 
-    first, last = closes[0], closes[-1]
+    # trend_3m đo đúng 65 phiên (~3 tháng) gần nhất, không dùng cả chuỗi -
+    # trước đây lấy closes[0] của toàn bộ window nên chỉ đúng tên khi fetch
+    # đúng ~90 ngày; tăng `days` thì trend_3m im lặng sai tên.
+    last = closes[-1]
+    first = closes[-66] if len(closes) >= 66 else closes[0]
     trend_3m = ((last - first) / first) * 100 if first else 0
     momentum = calc_momentum_slope(closes)
     rsi14 = calc_rsi(closes)
@@ -692,16 +723,21 @@ class EnhancedIndicators:
     cross: CrossSignal
     adx: ADXResult
     donchian: DonchianState
-    sma20: float
-    sma50: float
-    ema9: float
+    sma20: float | None
+    sma50: float | None
+    ema9: float | None
     atr14: float | None
     atr_pct: float | None  # ATR như % giá - dùng để so sánh biến động giữa các mã
+    sma200: float | None = None  # xu hướng dài hạn; None khi < 200 phiên (fetch 260 ngày)
 
 
 def build_enhanced_indicators(closes: list[float], price: float, highs: list[float] | None = None, lows: list[float] | None = None) -> EnhancedIndicators:
     atr14 = calc_atr(closes, highs, lows)
     atr_pct = round(atr14 / price * 100, 2) if atr14 is not None and price > 0 else None
+    sma20 = calc_sma(closes, 20)
+    sma50 = calc_sma(closes, 50)
+    ema9 = calc_ema(closes, 9)
+    sma200 = calc_sma(closes, 200)
     return EnhancedIndicators(
         macd=calc_macd(closes),
         bollinger=calc_bollinger(closes, price),
@@ -709,11 +745,12 @@ def build_enhanced_indicators(closes: list[float], price: float, highs: list[flo
         cross=calc_cross_signal(closes),
         adx=calc_adx(closes, highs, lows),
         donchian=calc_donchian_breakout(highs or [], lows or [], closes),
-        sma20=round(calc_sma(closes, 20)),
-        sma50=round(calc_sma(closes, 50)),
-        ema9=round(calc_ema(closes, 9)),
+        sma20=round(sma20) if sma20 is not None else None,
+        sma50=round(sma50) if sma50 is not None else None,
+        ema9=round(ema9) if ema9 is not None else None,
         atr14=atr14,
         atr_pct=atr_pct,
+        sma200=round(sma200) if sma200 is not None else None,
     )
 
 
@@ -737,12 +774,13 @@ def calc_signal_agreement(ind: EnhancedIndicators) -> float:
     elif ind.multi_tf.alignment == "bearish":
         votes.append(-1.0)
 
-    if ind.cross.golden_cross:
-        votes.append(1.0)
-    if ind.cross.death_cross:
-        votes.append(-1.0)
-    if not ind.cross.golden_cross and not ind.cross.death_cross:
-        votes.append(1.0 if (ind.cross.above_sma20 and ind.cross.above_sma50) else (-1.0 if not ind.cross.above_sma20 and not ind.cross.above_sma50 else 0.0))
+    if ind.cross.available:
+        if ind.cross.golden_cross:
+            votes.append(1.0)
+        if ind.cross.death_cross:
+            votes.append(-1.0)
+        if not ind.cross.golden_cross and not ind.cross.death_cross:
+            votes.append(1.0 if (ind.cross.above_sma20 and ind.cross.above_sma50) else (-1.0 if not ind.cross.above_sma20 and not ind.cross.above_sma50 else 0.0))
 
     if ind.adx.available and ind.adx.trending:
         votes.append(1.0 if ind.adx.di_plus > ind.adx.di_minus else -1.0)
@@ -765,6 +803,8 @@ def build_indicator_summary(ind: EnhancedIndicators, symbol: str) -> str:
         f"1M {'+' if tf.trend_1m > 0 else ''}{tf.trend_1m}% | "
         f"3M {'+' if tf.trend_3m > 0 else ''}{tf.trend_3m}% -> {tf.alignment.upper()}"
     )
+    if tf.bars_used_1y >= 250:
+        lines.append(f"1Y: {'+' if tf.trend_1y > 0 else ''}{tf.trend_1y}% (xu hướng dài hạn ~1 năm)")
     cross_note = f" ⚡ {macd.crossover.upper()} CROSSOVER" if macd.crossover != "none" else ""
     lines.append(f"MACD: line {'+' if macd.macd_line > 0 else ''}{macd.macd_line} | hist {'+' if macd.histogram > 0 else ''}{macd.histogram}{cross_note}")
     if bb.available:
@@ -773,12 +813,15 @@ def build_indicator_summary(ind: EnhancedIndicators, symbol: str) -> str:
     else:
         lines.append("BB: chưa đủ dữ liệu (cần tối thiểu 20 phiên)")
     cross_parts = []
-    if cross.golden_cross:
-        cross_parts.append("⭐ GOLDEN CROSS")
-    if cross.death_cross:
-        cross_parts.append("💀 DEATH CROSS")
-    cross_parts.append("above SMA20" if cross.above_sma20 else "below SMA20")
-    cross_parts.append("above SMA50" if cross.above_sma50 else "below SMA50")
+    if not cross.available:
+        cross_parts.append("chưa đủ dữ liệu (cần tối thiểu 52 phiên)")
+    else:
+        if cross.golden_cross:
+            cross_parts.append("⭐ GOLDEN CROSS")
+        if cross.death_cross:
+            cross_parts.append("💀 DEATH CROSS")
+        cross_parts.append("above SMA20" if cross.above_sma20 else "below SMA20")
+        cross_parts.append("above SMA50" if cross.above_sma50 else "below SMA50")
     lines.append("SMA: " + " | ".join(cross_parts))
     if adx.available:
         lines.append(f"ADX: {adx.adx} ({'xu hướng mạnh' if adx.trending else 'sideway'}) | +DI {adx.di_plus} vs -DI {adx.di_minus}")
@@ -793,4 +836,6 @@ def build_indicator_summary(ind: EnhancedIndicators, symbol: str) -> str:
         lines.append(f"Donchian(20): {donchian_note}")
     if ind.atr14 is not None:
         lines.append(f"ATR(14): {ind.atr14} ({ind.atr_pct}% giá)")
+    if ind.sma200 is not None:
+        lines.append(f"SMA200: {ind.sma200} (xu hướng dài hạn ~1 năm)")
     return "\n".join(lines)

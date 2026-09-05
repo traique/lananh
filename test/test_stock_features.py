@@ -44,16 +44,32 @@ def test_rsi_gia_tri_tinh_tay():
     assert rsi == pytest.approx(85.71428571428571)
 
 
+def test_rsi_chuoi_phang_tra_none():
+    # Chuỗi đứng giá hoàn toàn: RSI không xác định -> None (không bịa 100
+    # "quá mua" hay 50 "trung tính").
+    assert ind.calc_rsi([10.0] * 20, period=14) is None
+
+
 # ─── SMA / EMA ───────────────────────────────────────────────────────────────
 
 def test_sma_tinh_tay():
     assert ind.calc_sma([1, 2, 3, 4, 5], period=3) == 4.0
 
 
+def test_sma_khong_du_du_lieu_tra_none():
+    # KHÔNG trả closes[-1] làm "SMA" - số bịa trông như chỉ báo thật.
+    assert ind.calc_sma([1.0, 2.0], period=5) is None
+    assert ind.calc_sma([], period=5) is None
+
+
 def test_ema_tinh_tay():
     # alpha=2/(3+1)=0.5, seed=sum([1,2,3])/3=2.0
     # i=3: 4*0.5+2*0.5=3.0 | i=4: 5*0.5+3*0.5=4.0
     assert ind.calc_ema([1, 2, 3, 4, 5], period=3) == 4.0
+
+
+def test_ema_khong_du_du_lieu_tra_none():
+    assert ind.calc_ema([1.0, 2.0], period=5) is None
 
 
 # ─── MACD(12,26,9) ───────────────────────────────────────────────────────────
@@ -196,17 +212,39 @@ def test_donchian_inside():
 
 # ─── Signal agreement ─────────────────────────────────────────────────────────
 
-def test_signal_agreement_khong_co_tin_hieu_bang_0():
+def test_signal_agreement_duoi_ca_hai_ma_vote_giam():
     enh = ind.EnhancedIndicators(
         macd=ind.MACDResult(), bollinger=ind.BollingerResult(0, 0, 0, 0, 50, False, False),
         multi_tf=ind.MultiTimeframe(0, 0, 0, "mixed"),
-        cross=ind.CrossSignal(False, False, False, False),
+        cross=ind.CrossSignal(False, False, False, False, available=True),
         adx=ind.ADXResult(0, 0, 0, False, available=False),
         donchian=ind.DonchianState(None, None, "unknown"),
         sma20=0, sma50=0, ema9=0, atr14=None, atr_pct=None,
     )
-    # cross: above_sma20=False, above_sma50=False -> "toàn bộ dưới MA" -> vote -1
+    # cross.available=True + dưới cả SMA20/SMA50 -> vote giảm thật (-1).
     assert ind.calc_signal_agreement(enh) == -1.0
+
+
+def test_signal_agreement_du_lieu_thieu_khong_vote_giam():
+    # Chuỗi < 52 phiên: calc_cross_signal trả available=False, agreement KHÔNG
+    # được đọc above_sma20/50=False thành "dưới cả 2 MA" (bug vote -1.0 thuần
+    # từ dữ liệu thiếu).
+    enh = ind.EnhancedIndicators(
+        macd=ind.MACDResult(), bollinger=ind.BollingerResult(0, 0, 0, 0, 50, False, False),
+        multi_tf=ind.MultiTimeframe(0, 0, 0, "mixed"),
+        cross=ind.CrossSignal(False, False, False, False, available=False),
+        adx=ind.ADXResult(0, 0, 0, False, available=False),
+        donchian=ind.DonchianState(None, None, "unknown"),
+        sma20=0, sma50=0, ema9=0, atr14=None, atr_pct=None,
+    )
+    assert ind.calc_signal_agreement(enh) == 0.0
+
+
+def test_cross_signal_khong_du_52_phien_available_false():
+    result = ind.calc_cross_signal([100.0 + i for i in range(40)])
+    assert result.available is False
+    result = ind.calc_cross_signal([100.0 + i for i in range(60)])
+    assert result.available is True
 
 
 def test_signal_agreement_dong_thuan_tang_bang_1():

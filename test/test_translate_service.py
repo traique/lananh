@@ -93,3 +93,59 @@ async def test_translate_respects_explicit_direction(monkeypatch):
     assert direction == "vi_ja"
     assert result == "了解しました"
     assert response.used_fallback is True
+
+
+# ─── looks_english: phân biệt tiếng Anh với tiếng Việt có dấu ───────────────
+
+def test_looks_english_nhan_biet_tieng_anh():
+    assert translate_service.looks_english("Could you check the schedule for tomorrow?") is True
+    assert translate_service.looks_english("OK, I will send the report later.") is True
+
+
+def test_looks_english_bo_qua_tieng_viet_co_dau():
+    assert translate_service.looks_english("Xin chào anh, em đã hiểu rồi ạ") is False
+    assert translate_service.looks_english("Đồng ý, để em kiểm tra nhé.") is False
+
+
+def test_looks_english_bo_qua_chu_nhat():
+    assert translate_service.looks_english("了解しました。Could you check?") is False
+
+
+def test_looks_english_text_ngan_hoac_khong_chu_cai():
+    assert translate_service.looks_english("OK!") is False
+    assert translate_service.looks_english("12345 ???") is False
+    assert translate_service.looks_english("") is False
+
+
+# ─── Giới hạn độ dài ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_translate_text_qua_dai_raise_text_too_long(monkeypatch):
+    monkeypatch.setattr(config, "TRANSLATE_MAX_CHARS", 50)
+    long_text = "a" * 100
+    with pytest.raises(translate_service.TextTooLongError):
+        await translate_service.translate(long_text, direction="vi_ja")
+
+
+# ─── Retry khi provider trả bản dịch rỗng ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_translate_retry_khi_lan_dau_tra_rong(monkeypatch):
+    responses = []
+
+    class FakeEmpty:
+        text = ""
+        used_fallback = False
+
+    class FakeOk:
+        text = "Đã hiểu"
+        used_fallback = False
+
+    async def fake_ask(prompt, **kwargs):
+        responses.append(prompt)
+        return FakeEmpty() if len(responses) == 1 else FakeOk()
+
+    monkeypatch.setattr(translate_service.orchestrator, "ask", fake_ask)
+    result, _direction, _response = await translate_service.translate("了解しました。")
+    assert result == "Đã hiểu"
+    assert len(responses) == 2

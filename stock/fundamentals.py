@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 
 from stock import features as feat
@@ -299,6 +300,18 @@ def _fetch_growth_sync(symbol: str) -> GrowthTrend | None:
         return None
 
     flat_cols = _flatten_columns(df.columns)
+
+    # Sort tường minh như _fetch_valuation_sync: KHÔNG giả định df mới nhất
+    # -> cũ dần (vnstock từng đổi thứ tự giữa các version - nếu sai, QoQ/YoY
+    # tính trên cặp quý ngược và tăng trưởng hiển thị sai hoàn toàn).
+    year_idx = _find_col(flat_cols, "year")
+    quarter_idx = _find_col_any(flat_cols, ("quarter",), ("length",))
+    if year_idx is not None:
+        sort_cols = [df.columns[year_idx]]
+        if quarter_idx is not None:
+            sort_cols.append(df.columns[quarter_idx])
+        df = df.sort_values(by=sort_cols, ascending=False).reset_index(drop=True)
+
     rev_idx = _find_col_any(flat_cols, ("doanh thu",), ("revenue",), ("net sale",))
     profit_idx = _find_col_any(
         flat_cols,
@@ -315,7 +328,7 @@ def _fetch_growth_sync(symbol: str) -> GrowthTrend | None:
             return None, None
         vals = [_to_float(v) for v in df.iloc[:, idx]]
         qoq = yoy = None
-        # vals[0] = quý gần nhất (giả định df mới nhất -> cũ dần, giống ratio()).
+        # vals[0] = quý gần nhất (đã sort tường minh ở trên).
         if len(vals) >= 2 and vals[0] is not None and vals[1]:
             qoq = round((vals[0] - vals[1]) / abs(vals[1]) * 100, 1)
         if len(vals) >= 5 and vals[0] is not None and vals[4]:
@@ -596,13 +609,33 @@ class FundamentalsBundle:
     sector_profile: fundamental_profiles.FundamentalProfile | None = None
     sector_benchmark: SectorBenchmark | None = None
 
+# Cache bundle fundamentals theo symbol. BCTC/định giá đổi theo quý, khối ngoại
+# đổi theo phiên nên 30 phút là an toàn, trong khi mỗi lượt phân tích bắn
+# ~12-13 request VCI (4 cho mã + 8 peer ngành) - với API free 20 req/phút, 2
+# lượt phân tích liên tiếp không cache là đủ bị rate-limit và toàn bundle rỗng.
+_FUNDAMENTALS_CACHE_TTL = 30 * 60
+_fundamentals_cache: dict[str, tuple[float, "FundamentalsBundle"]] = {}
+
+
+def _evict_fundamentals_cache(now: float) -> None:
+    expired = [k for k, (ts, _) in _fundamentals_cache.items() if now - ts >= _FUNDAMENTALS_CACHE_TTL]
+    for k in expired:
+        _fundamentals_cache.pop(k, None)
+
+
 async def fetch_fundamentals(symbol: str) -> FundamentalsBundle:
     """Lấy song song toàn bộ dữ liệu cơ bản. Không bao giờ raise ra ngoài.
 
-    Lưu ý: sector_pe_avg gọi thêm vài request cho mã cùng ngành (xem
-    fetch_sector_pe_average) -> tổng thời gian chờ tăng thêm so với bản gốc,
-    nhưng vẫn chạy song song với các phần khác nên không cộng dồn tuần tự.
+    Có cache 30 phút theo symbol (xem _FUNDAMENTALS_CACHE_TTL) - cùng 1 mã được
+    phân tích lại trong nửa giờ thì tái dùng bundle, không bắn lại request VCI.
     """
+    sym = symbol.strip().upper()
+    cached = _fundamentals_cache.get(sym)
+    if cached:
+        ts, bundle = cached
+        if time.monotonic() - ts < _FUNDAMENTALS_CACHE_TTL:
+            return bundle
+
     async def _safe(fn, *args):
         try:
             async with get_vnstock_semaphore():
@@ -622,11 +655,15 @@ async def fetch_fundamentals(symbol: str) -> FundamentalsBundle:
     sector_pe_avg=benchmark.average if benchmark and benchmark.metric=='pe' else None
     sector_pe_sample=benchmark.sample if sector_pe_avg is not None else 0
     sector_pe_label=benchmark.label if sector_pe_avg is not None else None
-    return FundamentalsBundle(
+    bundle = FundamentalsBundle(
         valuation=valuation, foreign=foreign,
         growth=growth, events=events, sector_pe_avg=sector_pe_avg,
         sector_pe_sample=sector_pe_sample, sector_pe_label=sector_pe_label, sector_profile=profile, sector_benchmark=benchmark,
     )
+    now = time.monotonic()
+    _evict_fundamentals_cache(now)
+    _fundamentals_cache[sym] = (now, bundle)
+    return bundle
 
 
 def _fmt(v: float | None, suffix: str = "") -> str:
@@ -645,7 +682,8 @@ def build_fundamentals_prompt_section(
     sector_profile: fundamental_profiles.FundamentalProfile | None = None,
     sector_benchmark: SectorBenchmark | None = None,
 ) -> str:
-    if not any([valuation, foreign, growth, events, sector_pe_avg]):
+    if not any([valuation, foreign, growth, events, sector_pe_avg,
+                sector_benchmark is not None and sector_benchmark.average is not None]):
         return ""
     profile=sector_profile or fundamental_profiles.get_profile(symbol)
     lines=[f"[ĐỊNH GIÁ & DÒNG TIỀN THẬT — {symbol}, nguồn công khai VCI/TCBS qua vnstock]"]
@@ -690,6 +728,17 @@ def build_fundamentals_prompt_section(
             f"Tăng trưởng theo quý ({growth.quarters_available} quý dữ liệu) — "
             f"Doanh thu QoQ: {_g(growth.revenue_qoq_pct)}, YoY: {_g(growth.revenue_yoy_pct)} | "
             f"LN sau thuế QoQ: {_g(growth.profit_qoq_pct)}, YoY: {_g(growth.profit_yoy_pct)}"
+        )
+    elif valuation is None and sector_benchmark and sector_benchmark.average is not None:
+        # Benchmark ngành có số nhưng valuation của chính mã rỗng (trước đây
+        # cả section bị skip dù trung bình ngành dùng được - case phổ biến
+        # nhất là ngành ngân hàng so P/B). Vẫn in benchmark, ghi rõ là chưa
+        # so được trực tiếp.
+        metric = "P/B" if sector_benchmark.metric == "pb" else "P/E"
+        lines.append(
+            f"So ngành {sector_benchmark.label or ''}: {metric} trung bình "
+            f"{sector_benchmark.average} từ {sector_benchmark.sample} mã hợp lệ "
+            f"(chưa lấy được định giá của chính mã này để so trực tiếp)."
         )
     if foreign:
         lines.append(

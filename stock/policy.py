@@ -20,7 +20,10 @@ CONFIDENCE_BUY_MIN = 0.75
 CONFIDENCE_WATCH_MIN = 0.55
 MIN_RR_RATIO = 1.5
 DISTRIBUTION_DAY_THRESHOLD = 4  # >= 4 ngày phân phối / 25 phiên -> ép risk_off (chuẩn O'Neil)
-_NEAR_CEILING_PCT = 5.5  # sát trần HOSE (7%) - cảnh báo rủi ro T+2.5 khi mua đuổi
+# Ước lượng "sát trần" cho HOSE (trần 7%) - với HNX/UPCoM (trần 10%) ngưỡng
+# này sẽ phạt sớm một chút; chấp nhận được vì đây chỉ là cảnh báo T+2.5, không
+# phải gate chặn cứng.
+_NEAR_CEILING_PCT = 5.5
 _NEAR_CEILING_STRENGTH_PENALTY = 0.15
 
 # B2: sizing theo % NAV
@@ -34,8 +37,8 @@ class TradePlan:
     entry_low: float
     entry_high: float          # vùng mua ±1%, không phải 1 điểm
     stop: float
-    target1: float             # kháng cự gần nhất (từ KeyLevels), chốt 1/2 tại đây
-    target2: float | None      # kháng cự mạnh kế tiếp, phần còn lại
+    target1: float             # trùng target đã qua Gate D của Decision - MỘT nguồn số duy nhất
+    target2: float | None      # kháng cự (KeyLevels) kế tiếp TRÊN target1, phần còn lại
     position_size_pct: float   # % NAV đề xuất, suy ngược từ khoảng cách stop
     plan_note: str             # quy tắc: chốt 1/2 tại T1, dời stop về hoà vốn
 
@@ -46,8 +49,15 @@ def build_trade_plan(
 ) -> TradePlan | None:
     """B2 - suy ngược tỷ trọng vị thế từ khoảng cách rủi ro (không bịa số
     NAV thật - đây là % NAV ĐỀ XUẤT dựa trên nguyên tắc rủi ro cố định mỗi
-    lệnh, người dùng tự đối chiếu với NAV thật của mình)."""
+    lệnh, người dùng tự đối chiếu với NAV thật của mình).
+
+    T1 trùng `target_price` của Decision (số đã qua gate R:R) - trước đây T1
+    lấy kháng cự gần nhất từ KeyLevels trong khi báo cáo hiển thị rr_ratio
+    tính trên target của Gate D, khiến cùng 1 báo cáo có 2 con số target và
+    2 R:R khác nguồn. T2 = kháng cự thật kế tiếp TRÊN T1 (nếu có)."""
     if price <= 0 or stop is None or stop >= price:
+        return None
+    if target_price is None or target_price <= price:
         return None
     risk_pct = (price - stop) / price * 100
     if risk_pct <= 0:
@@ -63,17 +73,8 @@ def build_trade_plan(
     entry_high = feat.round_price(price * 1.01)
 
     resistances = key_levels.resistances if key_levels else []
-    if resistances:
-        target1 = resistances[0].price
-        target2 = resistances[1].price if len(resistances) > 1 else None
-    else:
-        # không có kháng cự thật dùng được - fallback về target_price hiện
-        # tại (đã tính ở _compute_stop_target) thay vì bịa hệ số nhân mới.
-        target1 = target_price
-        target2 = None
-
-    if target1 is None:
-        return None
+    target1 = target_price
+    target2 = next((lv.price for lv in resistances if lv.price > target_price), None)
 
     return TradePlan(
         entry_low=entry_low, entry_high=entry_high, stop=stop,
@@ -201,8 +202,15 @@ def _evaluate_session(session: feat.SessionMetrics | None, enhanced: feat.Enhanc
     if is_close_near_low:
         reasons.append(f"đóng cửa sát đáy phiên (vị trí close {session.close_position_pct:.1f}% biên độ ngày)")
 
-    below_both_sma = bool(enhanced and not enhanced.cross.above_sma20 and not enhanced.cross.above_sma50)
+    # Chỉ đọc above_sma20/50 khi cross.available - khi chuỗi < 52 phiên, 2 cờ
+    # False này nghĩa là "thiếu dữ liệu", không phải "giá dưới cả 2 MA".
+    below_both_sma = bool(
+        enhanced and enhanced.cross.available
+        and not enhanced.cross.above_sma20 and not enhanced.cross.above_sma50
+    )
     macd_bad = bool(enhanced and (enhanced.macd.crossover == "bearish" or enhanced.macd.histogram < 0))
+    if below_both_sma and macd_bad:
+        reasons.append("giá dưới cả SMA20/SMA50 và MACD bearish")
 
     hard_no_buy = (
         is_near_floor_like
@@ -210,8 +218,6 @@ def _evaluate_session(session: feat.SessionMetrics | None, enhanced: feat.Enhanc
         or (is_distribution and is_close_near_low)
         or (below_both_sma and macd_bad)
     )
-    if below_both_sma and macd_bad and not hard_no_buy:
-        reasons.append("giá dưới cả SMA20/SMA50 và MACD bearish")
 
     return _SessionFlags(is_selloff, is_near_floor_like, is_close_near_low, is_distribution, hard_no_buy, reasons)
 
@@ -513,9 +519,11 @@ def evaluate_policy(inputs: PolicyInputs) -> Decision:
     holding = inputs.is_holding
 
     if bias.direction == "bullish":
+        # "unknown" (thiếu dữ liệu VNINDEX) cũng phải chặn BUY như risk_off:
+        # không có bối cảnh thị trường chung thì không đủ cơ sở để mở mua mới.
         can_buy = (
             confidence >= CONFIDENCE_BUY_MIN
-            and regime != "risk_off"
+            and regime in ("risk_on", "neutral")
             and not session_flags.hard_no_buy
         )
         if can_buy:
@@ -524,6 +532,8 @@ def evaluate_policy(inputs: PolicyInputs) -> Decision:
             action = "HOLD" if holding else "WATCH"
             if regime == "risk_off":
                 reasons.append("VNINDEX đang risk-off - hạn chế mở mua mới dù setup mã riêng còn ổn")
+            elif regime == "unknown":
+                reasons.append("không xác định được regime VNINDEX (thiếu dữ liệu) - không mở mua mới")
             if session_flags.hard_no_buy:
                 reasons.append("phiên gần nhất có rủi ro phân phối/breakdown - chưa mở mua mới")
         else:
@@ -604,7 +614,13 @@ def evaluate_policy(inputs: PolicyInputs) -> Decision:
 
     trade_plan: TradePlan | None = None
     scenarios: list[Scenario] = []
-    if direction == "buy" and action in ("BUY", "HOLD") and stop_price is not None:
+    # Chỉ dựng plan khi action thực sự đã qua đủ Gate D (BUY, hoặc HOLD của
+    # người đang giữ với R:R đạt ngưỡng). HOLD bị HẠ vì R:R dưới ngưỡng không
+    # được kèm plan + % NAV đề xuất - mâu thuẫn với chính lý do bị hạ.
+    if (
+        direction == "buy" and action in ("BUY", "HOLD") and stop_price is not None
+        and rr_ratio is not None and rr_ratio >= MIN_RR_RATIO
+    ):
         trade_plan = build_trade_plan(inputs.price, stop_price, target_price, confidence, inputs.key_levels, inputs.liquidity)
         if trade_plan is not None:
             scenarios = _build_scenarios(trade_plan)

@@ -71,11 +71,14 @@ Năng lực hiện tại:
 - DNSE OHLCV với failover tự động sang `vnstock`/VCI (đăng ký `VNSTOCK_API_KEY` free tại vnstocks.com/login để tăng rate limit 20→60 req/phút và số kỳ BCTC 4→8, không bắt buộc).
 - Strict contract cho độ dài mảng, số hữu hạn, quan hệ OHLC và ngày giao dịch.
 - RSI, MACD, MA/EMA, Bollinger, ADX, ATR, Donchian, thanh khoản, distribution days và key levels.
+- Chuỗi giá 260 phiên: SMA200 + trend 1 năm vào bối cảnh dài hạn.
+- Điều chỉnh cổ tức tiền mặt từ dữ liệu corporate actions (VCI) — chỉ áp dụng khi ngày GDKHQ VÀ độ lớn gap khớp nhau, gap còn lại vẫn được cảnh báo (`stock/corporate_actions.py`).
 - Gate theo market regime, data quality, setup và risk/reward.
-- `BUY`, `HOLD`, `WATCH`, `SELL`, `NO_TRADE` do code quyết định; LLM chỉ diễn giải.
+- `BUY`, `HOLD`, `WATCH`, `SELL`, `NO_TRADE` do code quyết định; LLM chỉ diễn giải — ngoại trừ bước "Manager" cuối pipeline debate được phép chọn action khác hệ thống (có cảnh báo rõ trên báo cáo, và KHÔNG được suy ra vùng giá nào cho action đó; mọi số entry/stop/target/tỷ trọng vẫn chỉ do code chốt).
 - Vùng mua, stop, target, R:R, position sizing và kịch bản bull/base/bear.
 - Fundamental theo ngành: ưu tiên P/B cho ngân hàng, chứng khoán, bảo hiểm và bất động sản; P/E ở nhóm phù hợp.
 - Walk-forward backtest có phí, thuế bán, slippage, T+, và 30% out-of-sample.
+- Model thống kê (gradient boosting) dự đoán **xác suất tăng sau 5 phiên** trên 30 features kỹ thuật + bối cảnh VNINDEX: train/test split theo NGÀY với embargo, hyperparameter cố định, thống kê out-of-sample lưu `stock/data/trend_model_stats.json`. Runtime chỉ ĐỌC model (nếu file + scikit-learn có sẵn) và đưa vào prompt ở mức "CHỈ THAM KHẢO" — KHÔNG phải gate định lượng. Train offline: `python scripts/train_trend_model.py --symbols auto --days 750`. Model chỉ đáng deploy khi top-decile return cao rõ rệt hơn baseline trong file stats.
 
 Bot không kết nối tài khoản chứng khoán và không đặt lệnh.
 
