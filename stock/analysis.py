@@ -437,11 +437,16 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
         providers.fetch_ohlcv(symbol, days=90), providers.fetch_ohlcv("VNINDEX", days=90),
         providers.fetch_quote(symbol), providers.fetch_news(symbol),
         _safe_sector_prompt(symbol), _safe_fundamentals_prompt(symbol),
+        fundamentals.fetch_company_news(symbol),
         return_exceptions=True
     )
     for r in results:
         if isinstance(r, BaseException): raise r
-    symbol_series, vnindex_series, quote, news, sector_prompt, fundamentals_prompt = results
+    symbol_series, vnindex_series, quote, news, sector_prompt, fundamentals_prompt, company_news = results
+    # Tin công ty CHÍNH CHỦ từ VCI (đã confirmed=True) + tin cào Google News,
+    # loại trùng theo tiêu đề (không phân biệt hoa/thường).
+    seen_titles = {n.title.strip().lower() for n in news}
+    news = news + [n for n in company_news if n.title.strip().lower() not in seen_titles]
     if not symbol_series.closes: return None
 
     quality = validation.validate_ohlcv(symbol_series.closes, symbol_series.highs, symbol_series.lows, symbol_series.volumes, symbol_series.dates)
@@ -553,16 +558,19 @@ def build_prompt(
             f"({rfmt.fmt_number(liq.liquidity_ratio_pct, 1)}% TB20)"
         )
 
-    # Tin có nhắc đúng mã được đẩy lên trước để không bị tin thị trường chung
-    # chiếm hết 5 suất, và từng tin được gắn cờ confirmed + ngày đăng.
-    ranked_news = sorted(ctx.news, key=lambda n: not rfmt.title_mentions_symbol(n.title, ctx.symbol))
+    # Tin có nhắc đúng mã (hoặc confirmed=True từ nguồn chính chủ VCI) được
+    # đẩy lên trước để không bị tin thị trường chung chiếm hết 5 suất.
+    ranked_news = sorted(
+        ctx.news,
+        key=lambda n: not (n.confirmed if n.confirmed is not None else rfmt.title_mentions_symbol(n.title, ctx.symbol)),
+    )
     news = [
         {
             "tag": "🟢" if n.sentiment > 0.2 else ("🔴" if n.sentiment < -0.2 else "⚪"),
             "title": n.title,
             "source": n.source,
             "date": rfmt.fmt_news_date(n.pub_date),
-            "confirmed": rfmt.title_mentions_symbol(n.title, ctx.symbol),
+            "confirmed": n.confirmed if n.confirmed is not None else rfmt.title_mentions_symbol(n.title, ctx.symbol),
         }
         for n in ranked_news[:5]
     ]

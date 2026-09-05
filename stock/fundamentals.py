@@ -58,7 +58,7 @@ from dataclasses import dataclass
 
 from stock import features as feat
 from stock import fundamental_profiles
-from stock.providers import ensure_vnstock_api_key
+from stock.providers import NewsHeadline, ensure_vnstock_api_key, get_vnstock_semaphore, sentiment_score
 
 logger = logging.getLogger(__name__)
 
@@ -428,6 +428,74 @@ def _fetch_events_sync(symbol: str, limit: int = 3) -> list[UpcomingEvent] | Non
     return out or None
 
 
+def _fetch_company_news_sync(symbol: str, limit: int = 5) -> list[NewsHeadline] | None:
+    """Tin công ty CHÍNH CHỦ từ VCI (company.news()) - đã được VCI gắn đúng
+    organ_code của {symbol}, nên KHÔNG cần kiểm tra lại mã có xuất hiện
+    trong tiêu đề như tin cào từ Google News (rfmt.title_mentions_symbol) -
+    luôn đánh dấu confirmed=True. Đây là nguồn BỔ SUNG cho
+    providers.fetch_news(), không thay thế (tin VCI có thể ít/chậm hơn báo
+    chí, nhưng độ chính xác gắn đúng mã cao hơn)."""
+    try:
+        ensure_vnstock_api_key()
+        from vnstock import Vnstock
+    except ImportError:
+        return None
+
+    try:
+        stock = Vnstock().stock(symbol=symbol, source="VCI")
+    except Exception:
+        return None
+
+    company = getattr(stock, "company", None)
+    news_fn = getattr(company, "news", None) if company is not None else None
+    if not callable(news_fn):
+        return None
+    try:
+        df = news_fn()
+    except Exception:
+        logger.info("vnstock: không lấy được tin công ty (company.news()) cho %s", symbol)
+        return None
+    if df is None or df.empty:
+        return None
+
+    flat_cols = _flatten_columns(df.columns)
+    title_idx = _find_col_any(flat_cols, ("news", "title"), ("title",), ("tiêu đề",))
+    date_idx = _find_col_any(flat_cols, ("public", "date"), ("date",), ("ngày",))
+    if title_idx is None:
+        return None
+
+    out: list[NewsHeadline] = []
+    for _, r in df.head(limit).iterrows():
+        title_val = r.iloc[title_idx]
+        if title_val is None:
+            continue
+        title = str(title_val).strip()
+        if not title or title.lower() == "nan":
+            continue
+        date_val = str(r.iloc[date_idx]).strip() if date_idx is not None else ""
+        out.append(NewsHeadline(
+            title=title, source="VCI", pub_date=date_val, url="",
+            sentiment=sentiment_score(title), confirmed=True,
+        ))
+    return out or None
+
+
+async def fetch_company_news(symbol: str, limit: int = 5) -> list[NewsHeadline]:
+    """Wrapper async cho _fetch_company_news_sync, qua semaphore VCI dùng
+    chung + timeout, không bao giờ raise ra ngoài (giống pattern _safe() ở
+    fetch_fundamentals)."""
+    try:
+        async with get_vnstock_semaphore():
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_fetch_company_news_sync, symbol, limit),
+                timeout=_FETCH_TIMEOUT_SEC,
+            )
+        return result or []
+    except Exception:
+        logger.warning("fetch_company_news lỗi cho %s", symbol, exc_info=True)
+        return []
+
+
 async def fetch_sector_pe_average(symbol: str, sample_size: int = 4) -> tuple[float | None, int, str | None]:
     """So P/E hiện tại với trung bình MỘT MẪU NHỎ mã cùng ngành, tái dùng
     nhóm ngành có sẵn trong stock_sector.py - đây KHÔNG phải trung bình toàn
@@ -451,7 +519,8 @@ async def fetch_sector_pe_average(symbol: str, sample_size: int = 4) -> tuple[fl
 
     async def _safe_pe(sym: str) -> float | None:
         try:
-            val = await asyncio.wait_for(asyncio.to_thread(_fetch_valuation_sync, sym), timeout=_FETCH_TIMEOUT_SEC)
+            async with get_vnstock_semaphore():
+                val = await asyncio.wait_for(asyncio.to_thread(_fetch_valuation_sync, sym), timeout=_FETCH_TIMEOUT_SEC)
             return val.pe if val and val.pe and val.pe > 0 else None
         except Exception:
             return None
@@ -476,7 +545,9 @@ async def fetch_sector_benchmark(symbol, sample_size=8):
     meta=sector.SECTOR_MAP[keys[0]]; peers=[p for p in meta["symbols"] if p!=symbol.upper()][:sample_size]
     async def load(peer):
         try:
-            v=await asyncio.wait_for(asyncio.to_thread(_fetch_valuation_sync,peer),timeout=_FETCH_TIMEOUT_SEC); value=getattr(v,profile.benchmark_metric,None) if v else None
+            async with get_vnstock_semaphore():
+                v=await asyncio.wait_for(asyncio.to_thread(_fetch_valuation_sync,peer),timeout=_FETCH_TIMEOUT_SEC)
+            value=getattr(v,profile.benchmark_metric,None) if v else None
             return value if value is not None and 0<value<500 else None
         except Exception: return None
     values=[v for v in await asyncio.gather(*(load(p) for p in peers)) if v is not None]
@@ -504,7 +575,8 @@ async def fetch_fundamentals(symbol: str) -> FundamentalsBundle:
     """
     async def _safe(fn, *args):
         try:
-            return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout=_FETCH_TIMEOUT_SEC)
+            async with get_vnstock_semaphore():
+                return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout=_FETCH_TIMEOUT_SEC)
         except Exception:
             logger.warning("stock_fundamentals lỗi cho %s (%s)", symbol, fn.__name__, exc_info=True)
             return None

@@ -49,6 +49,25 @@ async def close_http_client() -> None:
 
 
 _vnstock_auth_attempted = False
+_vnstock_semaphore: asyncio.Semaphore | None = None
+
+
+def get_vnstock_semaphore() -> asyncio.Semaphore:
+    """Giới hạn số request đồng thời tới VCI (qua vnstock) trên toàn app.
+
+    1 lượt /phantich có thể bắn nhiều lệnh gọi VCI cùng lúc (valuation,
+    foreign, growth, events, tin công ty, + tới 8 mã cùng ngành để so P/E
+    trung bình) - không giới hạn thì tổng có thể lên tới hơn chục request
+    song song, dễ bị VCI (nguồn miễn phí không chính thức) rate-limit/chặn
+    tạm thời khiến TẤT CẢ đều fail cùng lúc (đã quan sát thấy hiện tượng này:
+    bundle dữ liệu cơ bản rỗng hoàn toàn cho nhiều mã khác nhau, không phải
+    lỗi riêng của 1 mã). Semaphore không đổi timeout của từng request, chỉ
+    giới hạn số request cùng lúc được PHÉP bắt đầu."""
+    global _vnstock_semaphore
+    if _vnstock_semaphore is None:
+        from core import config
+        _vnstock_semaphore = asyncio.Semaphore(max(1, config.VNSTOCK_MAX_CONCURRENCY))
+    return _vnstock_semaphore
 
 
 def ensure_vnstock_api_key() -> None:
@@ -225,7 +244,9 @@ def _fetch_ohlcv_vnstock_sync(symbol, days):
     except Exception:
         logger.warning("vnstock fallback failed for %s", symbol, exc_info=True); return OhlcvSeries(symbol=symbol, source="vnstock-vci")
 async def _fetch_ohlcv_vnstock(symbol, days):
-    try: return await asyncio.wait_for(asyncio.to_thread(_fetch_ohlcv_vnstock_sync, symbol, days), timeout=20)
+    try:
+        async with get_vnstock_semaphore():
+            return await asyncio.wait_for(asyncio.to_thread(_fetch_ohlcv_vnstock_sync, symbol, days), timeout=20)
     except (TimeoutError, asyncio.TimeoutError): return OhlcvSeries(symbol=symbol, source="vnstock-vci")
 _fetch_ohlcv_uncached = _fetch_ohlcv_dnse
 
@@ -238,7 +259,9 @@ def _fetch_symbol_universe_sync():
         return sorted({str(v).strip().upper() for v in df[c] if c is not None and _SYMBOL_RE.fullmatch(str(v).strip().upper())})
     except Exception: return []
 async def fetch_symbol_universe():
-    try: symbols=await asyncio.wait_for(asyncio.to_thread(_fetch_symbol_universe_sync), timeout=30)
+    try:
+        async with get_vnstock_semaphore():
+            symbols=await asyncio.wait_for(asyncio.to_thread(_fetch_symbol_universe_sync), timeout=30)
     except (TimeoutError, asyncio.TimeoutError): symbols=[]
     if symbols: return symbols
     from stock.sector import ALL_KNOWN_SYMBOLS
@@ -387,6 +410,11 @@ class NewsHeadline:
     pub_date: str
     url: str
     sentiment: float = 0.0
+    # None = chưa rõ, dùng heuristic title_mentions_symbol ở nơi build prompt
+    # (tin cào Google News). True = nguồn CHÍNH CHỦ đã xác nhận đúng mã (tin
+    # công ty lấy trực tiếp từ VCI qua fundamentals.fetch_company_news), bỏ
+    # qua heuristic vì title có thể không chứa mã CK mà vẫn đúng công ty.
+    confirmed: bool | None = None
 
 
 def _extract_tag(xml: str, tag: str) -> str:
