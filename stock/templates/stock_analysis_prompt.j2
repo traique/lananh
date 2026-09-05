@@ -101,8 +101,48 @@ Technical cơ bản: trend {{ trend_3m }}% (~3 tháng), momentum {{ momentum }},
 {% else %}
 [TIN TỨC — {{ symbol }}]: không tìm thấy tin gần đây.
 {% endif %}
+{% if news_analysis %}
+[TÓM TẮT TÁC ĐỘNG TIN TỨC - đã được phân tích trước, ưu tiên dùng bản tóm tắt này khi viết mục Dòng tiền & bối cảnh]
+Mức độ liên quan: {{ "có tin nhắc đúng mã" if news_analysis.relevant else "không có tin nào thực sự nói về đúng mã này" }} | Sentiment: {{ news_analysis.sentiment_label }}
+{% for p in news_analysis.key_points %}
+- {{ p }}
+{% endfor %}
+{% if news_analysis.impact_note %}
+Đánh giá: {{ news_analysis.impact_note }}
+{% endif %}
+{% endif %}
 
---- Kế hoạch hành động (chỉ có khi action ủng hộ mua/giữ mua) ---
+--- Tranh luận nội bộ trước khi ra báo cáo (chỉ để tham khảo góc nhìn, KHÔNG được dùng để đổi action/con số đã chốt) ---
+{% if bull_case %}
+Phe lạc quan cho rằng: {{ bull_case.thesis }}
+{% for p in bull_case.points %}
+- {{ p }}
+{% endfor %}
+{% endif %}
+{% if bear_case %}
+Phe thận trọng phản biện: {{ bear_case.thesis }}
+{% for p in bear_case.points %}
+- {{ p }}
+{% endfor %}
+{% endif %}
+{% if not bull_case and not bear_case %}
+(Không có dữ liệu tranh luận nội bộ lần này - bỏ qua, không tự bịa 2 phe.)
+{% endif %}
+
+=== KẾT LUẬN SAU TRANH LUẬN (Manager AI - đây là action chính để mở đầu báo cáo) ===
+{% if final_decision %}
+Action sau tranh luận: {{ final_decision.action }} | Confidence Manager: {{ final_decision.confidence }}
+Lý do Manager: {{ final_decision.reasoning }}
+{% if decision_diverges %}
+⚠️ Action này KHÁC action hệ thống rule-based ({{ action }}) - đây là nhận định ĐỊNH TÍNH, CHƯA qua backtest/gate định lượng. BẮT BUỘC nêu rõ 2 điều trong Kết luận nhanh: (1) hệ thống rule-based nói {{ action }} vì lý do gì (xem "Lý do hệ thống" ở trên), (2) Manager AI lại chọn {{ final_decision.action }} vì lý do gì - để người đọc TỰ đối chiếu và quyết định, không được chỉ nói 1 trong 2.
+{% else %}
+Action này TRÙNG với action hệ thống rule-based - có thể nói ngắn gọn là cả 2 lớp (định lượng + tranh luận) đồng thuận, không cần tách riêng 2 đoạn.
+{% endif %}
+{% else %}
+(Bước tổng hợp AI lỗi lần này - dùng thẳng action hệ thống rule-based {{ action }} làm kết luận, không có lớp tranh luận.)
+{% endif %}
+
+--- Kế hoạch hành động định lượng (entry/stop/target/tỷ trọng - LUÔN gắn với action HỆ THỐNG {{ action }}, KHÔNG PHẢI action Manager AI ở trên) ---
 {% if trade_plan %}
 Vùng mua: {{ trade_plan.entry_low }} - {{ trade_plan.entry_high }} | Tỷ trọng đề xuất: {{ trade_plan.position_size_pct }}% NAV | Stop: {{ trade_plan.stop }} | T1: {{ trade_plan.target1 }}{% if trade_plan.target2 %} | T2: {{ trade_plan.target2 }}{% endif %}
 Quy tắc quản trị vị thế: {{ trade_plan.plan_note }}
@@ -112,19 +152,25 @@ Kịch bản (bám ĐÚNG các mốc giá đã cho ở trên, không bịa thêm
 - {{ s.name|upper }}: nếu {{ s.trigger }} -> {{ s.action }}
 {% endfor %}
 {% endif %}
+{% if decision_diverges %}
+LƯU Ý QUAN TRỌNG: kế hoạch giá này được tính cho action hệ thống {{ action }}, KHÔNG PHẢI cho action {{ final_decision.action }} mà Manager AI vừa chọn. TUYỆT ĐỐI không gán nhầm vùng giá/stop/target này cho action của Manager AI nếu 2 action khác nhau - nếu Manager chọn 1 action khác mà không có sẵn kế hoạch giá tương ứng, phải nói thẳng "chưa có kế hoạch giao dịch định lượng cho nhận định này của AI, chỉ có kế hoạch cho kịch bản {{ action }} của hệ thống".
+{% endif %}
 {% else %}
-Hệ thống chưa đủ cơ sở để đưa ra kế hoạch mua/tỷ trọng cụ thể cho mã này lúc này (action hiện tại: {{ action }}).
+Hệ thống chưa đủ cơ sở để đưa ra kế hoạch mua/tỷ trọng cụ thể cho mã này lúc này (action hệ thống: {{ action }}).
+{% if final_decision and decision_diverges %}
+Manager AI chọn action {{ final_decision.action }} nhưng KHÔNG có kế hoạch giá nào cho action này (chưa qua gate định lượng) - PHẢI nói rõ đây chỉ là nhận định định tính, không có vùng mua/stop/target cụ thể.
+{% endif %}
 {% endif %}
 
 === YÊU CẦU OUTPUT ===
 Viết 1 tin nhắn Telegram bằng tiếng Việt, giọng Lan Anh thân thiện nhưng số liệu chuẩn xác như chuyên viên phân tích thực thụ, có emoji vừa phải, viết ĐÚNG theo cấu trúc báo cáo môi giới sau (có thể gộp câu cho tự nhiên, không cần ghi lại tiêu đề số thứ tự, nhưng phải đủ nội dung từng mục):
 
 0. Mở đầu phải nêu con số: giá dùng để tính toán (close phiên gần nhất) VÀ giá khớp hiện tại nếu có, kèm chên lệch. Không được viết cả báo cáo mà không nói giá đang ở mức nào.
-1. Kết luận nhanh — 2 câu: action + lý do lõi + điều kiện vô hiệu (dùng ĐÚNG action hệ thống: BUY/HOLD/WATCH/SELL/NO_TRADE; nếu NO_TRADE thì nói rõ đây là lúc nên đứng ngoài quan sát, không phải tín hiệu bán tháo).
-2. Bức tranh kỹ thuật — diễn giải thành CÂU CHUYỆN giá/volume, KHÔNG liệt kê lại số suông. Bắt buộc: nêu mốc trong "MỐC GẦN NHẤT" kèm khoảng cách %; nêu MACD theo % giá; nêu ADX KÈM hướng +DI/-DI (không được gọi ADX cao là tín hiệu tích cực nếu -DI đang lỗn hơn +DI).
+1. Kết luận nhanh — dùng action ở mục "KẾT LUẬN SAU TRANH LUẬN" làm action chính để mở đầu (BUY/HOLD/WATCH/SELL/NO_TRADE; nếu NO_TRADE thì nói rõ đây là lúc nên đứng ngoài quan sát, không phải tín hiệu bán tháo). Nếu action đó KHÁC action hệ thống rule-based, BẮT BUỘC viết đủ 2 vế trong 2-3 câu: "hệ thống kỹ thuật (đã backtest) nói X vì lý do gì" và "sau khi cân nhắc thêm Y, Z (tin tức/luận điểm) thì nhận định lại là W" - để anh tự cân nhắc tin bên nào, KHÔNG được giấu đi action hệ thống ban đầu. Nếu 2 action trùng nhau, viết gọn bình thường như 1 kết luận.
+2. Bức tranh kỹ thuật — diễn giải thành CÂU CHUYỆN giá/volume, KHÔNG liệt kê lại số suông. Bắt buộc: nêu mốc trong "MỐC GẦN NHẤT" kèm khoảng cách %; nêu MACD theo % giá; nêu ADX KÈM hướng +DI/-DI (không được gọi ADX cao là tín hiệu tích cực nếu -DI đang lỗn hơn +DI). Nếu có "Phe lạc quan" ở trên, có thể lồng ý đó vào câu chuyện NHƯNG chỉ khi action hệ thống không mâu thuẫn - nếu action là SELL/NO_TRADE, luận điểm lạc quan chỉ được nhắc như "kịch bản cần theo dõi thêm", không phải lý do để đổi giọng khuyến nghị.
 3. Dòng tiền & bối cảnh — thanh khoản vs TB20, ngành, regime thị trường, tin tức (đúng quy tắc ✅/⚠️ và có ngày). Nếu dữ liệu nào ngược chiều với kỹ thuật, phải nói rõ mâu thuẩn thay vì lời đi.
-4. Kế hoạch hành động — nếu có "Kế hoạch hành động" ở trên thì trình bày gọn: Vùng mua | Tỷ trọng %NAV | Stop | T1 | T2 | R:R, kèm đủ 3 kịch bản base/bull/bear với điều kiện kích hoạt CÓ SỐ. Nếu action là HOLD/SELL mà hệ thống đã cho target và stop thì VẮN phải nêu khoảng cách % tới target/stop và R:R đã cho. Nếu hệ thống không đưa kế hoạch/R:R thì nói thẳng là chưa có cơ sở, không tự bịa vùng giá/tỷ trọng/R:R.
-5. Rủi ro chính — 2-3 gạch đầu dòng, ưu tiên rủi ro LÀM SAI kịch bản chính (dựa risk level/volatility/thanh khoản mỏng/tin xấu/ngành yếu/backtest win rate thấp nếu có). Nếu mốc vô hiệu hoá nằm trong biên nhiễu một phiên (ATR) thì PHẢI nêu đó như một rủi ro cụ thể. Nếu có cảnh báo điều chỉnh giá, rủi ro dữ liệu đó phải được nêu.
+4. Kế hoạch hành động — nếu có "Kế hoạch hành động định lượng" ở trên thì trình bày gọn: Vùng mua | Tỷ trọng %NAV | Stop | T1 | T2 | R:R, kèm đủ 3 kịch bản base/bull/bear với điều kiện kích hoạt CÓ SỐ. Nếu action là HOLD/SELL mà hệ thống đã cho target và stop thì VẮN phải nêu khoảng cách % tới target/stop và R:R đã cho. Nếu hệ thống không đưa kế hoạch/R:R thì nói thẳng là chưa có cơ sở, không tự bịa vùng giá/tỷ trọng/R:R. Nếu action Manager AI (mục 1) KHÁC action hệ thống, kế hoạch giá này VẪN LÀ của action hệ thống - phải nói rõ "đây là kế hoạch cho kịch bản {action hệ thống}, không phải cho nhận định {action Manager}", KHÔNG được ngầm hiểu vùng giá này áp dụng cho action Manager vừa nêu ở mục 1.
+5. Rủi ro chính — 2-3 gạch đầu dòng, ưu tiên rủi ro LÀM SAI kịch bản chính (dựa risk level/volatility/thanh khoản mỏng/tin xấu/ngành yếu/backtest win rate thấp nếu có). Nếu mốc vô hiệu hoá nằm trong biên nhiễu một phiên (ATR) thì PHẢI nêu đó như một rủi ro cụ thể. Nếu có cảnh báo điều chỉnh giá, rủi ro dữ liệu đó phải được nêu. Nếu có "Phe thận trọng phản biện" ở trên, ưu tiên lấy ý từ đó thay vì tự nghĩ thêm rủi ro mới.
 6. Một dòng cuối gộp mọi phần chưa đủ dữ liệu (vd định giá, khối ngoại) - ĐÚNG MỘT dòng, không tách thành nhiều đoạn.
 
 Câu kết: ĐÚNG MỘT câu ngắn nhắc đây là thông tin tham khảo, không phải khuyến nghị đầu tư tuyệt đối. Chỉ xuất hiện MỘT LẦN DUY NHẤT, đặt ở cuối tin nhắn - TUYỆT ĐỐI không nhắc lại ý này ở bất kỳ đoạn nào khác, không thêm câu kiểu "nhiệm vụ của em xong rồi". KHÔNG dùng markdown code block, không lặp lại nguyên văn nhãn tiếng Anh của dữ liệu, viết tự nhiên.
