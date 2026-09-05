@@ -83,9 +83,13 @@ services:
       - key: API_QUOTA_COOLDOWN_SEC
         value: "3600"
       - key: ROUTER9_CALL_TIMEOUT_SEC
-        value: "30"
+        value: "45"
+      - key: ROUTER9_STEP_DELAY_SEC
+        value: "3"
       - key: ROUTER9_MAX_CONCURRENCY
         value: "4"
+      - key: VNSTOCK_API_KEY
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: OPENROUTER_API_KEY

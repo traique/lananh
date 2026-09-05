@@ -68,7 +68,7 @@ VCI ───┘                         │
 
 Năng lực hiện tại:
 
-- DNSE OHLCV với failover tự động sang `vnstock`/VCI.
+- DNSE OHLCV với failover tự động sang `vnstock`/VCI (đăng ký `VNSTOCK_API_KEY` free tại vnstocks.com/login để tăng rate limit 20→60 req/phút và số kỳ BCTC 4→8, không bắt buộc).
 - Strict contract cho độ dài mảng, số hữu hạn, quan hệ OHLC và ngày giao dịch.
 - RSI, MACD, MA/EMA, Bollinger, ADX, ATR, Donchian, thanh khoản, distribution days và key levels.
 - Gate theo market regime, data quality, setup và risk/reward.
@@ -464,6 +464,8 @@ gửi trực tiếp/@mention cho bot), nên KHÔNG có `/tongket`/`/dangnoi` tư
 ## Giới hạn đã biết
 
 - `gemini-webapi`, `zca-js`, DNSE và `vnstock` là dependency không chính thức hoặc không có SLA.
+- Khối ngoại nhiều phiên (lịch sử mua/bán ròng theo chuỗi ngày) hiện KHÔNG có trong bot: `vnstock` chưa có provider nào implement thật endpoint này (chỉ là stub rỗng). Chỉ có khối ngoại phiên gần nhất (qua `price_board()`).
+- 1 lượt `/phantich` gọi tối đa 5 lệnh LLM tuần tự (news → bull → bear → manager → tổng hợp), có nghỉ `ROUTER9_STEP_DELAY_SEC` (mặc định 3s) giữa mỗi lệnh để giãn tải gateway 9Router — tổng thời gian phản hồi vì vậy dài hơn vài giây so với gọi dồn dập.
 - Stock module là research assistant, không phải broker hoặc tư vấn viên được cấp phép.
 - Backtest phụ thuộc độ phủ provider và không bảo đảm hiệu suất tương lai.
 - Dự án cố ý chỉ hỗ trợ một người dùng; không có tenant isolation, billing, roles hoặc horizontal scaling.
