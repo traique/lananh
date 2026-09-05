@@ -512,8 +512,22 @@ _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(_TEMPLATES_DIR), trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=False)
 _STOCK_PROMPT_TEMPLATE = _jinja_env.get_template("stock_analysis_prompt.j2")
 
-def build_prompt(ctx: StockContext) -> str:
+def build_prompt(
+    ctx: StockContext,
+    *,
+    news_analysis=None,
+    bull_case=None,
+    bear_case=None,
+    final_decision=None,
+) -> str:
     d = ctx.decision
+    # FinalDecision.action (bước Manager, stock/debate.py) được PHÉP khác
+    # d.action theo yêu cầu người dùng - nhưng trade_plan/entry/stop/target
+    # bên dưới vẫn CHỈ được tính khi chính d.action (rule-based) đã qua gate
+    # định lượng. Nếu manager đổi sang 1 action mà code không duyệt (vd code
+    # WATCH, manager BUY), KHÔNG được suy ra vùng giá nào cho action đó -
+    # decision_diverges nói cho template biết để tự cảnh báo rõ, không bịa số.
+    decision_diverges = bool(final_decision) and final_decision.action != d.action
     price = ctx.price
     atr_pct = ctx.enhanced.atr_pct if ctx.enhanced else None
     sr = ctx.support_resistance
@@ -626,6 +640,8 @@ def build_prompt(ctx: StockContext) -> str:
         ma_distance_line=ma_distance_line, data_as_of_line=data_as_of_line,
         adjustment_note=ctx.adjustment_note,
         trade_plan=trade_plan, scenarios=scenarios, backtest_stats_line=backtest_stats_line,
+        news_analysis=news_analysis, bull_case=bull_case, bear_case=bear_case,
+        final_decision=final_decision, decision_diverges=decision_diverges,
     )
 
 def _fallback_text(ctx: StockContext) -> str:
@@ -729,7 +745,21 @@ async def analyze_symbol(symbol: str, user_text: str = "", *, force_refresh: boo
         ctx = None
     if ctx is None: return messages.STOCK_FETCH_ERROR.format(symbol=symbol)
 
-    prompt = build_prompt(ctx)
+    # Debate tuần tự (KHÔNG song song - bear cần thấy bull_case để phản biện
+    # trực tiếp, giống 1 buổi tranh luận thật). Mỗi bước tự fallback về None
+    # khi lỗi (xem stock/debate.py, stock/schemas.py::ask_structured) nên dù
+    # 1-2 bước lỗi, pipeline vẫn tiếp tục chạy tới bước tổng hợp cuối bên dưới
+    # với các block tương ứng bị bỏ trống trong prompt (template có {% if %}).
+    from stock import debate as stock_debate
+    try:
+        news_analysis, bull_case, bear_case, final_decision = await stock_debate.run_debate(ctx)
+    except Exception:
+        logger.exception("Lỗi pipeline debate cho %s - bỏ qua, dùng prompt không có debate", symbol)
+        news_analysis = bull_case = bear_case = final_decision = None
+
+    prompt = build_prompt(
+        ctx, news_analysis=news_analysis, bull_case=bull_case, bear_case=bear_case, final_decision=final_decision,
+    )
     if user_text:
         prompt += (
             f"\n\n[LƯU Ý QUAN TRỌNG TỪ HỆ THỐNG]:\n"
