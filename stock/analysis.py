@@ -17,6 +17,7 @@ from stock import policy
 from stock import price_adjust
 from stock import providers
 from stock import report_format as rfmt
+from stock import personas as stock_personas
 from stock import sector
 from stock import validation
 import messages
@@ -895,3 +896,34 @@ async def analyze_symbol(symbol: str, user_text: str = "", *, force_refresh: boo
         _cache_set(symbol, holding, result)
 
     return result
+
+async def analyze_persona(symbol: str, persona_ids: list[str], user_text: str = "", *, user_id: int | None = None) -> str:
+    """Góc nhìn persona trên số liệu rule-based - tầng chat giải trí, KHÔNG là
+    một bước phân tích: không chấm action, không sinh vùng giá (ràng buộc nằm
+    trong prompt, xem stock/personas.py). Không cache - câu hỏi persona mang
+    tính đối thoại, trả lời cũ khi giá đã đổi còn tệ hơn chờ vài giây."""
+    symbol = symbol.strip().upper()
+    try:
+        ctx = await build_context(symbol, user_id=user_id, is_holding=await _is_holding_symbol(user_id, symbol))
+    except Exception:
+        logger.exception("Lỗi lấy dữ liệu persona %s", symbol)
+        ctx = None
+    if ctx is None:
+        return messages.STOCK_FETCH_ERROR.format(symbol=symbol)
+
+    data_text = _fallback_text(ctx, fallback_note=False)
+    fundamentals_prompt = await _safe_fundamentals_prompt(symbol)
+    if fundamentals_prompt:
+        data_text += "\n\n" + fundamentals_prompt
+    prompt = stock_personas.build_persona_prompt(symbol, persona_ids, data_text, user_text)
+
+    from ai import orchestrator
+    try:
+        response = await orchestrator.ask(prompt)
+        text = rfmt.clean_analysis_output((response.text or "").strip())
+        if not text:
+            return "Chưa diễn giải được góc nhìn này lúc này, anh thử lại sau nhé."
+    except Exception:
+        logger.exception("LLM lỗi khi diễn giải persona cho %s", symbol)
+        return messages.STOCK_ANALYZE_FAILED.format(symbol=symbol)
+    return rfmt.ensure_disclaimer(text)

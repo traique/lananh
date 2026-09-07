@@ -28,6 +28,11 @@ async def maybe_handle(update, user_id: int, text: str) -> StockRouteResult:
         await _handle_portfolio_analysis(update, user_id, symbols, text)
         return StockRouteResult(handled=True, grounding="")
 
+    persona_ids = stock_analysis.stock_personas.detect_personas(text)
+    if persona_ids:
+        await _handle_persona_view(update, user_id, symbols, persona_ids, text)
+        return StockRouteResult(handled=True, grounding="")
+
     if stock_analysis.wants_full_analysis(text, symbols):
         await _handle_full_analysis(update, user_id, symbols, text)
         return StockRouteResult(handled=True, grounding="")
@@ -85,6 +90,26 @@ async def _handle_full_analysis(update, user_id: int, symbols: list[str], user_t
                 await status.delete()
             except Exception:
                 logger.debug("Không xóa được status phân tích %s", symbol, exc_info=True)
+
+
+async def _handle_persona_view(update, user_id: int, symbols: list[str], persona_ids: list[str], user_text: str) -> None:
+    prompt_id = await telemetry.start(user_id, "persona_view", ",".join(symbols))
+    try:
+        results = [
+            await stock_analysis.analyze_persona(symbol, persona_ids, user_text, user_id=user_id)
+            for symbol in symbols
+        ]
+        text = "\n\n".join(r for r in results if r)
+        if text:
+            await telemetry.success(prompt_id, "persona_view", text)
+            await common.reply_long_text(update.message, text)
+        else:
+            await telemetry.failure(prompt_id, "persona_view", RuntimeError("empty persona view"))
+            await update.message.reply_text(messages.STOCK_ANALYZE_FAILED.format(symbol=", ".join(symbols)))
+    except Exception as exc:
+        logger.exception("Lỗi góc nhìn persona %s", ", ".join(symbols))
+        await telemetry.failure(prompt_id, "persona_view", exc)
+        await update.message.reply_text(messages.STOCK_ANALYZE_FAILED.format(symbol=", ".join(symbols)))
 
 
 async def _handle_price_quote(update, user_id: int, symbols: list[str]) -> None:
