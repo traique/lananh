@@ -25,7 +25,7 @@ Repository được thiết kế cho **một chủ sở hữu**:
 ### Trợ lý chung
 
 - Provider chain: 9Router (gateway OpenAI-compatible) → Groq (miễn phí) → OpenRouter (miễn phí) → AI Studio key 1 → key 2.
-- Tự cooldown provider hết quota và probe lại 9Router.
+- Tự cooldown provider hết quota và probe lại 9Router; 9Router chạm timeout (mặc định 45s) thì chuyển provider luôn, không retry thêm lượt nữa.
 - Tác vụ cần Google Search thật (`require_real_search`) dùng riêng 1 chuỗi: Groq `compound-mini` (tool search tích hợp, miễn phí) → Gemini grounding (API key 1/2) - bỏ qua 9Router và OpenRouter vì không đảm bảo có tool search thật.
 - Lịch sử theo phiên và trí nhớ dài hạn trên Supabase Postgres.
 - Ghi chú, reminder và facts danh mục qua ngôn ngữ tự nhiên.
@@ -79,6 +79,7 @@ Năng lực hiện tại:
 - Fundamental theo ngành: ưu tiên P/B cho ngân hàng, chứng khoán, bảo hiểm và bất động sản; P/E ở nhóm phù hợp.
 - Walk-forward backtest có phí, thuế bán, slippage, T+, và 30% out-of-sample.
 - Model thống kê (gradient boosting) dự đoán **xác suất tăng sau 5 phiên** trên 30 features kỹ thuật + bối cảnh VNINDEX: train/test split theo NGÀY với embargo, hyperparameter cố định, thống kê out-of-sample lưu `stock/data/trend_model_stats.json`. Runtime chỉ ĐỌC model (nếu file + scikit-learn có sẵn) và đưa vào prompt ở mức "CHỈ THAM KHẢO" — KHÔNG phải gate định lượng. Train offline: `python scripts/train_trend_model.py --symbols auto --days 750`. Model chỉ đáng deploy khi top-decile return cao rõ rệt hơn baseline trong file stats.
+- Góc nhìn "nhà đầu tư huyền thoại" theo yêu cầu trong chat (Buffett / Đoàn Vĩnh Bình / Mark Minervini, hoặc "3 huyền thoại" cho cả ba): persona chỉ diễn giải ĐỊNH TÍNH trên số liệu đã qua gate của hệ thống, prompt cấm sinh entry/stop/target mới — tầng chat giải trí, không nằm trong pipeline policy (`stock/personas.py`).
 
 Bot không kết nối tài khoản chứng khoán và không đặt lệnh.
 
@@ -468,7 +469,7 @@ gửi trực tiếp/@mention cho bot), nên KHÔNG có `/tongket`/`/dangnoi` tư
 
 - `gemini-webapi`, `zca-js`, DNSE và `vnstock` là dependency không chính thức hoặc không có SLA.
 - Khối ngoại nhiều phiên (lịch sử mua/bán ròng theo chuỗi ngày) hiện KHÔNG có trong bot: `vnstock` chưa có provider nào implement thật endpoint này (chỉ là stub rỗng). Chỉ có khối ngoại phiên gần nhất (qua `price_board()`).
-- 1 lượt `/phantich` gọi tối đa 5 lệnh LLM tuần tự (news → bull → bear → manager → tổng hợp), có nghỉ `ROUTER9_STEP_DELAY_SEC` (mặc định 3s) giữa mỗi lệnh để giãn tải gateway 9Router — tổng thời gian phản hồi vì vậy dài hơn vài giây so với gọi dồn dập.
+- 1 lượt `/phantich` vẫn gọi tối đa 5 lệnh LLM tuần tự (news → bull → bear → manager → tổng hợp), có nghỉ `ROUTER9_STEP_DELAY_SEC` (mặc định 3s) giữa mỗi lệnh để giãn tải gateway 9Router. Bù lại bản số liệu rule-based giờ được gửi NGAY trước khi debate chạy (báo cáo AI gửi tiếp thành tin nhắn thứ hai), nên không phải chờ tới hơn 2 phút mới thấy tin đầu tiên.
 - Stock module là research assistant, không phải broker hoặc tư vấn viên được cấp phép.
 - Backtest phụ thuộc độ phủ provider và không bảo đảm hiệu suất tương lai.
 - Dự án cố ý chỉ hỗ trợ một người dùng; không có tenant isolation, billing, roles hoặc horizontal scaling.
