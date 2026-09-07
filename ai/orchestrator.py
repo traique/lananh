@@ -226,92 +226,99 @@ async def _run_provider_chain(
             for name, is_configured in _GENERIC_PROVIDER_CONFIGURED.items()
         )
 
-    async with call_lock:
-        last_exc: Optional[BaseException] = None
-        known_bad_skipped: list[str] = []
+    last_exc: Optional[BaseException] = None
+    known_bad_skipped: list[str] = []
 
-        for provider in order:
-            if provider == "router9":
-                if not provider_state.router9_enabled:
-                    continue
-                if provider_state.router9_dead_since is not None:
-                    known_bad_skipped.append("router9")
-                    continue
-                has_fallback = await _has_any_fallback_configured()
-                try:
-                    return await _attempt_router9()
-                except Exception as exc:
-                    last_exc = exc
-                    logger.warning(
-                        "Gọi Gemini (9Router) lỗi/treo lần 1, thử lại 1 lần.",
-                        exc_info=True,
-                    )
-                    try:
-                        return await _attempt_router9()
-                    except Exception as retry_exc:
-                        last_exc = retry_exc
-                        if not has_fallback:
-                            raise
-                        logger.warning(
-                            "9Router vẫn lỗi sau retry; chuyển provider.",
-                            exc_info=True,
-                        )
-                        await provider_state.mark_router9_dead()
-            elif provider in ("api1", "api2"):
-                idx = 1 if provider == "api1" else 2
-                if not await provider_overrides.is_enabled(provider):
-                    continue
-                if not await official_client.api_key_for(idx):
-                    continue
-                if provider_state.api_in_cooldown(provider):
-                    known_bad_skipped.append(provider)
-                    continue
-                try:
-                    return await _attempt_api(idx)
-                except Exception as exc:
-                    if official_client.is_quota_exhausted_error(exc):
-                        await provider_state.mark_api_exhausted(provider)
-                        last_exc = exc
-                        continue
-                    logger.exception("%s lỗi (không phải hết quota).", provider)
-                    last_exc = exc
-            else:
-                call = generic_calls.get(provider)
-                is_configured = _GENERIC_PROVIDER_CONFIGURED.get(provider)
-                if call is None or (is_configured and not is_configured()):
-                    continue
-                if not await provider_overrides.is_enabled(provider):
-                    continue
-                if provider_state.api_in_cooldown(provider):
-                    known_bad_skipped.append(provider)
-                    continue
-                try:
-                    return await _attempt_generic(provider)
-                except Exception as exc:
-                    if openai_compatible.is_rate_limited(exc):
-                        await provider_state.mark_api_exhausted(provider)
-                        last_exc = exc
-                        continue
-                    logger.exception("%s lỗi (không phải hết quota).", provider)
-                    last_exc = exc
-
-        for provider in known_bad_skipped:
+    for provider in order:
+        if provider == "router9":
+            if not provider_state.router9_enabled:
+                continue
+            if provider_state.router9_dead_since is not None:
+                known_bad_skipped.append("router9")
+                continue
+            has_fallback = await _has_any_fallback_configured()
             try:
-                if provider == "router9":
-                    return await _attempt_router9()
-                if provider in ("api1", "api2"):
-                    return await _attempt_api(1 if provider == "api1" else 2)
-                if generic_calls.get(provider) is not None:
-                    return await _attempt_generic(provider)
+                return await _attempt_router9()
+            except asyncio.TimeoutError as exc:
+                # Timeout nghĩa là router9 đã treo đủ lâu - retry cùng ngân
+                # sách chỉ nhân đôi thời gian chờ trước khi fallback.
+                last_exc = exc
+                if not has_fallback:
+                    raise
+                logger.warning("9Router timeout sau %ss; chuyển provider luôn.", _call_timeout_sec())
+                await provider_state.mark_router9_dead()
             except Exception as exc:
                 last_exc = exc
+                logger.warning(
+                    "Gọi Gemini (9Router) lỗi/treo lần 1, thử lại 1 lần.",
+                    exc_info=True,
+                )
+                try:
+                    return await _attempt_router9()
+                except Exception as retry_exc:
+                    last_exc = retry_exc
+                    if not has_fallback:
+                        raise
+                    logger.warning(
+                        "9Router vẫn lỗi sau retry; chuyển provider.",
+                        exc_info=True,
+                    )
+                    await provider_state.mark_router9_dead()
+        elif provider in ("api1", "api2"):
+            idx = 1 if provider == "api1" else 2
+            if not await provider_overrides.is_enabled(provider):
+                continue
+            if not await official_client.api_key_for(idx):
+                continue
+            if provider_state.api_in_cooldown(provider):
+                known_bad_skipped.append(provider)
+                continue
+            try:
+                return await _attempt_api(idx)
+            except Exception as exc:
+                if official_client.is_quota_exhausted_error(exc):
+                    await provider_state.mark_api_exhausted(provider)
+                    last_exc = exc
+                    continue
+                logger.exception("%s lỗi (không phải hết quota).", provider)
+                last_exc = exc
+        else:
+            call = generic_calls.get(provider)
+            is_configured = _GENERIC_PROVIDER_CONFIGURED.get(provider)
+            if call is None or (is_configured and not is_configured()):
+                continue
+            if not await provider_overrides.is_enabled(provider):
+                continue
+            if provider_state.api_in_cooldown(provider):
+                known_bad_skipped.append(provider)
+                continue
+            try:
+                return await _attempt_generic(provider)
+            except Exception as exc:
+                if openai_compatible.is_rate_limited(exc):
+                    await provider_state.mark_api_exhausted(provider)
+                    last_exc = exc
+                    continue
+                logger.exception("%s lỗi (không phải hết quota).", provider)
+                last_exc = exc
 
-        if last_exc is not None:
-            raise last_exc
-        raise RuntimeError(
-            "Không có provider nào khả dụng (tất cả lỗi, chưa cấu hình, "
-            "hoặc đang cooldown quota)."
-        )
+    for provider in known_bad_skipped:
+        try:
+            if provider == "router9":
+                return await _attempt_router9()
+            if provider in ("api1", "api2"):
+                return await _attempt_api(1 if provider == "api1" else 2)
+            if generic_calls.get(provider) is not None:
+                return await _attempt_generic(provider)
+        except Exception as exc:
+            last_exc = exc
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError(
+        "Không có provider nào khả dụng (tất cả lỗi, chưa cấu hình, "
+        "hoặc đang cooldown quota)."
+    )
 
 
 async def ask(

@@ -10,7 +10,6 @@ from core import crypto
 from core import database as db
 
 PROVIDERS = ("router9", "groq", "openrouter", "api1", "api2")
-MODEL_OVERRIDABLE = ("groq", "openrouter", "api1", "api2")
 ENABLE_OVERRIDABLE = ("groq", "openrouter", "api1", "api2")  # router9: ai/provider_state.py
 
 _model_cache: dict[str, Optional[str]] = {}

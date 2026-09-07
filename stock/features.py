@@ -17,6 +17,10 @@ def round_price(v: float) -> float:
     return round(v / 10) * 10
 
 
+def trend_pct(closes: list[float]) -> float:
+    return ((closes[-1] - closes[0]) / closes[0]) * 100 if closes and closes[0] > 0 else 0.0
+
+
 # ─── RSI (Wilder) ────────────────────────────────────────────────────────────
 
 def calc_rsi(closes: list[float], period: int = 14) -> float | None:
@@ -480,29 +484,6 @@ def find_key_levels(
     resistances.sort(key=lambda lv: lv.price - price)
 
     return KeyLevels(supports=supports, resistances=resistances)
-
-
-@dataclass
-class BiasMA:
-    bias: float
-    status: str  # nguy_hiem | canh_giac | an_toan | chiet_khau | qua_ban
-
-
-def calc_bias_ma(price: float, ma: float) -> BiasMA:
-    if ma <= 0:
-        return BiasMA(0.0, "an_toan")
-    bias = round((price - ma) / ma * 100, 2)
-    if bias > 8:
-        status = "nguy_hiem"
-    elif bias > 5:
-        status = "canh_giac"
-    elif bias < -8:
-        status = "qua_ban"
-    elif bias < -5:
-        status = "chiet_khau"
-    else:
-        status = "an_toan"
-    return BiasMA(bias, status)
 
 
 def calc_distance_pct(price: float, level: float) -> float | None:

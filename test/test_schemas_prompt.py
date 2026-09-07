@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from stock import schemas  # noqa: E402
-from stock.schemas import BullCase, NewsAnalysis  # noqa: E402
+from stock.schemas import NewsAnalysis  # noqa: E402
 
 
 def test_type_skeleton_la_gia_tri_khong_phai_mo_ta():

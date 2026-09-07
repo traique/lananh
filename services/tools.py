@@ -16,9 +16,11 @@ JSON riêng" ở đây chạy qua generate_utility_json() - vốn LUÔN gọi th
 chính thức bất kể provider-chain đang active cái gì - nên hoạt động NHẤT
 QUÁN dù chat chính đang trả lời qua router9 hay qua api1/api2.
 
-Đánh đổi: thêm 1 lượt gọi API phụ / tin nhắn (chỉ khi có API key cấu hình -
-nếu không, maybe_run_tool() trả None êm, tool tự tắt, chat chính không ảnh
-hưởng) - chấp nhận được vì đây là bot phục vụ 1 người dùng, tần suất thấp.
+Đánh đổi: thêm 1 lượt gọi API phụ cho tin nhắn có khả năng là lệnh tool (lọc
+từ khóa rẻ ở maybe_run_tool() đã chặn phần lớn tin phiếm; chỉ khi có API key
+cấu hình - nếu không, maybe_run_tool() trả None êm, tool tự tắt, chat chính
+không ảnh hưởng) - chấp nhận được vì đây là bot phục vụ 1 người dùng, tần
+suất thấp.
 
 CHỦ Ý giữ nguyên `stock_analysis.wants_full_analysis()` / `wants_price_quote()`
 (nhận diện hỏi giá/phân tích cổ phiếu) bằng keyword như cũ, KHÔNG gộp vào
@@ -134,12 +136,31 @@ def _build_router_prompt(user_text: str) -> str:
     )
 
 
+# Bộ lọc rẻ trước khi gọi LLM: đủ 4 tool đều dùng những từ này khi người dùng
+# diễn đạt ý định thật (ghi chú/nhắc việc/xem danh mục), nên tin nhắn không
+# khớp từ nào coi như không cần tool - tiết kiệm 1 lượt gọi utility API cho
+# phần lớn tin chat phiếm. Đánh đổi: bỏ lỡ câu lệnh diễn đạt lạ hoàn toàn
+# không chứa từ khóa nào ở dưới.
+_TOOL_INTENT_KEYWORDS = (
+    "ghi chú", "ghi chu", "ghi lại", "ghi lai", "note", "nhắc", "nhac", "nhớ", "nho",
+    "lưu lại", "luu lai", "danh mục", "danh muc", "đang giữ", "portfolio",
+    "đặt lịch", "dat lich", "hẹn giờ", "hen gio", "remind", "todo",
+)
+
+
+def _looks_like_tool_intent(user_text: str) -> bool:
+    lower = user_text.lower()
+    return any(kw in lower for kw in _TOOL_INTENT_KEYWORDS)
+
+
 async def maybe_run_tool(user_id: int, user_text: str) -> Optional[str]:
     """Hỏi Gemini xem tin nhắn này có cần gọi tool nào không; nếu có, chạy
     tool và trả về text kết quả (để chèn làm `grounding` cho ai.orchestrator.chat(),
     giúp Gemini biết tool đã chạy và kết quả ra sao khi soạn câu trả lời tự
     nhiên). Trả về None nếu không cần tool, hoặc lỗi/chưa cấu hình API key
     (graceful - KHÔNG được raise, không được làm gián đoạn chat chính)."""
+    if not _looks_like_tool_intent(user_text):
+        return None
     # Khởi tạo TRƯỚC block try: nếu chính generate_utility_json() raise
     # TypeError thì block `except TypeError` bên dưới vẫn cần đọc được 2 biến
     # này. Nếu để chúng chỉ được gán bên trong try, except sẽ ném

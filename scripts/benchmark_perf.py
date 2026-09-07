@@ -4,7 +4,6 @@
 core.crypto (Fernet), core.text_normalize (NFC).
 """
 
-import inspect
 import os
 import statistics
 import sys

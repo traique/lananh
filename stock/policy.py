@@ -472,7 +472,7 @@ def _build_scenarios(plan: TradePlan) -> list[Scenario]:
     if plan.target2 is not None:
         bull_action = f"Giữ phần còn lại nhắm T2 {plan.target2:,.0f}, dời stop về hoà vốn (entry ~{plan.entry_low:,.0f})".replace(",", ".")
     else:
-        bull_action = f"Không có T2 rõ ràng - trail stop theo MA10 cho phần còn lại thay vì chốt cứng"
+        bull_action = "Không có T2 rõ ràng - trail stop theo MA10 cho phần còn lại thay vì chốt cứng"
     bull = Scenario(
         name="bull",
         trigger=f"Đóng cửa vượt T1 {plan.target1:,.0f} kèm volume > 130% trung bình 20 phiên".replace(",", "."),

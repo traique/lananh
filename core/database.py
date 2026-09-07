@@ -773,18 +773,6 @@ async def add_reminder(telegram_user_id: int, message: str, due_at) -> None:
 
 
 @_with_reconnect
-async def get_due_reminders() -> list[tuple[int, int, str]]:
-    """Trả về [(id, telegram_user_id, message), ...] các reminder đã tới hạn
-    và CHƯA gửi. Không lọc theo user vì bot chỉ phục vụ 1 user, nhưng để
-    nguyên user_id trong kết quả cho rõ ràng nếu sau này mở rộng đa user."""
-    pool = await get_pool()
-    rows = await pool.fetch(
-        "SELECT id, telegram_user_id, message FROM reminders WHERE due_at <= now() AND sent = false"
-    )
-    return [(r["id"], r["telegram_user_id"], r["message"]) for r in rows]
-
-
-@_with_reconnect
 async def mark_reminder_sent(reminder_id: int) -> None:
     pool = await get_pool()
     await pool.execute("UPDATE reminders SET sent = true WHERE id = $1", reminder_id)

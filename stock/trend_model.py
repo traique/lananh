@@ -87,12 +87,6 @@ _DONCHIAN_CODE = {"breakout_up": 1.0, "breakout_down": -1.0, "inside": 0.0, "unk
 _MACD_CROSS_CODE = {"bullish": 1.0, "bearish": -1.0, "none": 0.0}
 
 
-def _trend_pct(closes: list[float]) -> float:
-    if not closes or closes[0] <= 0:
-        return 0.0
-    return (closes[-1] - closes[0]) / closes[0] * 100
-
-
 def compute_feature_vector(
     closes: list[float], highs: list[float], lows: list[float], volumes: list[float],
     i: int, vn_closes: list[float], vn_highs: list[float], vn_lows: list[float],
@@ -155,7 +149,7 @@ def compute_feature_vector(
         float(session.daily_change_pct) if session else nan,
         float(session.close_position_pct) if session else nan,
         float(session.volume_ratio_pct) if session else nan,
-        round(_trend_pct(w_c[-66:]) - _trend_pct(wv_c[-66:]) if wv_c else _trend_pct(w_c[-66:]), 3),
+        round(feat.trend_pct(w_c[-66:]) - feat.trend_pct(wv_c[-66:]) if wv_c else feat.trend_pct(w_c[-66:]), 3),
         float(trend_score) if trend_score is not None else nan,
         float(agreement),
         _ALIGN_CODE.get(vn_multi.alignment, 0.0) if vn_multi else nan,

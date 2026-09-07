@@ -63,9 +63,19 @@ async def _handle_full_analysis(update, user_id: int, symbols: list[str], user_t
         prompt_id = await telemetry.start(user_id, "stock_analysis", symbol)
         status = await update.message.reply_text(f"🔍 Đang phân tích {symbol}...")
         try:
-            result_text = await stock_analysis.analyze_symbol(symbol, user_text=user_text, user_id=user_id)
-            await telemetry.success(prompt_id, "stock_analysis", result_text)
-            await common.reply_long_text(update.message, result_text)
+            async def send_rule_report(text: str) -> None:
+                await common.reply_long_text(update.message, text)
+
+            result_text = await stock_analysis.analyze_symbol(
+                symbol, user_text=user_text, user_id=user_id, on_rule_report=send_rule_report,
+            )
+            if result_text:
+                await telemetry.success(prompt_id, "stock_analysis", result_text)
+                await common.reply_long_text(update.message, result_text)
+            else:
+                # Bản rule-based đã gửi làm tin nhắn đầu, LLM không trả thêm
+                # được gì mới - telemetry ghi nhận để vẫn có số liệu theo dõi.
+                await telemetry.success(prompt_id, "stock_analysis", "(đã gửi bản rule-based)")
         except Exception as exc:
             logger.exception("Lỗi phân tích %s", symbol)
             await telemetry.failure(prompt_id, "stock_analysis", exc)

@@ -69,7 +69,6 @@ from ai.timeouts import OFFICIAL_CHAT_TIMEOUT_SEC, with_timeout
 logger = logging.getLogger(__name__)
 
 MAX_AGENT_STEPS = 4
-_AGENT_PROVIDERS = ("api1", "api2")
 # Tắt hẳn cả 2 nhánh router9 (native tools + JSON-router) của /agent, không
 # đụng /router9 on|off của chat chính.
 _ROUTER9_AGENT_ENABLED = True

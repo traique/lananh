@@ -31,7 +31,6 @@ ZOOM_UNPAIRED_ALERT = (
     "🔔 Zoom jid={jid} vừa nhắn cho bot nhưng chưa được cấp quyền.\n"
     "Dùng /zoompair {jid} để cấp quyền."
 )
-ZOOM_LOCKED_REPLY = "Tài khoản Zoom đang bị tạm khóa."
 
 # ─── Phân tích cổ phiếu ──────────────────────────────────────────────────────
 STOCK_FETCH_ERROR = "Em không lấy được dữ liệu giá cho mã {symbol} lúc này, anh thử lại sau ít phút nhé."

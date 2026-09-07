@@ -1,6 +1,6 @@
 """Strict OHLCV contract and data-quality gate."""
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import datetime
 import math
 from zoneinfo import ZoneInfo
 

@@ -6,6 +6,7 @@ State provider-chain sống trong ai.provider_state.provider_state (1 singleton
 ProviderChainState) - các test dưới đây tự reset qua fixture `reset_state`
 trước mỗi test để không bị rò rỉ giữa các case.
 """
+import asyncio
 import sys
 import time
 from pathlib import Path
@@ -320,6 +321,27 @@ async def test_co_api_van_retry_router9_1_lan_truoc_khi_khai_tu(fake_store):
     assert result == "router9-response-lan-2"
     assert len(attempts) == 2
     assert provider_state.router9_dead_since is None
+
+
+@pytest.mark.asyncio
+async def test_router9_timeout_khong_retry_chuyen_provider_luon(fake_store):
+    """9Router timeout (khác lỗi thoáng qua) -> KHÔNG retry, khai tử + rơi
+    thẳng xuống api1: retry cùng ngân sách timeout chỉ nhân đôi thời gian chờ
+    oan (45s x2) trước khi fallback."""
+    attempts = []
+
+    async def router9_call():
+        attempts.append(1)
+        raise asyncio.TimeoutError()
+
+    async def api_call(idx):
+        return f"api{idx}-response"
+
+    result = await orchestrator._run_provider_chain(router9_call=router9_call, api_call=api_call)
+
+    assert result == "api1-response"
+    assert len(attempts) == 1
+    assert provider_state.router9_dead_since is not None
 
 
 @pytest.mark.asyncio

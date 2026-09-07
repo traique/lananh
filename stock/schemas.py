@@ -28,8 +28,6 @@ from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
 
-_MAX_POINT_LEN = 160  # 1 luận điểm quá dài là dấu hiệu LLM đang viết cả đoạn văn thay vì gạch đầu dòng
-
 _ACTIONS = Literal["BUY", "HOLD", "WATCH", "SELL", "NO_TRADE"]
 
 

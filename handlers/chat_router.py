@@ -75,8 +75,11 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     prompt_id = await telemetry.start(user_id, "chat", text)
     try:
-        tool_result = await tools.maybe_run_tool(user_id, text)
-        search_result = await _maybe_tavily_search(text)
+        # 2 bước này độc lập nhau - chạy song song để không cộng dồn thời gian chờ.
+        tool_result, search_result = await asyncio.gather(
+            tools.maybe_run_tool(user_id, text),
+            _maybe_tavily_search(text),
+        )
         combined_grounding = "\n\n".join(
             part for part in (route.grounding, tool_result, search_result) if part
         )

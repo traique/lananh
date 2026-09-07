@@ -169,10 +169,6 @@ class OutOfSampleResult:
     train: BacktestResult
     test: BacktestResult
 
-def _trend_pct(closes: list[float]) -> float:
-    return ((closes[-1] - closes[0]) / closes[0]) * 100 if closes and closes[0] else 0.0
-
-
 def _evaluate_day(
     symbol: str, closes, highs, lows, volumes, dates, i: int,
     vnindex_closes, vnindex_highs, vnindex_lows, vnindex_volumes,
@@ -208,7 +204,7 @@ def _evaluate_day(
     vnindex_adx = feat.calc_adx(w_vn_closes, w_vn_highs, w_vn_lows) if w_vn_closes else None
     vnindex_distribution_days = feat.calc_distribution_days(w_vn_closes, w_vn_volumes)
 
-    relative_strength = round(_trend_pct(w_closes) - _trend_pct(w_vn_closes), 2)
+    relative_strength = round(feat.trend_pct(w_closes) - feat.trend_pct(w_vn_closes), 2)
 
     inputs = policy.PolicyInputs(
         price=price, stats=stats, enhanced=enhanced, ma_alignment=ma_alignment,
@@ -344,9 +340,6 @@ def format_backtest_summary(results: list[BacktestResult]) -> str:
         )
     return "\n".join(lines)
 
-
-# Full universe is discovered from VCI, with local sector symbols as fallback.
-DEFAULT_BACKTEST_SYMBOLS=None
 
 async def refresh_setup_stats(symbols: list[str] | None = None, days: int = DEFAULT_BACKTEST_DAYS) -> dict:
     """Chạy backtest trên tập mã đại diện rồi ghi thống kê per-setup_type ra

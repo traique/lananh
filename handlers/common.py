@@ -61,14 +61,6 @@ def extract_arg(context: ContextTypes.DEFAULT_TYPE) -> str:
     return nfc(" ".join(context.args).strip()) if context.args else ""
 
 
-async def read_file_bytes(path) -> bytes:
-    def _read():
-        with open(path, "rb") as f:
-            return f.read()
-
-    return await asyncio.to_thread(_read)
-
-
 async def safe_delete(path) -> None:
     try:
         await asyncio.to_thread(os.remove, path)

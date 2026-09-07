@@ -28,9 +28,7 @@ HISTORY_LIMIT = 10
 # handlers/prompt_identity.py - dùng chung cho /prompt, channel_command_service.py
 # và media_handler.py để không lệch nhau giữa các nơi gọi.
 
-# ---------------------------------------------------------------------------
 # Cache ngắn hạn cho /gia
-# ---------------------------------------------------------------------------
 _PRICE_CACHE: dict[str, tuple[float, str]] = {}
 _PRICE_CACHE_TTL_SECONDS = 30 * 60  # 30 phút
 
@@ -915,14 +913,12 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
-# ---------------------------------------------------------------------------
 # /thongke - thống kê lượt gọi AI theo user và theo model, dùng chung cho cả
 # Telegram (thongke_cmd bên dưới) lẫn Zalo/Zoom (services/channel_command_service.py
 # gọi thẳng _build_thongke_text/_parse_thongke_hours qua telegram_commands).
 # Số liệu lấy từ core/database.py::usage_by_user/usage_by_model - CÙNG 2 hàm
 # đang phục vụ trang admin (xem web.py::admin_usage/admin_usage_models), nên
 # /thongke luôn khớp với trang admin.
-# ---------------------------------------------------------------------------
 _THONGKE_DEFAULT_HOURS = 24 * 7
 _THONGKE_CHANNEL_LABELS = {"telegram": "Telegram", "zoom": "Zoom", "zalo": "Zalo"}
 
@@ -1005,13 +1001,11 @@ async def thongke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(text, parse_mode="HTML")
 
 
-# ---------------------------------------------------------------------------
 # /agent - AI agent thật (xem ai/agent_service.py): model tự quyết định gọi
 # tool nào (tim_gia, xem_thong_ke...) bao nhiêu lần để trả lời, khác mọi lệnh
 # khác trong file này (pipeline cố định). Thử nghiệm - chỉ bật ở Telegram,
 # chỉ admin, vì mỗi câu hỏi có thể tốn tới MAX_AGENT_STEPS lượt gọi api1/api2
 # (quota thấp nhất trong provider-chain).
-# ---------------------------------------------------------------------------
 @common.restricted
 async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     question = common.extract_arg(context)

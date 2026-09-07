@@ -67,14 +67,6 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name, str(default)).strip()
-    try:
-        return float(raw)
-    except ValueError:
-        return default
-
-
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name, str(default)).strip()
     try:
@@ -94,8 +86,7 @@ ROUTER9_MAX_CONCURRENCY = _env_int("ROUTER9_MAX_CONCURRENCY", 4)
 
 # Khoảng nghỉ (giây) giữa các lệnh gọi LLM liên tiếp trong 1 lượt phân tích
 # (news -> bull -> bear -> manager -> tổng hợp cuối, xem stock/debate.py và
-# stock/analysis.py::analyze_symbol) - giãn tải cho gateway 9Router, không
-# ảnh hưởng call_lock (vẫn chỉ 1 request in-flight tại 1 thời điểm).
+# stock/analysis.py::analyze_symbol) - giãn tải cho gateway 9Router.
 ROUTER9_STEP_DELAY_SEC = _env_int("ROUTER9_STEP_DELAY_SEC", 3)
 
 # Groq — gateway OpenAI-compatible miễn phí, provider thứ 2 của provider-chain

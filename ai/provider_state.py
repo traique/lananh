@@ -171,7 +171,3 @@ provider_state = ProviderChainState()
 async def init_provider_state() -> None:
     """Nạp state provider-chain từ DB lúc khởi động (bot_app._post_init gọi 1 lần)."""
     await provider_state.load()
-
-
-def get_provider_state_snapshot() -> ProviderStateSnapshot:
-    return provider_state.snapshot()

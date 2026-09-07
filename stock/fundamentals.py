@@ -539,42 +539,6 @@ async def fetch_company_news(symbol: str, limit: int = 5) -> list[NewsHeadline]:
         return []
 
 
-async def fetch_sector_pe_average(symbol: str, sample_size: int = 4) -> tuple[float | None, int, str | None]:
-    """So P/E hiện tại với trung bình MỘT MẪU NHỎ mã cùng ngành, tái dùng
-    nhóm ngành có sẵn trong stock_sector.py - đây KHÔNG phải trung bình toàn
-    ngành chính xác qua screener (sẽ cần gọi rất nhiều request, chậm và dễ bị
-    giới hạn), chỉ là ước lượng nhanh từ vài mã tiêu biểu. Trả về
-    (avg_pe, số mã lấy được dữ liệu, tên ngành) - số mã lấy được thấp thì độ
-    tin cậy của trung bình cũng thấp, cần nêu rõ khi hiển thị.
-    """
-    try:
-        from stock import sector
-    except ImportError:
-        return None, 0, None
-
-    sector_keys = sector.get_symbol_sectors(symbol)
-    if not sector_keys:
-        return None, 0, None
-    meta = sector.SECTOR_MAP[sector_keys[0]]
-    peers = [s for s in meta["symbols"] if s != symbol.upper()][:sample_size]
-    if not peers:
-        return None, 0, meta["label"]
-
-    async def _safe_pe(sym: str) -> float | None:
-        try:
-            async with get_vnstock_semaphore():
-                val = await asyncio.wait_for(asyncio.to_thread(_fetch_valuation_sync, sym), timeout=_FETCH_TIMEOUT_SEC)
-            return val.pe if val and val.pe and val.pe > 0 else None
-        except Exception:
-            return None
-
-    results = await asyncio.gather(*[_safe_pe(p) for p in peers])
-    valid = [r for r in results if r is not None]
-    if not valid:
-        return None, 0, meta["label"]
-    return round(sum(valid) / len(valid), 1), len(valid), meta["label"]
-
-
 @dataclass
 class SectorBenchmark:
     metric: str

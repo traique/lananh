@@ -188,9 +188,6 @@ _WEAK_ANALYSIS_KEYWORDS = [
     "kệt", "ket", "về bờ", "ve bo",
 ]
 
-# Giữ tên cũ cho code/test còn tham chiếu.
-ANALYSIS_KEYWORDS = _STRONG_ANALYSIS_KEYWORDS + _WEAK_ANALYSIS_KEYWORDS
-
 
 def _build_keyword_re(keywords: list[str]) -> re.Pattern[str]:
     return re.compile(
@@ -403,17 +400,11 @@ async def _safe_fundamentals_prompt(symbol: str) -> str:
         logger.warning("_safe_fundamentals_prompt lỗi cho %s", symbol, exc_info=True)
         return ""
 
-def _trend_pct(closes: list[float]) -> float:
-    return ((closes[-1] - closes[0]) / closes[0]) * 100 if closes and closes[0] else 0.0
-
 # NGUỒN DUY NHẤT cho khái niệm "fact nào được coi là thuộc danh mục đầu tư".
 # services/tools.py._tool_get_portfolio và scheduler.py._build_portfolio_digest
 # import lại từ đây thay vì tự khai báo bản copy riêng - trước đây có 3 bản
 # giống nhau, sửa 1 chỗ là 2 chỗ kia lệch ngay.
 PORTFOLIO_FACT_KEYWORDS = ("danh_muc", "portfolio", "co_phieu")
-
-# Alias giữ tương thích ngược cho code/test cũ còn tham chiếu tên private.
-_PORTFOLIO_FACT_KEYWORDS = PORTFOLIO_FACT_KEYWORDS
 
 
 def is_portfolio_fact(key: str) -> bool:
@@ -520,7 +511,7 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
     # tức là ảnh hưởng trực tiếp tới khuyến nghị mua/bán.
     news_impact = rfmt.relevant_news_impact([(n.title, n.sentiment) for n in news], symbol)
     stats = feat.calc_signal_stats(symbol_series.closes, symbol_series.volumes, analysis_price)
-    relative_strength = round(_trend_pct(symbol_series.closes) - _trend_pct(vnindex_series.closes), 2)
+    relative_strength = round(feat.trend_pct(symbol_series.closes) - feat.trend_pct(vnindex_series.closes), 2)
 
     enhanced, indicator_summary = None, ""
     if quality.usable and len(symbol_series.closes) >= 20:
@@ -720,7 +711,7 @@ def build_prompt(
         final_decision=final_decision, decision_diverges=decision_diverges,
     )
 
-def _fallback_text(ctx: StockContext) -> str:
+def _fallback_text(ctx: StockContext, *, fallback_note: bool = True) -> str:
     d = ctx.decision
     action_label = _ACTION_LABEL_VI.get(d.action, d.action)
     if d.action == "BUY": price_line = f"Vùng mua {_fmt_price(ctx.price)} | TP {_fmt_price(d.target_price)} | SL {_fmt_price(d.stop_price)} | R:R ~{d.rr_ratio}"
@@ -744,7 +735,7 @@ def _fallback_text(ctx: StockContext) -> str:
     if ctx.liquidity and ctx.liquidity.is_thin: lines.append("⚠️ Thanh khoản TB20 quá thấp.")
     if ctx.adjustment_note: lines.append("⚠️ Chuỗi giá có gap nghi ngày giao dịch không hưởng quyền chưa được điều chỉnh - SMA50/Donchian/ATR/trend 3 tháng kém tin cậy.")
     if ctx.quality.status != "ok": lines.append(f"⚠️ Chất lượng dữ liệu: {ctx.quality.status}")
-    lines.append("⚠️ API dự phòng không phản hồi nên đây là bản rút gọn.")
+    if fallback_note: lines.append("⚠️ API dự phòng không phản hồi nên đây là bản rút gọn.")
     return "\n".join(lines)
 
 _STALE_NOTE = "\n\n⏱️ _Lưu ý: dữ liệu/thời điểm bên trên là của lần phân tích gần nhất_"
@@ -821,7 +812,7 @@ async def analyze_portfolio(symbols: list[str], user_text: str, *, user_id: int 
         logger.exception("Lỗi khi tổng hợp danh mục")
         return "Em đang gặp chút sự cố khi phân tích danh mục, anh chờ chút thử lại nha."
 
-async def analyze_symbol(symbol: str, user_text: str = "", *, force_refresh: bool = False, user_id: int | None = None) -> str:
+async def analyze_symbol(symbol: str, user_text: str = "", *, force_refresh: bool = False, user_id: int | None = None, on_rule_report=None) -> str:
     symbol = symbol.strip().upper()
     holding = await _is_holding_symbol(user_id, symbol)
     if not force_refresh and not user_text:
@@ -834,6 +825,16 @@ async def analyze_symbol(symbol: str, user_text: str = "", *, force_refresh: boo
         logger.exception("Lỗi lấy dữ liệu phân tích %s", symbol)
         ctx = None
     if ctx is None: return messages.STOCK_FETCH_ERROR.format(symbol=symbol)
+
+    # Gửi ngay bản số liệu rule-based (đã có đầy đủ entry/stop/target) thay vì
+    # bắt người dùng chờ cả pipeline debate 4 lượt LLM mới thấy tin đầu tiên.
+    rule_report_sent = False
+    if on_rule_report is not None:
+        await on_rule_report(rfmt.ensure_disclaimer(
+            _fallback_text(ctx, fallback_note=False)
+            + "\n\n⏳ Bản số liệu nhanh theo quy tắc hệ thống; bản phân tích đầy đủ sẽ gửi tiếp ngay sau đây."
+        ))
+        rule_report_sent = True
 
     # Debate tuần tự (KHÔNG song song - bear cần thấy bull_case để phản biện
     # trực tiếp, giống 1 buổi tranh luận thật). Mỗi bước tự fallback về None
@@ -874,11 +875,18 @@ async def analyze_symbol(symbol: str, user_text: str = "", *, force_refresh: boo
         # LLM không ổn định: cùng một prompt, báo cáo FPT bị lặp disclaimer hai
         # lần còn CII thì không.
         text = rfmt.clean_analysis_output((response.text or "").strip())
-        result = text or _fallback_text(ctx)
+        result = text or None
         if text and getattr(response, "used_fallback", False):
             result += "\n\n⚙️ _Báo cáo do API dự phòng trả về, ngôn ngữ có thể thô hơn bình thường._"
     except Exception:
         logger.exception("Gemini lỗi khi phân tích %s", symbol)
+        result = None
+
+    if result is None:
+        # LLM không trả được báo cáo: nếu bản rule-based đã gửi trước đó thì
+        # hết content mới, còn không thì trả bản rút gọn thay thế.
+        if rule_report_sent:
+            return ""
         result = _fallback_text(ctx)
 
     result = rfmt.ensure_disclaimer(result)

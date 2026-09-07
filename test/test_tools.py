@@ -38,7 +38,7 @@ async def test_tool_none_khong_chay_handler_nao(monkeypatch):
 
     monkeypatch.setattr(official_client, "generate_utility_json", fake_generate_none)
 
-    result = await tools.maybe_run_tool(1, "hôm nay trời đẹp quá")
+    result = await tools.maybe_run_tool(1, "nhớ mua rau về ăn tối nhé em")
     assert result is None
 
 
@@ -49,7 +49,7 @@ async def test_loi_router_khong_raise(monkeypatch):
 
     monkeypatch.setattr(official_client, "generate_utility_json", fake_raise)
 
-    result = await tools.maybe_run_tool(1, "bất kỳ gì")
+    result = await tools.maybe_run_tool(1, "ghi chú vài chữ bất kỳ")
     assert result is None  # không raise, chat chính vẫn tiếp tục bình thường
 
 

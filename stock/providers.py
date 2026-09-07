@@ -257,7 +257,6 @@ async def _fetch_ohlcv_vnstock(symbol, days):
         async with get_vnstock_semaphore():
             return await asyncio.wait_for(asyncio.to_thread(_fetch_ohlcv_vnstock_sync, symbol, days), timeout=20)
     except (TimeoutError, asyncio.TimeoutError): return OhlcvSeries(symbol=symbol, source="vnstock-vci")
-_fetch_ohlcv_uncached = _fetch_ohlcv_dnse
 
 def _fetch_symbol_universe_sync():
     try:
