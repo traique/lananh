@@ -60,7 +60,12 @@ from stock.providers import NewsHeadline, ensure_vnstock_api_key, get_vnstock_se
 
 logger = logging.getLogger(__name__)
 
-_FETCH_TIMEOUT_SEC = 15
+# 30s (trước 15s): các lệnh qua vnstock phải qua throttle gói Community
+# (60 req/phút) + Company() eager-fetch toàn bộ dữ liệu ở lần đầu, cộng cold
+# start sau deploy là hay bị cắt giữa chừng (đã gặp GEX timeout cả news,
+# foreign, events ngay sau restart 09/09/2026). Các hàm caller đều catch và
+# degrade nên timeout lớn chỉ làm chậm nhánh lỗi, không treo bot.
+_FETCH_TIMEOUT_SEC = 30
 _PE_HISTORY_QUARTERS = 20  # ~5 năm dữ liệu quý, dùng để tính percentile P/E
 
 

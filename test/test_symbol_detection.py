@@ -57,3 +57,17 @@ def test_price_question_with_unknown_token_is_guarded():
 
 def test_casual_message_is_not_guarded():
     assert stock_analysis.looks_like_price_question("tối nay ăn gì anh ơi") is False
+
+
+def test_why_question_about_nonstock_prices_is_not_guarded():
+    """Regression 09/09/2026: "tại sao giá điện thoại ... tăng giá mạnh trong
+    năm 2026" bị chặn trả lời cứng vì token tiếng Việt có dấu bị regex ASCII
+    cắt thành mảnh giả mã ("liên quan" -> QUAN, "điện thoại" -> THO). Câu hỏi
+    lý giải không phải yêu cầu đọc giá, phải đi xuống chat thường."""
+    assert stock_analysis.looks_like_price_question(
+        "tại sao giá điện thoại và các thiết bị điện tử liên quan lại tăng giá mạnh trong năm 2026"
+    ) is False
+
+
+def test_why_question_without_diacritics_is_not_guarded():
+    assert stock_analysis.looks_like_price_question("tai sao gia dien thoai tang manh") is False

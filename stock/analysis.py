@@ -220,6 +220,11 @@ def wants_full_analysis(text: str, symbols: list[str] | None = None) -> bool:
     return False
 
 PRICE_KEYWORDS = ["giá", "gia", "price", "bao nhiêu", "bao nhieu"]
+# Câu hỏi LÝ GIẢI định tính (vd "tại sao giá X tăng") - không phải yêu cầu
+# đọc giá hiện tại của một mã, dùng để loại khỏi looks_like_price_question.
+_WHY_QUESTION_RE = re.compile(
+    r"\b(?:tại sao|tai sao|vì sao|vi sao|do đâu|do dau|why)\b", re.IGNORECASE
+)
 _PRICE_KEYWORDS_RE = re.compile(r"\b(?:" + "|".join(re.escape(kw) for kw in PRICE_KEYWORDS) + r")\b", re.IGNORECASE)
 _BARE_SYMBOLS_FILLER_RE = re.compile(r"[,\.\-/&+]+")
 
@@ -246,11 +251,20 @@ def looks_like_price_question(text: str) -> bool:
     2. Có keyword giá VÀ còn ít nhất một token 3-4 ký tự trông giống mã
        (không nằm trong các list từ thông dụng) - để "giá vàng hôm nay bao
        nhiêu" vẫn đi tiếp xuống chat bình thường.
+
+    Ngoại lệ: câu hỏi LÝ GIẢI ("tại sao/vì sao giá...tăng") không phải yêu
+    cầu đọc giá hiện tại, không chặn. Trước đây câu kiểu "tại sao giá điện
+    thoại lại tăng" vẫn bị chặn vì token tiếng Việt có dấu bị regex ASCII
+    cắt thành mảnh giả mã ("liên quan" -> QUAN, "điện thoại" -> THO) trông
+    giống mã không xác định; loại câu này để xuống chat thường có Tavily
+    search tiếp sức mới đúng.
     """
     if is_bare_symbol_message(text):
         upper = text.strip().upper()
         if upper not in _COMMON_WORD_EXCLUDE and upper not in _LOWERCASE_NOISE_EXCLUDE:
             return True
+    if _WHY_QUESTION_RE.search(text):
+        return False
     if not _PRICE_KEYWORDS_RE.search(text):
         return False
     for tok in _SYMBOL_TOKEN_RE.findall(text):
