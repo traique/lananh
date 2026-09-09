@@ -85,10 +85,21 @@ def build_messages(
 
 
 def parse_sse_content(raw: str) -> str:
-    """Một số gateway (khi provider phía sau chỉ hỗ trợ streaming) trả về
-    text/event-stream ngay cả khi request không xin stream. Gom lại nội dung
-    delta/message từ các chunk JSON trong luồng SSE đó."""
+    """Gom nội dung text từ các chunk JSON trong luồng SSE (giữ cho tương
+    thích cũ; bản đầy đủ text + tool_calls xem `_parse_sse_stream`)."""
+    return _parse_sse_stream(raw)[0]
+
+
+def _parse_sse_stream(raw: str) -> tuple[str, list[dict[str, Any]]]:
+    """Gom 1 response SSE (chat.completion.chunk chuẩn OpenAI) thành
+    (text, tool_calls đã parse JSON). Tool_calls dạng delta: chunk đầu mang
+    id + function.name (arguments rỗng), các chunk sau nối function.arguments
+    theo index. Chunk `{"error": ...}` giữa stream (gateway forward lỗi
+    upstream) được trả về qua error_msg để caller raise với thông điệp thật
+    thay vì "trả kết quả rỗng"."""
     pieces: list[str] = []
+    error_msg: Optional[str] = None
+    calls_by_index: dict[int, dict[str, Any]] = {}
     for line in raw.splitlines():
         line = line.strip()
         if not line.startswith("data:"):
@@ -100,14 +111,41 @@ def parse_sse_content(raw: str) -> str:
             chunk = json.loads(payload)
         except json.JSONDecodeError:
             continue
+        if isinstance(chunk, dict) and chunk.get("error"):
+            error = chunk["error"]
+            error_msg = str(error.get("message") or error) if isinstance(error, dict) else str(error)
+            continue
         for choice in chunk.get("choices", []):
-            delta_content = (choice.get("delta") or {}).get("content")
+            delta = choice.get("delta") or {}
+            delta_content = delta.get("content")
             if delta_content:
                 pieces.append(delta_content)
             msg_content = (choice.get("message") or {}).get("content")
             if msg_content:
                 pieces.append(msg_content)
-    return "".join(pieces)
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index") or 0
+                call = calls_by_index.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                if tc.get("id"):
+                    call["id"] = str(tc["id"])
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    call["name"] = str(fn["name"])
+                if fn.get("arguments"):
+                    call["arguments"] += str(fn["arguments"])
+    tool_calls = _parse_tool_calls([
+        {
+            "id": call["id"] or f"call_{position}",
+            "function": {"name": call["name"], "arguments": call["arguments"]},
+        }
+        for position, call in sorted(calls_by_index.items())
+    ]) if calls_by_index else []
+    text = "".join(pieces)
+    if not text and error_msg:
+        # Ném ở đây thay vì để caller nhận text rỗng: giữ nguyên thông điệp
+        # lỗi upstream (gateway đã gói trong chunk {"error": ...}).
+        raise OpenAICompatibleError(f"SSE upstream error: {error_msg[:500]}")
+    return text, tool_calls
 
 
 async def post_chat_completion(
@@ -121,13 +159,25 @@ async def post_chat_completion(
     max_tokens: int,
     provider_label: str,
 ) -> str:
+    """LUÔN xin stream (SSE) kể cả khi chỉ cần text cuối: 9Router/chatgpt-
+    gateway với request stream:false phải GỘP toàn bộ stream upstream xong
+    mới trả 1 phát JSON - trong suốt thời gian generation không có byte nào
+    đi qua các proxy trung gian (Faable/Render), và proxy sẽ cắt kết nối
+    "im lặng" quá lâu bằng HTTP 504 Gateway Timeout. Với các prompt dài
+    (bước tổng hợp cuối của /phantich, generation 60-120s), 504 xuất hiện
+    ỔN ĐỊNH mỗi lần - đã xác minh trên chatgpt-gateway (traique/
+    chatgpt-gateway, hàm _aggregate_chat: chỉ trả JSON sau khi đọc hết
+    stream, gateway không bao giờ tự trả 504). Với stream:true, gateway
+    forward chunk ngay khi có delta -> proxy thấy byte chảy, không cắt.
+    parse_sse_content() gom delta thành text; nếu gateway vẫn trả JSON
+    thường (bỏ qua stream) thì nhánh else xử lý như cũ."""
     headers = {"Authorization": f"Bearer {api_key}"}
     payload = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "stream": False,
+        "stream": True,
     }
     try:
         response = await client.post(
@@ -207,14 +257,20 @@ async def post_chat_completion_with_tools(
     phát hiện được sự khác biệt giữa "model chủ động thấy không cần tool" và
     "gateway lờ tools đi" - cả 2 đều trả tool_calls rỗng. Xem log ở
     ai/agent_service.py::_run_router9 để tự kiểm chứng bằng traffic thật.
-    """
+
+    Cơ chế stream: giống post_chat_completion() - LUÔN xin stream để tránh
+    proxy trung gian cắt kết nối im lặng (HTTP 504) khi gateway gộp stream
+    xong mới trả. Tool_calls xuất hiện dạng delta trong các chunk
+    (index/id/name ở chunk đầu, arguments nối dần) - `_parse_sse_stream`
+    gom lại thành list hoàn chỉnh; nếu gateway trả JSON thường thì xử lý
+    như cũ."""
     headers = {"Authorization": f"Bearer {api_key}"}
     payload = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "stream": False,
+        "stream": True,
         "tools": tools,
     }
     try:
@@ -224,10 +280,15 @@ async def post_chat_completion_with_tools(
             json=payload,
         )
         response.raise_for_status()
-        completion_payload = response.json()
-        message = ((completion_payload.get("choices") or [{}])[0]).get("message") or {}
-        text = (message.get("content") or "").strip()
-        tool_calls = _parse_tool_calls(message.get("tool_calls"))
+        content_type = response.headers.get("content-type", "")
+        if "text/event-stream" in content_type or response.text.lstrip().startswith("data:"):
+            text, tool_calls = _parse_sse_stream(response.text)
+            text = text.strip()
+        else:
+            completion_payload = response.json()
+            message = ((completion_payload.get("choices") or [{}])[0]).get("message") or {}
+            text = (message.get("content") or "").strip()
+            tool_calls = _parse_tool_calls(message.get("tool_calls"))
     except httpx.HTTPStatusError as exc:
         body = exc.response.text[:500]
         raise OpenAICompatibleError(f"{provider_label} HTTP {exc.response.status_code}: {body}") from exc

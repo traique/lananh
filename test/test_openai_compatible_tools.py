@@ -22,6 +22,72 @@ def _client_with_response(json_body: dict, status_code: int = 200) -> httpx.Asyn
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
+def _client_with_sse(chunks: list[dict]) -> httpx.AsyncClient:
+    """Gateway trả SSE dù request stream:true (chuẩn chatgpt-gateway)."""
+    body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert b'"stream":true' in request.content  # luôn phải xin stream
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+@pytest.mark.asyncio
+async def test_stream_sse_gom_text_dung():
+    client = _client_with_sse([
+        {"choices": [{"index": 0, "delta": {"role": "assistant", "content": "Xin chào "}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {"content": "anh!"}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+    ])
+    from ai import openai_compatible as o
+    text = await o.post_chat_completion(
+        client, base_url="https://fake.example", api_key="k",
+        messages=[{"role": "user", "content": "chào"}], model="m",
+        temperature=0.7, max_tokens=100, provider_label="test",
+    )
+    assert text == "Xin chào anh!"
+
+
+def _sse_chunk(delta: dict, finish_reason: str | None = None) -> dict:
+    return {"choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]}
+
+
+@pytest.mark.asyncio
+async def test_sse_tool_calls_delta_gom_dung():
+    """Tool_calls dạng delta chuẩn OpenAI: chunk đầu id+name, các chunk sau
+    nối arguments theo index - phải ghép lại thành list hoàn chỉnh."""
+    args_chunk1 = '{"ten":'
+    args_chunk2 = ' "FPT"}'
+    client = _client_with_sse([
+        _sse_chunk({"tool_calls": [
+            {"index": 0, "id": "call_1", "type": "function", "function": {"name": "tim_gia", "arguments": ""}}]}),
+        _sse_chunk({"tool_calls": [{"index": 0, "function": {"arguments": args_chunk1}}]}),
+        _sse_chunk({"tool_calls": [{"index": 0, "function": {"arguments": args_chunk2}}]}),
+        _sse_chunk({}, finish_reason="tool_calls"),
+    ])
+    result = await openai_compatible.post_chat_completion_with_tools(
+        client, base_url="https://fake.example", api_key="k",
+        messages=[], tools=[{"type": "function", "function": {"name": "tim_gia", "parameters": {}}}],
+        model="m", temperature=0.7, max_tokens=100, provider_label="test",
+    )
+    assert result.text == ""
+    assert result.tool_calls == [{"id": "call_1", "name": "tim_gia", "arguments": {"ten": "FPT"}}]
+
+
+@pytest.mark.asyncio
+async def test_sse_error_chunk_surface_thong_diep_upstream():
+    client = _client_with_sse([
+        {"error": {"message": "ChatGPT upstream failed.", "type": "upstream_error"}},
+    ])
+    with pytest.raises(openai_compatible.OpenAICompatibleError, match="ChatGPT upstream failed"):
+        await openai_compatible.post_chat_completion_with_tools(
+            client, base_url="https://fake.example", api_key="k",
+            messages=[], tools=[], model="m", temperature=0.7, max_tokens=100,
+            provider_label="test",
+        )
+
+
 @pytest.mark.asyncio
 async def test_tool_call_duoc_parse_dung_khi_model_muon_goi_tool():
     body = {
