@@ -119,7 +119,11 @@ async def fetch_dividends(symbol: str) -> list[DividendEvent]:
 
     def _sync() -> list[DividendEvent]:
         try:
-            df = Company(symbol=symbol, show_log=False).dividends()
+            # vnstock 4.x đã GỠ Company.dividends() - lịch cổ tức tiền mặt
+            # giờ nằm trong Company.events() với event_code == "DIV", kèm
+            # exright_date (GDKHQ) và value_per_share (VND/cp đã chuẩn, vd
+            # 500.0 = 500 VND/cp - không còn quy ước % mệnh giá lẫn lộn).
+            df = Company(symbol=symbol, show_log=False).events()
         except Exception:
             logger.warning("vnstock: dividends lỗi cho %s", symbol, exc_info=True)
             return []
@@ -134,12 +138,20 @@ async def fetch_dividends(symbol: str) -> list[DividendEvent]:
                         return orig
             return None
 
-        ex_col = pick("ex", "gdkhq")
-        cash_col = pick("cash", "dividend", "tiền mặt", "cổ tức tiền")
-        if cash_col is None:
+        code_col = pick("event_code")
+        ex_col = pick("exright", "ex", "gdkhq")
+        cash_col = pick("value_per_share", "cash", "dividend", "tiền mặt", "cổ tức tiền")
+        if cash_col is None or (code_col is None and ex_col is None):
             return []
         events: list[DividendEvent] = []
         for _, row in df.iterrows():
+            if code_col is not None:
+                code = str(row[code_col]).strip().upper() if row[code_col] is not None else ""
+                if code and code != "DIV":
+                    # events() trả MỌI sự kiện (ĐHĐCĐ, niêm yết bổ sung,
+                    # giao dịch nội bộ...) - chỉ cổ tức tiền mới dùng được
+                    # để điều chỉnh giá.
+                    continue
             try:
                 value = float(row[cash_col])
             except (TypeError, ValueError, KeyError):

@@ -1,52 +1,49 @@
 """Định giá cơ bản (P/E, P/B, EPS, ROE, D/E...) + dòng tiền khối ngoại +
 tăng trưởng theo quý + lịch sự kiện, dựa trên `vnstock`.
 
-Nguồn: thư viện `vnstock` (mã nguồn mở, MIỄN PHÍ, KHÔNG cần đăng ký/API key) -
-gom dữ liệu công khai từ VCI/TCBS.
+Nguồn (đã thay đổi 08/09/2026 - đọc kỹ trước khi sửa):
+- `_fetch_valuation_sync` (định giá + EPS) và `_fetch_growth_sync` (tăng
+  trưởng DT/LN quý) KHÔNG còn đi qua vnstock mà gọi thẳng REST VCI qua
+  `stock.vci_direct`. Nguyên nhân: endpoint GraphQL mà vnstock<=3.5.1 dùng
+  bị VCI tắt (KeyError 'data' cho mọi mã, log production 08/09/2026), còn
+  các method Finance công khai trên vnstock 4.0.7 cắt dữ liệu còn 4 quý
+  2018 sai do .head(4) trên danh sách cũ->mới - chi tiết đầy đủ trong
+  docstring stock/vci_direct.py.
+- `_fetch_events_sync`, `_fetch_company_news_sync`, `_fetch_foreign_sync`
+  vẫn qua vnstock (Company.events/news, Trading.price_board) - các method
+  này đã được kiểm tra chạy tốt trên vnstock 4.0.7.
 
 ⚠️ QUAN TRỌNG - đọc trước khi tin tưởng module này:
-- vnstock là công cụ của bên thứ 3, dựa trên API công khai không tài liệu hoá
-  chính thức của VCI/TCBS -> KHÔNG có SLA, có thể lỗi hoặc đổi cấu trúc dữ
-  liệu bất kỳ lúc nào mà không báo trước.
-- Toàn bộ hàm ở đây match tên cột theo TỪ KHOÁ (substring) thay vì tên cột
-  cứng, để bớt nhạy cảm với thay đổi nhỏ giữa các phiên bản vnstock - nhưng
+- VCI/vnstock là nguồn bên thứ 3, API không tài liệu hoá chính thức ->
+  KHÔNG có SLA, có thể lỗi hoặc đổi cấu trúc dữ liệu bất kỳ lúc nào mà
+  không báo trước.
+- Các hàm qua vnstock match tên cột theo TỪ KHOÁ (substring) thay vì tên
+  cột cứng, để bớt nhạy cảm với thay đổi nhỏ giữa các phiên bản - nhưng
   KHÔNG đảm bảo luôn đúng 100%. Nếu không tìm thấy cột phù hợp, trả về None
-  cho trường đó thay vì đoán liều.
+  cho trường đó thay vì đoán liều. Với vci_direct, tên trường raw (pe, pb,
+  isa20...) được gọi thẳng - đã cố định theo mapping metrics của VCI.
 - Giấy phép vnstock: dành cho cá nhân/phi thương mại - phù hợp bot 1 user
   này, KHÔNG dùng cho mục đích thương mại nếu chưa xin phép tác giả.
-- Gọi vnstock là thao tác ĐỒNG BỘ (blocking, dùng requests) -> luôn chạy qua
-  asyncio.to_thread() để không chặn event loop, và luôn có timeout.
+- Gọi nguồn ngoài là thao tác ĐỒNG BỘ (blocking, dùng requests) -> luôn
+  chạy qua asyncio.to_thread() để không chặn event loop, và luôn có timeout.
 
-🧪 GHI CHÚ ĐỘ TIN CẬY (đọc trước khi deploy):
-- `_fetch_valuation_sync` (P/E, P/B, EPS, ROE, D/E, current ratio, percentile
-  P/E lịch sử) và `_fetch_growth_sync` (tăng trưởng DT/LN quý) dùng
-  `stock.finance.ratio()` / `stock.finance.income_statement()` - đây là 2 hàm
-  đã được dùng ổn định trong bản gốc, rủi ro thấp, chỉ thêm cột/nhiều dòng
-  hơn so với trước. Lưu ý: `Vnstock().stock(...)` (facade dùng chung cho cả
-  2 hàm này lẫn 2 hàm bên dưới) đã bị vnstock đánh dấu DEPRECATED kể từ
-  31/08/2025 (tự in cảnh báo mỗi lần gọi, khuyến nghị chuyển sang
-  `vnstock.api.*`) - vẫn chạy được ở bản đang pin, nhưng có thể bị gỡ hẳn ở
-  bản vnstock sau này.
-- `_fetch_events_sync` (lịch sự kiện KQKD/ĐHCĐ/cổ tức): ĐÃ XÁC MINH bằng cách
-  đọc mã nguồn vnstock đã cài (môi trường viết/sửa code này không có mạng ra
-  ngoài tới API thật của VCI/TCBS, nên không gọi thử end-to-end được, nhưng
-  việc đọc source đã đủ để xác nhận nguyên nhân): source="TCBS" (bản cũ) LUÔN
-  lỗi vì TCBS đã bị gỡ khỏi StockComponents.SUPPORTED_SOURCES - đã sửa sang
-  source="VCI" (có method events() thật). Vẫn chưa chắc chắn 100% vì chưa gọi
-  mạng thật để xem tên cột (title/date) thực tế trả về có khớp
-  `_find_col_any` bên dưới không - nếu vẫn trả "chưa có dữ liệu" sau khi
-  deploy, hãy chạy thử trên máy có mạng:
-      from vnstock import Vnstock
-      df = Vnstock().stock(symbol="FPT", source="VCI").company.events()
-      print(df.columns.tolist())
-  rồi bổ sung tên cột thực tế vào `_find_col_any(...)` trong
-  `_fetch_events_sync`.
+🧪 GHI CHÚ ĐỘ TIN CẬY:
+- `_fetch_valuation_sync`: P/E, P/B, ROE (đã *100), D/E, current ratio lấy
+  trực tiếp từ raw; EPS = currentPrice/pe (isa23 của VCI sai lệch với một
+  số mã - xem _fetch_eps_sync); dividend_yield của VCI đang trả 0.0 cả với
+  mã có trả cổ tức -> coi 0 là "chưa có dữ liệu", đừng kết luận "không trả
+  cổ tức" từ trường này.
+- `_fetch_growth_sync`: isa3 (doanh thu thuần) NULL với mã ngân hàng (mã
+  loại NH chỉ populate isa16 trở đi) -> với ngân hàng, phần doanh thu sẽ
+  "chưa có dữ liệu", phần lợi nhuận (isa20) vẫn hoạt động.
+- `_fetch_events_sync` (lịch sự kiện): đã xác minh end-to-end trên vnstock
+  4.0.7 (Company.events()), ưu tiên event_title_* trước event_name_* (tên
+  loại chung chung: "Sự kiện khác", "Đại hội Đồng Cổ đông"...).
 - Khối ngoại NHIỀU phiên (lịch sử mua/bán ròng theo chuỗi ngày) ĐÃ BỊ BỎ
   KHỎI module này: cả facade cũ (`vnstock/explorer/vci/trading.py`, chỉ có
   đúng 1 method công khai là price_board()) lẫn API mới
   (`vnstock.api.trading.foreign_trade()`) đều không có provider nào implement
-  thật (chỉ là stub `pass`) - đã xác minh lại trên vnstock 3.5.1, không phải
-  giới hạn riêng của bản đang pin. Chỉ còn `_fetch_foreign_sync` (khối ngoại
+  thật (chỉ là stub `pass`). Chỉ còn `_fetch_foreign_sync` (khối ngoại
   PHIÊN GẦN NHẤT, qua price_board() - có hoạt động thật) là nguồn khối ngoại
   duy nhất trong bot này.
 """
@@ -58,7 +55,7 @@ import time
 from dataclasses import dataclass
 
 from stock import features as feat
-from stock import fundamental_profiles
+from stock import fundamental_profiles, vci_direct
 from stock.providers import NewsHeadline, ensure_vnstock_api_key, get_vnstock_semaphore, sentiment_score
 
 logger = logging.getLogger(__name__)
@@ -145,131 +142,64 @@ def _find_col_any(flat_columns: list[str], *keyword_groups: tuple[str, ...]) -> 
     return None
 
 
-_RATIO_COL_DENYLIST = ("period", "type", "length")
-
-
-def _find_ratio_col(flat_columns: list[str], primary: str, fallback: str) -> int | None:
-    """Ưu tiên match tên cột đầy đủ (vd "p/e"); fallback substring ngắn (vd
-    "pe") chỉ được chấp nhận khi tên cột không chứa từ trong denylist -
-    tránh khớp nhầm các cột như "period"/"period_length"/"type" chứa "pe"
-    như một substring tình cờ."""
-    idx = _find_col(flat_columns, primary)
-    if idx is not None:
-        return idx
-    for i, col in enumerate(flat_columns):
-        if fallback in col and not any(bad in col for bad in _RATIO_COL_DENYLIST):
-            return i
-    return None
-
-
 def _percentile_rank(current: float, history: list[float]) -> float:
     return feat._percentile_rank(current, history)
 
 
 def _fetch_valuation_sync(symbol: str) -> Valuation | None:
-    """Dùng thẳng vnstock.explorer.vci.Finance thay vì facade Vnstock().stock().
+    """Định giá qua REST VCI thẳng (stock.vci_direct) - KHÔNG qua vnstock.
 
-    ĐÃ XÁC MINH bằng traceback thật từ production (ReadTimeoutError tới
-    trading.vietcap.com.vn): facade Vnstock().stock(symbol, source="VCI")
-    khi khởi tạo sẽ eager-fetch CẢ Company LẪN Finance LẪN Quote/Trading
-    (StockComponents._initialize_components), dù ở đây chỉ cần
-    finance.ratio(). Tệ hơn, Finance.__init__ tự nó CŨNG gọi thêm 1 lần
-    Company(...)._fetch_data() riêng (để lấy mã ngành ICB4) - tức dùng
-    facade tốn tới 2 lần fetch Company không cần thiết trước khi chạm được
-    tới dữ liệu ratio() thật sự muốn lấy. Gọi Finance(symbol) trực tiếp vẫn
-    còn 1 lần fetch Company (không tránh được, nằm sâu trong thư viện), nhưng
-    bớt được lần thứ 2 - giảm ~50% số request/khả năng timeout cho hàm này.
+    Nền tảng (xem docstring stock/vci_direct.py): endpoint GraphQL mà
+    vnstock 3.5.1 dùng đã bị VCI tắt (KeyError: 'data' cho mọi mã), còn
+    vnstock 4.0.7 thì Finance.ratio() công khai bị cắt còn 4 kỳ bằng
+    .head(4) theo thứ tự CŨ->MỚI - trả 2018-Q1..Q4 thay vì các quý gần
+    nhất. Gọi thẳng statistics-financial raw lấy đủ 41+ quý, tự parse.
     """
     try:
-        ensure_vnstock_api_key()
-        from vnstock.explorer.vci import Finance
-    except ImportError:
-        logger.warning("Chưa cài thư viện vnstock (pip install vnstock).")
-        return None
-
-    try:
-        finance = Finance(symbol=symbol, show_log=False)
+        rows = vci_direct.fetch_statistical_ratios(symbol)
     except Exception:
-        logger.warning("vnstock: không khởi tạo được Finance cho %s", symbol, exc_info=True)
+        logger.warning("vci_direct: statistics-financial lỗi cho %s", symbol, exc_info=True)
+        return None
+    if not rows:
         return None
 
-    df = None
-    for kwargs in ({"period": "quarter"}, {}):
-        try:
-            df = finance.ratio(**kwargs)
-            if df is not None and not df.empty:
-                break
-        except Exception:
-            continue
-    if df is None or df.empty:
+    row = rows[0]
+
+    def _val(*keys: str) -> float | None:
+        for k in keys:
+            if k in row:
+                return _to_float(row[k])
         return None
 
-    flat_cols = _flatten_columns(df.columns)
-
-    # Đảm bảo quý gần nhất luôn ở iloc[0]: không giả định df đã sắp xếp sẵn,
-    # sort tường minh theo năm (và quý nếu có) giảm dần.
-    year_idx = _find_col(flat_cols, "year")
-    quarter_idx = _find_col_any(flat_cols, ("quarter",), ("length",))
-    if year_idx is not None:
-        sort_cols = [df.columns[year_idx]]
-        if quarter_idx is not None:
-            sort_cols.append(df.columns[quarter_idx])
-        df = df.sort_values(by=sort_cols, ascending=False).reset_index(drop=True)
-
-    row = df.iloc[0]
-
-    def _val(*keywords: str) -> float | None:
-        idx = _find_col(flat_cols, *keywords)
-        return _to_float(row.iloc[idx]) if idx is not None else None
-
-    # "pe"/"pb" có thể trùng khớp nhầm vào các cột khác chứa chữ "pe"/"pb" (vd
-    # "period", "period_length", "type") - dùng _find_ratio_col với denylist
-    # thay vì substring "or" đơn thuần (vốn cũng nuốt luôn giá trị 0.0 hợp lệ).
-    pe_idx = _find_ratio_col(flat_cols, "p/e", "pe")
-    pe = _to_float(row.iloc[pe_idx]) if pe_idx is not None else None
-    pb_idx = _find_ratio_col(flat_cols, "p/b", "pb")
-    pb = _to_float(row.iloc[pb_idx]) if pb_idx is not None else None
-    eps = _val("eps")
+    pe = _val("pe")
+    pb = _val("pb")
+    # roe (và dividendYield) từ VCI là phân số 0-1 -> nhân 100 cho khớp quy
+    # ước % mà build_fundamentals_prompt_section/percentile lịch sử hiển thị.
     roe = _val("roe")
-    # Ưu tiên cột vừa chứa "dividend" vừa chứa "yield"/"suất" (đúng là tỷ suất
-    # %) trước khi fallback về substring "dividend" đơn thuần (có thể là DPS
-    # theo VND tuỳ version vnstock - xem sanity check bên dưới, C2).
-    dividend_yield_a = _val("dividend", "yield")
-    dividend_yield_b = _val("dividend", "suất")
-    dividend_yield = dividend_yield_a if dividend_yield_a is not None else dividend_yield_b
-    if dividend_yield is None:
-        dividend_yield = _val("dividend")
-    if dividend_yield is not None and dividend_yield > 40:
-        # không tỷ suất cổ tức thật nào ở VN vượt mức này -> nhiều khả năng
-        # cột lấy được là dividend per share (VND) chứ không phải %, không
-        # tin cậy để hiển thị như tỷ suất.
-        dividend_yield = None
-    # D/E và current ratio: tên cột có thể tiếng Việt ("nợ"/"vốn chủ", "thanh
-    # toán hiện hành") hoặc tiếng Anh ("debt"/"equity", "current ratio") tuỳ
-    # version/lang của vnstock - thử cả 2.
-    debt_equity_idx = _find_col_any(
-        flat_cols,
-        ("nợ", "vốn chủ"),
-        ("debt", "equity"),
-        ("nợ/vcsh",),
-    )
-    debt_equity = _to_float(row.iloc[debt_equity_idx]) if debt_equity_idx is not None else None
-    current_ratio_idx = _find_col_any(
-        flat_cols,
-        ("thanh toán", "hiện"),
-        ("current", "ratio"),
-    )
-    current_ratio = _to_float(row.iloc[current_ratio_idx]) if current_ratio_idx is not None else None
+    if roe is not None:
+        roe = roe * 100
+    # dividendYield của VCI đang trả 0.0 cả với các mã TRẢ CỔ TỨC (VCB, HPG -
+    # xác minh 08/09/2026) => trường này không đáng tin: coi 0 là "không có
+    # dữ liệu" thay vì khẳng định mã không trả cổ tức.
+    dividend_yield = _val("dividendYield")
+    if dividend_yield is not None:
+        dividend_yield = dividend_yield * 100
+        if dividend_yield <= 0 or dividend_yield > 40:
+            # >40%: nhiều khả năng cột lấy được là dividend per share (VND)
+            # chứ không phải % - không tin cậy để hiển thị như tỷ suất.
+            dividend_yield = None
+    debt_equity = _val("debtToEquity", "debtPerEquity")
+    current_ratio = _val("currentRatio")
+    eps = _fetch_eps_sync(symbol, pe)
 
-    # Percentile P/E so với chính nó trong lịch sử: lấy toàn bộ cột P/E qua
-    # nhiều quý (giả định df sắp xếp mới nhất -> cũ dần, giống hàng iloc[0]
-    # ở trên đã lấy làm "hiện tại").
+    # Percentile P/E so với chính nó trong lịch sử: tối đa _PE_HISTORY_QUARTERS
+    # quý gần nhất có P/E dương (quý lỗ có pe âm/null bị loại khỏi history).
     pe_percentile = None
     pe_quarters = 0
-    if pe_idx is not None and pe is not None:
+    if pe is not None:
         history = []
-        for v in df.iloc[:_PE_HISTORY_QUARTERS, pe_idx]:
-            f = _to_float(v)
+        for r in rows[:_PE_HISTORY_QUARTERS]:
+            f = _to_float(r.get("pe"))
             if f is not None and f > 0:
                 history.append(f)
         pe_quarters = len(history)
@@ -283,67 +213,70 @@ def _fetch_valuation_sync(symbol: str) -> Valuation | None:
     )
 
 
-def _fetch_growth_sync(symbol: str) -> GrowthTrend | None:
-    try:
-        ensure_vnstock_api_key()
-        from vnstock.explorer.vci import Finance
-    except ImportError:
-        return None
+def _fetch_eps_sync(symbol: str, pe: float | None) -> float | None:
+    """EPS TTM (VND/cp) suy ra từ giá hiện tại / P/E của chính VCI.
 
+    Vì sao không dùng dữ liệu có sẵn:
+    - statistics-financial raw KHÔNG có trường eps.
+    - isa23 (EPS cơ bản theo KQKD) sai lệch nghiêm trọng với một số mã: CII
+      báo 12 (TTM thật ~170), CTD báo 721 (TTM thật ~5200), trong khi VCB/HPG
+      thì khớp - đã đối chiếu 08/09/2026, không đáng tin.
+    - Tự tính TTM từ isa20 (LN sau thuế từng quý) cũng không được: các hàng
+      quý của VCI không thống nhất rời rạc/lũy kế (CII rời rạc, VCB có quý
+      đột biến gấp run-rate ~1.6 lần) -> tổng 4 quý không khớp P/E mà chính
+      VCI báo.
+    EPS = currentPrice / pe là công thức định nghĩa P/E đảo lại, bảo đảm
+    nội thống nhất: pe * eps == giá tại thời điểm VCI tính pe.
+    """
+    if not pe or pe <= 0:
+        return None
     try:
-        finance = Finance(symbol=symbol, show_log=False)
-        df = finance.income_statement(period="quarter")
+        details = vci_direct.fetch_details(symbol)
     except Exception:
-        logger.warning("vnstock: income_statement lỗi cho %s", symbol, exc_info=True)
         return None
-    if df is None or df.empty or len(df) < 2:
+    price = _to_float(details.get("currentPrice"))
+    if not price or price <= 0:
         return None
+    return round(price / pe, 1)
 
-    flat_cols = _flatten_columns(df.columns)
 
-    # Sort tường minh như _fetch_valuation_sync: KHÔNG giả định df mới nhất
-    # -> cũ dần (vnstock từng đổi thứ tự giữa các version - nếu sai, QoQ/YoY
-    # tính trên cặp quý ngược và tăng trưởng hiển thị sai hoàn toàn).
-    year_idx = _find_col(flat_cols, "year")
-    quarter_idx = _find_col_any(flat_cols, ("quarter",), ("length",))
-    if year_idx is not None:
-        sort_cols = [df.columns[year_idx]]
-        if quarter_idx is not None:
-            sort_cols.append(df.columns[quarter_idx])
-        df = df.sort_values(by=sort_cols, ascending=False).reset_index(drop=True)
+def _fetch_growth_sync(symbol: str) -> GrowthTrend | None:
+    """Tăng trưởng DT/LN theo quý từ KQKD VCI (qua stock.vci_direct).
 
-    rev_idx = _find_col_any(flat_cols, ("doanh thu",), ("revenue",), ("net sale",))
-    profit_idx = _find_col_any(
-        flat_cols,
-        ("lợi nhuận sau thuế",),
-        ("lợi nhuận", "cổ đông"),
-        ("net profit",),
-        ("profit", "after"),
-    )
-    if rev_idx is None and profit_idx is None:
+    Mã cột ISA cố định theo chuẩn VCI (xem docstring stock/vci_direct.py):
+    isa3 = doanh thu thuần, isa20 = lãi/lỗ thuần sau thuế. Các quý được
+    vci_direct sort MỚI->CŨ nên vals[0] luôn là quý gần nhất.
+    """
+    try:
+        income = vci_direct.fetch_income_statement(symbol)
+    except Exception:
+        logger.warning("vci_direct: income_statement lỗi cho %s", symbol, exc_info=True)
+        return None
+    # QoQ cần 2 quý, YoY cần 5 quý (quý [0] so với quý cùng vị trí năm trước
+    # ở [4]) - ít hơn thì growth không đủ ý nghĩa, trả None như cũ.
+    if len(income) < 2:
         return None
 
-    def _growth(idx: int | None) -> tuple[float | None, float | None]:
-        if idx is None:
-            return None, None
-        vals = [_to_float(v) for v in df.iloc[:, idx]]
+    def _vals(code: str) -> list[float | None]:
+        return [_to_float(r.get(code)) for r in income]
+
+    def _growth(vals: list[float | None]) -> tuple[float | None, float | None]:
         qoq = yoy = None
-        # vals[0] = quý gần nhất (đã sort tường minh ở trên).
         if len(vals) >= 2 and vals[0] is not None and vals[1]:
             qoq = round((vals[0] - vals[1]) / abs(vals[1]) * 100, 1)
         if len(vals) >= 5 and vals[0] is not None and vals[4]:
             yoy = round((vals[0] - vals[4]) / abs(vals[4]) * 100, 1)
         return qoq, yoy
 
-    rev_qoq, rev_yoy = _growth(rev_idx)
-    profit_qoq, profit_yoy = _growth(profit_idx)
+    rev_qoq, rev_yoy = _growth(_vals("isa3"))
+    profit_qoq, profit_yoy = _growth(_vals("isa20"))
     if rev_qoq is None and rev_yoy is None and profit_qoq is None and profit_yoy is None:
         return None
 
     return GrowthTrend(
         revenue_qoq_pct=rev_qoq, revenue_yoy_pct=rev_yoy,
         profit_qoq_pct=profit_qoq, profit_yoy_pct=profit_yoy,
-        quarters_available=len(df),
+        quarters_available=len(income),
     )
 
 
@@ -452,7 +385,9 @@ def _fetch_events_sync(symbol: str, limit: int = 3) -> list[UpcomingEvent] | Non
         return None
 
     flat_cols = _flatten_columns(df.columns)
-    title_idx = _find_col_any(flat_cols, ("event", "name"), ("event",), ("title",), ("nội dung",))
+    # Ưu tiên event_title_* (vd "CII - Thực hiện quyền mua trái phiếu...")
+    # trước event_name_* (chỉ là tên loại chung: "Sự kiện khác", "Đại hội...")
+    title_idx = _find_col_any(flat_cols, ("event", "title"), ("event", "name"), ("event",), ("title",), ("nội dung",))
     date_idx = _find_col_any(flat_cols, ("date",), ("ngày",))
     if title_idx is None:
         return None
