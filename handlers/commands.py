@@ -16,7 +16,7 @@ from channels import group_commands, zalo_repository, zalo_users
 from core import config, database as db
 from handlers import common
 from handlers.prompt_identity import render_instruction, resolve_prompt_identity
-from services import memory_service
+from services import memory_service, rag_clean_service, rag_service
 from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -126,6 +126,8 @@ HELP_TEXT = (
     "/status — xem trạng thái provider\n"
     "/thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày\n"
     "/agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm)\n"
+    "/rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/\n"
+    "/ragxuly <file> — dọn file md OCR trong rag/ (AI thêm heading, backup bản gốc)\n"
     "/userouter9 — ép thử lại 9Router ngay\n"
     "/router9 on|off — bật/tắt 9Router thủ công\n"
     "/tavily on|off — bật/tắt tra web Tavily trước khi trả lời\n"
@@ -1030,6 +1032,63 @@ async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # reply_long_text nhận markdown-lite (xem tg_format.py), KHÔNG phải HTML -
     # dùng cú pháp _italic_ chứ không phải thẻ <i>.
     await common.reply_long_text(update.message, f"{text}\n\n_⚙️ {provider}_")
+
+
+@common.restricted
+async def rag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/rag <câu hỏi> - tra cứu kho kiến thức .md trong thư mục rag/."""
+    query = common.extract_arg(context)
+    if not query:
+        await update.message.reply_text(
+            "Dùng: /rag <câu hỏi>\n"
+            "Ví dụ: /rag chiến lược vào tiền khi thị trường sideway\n"
+            "Em tìm trong các file .md anh để ở thư mục rag/."
+        )
+        return
+
+    user_id = update.effective_user.id
+    prompt_id = await telemetry.start(user_id, "rag", query)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    try:
+        text = await rag_service.ask(user_id, query)
+        await telemetry.success(prompt_id, "rag", text)
+    except Exception as exc:
+        logger.exception("Lỗi /rag với câu hỏi: %r", query)
+        await telemetry.failure(prompt_id, "rag", exc)
+        await update.message.reply_text("❌ Có lỗi khi tra cứu kiến thức. Thử lại sau nhé.")
+        return
+
+    await common.reply_long_text(update.message, text)
+
+
+@common.restricted
+async def ragxuly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/ragxuly <tên-file> - dọn file .md OCR trong rag/ thành kho kiến thức sạch."""
+    name = common.extract_arg(context)
+    if not name:
+        await update.message.reply_text(
+            "Dùng: /ragxuly <tên-file-trong-rag>\n"
+            "Ví dụ: /ragxuly ghichu.md\n"
+            "Em dọn file md OCR (gộp dòng ngắt, bỏ số trang, thêm heading, sửa lỗi OCR), "
+            "backup bản gốc vào rag/_goc/ rồi ghi đè file chính."
+        )
+        return
+
+    user_id = update.effective_user.id
+    prompt_id = await telemetry.start(user_id, "ragxuly", name)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    try:
+        # clean_file tự bọc mọi lỗi thành thông báo thân thiện; chạy trong
+        # thread vì bên trong có asyncio.run() (orchestrator cần loop riêng).
+        text = await asyncio.to_thread(rag_clean_service.clean_file, name)
+        await telemetry.success(prompt_id, "ragxuly", text)
+    except Exception as exc:
+        logger.exception("Lỗi /ragxuly với file: %r", name)
+        await telemetry.failure(prompt_id, "ragxuly", exc)
+        await update.message.reply_text("❌ Có lỗi khi dọn file. Thử lại sau nhé.")
+        return
+
+    await update.message.reply_text(text)
 
 
 @common.restricted

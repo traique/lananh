@@ -22,3 +22,6 @@ zalo-gateway/dist/
 .DS_Store
 Thumbs.db
 *.swp
+
+# ZCode workspace cục bộ (plans, session)
+.zcode/

@@ -27,6 +27,8 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /tavily on|off — bật/tắt tra web Tavily trước khi trả lời (chỉ admin)
 /anh on|off — bật/tắt tạo ảnh Agnes AI (chỉ admin)
 /agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm, chỉ admin)
+/rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/ (chỉ admin)
+/ragxuly <file> — dọn file md OCR trong rag/ (chỉ admin)
 /bantinsang — gửi ngay bản tin buổi sáng (test thủ công, chỉ admin; bình thường tự gửi lúc 8h)
 /nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo
   (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom, chỉ admin)"""
@@ -165,6 +167,38 @@ async def _agent(user_id: int, question: str, channel: str = "zalo") -> tuple[li
         return ["Agent gặp lỗi, thử lại sau hoặc dùng lệnh thường (/gia, /thongke...) nhé."], None
 
 
+async def _rag(user_id: int, question: str) -> tuple[list[str], str | None]:
+    if not question:
+        return [
+            "Dùng: /rag <câu hỏi>\n"
+            "Ví dụ: /rag chiến lược vào tiền khi thị trường sideway\n"
+            "Em tìm trong các file .md anh để ở thư mục rag/."
+        ], None
+    from services import rag_service
+
+    # Timeout của orchestrator lo phần chờ AI; ở đây không cần tự bọc thêm.
+    text = await rag_service.ask(user_id, question)
+    return [text], None
+
+
+async def _ragxuly(user_id: int, name: str) -> tuple[list[str], str | None]:
+    if not name:
+        return [
+            "Dùng: /ragxuly <tên-file-trong-rag>\n"
+            "Ví dụ: /ragxuly ghichu.md\n"
+            "Em dọn file md OCR (gộp dòng ngắt, bỏ số trang, thêm heading), "
+            "backup bản gốc vào rag/_goc/ rồi ghi đè file chính."
+        ], None
+    from services import rag_clean_service
+
+    # clean_file tự bọc mọi lỗi thành thông báo thân thiện; chạy thread vì
+    # bên trong có asyncio.run() (orchestrator cần event loop riêng).
+    import asyncio
+
+    text = await asyncio.to_thread(rag_clean_service.clean_file, name)
+    return [text], None
+
+
 async def _morning_news_now() -> list[str]:
     from services import morning_news
 
@@ -274,10 +308,16 @@ async def maybe_handle_command(
     # gõ lệnh. Chỉ admin (Zalo: role=admin; Zoom/kênh khác chỉ có đúng 1 người
     # pair nên is_admin mặc định True) mới được đổi, để 1 thành viên thường
     # không thể vô tình/cố ý phá cấu hình chung của cả bot.
-    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model", "/thongke", "/agent", "/bantinsang"} and not is_admin:
+    # /rag: kiến thức cá nhân trong rag/ nên cũng khóa admin như /agent - thành
+    # viên thường không được mổ xẻ kho kiến thức riêng của chủ bot.
+    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model", "/thongke", "/agent", "/rag", "/ragxuly", "/bantinsang"} and not is_admin:
         return ["Lệnh này chỉ dành cho admin."], None
     if command == "/agent":
         return await _agent(user_id, argument, channel)
+    if command == "/rag":
+        return await _rag(user_id, argument)
+    if command == "/ragxuly":
+        return await _ragxuly(user_id, argument)
     if command == "/bantinsang":
         return await _morning_news_now(), None
     if command == "/status":

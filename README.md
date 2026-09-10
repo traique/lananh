@@ -263,6 +263,8 @@ Gateway chỉ lưu text mới từ nhóm allowlist, không backfill, không lưu
 | `/status` | Xem provider chain |
 | `/thongke [Nd\|Ngiờ]` | Thống kê lượt gọi theo user/kênh và theo model (mặc định 7 ngày, chỉ admin) |
 | `/agent <câu hỏi>` | Agent tự tra cứu nhiều bước để trả lời (thử nghiệm, chỉ admin) |
+| `/rag <câu hỏi>` | Tra cứu kiến thức trong các file `.md` của thư mục `rag/` (tìm theo từ khóa, AI diễn giải kèm nguồn; chỉ admin trên Zalo/Zoom) |
+| `/ragxuly <file>` | Dọn file md OCR trong `rag/` (gộp dòng ngắt, bỏ số trang, AI thêm heading; backup bản gốc vào `rag/_goc/`; chỉ admin trên Zalo/Zoom) |
 | `/bantinsang` | Gửi thử ngay bản tin buổi sáng (Zalo+Zoom, chỉ admin; bình thường tự gửi 8h) |
 | `/userouter9` | Thử lại 9Router provider |
 | `/zoompair <jid> [tên]` | Cấp quyền 1 jid Zoom nói chuyện với bot |
@@ -399,6 +401,7 @@ core/               Config, encryption và database
 handlers/           Telegram handlers
 services/           Chat, commands, memory và telemetry dùng chung
 stock/              Market data, validation, policy và backtest
+rag/                Kho kiến thức .md cho lệnh /rag (mỗi heading 1 mẩu kiến thức)
 zalo-gateway/        Node.js Zalo listener
 web.py               FastAPI webhook entrypoint (Telegram + Zoom)
 main.py              Local long-polling entrypoint
