@@ -78,14 +78,14 @@ def _env_int(name: str, default: int) -> int:
 # Timeout cho 1 lượt gọi 9Router (giữ tên biến ROUTER9_CALL_TIMEOUT_SEC; alias
 # GEMINI_COOKIE_CALL_TIMEOUT_SEC cũ vẫn được đọc nếu ROUTER9_CALL_TIMEOUT_SEC
 # chưa set riêng, để không phá cấu hình Render đã lưu sẵn từ trước).
-# 120s (trước 45s): client luôn xin stream (xem openai_compatible.
+# 240s (trước 45s): client luôn xin stream (xem openai_compatible.
 # post_chat_completion) nên byte chảy liên tục, không còn bị proxy trung gian
-# cắt 504; timeout này là chặn TỔNG thời gian 1 lượt gọi. 120s đủ rộng cho
-# bước tổng hợp cuối /phantich nhưng vẫn giới hạn thời gian chờ khi 9Router
-# gặp sự cố để provider-chain còn kịp fallback.
+# cắt 504; timeout này giờ là chặn TỔNG thời gian 1 lượt gọi, phải đủ lớn cho
+# generation của bước tổng hợp cuối /phantich (prompt lớn + báo cáo dài,
+# 60-120s là bình thường).
 ROUTER9_CALL_TIMEOUT_SEC = _env_int(
     "ROUTER9_CALL_TIMEOUT_SEC",
-    _env_int("GEMINI_COOKIE_CALL_TIMEOUT_SEC", 120),
+    _env_int("GEMINI_COOKIE_CALL_TIMEOUT_SEC", 240),
 )
 ROUTER9_MAX_CONCURRENCY = _env_int("ROUTER9_MAX_CONCURRENCY", 4)
 
