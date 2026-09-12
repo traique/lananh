@@ -128,6 +128,8 @@ HELP_TEXT = (
     "/agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm)\n"
     "/rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/\n"
     "/ragxuly <file> — dọn file md OCR trong rag/ (AI thêm heading, backup bản gốc)\n"
+    "/bangtinsang — gửi ngay Bản tin sáng tới Zalo + Zoom (bình thường tự gửi lúc 8h)\n"
+    "/tintuc — đọc Điểm tin mới ngay trong Telegram, không broadcast sang Zalo/Zoom\n"
     "/userouter9 — ép thử lại 9Router ngay\n"
     "/router9 on|off — bật/tắt 9Router thủ công\n"
     "/tavily on|off — bật/tắt tra web Tavily trước khi trả lời\n"
@@ -1090,6 +1092,61 @@ async def ragxuly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     await update.message.reply_text(text)
+
+
+@common.restricted
+async def bangtinsang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Gửi ngay bản tin sáng theo đúng luồng scheduler tới Zalo + Zoom."""
+    from services import morning_news
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    try:
+        result = await morning_news.run_once(force=True)
+    except Exception:
+        logger.exception("Lỗi /bangtinsang")
+        await update.message.reply_text("❌ Có lỗi khi tạo/gửi Bản tin sáng. Thử lại sau nhé.")
+        return
+
+    if result.content is None:
+        await update.message.reply_text(
+            "Không có nội dung để gửi (các nguồn RSS đều lỗi hoặc AI tổng hợp trả lời bất thường)."
+        )
+        return
+
+    sent = []
+    if result.sent_zalo:
+        sent.append("Zalo")
+    if result.sent_zoom:
+        sent.append("Zoom")
+    if not sent:
+        await update.message.reply_text(
+            "Đã tổng hợp được Bản tin sáng nhưng chưa gửi được tới Zalo/Zoom (chưa pair hoặc gửi lỗi)."
+        )
+        return
+
+    await update.message.reply_text(f"✅ Đã gửi Bản tin sáng tới {' và '.join(sent)}.")
+
+
+@common.restricted
+async def tintuc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Tạo Điểm tin theo yêu cầu và chỉ trả về đúng cuộc chat Telegram hiện tại."""
+    from services import morning_news
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    try:
+        content = await morning_news.build_digest(mode="on_demand")
+    except Exception:
+        logger.exception("Lỗi /tintuc")
+        await update.message.reply_text("❌ Có lỗi khi tổng hợp Điểm tin. Thử lại sau nhé.")
+        return
+
+    if not content:
+        await update.message.reply_text(
+            "Không tổng hợp được Điểm tin lúc này (các nguồn RSS đều lỗi hoặc AI trả lời bất thường)."
+        )
+        return
+
+    await common.reply_long_text(update.message, content)
 
 
 @common.restricted
