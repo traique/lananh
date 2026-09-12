@@ -53,9 +53,12 @@ _STYLE = (
     "- không nhắc tên nguồn RSS ở bất kỳ đâu trong bài, chỉ có duy nhất 1 dòng "
     "'Nguồn: ...' liệt kê tên các nguồn ở CUỐI CÙNG bài (sau khi hết tin).\n"
     "Gom các tin trùng chủ đề lại thành 1 đoạn liền mạch thay vì liệt kê rời "
-    "rạc từng tin 1-2 dòng. Ưu tiên tin kinh tế/chứng khoán/thời sự quan trọng "
-    "lên đầu. Không dùng markdown (**, #, bảng). Không thêm lời chào mở đầu/"
-    "kết thúc."
+    "rạc từng tin 1-2 dòng. Bản tin PHẢI giữ phần kinh tế/chứng khoán như hiện "
+    "tại và bổ sung thêm các tin thời sự/xã hội/quốc tế đáng chú ý từ những "
+    "feed tin tổng hợp (đặc biệt VnExpress và Tuổi Trẻ) nếu feed có dữ liệu; "
+    "không được chỉ tóm tắt một nhóm rồi bỏ hẳn nhóm còn lại. Ưu tiên các tin "
+    "quan trọng, mới và có ảnh hưởng rộng lên đầu. Không dùng markdown (**, #, "
+    "bảng). Không thêm lời chào mở đầu/kết thúc."
 )
 # Nếu response ngắn hơn ngưỡng này dù feed_texts có dữ liệu thật, coi là AI đã
 # "bịa" từ chối/nói không có tin thay vì tổng hợp đúng - không phải lỗi feed.
