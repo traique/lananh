@@ -7,6 +7,9 @@ diễn giải, có ghi nguồn.
 File gốc của bạn là PDF → OCR sang md nên bẩn? Dùng lệnh
 `/ragxuly <tên-file>`: bot gộp dòng ngắt cứng, bỏ số trang, nhờ AI thêm
 heading + sửa lỗi OCR rồi ghi đè file (bản gốc được backup vào `_goc/`).
+File dài được bot tự chia thành nhiều phần vừa ngữ cảnh và xử lý tuần tự;
+người dùng không cần tự cắt file. Chỉ khi mọi phần đều đạt kiểm định bot mới
+ghép kết quả và ghi đè file chính.
 
 ## Cách viết file để tra cứu tốt
 
