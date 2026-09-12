@@ -1078,9 +1078,10 @@ async def ragxuly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     prompt_id = await telemetry.start(user_id, "ragxuly", name)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     try:
-        # clean_file tự bọc mọi lỗi thành thông báo thân thiện; chạy trong
-        # thread vì bên trong có asyncio.run() (orchestrator cần loop riêng).
-        text = await asyncio.to_thread(rag_clean_service.clean_file, name)
+        # /ragxuly phải chạy orchestrator trên event loop chính vì provider_state
+        # và asyncpg pool được khởi tạo ở loop này. Các lượt AI đều await nên
+        # không chặn những request khác trong lúc chờ network.
+        text = await rag_clean_service.clean_file(name)
         await telemetry.success(prompt_id, "ragxuly", text)
     except Exception as exc:
         logger.exception("Lỗi /ragxuly với file: %r", name)
