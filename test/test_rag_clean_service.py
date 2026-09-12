@@ -87,11 +87,11 @@ def test_cleaned_file_is_searchable_but_backup_is_not(rag_dir):
     assert not rag_service.search("goc ocr ban")
 
 
-def test_clean_file_rejects_empty_and_oversize(rag_dir):
+def test_clean_file_rejects_empty_and_extreme_oversize(rag_dir):
     _write("rong.md", "   \n  ")
     assert "rỗng" in rag_clean_service.clean_file("rong.md")
-    _write("dai.md", "x" * (rag_clean_service.MAX_SOURCE_CHARS + 100))
-    assert "quá dài" in rag_clean_service.clean_file("dai.md")
+    _write("dai.md", "x" * (rag_clean_service.MAX_FILE_CHARS + 100))
+    assert "quá lớn" in rag_clean_service.clean_file("dai.md")
 
 
 def test_clean_file_rejects_missing_file():
@@ -116,6 +116,67 @@ def test_clean_file_happy_path_with_fake_ai(rag_dir, monkeypatch):
     assert backup.read_text(encoding="utf-8") == raw
     # File đã có heading -> /rag tra được ngay
     assert rag_service.search("ghi chu dau tu")
+
+
+def test_clean_file_long_input_is_processed_sequentially(rag_dir, monkeypatch):
+    paragraphs = [
+        f"Đoạn {i} về quản trị rủi ro và chiến lược đầu tư. " * 80
+        for i in range(1, 10)
+    ]
+    raw = "\n\n".join(paragraphs)
+    assert len(raw) > rag_clean_service.CLEAN_CHUNK_MAX_CHARS
+    _write("dai.md", raw)
+
+    calls: list[str] = []
+
+    def fake_ai(part: str) -> str:
+        calls.append(part)
+        return "## Phần kiến thức\n\n" + part
+
+    monkeypatch.setattr(rag_clean_service, "_clean_via_ai", fake_ai)
+    reply = rag_clean_service.clean_file("dai.md")
+
+    assert reply.startswith("✅")
+    assert len(calls) >= 2
+    assert all(len(part) <= rag_clean_service.CLEAN_CHUNK_MAX_CHARS for part in calls)
+    assert f"Xử lý tuần tự: {len(calls)} phần" in reply
+    output = (rag_service.RAG_DIR / "dai.md").read_text(encoding="utf-8")
+    assert "Đoạn 1" in output and "Đoạn 9" in output
+    assert (rag_service.RAG_DIR / "_goc" / "dai.md").read_text(encoding="utf-8") == raw
+
+
+def test_clean_file_middle_part_failure_keeps_original(rag_dir, monkeypatch):
+    raw = "\n\n".join(
+        f"Khối {i}: nội dung quan trọng về DCA. " * 90 for i in range(1, 8)
+    )
+    _write("loi-giua.md", raw)
+    calls = 0
+
+    def fake_ai(part: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("provider sập giữa chừng")
+        return "## Kiến thức\n\n" + part
+
+    monkeypatch.setattr(rag_clean_service, "_clean_via_ai", fake_ai)
+    reply = rag_clean_service.clean_file("loi-giua.md")
+
+    assert "CHƯA ghi đè" in reply
+    assert "phần 2/" in reply
+    assert (rag_service.RAG_DIR / "loi-giua.md").read_text(encoding="utf-8") == raw
+
+
+def test_backup_preserves_subdirectory_structure(rag_dir):
+    _write("a/trung.md", "bản gốc a")
+    _write("b/trung.md", "bản gốc b")
+    pa = rag_clean_service.resolve_path("a/trung.md")
+    pb = rag_clean_service.resolve_path("b/trung.md")
+    ba = rag_clean_service._backup_and_write(pa, "bản gốc a", "# A\nđã dọn")
+    bb = rag_clean_service._backup_and_write(pb, "bản gốc b", "# B\nđã dọn")
+    assert ba != bb
+    assert ba.read_text(encoding="utf-8") == "bản gốc a"
+    assert bb.read_text(encoding="utf-8") == "bản gốc b"
 
 
 def test_clean_file_ai_failure_keeps_original(rag_dir, monkeypatch):
