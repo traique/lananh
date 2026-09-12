@@ -25,7 +25,7 @@ Repository được thiết kế cho **một chủ sở hữu**:
 ### Trợ lý chung
 
 - Provider chain: 9Router (gateway OpenAI-compatible) → Groq (miễn phí) → OpenRouter (miễn phí) → AI Studio key 1 → key 2.
-- Tự cooldown provider hết quota và probe lại 9Router; 9Router chạm timeout (mặc định 120s) thì chuyển provider luôn, không retry thêm lượt nữa.
+- Tự cooldown provider hết quota và probe lại 9Router; 9Router chạm timeout (mặc định 45s) thì chuyển provider luôn, không retry thêm lượt nữa.
 - Tác vụ cần Google Search thật (`require_real_search`) dùng riêng 1 chuỗi: Groq `compound-mini` (tool search tích hợp, miễn phí) → Gemini grounding (API key 1/2) - bỏ qua 9Router và OpenRouter vì không đảm bảo có tool search thật.
 - Lịch sử theo phiên và trí nhớ dài hạn trên Supabase Postgres.
 - Ghi chú, reminder và facts danh mục qua ngôn ngữ tự nhiên.
