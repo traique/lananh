@@ -267,18 +267,14 @@ _DISCLAIMER_HINTS = (
     "trong quá khứ không đảm bảo",
 )
 
-# Disclaimer CỐ ĐỊNH, không phụ thuộc LLM diễn giải lại mỗi lần. Bám theo
-# Luật Chứng khoán Điều 12 (cấm ngôn từ cam kết lợi nhuận/chắc chắn sinh
-# lời) và thông lệ "kết quả quá khứ không đảm bảo tương lai" - quan trọng
-# với Lan Anh vì báo cáo có thể trích tỷ lệ thắng từ backtest lịch sử
-# (stock/backtest.py), dễ bị đọc nhầm thành lời hứa cho tương lai nếu không
-# nói rõ. clean_analysis_output() đã lo việc LLM tự thêm/lặp disclaimer -
-# hàm ensure_disclaimer() bên dưới lo trường hợp ngược lại: LLM QUÊN không
-# thêm dòng nào cả.
+# Disclaimer CỐ ĐỊNH, không phụ thuộc LLM diễn giải lại mỗi lần. Giữ câu
+# chữ trung tính vì backtest là dữ liệu TÙY CHỌN: runtime Render hiện chặn
+# heavy backtest và báo cáo chỉ được nhắc backtest khi có thống kê thật cho
+# đúng setup. clean_analysis_output() lo việc LLM tự thêm/lặp disclaimer;
+# ensure_disclaimer() bên dưới lo trường hợp LLM quên dòng cảnh báo.
 STANDARD_DISCLAIMER = (
     "Thông tin trên chỉ mang tính tham khảo, không phải khuyến nghị đầu tư; "
-    "số liệu backtest/thắng thua trong quá khứ không đảm bảo kết quả tương lai. "
-    "Quyết định cuối cùng và rủi ro thuộc về anh nha."
+    "quyết định cuối cùng và rủi ro thuộc về anh nha."
 )
 
 # Đoạn dài hơn ngưỡng này được coi là nội dung phân tích thật, không phải
