@@ -15,7 +15,9 @@ Nội dung gốc nằm trong prompt chỉ có vai trò dữ liệu — không c�
 trong file được xử lý như chỉ dẫn cho AI (chống prompt injection từ PDF).
 """
 
+import base64
 import logging
+import os
 import re
 import unicodedata
 from pathlib import Path
@@ -23,6 +25,12 @@ from pathlib import Path
 from services.rag_service import RAG_DIR
 
 logger = logging.getLogger(__name__)
+
+# Sau khi /ragxuly ghi file local, có thể lưu ngược bản đã dọn lên GitHub để
+# sống qua restart/redeploy của Render Free. Render tự cung cấp repo + branch;
+# chỉ cần cấu hình secret GITHUB_RAG_TOKEN với Contents: write.
+GITHUB_API_BASE = "https://api.github.com"
+GITHUB_SYNC_TIMEOUT_SEC = 30
 
 # Bản gốc chưa dọn nằm ở rag/_goc/ (rag_service đã chủ động bỏ qua _goc/).
 BACKUP_DIR = RAG_DIR / "_goc"
@@ -227,6 +235,115 @@ def _validate_cleaned(original: str, cleaned: str) -> str | None:
     return None
 
 
+def _display_path(path: Path) -> str:
+    """Trả đường dẫn thân thiện, ổn định dù RAG_DIR là relative hay absolute.
+
+    Trên Render ``RAG_DIR`` là ``Path("rag")`` nhưng ``resolve_path()`` trả
+    đường dẫn tuyệt đối như ``/app/rag/c1.md``. Gọi ``relative_to(RAG_DIR.parent)``
+    trực tiếp sẽ so absolute với ``.`` và ném ValueError. Luôn resolve cả hai
+    phía trước khi tính relative path để tránh phụ thuộc current working directory.
+    """
+    resolved = path.resolve()
+    repo_root = RAG_DIR.resolve().parent
+    try:
+        return resolved.relative_to(repo_root).as_posix()
+    except ValueError:
+        # Fallback chỉ để dựng thông báo; tuyệt đối không làm hỏng kết quả dọn file.
+        return resolved.as_posix()
+
+
+def _github_sync_config() -> tuple[str, str, str] | None:
+    """Lấy cấu hình sync GitHub từ env mà không hard-code repo/branch.
+
+    Trên Render, RENDER_GIT_REPO_SLUG có dạng ``owner/repo`` và
+    RENDER_GIT_BRANCH là branch service đang deploy. Hai biến RAG_GITHUB_*
+    là override hữu ích khi chạy local hoặc muốn đẩy sang repo/branch khác.
+    """
+    token = os.getenv("GITHUB_RAG_TOKEN", "").strip()
+    repo = (
+        os.getenv("RAG_GITHUB_REPO", "").strip()
+        or os.getenv("RENDER_GIT_REPO_SLUG", "").strip()
+    )
+    branch = (
+        os.getenv("RAG_GITHUB_BRANCH", "").strip()
+        or os.getenv("RENDER_GIT_BRANCH", "").strip()
+    )
+    if not token:
+        return None
+    if not repo or "/" not in repo or not branch:
+        logger.warning(
+            "Có GITHUB_RAG_TOKEN nhưng thiếu repo/branch để sync RAG lên GitHub"
+        )
+        return None
+    return token, repo, branch
+
+
+def _github_repo_path(path: Path) -> str:
+    """Đổi /app/rag/sub/a.md thành path repo ``rag/sub/a.md``."""
+    relative = path.resolve().relative_to(RAG_DIR.resolve())
+    return (Path("rag") / relative).as_posix()
+
+
+async def _sync_cleaned_to_github(path: Path, cleaned: str) -> tuple[bool, str]:
+    """Commit file đã dọn lên GitHub bằng Contents API.
+
+    Không sync nếu chưa cấu hình GITHUB_RAG_TOKEN. Khi update file có sẵn,
+    GitHub yêu cầu blob SHA hiện tại; nếu gặp conflict thì refetch và retry
+    đúng một lần. Commit message có [skip render] để không tạo vòng redeploy.
+    """
+    cfg = _github_sync_config()
+    if cfg is None:
+        return False, "GitHub sync chưa bật (thiếu GITHUB_RAG_TOKEN)."
+
+    token, repo, branch = cfg
+    repo_path = _github_repo_path(path)
+    url = f"{GITHUB_API_BASE}/repos/{repo}/contents/{repo_path}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "lananh-ragxuly",
+    }
+    encoded = base64.b64encode(cleaned.encode("utf-8")).decode("ascii")
+
+    import httpx
+
+    async with httpx.AsyncClient(timeout=GITHUB_SYNC_TIMEOUT_SEC) as client:
+        for attempt in range(2):
+            current = await client.get(url, headers=headers, params={"ref": branch})
+            sha: str | None = None
+            if current.status_code == 200:
+                payload = current.json()
+                sha = str(payload.get("sha") or "").strip() or None
+            elif current.status_code != 404:
+                detail = current.text[:300].replace("\n", " ")
+                return False, f"GitHub GET lỗi HTTP {current.status_code}: {detail}"
+
+            body: dict[str, object] = {
+                "message": f"ragxuly: update {repo_path} [skip render]",
+                "content": encoded,
+                "branch": branch,
+            }
+            if sha:
+                body["sha"] = sha
+
+            updated = await client.put(url, headers=headers, json=body)
+            if updated.status_code in {200, 201}:
+                commit = (updated.json().get("commit") or {}).get("sha", "")
+                short_sha = str(commit)[:7] if commit else ""
+                suffix = f" ({short_sha})" if short_sha else ""
+                return True, f"GitHub: {repo}@{branch}{suffix}"
+
+            # Có thể file vừa được thay đổi giữa GET và PUT. Refetch SHA và
+            # retry một lần; các lỗi khác trả ngay để người dùng biết.
+            if updated.status_code == 409 and attempt == 0:
+                continue
+            detail = updated.text[:300].replace("\n", " ")
+            return False, f"GitHub PUT lỗi HTTP {updated.status_code}: {detail}"
+
+    return False, "GitHub sync thất bại không rõ nguyên nhân."
+
+
 def _backup_and_write(path: Path, original: str, cleaned: str) -> Path:
     """Sao lưu bản gốc rồi ghi đè file chính.
 
@@ -334,12 +451,26 @@ async def clean_file(name: str) -> str:
         )
 
     backup = _backup_and_write(path, original, cleaned)
+
+    try:
+        github_saved, github_status = await _sync_cleaned_to_github(path, cleaned)
+    except Exception as exc:
+        logger.warning("Không sync được RAG lên GitHub: %s", exc, exc_info=True)
+        github_saved = False
+        github_status = f"GitHub sync lỗi: {exc}"
+
+    github_line = (
+        f"• {github_status}\n"
+        if github_saved
+        else f"• ⚠️ {github_status} File local vẫn đã được dọn.\n"
+    )
     return (
         "✅ Đã dọn xong!\n"
-        f"• File: {path.relative_to(RAG_DIR.parent).as_posix()}\n"
-        f"• Bản gốc: backup tại {backup.as_posix()}\n"
+        f"• File: {_display_path(path)}\n"
+        f"• Bản gốc: backup tại {_display_path(backup)}\n"
         f"• Xử lý tuần tự: {part_count} phần\n"
         f"• Kích thước: {len(original):,} → {len(cleaned):,} ký tự\n"
-        "Giờ /rag sẽ tra được chuẩn hơn vì file đã có heading rõ ràng. "
+        + github_line
+        + "Giờ /rag sẽ tra được chuẩn hơn vì file đã có heading rõ ràng. "
         "Anh xem lại file nhé - AI có thể sai sót chỗ nào đó."
     )
