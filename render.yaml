@@ -12,13 +12,13 @@ services:
       - key: TELEGRAM_TOKEN
         sync: false
       - key: ALLOWED_USER_ID
-        value: 1274613019
+        sync: false
       - key: ROUTER9_API_KEY
         sync: false
       - key: ROUTER9_BASE_URL
-        value: https://ninerouter-v2.onrender.com/v1
+        sync: false
       - key: ROUTER9_MODEL
-        value: gpt-4o-mini
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: WEBHOOK_SECRET
@@ -48,7 +48,7 @@ services:
       - key: ZALO_CONTROLLER_ID
         sync: false
       - key: ZALO_BOT_ACCOUNT_ID
-        value: 350994751580505507
+        sync: false
       - key: ZALO_BRIDGE_SECRET
         generateValue: true
       - key: ZALO_CONTROL_PORT
@@ -83,7 +83,7 @@ services:
       - key: API_QUOTA_COOLDOWN_SEC
         value: "3600"
       - key: ROUTER9_CALL_TIMEOUT_SEC
-        value: "45"
+        value: "120"
       - key: ROUTER9_STEP_DELAY_SEC
         value: "3"
       - key: ROUTER9_MAX_CONCURRENCY
