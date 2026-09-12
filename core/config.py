@@ -221,19 +221,21 @@ DAILY_DIGEST_HOUR_VN = _env_int("DAILY_DIGEST_HOUR_VN", 8)
 
 # Bản tin buổi sáng tổng hợp từ RSS, gửi qua Zalo + Zoom cho chủ bot lúc
 # MORNING_NEWS_HOUR_VN giờ VN - xem services/morning_news.py. Nguồn RSS mặc
-# định gồm kinh doanh/chứng khoán + tin tổng hợp VnExpress/Tuổi Trẻ; đổi qua
+# định gồm kinh doanh/chứng khoán + tin tổng hợp VnExpress/Tuổi Trẻ/GenK; đổi qua
 # env MORNING_NEWS_RSS_FEEDS (phân cách bằng dấu phẩy) nếu muốn nguồn khác.
 MORNING_NEWS_ENABLED = _env_bool("MORNING_NEWS_ENABLED", True)
 MORNING_NEWS_HOUR_VN = _env_int("MORNING_NEWS_HOUR_VN", 8)
 _MORNING_NEWS_RSS_FEEDS_RAW = os.getenv(
     "MORNING_NEWS_RSS_FEEDS",
     # Giữ nguyên 3 nguồn kinh tế/chứng khoán hiện tại, đồng thời bổ sung
-    # 2 feed tin tổng hợp để bản tin sáng có thêm thời sự nổi bật.
+    # các feed tin tổng hợp VnExpress/Tuổi Trẻ/GenK để bản tin sáng có thêm
+    # thời sự và công nghệ nổi bật.
     "https://vnexpress.net/rss/kinh-doanh.rss,"
     "https://cafef.vn/thi-truong-chung-khoan.rss,"
     "https://vietstock.vn/830/chung-khoan/co-phieu.rss,"
     "https://vnexpress.net/rss/tin-moi-nhat.rss,"
-    "https://tuoitre.vn/home.rss",
+    "https://tuoitre.vn/home.rss,"
+    "https://genk.vn/rss/home.rss",
 )
 MORNING_NEWS_RSS_FEEDS = [url.strip() for url in _MORNING_NEWS_RSS_FEEDS_RAW.split(",") if url.strip()]
 
