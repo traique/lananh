@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from stock import backtest
 from stock import report_format as rfmt
 from stock.schemas import BearCase, BullCase, FinalDecision, NewsAnalysis, ask_structured
 from core import config
@@ -129,18 +130,30 @@ async def run_manager_step(
     bull_block = f"\n[PHE LẠC QUAN]\n{bull.model_dump_json(indent=2)}" if bull else "\n[PHE LẠC QUAN]: không có dữ liệu"
     bear_block = f"\n[PHE THẬN TRỌNG]\n{bear.model_dump_json(indent=2)}" if bear else "\n[PHE THẬN TRỌNG]: không có dữ liệu"
     d = ctx.decision
+    setup_backtest_line = backtest.format_setup_stats_line(d.setup_type)
+    if setup_backtest_line:
+        backtest_context = (
+            "Có thống kê backtest lịch sử cho đúng setup hiện tại (chỉ là dữ liệu quá khứ, không phải bảo đảm):\n"
+            f"{setup_backtest_line}\n"
+        )
+    else:
+        backtest_context = (
+            "Hiện KHÔNG có thống kê backtest đủ điều kiện cho setup này trong runtime/report; "
+            "không được mô tả hệ thống là 'đã qua backtest'.\n"
+        )
     prompt = (
         f"Bạn là Research Manager, nghe xong buổi tranh luận nội bộ về mã {ctx.symbol} và phải chốt 1 action "
         f"CUỐI CÙNG. Bạn ĐƯỢC PHÉP giữ nguyên hoặc đổi khác với action của hệ thống rule-based bên dưới, dựa "
         f"trên sức thuyết phục của 2 phe tranh luận và tin tức.\n\n"
-        f"[QUYẾT ĐỊNH CỦA HỆ THỐNG RULE-BASED - đã qua backtest, có gate định lượng, nhưng bạn không bắt buộc "
-        f"phải đồng ý]\n"
+        f"[QUYẾT ĐỊNH CỦA HỆ THỐNG RULE-BASED - có gate định lượng, nhưng bạn không bắt buộc phải đồng ý]\n"
         f"Action: {d.action} | Confidence: {d.confidence} | Setup: {d.setup_type} | Regime: {d.market_regime}\n"
-        f"Lý do hệ thống: {'; '.join(d.reasons[:6]) if d.reasons else '(không có)'}"
+        f"Lý do hệ thống: {'; '.join(d.reasons[:6]) if d.reasons else '(không có)'}\n"
+        f"{backtest_context}"
         f"{news_block}{bull_block}{bear_block}\n\n"
-        f"Nếu bạn chọn action KHÁC action hệ thống, reasoning PHẢI nêu rõ vì sao dám đi ngược lại 1 hệ thống đã "
-        f"backtest - đây là quyết định định tính, chưa có kiểm định số liệu, nên lý do phải thật thuyết phục "
-        f"(ví dụ: tin tức quá mới/quá lớn mà hệ thống kỹ thuật chưa kịp phản ánh), không đổi chỉ vì thích khác."
+        f"Nếu bạn chọn action KHÁC action hệ thống, reasoning PHẢI nêu rõ vì sao đi ngược lại hệ thống "
+        f"rule-based có gate định lượng. Đây là quyết định định tính, không tự động có kiểm định số liệu, nên lý do "
+        f"phải thật thuyết phục (ví dụ: tin tức quá mới/quá lớn mà hệ thống kỹ thuật chưa kịp phản ánh), "
+        f"không đổi chỉ vì thích khác."
     )
     return await ask_structured(FinalDecision, prompt, step_name="manager")
 
