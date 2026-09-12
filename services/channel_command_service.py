@@ -29,7 +29,8 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm, chỉ admin)
 /rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/ (chỉ admin)
 /ragxuly <file> — dọn file md OCR trong rag/ (chỉ admin)
-/bantinsang — gửi ngay bản tin buổi sáng (test thủ công, chỉ admin; bình thường tự gửi lúc 8h)
+/bangtinsang — gửi ngay Bản tin sáng tới cả Zalo + Zoom (chỉ admin; bình thường tự gửi lúc 8h)
+/tintuc — đọc Điểm tin mới ngay tại đúng kênh đang gọi lệnh (chỉ admin)
 /nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo
   (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom, chỉ admin)"""
 
@@ -212,8 +213,22 @@ async def _morning_news_now() -> list[str]:
         kenh.append("Zoom")
     if len(kenh) < 2:
         thieu = "Zoom" if "Zoom" not in kenh else "Zalo"
-        return [f"✅ Đã gửi bản tin buổi sáng qua {' và '.join(kenh)} (KHÔNG gửi được {thieu} - chưa pair hoặc lỗi, xem log)."]
-    return ["✅ Đã gửi bản tin buổi sáng."]
+        return [f"✅ Đã gửi Bản tin sáng qua {' và '.join(kenh)} (KHÔNG gửi được {thieu} - chưa pair hoặc lỗi, xem log)."]
+    return ["✅ Đã gửi Bản tin sáng tới Zalo và Zoom."]
+
+
+async def _news_now() -> list[str]:
+    """Tạo điểm tin nhưng KHÔNG broadcast.
+
+    ``maybe_handle_command`` trả chuỗi này cho channel_chat_service, nên nội
+    dung chỉ đi ngược về đúng Zalo/Zoom nơi người dùng vừa gõ ``/tintuc``.
+    """
+    from services import morning_news
+
+    content = await morning_news.build_digest(mode="on_demand")
+    if not content:
+        return ["Không tổng hợp được điểm tin lúc này (các nguồn RSS đều lỗi hoặc AI trả lời bất thường)."]
+    return [content]
 
 
 async def _generate_image(argument: str, is_admin: bool, channel: str) -> tuple[list[str], str | None]:
@@ -308,7 +323,7 @@ async def maybe_handle_command(
     # không thể vô tình/cố ý phá cấu hình chung của cả bot.
     # /rag: kiến thức cá nhân trong rag/ nên cũng khóa admin như /agent - thành
     # viên thường không được mổ xẻ kho kiến thức riêng của chủ bot.
-    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model", "/thongke", "/agent", "/rag", "/ragxuly", "/bantinsang"} and not is_admin:
+    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model", "/thongke", "/agent", "/rag", "/ragxuly", "/bangtinsang", "/bantinsang", "/tintuc"} and not is_admin:
         return ["Lệnh này chỉ dành cho admin."], None
     if command == "/agent":
         return await _agent(user_id, argument, channel)
@@ -316,8 +331,10 @@ async def maybe_handle_command(
         return await _rag(user_id, argument)
     if command == "/ragxuly":
         return await _ragxuly(user_id, argument)
-    if command == "/bantinsang":
+    if command in {"/bangtinsang", "/bantinsang"}:
         return await _morning_news_now(), None
+    if command == "/tintuc":
+        return await _news_now(), None
     if command == "/status":
         state = orchestrator.get_provider_state_snapshot()
         return [f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}"], None
