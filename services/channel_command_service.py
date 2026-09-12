@@ -191,11 +191,9 @@ async def _ragxuly(user_id: int, name: str) -> tuple[list[str], str | None]:
         ], None
     from services import rag_clean_service
 
-    # clean_file tự bọc mọi lỗi thành thông báo thân thiện; chạy thread vì
-    # bên trong có asyncio.run() (orchestrator cần event loop riêng).
-    import asyncio
-
-    text = await asyncio.to_thread(rag_clean_service.clean_file, name)
+    # Giữ orchestrator/provider_state/asyncpg trên cùng event loop của web app.
+    # Mỗi part AI được await tuần tự nên event loop vẫn phục vụ request khác.
+    text = await rag_clean_service.clean_file(name)
     return [text], None
 
 

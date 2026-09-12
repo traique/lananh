@@ -187,22 +187,19 @@ TÀI LIỆU CẦN DÓN:
 >>>"""
 
 
-def _clean_via_ai(precleaned: str) -> str:
-    """Gọi AI dọn 1 lượt qua orchestrator (provider chain + retry sẵn có).
+async def _clean_via_ai(precleaned: str) -> str:
+    """Gọi AI dọn 1 phần trên CHÍNH event loop của ứng dụng.
 
-    Hàm đồng bộ - caller chạy trong thread riêng để không chặn event loop.
+    Không dùng ``asyncio.run()`` trong worker thread. ``orchestrator`` dùng
+    provider_state + asyncpg pool toàn cục được tạo trên event loop chính;
+    đem các object đó sang loop phụ có thể gây ``Event loop is closed`` hoặc
+    ``another operation is in progress`` và làm web process mất ổn định.
     """
-    import asyncio
-
     from ai import orchestrator
 
     prompt = _CLEAN_INSTRUCTION.replace("{source}", precleaned)
-
-    async def _run():
-        response = await orchestrator.ask(prompt)
-        return (getattr(response, "text", "") or "").strip()
-
-    return asyncio.run(_run())
+    response = await orchestrator.ask(prompt)
+    return (getattr(response, "text", "") or "").strip()
 
 
 def _validate_cleaned(original: str, cleaned: str) -> str | None:
@@ -245,61 +242,53 @@ def _backup_and_write(path: Path, original: str, cleaned: str) -> Path:
     return backup
 
 
-def _clean_parts(precleaned: str) -> tuple[str | None, str | None, int]:
-    """Dọn tuần tự tất cả phần, không ghi file cho tới khi mọi phần đạt.
+async def _clean_parts(precleaned: str) -> tuple[str | None, str | None, int]:
+    """Dọn tuần tự tất cả phần trên event loop chính.
 
-    Returns (cleaned, error_message, part_count). ``cleaned`` chỉ có giá trị
-    khi toàn bộ part thành công + đạt validate. Mỗi part có timeout riêng nên
-    file dài không bị ép vào một ngân sách 180 giây cho toàn bộ tác vụ.
+    Mỗi lượt AI được ``await`` nên không chặn các request Zalo/Telegram khác.
+    ``asyncio.wait_for`` đặt timeout riêng cho từng part mà không tạo thread /
+    event loop phụ, vì vậy asyncpg pool luôn được dùng đúng loop sở hữu nó.
     """
-    import concurrent.futures
+    import asyncio
 
     parts = _split_for_cleaning(precleaned)
     if not parts:
         return None, "Bản preclean rỗng.", 0
 
     cleaned_parts: list[str] = []
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    try:
-        for index, part in enumerate(parts, 1):
-            future = executor.submit(_clean_via_ai, part)
-            try:
-                cleaned = future.result(timeout=180)
-            except concurrent.futures.TimeoutError:
-                future.cancel()
-                return (
-                    None,
-                    f"AI dọn phần {index}/{len(parts)} quá 3 phút không xong.",
-                    len(parts),
-                )
-            except Exception as exc:
-                logger.warning(
-                    "AI dọn /ragxuly lỗi ở phần %s/%s: %s",
-                    index,
-                    len(parts),
-                    exc,
-                )
-                return (
-                    None,
-                    f"AI lỗi ở phần {index}/{len(parts)} ({exc}).",
-                    len(parts),
-                )
+    for index, part in enumerate(parts, 1):
+        try:
+            cleaned = await asyncio.wait_for(_clean_via_ai(part), timeout=180)
+        except asyncio.TimeoutError:
+            return (
+                None,
+                f"AI dọn phần {index}/{len(parts)} quá 3 phút không xong.",
+                len(parts),
+            )
+        except Exception as exc:
+            logger.warning(
+                "AI dọn /ragxuly lỗi ở phần %s/%s: %s",
+                index,
+                len(parts),
+                exc,
+            )
+            return (
+                None,
+                f"AI lỗi ở phần {index}/{len(parts)} ({exc}).",
+                len(parts),
+            )
 
-            reason = _validate_cleaned(part, cleaned)
-            if reason is not None:
-                logger.warning(
-                    "Từ chối bản dọn phần %s/%s: %s", index, len(parts), reason
-                )
-                return (
-                    None,
-                    f"Phần {index}/{len(parts)} không đạt kiểm định ({reason}).",
-                    len(parts),
-                )
-            cleaned_parts.append(cleaned.strip())
-    finally:
-        # wait=False rất quan trọng: nếu future timeout thì context-manager
-        # mặc định sẽ wait=True và vô tình làm lệnh vẫn treo sau thông báo timeout.
-        executor.shutdown(wait=False, cancel_futures=True)
+        reason = _validate_cleaned(part, cleaned)
+        if reason is not None:
+            logger.warning(
+                "Từ chối bản dọn phần %s/%s: %s", index, len(parts), reason
+            )
+            return (
+                None,
+                f"Phần {index}/{len(parts)} không đạt kiểm định ({reason}).",
+                len(parts),
+            )
+        cleaned_parts.append(cleaned.strip())
 
     merged = "\n\n".join(cleaned_parts).strip()
     whole_reason = _validate_cleaned(precleaned, merged)
@@ -309,7 +298,7 @@ def _clean_parts(precleaned: str) -> tuple[str | None, str | None, int]:
     return merged, None, len(parts)
 
 
-def clean_file(name: str) -> str:
+async def clean_file(name: str) -> str:
     """Flow chính /ragxuly: preclean → chia part → AI tuần tự → validate → ghi.
 
     Trả về thông báo sẵn sàng gửi người dùng. Raise ValueError/FileNotFoundError
@@ -337,7 +326,7 @@ def clean_file(name: str) -> str:
         )
 
     precleaned = preclean(original)
-    cleaned, error, part_count = _clean_parts(precleaned)
+    cleaned, error, part_count = await _clean_parts(precleaned)
     if error is not None or cleaned is None:
         return (
             f"⚠️ {error or 'Không tạo được bản dọn.'} Em CHƯA ghi đè file; bản gốc vẫn nguyên vẹn. "
