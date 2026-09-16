@@ -301,3 +301,19 @@ async def test_tool_xem_rss_duoc_dang_ky_va_goi_dung(monkeypatch):
     )
 
     assert "Tin A" in result
+
+@pytest.mark.asyncio
+async def test_tim_web_tool_reuses_shared_web_search(monkeypatch):
+    from services import web_search
+
+    class SearchResult:
+        text = "[web] https://example.com nguồn thật"
+
+    async def fake_search(query, **kwargs):
+        assert query == "tin công nghệ Việt Nam"
+        return SearchResult()
+
+    monkeypatch.setattr(web_search, "search_web", fake_search)
+    text = await agent_service._tool_tim_web(" tin công nghệ Việt Nam ")
+    assert text == "[web] https://example.com nguồn thật"
+    assert "tim_web" in agent_service._TOOLS

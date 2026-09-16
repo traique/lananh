@@ -11,7 +11,9 @@ không cần chạy trình duyệt headless. Đọc RSS qua thư viện feedpars
 rồi server tự fetch hộ, phải đảm bảo không thể trỏ vào localhost/mạng nội bộ/
 endpoint metadata của Render/cloud khác - adapt từ agent_reach/utils/url.py
 (dự án Agent-Reach, MIT License) vì đã xử lý khá đầy đủ các ca (IP literal,
-hostname nội bộ, userinfo giả mạo, ký tự điều khiển...).
+hostname nội bộ, userinfo giả mạo, ký tự điều khiển...). Detector challenge
+page của Jina/Cloudflare bên dưới cũng adapt cùng repo để tránh coi CAPTCHA
+là nội dung thật.
 """
 import ipaddress
 import logging
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 _JINA_READER_BASE_URL = "https://r.jina.ai/"
 
 _BLOCKED_HOSTNAMES = {"localhost", "localhost.localdomain", "metadata.google.internal"}
+_ANTIBOT_SCAN_BYTES = 4096
 
 _client: Optional[httpx.AsyncClient] = None
 
@@ -125,6 +128,24 @@ def _extract_readable_text(html: str) -> str:
     return "\n".join(line for line in lines if line)
 
 
+def _is_antibot_page(body: bytes) -> bool:
+    """Nhận diện challenge page có tín hiệu mạnh, tránh coi CAPTCHA là nội dung."""
+    sample = body[:_ANTIBOT_SCAN_BYTES].decode("utf-8", errors="ignore").casefold()
+    jina_captcha_warning = "warning:" in sample and "requiring captcha" in sample
+    challenge_structure = any(
+        marker in sample
+        for marker in (
+            "title: just a moment...",
+            "## performing security verification",
+            "title: attention required! | cloudflare",
+        )
+    )
+    cloudflare_block = "title: attention required! | cloudflare" in sample and (
+        "ray id" in sample or "/cdn-cgi/challenge-platform/" in sample
+    )
+    return (jina_captcha_warning and challenge_structure) or cloudflare_block
+
+
 async def _fetch_direct(url: str) -> str:
     """Fallback khi Jina Reader lỗi/rỗng: 1 số trang (đặc biệt tin tức VN)
     chặn/rate-limit riêng IP hoặc User-Agent của các dịch vụ reader/proxy
@@ -158,13 +179,18 @@ async def read_url(raw_url: str) -> str:
         response = await _get_client().get(f"{_JINA_READER_BASE_URL}{url}")
         status_code = response.status_code
         if status_code == 200:
-            text = response.text.strip()
+            if _is_antibot_page(response.content):
+                logger.info("Jina Reader trả challenge page cho '%s', thử fetch trực tiếp.", url)
+            else:
+                text = response.text.strip()
     except httpx.HTTPError as exc:
         logger.warning("Jina Reader lỗi mạng cho '%s' (%s), thử fetch trực tiếp.", url, exc)
 
     if not text:
         if status_code is not None and status_code != 200:
-            logger.warning("Jina Reader trả HTTP %d cho '%s', thử fetch trực tiếp.", status_code, url)
+            logger.warning(
+                "Jina Reader trả HTTP %d cho '%s', thử fetch trực tiếp.", status_code, url
+            )
         logger.info("Jina Reader không đọc được '%s', thử fetch trực tiếp.", url)
         text = await _fetch_direct(url)
 

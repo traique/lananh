@@ -16,7 +16,7 @@ from channels import group_commands, zalo_repository, zalo_users
 from core import config, database as db
 from handlers import common
 from handlers.prompt_identity import render_instruction, resolve_prompt_identity
-from services import memory_service, rag_clean_service, rag_service
+from services import memory_service, rag_clean_service, rag_service, web_search
 from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -176,13 +176,13 @@ Rules for what you generate:
 
 User's basic description: {user_desc}"""
 
-PRICE_SEARCH_SYSTEM = """Bạn là trợ lý Lan Anh. Nhiệm vụ của bạn là sử dụng công cụ Google Search để tìm giá cập nhật mới nhất cho sản phẩm: "{product_name}" tại các hệ thống bán lẻ uy tín ở Việt Nam.
+PRICE_SEARCH_SYSTEM = """Bạn là trợ lý Lan Anh. Nhiệm vụ của bạn là sử dụng công cụ tìm kiếm web để tìm giá cập nhật mới nhất cho sản phẩm: "{product_name}" tại các hệ thống bán lẻ uy tín ở Việt Nam.
 
 YÊU CẦU QUAN TRỌNG:
 1. So khớp CHÍNH XÁC phiên bản/dung lượng.
 2. BẮT BUỘC phải trích xuất URL (đường link) gốc của trang sản phẩm để người dùng bấm vào xem.
 3. Không tự bịa giá. Nếu hệ thống báo hết hàng hoặc không có giá, hãy ghi chú rõ.
-4. BẮT BUỘC dùng công cụ Google Search TRƯỚC, rồi mới trả lời - không được trả lời dựa trên trí nhớ/kiến thức đã học sẵn của bạn. Kiến thức nội bộ của bạn có thể đã LỖI THỜI (sản phẩm mới ra mắt sau thời điểm bạn được huấn luyện). Nếu kết quả tìm kiếm cho thấy sản phẩm đã có bán/có giá, PHẢI tin theo kết quả tìm kiếm dù điều đó trái với những gì bạn "nhớ". Chỉ được kết luận "chưa ra mắt" hoặc "chưa có giá" khi kết quả tìm kiếm thực sự không tìm thấy thông tin nào về sản phẩm này.
+4. BẮT BUỘC dùng công cụ tìm kiếm web TRƯỚC, rồi mới trả lời - không được trả lời dựa trên trí nhớ/kiến thức đã học sẵn của bạn. Kiến thức nội bộ của bạn có thể đã LỖI THỜI (sản phẩm mới ra mắt sau thời điểm bạn được huấn luyện). Nếu kết quả tìm kiếm cho thấy sản phẩm đã có bán/có giá, PHẢI tin theo kết quả tìm kiếm dù điều đó trái với những gì bạn "nhớ". Chỉ được kết luận "chưa ra mắt" hoặc "chưa có giá" khi kết quả tìm kiếm thực sự không tìm thấy thông tin nào về sản phẩm này.
 5. ƯU TIÊN SO SÁNH NHIỀU CỬA HÀNG KHÁC NHAU (vd Thế Giới Di Động, CellphoneS, FPT Shop, Hoàng Hà Mobile...) - hãy chủ động tìm kiếm thêm để có giá từ ít nhất 2-3 cửa hàng khác nhau nếu có thể. CHỈ liệt kê nhiều dòng của CÙNG 1 cửa hàng (vd nhiều dung lượng/màu) khi thực sự không tìm được cửa hàng nào khác bán sản phẩm này.
 
 Trình bày kết quả theo ĐÚNG định dạng list (KHÔNG dùng bảng markdown vì Telegram không hiển thị được bảng) và văn phong sau:
@@ -208,7 +208,7 @@ QUAN TRỌNG VỀ LINK: mỗi link BẮT BUỘC viết đúng cú pháp markdown
 
 # Biến thể của PRICE_SEARCH_SYSTEM dùng khi đã có sẵn kết quả tìm kiếm thật
 # (từ Tavily, xem _search_price() bên dưới) thay vì yêu cầu model tự gọi
-# công cụ Google Search - giữ đúng văn phong/định dạng trả lời, chỉ đổi phần
+# công cụ tìm kiếm web - giữ đúng văn phong/định dạng trả lời, chỉ đổi phần
 # nguồn dữ liệu và nhắc model không tự bịa từ trí nhớ.
 PRICE_SEARCH_SYSTEM_FROM_RESULTS = """Bạn là trợ lý Lan Anh. Dưới đây là kết quả tìm kiếm web THẬT (qua Tavily) cho sản phẩm "{product_name}" tại các hệ thống bán lẻ uy tín ở Việt Nam.
 
@@ -296,39 +296,47 @@ async def prompt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await telemetry.failure(prompt_id, "prompt_generator", e)
         await update.message.reply_text("❌ Có lỗi khi tạo prompt. Hãy thử lại sau giây lát.")
 
-# Nhánh Google Search tool (Gemini) dùng làm lưới an toàn khi Tavily lỗi/rỗng
-# - giới hạn chỉ api1 -> api2 (KHÔNG có openrouter) vì bản thân Tavily đã là
-# lưới an toàn đầu tiên đứng trước, xem docstring providers_override trong
-# ai/orchestrator.py::ask(). Nếu về sau muốn thêm openrouter làm lưới cuối,
-# chỉ cần thêm "openrouter" vào list này.
-_PRICE_FALLBACK_PROVIDERS = ["api1", "api2"]
-
-
-_PRICE_FALLBACK_PROVIDERS = ["api1", "api2"]
+# Tavily yếu/lỗi -> Groq Compound web search trước, rồi Google Search grounding.
+# Không dùng OpenRouter ở nhánh /gia vì không có đảm bảo tool search thật.
+_PRICE_FALLBACK_PROVIDERS = ["groq", "api1", "api2"]
 
 
 async def _search_price(product_name: str) -> tuple[str, bool]:
     """Tìm giá sản phẩm: Tavily trước (1 request duy nhất, search_depth="advanced"
     để có nguồn đa dạng hơn basic, kèm giới hạn tối đa 2 kết quả/domain để 1
     shop SEO mạnh không chiếm hết top-N - xem tavily_client.search()), lỗi/
-    rỗng thì fallback công cụ Google Search (Gemini) qua api1 -> api2. Dùng
+    rỗng/yếu thì fallback Groq Compound -> Google Search (api1 -> api2). Dùng
     chung cho cả Telegram (price_cmd) và Zalo/Zoom
     (services/channel_command_service.py::_price).
 
-    Trả về (text, used_fallback) - used_fallback True nghĩa là nhánh
-    api1/api2 (không phải nhánh mặc định router9/groq/...) đã được dùng, để
-    caller gắn nhãn "⚙️ API" giống các lệnh khác.
+    Trả về (text, used_fallback); caller giữ contract cũ để gắn nhãn API khi
+    response provider có đánh dấu fallback.
     """
     search_results: str | None = None
     try:
-        search_results = await tavily_client.search(
+        tavily_response = await tavily_client.search_results(
             f"giá {product_name} chính hãng Việt Nam mua ở đâu",
             max_results=12,
             search_depth="advanced",
             max_results_per_domain=2,
         )
+        if web_search.is_tavily_quality_sufficient(
+            tavily_response, min_results=3, min_domains=3
+        ):
+            search_results = tavily_client.format_search_results(tavily_response)
+        else:
+            logger.info(
+                "Tavily tìm giá %r chỉ có %d kết quả/%d domain; chuyển grounded fallback.",
+                product_name,
+                len(tavily_response.results),
+                len(tavily_response.unique_domains),
+            )
     except tavily_client.TavilyError:
-        logger.warning("Tavily lỗi khi tìm giá %r, chuyển sang Google Search tool.", product_name, exc_info=True)
+        logger.warning(
+            "Tavily lỗi khi tìm giá %r, chuyển grounded fallback.",
+            product_name,
+            exc_info=True,
+        )
 
     if search_results:
         try:
@@ -339,9 +347,15 @@ async def _search_price(product_name: str) -> tuple[str, bool]:
             result_text = (response.text or "").strip()
             if result_text:
                 return result_text, bool(getattr(response, "used_fallback", False))
-            logger.warning("Tavily có kết quả nhưng model không trả lời được cho %r, chuyển sang Google Search tool.", product_name)
+            logger.warning(
+                "Tavily có kết quả nhưng model không trả lời được cho %r, chuyển grounded fallback.",
+                product_name,
+            )
         except Exception:
-            logger.exception("Lỗi khi định dạng giá từ kết quả Tavily cho %r, chuyển sang Google Search tool.", product_name)
+            logger.exception(
+                "Lỗi khi định dạng giá từ kết quả Tavily cho %r, chuyển grounded fallback.",
+                product_name,
+            )
 
     instruction = PRICE_SEARCH_SYSTEM.format(product_name=product_name)
     response = await orchestrator.ask(

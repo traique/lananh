@@ -1,9 +1,9 @@
 """Nhánh Groq của provider-chain (router9 -> groq -> openrouter -> api1 -> api2),
-gateway OpenAI-compatible (core.config.GROQ_BASE_URL/GROQ_API_KEY), miễn phí.
+gateway OpenAI-compatible (core.config.GROQ_BASE_URL/GROQ_API_KEY).
 
 generate_realtime() dùng model GROQ_REALTIME_MODEL (mặc định groq/compound-mini,
 có tool tìm kiếm web tích hợp sẵn) - dành riêng cho tác vụ require_real_search,
-đứng trước api1/api2 (Gemini grounding) trong chuỗi search vì cũng miễn phí.
+đứng trước api1/api2 (Gemini grounding) trong chuỗi search.
 Không dùng cho ask()/chat() thường vì compound-mini chậm hơn model chat thường.
 """
 from typing import Optional
@@ -103,6 +103,7 @@ async def generate_realtime(
             temperature=temperature,
             max_tokens=max_tokens,
             provider_label="Groq realtime",
+            extra_payload={"search_settings": {"country": "vietnam"}},
         )
     if not _has_web_evidence(text):
         raise RealtimeNoEvidenceError("Groq realtime không có dấu hiệu đã tra web thật")

@@ -1,10 +1,11 @@
-"""Tavily web search - dùng làm grounding cho chat khi bật qua /tavily on.
+"""Tavily web search - grounding cho chat khi bật qua /tavily on.
 
-Không thuộc provider-chain (router9/groq/openrouter/api1/api2, xem
-ai/orchestrator.py) - chỉ tra web rồi chèn kết quả vào prompt trước khi gọi
-provider hiện hành, tương tự cách services/tools.py chèn kết quả tool.
+Không thuộc provider-chain. Module giữ cả structured result để caller đánh
+giá chất lượng trước khi quyết định dùng/fallback, đồng thời giữ ``search()``
+trả ``str`` để tương thích các call site cũ.
 """
 import logging
+from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -16,12 +17,38 @@ from core import config, database as db
 logger = logging.getLogger(__name__)
 
 _SETTING_ENABLED = "tavily_enabled"
+_DEFAULT_COUNTRY = "vietnam"
+_DEFAULT_LANGUAGE = "vi"
 
 _client: Optional[httpx.AsyncClient] = None
 
 
 class TavilyError(RuntimeError):
     """Lỗi khi gọi Tavily (chưa cấu hình key, HTTP lỗi, payload rỗng)."""
+
+
+@dataclass(frozen=True)
+class TavilyResult:
+    title: str
+    url: str
+    content: str
+    score: Optional[float] = None
+    published_date: Optional[str] = None
+
+    @property
+    def domain(self) -> str:
+        return _domain_of(self.url)
+
+
+@dataclass(frozen=True)
+class TavilySearchResponse:
+    query: str
+    answer: str
+    results: tuple[TavilyResult, ...]
+
+    @property
+    def unique_domains(self) -> set[str]:
+        return {item.domain for item in self.results if item.url}
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -58,72 +85,107 @@ def _domain_of(url: str) -> str:
         return url
 
 
-async def search(
+def format_search_results(response: TavilySearchResponse) -> str:
+    lines = [f"[Kết quả tìm kiếm web (Tavily) cho: {response.query}]"]
+    if response.answer:
+        lines.append(f"Tóm tắt: {response.answer}")
+    for i, item in enumerate(response.results, start=1):
+        title = item.title or item.url or "?"
+        lines.append(f"{i}. {title} ({item.url})\n{item.content}")
+    return "\n\n".join(lines)
+
+
+async def search_results(
     query: str,
     max_results: int = 0,
     *,
     search_depth: str = "basic",
     max_results_per_domain: Optional[int] = None,
-) -> str:
-    """Tra Tavily, trả về text đã format để chèn làm grounding.
+    country: Optional[str] = _DEFAULT_COUNTRY,
+    language: Optional[str] = _DEFAULT_LANGUAGE,
+) -> TavilySearchResponse:
+    """Tra Tavily và giữ structured result để caller đánh giá chất lượng.
 
-    ``search_depth``: "basic" (1 credit/request, mặc định) hoặc "advanced"
-    (2 credit/request, kết quả sâu/đa dạng nguồn hơn - xem
-    https://docs.tavily.com/documentation/api-credits).
-
-    ``max_results_per_domain``: nếu đặt, chỉ giữ tối đa N kết quả / domain
-    (vd 2) - phòng trường hợp 1 domain SEO mạnh chiếm hết top-N kết quả tìm
-    kiếm tự nhiên (vd nhiều trang biến thể sản phẩm của CÙNG 1 shop), khiến
-    caller (vd /gia, xem handlers/commands.py::_search_price) không có đủ
-    nguồn từ NHIỀU shop khác nhau để so sánh dù chỉ tốn 1 request. None
-    (mặc định) = giữ nguyên, không lọc - dùng cho các trường hợp chat
-    grounding thông thường không cần đa dạng domain.
-
-    Raise TavilyError nếu chưa cấu hình TAVILY_API_KEY hoặc gọi lỗi.
+    ``country`` và ``language`` là ranking boost, không hard-filter. Mặc định
+    ưu tiên Việt Nam + tiếng Việt vì bot phục vụ truy vấn tiếng Việt; caller
+    vẫn có thể truyền ``None`` khi muốn search toàn cầu không localization.
     """
     api_key = await _api_key()
     if not api_key:
         raise TavilyError("Chưa cấu hình TAVILY_API_KEY")
 
+    payload = {
+        "query": query,
+        "max_results": max_results or config.TAVILY_MAX_RESULTS,
+        "include_answer": True,
+        "search_depth": search_depth,
+    }
+    if country:
+        payload["country"] = country
+    if language:
+        payload["language"] = language
+        payload["filter_by_language"] = False
+
     response = await _get_client().post(
         f"{config.TAVILY_BASE_URL}/search",
         headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "query": query,
-            "max_results": max_results or config.TAVILY_MAX_RESULTS,
-            "include_answer": True,
-            "search_depth": search_depth,
-        },
+        json=payload,
     )
     if response.status_code != 200:
         raise TavilyError(f"Tavily trả lỗi HTTP {response.status_code}: {response.text[:250]}")
 
     data = response.json()
-    results = data.get("results") or []
-    if not results and not data.get("answer"):
+    raw_results = data.get("results") or []
+    if not raw_results and not data.get("answer"):
         raise TavilyError("Tavily không trả về kết quả nào")
 
-    if max_results_per_domain is not None:
-        kept = []
-        domain_count: dict[str, int] = {}
-        for item in results:
-            domain = _domain_of(item.get("url", ""))
+    results: list[TavilyResult] = []
+    domain_count: dict[str, int] = {}
+    for item in raw_results:
+        url = str(item.get("url") or "")
+        domain = _domain_of(url)
+        if max_results_per_domain is not None:
             if domain_count.get(domain, 0) >= max_results_per_domain:
                 continue
             domain_count[domain] = domain_count.get(domain, 0) + 1
-            kept.append(item)
-        results = kept
-
-    lines = [f"[Kết quả tìm kiếm web (Tavily) cho: {query}]"]
-    if data.get("answer"):
-        lines.append(f"Tóm tắt: {data['answer']}")
-    for i, item in enumerate(results, start=1):
-        title = item.get("title") or item.get("url") or "?"
-        lines.append(f"{i}. {title} ({item.get('url', '')})\n{item.get('content', '')}")
+        results.append(
+            TavilyResult(
+                title=str(item.get("title") or ""),
+                url=url,
+                content=str(item.get("content") or ""),
+                score=item.get("score"),
+                published_date=item.get("published_date"),
+            )
+        )
 
     try:
         await db.record_provider_call("tavily", search_depth)
     except Exception:
         logger.warning("Không ghi được lượt gọi Tavily vào DB.", exc_info=True)
 
-    return "\n\n".join(lines)
+    return TavilySearchResponse(
+        query=str(data.get("query") or query),
+        answer=str(data.get("answer") or ""),
+        results=tuple(results),
+    )
+
+
+async def search(
+    query: str,
+    max_results: int = 0,
+    *,
+    search_depth: str = "basic",
+    max_results_per_domain: Optional[int] = None,
+    country: Optional[str] = _DEFAULT_COUNTRY,
+    language: Optional[str] = _DEFAULT_LANGUAGE,
+) -> str:
+    """Compatibility wrapper: tra Tavily rồi format thành grounding text."""
+    response = await search_results(
+        query,
+        max_results,
+        search_depth=search_depth,
+        max_results_per_domain=max_results_per_domain,
+        country=country,
+        language=language,
+    )
+    return format_search_results(response)

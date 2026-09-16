@@ -260,3 +260,48 @@ async def test_read_rss_tu_choi_url_noi_bo_truoc_khi_fetch(monkeypatch):
     with pytest.raises(web_reader.WebReaderError):
         await web_reader.read_rss("http://127.0.0.1/rss.xml")
     assert called is False
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        (
+            "Title: Just a moment...\n\n"
+            "Warning: This page maybe requiring CAPTCHA\n\n"
+            "## Performing security verification\n"
+        ),
+        "Title: Attention Required! | Cloudflare\n\nRay ID: abc123\n",
+    ],
+)
+def test_antibot_detector_rejects_high_confidence_challenge(body):
+    assert web_reader._is_antibot_page(body.encode("utf-8")) is True
+
+
+def test_antibot_detector_ignores_generic_security_article():
+    body = b"# A guide to security verification and DDoS protection"
+    assert web_reader._is_antibot_page(body) is False
+
+
+@pytest.mark.asyncio
+async def test_read_url_falls_back_when_jina_returns_antibot_page(monkeypatch):
+    monkeypatch.setattr(
+        web_reader.socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [(None, None, None, None, ("93.184.216.34", 0))],
+    )
+    challenge = (
+        "Title: Just a moment...\n\n"
+        "Warning: This page maybe requiring CAPTCHA\n\n"
+        "## Performing security verification\n"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "r.jina.ai":
+            return httpx.Response(200, text=challenge)
+        return httpx.Response(200, text="<html><body><article>Nội dung thật.</article></body></html>")
+
+    monkeypatch.setattr(
+        web_reader, "_get_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    text = await web_reader.read_url("https://example.com/protected")
+    assert "Nội dung thật" in text
+    assert "CAPTCHA" not in text

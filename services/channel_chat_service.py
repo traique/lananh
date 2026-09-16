@@ -4,9 +4,9 @@ import asyncio
 import logging
 
 import messages
-from ai import orchestrator, tavily_client
+from ai import orchestrator
 from core import database as db
-from services import memory_service, portfolio_service, tools
+from services import memory_service, portfolio_service, tools, web_search
 from services.background_tasks import stop_tracked_tasks
 from services import channel_command_service
 from services.channel_result import ChannelResult
@@ -64,36 +64,6 @@ def split_for_zalo(text: str, limit: int = 1800) -> list[str]:
     if remaining:
         chunks.append(remaining)
     return chunks
-
-
-def _looks_like_search_question(text: str) -> bool:
-    """Tin nhắn có cần tìm kiếm web không. Tavily được bật qua admin toggle
-    sẽ bắn request cho MỌI tin nhắn nếu không gate - kể cả "ừm", tám chuyện -
-    tốn quota + độ trễ + nhiễu prompt. Chỉ search khi câu hỏi thực sự gợi ý
-    cần dữ liệu ngoài: đủ dài và có dấu hiệu nghi vấn/tra cứu. Bỏ sót 1-2 câu
-    cần search thì Google model (api1/api2) vẫn tự search được bù lại."""
-    lower = text.lower()
-    if len(lower.split()) <= 3 and "?" not in lower:
-        return False
-    markers = (
-        "?", "bao nhiêu", "bao giờ", "thế nào", "như thế nào", "là gì", "ở đâu",
-        "khi nào", "vì sao", "tại sao", "giá", "tỷ giá", "giá vàng", "bitcoin",
-        "crypto", "tin", "mới nhất", "hiện tại", "hôm nay", "tuần này", "check",
-        "tra giúp", "tìm giúp", "search",
-    )
-    return any(marker in lower for marker in markers)
-
-
-async def _maybe_tavily_search(text: str) -> str:
-    if not await tavily_client.get_enabled():
-        return ""
-    if not _looks_like_search_question(text):
-        return ""
-    try:
-        return await tavily_client.search(text)
-    except Exception:
-        logger.warning("Tavily search lỗi, bỏ qua grounding.", exc_info=True)
-        return ""
 
 
 async def _handle_stock(user_id: int, text: str) -> tuple[ChannelResult | None, str]:
@@ -168,7 +138,7 @@ async def handle_channel_text(user_id: int, text: str, is_admin: bool = True, ch
         # độ trễ cho mọi tin nhắn).
         tool_result, search_result, memory = await asyncio.gather(
             tools.maybe_run_tool(user_id, text),
-            _maybe_tavily_search(text),
+            web_search.maybe_search(text),
             memory_service.build_memory_context(user_id),
         )
         combined = "\n\n".join(part for part in (grounding, tool_result, search_result) if part)

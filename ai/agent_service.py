@@ -52,9 +52,9 @@ tôn trọng router9_enabled/router9_dead_since đã biết (cờ /router9 off, 
 router9 đã được đánh dấu chết ở nhánh chat chính) để không lãng phí 1 lượt
 gọi chắc chắn sẽ lỗi.
 
-MVP: 2 tool ban đầu (tim_gia, xem_thong_ke), tái dùng thẳng logic đã có ở
-handlers/commands.py và core/database.py - KHÔNG viết lại logic tìm giá/thống
-kê. Muốn thêm tool mới: viết 1 async function nhận **kwargs trả về str, rồi
+Các tool tái dùng logic có sẵn: tim_web dùng services/web_search.py; tim_gia và
+xem_thong_ke tái dùng handlers/commands.py/core/database.py - KHÔNG viết lại
+logic tìm kiếm/giá/thống kê. Muốn thêm tool mới: viết 1 async function nhận **kwargs trả về str, rồi
 thêm vào _TOOLS bên dưới (schema + hàm thực thi) - vòng lặp _run_agent_loop
 tự động dùng được, không cần sửa gì khác.
 """
@@ -135,8 +135,33 @@ async def _tool_xem_rss(url: str, so_muc: int = 0) -> str:
         return f"Không đọc được feed: {exc}"
 
 
+async def _tool_tim_web(query: str) -> str:
+    from services import web_search
+
+    if not query or not query.strip():
+        return "Lỗi: thiếu từ khóa tìm kiếm."
+    try:
+        return (await web_search.search_web(query.strip())).text
+    except web_search.WebSearchError as exc:
+        return f"Không tìm được trên web: {exc}"
+
+
 # name -> (mô tả cho model, JSON schema tham số kiểu OpenAPI, hàm thực thi)
 _TOOLS: dict[str, tuple[str, dict, callable]] = {
+    "tim_web": (
+        "Tìm kiếm web theo từ khóa/câu hỏi, ưu tiên nguồn Việt Nam và trả kèm URL nguồn thật.",
+        {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Từ khóa hoặc câu hỏi cần tìm trên web",
+                },
+            },
+            "required": ["query"],
+        },
+        _tool_tim_web,
+    ),
     "tim_gia": (
         "Tìm giá bán thực tế của 1 sản phẩm tại Việt Nam (tìm web thật, không bịa).",
         {

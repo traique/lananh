@@ -94,10 +94,10 @@ ROUTER9_MAX_CONCURRENCY = _env_int("ROUTER9_MAX_CONCURRENCY", 4)
 # stock/analysis.py::analyze_symbol) - giãn tải cho gateway 9Router.
 ROUTER9_STEP_DELAY_SEC = _env_int("ROUTER9_STEP_DELAY_SEC", 3)
 
-# Groq — gateway OpenAI-compatible miễn phí, provider thứ 2 của provider-chain
-# (router9 -> groq -> openrouter -> api1 -> api2). Model mặc định nằm trong
-# free tier của Groq (console.groq.com); GROQ_REALTIME_MODEL (compound-mini)
-# có tool tìm kiếm web tích hợp, chỉ dùng cho tác vụ require_real_search.
+# Groq — gateway OpenAI-compatible, provider thứ 2 của provider-chain.
+# (router9 -> groq -> openrouter -> api1 -> api2). GROQ_REALTIME_MODEL
+# (compound-mini) có tool tìm kiếm web tích hợp, chỉ dùng cho tác vụ
+# require_real_search; built-in web search có thể phát sinh phí theo Groq.
 # Danh mục model free đổi theo thời gian - xem README mục Provider-chain nếu
 # model mặc định ngừng hoạt động.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
@@ -186,8 +186,8 @@ MONITOR_INTERVAL_SEC = _env_int("MONITOR_INTERVAL_SEC", 300)  # 5 phút
 # Thứ tự ưu tiên thử provider, đọc từ env PROVIDER_ORDER (vd "api1,api2,router9"
 # để dùng API chính thức làm xương sống - xem README mục Provider-chain để
 # cân nhắc trước khi đổi). Mặc định: router9 -> groq -> openrouter -> api1 ->
-# api2 (toàn bộ chuỗi mặc định là các provider miễn phí, Gemini official đứng
-# cuối làm lưới an toàn).
+# api2. Chi phí phụ thuộc provider/model/tool thực tế; Gemini official đứng cuối
+# làm lưới an toàn.
 _PROVIDER_ORDER_RAW = os.getenv("PROVIDER_ORDER", "router9,groq,openrouter,api1,api2").strip()
 
 

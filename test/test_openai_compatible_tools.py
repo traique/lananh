@@ -217,3 +217,27 @@ def test_parse_tool_calls_bo_qua_item_thieu_name():
 
 def test_parse_tool_calls_none_tra_ve_rong():
     assert openai_compatible._parse_tool_calls(None) == []
+
+@pytest.mark.asyncio
+async def test_post_chat_completion_merges_extra_payload():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    text = await openai_compatible.post_chat_completion(
+        client,
+        base_url="https://fake.example",
+        api_key="k",
+        messages=[{"role": "user", "content": "x"}],
+        model="groq/compound-mini",
+        temperature=0.3,
+        max_tokens=100,
+        provider_label="test",
+        extra_payload={"search_settings": {"country": "vietnam"}},
+    )
+    assert text == "ok"
+    assert captured["search_settings"] == {"country": "vietnam"}
+    await client.aclose()

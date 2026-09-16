@@ -7,11 +7,11 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import messages
-from ai import orchestrator, tavily_client
+from ai import orchestrator
 from core import database as db
 from core.text_normalize import nfc
 from handlers import common, stock_handler
-from services import memory_service, portfolio_service, tools
+from services import memory_service, portfolio_service, tools, web_search
 from services.background_tasks import stop_tracked_tasks
 from services.telemetry import telemetry
 from stock import analysis as stock_analysis
@@ -45,16 +45,6 @@ async def stop_background_tasks() -> None:
     )
 
 
-async def _maybe_tavily_search(text: str) -> str:
-    if not await tavily_client.get_enabled():
-        return ""
-    try:
-        return await tavily_client.search(text)
-    except Exception:
-        logger.warning("Tavily search lỗi, bỏ qua grounding.", exc_info=True)
-        return ""
-
-
 @common.restricted
 async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # nfc(): boundary nhận tin nhắn Telegram - xem core/text_normalize.py.
@@ -78,7 +68,7 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # 2 bước này độc lập nhau - chạy song song để không cộng dồn thời gian chờ.
         tool_result, search_result = await asyncio.gather(
             tools.maybe_run_tool(user_id, text),
-            _maybe_tavily_search(text),
+            web_search.maybe_search(text),
         )
         combined_grounding = "\n\n".join(
             part for part in (route.grounding, tool_result, search_result) if part

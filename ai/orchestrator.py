@@ -97,27 +97,23 @@ class RealSearchUnavailableError(RuntimeError):
 
 
 async def _search_only_providers() -> list[str]:
-    """Return the provider order for require_real_search: api1 -> api2 -> openrouter.
+    """Provider order cho require_real_search: Groq -> api1 -> api2 -> OpenRouter.
 
-    Mọi tìm kiếm thật (chat cần dữ liệu ngoài sàn VN, /gia) BẮT BUỘC đi qua
-    Google AI Studio với Google Search tool bật sẵn (enable_search=True, xem
-    ask()/chat() ở dưới) - api1 trước, lỗi/hết quota mới rớt xuống api2.
-    router9/groq bị loại khỏi nhánh này để không lệ thuộc việc 9Router có tự
-    bật đúng tool search hay không. openrouter đứng CUỐI làm lưới an toàn khi
-    cả 2 key Google đều lỗi/hết quota - chấp nhận model ":free" không có tool
-    search đảm bảo, còn hơn không trả lời được gì.
+    Groq Compound và Google AI Studio đều có tool search thật. OpenRouter chỉ
+    đứng cuối làm lưới an toàn vì model free không đảm bảo có web-search tool.
     """
-    order = [
-        provider
-        for provider in ("api1", "api2")
-        if await official_client.api_key_for(1 if provider == "api1" else 2)
-    ]
+    order: list[str] = []
+    if config.GROQ_API_KEY:
+        order.append("groq")
+    for provider, idx in (("api1", 1), ("api2", 2)):
+        if await official_client.api_key_for(idx):
+            order.append(provider)
     if config.OPENROUTER_API_KEY:
         order.append("openrouter")
     if not order:
         raise RealSearchUnavailableError(
-            "Tác vụ yêu cầu Google Search thật nhưng chưa cấu hình "
-            "GOOGLE_AI_STUDIO_API_KEY_1/2 hoặc OPENROUTER_API_KEY."
+            "Tác vụ yêu cầu tìm kiếm web thật nhưng chưa cấu hình "
+            "GROQ_API_KEY, GOOGLE_AI_STUDIO_API_KEY_1/2 hoặc OPENROUTER_API_KEY."
         )
     return order
 
@@ -127,7 +123,7 @@ _FORCED_SEARCH_DIRECTIVE = (
     "Câu hỏi này cần số liệu/sự kiện thực tế bên ngoài sàn chứng khoán Việt Nam "
     "(giá hàng hoá, tỷ giá, crypto, chỉ số quốc tế, tin thời sự). Hệ thống KHÔNG "
     "có sẵn dữ liệu này để cung cấp cho bạn.\n"
-    "1. BẮT BUỘC dùng Google Search để tra trước khi trả lời.\n"
+    "1. BẮT BUỘC dùng công cụ tìm kiếm web thật để tra trước khi trả lời.\n"
     "2. CHỈ được nêu con số, mốc thời gian và sự kiện có TRONG kết quả tra cứu. "
     "Kèm theo thời điểm của số liệu và tên nguồn.\n"
     "3. Nếu tra không ra dữ liệu: nói thẳng là chưa tra được và DỪNG LẠI. "
@@ -330,17 +326,14 @@ async def ask(
 ):
     """Run a one-turn task through the provider chain.
 
-    ``require_real_search`` forces a directive that reliably triggers real
-    web search regardless of provider (see _search_only_providers): router9
-    trước (đã tự bật search phía server), fail kết nối mới rơi xuống Groq
-    compound-mini / Gemini grounding. Raises RealSearchUnavailableError khi
-    không có provider nào cấu hình.
+    ``require_real_search`` forces a directive that triggers the dedicated
+    search chain (see _search_only_providers): Groq Compound first, then
+    Google Search grounding (api1/api2), with OpenRouter as a final fallback.
+    Raises RealSearchUnavailableError when no search provider is configured.
 
-    ``providers_override`` cho phép caller tự chỉ định thứ tự provider thay
-    vì để require_real_search tự suy ra qua _search_only_providers() (vd
-    /gia muốn giới hạn nhánh Google Search tool chỉ còn api1 -> api2, không
-    có openrouter, vì bước Tavily đứng trước đã là lưới an toàn đầu tiên -
-    xem handlers/commands.py::_search_price).
+    ``providers_override`` lets callers pin a smaller provider order instead
+    of using _search_only_providers() (for example /gia excludes OpenRouter
+    because Tavily already runs before the grounded fallback).
     """
     if require_real_search and providers_override is None:
         providers_override = await _search_only_providers()

@@ -158,6 +158,7 @@ async def post_chat_completion(
     temperature: float,
     max_tokens: int,
     provider_label: str,
+    extra_payload: Optional[dict[str, Any]] = None,
 ) -> str:
     """LUÔN xin stream (SSE) kể cả khi chỉ cần text cuối: 9Router/chatgpt-
     gateway với request stream:false phải GỘP toàn bộ stream upstream xong
@@ -179,6 +180,8 @@ async def post_chat_completion(
         "max_tokens": max_tokens,
         "stream": True,
     }
+    if extra_payload:
+        payload.update(extra_payload)
     try:
         response = await client.post(
             f"{base_url.rstrip('/')}/chat/completions",
