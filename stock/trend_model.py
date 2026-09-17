@@ -149,7 +149,7 @@ def compute_feature_vector(
         float(session.daily_change_pct) if session else nan,
         float(session.close_position_pct) if session else nan,
         float(session.volume_ratio_pct) if session else nan,
-        round(feat.trend_pct(w_c[-66:]) - feat.trend_pct(wv_c[-66:]) if wv_c else feat.trend_pct(w_c[-66:]), 3),
+        round(feat.calc_relative_strength(w_c, wv_c, lookback=65), 3),
         float(trend_score) if trend_score is not None else nan,
         float(agreement),
         _ALIGN_CODE.get(vn_multi.alignment, 0.0) if vn_multi else nan,
@@ -213,10 +213,20 @@ def walk_forward_eval(ds: Dataset, *, test_ratio: float = 0.30, horizon: int = D
     n = len(ds.x)
     if n < 500:
         raise RuntimeError(f"Dataset quá nhỏ ({n} rows) - không đánh giá model được.")
-    split = int(n * (1 - test_ratio))
-    embargo = horizon + 1
-    test_start = split + embargo
-    if test_start >= n - 50:
+
+    unique_dates = sorted({d for d in ds.dates if d})
+    if len(unique_dates) <= horizon + 2:
+        raise RuntimeError("Không đủ ngày giao dịch để split walk-forward theo ngày.")
+    split_date_idx = max(0, min(len(unique_dates) - 1, int(len(unique_dates) * (1 - test_ratio)) - 1))
+    test_date_idx = split_date_idx + horizon + 1
+    if test_date_idx >= len(unique_dates):
+        raise RuntimeError("Không đủ dữ liệu test sau embargo - tăng `days` hoặc thêm mã.")
+
+    split_date = unique_dates[split_date_idx]
+    test_start_date = unique_dates[test_date_idx]
+    split = next((idx for idx, d in enumerate(ds.dates) if d > split_date), n)
+    test_start = next((idx for idx, d in enumerate(ds.dates) if d >= test_start_date), n)
+    if split <= 0 or test_start >= n - 50:
         raise RuntimeError("Không đủ dữ liệu test sau embargo - tăng `days` hoặc thêm mã.")
 
     model = HistGradientBoostingClassifier(**_TREE_PARAMS)
@@ -241,8 +251,8 @@ def walk_forward_eval(ds: Dataset, *, test_ratio: float = 0.30, horizon: int = D
         "accuracy": round(accuracy, 4),
         "n_train": split,
         "n_test": n - test_start,
-        "split_date": ds.dates[split] if split < len(ds.dates) else "",
-        "test_start_date": ds.dates[test_start],
+        "split_date": split_date,
+        "test_start_date": test_start_date,
         "baseline_mean_fwd_ret_pct": round(baseline_mean, 3),
         "top_decile_mean_fwd_ret_pct": round(top_mean, 3),
         "bottom_decile_mean_fwd_ret_pct": round(bottom_mean, 3),

@@ -46,6 +46,7 @@ class TradePlan:
 def build_trade_plan(
     price: float, stop: float, target_price: float | None, confidence: float,
     key_levels: feat.KeyLevels | None, liquidity: feat.Liquidity | None,
+    exchange: str | None = None,
 ) -> TradePlan | None:
     """B2 - suy ngược tỷ trọng vị thế từ khoảng cách rủi ro (không bịa số
     NAV thật - đây là % NAV ĐỀ XUẤT dựa trên nguyên tắc rủi ro cố định mỗi
@@ -69,12 +70,14 @@ def build_trade_plan(
         size *= 0.5
     size = round(feat.clamp(size, MIN_POSITION_PCT, MAX_POSITION_PCT), 1)
 
-    entry_low = feat.round_price(price * 0.99)
-    entry_high = feat.round_price(price * 1.01)
+    entry_low = feat.round_order_price(price * 0.99, exchange)
+    entry_high = feat.round_order_price(price * 1.01, exchange)
 
     resistances = key_levels.resistances if key_levels else []
     target1 = target_price
-    target2 = next((lv.price for lv in resistances if lv.price > target_price), None)
+    target2 = next((feat.round_order_price(lv.price, exchange) for lv in resistances if lv.price > target_price), None)
+    if target2 is not None and target2 <= target1:
+        target2 = None
 
     return TradePlan(
         entry_low=entry_low, entry_high=entry_high, stop=stop,
@@ -132,6 +135,7 @@ class PolicyInputs:
     vnindex_adx: feat.ADXResult | None
     vnindex_distribution_days: int = 0
     key_levels: feat.KeyLevels | None = None
+    exchange: str | None = None
     # True nếu user đang thật sự giữ mã này (vd đã ghi trong danh mục nhớ
     # dài hạn). Mặc định False = đang cân nhắc mở vị thế MỚI. 2 trường hợp
     # cần quyết định khác nhau: SELL chỉ có ý nghĩa khi đang giữ hàng (không
@@ -356,7 +360,7 @@ def _compute_confidence(
 
 def _compute_stop_target(
     price: float, enhanced: feat.EnhancedIndicators | None, stats: feat.SignalStats, news_impact: float,
-    direction: str, support_resistance: feat.SupportResistance | None,
+    direction: str, support_resistance: feat.SupportResistance | None, exchange: str | None = None,
 ) -> tuple[float | None, float | None, float | None, str]:
     """Gate D input - stop/target ưu tiên ATR thật; chỉ rơi về % biến động
     lịch sử khi không có H/L thật để tính ATR (feature không bịa số, nhưng
@@ -398,23 +402,23 @@ def _compute_stop_target(
         reward_mult = feat.clamp(1.5 + news_boost * 0.5 + rsi_adj, 0.8, 2.5) if stats.trend_3m >= 0 else 1.0
 
         if support is not None and 0 < support < price and (price - support) <= risk_amount * 2:
-            stop = feat.round_price(support * 0.99)  # dưới support 1 chút, tránh bị quét nhiễu đúng vùng hỗ trợ
+            stop = feat.round_order_price(support * 0.99, exchange)  # dưới support 1 chút, tránh bị quét nhiễu đúng vùng hỗ trợ
             basis = f"{basis}+support"
         else:
-            stop = feat.round_price(price - risk_amount)
+            stop = feat.round_order_price(price - risk_amount, exchange)
         if stop >= price:
-            # cổ phiếu thị giá nhỏ: round_price (bước 10) có thể kéo stop
+            # làm tròn theo bước giá có thể kéo stop
             # ngang bằng giá, ép lùi thêm 1 bước để risk luôn dương.
-            stop -= 10
+            stop -= feat.order_tick_size(price, exchange)
         risk = price - stop
         if risk <= 0:
             return None, None, None, basis
 
         if resistance is not None and resistance > price and (resistance - price) >= risk:
-            target = feat.round_price(resistance)
+            target = feat.round_order_price(resistance, exchange)
             basis = f"{basis}+resistance"
         else:
-            target = feat.round_price(price + risk * reward_mult)
+            target = feat.round_order_price(price + risk * reward_mult, exchange)
 
         rr = round((target - price) / risk, 2)
         return stop, target, rr, basis
@@ -425,26 +429,26 @@ def _compute_stop_target(
     # - trước đây dùng chung điều kiện >= 0 nên với setup bearish (trend_3m
     # gần như luôn âm) reward_mult bị khoá cứng ở 1.0, không phản ứng theo
     # news/RSI như phía buy.
-    reward_mult = feat.clamp(1.5 + news_boost * 0.5 + rsi_adj, 0.8, 2.5) if stats.trend_3m <= 0 else 1.0
+    reward_mult = feat.clamp(1.5 - news_boost * 0.5 - rsi_adj, 0.8, 2.5) if stats.trend_3m <= 0 else 1.0
 
     if resistance is not None and resistance > price and (resistance - price) <= risk_amount * 2:
-        invalidation = feat.round_price(resistance * 1.01)
+        invalidation = feat.round_order_price(resistance * 1.01, exchange)
         basis = f"{basis}+resistance"
     else:
-        invalidation = feat.round_price(price + risk_amount)
+        invalidation = feat.round_order_price(price + risk_amount, exchange)
     if invalidation <= price:
-        # tương tự nhánh buy: cổ phiếu thị giá nhỏ có thể bị round_price kéo
+        # tương tự nhánh buy: làm tròn theo bước giá có thể kéo
         # invalidation về trùng giá, ép lên 1 bước để risk luôn dương.
-        invalidation += 10
+        invalidation += feat.order_tick_size(price, exchange)
     risk = invalidation - price
     if risk <= 0:
         return None, None, None, basis
 
     if support is not None and support < price and (price - support) >= risk:
-        target = feat.round_price(support)
+        target = feat.round_order_price(support, exchange)
         basis = f"{basis}+support"
     else:
-        target = feat.round_price(price - risk * reward_mult)
+        target = feat.round_order_price(price - risk * reward_mult, exchange)
 
     rr = round((price - target) / risk, 2)
     return invalidation, target, rr, basis
@@ -575,7 +579,7 @@ def evaluate_policy(inputs: PolicyInputs) -> Decision:
     stop_price = target_price = rr_ratio = None
     if direction == "buy":
         stop_price, target_price, rr_ratio, basis = _compute_stop_target(
-            inputs.price, inputs.enhanced, inputs.stats, inputs.news_impact, "buy", inputs.support_resistance,
+            inputs.price, inputs.enhanced, inputs.stats, inputs.news_impact, "buy", inputs.support_resistance, inputs.exchange,
         )
         if stop_price is None or rr_ratio is None:
             action = "HOLD" if holding else "WATCH"
@@ -596,7 +600,7 @@ def evaluate_policy(inputs: PolicyInputs) -> Decision:
             ).replace(",", ".")
     elif direction == "exit":
         stop_price, target_price, rr_ratio, basis = _compute_stop_target(
-            inputs.price, inputs.enhanced, inputs.stats, inputs.news_impact, "exit", inputs.support_resistance,
+            inputs.price, inputs.enhanced, inputs.stats, inputs.news_impact, "exit", inputs.support_resistance, inputs.exchange,
         )
         if stop_price is None or rr_ratio is None:
             action = "HOLD" if holding else "WATCH"
@@ -621,7 +625,7 @@ def evaluate_policy(inputs: PolicyInputs) -> Decision:
         direction == "buy" and action in ("BUY", "HOLD") and stop_price is not None
         and rr_ratio is not None and rr_ratio >= MIN_RR_RATIO
     ):
-        trade_plan = build_trade_plan(inputs.price, stop_price, target_price, confidence, inputs.key_levels, inputs.liquidity)
+        trade_plan = build_trade_plan(inputs.price, stop_price, target_price, confidence, inputs.key_levels, inputs.liquidity, inputs.exchange)
         if trade_plan is not None:
             scenarios = _build_scenarios(trade_plan)
 

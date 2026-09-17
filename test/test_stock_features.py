@@ -259,3 +259,21 @@ def test_signal_agreement_dong_thuan_tang_bang_1():
     )
     assert ind.calc_signal_agreement(enh) == 1.0
 
+
+
+def test_order_tick_size_va_round_price_theo_san():
+    assert ind.order_tick_size(9_990, "HOSE") == 10
+    assert ind.order_tick_size(20_020, "HOSE") == 50
+    assert ind.order_tick_size(60_050, "HOSE") == 100
+    assert ind.order_tick_size(20_020, "HNX") == 100
+    assert ind.order_tick_size(20_020, "UPCOM") == 100
+    # Không biết sàn: ưu tiên mức 100đ hợp lệ chung thay vì sinh giá 10/50đ
+    # có thể không đặt được trên HNX/UPCoM.
+    assert ind.round_order_price(20_051, None) == 20_100
+
+
+def test_relative_strength_dung_cung_horizon_65_phien():
+    symbol = [100 + i for i in range(100)]
+    benchmark = [100 + i * 0.5 for i in range(100)]
+    expected = round(ind.trend_pct(symbol[-66:]) - ind.trend_pct(benchmark[-66:]), 2)
+    assert ind.calc_relative_strength(symbol, benchmark, lookback=65) == expected

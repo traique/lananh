@@ -14,7 +14,47 @@ def clamp(v: float, lo: float, hi: float) -> float:
 
 
 def round_price(v: float) -> float:
+    """Làm tròn mức kỹ thuật hiển thị (không phải giá đặt lệnh)."""
     return round(v / 10) * 10
+
+
+def order_tick_size(price: float, exchange: str | None = None) -> int:
+    """Bước giá đặt lệnh cổ phiếu VN.
+
+    Khi chưa biết sàn, dùng 100đ - mức bảo thủ nhưng hợp lệ chung cho
+    HNX/UPCoM và cũng là bội số hợp lệ trên HOSE.
+    """
+    ex = (exchange or "").strip().upper().replace(" ", "")
+    if ex in {"HOSE", "HSX"}:
+        if price < 10_000:
+            return 10
+        if price < 50_000:
+            return 50
+        return 100
+    return 100
+
+
+def round_order_price(v: float, exchange: str | None = None) -> float:
+    tick = order_tick_size(v, exchange)
+    return round(v / tick) * tick
+
+
+def calc_relative_strength(
+    symbol_closes: list[float], benchmark_closes: list[float], *, lookback: int = 65,
+) -> float:
+    """Hiệu suất tương đối so với benchmark trên cùng horizon cố định.
+
+    Cần tối đa ``lookback + 1`` bars; chuỗi ngắn hơn vẫn dùng cùng số bars
+    khả dụng của CẢ HAI phía để tránh runtime/backtest/model đo khác horizon.
+    """
+    if len(symbol_closes) < 2 or len(benchmark_closes) < 2:
+        return 0.0
+    bars = min(lookback, len(symbol_closes) - 1, len(benchmark_closes) - 1)
+    if bars <= 0:
+        return 0.0
+    sym = symbol_closes[-(bars + 1):]
+    bench = benchmark_closes[-(bars + 1):]
+    return round(trend_pct(sym) - trend_pct(bench), 2)
 
 
 def trend_pct(closes: list[float]) -> float:

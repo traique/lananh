@@ -273,3 +273,28 @@ def test_find_key_levels_clustering_gom_pivot_gan_nhau():
     for lv in levels.resistances:
         assert lv.touches >= 1
         assert 0.0 <= lv.strength <= 1.0
+
+
+def test_sell_target_positive_news_khong_duoc_bearish_hon():
+    closes = _closes_downtrend(90)
+    price = closes[-1]
+    volumes = [500_000.0] * len(closes)
+    stats = feat.calc_signal_stats(closes, volumes, price)
+    enhanced = feat.build_enhanced_indicators(
+        closes, price, [c * 1.01 for c in closes], [c * 0.99 for c in closes]
+    )
+    # Không truyền S/R để test trực tiếp fallback reward multiplier.
+    _, target_negative, _, _ = pol._compute_stop_target(price, enhanced, stats, -1.0, "exit", None, "HOSE")
+    _, target_neutral, _, _ = pol._compute_stop_target(price, enhanced, stats, 0.0, "exit", None, "HOSE")
+    _, target_positive, _, _ = pol._compute_stop_target(price, enhanced, stats, 1.0, "exit", None, "HOSE")
+    assert target_negative < target_neutral < target_positive < price
+
+
+def test_trade_plan_entry_price_luon_dung_tick_hose():
+    plan = pol.build_trade_plan(
+        price=20_030, stop=19_000, target_price=22_000, confidence=0.9,
+        key_levels=None, liquidity=None, exchange="HOSE",
+    )
+    assert plan is not None
+    assert plan.entry_low % 50 == 0
+    assert plan.entry_high % 50 == 0

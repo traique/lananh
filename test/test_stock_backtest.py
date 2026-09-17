@@ -60,3 +60,28 @@ def test_format_summary_khong_crash_khi_khong_co_tin_hieu():
     text = bt.format_backtest_summary([empty_result])
     assert "XYZ" in text
     assert "0 tín hiệu BUY" in text
+
+
+def test_gap_qua_target_huy_pending_trade(monkeypatch):
+    import stock.policy as pol
+
+    closes = [100.0] * 6 + [120.0, 121.0, 122.0]
+    highs = [c + 1 for c in closes]
+    lows = [c - 1 for c in closes]
+    volumes = [100_000.0] * len(closes)
+    dates = [str(i) for i in range(len(closes))]
+
+    def fake_evaluate(*args, **kwargs):
+        return pol.Decision(
+            action="BUY", confidence=0.9, setup_type="breakout", reasons=[], risk_level="medium",
+            stop_price=95.0, target_price=110.0, rr_ratio=2.0, invalidation_reason=None,
+            market_regime="risk_on", data_quality="ok",
+        )
+
+    monkeypatch.setattr(bt, "_evaluate_day", fake_evaluate)
+    result = bt.run_backtest_on_series(
+        "TEST", closes, highs, lows, volumes, dates,
+        closes, highs, lows, volumes, min_bars=5,
+    )
+    assert result.buy_signals > 0
+    assert not result.trades

@@ -453,7 +453,7 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
         providers.fetch_ohlcv(symbol, days=260), providers.fetch_ohlcv("VNINDEX", days=260),
         providers.fetch_quote(symbol), providers.fetch_news(symbol),
         _safe_sector_prompt(symbol), _safe_fundamentals_prompt(symbol),
-        fundamentals.fetch_company_news(symbol),
+        fundamentals.fetch_company_news(symbol), providers.fetch_symbol_exchange(symbol),
         return_exceptions=True
     )
     # Chỉ exception của OHLCV mã chính (task 0) mới làm chết pipeline - đây
@@ -466,6 +466,7 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
         3: [],            # news -> không có tin
         5: "",            # fundamentals prompt -> rỗng
         6: [],            # company news -> rỗng
+        7: None,          # exchange -> policy dùng bước giá 100đ an toàn
     }
     for idx, r in enumerate(results):
         if isinstance(r, BaseException):
@@ -473,14 +474,13 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
                 raise r
             logger.warning("Task dữ liệu phụ #%s lỗi cho %s - bỏ qua: %s", idx, symbol, r)
             results[idx] = _OPTIONAL_FALLBACKS.get(idx, [] if idx in (3, 6) else "")
-    symbol_series, vnindex_series, quote, news, sector_prompt, fundamentals_prompt, company_news = results
+    symbol_series, vnindex_series, quote, news, sector_prompt, fundamentals_prompt, company_news, exchange = results
     # Tin công ty CHÍNH CHỦ từ VCI (đã confirmed=True) + tin cào Google News,
     # loại trùng theo tiêu đề (không phân biệt hoa/thường).
     seen_titles = {n.title.strip().lower() for n in news}
     news = news + [n for n in company_news if n.title.strip().lower() not in seen_titles]
     if not symbol_series.closes: return None
 
-    quality = validation.validate_ohlcv(symbol_series.closes, symbol_series.highs, symbol_series.lows, symbol_series.volumes, symbol_series.dates)
     # Kiểm tra chuỗi giá đã điều chỉnh sau chia tách/cổ tức chưa. OhlcvSeries có
     # sẵn trường is_adjusted từ đầu nhưng chưa provider nào gán giá trị, nên
     # trước đây hệ thống hoàn toàn không biết SMA50/Donchian/ATR14/trend 3
@@ -506,6 +506,12 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
             )
             adjustment_note = outcome.note or adjustment_note
     symbol_series.is_adjusted = audit.is_adjusted if not adjustment_note.startswith("ℹ️") else True
+    # Policy/indicator phải dùng quality của chính chuỗi sau cùng. Nếu vừa
+    # điều chỉnh corporate action, quality raw trước đó không còn mô tả dữ
+    # liệu thực tế đang được dùng nữa.
+    quality = validation.validate_ohlcv(
+        symbol_series.closes, symbol_series.highs, symbol_series.lows, symbol_series.volumes, symbol_series.dates
+    )
     # analysis_price = close của phiên gần nhất trong CHUỖI OHLCV - toàn bộ
     # feature/policy (Donchian, Bollinger, S/R, session...) phải nhìn CÙNG
     # một thời điểm để không tự mâu thuẫn nhau (P0-3). quote.price là tick
@@ -524,9 +530,9 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
     # Dùng providers.calc_news_impact (trung bình sentiment MỌI tin) thì
     # sentiment của tin không liên quan chảy thẳng vào PolicyInputs.news_impact,
     # tức là ảnh hưởng trực tiếp tới khuyến nghị mua/bán.
-    news_impact = rfmt.relevant_news_impact([(n.title, n.sentiment) for n in news], symbol)
+    news_impact = rfmt.relevant_news_impact([(n.title, n.sentiment, n.confirmed) for n in news], symbol)
     stats = feat.calc_signal_stats(symbol_series.closes, symbol_series.volumes, analysis_price)
-    relative_strength = round(feat.trend_pct(symbol_series.closes) - feat.trend_pct(vnindex_series.closes), 2)
+    relative_strength = feat.calc_relative_strength(symbol_series.closes, vnindex_series.closes, lookback=65)
 
     enhanced, indicator_summary = None, ""
     if quality.usable and len(symbol_series.closes) >= 20:
@@ -545,7 +551,7 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
     vnindex_distribution_days = feat.calc_distribution_days(vnindex_series.closes, vnindex_series.volumes)
 
     holding = is_holding if is_holding is not None else await _is_holding_symbol(user_id, symbol)
-    decision = policy.evaluate_policy(policy.PolicyInputs(price=analysis_price, stats=stats, enhanced=enhanced, ma_alignment=ma_alignment, support_resistance=support_resistance, liquidity=liquidity, session=session, relative_strength=relative_strength, trend_score=trend_score, news_impact=news_impact, quality=quality, vnindex_multi_tf=vnindex_multi_tf, vnindex_adx=vnindex_adx, vnindex_distribution_days=vnindex_distribution_days, key_levels=key_levels, is_holding=holding))
+    decision = policy.evaluate_policy(policy.PolicyInputs(price=analysis_price, stats=stats, enhanced=enhanced, ma_alignment=ma_alignment, support_resistance=support_resistance, liquidity=liquidity, session=session, relative_strength=relative_strength, trend_score=trend_score, news_impact=news_impact, quality=quality, vnindex_multi_tf=vnindex_multi_tf, vnindex_adx=vnindex_adx, vnindex_distribution_days=vnindex_distribution_days, key_levels=key_levels, exchange=exchange, is_holding=holding))
 
     # Model thống kê walk-forward (chỉ tham khảo, không phải gate). Tự vô hiệu
     # khi chưa train model hoặc máy không có sklearn - không bao giờ raise.
@@ -584,13 +590,6 @@ def build_prompt(
     final_decision=None,
 ) -> str:
     d = ctx.decision
-    # FinalDecision.action (bước Manager, stock/debate.py) được PHÉP khác
-    # d.action theo yêu cầu người dùng - nhưng trade_plan/entry/stop/target
-    # bên dưới vẫn CHỈ được tính khi chính d.action (rule-based) đã qua gate
-    # định lượng. Nếu manager đổi sang 1 action mà code không duyệt (vd code
-    # WATCH, manager BUY), KHÔNG được suy ra vùng giá nào cho action đó -
-    # decision_diverges nói cho template biết để tự cảnh báo rõ, không bịa số.
-    decision_diverges = bool(final_decision) and final_decision.action != d.action
     price = ctx.price
     atr_pct = ctx.enhanced.atr_pct if ctx.enhanced else None
     sr = ctx.support_resistance
@@ -620,7 +619,7 @@ def build_prompt(
     # đẩy lên trước để không bị tin thị trường chung chiếm hết 5 suất.
     ranked_news = sorted(
         ctx.news,
-        key=lambda n: not (n.confirmed if n.confirmed is not None else rfmt.title_mentions_symbol(n.title, ctx.symbol)),
+        key=lambda n: not rfmt.is_news_relevant(n.title, ctx.symbol, n.confirmed),
     )
     news = [
         {
@@ -628,7 +627,7 @@ def build_prompt(
             "title": n.title,
             "source": n.source,
             "date": rfmt.fmt_news_date(n.pub_date),
-            "confirmed": n.confirmed if n.confirmed is not None else rfmt.title_mentions_symbol(n.title, ctx.symbol),
+            "confirmed": rfmt.is_news_relevant(n.title, ctx.symbol, n.confirmed),
         }
         for n in ranked_news[:5]
     ]
@@ -723,7 +722,7 @@ def build_prompt(
         adjustment_note=ctx.adjustment_note, ml_prob_line=ml_prob_line,
         trade_plan=trade_plan, scenarios=scenarios, backtest_stats_line=backtest_stats_line,
         news_analysis=news_analysis, bull_case=bull_case, bear_case=bear_case,
-        final_decision=final_decision, decision_diverges=decision_diverges,
+        final_decision=final_decision,
     )
 
 def _fallback_text(ctx: StockContext, *, fallback_note: bool = True) -> str:

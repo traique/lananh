@@ -204,7 +204,7 @@ def _evaluate_day(
     vnindex_adx = feat.calc_adx(w_vn_closes, w_vn_highs, w_vn_lows) if w_vn_closes else None
     vnindex_distribution_days = feat.calc_distribution_days(w_vn_closes, w_vn_volumes)
 
-    relative_strength = round(feat.trend_pct(w_closes) - feat.trend_pct(w_vn_closes), 2)
+    relative_strength = feat.calc_relative_strength(w_closes, w_vn_closes, lookback=65)
 
     inputs = policy.PolicyInputs(
         price=price, stats=stats, enhanced=enhanced, ma_alignment=ma_alignment,
@@ -237,11 +237,15 @@ def run_backtest_on_series(
         if pending is not None:
             # Tín hiệu phát hiện ở phiên (i-1) dựa trên close của chính phiên
             # đó - không thể vào lệnh NGAY tại đúng mức giá vừa dùng để ra
-            # tín hiệu (nhìn thấy close rồi giả định khớp được ở đúng close
-            # đó là lạc quan phi thực tế). Vào lệnh ở close phiên kế tiếp,
-            # tương đương độ trễ thực thi 1 phiên.
+            # tín hiệu. Nếu phiên kế tiếp gap qua stop/target thì kế hoạch cũ
+            # đã mất hiệu lực: bỏ lệnh thay vì tạo trade có target nằm dưới
+            # entry (có thể sinh target_hit nhưng R âm).
+            entry_raw = closes[i]
+            if entry_raw <= pending["stop"] or entry_raw >= pending["target"]:
+                pending = None
+                continue
             open_trade = {
-                "entry_idx": i, "entry_raw": closes[i], "stop": pending["stop"], "target": pending["target"],
+                "entry_idx": i, "entry_raw": entry_raw, "stop": pending["stop"], "target": pending["target"],
                 "confidence": pending["confidence"], "setup_type": pending["setup_type"], "date": date_i,
             }
             pending = None

@@ -5,21 +5,18 @@ trước, giống cơ chế debate của TradingAgents (Bull/Bear researcher r�
 Research Manager chốt action):
 
     news_analysis -> bull_case -> bear_case (bear thấy bull để phản biện)
-                                        -> manager (FinalDecision, ĐƯỢC PHÉP
-                                           chọn action khác action hệ thống)
+                                        -> manager (FinalDecision, phản biện
+                                           nhưng giữ action hệ thống)
 
 Bước tổng hợp cuối cùng (viết tin nhắn gửi người dùng) KHÔNG nằm ở đây - vẫn
 là 1 lần gọi orchestrator.ask() ở stock/analysis.py::analyze_symbol() như
 trước, chỉ khác là prompt của nó giờ có thêm 4 block này làm ngữ liệu, và
-PHẢI hiển thị SONG SONG action hệ thống (rule-based) với FinalDecision.action
-(AI, có thể khác) để người dùng tự đối chiếu - không được chỉ in 1 trong 2.
+Manager chỉ bổ sung góc nhìn định tính/confidence/reasoning; action cuối cùng
+luôn là action đã qua gate định lượng của stock/policy.py.
 
-Nguyên tắc bất biến (xem stock/schemas.py để biết chi tiết): action là field
-DUY NHẤT được phép khác code (theo yêu cầu, ở bước manager). Mọi con số
-giá/entry/stop/target/tỷ trọng vẫn TUYỆT ĐỐI do stock/policy.py chốt - nếu
-FinalDecision.action khác action hệ thống thì KHÔNG có vùng giá nào cho
-action mới đó, layer hiển thị phải nói rõ "chưa qua gate định lượng" thay vì
-tự suy ra 1 con số.
+Nguyên tắc bất biến: action và mọi con số giá/entry/stop/target/tỷ trọng
+đều do stock/policy.py chốt. Manager có thể phản biện trong reasoning nhưng
+không được thay action đã qua gate định lượng.
 
 Lỗi ở BẤT KỲ bước nào (parse JSON lỗi liên tục, LLM timeout...) không được
 làm sập pipeline: hàm gọi ở analysis.py nhận None cho bước đó và vẫn tiếp
@@ -72,10 +69,10 @@ async def run_news_step(ctx: "StockContext") -> NewsAnalysis | None:
     """Bước 1: tóm tắt tác động tin tức thay vì nhét cả list tin thô vào prompt tổng hợp."""
     if not ctx.news:
         return None
-    ranked = sorted(ctx.news, key=lambda n: not rfmt.title_mentions_symbol(n.title, ctx.symbol))[:5]
+    ranked = sorted(ctx.news, key=lambda n: not rfmt.is_news_relevant(n.title, ctx.symbol, n.confirmed))[:5]
     news_lines = "\n".join(
         f"- {n.title} ({n.source}, {rfmt.fmt_news_date(n.pub_date)}) - "
-        f"{'nhắc đúng mã' if rfmt.title_mentions_symbol(n.title, ctx.symbol) else 'CHỈ tin ngành/thị trường chung, không nhắc tên mã'}"
+        f"{'tin đúng mã đã xác nhận' if rfmt.is_news_relevant(n.title, ctx.symbol, n.confirmed) else 'CHỈ tin ngành/thị trường chung, chưa xác nhận đúng mã'}"
         for n in ranked
     )
     prompt = (
@@ -119,12 +116,10 @@ async def run_bear_step(ctx: "StockContext", news: NewsAnalysis | None, bull: Bu
 async def run_manager_step(
     ctx: "StockContext", news: NewsAnalysis | None, bull: BullCase | None, bear: BearCase | None,
 ) -> FinalDecision | None:
-    """Bước 4 (Manager) - nghe hết news/bull/bear + quyết định gốc của code, tự chọn action cuối.
+    """Bước 4 (Manager) - phản biện định tính nhưng KHÔNG đổi action policy.
 
-    Đây là bước DUY NHẤT được phép ra action khác code. Prompt CỐ Ý không
-    đưa entry/stop/target/tỷ trọng cụ thể vào cho Manager cân nhắc - Manager
-    chỉ thấy action/confidence/lý do của code, không thấy vùng giá, để
-    không có cửa nào "tiện tay" chỉnh số nếu đổi action.
+    Prompt không đưa entry/stop/target/tỷ trọng cụ thể; Manager chỉ đánh giá
+    mức thuyết phục/rủi ro quanh action đã qua gate định lượng.
     """
     news_block = f"\n[TÓM TẮT TIN TỨC]\n{news.model_dump_json(indent=2)}" if news else ""
     bull_block = f"\n[PHE LẠC QUAN]\n{bull.model_dump_json(indent=2)}" if bull else "\n[PHE LẠC QUAN]: không có dữ liệu"
@@ -142,20 +137,22 @@ async def run_manager_step(
             "không được mô tả hệ thống là 'đã qua backtest'.\n"
         )
     prompt = (
-        f"Bạn là Research Manager, nghe xong buổi tranh luận nội bộ về mã {ctx.symbol} và phải chốt 1 action "
-        f"CUỐI CÙNG. Bạn ĐƯỢC PHÉP giữ nguyên hoặc đổi khác với action của hệ thống rule-based bên dưới, dựa "
-        f"trên sức thuyết phục của 2 phe tranh luận và tin tức.\n\n"
-        f"[QUYẾT ĐỊNH CỦA HỆ THỐNG RULE-BASED - có gate định lượng, nhưng bạn không bắt buộc phải đồng ý]\n"
-        f"Action: {d.action} | Confidence: {d.confidence} | Setup: {d.setup_type} | Regime: {d.market_regime}\n"
+        f"Bạn là Research Manager, nghe xong buổi tranh luận nội bộ về mã {ctx.symbol}. "
+        f"Action định lượng đã được hệ thống policy chốt là {d.action}; bạn KHÔNG được đổi action này. "
+        f"Nhiệm vụ của bạn là đánh giá mức thuyết phục của action đó, nêu rủi ro/phản biện quan trọng nhất "
+        f"và cho confidence định tính riêng.\n\n"
+        f"[QUYẾT ĐỊNH RULE-BASED ĐÃ QUA GATE ĐỊNH LƯỢNG]\n"
+        f"Action bắt buộc giữ nguyên: {d.action} | Confidence hệ thống: {d.confidence} | Setup: {d.setup_type} | Regime: {d.market_regime}\n"
         f"Lý do hệ thống: {'; '.join(d.reasons[:6]) if d.reasons else '(không có)'}\n"
         f"{backtest_context}"
         f"{news_block}{bull_block}{bear_block}\n\n"
-        f"Nếu bạn chọn action KHÁC action hệ thống, reasoning PHẢI nêu rõ vì sao đi ngược lại hệ thống "
-        f"rule-based có gate định lượng. Đây là quyết định định tính, không tự động có kiểm định số liệu, nên lý do "
-        f"phải thật thuyết phục (ví dụ: tin tức quá mới/quá lớn mà hệ thống kỹ thuật chưa kịp phản ánh), "
-        f"không đổi chỉ vì thích khác."
+        f"Trường action trong JSON PHẢI là {d.action}. Nếu bạn không đồng ý, hãy nói rõ trong reasoning vì sao "
+        f"nhưng vẫn giữ action={d.action}; tuyệt đối không tạo action giao dịch mới chưa qua gate."
     )
-    return await ask_structured(FinalDecision, prompt, step_name="manager")
+    result = await ask_structured(FinalDecision, prompt, step_name="manager")
+    if result is not None and result.action != d.action:
+        result = result.model_copy(update={"action": d.action})
+    return result
 
 
 async def run_debate(

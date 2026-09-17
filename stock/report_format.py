@@ -209,16 +209,26 @@ def title_mentions_symbol(title: str, symbol: str) -> bool:
     return bool(re.search(pattern, title, re.IGNORECASE))
 
 
-def relevant_news_impact(items: list[tuple[str, float]], symbol: str) -> float:
-    """news_impact chỉ được tính trên tin CÓ NHẮC ĐÚNG MÃ.
+def is_news_relevant(title: str, symbol: str, confirmed: bool | None = None) -> bool:
+    """Tin chính chủ đã xác nhận được ưu tiên; nguồn crawl fallback theo title."""
+    return bool(confirmed) if confirmed is not None else title_mentions_symbol(title, symbol)
 
-    providers.fetch_news tìm Google News bằng chuỗi "<mã> cổ phiếu" nhưng
-    không kiểm tra mã có trong tiêu đề, nên tin thị trường chung hoặc tin
-    của mã khác vẫn lọt vào. Nếu lấy trung bình sentiment MỌI tin, cảm xúc
-    của tin không liên quan chảy thẳng vào PolicyInputs.news_impact, tức là
-    ảnh hưởng trực tiếp tới khuyến nghị mua/bán bằng tiền thật.
+
+def relevant_news_impact(items: list[tuple], symbol: str) -> float:
+    """news_impact chỉ dùng tin thực sự liên quan đúng mã.
+
+    Mỗi item nhận ``(title, score)`` hoặc ``(title, score, confirmed)``. Tin
+    VCI/company-news đã gắn ``confirmed=True`` vẫn được tính dù tiêu đề không
+    chứa ticker; Google News chưa xác nhận tiếp tục phải match ticker ở title.
     """
-    relevant = [score for title, score in items if title_mentions_symbol(title, symbol)]
+    relevant = []
+    for item in items:
+        if len(item) < 2:
+            continue
+        title, score = item[0], item[1]
+        confirmed = item[2] if len(item) >= 3 else None
+        if is_news_relevant(title, symbol, confirmed):
+            relevant.append(score)
     if not relevant:
         return 0.0
     avg = sum(relevant) / len(relevant)

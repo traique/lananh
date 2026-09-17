@@ -7,15 +7,10 @@ có 1 chuẩn structured-output chung cho cả chain. Nên cách làm ở đây 
 LLM được yêu cầu trả JSON thuần trong prompt -> parse -> validate bằng
 pydantic -> nếu lỗi thì retry đúng 1 lần kèm thông báo lỗi để model tự sửa.
 
-Ràng buộc quan trọng - GIỮ NGUYÊN nguyên tắc "không được đổi SỐ" của
-stock/policy.py, dù đã cho phép FinalDecision.action khác action hệ thống
-theo yêu cầu người dùng: mọi schema ở đây (trừ field `action`/`confidence`
-định tính của FinalDecision) CHỈ có field str/list[str], KHÔNG có field giá
-nào. Nếu LLM nhét số vào trong text thì đó cũng chỉ là câu chữ hiển thị lại,
-không phải nguồn số liệu được code nào khác tin dùng - entry/stop/target/
-position size vẫn CHỈ tồn tại khi đã qua đủ gate định lượng của policy.py;
-nếu FinalDecision.action khác action hệ thống, KHÔNG có vùng giá nào cho
-action mới đó cả (xem stock/analysis.py phần ghép trade_plan).
+Ràng buộc quan trọng: action và mọi con số giao dịch đều do stock/policy.py
+chốt. FinalDecision chỉ bổ sung confidence/reasoning định tính; debate.py sẽ
+ép action về action policy nếu model trả khác. Các schema không có field giá
+để LLM trở thành nguồn entry/stop/target/position size.
 """
 from __future__ import annotations
 
@@ -55,21 +50,16 @@ class BearCase(BaseModel):
 
 
 class FinalDecision(BaseModel):
-    """Quyết định CUỐI CÙNG sau khi 'Manager' nghe hết news/bull/bear + quyết định gốc của code.
+    """Đánh giá định tính cuối sau news/bull/bear.
 
-    Đây là bước DUY NHẤT trong debate pipeline được phép ra action khác với
-    stock.policy.Decision.action (theo yêu cầu: để AI tự cân nhắc, không bắt
-    buộc đồng ý với code). Nhưng dứt khoát KHÔNG có field giá/entry/stop/
-    target/tỷ trọng nào ở đây - những con số đó chỉ tồn tại khi đã qua đủ 4
-    gate định lượng của policy.py (RR, data quality, regime, setup). Nếu
-    action ở đây khác action của code, coi như "nhận định định tính, CHƯA
-    qua gate định lượng" - render layer (xem stock/analysis.py) phải tự nói
-    rõ điều này, KHÔNG được suy ra 1 vùng giá nào cho action mới.
+    `action` được giữ để tương thích schema/prompt cũ nhưng runtime bắt buộc
+    đồng nhất với stock.policy.Decision.action. Manager chỉ được thay đổi
+    confidence/reasoning, không tạo action giao dịch mới.
     """
 
-    action: _ACTIONS = Field(description="BUY / HOLD / WATCH / SELL / NO_TRADE")
-    confidence: float = Field(ge=0.0, le=1.0, description="0.0 đến 1.0, mức tự tin của Manager vào action này")
-    reasoning: str = Field(description="2-3 câu giải thích vì sao chọn action này, đặc biệt PHẢI giải thích rõ nếu khác action hệ thống")
+    action: _ACTIONS = Field(description="Phải trùng action rule-based đã được cung cấp")
+    confidence: float = Field(ge=0.0, le=1.0, description="0.0 đến 1.0, mức tự tin định tính của Manager")
+    reasoning: str = Field(description="2-3 câu đánh giá/ phản biện action rule-based")
 
 
 _SCHEMA_T = TypeVar("_SCHEMA_T", bound=BaseModel)

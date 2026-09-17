@@ -80,3 +80,28 @@ def test_prob_up_khong_co_model_tra_none():
     finally:
         trend_model.MODEL_PATH = original
         trend_model._model_cache = None
+
+
+def test_walk_forward_split_khong_cat_giua_cung_ngay():
+    rng = np.random.default_rng(123)
+    dates = []
+    symbols = []
+    x = []
+    y = []
+    fwd = []
+    for day in range(120):
+        date = f"2026-01-{day + 1:03d}"
+        for sym in range(8):
+            value = float(rng.normal())
+            dates.append(date)
+            symbols.append(f"S{sym}")
+            x.append([value, float(sym)])
+            label = int(value > 0)
+            y.append(label)
+            fwd.append(0.01 if label else -0.01)
+    ds = trend_model.Dataset(x=x, y=y, fwd_returns=fwd, dates=dates, symbols=symbols)
+    _, metrics = trend_model.walk_forward_eval(ds, test_ratio=0.3, horizon=5)
+    assert metrics["split_date"] < metrics["test_start_date"]
+    # Horizon 5 + 1 ngày embargo: test phải bắt đầu sau ít nhất 6 trading dates.
+    unique_dates = sorted(set(dates))
+    assert unique_dates.index(metrics["test_start_date"]) - unique_dates.index(metrics["split_date"]) == 6

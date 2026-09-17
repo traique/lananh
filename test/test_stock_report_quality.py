@@ -202,3 +202,12 @@ def test_no_symbol_was_lost_when_splitting_sectors():
     for symbol in previously_industrial:
         assert symbol in stock_sector.ALL_KNOWN_SYMBOLS
         assert stock_sector.get_symbol_sectors(symbol)
+
+
+def test_confirmed_company_news_duoc_tinh_du_khong_co_ticker_trong_title():
+    items = [
+        ("Doanh nghiệp công bố kế hoạch kinh doanh mới", 0.8, True),
+        ("VN30 giảm sâu", -1.0, None),
+    ]
+    assert rf.relevant_news_impact(items, "FPT") > 0
+    assert rf.is_news_relevant(items[0][0], "FPT", True)

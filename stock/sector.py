@@ -72,7 +72,7 @@ class SectorPerformance:
     label: str
     trend_1m: float
     trend_3m: float
-    vs_vnindex_1m: float
+    vs_vnindex_1m: float | None
     momentum: str  # hot | warm | cold | dump
     top_movers: list[str]
 
@@ -88,7 +88,7 @@ def _trend_pct(closes: list[float], lookback: int) -> float | None:
 _SECTOR_SAMPLE_SIZE = 8
 
 
-async def _analyze_sector(key: str, meta: dict, vnindex_1m: float) -> SectorPerformance | None:
+async def _analyze_sector(key: str, meta: dict, vnindex_1m: float | None) -> SectorPerformance | None:
     sample = meta["symbols"][:_SECTOR_SAMPLE_SIZE]
     results = await asyncio.gather(*[providers.fetch_ohlcv(sym, days=90) for sym in sample], return_exceptions=True)
 
@@ -106,7 +106,7 @@ async def _analyze_sector(key: str, meta: dict, vnindex_1m: float) -> SectorPerf
 
     avg_1m = sum(v[1] for v in valid) / len(valid)
     avg_3m = sum(v[2] for v in valid) / len(valid)
-    vs_vnindex = round(avg_1m - vnindex_1m, 2)
+    vs_vnindex = round(avg_1m - vnindex_1m, 2) if vnindex_1m is not None else None
 
     if avg_1m > 5:
         momentum = "hot"
@@ -152,7 +152,6 @@ async def build_sector_context(sector_keys: list[str]) -> SectorContext | None:
 async def _build_sector_context_uncached(sector_keys: list[str]) -> SectorContext | None:
     vn_series = await providers.fetch_ohlcv("VNINDEX", days=90)
     vnindex_1m = _trend_pct(vn_series.closes, 22) if vn_series.closes else None
-    vnindex_1m = vnindex_1m if vnindex_1m is not None else 0.0
 
     results = await asyncio.gather(
         *[_analyze_sector(key, SECTOR_MAP[key], vnindex_1m) for key in sector_keys if key in SECTOR_MAP]
@@ -161,8 +160,8 @@ async def _build_sector_context_uncached(sector_keys: list[str]) -> SectorContex
     if not sectors:
         return None
 
-    strong = [s.label for s in sectors if s.momentum == "hot" or s.vs_vnindex_1m > 3]
-    risky = [s.label for s in sectors if s.momentum == "dump" or s.vs_vnindex_1m < -3]
+    strong = [s.label for s in sectors if s.momentum == "hot" or (s.vs_vnindex_1m is not None and s.vs_vnindex_1m > 3)]
+    risky = [s.label for s in sectors if s.momentum == "dump" or (s.vs_vnindex_1m is not None and s.vs_vnindex_1m < -3)]
 
     if strong:
         rotation = f"Dòng tiền đang vào: {', '.join(strong)}"
@@ -186,10 +185,14 @@ def build_sector_prompt_section(ctx: SectorContext | None, symbol: str) -> str:
         if not sp:
             continue
         emoji = {"hot": "🔥", "warm": "🟢", "cold": "🟡", "dump": "🔴"}[sp.momentum]
+        benchmark_text = (
+            f"{'outperform' if sp.vs_vnindex_1m > 0 else 'underperform'} VNINDEX "
+            f"{'+' if sp.vs_vnindex_1m > 0 else ''}{sp.vs_vnindex_1m}%"
+            if sp.vs_vnindex_1m is not None else "chưa có dữ liệu VNINDEX để so sánh"
+        )
         lines.append(
             f"{emoji} Ngành {sp.label}: {'+' if sp.trend_1m > 0 else ''}{sp.trend_1m}% (1M), "
-            f"{'outperform' if sp.vs_vnindex_1m > 0 else 'underperform'} VNINDEX {'+' if sp.vs_vnindex_1m > 0 else ''}{sp.vs_vnindex_1m}%. "
-            f"Biến động mạnh nhất: {', '.join(sp.top_movers)}."
+            f"{benchmark_text}. Biến động mạnh nhất: {', '.join(sp.top_movers)}."
         )
     lines.append(f"Tín hiệu luân chuyển: {ctx.rotation_signal}")
     return "\n".join(lines)

@@ -190,6 +190,10 @@ async def _fetch_ohlcv_dnse(symbol: str, days: int = 90) -> OhlcvSeries:
         logger.warning("fetch_ohlcv(%s) lỗi: %s", sym, e)
         return OhlcvSeries(symbol=sym)
 
+    if not isinstance(data, dict):
+        logger.warning("fetch_ohlcv(%s): DNSE trả schema không hợp lệ (%s)", sym, type(data).__name__)
+        return OhlcvSeries(symbol=sym)
+
     t = data.get("t") or []
     h = data.get("h") or []
     l = data.get("l") or []
@@ -274,6 +278,49 @@ async def fetch_symbol_universe():
     if symbols: return symbols
     from stock.sector import ALL_KNOWN_SYMBOLS
     return sorted(ALL_KNOWN_SYMBOLS)
+
+_EXCHANGE_MAP_TTL = 24 * 3600
+_exchange_map_cache: tuple[float, dict[str, str]] | None = None
+
+def _fetch_exchange_map_sync() -> dict[str, str]:
+    try:
+        ensure_vnstock_api_key()
+        from vnstock import Listing
+        df = Listing(source="VCI").symbols_by_exchange()
+        cols = {str(c).lower().replace("_", ""): c for c in df.columns}
+        symbol_col = next((cols[k] for k in ("symbol", "ticker", "code") if k in cols), None)
+        exchange_col = next((cols[k] for k in ("exchange", "exchangename", "market", "floor") if k in cols), None)
+        if symbol_col is None or exchange_col is None:
+            return {}
+        result = {}
+        for sym, ex in zip(df[symbol_col], df[exchange_col]):
+            symbol = str(sym).strip().upper()
+            exchange = str(ex).strip().upper()
+            if not _SYMBOL_RE.fullmatch(symbol):
+                continue
+            if exchange in {"HOSE", "HSX"}:
+                result[symbol] = "HOSE"
+            elif exchange in {"HNX"}:
+                result[symbol] = "HNX"
+            elif exchange == "UPCOM":
+                result[symbol] = "UPCOM"
+        return result
+    except Exception:
+        logger.debug("Không lấy được exchange map từ vnstock", exc_info=True)
+        return {}
+
+async def fetch_symbol_exchange(symbol: str) -> str | None:
+    """Best-effort resolve sàn; thiếu dữ liệu thì caller dùng tick 100đ an toàn."""
+    global _exchange_map_cache
+    now = time.monotonic()
+    if _exchange_map_cache is None or now - _exchange_map_cache[0] >= _EXCHANGE_MAP_TTL:
+        try:
+            async with get_vnstock_semaphore():
+                mapping = await asyncio.wait_for(asyncio.to_thread(_fetch_exchange_map_sync), timeout=30)
+        except (TimeoutError, asyncio.TimeoutError):
+            mapping = {}
+        _exchange_map_cache = (now, mapping)
+    return _exchange_map_cache[1].get(symbol.strip().upper())
 
 async def fetch_current_price(symbol: str) -> float:
     series = await fetch_ohlcv(symbol, days=5)
