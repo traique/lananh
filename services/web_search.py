@@ -125,6 +125,34 @@ def should_deep_read(text: str) -> bool:
     return any(marker in lower for marker in _DEEP_READ_TRIGGER_MARKERS)
 
 
+# Câu hỏi kiểu "tin tức" -> chuyển Tavily sang index news (ưu tiên bài có
+# ngày đăng, mới hơn) thay vì index trang web chung chung. Dùng cụm từ rõ
+# ràng thay vì chỉ "tin" đơn lẻ vì "tin" cũng là gốc của "tin tưởng" - dễ
+# bắt nhầm.
+_NEWS_TOPIC_MARKERS = ("tin tức", "tin mới", "tin nóng", "có tin gì", "tin về")
+# "hôm nay"/"hiện tại"/"vừa" -> chỉ lấy kết quả trong 1 ngày gần nhất.
+_TODAY_TIME_RANGE_MARKERS = ("hôm nay", "hiện tại", "mới nhất", "vừa mới", "ngay lúc này")
+# "tuần này"/"gần đây" -> nới ra 1 tuần thay vì 1 ngày để đỡ quá ít kết quả.
+_WEEK_TIME_RANGE_MARKERS = ("tuần này", "gần đây", "mấy ngày qua", "tuần qua")
+
+
+def _recency_params(text: str) -> tuple[str | None, str | None]:
+    """Suy ra (topic, time_range) cho Tavily từ câu hỏi, để ưu tiên bài mới
+    thay vì bài cũ nhưng nhiều backlink/traffic vẫn xếp hạng cao. Không có
+    tín hiệu thời gian nào thì trả (None, None) - giữ hành vi search chung
+    như cũ, không ép topic="news" cho mọi câu hỏi (dễ bỏ sót trang không
+    phải tin tức, ví dụ trang sản phẩm/tài liệu)."""
+    lower = (text or "").lower()
+    topic = "news" if any(m in lower for m in _NEWS_TOPIC_MARKERS) else None
+    if any(m in lower for m in _TODAY_TIME_RANGE_MARKERS):
+        time_range = "day"
+    elif any(m in lower for m in _WEEK_TIME_RANGE_MARKERS) or topic == "news":
+        time_range = "week"
+    else:
+        time_range = None
+    return topic, time_range
+
+
 async def _recent_history_text(user_id: int, turns: int = 3) -> str:
     """Vài lượt hội thoại gần nhất, dạng text ngắn cho prompt viết lại truy
     vấn - CHỈ để hiểu ngữ cảnh đại từ ("nó", "cái đó", "còn X thì sao"...),
@@ -245,6 +273,8 @@ async def _fetch_tavily(
     search_depth: str,
     max_results_per_domain: int | None,
     extra_queries: list[str],
+    topic: str | None,
+    time_range: str | None,
 ) -> tavily_client.TavilySearchResponse:
     """1 query -> gọi thẳng như cũ; nhiều query -> chạy song song rồi gộp."""
     queries = [query] + [q for q in extra_queries if q and q != query]
@@ -254,6 +284,8 @@ async def _fetch_tavily(
             max_results,
             search_depth=search_depth,
             max_results_per_domain=max_results_per_domain,
+            topic=topic,
+            time_range=time_range,
         )
 
     responses = await asyncio.gather(
@@ -263,6 +295,8 @@ async def _fetch_tavily(
                 max_results,
                 search_depth=search_depth,
                 max_results_per_domain=max_results_per_domain,
+                topic=topic,
+                time_range=time_range,
             )
             for q in queries
         ),
@@ -287,6 +321,8 @@ async def search_web(
     min_domains: int = 2,
     extra_queries: list[str] | None = None,
     deep_read: bool = False,
+    topic: str | None = None,
+    time_range: str | None = None,
 ) -> SearchGrounding:
     """Search Tavily trước, fallback real-search khi kết quả không đủ đa dạng.
 
@@ -296,6 +332,9 @@ async def search_web(
     ``deep_read``: đọc sâu 1-2 kết quả điểm cao nhất qua ``web_reader`` thay
     vì chỉ dùng snippet - dùng cho câu hỏi cần số liệu chính xác (giá, tin
     tức) hoặc khi caller (như /agent) chủ động muốn nghiên cứu kỹ hơn.
+    ``topic``/``time_range``: ép Tavily ưu tiên bài mới - xem
+    ``_recency_params``. Nếu quá hẹp mà không đủ kết quả (quality gate rớt),
+    tự rơi xuống nhánh fallback real-search bên dưới như bình thường.
     """
     tavily_response: tavily_client.TavilySearchResponse | None = None
     tavily_error: BaseException | None = None
@@ -306,6 +345,8 @@ async def search_web(
             search_depth=search_depth,
             max_results_per_domain=max_results_per_domain,
             extra_queries=extra_queries or [],
+            topic=topic,
+            time_range=time_range,
         )
         if is_tavily_quality_sufficient(
             tavily_response, min_results=min_results, min_domains=min_domains
@@ -371,8 +412,13 @@ async def maybe_search(text: str, *, user_id: int | None = None) -> str:
             history_text = await _recent_history_text(user_id)
             queries = await _rewrite_and_expand_query(text, history_text)
         primary, extras = queries[0], queries[1:]
+        topic, time_range = _recency_params(text)
         grounding = await search_web(
-            primary, extra_queries=extras, deep_read=should_deep_read(text)
+            primary,
+            extra_queries=extras,
+            deep_read=should_deep_read(text),
+            topic=topic,
+            time_range=time_range,
         )
         return grounding.text
     except Exception:

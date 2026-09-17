@@ -91,9 +91,10 @@ async def test_maybe_search_respects_toggle_and_intent_gate(monkeypatch):
     assert calls["search"] == 1
 
 
-def test_format_search_results_includes_citation_and_numeric_note():
+def test_format_search_results_avoids_citation_markers_and_keeps_numeric_note():
     text = tavily_client.format_search_results(_response(["a.vn", "b.vn"]))
-    assert "[n]" in text
+    assert "theo kết quả tìm kiếm" in text  # chỉ xuất hiện trong câu dặn KHÔNG viết vậy
+    assert "KHÔNG chèn số thứ tự" in text
     assert "KHÔNG làm tròn" in text
     assert "1. R0" in text and "2. R1" in text
 
@@ -102,6 +103,13 @@ def test_should_deep_read_flags_price_and_news_queries():
     assert web_search.should_deep_read("giá vàng hôm nay bao nhiêu") is True
     assert web_search.should_deep_read("tin AI mới nhất") is True
     assert web_search.should_deep_read("kể chuyện cười đi") is False
+
+
+def test_recency_params_detects_news_and_time_window():
+    assert web_search._recency_params("tin tức AI hôm nay") == ("news", "day")
+    assert web_search._recency_params("tin tức tuần này về AI") == ("news", "week")
+    assert web_search._recency_params("giá iPhone 16 Pro") == (None, None)
+    assert web_search._recency_params("tin tưởng vào bản thân") == (None, None)
 
 
 @pytest.mark.asyncio

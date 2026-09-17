@@ -144,7 +144,12 @@ async def _tool_tim_web(query: str) -> str:
         # deep_read=True: /agent là hành động nghiên cứu chủ động (không phải
         # chat ngẫu nhiên), đáng đọc sâu 1-2 nguồn điểm cao thay vì chỉ dùng
         # snippet Tavily - xem services/web_search.py::_deep_read_top_results.
-        return (await web_search.search_web(query.strip(), deep_read=True)).text
+        topic, time_range = web_search._recency_params(query)
+        return (
+            await web_search.search_web(
+                query.strip(), deep_read=True, topic=topic, time_range=time_range
+            )
+        ).text
     except web_search.WebSearchError as exc:
         return f"Không tìm được trên web: {exc}"
 

@@ -86,15 +86,19 @@ def _domain_of(url: str) -> str:
 
 
 # Chỉ dẫn gắn kèm mọi grounding Tavily đưa vào LLM (chat, /gia, /agent...):
-# ép model trích dẫn theo số [n] khớp danh sách kết quả bên dưới và giữ
-# nguyên số liệu/ngày tháng - adapt ý tưởng citation + "numerical data
-# integrity" của dự án Vane (ItzCrazyKns/Vane, MIT License), diễn đạt lại
-# bằng tiếng Việt cho phù hợp giọng bot.
+# ép giữ nguyên số liệu/ngày tháng, và tránh kiểu văn phong "theo kết quả tìm
+# kiếm/kết quả anh gửi" - đọc gượng gạo, lộ rõ đây là raw search dump thay vì
+# câu trả lời tự nhiên.
 _GROUNDING_USAGE_NOTE = (
-    "Khi dùng các kết quả bên dưới để trả lời, hãy trích dẫn nguồn bằng số "
-    "thứ tự [n] khớp với danh sách (vd: giá tăng 5%[1], theo VnExpress[2]). "
-    "Giữ NGUYÊN số liệu, ngày tháng, tỷ lệ % xuất hiện trong kết quả - "
-    "KHÔNG làm tròn, KHÔNG khái quát hoá hay suy diễn số khác với nguồn."
+    "Dùng thông tin bên dưới để trả lời tự nhiên như thể tự biết, KHÔNG kể "
+    "lể quá trình tìm kiếm (không viết \"theo kết quả tìm kiếm\", \"theo các "
+    "kết quả anh gửi\", \"nguồn tìm được\" hay tương tự), KHÔNG chèn số thứ tự "
+    "trích dẫn kiểu [1][2]. Nếu cần nêu nguồn thì nói tên nguồn tự nhiên "
+    "trong câu (vd: theo VnExpress, theo Reuters). Giữ NGUYÊN số liệu, ngày "
+    "tháng, tỷ lệ % xuất hiện trong kết quả - KHÔNG làm tròn, KHÔNG khái "
+    "quát hoá hay suy diễn số khác với nguồn. Ưu tiên kết quả có ngày đăng "
+    "gần ngày hiện tại nhất; kết quả nào ghi ngày đăng đã cũ (vài tháng "
+    "trở lên) thì coi là thông tin nền, không phải tin mới nhất."
 )
 
 
@@ -104,7 +108,8 @@ def format_search_results(response: TavilySearchResponse) -> str:
         lines.append(f"Tóm tắt: {response.answer}")
     for i, item in enumerate(response.results, start=1):
         title = item.title or item.url or "?"
-        lines.append(f"{i}. {title} ({item.url})\n{item.content}")
+        date_suffix = f" - đăng {item.published_date}" if item.published_date else ""
+        lines.append(f"{i}. {title}{date_suffix} ({item.url})\n{item.content}")
     return "\n\n".join(lines)
 
 
@@ -116,12 +121,20 @@ async def search_results(
     max_results_per_domain: Optional[int] = None,
     country: Optional[str] = _DEFAULT_COUNTRY,
     language: Optional[str] = _DEFAULT_LANGUAGE,
+    topic: Optional[str] = None,
+    time_range: Optional[str] = None,
 ) -> TavilySearchResponse:
     """Tra Tavily và giữ structured result để caller đánh giá chất lượng.
 
     ``country`` và ``language`` là ranking boost, không hard-filter. Mặc định
     ưu tiên Việt Nam + tiếng Việt vì bot phục vụ truy vấn tiếng Việt; caller
     vẫn có thể truyền ``None`` khi muốn search toàn cầu không localization.
+
+    ``topic="news"`` chuyển Tavily sang index tin tức (ưu tiên bài mới, có
+    ngày đăng) thay vì index trang web chung chung. ``time_range`` giới hạn
+    kết quả trong khoảng gần đây - 1 trong "day"/"week"/"month"/"year" - dùng
+    cho câu hỏi kiểu "tin mới nhất/hôm nay" để tránh Tavily trả bài cũ vẫn
+    còn xếp hạng cao do nhiều backlink/traffic.
     """
     api_key = await _api_key()
     if not api_key:
@@ -138,6 +151,10 @@ async def search_results(
     if language:
         payload["language"] = language
         payload["filter_by_language"] = False
+    if topic:
+        payload["topic"] = topic
+    if time_range:
+        payload["time_range"] = time_range
 
     response = await _get_client().post(
         f"{config.TAVILY_BASE_URL}/search",
@@ -191,6 +208,8 @@ async def search(
     max_results_per_domain: Optional[int] = None,
     country: Optional[str] = _DEFAULT_COUNTRY,
     language: Optional[str] = _DEFAULT_LANGUAGE,
+    topic: Optional[str] = None,
+    time_range: Optional[str] = None,
 ) -> str:
     """Compatibility wrapper: tra Tavily rồi format thành grounding text."""
     response = await search_results(
@@ -200,5 +219,7 @@ async def search(
         max_results_per_domain=max_results_per_domain,
         country=country,
         language=language,
+        topic=topic,
+        time_range=time_range,
     )
     return format_search_results(response)
