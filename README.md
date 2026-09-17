@@ -30,6 +30,10 @@ Repository được thiết kế cho **một chủ sở hữu**:
 - Lịch sử theo phiên và trí nhớ dài hạn trên Supabase Postgres.
 - Ghi chú, reminder và facts danh mục qua ngôn ngữ tự nhiên.
 - Tìm giá sản phẩm bằng grounded search chính thức.
+- Web search (Tavily) viết lại câu hỏi thành truy vấn độc lập + biến thể
+  (multi-query song song, dùng lịch sử hội thoại) và đọc sâu 1-2 nguồn điểm
+  cao qua Jina Reader cho câu hỏi cần số liệu chính xác (giá, tin tức) -
+  xem `services/web_search.py`.
 - Phân tích ảnh và tạo prompt.
 - Thống kê lượt gọi AI theo user/kênh và theo model (`/thongke` trên chat, hoặc trang `/admin`).
 

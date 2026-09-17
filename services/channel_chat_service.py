@@ -138,7 +138,7 @@ async def handle_channel_text(user_id: int, text: str, is_admin: bool = True, ch
         # độ trễ cho mọi tin nhắn).
         tool_result, search_result, memory = await asyncio.gather(
             tools.maybe_run_tool(user_id, text),
-            web_search.maybe_search(text),
+            web_search.maybe_search(text, user_id=user_id),
             memory_service.build_memory_context(user_id),
         )
         combined = "\n\n".join(part for part in (grounding, tool_result, search_result) if part)

@@ -85,8 +85,21 @@ def _domain_of(url: str) -> str:
         return url
 
 
+# Chỉ dẫn gắn kèm mọi grounding Tavily đưa vào LLM (chat, /gia, /agent...):
+# ép model trích dẫn theo số [n] khớp danh sách kết quả bên dưới và giữ
+# nguyên số liệu/ngày tháng - adapt ý tưởng citation + "numerical data
+# integrity" của dự án Vane (ItzCrazyKns/Vane, MIT License), diễn đạt lại
+# bằng tiếng Việt cho phù hợp giọng bot.
+_GROUNDING_USAGE_NOTE = (
+    "Khi dùng các kết quả bên dưới để trả lời, hãy trích dẫn nguồn bằng số "
+    "thứ tự [n] khớp với danh sách (vd: giá tăng 5%[1], theo VnExpress[2]). "
+    "Giữ NGUYÊN số liệu, ngày tháng, tỷ lệ % xuất hiện trong kết quả - "
+    "KHÔNG làm tròn, KHÔNG khái quát hoá hay suy diễn số khác với nguồn."
+)
+
+
 def format_search_results(response: TavilySearchResponse) -> str:
-    lines = [f"[Kết quả tìm kiếm web (Tavily) cho: {response.query}]"]
+    lines = [f"[Kết quả tìm kiếm web (Tavily) cho: {response.query}]", _GROUNDING_USAGE_NOTE]
     if response.answer:
         lines.append(f"Tóm tắt: {response.answer}")
     for i, item in enumerate(response.results, start=1):

@@ -68,7 +68,7 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # 2 bước này độc lập nhau - chạy song song để không cộng dồn thời gian chờ.
         tool_result, search_result = await asyncio.gather(
             tools.maybe_run_tool(user_id, text),
-            web_search.maybe_search(text),
+            web_search.maybe_search(text, user_id=user_id),
         )
         combined_grounding = "\n\n".join(
             part for part in (route.grounding, tool_result, search_result) if part
