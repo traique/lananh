@@ -135,3 +135,50 @@ async def test_preview_includes_original_shopee_link_for_easy_copy(monkeypatch):
     assert "Link Shopee gốc (chưa chuyển đổi):" in preview
     assert source_url in preview
     assert "/fb_link 25 <link_mới>" in preview
+
+
+@pytest.mark.asyncio
+async def test_prepare_post_notifies_secondary_admin_channels(monkeypatch):
+    row = {
+        "id": 25,
+        "status": "PENDING_APPROVAL",
+        "original_content": "Deal mới",
+        "processed_content": "Deal mới",
+        "group_id": "g1",
+        "sender_name": "Lan",
+        "sender_id": "u1",
+    }
+    notifications = []
+
+    async def fake_get_post(account_id, post_id):
+        return row
+
+    async def fake_links(account_id, urls):
+        return {}
+
+    async def fake_media(post_id):
+        return []
+
+    async def fake_controller():
+        return ""
+
+    async def notify(text):
+        notifications.append(text)
+
+    monkeypatch.delenv("ZALO_CONTROLLER_ID", raising=False)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "get_post", fake_get_post)
+    monkeypatch.setattr(
+        facebook_commands.facebook_repository, "get_affiliate_links", fake_links
+    )
+    monkeypatch.setattr(facebook_commands.facebook_repository, "get_media", fake_media)
+    from channels import zalo_session
+
+    monkeypatch.setattr(zalo_session, "load_controller", fake_controller)
+    facebook_commands.set_admin_notification_callback(notify)
+    try:
+        await facebook_commands.prepare_post("B", 25)
+    finally:
+        facebook_commands.set_admin_notification_callback(None)
+
+    assert len(notifications) == 1
+    assert "BÀI FACEBOOK CHỜ DUYỆT #25" in notifications[0]

@@ -1,10 +1,12 @@
 """Encrypted persistence for the personal Zalo session and controller pairing."""
 import json
+
 from core import crypto, database as db
 from core.repositories import settings as settings_repository
 
 _SESSION_KEY = "zalo:session:v1"
 _CONTROLLER_KEY = "zalo:controller:v1"
+
 
 async def load_session() -> dict | None:
     pool = await db.get_pool()
@@ -17,6 +19,14 @@ async def load_session() -> dict | None:
     except (TypeError, json.JSONDecodeError):
         return None
 
+
+async def load_account_id() -> str:
+    session = await load_session()
+    if not session:
+        return ""
+    return str(session.get("accountId") or session.get("account_id") or "").strip()
+
+
 async def save_session(value: dict) -> None:
     pool = await db.get_pool()
     await settings_repository.set(
@@ -25,17 +35,21 @@ async def save_session(value: dict) -> None:
         crypto.encrypt(json.dumps(value, separators=(",", ":"))),
     )
 
+
 async def clear_session() -> None:
     await settings_repository.set(await db.get_pool(), _SESSION_KEY, "")
+
 
 async def load_controller() -> str:
     raw = await settings_repository.get(await db.get_pool(), _CONTROLLER_KEY)
     return (crypto.decrypt(raw) or "").strip()
 
+
 async def save_controller(controller_id: str) -> None:
     await settings_repository.set(
         await db.get_pool(), _CONTROLLER_KEY, crypto.encrypt(controller_id.strip())
     )
+
 
 async def clear_controller() -> None:
     await settings_repository.set(await db.get_pool(), _CONTROLLER_KEY, "")

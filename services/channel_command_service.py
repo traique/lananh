@@ -32,7 +32,16 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /bangtinsang — gửi ngay Bản tin sáng tới cả Zalo + Zoom (chỉ admin; bình thường tự gửi lúc 8h)
 /tintuc — đọc Điểm tin mới ngay tại đúng kênh đang gọi lệnh (chỉ admin)
 /nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo
-  (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom, chỉ admin)"""
+  (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom, chỉ admin)
+📣 Zalo → Facebook Page (tách riêng khỏi /tongket, chỉ admin):
+/fb_nhom — xem nhóm nguồn Facebook
+/fb_themnhom <group_id> <tên> — thêm nhóm Zalo làm nguồn đăng Facebook
+/fb_xoanhom <group_id|tên> — bỏ nhóm khỏi luồng Facebook
+/fb_xem <post_id> — xem bài đang chờ duyệt
+/fb_sua <post_id> <nội dung> — sửa nội dung bài chờ
+/fb_link <post_id> <affiliate_url> — thay link Shopee sau khi chuyển đổi
+/fb_ok <post_id> — duyệt và đăng Facebook Page
+/fb_boqua <post_id> — bỏ bài chờ"""
 
 # Ảnh do lệnh /anh tạo ra được "gửi kèm" bằng ContextVar thay vì đổi kiểu trả
 # về của maybe_handle_command() (đang là tuple[list[str], str|None] và có

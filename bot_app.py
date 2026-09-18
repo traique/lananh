@@ -10,7 +10,7 @@ from telegram.request import HTTPXRequest
 import scheduler
 import tg_format
 from ai import agnes_client, orchestrator, router9_client, groq_client, openrouter_client, tavily_client
-from channels import zalo_users
+from channels import facebook_commands, zalo_users, zoom
 from core import config, database as db, idempotency
 from handlers import chat_router, commands, media_handler, portfolio_commands, zalo_login
 from services import channel_chat_service
@@ -60,6 +60,14 @@ COMMANDS = [
     BotCommand("xoanhom", "Ngừng theo dõi 1 nhóm Zalo"),
     BotCommand("tongket", "Tổng kết nhóm Zalo (AI)"),
     BotCommand("dangnoi", "Xem nguyên văn thảo luận hôm nay"),
+    BotCommand("fb_nhom", "Xem nhóm nguồn Facebook"),
+    BotCommand("fb_themnhom", "Thêm nhóm nguồn Facebook"),
+    BotCommand("fb_xoanhom", "Bỏ nhóm nguồn Facebook"),
+    BotCommand("fb_xem", "Xem bài Facebook chờ duyệt"),
+    BotCommand("fb_sua", "Sửa bài Facebook chờ duyệt"),
+    BotCommand("fb_link", "Thay link Shopee affiliate"),
+    BotCommand("fb_ok", "Duyệt và đăng Facebook"),
+    BotCommand("fb_boqua", "Bỏ bài Facebook chờ"),
     BotCommand("zalopair", "Cấp quyền thành viên Zalo"),
     BotCommand("zaloadmin", "Cấp quyền admin Zalo"),
     BotCommand("zalohaquyen", "Hạ quyền admin Zalo về thành viên"),
@@ -175,6 +183,14 @@ def build_application():
         ("xoanhom", commands.xoanhom_cmd),
         ("tongket", commands.tongket_cmd),
         ("dangnoi", commands.dangnoi_cmd),
+        ("fb_nhom", commands.fb_nhom_cmd),
+        ("fb_themnhom", commands.fb_themnhom_cmd),
+        ("fb_xoanhom", commands.fb_xoanhom_cmd),
+        ("fb_xem", commands.fb_xem_cmd),
+        ("fb_sua", commands.fb_sua_cmd),
+        ("fb_link", commands.fb_link_cmd),
+        ("fb_ok", commands.fb_ok_cmd),
+        ("fb_boqua", commands.fb_boqua_cmd),
         ("zalopair", commands.zalopair_cmd),
         ("zaloadmin", commands.zaloadmin_cmd),
         ("zalohaquyen", commands.zalohaquyen_cmd),
@@ -199,6 +215,23 @@ def build_application():
 
     orchestrator.set_alert_callback(alert)
     zalo_users.set_alert_callback(alert)
+
+    async def notify_facebook_admins(text):
+        try:
+            await tg_format.send_rich(app.bot, config.ALLOWED_USER_ID, text)
+        except Exception:
+            logger.warning("Không gửi được preview Facebook tới Telegram owner.", exc_info=True)
+
+        if not config.ZOOM_ENABLED:
+            return
+        try:
+            pairing = await db.zoom_get_pairing()
+            if pairing is not None:
+                await zoom.send_message(to_jid=pairing[0], text=text)
+        except Exception:
+            logger.warning("Không gửi được preview Facebook tới Zoom admin.", exc_info=True)
+
+    facebook_commands.set_admin_notification_callback(notify_facebook_admins)
 
     async def notify(uid, text):
         try:

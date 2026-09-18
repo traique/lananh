@@ -246,7 +246,50 @@ nhân ở trên, nên không bị ảnh hưởng bởi việc cách ly bộ nh�
 /dangnoi <alias> — xem nguyên văn thảo luận trong ngày hôm nay (không qua AI)
 ```
 
-Gateway chỉ lưu text mới từ nhóm allowlist, không backfill, không lưu media nhóm và không trả lời trong nhóm.
+Đối với allowlist `/tongket`, gateway chỉ lưu text mới, không backfill, không
+lưu media nhóm và không trả lời trong nhóm. Luồng Facebook bên dưới có allowlist
+riêng và tải media riêng.
+
+### Zalo → Facebook Page (độc lập `/tongket`)
+
+Luồng Facebook dùng danh sách `zalo_facebook_groups` riêng, không dùng
+`zalo_groups` của `/tongket`. Một nhóm có thể nằm ở một hoặc cả hai danh sách;
+thêm/xóa ở luồng Facebook không thay đổi dữ liệu tổng kết nhóm.
+
+Các lệnh `/fb_*` dùng được từ **Zalo admin, Telegram owner và Zoom jid đã pair**:
+
+```text
+/fb_nhom
+/fb_themnhom <group_id> <alias>
+/fb_xoanhom <group_id-or-alias>
+/fb_xem <post_id>
+/fb_sua <post_id> <nội dung mới>
+/fb_link <post_id> <affiliate_url>
+/fb_ok <post_id>
+/fb_boqua <post_id>
+```
+
+Quy trình vận hành:
+
+1. Trên Zalo admin gõ `/nhomzalo` để lấy `group_id` của nhóm nguồn.
+2. Từ Zalo admin, Telegram hoặc Zoom gõ
+   `/fb_themnhom <group_id> <alias>`.
+3. Gateway tự thu text + ảnh mới của nhóm đó và gom các message liên tiếp của
+   cùng người gửi thành một bài chờ duyệt. Luồng này không ghi vào dữ liệu
+   `/tongket` trừ khi nhóm đó cũng được thêm riêng bằng `/themnhom`.
+4. Preview có `post_id` và các link Shopee gốc chưa chuyển đổi để copy. Bot
+   gửi preview tới Zalo admin, Telegram owner và Zoom jid đã pair (nếu Zoom
+   đang bật); cũng có thể xem lại bằng `/fb_xem <post_id>`.
+5. Nếu có Shopee link, tự tạo affiliate link rồi gửi
+   `/fb_link <post_id> <affiliate_url>`. Bot thay link trong nội dung và lưu
+   mapping để tái sử dụng.
+6. Có thể sửa caption bằng `/fb_sua <post_id> <nội dung mới>`.
+7. Gõ `/fb_ok <post_id>` để đăng lên Facebook Page; nếu vẫn còn Shopee link
+   chưa có affiliate thì bot từ chối đăng. Dùng `/fb_boqua <post_id>` để bỏ.
+
+Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài nhóm Zalo vẫn do
+`zalo-gateway` thực hiện. `account_id` cho các lệnh `/fb_*` trên Telegram/Zoom
+được lấy từ Zalo session đang đăng nhập, nên không cần có nhóm `/tongket` trước.
 
 ## Lệnh chính
 
@@ -279,8 +322,16 @@ Gateway chỉ lưu text mới từ nhóm allowlist, không backfill, không lưu
 | `/xoanhom <group_id\|alias>` | Ngừng theo dõi 1 nhóm Zalo |
 | `/tongket <alias> [24h\|7d\|homnay\|homqua]` | Tổng kết nhóm Zalo (AI) |
 | `/dangnoi <alias>` | Xem nguyên văn thảo luận nhóm Zalo hôm nay |
+| `/fb_nhom` | Xem danh sách nhóm Zalo làm nguồn đăng Facebook |
+| `/fb_themnhom <group_id> <alias>` | Thêm nhóm vào luồng Zalo → Facebook, độc lập `/tongket` |
+| `/fb_xoanhom <group_id\|alias>` | Bỏ nhóm khỏi luồng Facebook |
+| `/fb_xem <post_id>` | Xem bài Facebook đang chờ duyệt |
+| `/fb_sua <post_id> <nội dung>` | Sửa nội dung bài Facebook đang chờ |
+| `/fb_link <post_id> <affiliate_url>` | Thay link Shopee bằng affiliate link đã chuyển đổi |
+| `/fb_ok <post_id>` | Duyệt và đăng bài lên Facebook Page |
+| `/fb_boqua <post_id>` | Bỏ bài Facebook đang chờ |
 | `/zalopair <id_zalo> [tên]` | Cấp quyền thành viên cho 1 tài khoản Zalo |
-| `/zaloadmin <id_zalo> [tên]` | Cấp/nâng quyền admin (dùng được lệnh nhóm) |
+| `/zaloadmin <id_zalo> [tên]` | Cấp/nâng quyền admin (dùng được lệnh nhóm và `/fb_*`) |
 | `/zalohaquyen <id_zalo>` | Hạ 1 admin về thành viên thường |
 | `/zalokhoa <id_zalo>` | Khóa 1 tài khoản Zalo |
 | `/zalomokhoa <id_zalo>` | Mở khóa 1 tài khoản Zalo |
@@ -448,19 +499,21 @@ mới gọi được các lệnh này (xem mục "Zalo — nhiều tài khoản 
 trên Zoom/Telegram không có khái niệm role riêng vì mỗi kênh chỉ có đúng 1
 owner được phép dùng, nên luôn coi như đủ quyền. Vì Zoom/Telegram không có sẵn
 `account_id` Zalo đi kèm request như kênh Zalo (`channels/router.py` nhận
-trực tiếp từ payload bridge), bot tự suy ra bằng cách lấy account_id có nhiều
-nhóm đang theo dõi nhất (`channels/zalo_repository.py::resolve_default_account_id`)
-— phù hợp
-với thiết kế 1-chủ (chỉ 1 tài khoản Zalo BOT/B, dù nhiều người DÙNG có thể pair
-để nhắn cho bot đó — xem mục "Zalo — nhiều tài khoản & phân quyền"). Nếu deploy
-NHIỀU tài khoản Zalo BOT cùng lúc (nhiều `zalo-gateway` riêng biệt), hàm này
-chỉ chọn được 1 tài khoản bot; cần chỉnh lại nếu muốn hỗ trợ multi-bot.
+trực tiếp từ payload bridge), bot ưu tiên lấy `accountId` từ Zalo session đang
+đăng nhập; với session cũ không có field này mới fallback về
+`channels/zalo_repository.py::resolve_default_account_id()`. Thiết kế này vẫn
+giả định chỉ có 1 tài khoản Zalo BOT/B đang active.
 
 Zoom/Telegram **không thể tự thu thập tin nhắn nhóm Zalo** (đó vẫn là việc
 của `zalo-gateway`) — chúng chỉ đọc lại dữ liệu Zalo đã có sẵn. Bản thân kênh
 Zoom cũng không đọc thụ động được tin nhắn trong Zoom channel (chỉ nhận tin
 gửi trực tiếp/@mention cho bot), nên KHÔNG có `/tongket`/`/dangnoi` tương
 đương CHO NHÓM ZOOM — chỉ dùng được để xem lại nhóm ZALO.
+
+Các lệnh Facebook (`/fb_nhom`, `/fb_themnhom`, `/fb_xoanhom`, `/fb_xem`,
+`/fb_sua`, `/fb_link`, `/fb_ok`, `/fb_boqua`) cũng dùng được từ Zoom với cùng
+quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác định
+`account_id`, nên luồng Facebook không phụ thuộc việc có cấu hình `/tongket`.
 
 ## Bảo mật vận hành
 

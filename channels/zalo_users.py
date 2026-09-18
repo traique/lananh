@@ -1,7 +1,7 @@
 """Pairing nhiều tài khoản Zalo cho ĐÚNG 1 bot Zalo (Zalo B), với phân quyền:
 
 - role="admin": dùng được tính năng nhóm (/nhom, /themnhom, /xoanhom, /tongket,
-  /dangnoi) NGOÀI các tính năng bình thường.
+  /dangnoi) và luồng Facebook (/fb_*) NGOÀI các tính năng bình thường.
 - role="user": chỉ dùng được tính năng bình thường (chat, /prompt, /gia, /dich,
   /reset...), KHÔNG thấy/dùng được lệnh nhóm - channels/router.py chỉ gọi
   channels.group_commands.maybe_handle_group_command() khi role=="admin".
@@ -83,7 +83,7 @@ def notify_unpaired(external_id: str, display_name: str = "") -> None:
     text = (
         f"🔔 Zalo id={external_id}{ten} vừa nhắn cho bot nhưng chưa được cấp quyền.\n"
         f"Dùng /zalopair {external_id} để cấp quyền thành viên, hoặc "
-        f"/zaloadmin {external_id} để cấp quyền admin (dùng được lệnh nhóm)."
+        f"/zaloadmin {external_id} để cấp quyền admin (dùng được lệnh nhóm và /fb_*)."
     )
     _send_alert(text)
 

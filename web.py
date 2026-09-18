@@ -21,7 +21,7 @@ from ai import orchestrator, provider_overrides
 from ai import groq_client, official_client, openrouter_client, router9_client, tavily_client
 from ai import agnes_client
 from ai.provider_state import provider_state
-from channels import facebook_repository, group_commands, zalo_repository, zalo_scheduler, zalo_users, zoom
+from channels import facebook_commands, facebook_repository, group_commands, zalo_repository, zalo_scheduler, zalo_session, zalo_users, zoom
 from channels.router import router as zalo_router
 from core import config, database as db, idempotency
 from diagnose_router9 import main as diagnose_main
@@ -547,21 +547,28 @@ async def _process_zoom_event(event: "zoom.ZoomEvent") -> None:
                 reply_texts = cached.get("messages", [])
                 image_url = cached.get("image_url")
             else:
-                # Lệnh quản lý/xem lại nhóm Zalo (/nhom, /themnhom, /xoanhom, /tongket,
-                # /dangnoi) hoạt động GIỐNG HỆT từ Zoom như từ Zalo (xem README mục
-                # "Zoom Team Chat") - dữ liệu nhóm luôn là dữ liệu Zalo (thu thập qua
-                # zalo-gateway), Zoom chỉ là 1 kênh khác để TRUY VẤN dữ liệu đó. Vì
-                # request tới đây không có sẵn account_id Zalo (khác channels/router.py
-                # nhận trực tiếp từ payload bridge), phải tự suy ra qua
-                # zalo_repository.resolve_default_account_id().
-                zalo_account_id = await zalo_repository.resolve_default_account_id()
-                group_result = (
-                    await group_commands.maybe_handle_group_command(zalo_account_id, event.text.strip())
+                # Zoom admin dùng chung lệnh quản lý nhóm Zalo và /fb_* với Zalo admin.
+                # Request Zoom không có account_id Zalo nên ưu tiên lấy từ session đang
+                # đăng nhập; fallback resolver cũ để tương thích session cũ.
+                zalo_account_id = (
+                    await zalo_session.load_account_id()
+                    or await zalo_repository.resolve_default_account_id()
+                )
+                facebook_result = (
+                    await facebook_commands.maybe_handle_facebook_command(
+                        zalo_account_id, event.text.strip()
+                    )
                     if zalo_account_id
                     else None
                 )
-                if group_result is not None:
-                    reply_texts = _zoom_chunks(group_result.messages)
+                group_result = None
+                if facebook_result is None and zalo_account_id:
+                    group_result = await group_commands.maybe_handle_group_command(
+                        zalo_account_id, event.text.strip()
+                    )
+                admin_result = facebook_result or group_result
+                if admin_result is not None:
+                    reply_texts = _zoom_chunks(admin_result.messages)
                     provider = None
                     image_url = None
                 else:

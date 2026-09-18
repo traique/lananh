@@ -1,7 +1,9 @@
 """Admin commands for the isolated Zalo -> Facebook publishing flow."""
 
+import logging
 import os
 import re
+from typing import Awaitable, Callable
 from urllib.parse import urlparse
 
 import asyncpg
@@ -13,6 +15,15 @@ from services.facebook_page_service import FacebookPublishError, publish_page_po
 _URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 _SHOPEE_HOSTS = ("shopee.vn", "s.shopee.vn", "shope.ee")
 _ALLOWED_AFFILIATE_SCHEMES = {"http", "https"}
+logger = logging.getLogger(__name__)
+_admin_notification_callback: Callable[[str], Awaitable[None]] | None = None
+
+
+def set_admin_notification_callback(
+    callback: Callable[[str], Awaitable[None]] | None,
+) -> None:
+    global _admin_notification_callback
+    _admin_notification_callback = callback
 
 
 def find_shopee_urls(text: str) -> list[str]:
@@ -85,8 +96,14 @@ async def prepare_post(account_id: str, post_id: int) -> None:
         from channels import zalo_session
 
         controller = await zalo_session.load_controller()
+    preview = await _preview(account_id, post_id)
     if controller:
-        await zalo_repository.enqueue_outbox(account_id, controller, await _preview(account_id, post_id))
+        await zalo_repository.enqueue_outbox(account_id, controller, preview)
+    if _admin_notification_callback is not None:
+        try:
+            await _admin_notification_callback(preview)
+        except Exception:
+            logger.warning("Không gửi được preview Facebook tới kênh admin phụ.", exc_info=True)
 
 
 async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelResult | None:

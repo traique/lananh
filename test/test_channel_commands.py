@@ -12,6 +12,8 @@ async def test_help_command():
     messages, provider = await service.maybe_handle_command(1, "/help")
     assert "/gia" in messages[0]
     assert "/tongket" in messages[0]
+    assert "/fb_themnhom" in messages[0]
+    assert "/fb_ok" in messages[0]
     assert provider is None
 
 

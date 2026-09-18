@@ -12,7 +12,7 @@ from telegram.ext import ContextTypes
 
 import messages
 from ai import agnes_client, orchestrator, router9_client, tavily_client
-from channels import group_commands, zalo_repository, zalo_users
+from channels import facebook_commands, group_commands, zalo_repository, zalo_session, zalo_users
 from core import config, database as db
 from handlers import common
 from handlers.prompt_identity import render_instruction, resolve_prompt_identity
@@ -136,6 +136,15 @@ HELP_TEXT = (
     "/anh <mô tả> — tạo ảnh thật (Agnes AI); /anh on|off — bật/tắt\n"
     "/zoompair, /zoomxoa, /zoomstatus — quản lý pairing Zoom\n"
     "/nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo\n"
+    "📣 *Zalo → Facebook Page (tách riêng khỏi /tongket):*\n"
+    "/fb\\_nhom — xem các nhóm nguồn Facebook\n"
+    "/fb\\_themnhom <group_id> <tên> — thêm nhóm Zalo làm nguồn đăng Facebook\n"
+    "/fb\\_xoanhom <group_id|tên> — bỏ nhóm khỏi luồng Facebook\n"
+    "/fb\\_xem <post_id> — xem lại bài đang chờ duyệt\n"
+    "/fb\\_sua <post_id> <nội dung> — sửa nội dung bài chờ\n"
+    "/fb\\_link <post_id> <affiliate_url> — thay link Shopee sau khi anh chuyển đổi\n"
+    "/fb\\_ok <post_id> — duyệt và đăng Facebook Page\n"
+    "/fb\\_boqua <post_id> — bỏ bài chờ\n"
     "/zalopair, /zaloadmin, /zalohaquyen, /zalokhoa, /zalomokhoa, /zaloxoa, /zalodanhsach — quản lý user Zalo\n"
     "/help — hiển thị hướng dẫn này"
 )
@@ -667,7 +676,7 @@ async def zalopair_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 @common.restricted
 async def zaloadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/zaloadmin <id_zalo> [tên] — cấp/nâng quyền ADMIN (dùng được lệnh nhóm
-    /nhom, /themnhom, /xoanhom, /tongket, /dangnoi). Hỗ trợ NHIỀU admin cùng
+    /nhom, /themnhom, /xoanhom, /tongket, /dangnoi và /fb_*). Hỗ trợ NHIỀU admin cùng
     lúc, không giới hạn 1 admin duy nhất."""
     arg = common.extract_arg(context)
     if not arg:
@@ -678,7 +687,7 @@ async def zaloadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     label = f" ({user.display_name})" if user.display_name else ""
     await update.message.reply_text(
         f"👑 Đã cấp quyền ADMIN cho Zalo id: {html.escape(user.external_id)}{html.escape(label)} "
-        f"(dùng được lệnh nhóm)."
+        f"(dùng được lệnh nhóm và /fb_*)."
     )
 
 
@@ -756,7 +765,10 @@ async def _group_command(update: Update, context: ContextTypes.DEFAULT_TYPE, com
     mà Zalo/Zoom đang dùng, chỉ khác cách lấy account_id (Telegram không có
     sẵn account_id Zalo trong update, phải tự suy ra qua
     zalo_repository.resolve_default_account_id())."""
-    account_id = await zalo_repository.resolve_default_account_id()
+    account_id = (
+        await zalo_session.load_account_id()
+        or await zalo_repository.resolve_default_account_id()
+    )
     if account_id is None:
         await update.message.reply_text(
             "Chưa theo dõi nhóm Zalo nào. Dùng /nhom để xem hướng dẫn lấy group ID, "
@@ -768,6 +780,30 @@ async def _group_command(update: Update, context: ContextTypes.DEFAULT_TYPE, com
     result = await group_commands.maybe_handle_group_command(account_id, text)
     if result is None:
         await update.message.reply_text("Lệnh chưa được hỗ trợ.")
+        return
+    for message_text in result.messages:
+        await common.reply_long_text(update.message, message_text)
+
+
+async def _facebook_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, command: str
+) -> None:
+    """Dùng cùng facebook_commands với Zalo/Zoom; account_id lấy từ session Zalo
+    để luồng Facebook không phụ thuộc việc đã cấu hình nhóm /tongket hay chưa."""
+    account_id = (
+        await zalo_session.load_account_id()
+        or await zalo_repository.resolve_default_account_id()
+    )
+    if account_id is None or not str(account_id).strip():
+        await update.message.reply_text(
+            "Chưa xác định được tài khoản Zalo đang đăng nhập. Hãy đăng nhập Zalo bot trước rồi thử lại."
+        )
+        return
+    argument = common.extract_arg(context)
+    text = f"{command} {argument}".strip()
+    result = await facebook_commands.maybe_handle_facebook_command(str(account_id), text)
+    if result is None:
+        await update.message.reply_text("Lệnh Facebook chưa được hỗ trợ.")
         return
     for message_text in result.messages:
         await common.reply_long_text(update.message, message_text)
@@ -796,6 +832,46 @@ async def tongket_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 @common.restricted
 async def dangnoi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _group_command(update, context, "/dangnoi")
+
+
+@common.restricted
+async def fb_nhom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_nhom")
+
+
+@common.restricted
+async def fb_themnhom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_themnhom")
+
+
+@common.restricted
+async def fb_xoanhom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_xoanhom")
+
+
+@common.restricted
+async def fb_xem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_xem")
+
+
+@common.restricted
+async def fb_sua_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_sua")
+
+
+@common.restricted
+async def fb_link_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_link")
+
+
+@common.restricted
+async def fb_ok_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_ok")
+
+
+@common.restricted
+async def fb_boqua_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_boqua")
 
 @common.restricted
 async def model_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
