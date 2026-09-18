@@ -54,12 +54,15 @@ async def _preview(account_id: str, post_id: int) -> str:
         "",
         row["processed_content"] or "(không có caption)",
     ]
+    if source_urls:
+        lines.extend(["", "🔗 Link Shopee gốc (chưa chuyển đổi):", *source_urls])
     if missing:
         lines.extend(
             [
                 "",
                 "⚠️ Có link Shopee chưa được đổi sang affiliate của bạn.",
-                f"Dùng: /fb_link {post_id} <affiliate_url>",
+                "Copy link gốc phía trên, chuyển đổi xong gửi:",
+                f"/fb_link {post_id} <link_mới>",
             ]
         )
     lines.extend(["", f"/fb_ok {post_id}  |  /fb_boqua {post_id}"])

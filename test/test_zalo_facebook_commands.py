@@ -100,3 +100,38 @@ async def test_fb_link_replaces_original_shopee_link_and_creates_short_link(monk
 
     assert updated["content"] == "Deal https://s.shopee.vn/affiliate123"
     assert "https://go.example.com/r/abc123" in result.messages[0]
+
+
+@pytest.mark.asyncio
+async def test_preview_includes_original_shopee_link_for_easy_copy(monkeypatch):
+    source_url = "https://shopee.vn/product/1/2"
+    row = {
+        "id": 25,
+        "status": "PENDING_APPROVAL",
+        "original_content": f"Deal {source_url}",
+        "processed_content": f"Deal {source_url}",
+        "group_id": "g1",
+        "sender_name": "Lan",
+        "sender_id": "u1",
+    }
+
+    async def fake_get_post(account_id, post_id):
+        return row
+
+    async def fake_media(post_id):
+        return []
+
+    async def fake_links(account_id, urls):
+        return {}
+
+    monkeypatch.setattr(facebook_commands.facebook_repository, "get_post", fake_get_post)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "get_media", fake_media)
+    monkeypatch.setattr(
+        facebook_commands.facebook_repository, "get_affiliate_links", fake_links
+    )
+
+    preview = await facebook_commands._preview("B", 25)
+
+    assert "Link Shopee gốc (chưa chuyển đổi):" in preview
+    assert source_url in preview
+    assert "/fb_link 25 <link_mới>" in preview

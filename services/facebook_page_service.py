@@ -13,7 +13,7 @@ class FacebookPublishError(RuntimeError):
 def _settings() -> tuple[str, str, str]:
     page_id = os.getenv("FACEBOOK_PAGE_ID", "").strip()
     token = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN", "").strip()
-    version = os.getenv("FACEBOOK_GRAPH_VERSION", "v23.0").strip() or "v23.0"
+    version = os.getenv("FACEBOOK_GRAPH_VERSION", "v26.0").strip() or "v26.0"
     if not page_id or not token:
         raise FacebookPublishError(
             "Chưa cấu hình FACEBOOK_PAGE_ID và FACEBOOK_PAGE_ACCESS_TOKEN."
