@@ -46,6 +46,26 @@ class ZaloGroupConfig(BaseModel):
     alias: str
 
 
+class ZaloFacebookMedia(BaseModel):
+    mime_type: str = Field(pattern=r"^image/(jpeg|png|webp)$")
+    data_b64: str = Field(min_length=1)
+
+
+class ZaloFacebookPostRequest(BaseModel):
+    account_id: str = Field(min_length=1)
+    group_id: str = Field(min_length=1)
+    sender_id: str = Field(min_length=1)
+    sender_name: str = Field(default="", max_length=500)
+    message_ids: list[str] = Field(min_length=1, max_length=50)
+    text: str = Field(default="", max_length=20_000)
+    media: list[ZaloFacebookMedia] = Field(default_factory=list, max_length=10)
+
+    @field_validator("text", "sender_name")
+    @classmethod
+    def _normalize_facebook_nfc(cls, value: str) -> str:
+        return nfc(value)
+
+
 class ZaloOutboxItem(BaseModel):
     id: int
     content: str

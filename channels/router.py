@@ -1,5 +1,7 @@
 """Authenticated HTTP bridge used by the local zca-js process."""
 
+import base64
+import binascii
 import hmac
 import os
 from urllib.parse import unquote
@@ -8,14 +10,16 @@ from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 
 import messages as messages_module
-from channels import zalo_repository, zalo_session, zalo_users
+from channels import facebook_repository, zalo_repository, zalo_session, zalo_users
 from channels.contracts import (
     ZaloGroupConfig,
+    ZaloFacebookPostRequest,
     ZaloGroupMessageRequest,
     ZaloMessageRequest,
     ZaloMessageResponse,
     ZaloOutboxItem,
 )
+from channels.facebook_commands import maybe_handle_facebook_command, prepare_post
 from channels.group_commands import maybe_handle_group_command
 from channels.zalo_text import to_plain_text
 from core import idempotency
@@ -153,7 +157,9 @@ async def receive(
 
         result = None
         if zalo_user.is_admin:
-            result = await maybe_handle_group_command(payload.account_id, payload.text)
+            result = await maybe_handle_facebook_command(payload.account_id, payload.text)
+            if result is None:
+                result = await maybe_handle_group_command(payload.account_id, payload.text)
         if result is None:
             # user_id RIÊNG cho từng external_id (zalo_user.internal_user_id) -
             # KHÔNG dùng _shared_user_id()/config.ALLOWED_USER_ID nữa, để cách
@@ -228,6 +234,18 @@ async def image_prompt(
         return response
 
 
+@router.get("/facebook-groups/{account_id}", response_model=list[ZaloGroupConfig])
+async def facebook_groups(
+    account_id: str,
+    x_zalo_bridge_secret: str | None = Header(default=None),
+):
+    _auth(x_zalo_bridge_secret)
+    return [
+        ZaloGroupConfig(group_id=group_id, alias=alias)
+        for group_id, alias in await facebook_repository.list_groups(account_id)
+    ]
+
+
 @router.get("/groups/{account_id}", response_model=list[ZaloGroupConfig])
 async def groups(
     account_id: str,
@@ -257,6 +275,43 @@ async def group_message(
     )
     return Response(status_code=204)
 
+
+
+
+@router.post("/facebook-group-post", status_code=204)
+async def facebook_group_post(
+    payload: ZaloFacebookPostRequest,
+    x_zalo_bridge_secret: str | None = Header(default=None),
+):
+    _auth(x_zalo_bridge_secret)
+    media: list[tuple[str, bytes]] = []
+    total_bytes = 0
+    max_image_bytes = int(os.getenv("ZALO_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
+    for item in payload.media:
+        try:
+            body = base64.b64decode(item.data_b64, validate=True)
+        except (ValueError, binascii.Error):
+            raise HTTPException(400, "Invalid image base64")
+        if not body or len(body) > max_image_bytes:
+            raise HTTPException(413, "Image too large")
+        total_bytes += len(body)
+        if total_bytes > max_image_bytes * 10:
+            raise HTTPException(413, "Media payload too large")
+        media.append((item.mime_type, body))
+    if not payload.text.strip() and not media:
+        raise HTTPException(400, "Empty Facebook post")
+    post_id = await facebook_repository.create_post(
+        account_id=payload.account_id,
+        group_id=payload.group_id,
+        sender_id=payload.sender_id,
+        sender_name=payload.sender_name,
+        source_message_ids=payload.message_ids,
+        content=payload.text.strip(),
+        media=media,
+    )
+    if post_id is not None:
+        await prepare_post(payload.account_id, post_id)
+    return Response(status_code=204)
 
 @router.get("/outbox/{account_id}/{recipient_id}", response_model=list[ZaloOutboxItem])
 async def outbox(

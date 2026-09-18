@@ -21,7 +21,7 @@ from ai import orchestrator, provider_overrides
 from ai import groq_client, official_client, openrouter_client, router9_client, tavily_client
 from ai import agnes_client
 from ai.provider_state import provider_state
-from channels import group_commands, zalo_repository, zalo_scheduler, zalo_users, zoom
+from channels import facebook_repository, group_commands, zalo_repository, zalo_scheduler, zalo_users, zoom
 from channels.router import router as zalo_router
 from core import config, database as db, idempotency
 from diagnose_router9 import main as diagnose_main
@@ -145,6 +145,14 @@ async def lifespan(_: FastAPI):
 
 api = FastAPI(lifespan=lifespan)
 api.include_router(zalo_router)
+
+
+@api.get("/r/{token}", include_in_schema=False)
+async def affiliate_redirect(token: str):
+    target = await facebook_repository.resolve_short_link(token)
+    if not target:
+        raise HTTPException(status_code=404, detail="Short link not found")
+    return RedirectResponse(target, status_code=302)
 
 
 @api.api_route("/", methods=["GET", "HEAD"])
