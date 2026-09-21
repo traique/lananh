@@ -132,6 +132,11 @@
     background:rgba(255,255,255,.55);
   }
   .field-row input:focus{outline:2px solid var(--accent-a);outline-offset:-1px;background:rgba(255,255,255,.85)}
+  textarea.admin-textarea{
+    width:100%;min-height:130px;box-sizing:border-box;padding:10px;border:1px solid rgba(60,60,67,.16);
+    border-radius:var(--radius-sm);font-family:var(--mono);font-size:11.5px;background:rgba(255,255,255,.55);resize:vertical;
+  }
+  textarea.admin-textarea:focus{outline:2px solid var(--accent-a);outline-offset:-1px;background:rgba(255,255,255,.85)}
   .field-label{font-size:11px;color:var(--muted);width:100%;margin-top:6px}
 
   select{
@@ -186,6 +191,11 @@
   <section class="tile glass">
     <h2 class="tile-title"><span class="dot"></span>Agnes AI (lệnh /anh - tạo ảnh)</h2>
     <div id="agnes-box" class="muted">Đang tải...</div>
+  </section>
+
+  <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>Shopee Affiliate tự động</h2>
+    <div id="shopee-aff-box" class="muted">Đang tải...</div>
   </section>
 
   <section class="tile glass">
@@ -502,6 +512,72 @@ async function loadAgnes() {
 }
 
 
+function shopeeAffiliateBox(state) {
+  const status = state.configured
+    ? `<span class="pill ok">session OK</span>`
+    : `<span class="pill bad">chưa có session</span>`;
+  const updated = state.updated_at ? ` · cập nhật ${fmtDate(state.updated_at)}` : '';
+  return `
+    <div class="provider-card" style="border-bottom:none;padding-top:0">
+      <div class="provider-head">
+        <span class="provider-name">Custom Link</span>
+        <span>${status} <span class="pill ${state.auto_enabled ? 'ok' : 'bad'}">${state.auto_enabled ? 'auto bật' : 'auto tắt'}</span></span>
+      </div>
+      <div class="field-label">Session được mã hóa bằng SETTINGS_ENC_KEY và lưu PostgreSQL${updated}. Chromium chỉ chạy khi cache miss.</div>
+      <div class="field-label" style="margin-top:8px">Dán Playwright storage_state JSON từ script scripts/export_shopee_session.py:</div>
+      <div class="field-row"><textarea id="shopee-session-json" class="admin-textarea" placeholder='{"cookies":[...],"origins":[...]}'></textarea></div>
+      <div class="actions">
+        <button id="shopee-session-save">Lưu session</button>
+        <button class="secondary" id="shopee-session-clear">Xóa session</button>
+      </div>
+      <div class="field-label" style="margin-top:14px">Test trực tiếp một link trước khi dùng /fb_link:</div>
+      <div class="field-row">
+        <input id="shopee-test-url" placeholder="https://s.shopee.vn/... hoặc https://shopee.vn/...">
+        <button class="secondary small" id="shopee-test-btn">Test convert</button>
+      </div>
+      <div id="shopee-test-result" class="field-label"></div>
+    </div>`;
+}
+
+async function loadShopeeAffiliate() {
+  const state = await api('/admin/api/shopee-affiliate');
+  document.getElementById('shopee-aff-box').innerHTML = shopeeAffiliateBox(state);
+  document.getElementById('shopee-session-save').onclick = async () => {
+    const raw = document.getElementById('shopee-session-json').value.trim();
+    if (!raw) { msg('Dán storage_state JSON trước khi lưu.', true); return; }
+    try {
+      const storageState = JSON.parse(raw);
+      await api('/admin/api/shopee-affiliate/session', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storage_state: storageState }),
+      });
+      msg('Shopee Affiliate: đã lưu session mã hóa.');
+      loadShopeeAffiliate();
+    } catch (e) { msg('Lưu Shopee session thất bại: ' + e.message, true); }
+  };
+  document.getElementById('shopee-session-clear').onclick = async () => {
+    try {
+      await api('/admin/api/shopee-affiliate/session', { method: 'DELETE' });
+      msg('Shopee Affiliate: đã xóa session.');
+      loadShopeeAffiliate();
+    } catch (e) { msg('Xóa Shopee session thất bại: ' + e.message, true); }
+  };
+  document.getElementById('shopee-test-btn').onclick = async () => {
+    const input = document.getElementById('shopee-test-url');
+    const result = document.getElementById('shopee-test-result');
+    if (!input.value.trim()) { msg('Nhập link Shopee để test.', true); return; }
+    result.textContent = 'Đang chuyển...';
+    try {
+      const data = await api('/admin/api/shopee-affiliate/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: input.value.trim() }),
+      });
+      result.textContent = `${data.from_cache ? 'Cache' : 'Shopee'} → ${data.affiliate_url}`;
+      msg('Shopee Affiliate: test thành công.');
+    } catch (e) { result.textContent = ''; msg('Test Shopee thất bại: ' + e.message, true); }
+  };
+}
+
 async function loadMemory() {
   const users = await api('/admin/api/memory');
   const table = document.getElementById('memory-table');
@@ -568,6 +644,7 @@ loadState().catch(e => msg(e.message, true));
 loadProviders().catch(e => msg(e.message, true));
 loadTavily().catch(e => msg(e.message, true));
 loadAgnes().catch(e => msg(e.message, true));
+loadShopeeAffiliate().catch(e => msg(e.message, true));
 loadMemory().catch(e => msg(e.message, true));
 loadUsage().catch(e => msg(e.message, true));
 loadUsageModels().catch(e => msg(e.message, true));

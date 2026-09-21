@@ -19,7 +19,7 @@ import ipaddress
 import logging
 import socket
 from typing import Optional
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -42,7 +42,7 @@ class WebReaderError(RuntimeError):
 def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=config.WEB_READER_TIMEOUT_SEC, follow_redirects=True)
+        _client = httpx.AsyncClient(timeout=config.WEB_READER_TIMEOUT_SEC, follow_redirects=False)
     return _client
 
 
@@ -108,6 +108,23 @@ def normalize_public_http_url(raw_url: str) -> str:
             continue
     return raw_url
 
+_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+_MAX_REDIRECTS = 5
+
+
+async def _get_public(url: str, **kwargs) -> httpx.Response:
+    """GET an URL while validating every redirect hop against the SSRF guard."""
+    current = normalize_public_http_url(url)
+    for _ in range(_MAX_REDIRECTS + 1):
+        response = await _get_client().get(current, **kwargs)
+        if response.status_code not in _REDIRECT_STATUS_CODES:
+            return response
+        location = response.headers.get("location")
+        if not location:
+            return response
+        current = normalize_public_http_url(urljoin(current, location))
+    raise WebReaderError(f"Link chuyển hướng quá {_MAX_REDIRECTS} lần.")
+
 
 _FALLBACK_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -154,7 +171,7 @@ async def _fetch_direct(url: str) -> str:
     HTML thô với User-Agent giả trình duyệt rồi bóc text bằng BeautifulSoup
     (đã có sẵn qua dependency của vnstock, không thêm gánh nặng RAM đáng kể
     trên Render free)."""
-    response = await _get_client().get(url, headers={"User-Agent": _FALLBACK_USER_AGENT})
+    response = await _get_public(url, headers={"User-Agent": _FALLBACK_USER_AGENT})
     if response.status_code != 200:
         raise WebReaderError(f"Không đọc được link (HTTP {response.status_code}).")
 
@@ -176,7 +193,7 @@ async def read_url(raw_url: str) -> str:
     text = ""
     status_code: Optional[int] = None
     try:
-        response = await _get_client().get(f"{_JINA_READER_BASE_URL}{url}")
+        response = await _get_public(f"{_JINA_READER_BASE_URL}{url}")
         status_code = response.status_code
         if status_code == 200:
             if _is_antibot_page(response.content):
@@ -208,7 +225,7 @@ async def read_rss(raw_url: str, limit: int = 0) -> str:
     url = normalize_public_http_url(raw_url)
     limit = limit if limit and limit > 0 else config.RSS_READER_MAX_ITEMS
 
-    response = await _get_client().get(url)
+    response = await _get_public(url)
     if response.status_code != 200:
         raise WebReaderError(f"Không đọc được feed (HTTP {response.status_code}).")
 

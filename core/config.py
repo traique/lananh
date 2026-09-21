@@ -361,6 +361,19 @@ ADMIN_USER = os.getenv("ADMIN_USER", "").strip() or None
 ADMIN_PASS = os.getenv("ADMIN_PASS", "").strip() or None
 ADMIN_SESSION_TTL_SEC = _env_int("ADMIN_SESSION_TTL_SEC", 12 * 3600)
 
+# Shopee Affiliate browser automation. No Open API credentials are required: the
+# worker uses the official logged-in Custom Link page and an encrypted Playwright
+# storage_state stored in PostgreSQL. Chromium is launched only on cache misses.
+SHOPEE_AFFILIATE_AUTO_ENABLED = _env_bool("SHOPEE_AFFILIATE_AUTO_ENABLED", True)
+SHOPEE_AFFILIATE_CUSTOM_LINK_URL = os.getenv(
+    "SHOPEE_AFFILIATE_CUSTOM_LINK_URL",
+    "https://affiliate.shopee.vn/offer/custom_link",
+).strip()
+SHOPEE_RESOLVE_TIMEOUT_SEC = _env_int("SHOPEE_RESOLVE_TIMEOUT_SEC", 12)
+SHOPEE_BROWSER_NAV_TIMEOUT_SEC = _env_int("SHOPEE_BROWSER_NAV_TIMEOUT_SEC", 35)
+SHOPEE_BROWSER_ACTION_TIMEOUT_SEC = _env_int("SHOPEE_BROWSER_ACTION_TIMEOUT_SEC", 10)
+SHOPEE_BROWSER_RESULT_TIMEOUT_SEC = _env_int("SHOPEE_BROWSER_RESULT_TIMEOUT_SEC", 20)
+
 
 def validate(require_webhook: bool = False) -> None:
     missing = []

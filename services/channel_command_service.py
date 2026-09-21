@@ -39,9 +39,12 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /fb_xoanhom <group_id|tên> — bỏ nhóm khỏi luồng Facebook
 /fb_xem <post_id> — xem bài đang chờ duyệt
 /fb_sua <post_id> <nội dung> — sửa nội dung bài chờ
-/fb_link <post_id> <affiliate_url> — thay link Shopee sau khi chuyển đổi
+/fb_link <post_id> — tự chuyển mọi link Shopee sang Affiliate short-link
+/fb_link <post_id> <affiliate_url> — fallback thủ công khi bài chỉ có 1 link
+/fb_link <post_id> <source_url> <affiliate_url> — fallback từng link khi bài có nhiều link
 /fb_ok <post_id> — duyệt và đăng Facebook Page
-/fb_boqua <post_id> — bỏ bài chờ"""
+/fb_boqua <post_id> — bỏ bài chờ
+/fb_reset — xóa toàn bộ bài Facebook đã lưu của tài khoản, reset ID về #1 khi có thể"""
 
 # Ảnh do lệnh /anh tạo ra được "gửi kèm" bằng ContextVar thay vì đổi kiểu trả
 # về của maybe_handle_command() (đang là tuple[list[str], str|None] và có

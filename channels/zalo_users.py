@@ -47,9 +47,6 @@ ROLE_USER = "user"
 VALID_ROLES = {ROLE_ADMIN, ROLE_USER}
 VALID_STATUSES = {STATUS_ACTIVE, STATUS_SUSPENDED}
 
-_schema_lock = asyncio.Lock()
-_schema_ready = False
-
 _alert_callback: Optional[Callable[[str], Awaitable[None]]] = None
 _background_tasks: set[asyncio.Task] = set()
 _notified_unpaired: set[str] = set()
@@ -106,42 +103,7 @@ class ZaloUser:
 
 
 async def ensure_schema() -> None:
-    global _schema_ready
-    if _schema_ready:
-        return
-    async with _schema_lock:
-        if _schema_ready:
-            return
-        pool = await db.get_pool()
-        async with pool.acquire() as conn:
-            # Sequence tăng dần bình thường; internal_user_id thực tế lấy giá
-            # trị ÂM của sequence (xem DEFAULT bên dưới) để không bao giờ đụng
-            # dải số dương của Telegram user id.
-            await conn.execute("CREATE SEQUENCE IF NOT EXISTS zalo_users_uid_seq")
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS zalo_users (
-                    external_id TEXT PRIMARY KEY,
-                    internal_user_id BIGINT UNIQUE NOT NULL
-                        DEFAULT (-(nextval('zalo_users_uid_seq'))),
-                    display_name TEXT NOT NULL DEFAULT '',
-                    role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
-                    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-                """
-            )
-            # An toàn khi nâng cấp từ bản trước khi có internal_user_id (bảng
-            # đã tồn tại nhưng thiếu cột) - vô hại nếu cột đã có sẵn.
-            await conn.execute(
-                """
-                ALTER TABLE zalo_users
-                ADD COLUMN IF NOT EXISTS internal_user_id BIGINT
-                    UNIQUE NOT NULL DEFAULT (-(nextval('zalo_users_uid_seq')))
-                """
-            )
-        _schema_ready = True
+    await db.ensure_migrations()
 
 
 def _row_to_user(row) -> ZaloUser:

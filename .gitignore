@@ -25,3 +25,6 @@ Thumbs.db
 
 # ZCode workspace cục bộ (plans, session)
 .zcode/
+
+# Sensitive Shopee Affiliate browser session exported locally
+shopee-storage-state*.json

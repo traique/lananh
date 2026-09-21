@@ -6,9 +6,6 @@ from datetime import datetime
 
 from core import database as db
 
-_schema_lock = asyncio.Lock()
-_schema_ready = False
-
 
 def _retention_days() -> int:
     try:
@@ -18,99 +15,7 @@ def _retention_days() -> int:
 
 
 async def ensure_schema() -> None:
-    global _schema_ready
-    if _schema_ready:
-        return
-    async with _schema_lock:
-        if _schema_ready:
-            return
-        pool = await db.get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS zalo_groups (
-                    account_id TEXT NOT NULL,
-                    group_id TEXT NOT NULL,
-                    alias TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    PRIMARY KEY (account_id, group_id),
-                    UNIQUE (account_id, alias)
-                )
-                """
-            )
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS zalo_group_messages (
-                    id BIGSERIAL PRIMARY KEY,
-                    account_id TEXT NOT NULL,
-                    group_id TEXT NOT NULL,
-                    message_id TEXT NOT NULL,
-                    sender_id TEXT NOT NULL,
-                    sender_name TEXT NOT NULL DEFAULT '',
-                    content TEXT NOT NULL,
-                    sent_at TIMESTAMPTZ NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    UNIQUE (account_id, group_id, message_id),
-                    FOREIGN KEY (account_id, group_id)
-                        REFERENCES zalo_groups(account_id, group_id) ON DELETE CASCADE
-                )
-                """
-            )
-            await conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_zalo_group_messages_window
-                ON zalo_group_messages (account_id, group_id, sent_at DESC)
-                """
-            )
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS zalo_group_summaries (
-                    id BIGSERIAL PRIMARY KEY,
-                    account_id TEXT NOT NULL,
-                    group_id TEXT NOT NULL,
-                    summary_type TEXT NOT NULL,
-                    window_start TIMESTAMPTZ NOT NULL,
-                    window_end TIMESTAMPTZ NOT NULL,
-                    content TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    UNIQUE (
-                        account_id, group_id, summary_type, window_start, window_end
-                    ),
-                    FOREIGN KEY (account_id, group_id)
-                        REFERENCES zalo_groups(account_id, group_id) ON DELETE CASCADE
-                )
-                """
-            )
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS zalo_outbox (
-                    id BIGSERIAL PRIMARY KEY,
-                    account_id TEXT NOT NULL,
-                    recipient_id TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    sent_at TIMESTAMPTZ,
-                    summary_id BIGINT
-                )
-                """
-            )
-            await conn.execute("ALTER TABLE zalo_outbox ADD COLUMN IF NOT EXISTS summary_id BIGINT")
-            await conn.execute(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_zalo_outbox_summary
-                ON zalo_outbox (summary_id)
-                WHERE summary_id IS NOT NULL
-                """
-            )
-            await conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_zalo_outbox_pending
-                ON zalo_outbox (account_id, id)
-                WHERE sent_at IS NULL
-                """
-            )
-        _schema_ready = True
+    await db.ensure_migrations()
 
 
 async def list_groups(account_id: str) -> list[tuple[str, str]]:

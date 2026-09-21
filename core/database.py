@@ -121,251 +121,49 @@ async def _ensure_vector_extension() -> bool:
 
 
 @_with_reconnect
+async def ensure_migrations(*, include_vector: bool = False) -> None:
+    """Apply all pending versioned schema migrations."""
+    from core import migrations
+
+    await migrations.run(await get_pool(), include_vector=include_vector)
+
+
+@_with_reconnect
 async def init_db() -> None:
-    # QUAN TRỌNG: phải chạy TRƯỚC get_pool() (xem docstring _ensure_vector_extension).
+    # pgvector extension must exist before the pool's vector codec is registered.
     global VECTOR_ENABLED
     VECTOR_ENABLED = await _ensure_vector_extension()
 
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS prompts (
-                id SERIAL PRIMARY KEY,
-                telegram_user_id BIGINT NOT NULL,
-                command_type TEXT NOT NULL,
-                prompt TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        # channel: 'telegram'|'zalo'|'zoom' - thêm sau khi bảng đã chạy production
-        # nên dùng ALTER thay vì sửa CREATE TABLE (không re-run trên bảng có sẵn).
-        # Dùng cho thống kê lượt gọi AI theo kênh/người dùng ở trang admin.
-        await conn.execute(
-            "ALTER TABLE prompts ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'telegram'"
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_prompts_channel ON prompts (channel, created_at DESC)"
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_prompts_user_id ON prompts (telegram_user_id, id DESC)"
-        )
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS results (
-                id SERIAL PRIMARY KEY,
-                prompt_id INTEGER NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
-                result_type TEXT NOT NULL,
-                content_text TEXT,
-                file_path TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-
-        # Lượt gọi thành công tới từng provider/model trong provider-chain
-        # (router9/groq/openrouter/api1/api2, xem ai/orchestrator.py -
-        # _run_provider_chain ghi 1 dòng mỗi lần 1 provider trả lời thành
-        # công) - dùng cho thống kê "lượt gọi theo model" ở trang admin.
-        # Tách khỏi bảng prompts (đó là lượt gọi theo user/kênh, không biết
-        # provider/model nào đã thực sự trả lời).
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS provider_calls (
-                id SERIAL PRIMARY KEY,
-                provider TEXT NOT NULL,
-                model TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_provider_calls_provider ON provider_calls (provider, created_at DESC)"
-        )
-
-        # Lượt gọi AI theo (channel, user) - dùng cho /thongke và trang admin
-        # (usage_by_user() bên dưới). TÁCH KHỎI bảng `prompts` một cách CỐ Ý:
-        # `prompts` bị dọn xuống còn HISTORY_RETENTION_LIMIT (20) dòng gần
-        # nhất/user ngay sau MỖI lần insert (phục vụ /history, xem cuối
-        # save_prompt()) - nếu đếm COUNT(*) trực tiếp trên `prompts` như bản cũ,
-        # số liệu "lượt gọi theo user" sẽ bị KHOÁ CỨNG ở 20 vĩnh viễn ngay khi
-        # 1 user vượt quá 20 lượt trong đời (mọi dòng cũ hơn bị xoá), trong khi
-        # MAX(created_at) vẫn tiếp tục nhảy vì dòng mới nhất luôn đổi - đúng
-        # triệu chứng "lượt gọi không nhảy số, chỉ thời gian nhảy". Bảng này
-        # (giống provider_calls) KHÔNG bị dọn theo số lượng, chỉ ghi thêm mỗi
-        # lượt (xem save_prompt()), nên COUNT(*) luôn phản ánh đúng thực tế.
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS user_calls (
-                id SERIAL PRIMARY KEY,
-                channel TEXT NOT NULL,
-                telegram_user_id BIGINT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_user_calls_user ON user_calls (channel, telegram_user_id, created_at DESC)"
-        )
-
-        # Trí nhớ hội thoại (Phương án B - cửa sổ trượt + session timeout).
-        # Ghi lại MỌI lượt chat bất kể đang dùng provider nào (router9/api1/
-        # api2), để khi provider-chain đổi provider giữa chừng, nhánh API vẫn
-        # có ngữ cảnh gần nhất nạp lại từ đây (xem ai.orchestrator.chat()).
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS chat_messages (
-                id SERIAL PRIMARY KEY,
-                telegram_user_id BIGINT NOT NULL,
-                role TEXT NOT NULL,          -- 'user' | 'model'
-                content TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_chat_msg_user ON chat_messages (telegram_user_id, id DESC)"
-        )
-
-        # Trí nhớ DÀI HẠN (khác chat_messages là trí nhớ NGẮN HẠN theo phiên):
-        # - user_facts: các "sự thật" bền về người dùng (tên, sở thích, danh
-        #   mục đầu tư...), 1 dòng / key, upsert theo (telegram_user_id, key).
-        #   Được trích xuất tự động bằng Gemini sau mỗi lượt chat (xem services/memory_service.py).
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS user_facts (
-                id SERIAL PRIMARY KEY,
-                telegram_user_id BIGINT NOT NULL,
-                key TEXT NOT NULL,
-                value TEXT NOT NULL,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                UNIQUE (telegram_user_id, key)
-            )
-            """
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_user_facts_user ON user_facts (telegram_user_id, updated_at DESC)"
-        )
-
-        # - user_memory_summary: 1 đoạn tóm tắt "rolling" / user, được Gemini
-        #   hợp nhất dần (tóm tắt cũ + lượt mới) mỗi lượt chat, thay cho việc
-        #   giữ toàn bộ lịch sử -> trí nhớ gần như vô hạn mà không phình token.
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS user_memory_summary (
-                telegram_user_id BIGINT PRIMARY KEY,
-                summary TEXT NOT NULL DEFAULT '',
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-
-        # "Nhật ký ý quan trọng": thay cho semantic recall (chat_embeddings, đã
-        # ngưng dùng - xem services/memory_service.py) - N dòng gần nhất/user,
-        # trích cùng lượt gọi generate_utility_json() đã có sẵn (không tốn
-        # thêm lượt gọi AI nào), KHÔNG bị "nén" lại như user_memory_summary
-        # nên giữ nguyên chi tiết cụ thể (số liệu, ngày tháng, tên mã...).
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS user_memory_highlights (
-                id SERIAL PRIMARY KEY,
-                telegram_user_id BIGINT NOT NULL,
-                content TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_user_memory_highlights_user "
-            "ON user_memory_highlights (telegram_user_id, created_at DESC)"
-        )
-
-        # Function calling (xem services/tools.py): ghi chú tự do + nhắc việc,
-        # do Gemini tự quyết định gọi qua tools.maybe_run_tool().
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS notes (
-                id SERIAL PRIMARY KEY,
-                telegram_user_id BIGINT NOT NULL,
-                content TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_notes_user ON notes (telegram_user_id, created_at DESC)"
-        )
-
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS reminders (
-                id SERIAL PRIMARY KEY,
-                telegram_user_id BIGINT NOT NULL,
-                message TEXT NOT NULL,
-                due_at TIMESTAMPTZ NOT NULL,
-                sent BOOLEAN NOT NULL DEFAULT false,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders (due_at) WHERE sent = false"
-        )
-
-        # pgvector semantic recall (Bước 7 - nâng cao, làm sau cùng). Extension
-        # đã được thử bật ở _ensure_vector_extension() TRƯỚC khi mở pool (xem
-        # đầu init_db()) - ở đây chỉ tạo bảng/index NẾU đã bật thành công.
+    try:
+        await ensure_migrations(include_vector=VECTOR_ENABLED)
         if VECTOR_ENABLED:
-            try:
-                await conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS chat_embeddings (
-                        id SERIAL PRIMARY KEY,
-                        telegram_user_id BIGINT NOT NULL,
-                        content TEXT NOT NULL,
-                        embedding vector(768) NOT NULL,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
-                    """
-                )
-                await conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_chat_embeddings_user ON chat_embeddings (telegram_user_id)"
-                )
-                logger.info("pgvector đã sẵn sàng - semantic recall (Bước 7) khả dụng.")
-            except Exception:
-                # Extension bật được nhưng tạo bảng lỗi (hiếm) -> tắt tính
-                # năng thay vì để lỗi này kéo sập toàn bộ init_db().
-                VECTOR_ENABLED = False
-                logger.warning("Extension 'vector' đã bật nhưng tạo bảng chat_embeddings lỗi.", exc_info=True)
+            logger.info("pgvector đã sẵn sàng - semantic recall khả dụng.")
+    except Exception:
+        if VECTOR_ENABLED:
+            # If only the vector migration fails, retry the mandatory schema
+            # without it so the rest of the bot can still start.
+            VECTOR_ENABLED = False
+            logger.warning("Tạo schema pgvector lỗi; tiếp tục với semantic recall tắt.", exc_info=True)
+            await ensure_migrations(include_vector=False)
+        else:
+            raise
 
-        # Dọn 1 lần lúc khởi động: xoá phần vượt quá HISTORY_RETENTION_LIMIT
-        # cho MỌI user đã có sẵn trong bảng (không chỉ user mới ghi thêm),
-        # để dữ liệu tồn đọng từ trước khi có giới hạn này cũng được dọn.
-        await conn.execute(
-            """
-            DELETE FROM prompts p
-            WHERE p.id NOT IN (
-                SELECT id FROM (
-                    SELECT id, ROW_NUMBER() OVER (
-                        PARTITION BY telegram_user_id ORDER BY id DESC
-                    ) AS rn
-                    FROM prompts
-                ) ranked
-                WHERE ranked.rn <= $1
-            )
-            """,
-            HISTORY_RETENTION_LIMIT,
+    # Data retention is operational cleanup, not schema migration.
+    await (await get_pool()).execute(
+        """
+        DELETE FROM prompts p
+        WHERE p.id NOT IN (
+            SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY telegram_user_id ORDER BY id DESC
+                ) AS rn
+                FROM prompts
+            ) ranked
+            WHERE ranked.rn <= $1
         )
+        """,
+        HISTORY_RETENTION_LIMIT,
+    )
 
 
 @_with_reconnect

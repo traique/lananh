@@ -7,9 +7,6 @@ from typing import Optional
 from core import database as db
 from stock import providers
 
-_schema_lock = asyncio.Lock()
-_schema_ready = False
-
 
 @dataclass(frozen=True)
 class Holding:
@@ -23,30 +20,7 @@ class Holding:
 
 
 async def ensure_schema() -> None:
-    global _schema_ready
-    if _schema_ready:
-        return
-    async with _schema_lock:
-        if _schema_ready:
-            return
-        pool = await db.get_pool()
-        await pool.execute(
-            """
-            CREATE TABLE IF NOT EXISTS stock_holdings (
-                telegram_user_id BIGINT NOT NULL,
-                symbol TEXT NOT NULL,
-                quantity NUMERIC NOT NULL CHECK (quantity > 0),
-                average_price NUMERIC NOT NULL CHECK (average_price > 0),
-                stop_price NUMERIC CHECK (stop_price > 0),
-                target_price NUMERIC CHECK (target_price > 0),
-                note TEXT NOT NULL DEFAULT '',
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                PRIMARY KEY (telegram_user_id, symbol)
-            )
-            """
-        )
-        _schema_ready = True
+    await db.ensure_migrations()
 
 
 def _holding(row) -> Holding:

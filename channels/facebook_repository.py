@@ -4,102 +4,13 @@ This module is intentionally separate from zalo_repository so Facebook source
 configuration and queued posts cannot affect /tongket tracked groups.
 """
 
-import asyncio
 import secrets
-from datetime import datetime
 
 from core import database as db
 
-_schema_lock = asyncio.Lock()
-_schema_ready = False
-
 
 async def ensure_schema() -> None:
-    global _schema_ready
-    if _schema_ready:
-        return
-    async with _schema_lock:
-        if _schema_ready:
-            return
-        pool = await db.get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS zalo_facebook_groups (
-                    account_id TEXT NOT NULL,
-                    group_id TEXT NOT NULL,
-                    alias TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    PRIMARY KEY (account_id, group_id),
-                    UNIQUE (account_id, alias)
-                )
-                """
-            )
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS facebook_post_queue (
-                    id BIGSERIAL PRIMARY KEY,
-                    account_id TEXT NOT NULL,
-                    group_id TEXT NOT NULL,
-                    sender_id TEXT NOT NULL,
-                    sender_name TEXT NOT NULL DEFAULT '',
-                    source_message_ids TEXT[] NOT NULL DEFAULT '{}',
-                    original_content TEXT NOT NULL DEFAULT '',
-                    processed_content TEXT NOT NULL DEFAULT '',
-                    status TEXT NOT NULL DEFAULT 'PENDING_APPROVAL',
-                    facebook_post_id TEXT,
-                    error_message TEXT,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    approved_at TIMESTAMPTZ,
-                    posted_at TIMESTAMPTZ,
-                    CONSTRAINT facebook_post_queue_status CHECK (
-                        status IN ('PENDING_APPROVAL', 'POSTING', 'POSTED', 'REJECTED', 'ERROR')
-                    )
-                )
-                """
-            )
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS facebook_post_media (
-                    id BIGSERIAL PRIMARY KEY,
-                    post_id BIGINT NOT NULL REFERENCES facebook_post_queue(id) ON DELETE CASCADE,
-                    position INTEGER NOT NULL,
-                    mime_type TEXT NOT NULL,
-                    content BYTEA NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    UNIQUE (post_id, position)
-                )
-                """
-            )
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS shopee_affiliate_links (
-                    account_id TEXT NOT NULL,
-                    source_url TEXT NOT NULL,
-                    affiliate_url TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    PRIMARY KEY (account_id, source_url)
-                )
-                """
-            )
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS affiliate_short_links (
-                    token TEXT PRIMARY KEY,
-                    target_url TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-                """
-            )
-            await conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_facebook_post_queue_status
-                ON facebook_post_queue (account_id, status, created_at DESC)
-                """
-            )
-        _schema_ready = True
+    await db.ensure_migrations()
 
 
 async def list_groups(account_id: str) -> list[tuple[str, str]]:
@@ -283,18 +194,49 @@ async def mark_error(account_id: str, post_id: int, message: str) -> None:
     )
 
 
-async def set_affiliate_link(account_id: str, source_url: str, affiliate_url: str) -> None:
+async def reset_posts(account_id: str) -> tuple[int, bool]:
+    """Delete every saved Facebook post for one account.
+
+    Returns ``(deleted_count, sequence_reset)``. The global BIGSERIAL can only
+    be restarted safely when no other account still has queued/history rows.
+    """
+    await ensure_schema()
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            rows = await conn.fetch(
+                "DELETE FROM facebook_post_queue WHERE account_id = $1 RETURNING id",
+                account_id,
+            )
+            remaining = await conn.fetchval("SELECT COUNT(*) FROM facebook_post_queue")
+            sequence_reset = int(remaining or 0) == 0
+            if sequence_reset:
+                await conn.execute("ALTER SEQUENCE facebook_post_queue_id_seq RESTART WITH 1")
+            return len(rows), sequence_reset
+
+
+async def set_affiliate_link(
+    account_id: str,
+    source_url: str,
+    affiliate_url: str,
+    *,
+    canonical_key: str | None = None,
+) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
         """
-        INSERT INTO shopee_affiliate_links (account_id, source_url, affiliate_url)
-        VALUES ($1, $2, $3)
+        INSERT INTO shopee_affiliate_links (account_id, source_url, affiliate_url, canonical_key)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (account_id, source_url)
-        DO UPDATE SET affiliate_url = EXCLUDED.affiliate_url, updated_at = now()
+        DO UPDATE SET
+            affiliate_url = EXCLUDED.affiliate_url,
+            canonical_key = COALESCE(EXCLUDED.canonical_key, shopee_affiliate_links.canonical_key),
+            updated_at = now()
         """,
         account_id,
         source_url,
         affiliate_url,
+        canonical_key,
     )
 
 
@@ -311,6 +253,27 @@ async def get_affiliate_links(account_id: str, source_urls: list[str]) -> dict[s
         source_urls,
     )
     return {row["source_url"]: row["affiliate_url"] for row in rows}
+
+
+async def get_affiliate_links_by_canonical(
+    account_id: str, canonical_keys: list[str]
+) -> dict[str, str]:
+    """Return the newest cached affiliate URL for each canonical product key."""
+    keys = [key for key in dict.fromkeys(canonical_keys) if key]
+    if not keys:
+        return {}
+    await ensure_schema()
+    rows = await (await db.get_pool()).fetch(
+        """
+        SELECT DISTINCT ON (canonical_key) canonical_key, affiliate_url
+        FROM shopee_affiliate_links
+        WHERE account_id = $1 AND canonical_key = ANY($2::text[])
+        ORDER BY canonical_key, updated_at DESC
+        """,
+        account_id,
+        keys,
+    )
+    return {row["canonical_key"]: row["affiliate_url"] for row in rows}
 
 
 async def create_short_link(target_url: str) -> str:

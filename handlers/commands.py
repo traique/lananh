@@ -142,9 +142,12 @@ HELP_TEXT = (
     "/fb\\_xoanhom <group_id|tên> — bỏ nhóm khỏi luồng Facebook\n"
     "/fb\\_xem <post_id> — xem lại bài đang chờ duyệt\n"
     "/fb\\_sua <post_id> <nội dung> — sửa nội dung bài chờ\n"
-    "/fb\\_link <post_id> <affiliate_url> — thay link Shopee sau khi anh chuyển đổi\n"
+    "/fb\\_link <post_id> — tự chuyển mọi link Shopee sang Affiliate short-link\n"
+    "/fb\\_link <post_id> <affiliate_url> — fallback thủ công khi bài chỉ có 1 link\n"
+    "/fb\\_link <post_id> <source_url> <affiliate_url> — fallback từng link khi bài có nhiều link\n"
     "/fb\\_ok <post_id> — duyệt và đăng Facebook Page\n"
     "/fb\\_boqua <post_id> — bỏ bài chờ\n"
+    "/fb\\_reset — xóa bài Facebook đã lưu, reset ID về #1 khi có thể\n"
     "/zalopair, /zaloadmin, /zalohaquyen, /zalokhoa, /zalomokhoa, /zaloxoa, /zalodanhsach — quản lý user Zalo\n"
     "/help — hiển thị hướng dẫn này"
 )
@@ -872,6 +875,11 @@ async def fb_ok_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @common.restricted
 async def fb_boqua_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _facebook_command(update, context, "/fb_boqua")
+
+
+@common.restricted
+async def fb_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_reset")
 
 @common.restricted
 async def model_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

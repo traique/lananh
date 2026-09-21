@@ -264,9 +264,12 @@ Các lệnh `/fb_*` dùng được từ **Zalo admin, Telegram owner và Zoom ji
 /fb_xoanhom <group_id-or-alias>
 /fb_xem <post_id>
 /fb_sua <post_id> <nội dung mới>
-/fb_link <post_id> <affiliate_url>
+/fb_link <post_id>
+/fb_link <post_id> <affiliate_url>  # fallback thủ công khi chỉ có 1 link
+/fb_link <post_id> <source_url> <affiliate_url>  # fallback từng link khi bài có nhiều link
 /fb_ok <post_id>
 /fb_boqua <post_id>
+/fb_reset
 ```
 
 Quy trình vận hành:
@@ -280,16 +283,75 @@ Quy trình vận hành:
 4. Preview có `post_id` và các link Shopee gốc chưa chuyển đổi để copy. Bot
    gửi preview tới Zalo admin, Telegram owner và Zoom jid đã pair (nếu Zoom
    đang bật); cũng có thể xem lại bằng `/fb_xem <post_id>`.
-5. Nếu có Shopee link, tự tạo affiliate link rồi gửi
-   `/fb_link <post_id> <affiliate_url>`. Bot thay link trong nội dung và lưu
-   mapping để tái sử dụng.
+5. Nếu có Shopee link, gõ `/fb_link <post_id>`. Bot mở Chromium headless
+   **chỉ khi cache miss**, dùng session Shopee Affiliate đã nạp trong `/admin`,
+   vào trang Custom Link chính thức và lấy short-link `https://s.shopee.vn/...`.
+   Link được cache theo URL nguồn và sản phẩm canonical để lần sau không cần mở browser.
+   Nếu Shopee yêu cầu login/CAPTCHA, bài được giữ nguyên; fallback thủ công là
+   `/fb_link <post_id> <affiliate_url>` (1 link) hoặc
+   `/fb_link <post_id> <source_url> <affiliate_url>` (bài có nhiều link).
 6. Có thể sửa caption bằng `/fb_sua <post_id> <nội dung mới>`.
 7. Gõ `/fb_ok <post_id>` để đăng lên Facebook Page; nếu vẫn còn Shopee link
-   chưa có affiliate thì bot từ chối đăng. Dùng `/fb_boqua <post_id>` để bỏ.
+   chưa có affiliate thì bot từ chối đăng. Dùng `/fb_boqua <post_id>` để bỏ. `/fb_reset` xóa toàn bộ bài Facebook đã lưu của tài khoản hiện tại; nếu không còn bài của tài khoản khác, ID bài mới sẽ bắt đầu lại từ `#1`.
 
 Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài nhóm Zalo vẫn do
 `zalo-gateway` thực hiện. `account_id` cho các lệnh `/fb_*` trên Telegram/Zoom
 được lấy từ Zalo session đang đăng nhập, nên không cần có nhóm `/tongket` trước.
+
+#### Đăng nhập và nạp session Shopee Affiliate cho Render
+
+Render Free không có disk bền, nên bot **không** lưu Chrome profile trên filesystem.
+Session Playwright được mã hóa bằng `SETTINGS_ENC_KEY` rồi lưu vào PostgreSQL.
+Không cần và không được nhập mật khẩu Shopee vào `.env` hay source code.
+
+Thực hiện theo đúng thứ tự sau khi đã deploy bản repo này lên Render:
+
+1. **Trên máy cá nhân**, giải nén/mở repo và mở terminal ngay tại thư mục gốc của repo.
+2. Cài Playwright và Chromium:
+
+   ```bash
+   pip install playwright==1.63.0
+   playwright install chromium
+   ```
+
+3. Chạy script xuất session:
+
+   ```bash
+   python scripts/export_shopee_session.py
+   ```
+
+4. Một cửa sổ Chromium sẽ mở. Đăng nhập **đúng tài khoản Shopee Affiliate** của bạn.
+   Tự nhập OTP hoặc CAPTCHA nếu Shopee yêu cầu. Sau khi đăng nhập thành công, mở được
+   khu vực Shopee Affiliate/Custom Link rồi quay lại terminal và nhấn ENTER theo hướng dẫn.
+5. Script tạo file `shopee-storage-state.json`. Mở file này và copy **toàn bộ JSON**.
+6. Mở trang admin của bot đã deploy, ví dụ:
+
+   ```text
+   https://<ten-service>.onrender.com/admin
+   ```
+
+7. Đăng nhập admin → **Shopee Affiliate tự động** → dán toàn bộ JSON vào ô session
+   → bấm **Lưu session**. Trạng thái phải báo session đã được cấu hình.
+8. Ngay trong `/admin`, ở ô **Test convert**, dán thử một link Shopee, ví dụ
+   `https://s.shopee.vn/...`. Kết quả hợp lệ phải là một short-link mới dạng
+   `https://s.shopee.vn/...`. Chỉ sau khi test này thành công mới dùng `/fb_link <post_id>`.
+9. Thử trên bài Facebook đang chờ bằng `/fb_link <post_id>`, kiểm tra lại bằng
+   `/fb_xem <post_id>`, rồi mới `/fb_ok <post_id>`.
+10. Sau khi session đã lưu thành công lên admin, nên xóa `shopee-storage-state.json`
+    trên máy cá nhân vì file chứa cookie/session đăng nhập nhạy cảm. Không gửi file này
+    cho người khác và không commit lên Git.
+
+Khi session hết hạn hoặc Shopee yêu cầu đăng nhập/CAPTCHA lại, bot giữ nguyên bài ở
+trạng thái chờ duyệt. Chạy lại các bước 3–8 để nạp session mới; không cần thay đổi code.
+
+Production container chỉ cài Chromium **headless shell** và browser chỉ chạy on-demand,
+concurrency toàn cục = 1. Ảnh/media/font trên Shopee bị chặn tải để giảm RAM/CPU; browser
+đóng ngay sau mỗi batch `/fb_link`. Bot không tự vượt CAPTCHA.
+
+Các biến tùy chọn: `SHOPEE_AFFILIATE_AUTO_ENABLED` (mặc định `true`),
+`SHOPEE_AFFILIATE_CUSTOM_LINK_URL`, `SHOPEE_RESOLVE_TIMEOUT_SEC`,
+`SHOPEE_BROWSER_NAV_TIMEOUT_SEC`, `SHOPEE_BROWSER_ACTION_TIMEOUT_SEC`,
+`SHOPEE_BROWSER_RESULT_TIMEOUT_SEC`.
 
 ## Lệnh chính
 
@@ -327,9 +389,10 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/fb_xoanhom <group_id\|alias>` | Bỏ nhóm khỏi luồng Facebook |
 | `/fb_xem <post_id>` | Xem bài Facebook đang chờ duyệt |
 | `/fb_sua <post_id> <nội dung>` | Sửa nội dung bài Facebook đang chờ |
-| `/fb_link <post_id> <affiliate_url>` | Thay link Shopee bằng affiliate link đã chuyển đổi |
+| `/fb_link <post_id>` | Tự chuyển mọi link Shopee qua Custom Link chính thức; có fallback nhập short-link thủ công |
 | `/fb_ok <post_id>` | Duyệt và đăng bài lên Facebook Page |
 | `/fb_boqua <post_id>` | Bỏ bài Facebook đang chờ |
+| `/fb_reset` | Xóa toàn bộ bài Facebook đã lưu của tài khoản; reset ID về `#1` khi hàng đợi chung trống |
 | `/zalopair <id_zalo> [tên]` | Cấp quyền thành viên cho 1 tài khoản Zalo |
 | `/zaloadmin <id_zalo> [tên]` | Cấp/nâng quyền admin (dùng được lệnh nhóm và `/fb_*`) |
 | `/zalohaquyen <id_zalo>` | Hạ 1 admin về thành viên thường |
@@ -511,7 +574,7 @@ gửi trực tiếp/@mention cho bot), nên KHÔNG có `/tongket`/`/dangnoi` tư
 đương CHO NHÓM ZOOM — chỉ dùng được để xem lại nhóm ZALO.
 
 Các lệnh Facebook (`/fb_nhom`, `/fb_themnhom`, `/fb_xoanhom`, `/fb_xem`,
-`/fb_sua`, `/fb_link`, `/fb_ok`, `/fb_boqua`) cũng dùng được từ Zoom với cùng
+`/fb_sua`, `/fb_link`, `/fb_ok`, `/fb_boqua`, `/fb_reset`) cũng dùng được từ Zoom với cùng
 quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác định
 `account_id`, nên luồng Facebook không phụ thuộc việc có cấu hình `/tongket`.
 

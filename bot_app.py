@@ -65,9 +65,10 @@ COMMANDS = [
     BotCommand("fb_xoanhom", "Bỏ nhóm nguồn Facebook"),
     BotCommand("fb_xem", "Xem bài Facebook chờ duyệt"),
     BotCommand("fb_sua", "Sửa bài Facebook chờ duyệt"),
-    BotCommand("fb_link", "Thay link Shopee affiliate"),
+    BotCommand("fb_link", "Tự chuyển link Shopee affiliate"),
     BotCommand("fb_ok", "Duyệt và đăng Facebook"),
     BotCommand("fb_boqua", "Bỏ bài Facebook chờ"),
+    BotCommand("fb_reset", "Xóa bài Facebook đã lưu, reset ID"),
     BotCommand("zalopair", "Cấp quyền thành viên Zalo"),
     BotCommand("zaloadmin", "Cấp quyền admin Zalo"),
     BotCommand("zalohaquyen", "Hạ quyền admin Zalo về thành viên"),
@@ -81,6 +82,8 @@ COMMANDS = [
 async def _post_init(app):
     await db.init_db()
     await idempotency.ensure_schema()
+    await idempotency.cleanup_expired()
+    idempotency.start_cleanup_task()
     await portfolio.ensure_schema()
     await zalo_users.ensure_schema()
     await app.bot.set_my_commands(COMMANDS)
@@ -98,6 +101,7 @@ async def _post_shutdown(app):
             logger.exception("Shutdown step lỗi: %s", label)
 
     await run_step("Telegram scheduler", scheduler.stop())
+    await run_step("idempotency cleanup task", idempotency.stop_cleanup_task())
     await run_step("provider monitor task", monitor_service.stop())
     await run_step("Telegram memory tasks", chat_router.stop_background_tasks())
     await run_step("channel memory tasks", channel_chat_service.stop_background_tasks())
@@ -191,6 +195,7 @@ def build_application():
         ("fb_link", commands.fb_link_cmd),
         ("fb_ok", commands.fb_ok_cmd),
         ("fb_boqua", commands.fb_boqua_cmd),
+        ("fb_reset", commands.fb_reset_cmd),
         ("zalopair", commands.zalopair_cmd),
         ("zaloadmin", commands.zaloadmin_cmd),
         ("zalohaquyen", commands.zalohaquyen_cmd),

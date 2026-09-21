@@ -305,3 +305,25 @@ async def test_read_url_falls_back_when_jina_returns_antibot_page(monkeypatch):
     text = await web_reader.read_url("https://example.com/protected")
     assert "Nội dung thật" in text
     assert "CAPTCHA" not in text
+
+@pytest.mark.asyncio
+async def test_redirect_to_private_ip_is_blocked(monkeypatch):
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(302, headers={"Location": "http://127.0.0.1:9901/secret"})
+
+    monkeypatch.setattr(
+        web_reader, "_get_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    monkeypatch.setattr(
+        web_reader.socket,
+        "getaddrinfo",
+        lambda host, port: [(web_reader.socket.AF_INET, 0, 0, "", ("93.184.216.34", 0))],
+    )
+
+    with pytest.raises(web_reader.WebReaderError):
+        await web_reader._get_public("https://example.com/start")
+
+    assert seen == ["https://example.com/start"]

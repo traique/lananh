@@ -2,68 +2,70 @@
 
 import asyncio
 import json
+import logging
 from datetime import timedelta
 from typing import Any
 
 from core import database as db
 
-_schema_lock = asyncio.Lock()
-_schema_ready = False
+logger = logging.getLogger(__name__)
+
+RETENTION = timedelta(days=2)
+_CLEANUP_INTERVAL_SEC = 60 * 60
+_cleanup_task: asyncio.Task | None = None
 
 
 async def ensure_schema() -> None:
-    global _schema_ready
-    if _schema_ready:
+    await db.ensure_migrations()
+
+
+async def cleanup_expired(retention: timedelta = RETENTION) -> None:
+    """Delete idempotency/cache rows older than the retention window."""
+    await ensure_schema()
+    pool = await db.get_pool()
+    await pool.execute(
+        "DELETE FROM telegram_processed_updates WHERE claimed_at < now() - $1::interval",
+        retention,
+    )
+    await pool.execute(
+        "DELETE FROM zoom_processed_events WHERE claimed_at < now() - $1::interval",
+        retention,
+    )
+    # response_json may contain large base64 images, so this table is especially
+    # important to prune on schedule.
+    await pool.execute(
+        "DELETE FROM zalo_direct_responses WHERE created_at < now() - $1::interval",
+        retention,
+    )
+
+
+async def _cleanup_loop() -> None:
+    while True:
+        try:
+            await cleanup_expired()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Không dọn được idempotency cache cũ.", exc_info=True)
+        await asyncio.sleep(_CLEANUP_INTERVAL_SEC)
+
+
+def start_cleanup_task() -> None:
+    global _cleanup_task
+    if _cleanup_task is None or _cleanup_task.done():
+        _cleanup_task = asyncio.create_task(_cleanup_loop(), name="idempotency-retention")
+
+
+async def stop_cleanup_task() -> None:
+    global _cleanup_task
+    task, _cleanup_task = _cleanup_task, None
+    if task is None:
         return
-    async with _schema_lock:
-        if _schema_ready:
-            return
-        pool = await db.get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS telegram_processed_updates (
-                    update_id BIGINT PRIMARY KEY,
-                    claimed_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-                """
-            )
-            await conn.execute(
-                """
-                ALTER TABLE reminders
-                ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ
-                """
-            )
-            await conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_reminders_claimable
-                ON reminders (due_at, claimed_at)
-                WHERE sent = false
-                """
-            )
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS zalo_direct_responses (
-                    account_id TEXT NOT NULL,
-                    message_id TEXT NOT NULL,
-                    message_kind TEXT NOT NULL,
-                    response_json JSONB NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    PRIMARY KEY (account_id, message_id, message_kind)
-                )
-                """
-            )
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS zoom_processed_events (
-                    event_id TEXT PRIMARY KEY,
-                    claimed_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-                """
-            )
-        _schema_ready = True
-
-
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 async def claim_telegram_update(update_id: int) -> bool:
     """Atomically claim a Telegram update across restarts and instances."""
     await ensure_schema()
