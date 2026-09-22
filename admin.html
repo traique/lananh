@@ -235,6 +235,15 @@ function msg(text, isError) {
   el.style.color = isError ? 'var(--bad-fg)' : 'var(--ok-fg)';
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
 async function api(path, opts) {
   const res = await fetch(path, opts);
   if (res.status === 403) { window.location.reload(); throw new Error('phiên đăng nhập hết hạn'); }
@@ -318,6 +327,12 @@ function providerCard(p) {
   const enableControl = p.enabled_editable
     ? `<button class="secondary small provider-toggle" data-provider="${p.provider}">${p.enabled ? 'Tắt' : 'Bật'}</button>`
     : `<span class="pill ${p.enabled ? 'ok' : 'bad'}">${p.enabled ? 'bật' : 'tắt'}</span>`;
+  const baseUrlControl = p.provider === 'router9' ? `
+      <div class="field-row">
+        <input class="base-url-input" type="url" placeholder="Base URL (để trống = dùng biến Render)" value="${escapeHtml(p.base_url_override || '')}">
+        <button class="secondary small save-base-url" data-provider="router9">Lưu Base URL</button>
+      </div>
+      <div class="field-label">Base URL hiện dùng: ${escapeHtml(p.base_url)}${p.base_url_overridden ? ' (đã override)' : ' (ROUTER9_BASE_URL trên Render)'}</div>` : '';
   return `
     <div class="provider-card" data-provider="${p.provider}">
       <div class="provider-head">
@@ -337,6 +352,7 @@ function providerCard(p) {
         <button class="secondary small save-key" data-provider="${p.provider}">Lưu key</button>
       </div>
       <div class="field-label">${p.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
+      ${baseUrlControl}
     </div>`;
 }
 
@@ -371,6 +387,22 @@ async function loadProviders() {
         msg(`${btn.dataset.provider}: đã lưu API key.`);
         loadProviders();
       } catch (e) { msg('Lưu API key thất bại: ' + e.message, true); }
+    };
+  });
+  document.querySelectorAll('.save-base-url').forEach(btn => {
+    btn.onclick = async () => {
+      const card = btn.closest('.provider-card');
+      const input = card.querySelector('.base-url-input');
+      try {
+        const result = await api('/admin/api/providers/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: 'router9', base_url: input.value.trim() }),
+        });
+        msg(result.warning || (result.base_url_overridden
+          ? 'router9: đã lưu Base URL.'
+          : 'router9: đã dùng lại ROUTER9_BASE_URL từ Render.'), Boolean(result.warning));
+        loadProviders();
+      } catch (e) { msg('Lưu Base URL thất bại: ' + e.message, true); }
     };
   });
   document.querySelectorAll('.provider-toggle').forEach(btn => {

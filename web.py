@@ -276,10 +276,17 @@ def _mask_api_key(key: str) -> str:
 
 
 async def _provider_info(provider: str) -> dict:
+    base_url_info = {}
     if provider == "router9":
         model_override = await router9_client.get_preferred_model_name()
         effective_model = model_override or config.ROUTER9_MODEL
         enabled = provider_state.router9_enabled
+        base_url_override = await router9_client.get_base_url_override()
+        base_url_info = {
+            "base_url": base_url_override or config.ROUTER9_BASE_URL,
+            "base_url_override": base_url_override or "",
+            "base_url_overridden": bool(base_url_override),
+        }
     else:
         model_override = await provider_overrides.get_model_override(provider)
         effective_model = await {
@@ -305,6 +312,7 @@ async def _provider_info(provider: str) -> dict:
         "api_key_overridden": bool(await provider_overrides.get_api_key_override(provider)),
         "enabled": enabled,
         "enabled_editable": provider in provider_overrides.ENABLE_OVERRIDABLE,
+        **base_url_info,
     }
 
 
@@ -320,6 +328,7 @@ async def admin_providers_update(request: Request) -> Response:
     """Body: {"provider": "router9"|"groq"|"openrouter"|"api1"|"api2",
     "model"?: str (rỗng = xoá override, dùng lại mặc định env),
     "api_key"?: str (rỗng = xoá override),
+    "base_url"?: str (chỉ router9; rỗng/sai định dạng = dùng ROUTER9_BASE_URL env),
     "enabled"?: bool}."""
     if not _admin_session_valid(request):
         return Response(status_code=403)
@@ -339,6 +348,21 @@ async def admin_providers_update(request: Request) -> Response:
             await provider_overrides.set_api_key_override(provider, body["api_key"])
         except RuntimeError as exc:
             return JSONResponse({"error": str(exc)}, status_code=500)
+    warning = None
+    if "base_url" in body:
+        if provider != "router9":
+            return JSONResponse({"error": "Base URL chỉ được cấu hình cho router9."}, status_code=400)
+        base_url = body["base_url"]
+        if isinstance(base_url, str):
+            valid = await router9_client.set_base_url_override(base_url)
+        else:
+            await router9_client.set_base_url_override(None)
+            valid = False
+        if not valid:
+            warning = (
+                "Base URL không đúng định dạng. Đã bỏ override và dùng "
+                "ROUTER9_BASE_URL từ biến môi trường trên Render."
+            )
     if "enabled" in body:
         enabled = bool(body["enabled"])
         if provider == "router9":
@@ -346,7 +370,10 @@ async def admin_providers_update(request: Request) -> Response:
         elif provider in provider_overrides.ENABLE_OVERRIDABLE:
             await provider_overrides.set_enabled(provider, enabled)
 
-    return JSONResponse(await _provider_info(provider))
+    result = await _provider_info(provider)
+    if warning:
+        result["warning"] = warning
+    return JSONResponse(result)
 
 
 _CHANNEL_LABELS = {"telegram": "Telegram", "zoom": "Zoom", "zalo": "Zalo"}

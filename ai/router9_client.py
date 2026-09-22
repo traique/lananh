@@ -10,6 +10,7 @@ không có khái niệm ChatSession/Gem như cookie_client cũ.
 """
 import logging
 from typing import Optional
+from urllib.parse import urlsplit
 
 from ai import openai_compatible, provider_overrides
 from ai.openai_compatible import Response
@@ -18,6 +19,7 @@ from core import config, database as db
 logger = logging.getLogger(__name__)
 
 _SETTING_PREFERRED_MODEL = "preferred_model_name"
+_SETTING_BASE_URL = "router9_base_url"
 
 _pool = openai_compatible.ClientPool(config.ROUTER9_CALL_TIMEOUT_SEC, config.ROUTER9_MAX_CONCURRENCY)
 
@@ -32,6 +34,65 @@ async def close() -> None:
 
 async def _api_key() -> str:
     return await provider_overrides.get_api_key_override("router9") or config.ROUTER9_API_KEY
+
+
+def normalize_base_url(value: Optional[str]) -> Optional[str]:
+    """Validate + normalize Base URL nhập từ admin.
+
+    Chỉ chấp nhận http/https có hostname; không nhận credentials, query hay
+    fragment vì caller sẽ tự nối /chat/completions và /models vào cuối URL.
+    Trả None nếu không hợp lệ để caller fallback về ROUTER9_BASE_URL env.
+    """
+    value = (value or "").strip()
+    if not value or any(char.isspace() for char in value):
+        return None
+    try:
+        parsed = urlsplit(value)
+        # Truy cập .port để buộc urllib kiểm tra port có đúng định dạng/range.
+        _ = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        return None
+    path = parsed.path.rstrip("/").lower()
+    if path.endswith("/chat/completions") or path.endswith("/models"):
+        return None
+    return value.rstrip("/")
+
+
+async def get_base_url_override() -> Optional[str]:
+    raw = await db.get_setting(_SETTING_BASE_URL)
+    if not raw:
+        return None
+    normalized = normalize_base_url(raw)
+    if normalized is None:
+        logger.warning("Base URL override của 9Router không hợp lệ; fallback về ROUTER9_BASE_URL env.")
+    return normalized
+
+
+async def get_base_url() -> str:
+    """Base URL hiệu lực: admin override hợp lệ, nếu không thì env Render."""
+    return await get_base_url_override() or config.ROUTER9_BASE_URL
+
+
+async def set_base_url_override(value: Optional[str]) -> bool:
+    """Lưu Base URL override; URL sai bị xoá để an toàn fallback về env.
+
+    Trả True nếu rỗng (reset env) hoặc URL hợp lệ; False nếu input không hợp
+    lệ và đã được reset về ROUTER9_BASE_URL từ environment.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        await db.set_setting(_SETTING_BASE_URL, "")
+        return True
+    normalized = normalize_base_url(raw)
+    if normalized is None:
+        await db.set_setting(_SETTING_BASE_URL, "")
+        return False
+    await db.set_setting(_SETTING_BASE_URL, normalized)
+    return True
 
 
 async def generate(
@@ -49,11 +110,12 @@ async def generate(
     if not api_key:
         raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
     messages = openai_compatible.build_messages(prompt, system_instruction, history)
+    base_url = await get_base_url()
     async with _pool.get_semaphore():
         try:
             text = await openai_compatible.post_chat_completion(
                 _pool.get_client(),
-                base_url=config.ROUTER9_BASE_URL,
+                base_url=base_url,
                 api_key=api_key,
                 messages=messages,
                 model=model or config.ROUTER9_MODEL,
@@ -86,11 +148,12 @@ async def generate_with_tools(
     api_key = await _api_key()
     if not api_key:
         raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
+    base_url = await get_base_url()
     async with _pool.get_semaphore():
         try:
             return await openai_compatible.post_chat_completion_with_tools(
                 _pool.get_client(),
-                base_url=config.ROUTER9_BASE_URL,
+                base_url=base_url,
                 api_key=api_key,
                 messages=messages,
                 tools=tools,
@@ -107,10 +170,11 @@ async def generate_image_prompt(instruction: str, image_path: str) -> Response:
     api_key = await _api_key()
     if not api_key:
         raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
+    base_url = await get_base_url()
     try:
         return await openai_compatible.generate_image_prompt(
             _pool,
-            base_url=config.ROUTER9_BASE_URL,
+            base_url=base_url,
             api_key=api_key,
             vision_model=config.ROUTER9_MODEL,
             provider_label="9Router",
@@ -129,10 +193,9 @@ async def list_models() -> list[str]:
         return []
     headers = {"Authorization": f"Bearer {api_key}"}
     client = _pool.get_client()
+    base_url = await get_base_url()
     try:
-        response = await client.get(
-            f"{config.ROUTER9_BASE_URL.rstrip('/')}/models", headers=headers
-        )
+        response = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
         response.raise_for_status()
         model_list_payload = response.json()
         return sorted({
