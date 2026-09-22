@@ -268,6 +268,7 @@ Các lệnh `/fb_*` dùng được từ **Zalo admin, Telegram owner và Zoom ji
 /fb_link <post_id> <affiliate_url>  # fallback thủ công khi chỉ có 1 link
 /fb_link <post_id> <source_url> <affiliate_url>  # fallback từng link khi bài có nhiều link
 /fb_ok <post_id>
+/fb_check <post_id>  # kiểm tra post đã published/công khai và lấy permalink
 /fb_boqua <post_id>
 /fb_reset
 ```
@@ -321,9 +322,13 @@ Thực hiện theo đúng thứ tự sau khi đã deploy bản repo này lên Re
    ```
 
 4. Một cửa sổ Chromium sẽ mở. Đăng nhập **đúng tài khoản Shopee Affiliate** của bạn.
-   Tự nhập OTP hoặc CAPTCHA nếu Shopee yêu cầu. Sau khi đăng nhập thành công, mở được
-   khu vực Shopee Affiliate/Custom Link rồi quay lại terminal và nhấn ENTER theo hướng dẫn.
+   Tự nhập OTP hoặc CAPTCHA nếu Shopee yêu cầu. Khi đã vào được hệ thống Affiliate, quay
+   lại terminal và nhấn ENTER. Script sẽ tự mở lại Custom Link, lưu **cookies + localStorage
+   + IndexedDB + OPFS**, rồi tạo một browser context mới để kiểm tra session có restore
+   được hay không. Chỉ tiếp tục khi terminal báo `VERIFY OK`.
 5. Script tạo file `shopee-storage-state.json`. Mở file này và copy **toàn bộ JSON**.
+   Nếu `/admin` hiển thị `state cũ`, hãy export lại bằng script của bản repo mới; không nên
+   tiếp tục dùng file session được tạo bởi exporter cũ.
 6. Mở trang admin của bot đã deploy, ví dụ:
 
    ```text
@@ -344,6 +349,12 @@ Thực hiện theo đúng thứ tự sau khi đã deploy bản repo này lên Re
 Khi session hết hạn hoặc Shopee yêu cầu đăng nhập/CAPTCHA lại, bot giữ nguyên bài ở
 trạng thái chờ duyệt. Chạy lại các bước 3–8 để nạp session mới; không cần thay đổi code.
 
+Nếu `/admin` báo không tìm thấy ô Custom Link, bản bot sẽ chờ SPA render tối đa theo
+`SHOPEE_BROWSER_ACTION_TIMEOUT_SEC`, dò cả iframe/contenteditable và ghi chẩn đoán an toàn
+vào Render logs. Một lượt browser có hard-timeout `SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC` nên
+không thể giữ `/fb_link` treo vô hạn. Nếu lỗi vẫn lặp lại sau khi deploy bản mới, kiểm tra
+Render logs để xem URL/frame/nút mà Shopee thực tế đã render; không cần gửi cookie/session.
+
 Production container chỉ cài Chromium **headless shell** và browser chỉ chạy on-demand,
 concurrency toàn cục = 1. Ảnh/media/font trên Shopee bị chặn tải để giảm RAM/CPU; browser
 đóng ngay sau mỗi batch `/fb_link`. Bot không tự vượt CAPTCHA.
@@ -351,7 +362,7 @@ concurrency toàn cục = 1. Ảnh/media/font trên Shopee bị chặn tải đ�
 Các biến tùy chọn: `SHOPEE_AFFILIATE_AUTO_ENABLED` (mặc định `true`),
 `SHOPEE_AFFILIATE_CUSTOM_LINK_URL`, `SHOPEE_RESOLVE_TIMEOUT_SEC`,
 `SHOPEE_BROWSER_NAV_TIMEOUT_SEC`, `SHOPEE_BROWSER_ACTION_TIMEOUT_SEC`,
-`SHOPEE_BROWSER_RESULT_TIMEOUT_SEC`.
+`SHOPEE_BROWSER_RESULT_TIMEOUT_SEC`, `SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC` (mặc định 90 giây).
 
 ## Lệnh chính
 
@@ -391,6 +402,7 @@ Các biến tùy chọn: `SHOPEE_AFFILIATE_AUTO_ENABLED` (mặc định `true`),
 | `/fb_sua <post_id> <nội dung>` | Sửa nội dung bài Facebook đang chờ |
 | `/fb_link <post_id>` | Tự chuyển mọi link Shopee qua Custom Link chính thức; có fallback nhập short-link thủ công |
 | `/fb_ok <post_id>` | Duyệt và đăng bài lên Facebook Page |
+| `/fb_check <post_id>` | Kiểm tra `is_published`, trạng thái ẩn/Timeline, `published_posts` và permalink của bài đã đăng |
 | `/fb_boqua <post_id>` | Bỏ bài Facebook đang chờ |
 | `/fb_reset` | Xóa toàn bộ bài Facebook đã lưu của tài khoản; reset ID về `#1` khi hàng đợi chung trống |
 | `/zalopair <id_zalo> [tên]` | Cấp quyền thành viên cho 1 tài khoản Zalo |
@@ -610,3 +622,24 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
 ## Trách nhiệm
 
 Dùng cho mục đích cá nhân/nội bộ. Người vận hành chịu trách nhiệm về điều khoản của Google, Telegram, Zalo, nguồn dữ liệu thị trường và mọi quyết định đầu tư.
+
+### Kiểm tra bài Facebook có thực sự công khai
+
+Sau khi `/fb_ok <post_id>`, bot không còn chỉ tin vào HTTP 200/Post ID từ Graph API.
+Bot tạo bài với `published=true`, đọc lại `is_published`, `is_hidden`,
+`timeline_visibility`, `permalink_url` và kiểm tra `/{page-id}/published_posts`.
+
+Nếu bot trả `🌐 Graph API xác nhận...`, bài đã được Graph API xác nhận là post
+published bình thường. Bot cũng trả `Link bài`; nên mở link đó bằng tài khoản Facebook
+khác hoặc cửa sổ ẩn danh để kiểm tra trải nghiệm công khai thực tế.
+
+Nếu bài đã đăng trước đó nhưng không thấy trong tab Posts, dùng:
+
+```text
+/fb_check <post_id>
+```
+
+Nếu `is_published=true` nhưng `in_published_posts=false` hoặc
+`timeline_visibility=hidden`, không nên đăng lại ngay vì có thể tạo bài trùng. Hãy dùng
+permalink mà bot trả về để kiểm tra từ tài khoản khác và xem Render log/Graph status trước.
+Facebook có thể cập nhật tab Posts chậm hơn Photos/Feed trong một số thời điểm.

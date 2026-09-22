@@ -146,6 +146,7 @@ HELP_TEXT = (
     "/fb\\_link <post_id> <affiliate_url> — fallback thủ công khi bài chỉ có 1 link\n"
     "/fb\\_link <post_id> <source_url> <affiliate_url> — fallback từng link khi bài có nhiều link\n"
     "/fb\\_ok <post_id> — duyệt và đăng Facebook Page\n"
+    "/fb\\_check <post_id> — kiểm tra bài đã published/công khai và lấy permalink\n"
     "/fb\\_boqua <post_id> — bỏ bài chờ\n"
     "/fb\\_reset — xóa bài Facebook đã lưu, reset ID về #1 khi có thể\n"
     "/zalopair, /zaloadmin, /zalohaquyen, /zalokhoa, /zalomokhoa, /zaloxoa, /zalodanhsach — quản lý user Zalo\n"
@@ -875,6 +876,11 @@ async def fb_ok_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @common.restricted
 async def fb_boqua_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _facebook_command(update, context, "/fb_boqua")
+
+
+@common.restricted
+async def fb_check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_check")
 
 
 @common.restricted

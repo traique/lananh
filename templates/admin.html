@@ -245,14 +245,30 @@ function msg(text, isError) {
   el.style.color = isError ? 'var(--bad-fg)' : 'var(--ok-fg)';
 }
 
-async function api(path, opts) {
-  const res = await fetch(path, opts);
-  if (res.status === 403) { window.location.reload(); throw new Error('phiên đăng nhập hết hạn'); }
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || res.statusText);
+async function api(path, opts = {}) {
+  const requestOpts = { ...opts };
+  const timeoutMs = requestOpts.timeoutMs || 0;
+  delete requestOpts.timeoutMs;
+  let timer = null;
+  if (timeoutMs > 0 && !requestOpts.signal) {
+    const controller = new AbortController();
+    requestOpts.signal = controller.signal;
+    timer = setTimeout(() => controller.abort(), timeoutMs);
   }
-  return res.json();
+  try {
+    const res = await fetch(path, requestOpts);
+    if (res.status === 403) { window.location.reload(); throw new Error('phiên đăng nhập hết hạn'); }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || res.statusText);
+    }
+    return res.json();
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw new Error('quá thời gian chờ, tác vụ đã được dừng');
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function fmtCooldown(untilEpochSec) {
@@ -514,7 +530,7 @@ async function loadAgnes() {
 
 function shopeeAffiliateBox(state) {
   const status = state.configured
-    ? `<span class="pill ok">session OK</span>`
+    ? `<span class="pill ok">session OK</span> <span class="pill ${state.enhanced_state ? 'ok' : 'bad'}">${state.enhanced_state ? 'state đầy đủ' : 'state cũ'}</span>`
     : `<span class="pill bad">chưa có session</span>`;
   const updated = state.updated_at ? ` · cập nhật ${fmtDate(state.updated_at)}` : '';
   return `
@@ -524,6 +540,7 @@ function shopeeAffiliateBox(state) {
         <span>${status} <span class="pill ${state.auto_enabled ? 'ok' : 'bad'}">${state.auto_enabled ? 'auto bật' : 'auto tắt'}</span></span>
       </div>
       <div class="field-label">Session được mã hóa bằng SETTINGS_ENC_KEY và lưu PostgreSQL${updated}. Chromium chỉ chạy khi cache miss.</div>
+      ${state.configured && !state.enhanced_state ? '<div class="field-label" style="margin-top:6px;color:#ffb86b">Session này được export theo định dạng cũ. Nên chạy lại scripts/export_shopee_session.py bản mới để lưu cả IndexedDB/OPFS rồi nạp lại.</div>' : ''}
       <div class="field-label" style="margin-top:8px">Dán Playwright storage_state JSON từ script scripts/export_shopee_session.py:</div>
       <div class="field-row"><textarea id="shopee-session-json" class="admin-textarea" placeholder='{"cookies":[...],"origins":[...]}'></textarea></div>
       <div class="actions">
@@ -565,16 +582,24 @@ async function loadShopeeAffiliate() {
   document.getElementById('shopee-test-btn').onclick = async () => {
     const input = document.getElementById('shopee-test-url');
     const result = document.getElementById('shopee-test-result');
+    const button = document.getElementById('shopee-test-btn');
     if (!input.value.trim()) { msg('Nhập link Shopee để test.', true); return; }
-    result.textContent = 'Đang chuyển...';
+    result.textContent = 'Đang chuyển... (tối đa khoảng 90 giây)';
+    button.disabled = true;
     try {
       const data = await api('/admin/api/shopee-affiliate/test', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: input.value.trim() }),
+        timeoutMs: 95000,
       });
       result.textContent = `${data.from_cache ? 'Cache' : 'Shopee'} → ${data.affiliate_url}`;
       msg('Shopee Affiliate: test thành công.');
-    } catch (e) { result.textContent = ''; msg('Test Shopee thất bại: ' + e.message, true); }
+    } catch (e) {
+      result.textContent = 'Test thất bại: ' + e.message;
+      msg('Test Shopee thất bại: ' + e.message, true);
+    } finally {
+      button.disabled = false;
+    }
   };
 }
 

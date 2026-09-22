@@ -69,3 +69,60 @@ async def test_convert_urls_uses_canonical_cache_without_browser(monkeypatch):
     assert result[0].affiliate_url == affiliate
     assert result[0].from_cache is True
     assert saved == {"source": source, "affiliate": affiliate, "canonical": "item:1:2"}
+
+@pytest.mark.asyncio
+async def test_convert_urls_browser_has_hard_timeout(monkeypatch):
+    source = "https://s.shopee.vn/source-timeout"
+
+    async def fake_direct(account_id, urls):
+        return {}
+
+    async def fake_resolve(url):
+        return shopee.ResolvedShopeeUrl(url, "https://shopee.vn/product/9/10", "item:9:10")
+
+    async def fake_canonical(account_id, keys):
+        return {}
+
+    async def slow_browser(items):
+        import asyncio
+        await asyncio.sleep(1)
+        return {}
+
+    monkeypatch.setattr(shopee.facebook_repository, "get_affiliate_links", fake_direct)
+    monkeypatch.setattr(shopee.facebook_repository, "get_affiliate_links_by_canonical", fake_canonical)
+    monkeypatch.setattr(shopee, "resolve_shopee_url", fake_resolve)
+    monkeypatch.setattr(shopee, "_launch_and_convert", slow_browser)
+    monkeypatch.setattr(shopee.config, "SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC", 0.01)
+
+    with pytest.raises(shopee.ShopeeAffiliateError, match="vượt quá thời gian"):
+        await shopee.convert_urls("A", [source])
+
+
+@pytest.mark.asyncio
+async def test_wait_for_custom_link_field_retries_until_spa_renders(monkeypatch):
+    class FakePage:
+        url = "https://affiliate.shopee.vn/offer/custom_link"
+        frames = []
+
+    page = FakePage()
+    expected = object()
+    attempts = 0
+
+    async def fake_assert_logged_in(_page):
+        return None
+
+    async def fake_visible_input(_page):
+        nonlocal attempts
+        attempts += 1
+        return expected if attempts >= 3 else None
+
+    async def fast_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(shopee, "_assert_logged_in", fake_assert_logged_in)
+    monkeypatch.setattr(shopee, "_visible_input", fake_visible_input)
+    monkeypatch.setattr(shopee.asyncio, "sleep", fast_sleep)
+
+    field = await shopee._wait_for_custom_link_field(page)
+    assert field is expected
+    assert attempts == 3

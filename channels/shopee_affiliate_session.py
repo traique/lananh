@@ -24,8 +24,8 @@ def _validate_storage_state(value: Any) -> dict:
         raise ValueError("storage_state không đúng định dạng Playwright.")
     # Avoid accidentally persisting an arbitrarily large request body in settings.
     encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    if len(encoded.encode("utf-8")) > 2_000_000:
-        raise ValueError("storage_state quá lớn (giới hạn 2 MB).")
+    if len(encoded.encode("utf-8")) > 5_000_000:
+        raise ValueError("storage_state quá lớn (giới hạn 5 MB).")
     return value
 
 
@@ -62,7 +62,20 @@ async def status() -> dict:
         _SESSION_KEY,
     )
     configured = bool(row and row["value"])
+    has_indexed_db = False
+    has_opfs = False
+    if configured:
+        try:
+            decoded = json.loads(crypto.decrypt(row["value"]) or "{}")
+            for origin in decoded.get("origins", []):
+                if not isinstance(origin, dict):
+                    continue
+                has_indexed_db = has_indexed_db or bool(origin.get("indexedDB"))
+                has_opfs = has_opfs or bool(origin.get("opfs"))
+        except (TypeError, json.JSONDecodeError):
+            pass
     return {
         "configured": configured,
         "updated_at": row["updated_at"].isoformat() if configured and row["updated_at"] else None,
+        "enhanced_state": has_indexed_db or has_opfs,
     }

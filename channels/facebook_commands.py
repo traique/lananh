@@ -11,7 +11,11 @@ import asyncpg
 from channels import facebook_repository, zalo_repository
 from core import config
 from services.channel_result import ChannelResult
-from services.facebook_page_service import FacebookPublishError, publish_page_post
+from services.facebook_page_service import (
+    FacebookPublishError,
+    inspect_page_post,
+    publish_page_post,
+)
 from services import shopee_affiliate_browser
 
 _URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
@@ -326,14 +330,59 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         media_rows = await facebook_repository.get_media(post_id)
         media = [(row["mime_type"], bytes(row["content"])) for row in media_rows]
         try:
-            facebook_post_id = await publish_page_post(claimed["processed_content"], media)
+            published = await publish_page_post(claimed["processed_content"], media)
         except FacebookPublishError as exc:
             await facebook_repository.mark_error(account_id, post_id, str(exc))
             return ChannelResult([f"❌ Đăng Facebook thất bại cho bài #{post_id}: {exc}"])
         except Exception as exc:
             await facebook_repository.mark_error(account_id, post_id, str(exc))
             return ChannelResult([f"❌ Đăng Facebook thất bại cho bài #{post_id}: {exc}"])
-        await facebook_repository.mark_posted(account_id, post_id, facebook_post_id)
-        return ChannelResult([f"✅ Đã đăng bài #{post_id} lên Facebook. Post ID: {facebook_post_id}"])
+        await facebook_repository.mark_posted(account_id, post_id, published.post_id)
+        lines = [f"✅ Đã đăng bài #{post_id} lên Facebook. Post ID: {published.post_id}"]
+        if published.permalink_url:
+            lines.append(f"🔗 Link bài: {published.permalink_url}")
+        if published.visibility_confirmed:
+            lines.append("🌐 Graph API xác nhận bài đang ở trạng thái published/public trên Page.")
+        else:
+            status = published.status
+            lines.append(
+                "⚠️ Facebook đã nhận và is_published không phải false, nhưng bot chưa xác minh chắc chắn "
+                "bài đã xuất hiện trong published_posts/Timeline. Hãy mở Link bài bằng tài khoản khác hoặc "
+                f"dùng /fb_check {post_id}. "
+                f"(is_published={status.is_published}, is_hidden={status.is_hidden}, "
+                f"timeline={status.timeline_visibility}, in_published_posts={status.in_published_posts})"
+            )
+        return ChannelResult(["\n".join(lines)])
+
+    if command == "/fb_check":
+        parts = raw.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].isdigit():
+            return ChannelResult(["Cú pháp: /fb_check <post_id>"])
+        post_id = int(parts[1])
+        row = await facebook_repository.get_post(account_id, post_id)
+        if not row:
+            return ChannelResult([f"Không tìm thấy bài #{post_id}."])
+        facebook_post_id = (row["facebook_post_id"] or "").strip()
+        if not facebook_post_id:
+            return ChannelResult([f"Bài #{post_id} chưa có Facebook Post ID; có thể chưa được /fb_ok thành công."])
+        try:
+            status = await inspect_page_post(facebook_post_id)
+        except FacebookPublishError as exc:
+            return ChannelResult([f"❌ Không kiểm tra được bài #{post_id}: {exc}"])
+        lines = [
+            f"🔎 FACEBOOK CHECK #{post_id}",
+            f"Post ID: {facebook_post_id}",
+            f"is_published: {status.is_published}",
+            f"is_hidden: {status.is_hidden}",
+            f"timeline_visibility: {status.timeline_visibility or 'không trả về'}",
+            f"in_published_posts: {status.in_published_posts}",
+        ]
+        if status.permalink_url:
+            lines.append(f"Link bài: {status.permalink_url}")
+        if status.public_visibility_confirmed:
+            lines.append("✅ Graph API xác nhận bài đang published và không bị ẩn.")
+        else:
+            lines.append("⚠️ Chưa xác nhận được bài là post public bình thường trên Timeline.")
+        return ChannelResult(["\n".join(lines)])
 
     return None

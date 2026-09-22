@@ -171,75 +171,194 @@ async def _block_heavy_resources(route) -> None:
         await route.continue_()
 
 
+async def _page_scopes(page):
+    """Return the main page plus child frames that can host the Custom Link UI.
+
+    Shopee is a SPA and has changed how some dashboard sections are mounted over
+    time.  Looking through frames as well as the top-level document costs almost
+    nothing and avoids coupling the automation to one rendering strategy.
+    """
+    scopes = [page]
+    try:
+        for frame in page.frames:
+            if frame is not page.main_frame:
+                scopes.append(frame)
+    except Exception:
+        pass
+    return scopes
+
+
 async def _visible_input(page):
+    """Find the Custom Link source field without assuming one Shopee DOM version."""
     selectors = [
+        # Prefer explicit accessibility/placeholder hints first.
         'textarea[placeholder*="link" i]',
         'input[placeholder*="link" i]',
+        'textarea[placeholder*="liên kết" i]',
+        'input[placeholder*="liên kết" i]',
         'textarea[aria-label*="link" i]',
         'input[aria-label*="link" i]',
+        'textarea[aria-label*="liên kết" i]',
+        'input[aria-label*="liên kết" i]',
+        # Some component libraries use an editable div rather than a native input.
+        '[contenteditable="true"][role="textbox"]',
+        '[contenteditable="true"]',
+        # Last-resort native controls. Descriptor filtering below avoids obvious
+        # Sub-ID/code/search fields.
         'textarea',
+        'input[type="url"]',
         'input[type="text"]',
         'input:not([type])',
     ]
-    for selector in selectors:
-        locator = page.locator(selector)
-        for idx in range(await locator.count()):
-            item = locator.nth(idx)
+    for scope in await _page_scopes(page):
+        for selector in selectors:
             try:
-                if not await item.is_visible():
-                    continue
-                descriptor = " ".join(
-                    filter(
-                        None,
-                        [
-                            await item.get_attribute("placeholder"),
-                            await item.get_attribute("aria-label"),
-                            await item.get_attribute("name"),
-                        ],
-                    )
-                ).casefold()
-                if "sub" in descriptor or "mã" in descriptor or "code" in descriptor:
-                    continue
-                return item
+                locator = scope.locator(selector)
+                count = await locator.count()
             except Exception:
                 continue
+            for idx in range(count):
+                item = locator.nth(idx)
+                try:
+                    if not await item.is_visible():
+                        continue
+                    descriptor = " ".join(
+                        filter(
+                            None,
+                            [
+                                await item.get_attribute("placeholder"),
+                                await item.get_attribute("aria-label"),
+                                await item.get_attribute("name"),
+                                await item.get_attribute("id"),
+                            ],
+                        )
+                    ).casefold()
+                    # Shopee exposes optional Sub ID fields near Custom Link. Do not
+                    # accidentally put the product URL there. Search/header inputs are
+                    # also poor fallbacks when the actual component is still loading.
+                    rejected = (
+                        "sub", "mã", "code", "search", "tìm kiếm", "keyword",
+                        "campaign", "chiến dịch",
+                    )
+                    if any(token in descriptor for token in rejected):
+                        continue
+                    return item
+                except Exception:
+                    continue
     return None
 
 
+async def _wait_for_custom_link_field(page):
+    """Wait for the SPA to render the Custom Link field.
+
+    ``domcontentloaded`` only means the JS shell was downloaded. On Render Free
+    Shopee's React/Vue bundle can take several more seconds to mount the actual
+    dashboard component, so probing once caused false "UI changed" failures.
+    """
+    timeout_sec = max(5, config.SHOPEE_BROWSER_ACTION_TIMEOUT_SEC * 2)
+    deadline = asyncio.get_running_loop().time() + timeout_sec
+    last_url = page.url
+    while asyncio.get_running_loop().time() < deadline:
+        await _assert_logged_in(page)
+        field = await _visible_input(page)
+        if field is not None:
+            return field
+        last_url = page.url
+        await asyncio.sleep(0.5)
+
+    # Keep the user-facing error concise; detailed DOM information is written to
+    # logs without cookies/storage state so debugging production remains safe.
+    try:
+        frame_urls = [frame.url for frame in page.frames][:6]
+        button_texts: list[str] = []
+        for scope in await _page_scopes(page):
+            try:
+                texts = await scope.locator('button, [role="button"]').all_inner_texts()
+                button_texts.extend(t.strip() for t in texts if t.strip())
+            except Exception:
+                continue
+        logger.warning(
+            "Shopee Custom Link field not found after %.1fs; url=%s frames=%r buttons=%r",
+            timeout_sec, last_url, frame_urls, button_texts[:15],
+        )
+    except Exception:
+        logger.warning("Shopee Custom Link field not found; diagnostic collection failed", exc_info=True)
+    raise ShopeeUiChanged(
+        "Không tìm thấy ô nhập Custom Link sau khi chờ giao diện Shopee tải xong. "
+        "Session có thể đang ở sai loại tài khoản/trang hoặc Shopee vừa đổi giao diện."
+    )
+
+
 async def _click_get_link(page) -> None:
-    patterns = (r"^\s*Lấy\s*link\s*$", r"^\s*Tạo\s*link\s*$", r"^\s*Get\s*link\s*$")
-    for pattern in patterns:
-        candidate = page.get_by_role("button", name=re.compile(pattern, re.IGNORECASE))
-        if await candidate.count():
-            for idx in range(await candidate.count()):
+    patterns = (
+        r"^\s*Lấy\s*link\s*$",
+        r"^\s*Lấy\s*liên\s*kết\s*$",
+        r"^\s*Tạo\s*link\s*$",
+        r"^\s*Tạo\s*liên\s*kết\s*$",
+        r"^\s*Get\s*link\s*$",
+        r"^\s*Generate\s*link\s*$",
+        r"^\s*Convert\s*$",
+    )
+    for scope in await _page_scopes(page):
+        for pattern in patterns:
+            try:
+                candidate = scope.get_by_role("button", name=re.compile(pattern, re.IGNORECASE))
+                count = await candidate.count()
+            except Exception:
+                continue
+            for idx in range(count):
                 button = candidate.nth(idx)
-                if await button.is_visible() and await button.is_enabled():
-                    await button.click()
-                    return
+                try:
+                    if await button.is_visible() and await button.is_enabled():
+                        await button.click()
+                        return
+                except Exception:
+                    continue
+
     # Some Shopee UI versions render a div/span styled as a button.
-    for text in ("Lấy link", "Tạo link", "Get link"):
-        candidate = page.get_by_text(text, exact=True)
-        for idx in range(await candidate.count()):
-            node = candidate.nth(idx)
-            if await node.is_visible():
-                await node.click()
-                return
+    for scope in await _page_scopes(page):
+        for label in (
+            "Lấy link", "Lấy liên kết", "Tạo link", "Tạo liên kết",
+            "Get link", "Generate link", "Convert",
+        ):
+            try:
+                candidate = scope.get_by_text(label, exact=True)
+                count = await candidate.count()
+            except Exception:
+                continue
+            for idx in range(count):
+                node = candidate.nth(idx)
+                try:
+                    if await node.is_visible():
+                        await node.click()
+                        return
+                except Exception:
+                    continue
     raise ShopeeUiChanged("Không tìm thấy nút “Lấy link” trên Shopee Affiliate.")
 
 
 async def _extract_affiliate_url(page, source_url: str) -> str | None:
-    values = await page.locator("input, textarea").evaluate_all(
-        "els => els.map(e => e.value || '').filter(Boolean)"
-    )
-    hrefs = await page.locator("a[href]").evaluate_all(
-        "els => els.map(e => e.href || '').filter(Boolean)"
-    )
-    candidates = [*values, *hrefs]
-    try:
-        body_text = await page.locator("body").inner_text(timeout=2_000)
-        candidates.append(body_text)
-    except Exception:
-        pass
+    candidates: list[str] = []
+    for scope in await _page_scopes(page):
+        try:
+            values = await scope.locator("input, textarea").evaluate_all(
+                "els => els.map(e => e.value || '').filter(Boolean)"
+            )
+            candidates.extend(str(value) for value in values)
+        except Exception:
+            pass
+        try:
+            hrefs = await scope.locator("a[href]").evaluate_all(
+                "els => els.map(e => e.href || '').filter(Boolean)"
+            )
+            candidates.extend(str(value) for value in hrefs)
+        except Exception:
+            pass
+        try:
+            body_text = await scope.locator("body").inner_text(timeout=2_000)
+            candidates.append(body_text)
+        except Exception:
+            pass
     for candidate in candidates:
         for match in _AFFILIATE_URL_RE.findall(str(candidate)):
             if match != source_url:
@@ -279,9 +398,17 @@ async def _convert_on_page(page, destination_url: str) -> str:
         timeout=config.SHOPEE_BROWSER_NAV_TIMEOUT_SEC * 1000,
     )
     await _assert_logged_in(page)
-    field = await _visible_input(page)
-    if field is None:
-        raise ShopeeUiChanged("Không tìm thấy ô nhập Custom Link trên Shopee Affiliate.")
+    # Some authenticated sessions first land on /dashboard before the router has
+    # restored the requested SPA route. Retry the official Custom Link URL once.
+    if "/offer/custom_link" not in urlsplit(page.url).path.casefold():
+        await asyncio.sleep(1)
+        await page.goto(
+            config.SHOPEE_AFFILIATE_CUSTOM_LINK_URL,
+            wait_until="domcontentloaded",
+            timeout=config.SHOPEE_BROWSER_NAV_TIMEOUT_SEC * 1000,
+        )
+        await _assert_logged_in(page)
+    field = await _wait_for_custom_link_field(page)
     await field.fill(destination_url)
     await _click_get_link(page)
 
@@ -337,7 +464,6 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
                 storage_state=state,
                 viewport={"width": 1024, "height": 768},
                 locale="vi-VN",
-                service_workers="block",
             )
             context.set_default_timeout(config.SHOPEE_BROWSER_ACTION_TIMEOUT_SEC * 1000)
             page = await context.new_page()
@@ -349,7 +475,9 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
 
             # Shopee may rotate auth cookies during normal navigation. Persist the
             # refreshed state before closing the ephemeral browser.
-            await shopee_affiliate_session.save(await context.storage_state())
+            await shopee_affiliate_session.save(
+                await context.storage_state(indexed_db=True, opfs=True)
+            )
     except PlaywrightTimeoutError as exc:
         raise ShopeeAffiliateError("Shopee Affiliate phản hồi quá chậm hoặc giao diện chưa tải xong.") from exc
     finally:
@@ -428,7 +556,17 @@ async def convert_urls(account_id: str, source_urls: list[str]) -> list[Affiliat
                 if is_official_short_affiliate_url(affiliate)
             }
             to_convert = [item for key, item in missing_by_key.items() if key not in second_cache]
-            generated = await _launch_and_convert(to_convert) if to_convert else {}
+            if to_convert:
+                try:
+                    async with asyncio.timeout(config.SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC):
+                        generated = await _launch_and_convert(to_convert)
+                except TimeoutError as exc:
+                    raise ShopeeAffiliateError(
+                        "Shopee Affiliate vượt quá thời gian xử lý; Chromium đã được hủy để tránh treo bot. "
+                        "Thử lại một lần, hoặc nạp lại session nếu lỗi lặp lại."
+                    ) from exc
+            else:
+                generated = {}
             generated.update(second_cache)
 
             for item in resolved_items:
