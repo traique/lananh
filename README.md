@@ -643,3 +643,25 @@ Nếu `is_published=true` nhưng `in_published_posts=false` hoặc
 `timeline_visibility=hidden`, không nên đăng lại ngay vì có thể tạo bài trùng. Hãy dùng
 permalink mà bot trả về để kiểm tra từ tài khoản khác và xem Render log/Graph status trước.
 Facebook có thể cập nhật tab Posts chậm hơn Photos/Feed trong một số thời điểm.
+
+## Meta App: Privacy Policy, Terms và Data Deletion
+
+Repo cung cấp sẵn ba trang public, **không cần đăng nhập `/admin`**:
+
+- `https://<domain-render>/privacy` — Privacy Policy / Chính sách quyền riêng tư.
+- `https://<domain-render>/terms` — Terms of Service / Điều khoản dịch vụ.
+- `https://<domain-render>/data-deletion` — User Data Deletion Instructions / Hướng dẫn xóa dữ liệu.
+
+Sau khi deploy lên Render, mở cả ba URL trên trình duyệt để chắc chắn chúng trả HTTP 200. Trong **Meta for Developers → Cài đặt ứng dụng → Thông tin cơ bản**, điền:
+
+```text
+Miền ứng dụng:             <domain-render>             (không có https://)
+URL chính sách riêng tư:   https://<domain-render>/privacy
+URL Điều khoản dịch vụ:    https://<domain-render>/terms
+Xóa dữ liệu người dùng:    URL hướng dẫn xóa dữ liệu
+URL xóa dữ liệu:           https://<domain-render>/data-deletion
+```
+
+Ví dụ nếu service Render là `https://my-bot.onrender.com` thì miền ứng dụng là `my-bot.onrender.com`.
+
+Các trang này không hiển thị access token, cookie, App Secret hoặc thông tin đăng nhập. Phần liên hệ hướng người dùng tới thông tin liên hệ mà chủ ứng dụng công bố trên Facebook Page/Meta App, vì vậy hãy bảo đảm **Email liên hệ** trong Meta App Settings là email bạn đang sử dụng.

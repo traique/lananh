@@ -41,6 +41,9 @@ _ADMIN_TEMPLATE_PATH = Path(__file__).resolve().parent / "templates" / "admin.ht
 _ADMIN_LOGIN_PATH = Path(__file__).resolve().parent / "templates" / "admin_login.html"
 _ADMIN_COOLDOWN_PROVIDERS = ("groq", "openrouter", "api1", "api2")
 _ADMIN_SESSION_COOKIE = "admin_session"
+_PRIVACY_PATH = Path(__file__).resolve().parent / "templates" / "privacy.html"
+_TERMS_PATH = Path(__file__).resolve().parent / "templates" / "terms.html"
+_DATA_DELETION_PATH = Path(__file__).resolve().parent / "templates" / "data_deletion.html"
 
 
 def _diagnose_token_valid(request: Request) -> bool:
@@ -159,6 +162,21 @@ async def affiliate_redirect(token: str):
 @api.api_route("/", methods=["GET", "HEAD"])
 async def health() -> dict:
     return {"status": "ok"}
+
+
+@api.get("/privacy", response_class=HTMLResponse, include_in_schema=False)
+async def privacy_policy() -> HTMLResponse:
+    return HTMLResponse(_PRIVACY_PATH.read_text(encoding="utf-8"))
+
+
+@api.get("/terms", response_class=HTMLResponse, include_in_schema=False)
+async def terms_of_service() -> HTMLResponse:
+    return HTMLResponse(_TERMS_PATH.read_text(encoding="utf-8"))
+
+
+@api.get("/data-deletion", response_class=HTMLResponse, include_in_schema=False)
+async def data_deletion_instructions() -> HTMLResponse:
+    return HTMLResponse(_DATA_DELETION_PATH.read_text(encoding="utf-8"))
 
 
 @api.get(config.DIAGNOSE_PATH)
