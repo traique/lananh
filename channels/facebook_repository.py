@@ -25,32 +25,18 @@ async def list_groups(account_id: str) -> list[tuple[str, str]]:
     return [(row["group_id"], row["alias"]) for row in rows]
 
 
-async def list_groups_with_pages(account_id: str) -> list[tuple[str, str, str]]:
-    """Same as list_groups but also returns each group's destination page_key."""
-    await ensure_schema()
-    rows = await (await db.get_pool()).fetch(
-        """
-        SELECT group_id, alias, page_key FROM zalo_facebook_groups
-        WHERE account_id = $1 ORDER BY alias
-        """,
-        account_id,
-    )
-    return [(row["group_id"], row["alias"], row["page_key"]) for row in rows]
-
-
-async def add_group(account_id: str, group_id: str, alias: str, page_key: str = "default") -> None:
+async def add_group(account_id: str, group_id: str, alias: str) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
         """
-        INSERT INTO zalo_facebook_groups (account_id, group_id, alias, page_key)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO zalo_facebook_groups (account_id, group_id, alias)
+        VALUES ($1, $2, $3)
         ON CONFLICT (account_id, group_id)
-        DO UPDATE SET alias = EXCLUDED.alias, page_key = EXCLUDED.page_key, updated_at = now()
+        DO UPDATE SET alias = EXCLUDED.alias, updated_at = now()
         """,
         account_id,
         group_id,
         alias.lower(),
-        page_key,
     )
 
 
@@ -82,20 +68,20 @@ async def create_post(
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            page_key = await conn.fetchval(
-                "SELECT page_key FROM zalo_facebook_groups WHERE account_id = $1 AND group_id = $2",
+            allowed = await conn.fetchval(
+                "SELECT 1 FROM zalo_facebook_groups WHERE account_id = $1 AND group_id = $2",
                 account_id,
                 group_id,
             )
-            if page_key is None:
+            if not allowed:
                 return None
             post_id = await conn.fetchval(
                 """
                 INSERT INTO facebook_post_queue (
                     account_id, group_id, sender_id, sender_name,
-                    source_message_ids, original_content, processed_content, page_key
+                    source_message_ids, original_content, processed_content
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
+                VALUES ($1, $2, $3, $4, $5, $6, $6)
                 RETURNING id
                 """,
                 account_id,
@@ -104,7 +90,6 @@ async def create_post(
                 sender_name[:500],
                 source_message_ids,
                 content,
-                page_key,
             )
             for position, (mime_type, body) in enumerate(media):
                 await conn.execute(
@@ -167,6 +152,107 @@ async def reject_post(account_id: str, post_id: int) -> bool:
     return result != "UPDATE 0"
 
 
+async def ensure_targets(post_id: int, page_keys: list[str]) -> None:
+    """Make sure every currently configured page has a target row for this
+    post. Existing rows (any status) are left untouched — this is what lets a
+    re-run of /fb_ok add a newly-configured page to an old post without
+    disturbing pages that already posted or already failed."""
+    if not page_keys:
+        return
+    await ensure_schema()
+    await (await db.get_pool()).executemany(
+        """
+        INSERT INTO facebook_post_targets (post_id, page_key)
+        VALUES ($1, $2)
+        ON CONFLICT (post_id, page_key) DO NOTHING
+        """,
+        [(post_id, page_key) for page_key in page_keys],
+    )
+
+
+async def list_targets(post_id: int):
+    await ensure_schema()
+    return await (await db.get_pool()).fetch(
+        "SELECT * FROM facebook_post_targets WHERE post_id = $1 ORDER BY page_key",
+        post_id,
+    )
+
+
+async def record_target_posted(
+    post_id: int, page_key: str, facebook_post_id: str, permalink_url: str | None
+) -> None:
+    await ensure_schema()
+    await (await db.get_pool()).execute(
+        """
+        UPDATE facebook_post_targets
+        SET status = 'POSTED', facebook_post_id = $3, permalink_url = $4,
+            error_message = NULL, posted_at = now(), updated_at = now()
+        WHERE post_id = $1 AND page_key = $2
+        """,
+        post_id,
+        page_key,
+        facebook_post_id,
+        permalink_url,
+    )
+
+
+async def record_target_error(post_id: int, page_key: str, message: str) -> None:
+    await ensure_schema()
+    await (await db.get_pool()).execute(
+        """
+        UPDATE facebook_post_targets
+        SET status = 'ERROR', error_message = $3, updated_at = now()
+        WHERE post_id = $1 AND page_key = $2
+        """,
+        post_id,
+        page_key,
+        message[:1000],
+    )
+
+
+async def finalize_post_status(account_id: str, post_id: int) -> str:
+    """Recompute facebook_post_queue.status from facebook_post_targets: POSTED
+    only once every target page succeeded, ERROR otherwise. Returns the
+    resulting overall status."""
+    await ensure_schema()
+    pool = await db.get_pool()
+    summary = await pool.fetchrow(
+        """
+        SELECT
+            count(*) AS total,
+            count(*) FILTER (WHERE status = 'POSTED') AS posted,
+            count(*) FILTER (WHERE status = 'ERROR') AS errored
+        FROM facebook_post_targets WHERE post_id = $1
+        """,
+        post_id,
+    )
+    total = summary["total"] if summary else 0
+    posted = summary["posted"] if summary else 0
+    errored = summary["errored"] if summary else 0
+    if total > 0 and posted == total:
+        await pool.execute(
+            """
+            UPDATE facebook_post_queue
+            SET status = 'POSTED', posted_at = COALESCE(posted_at, now()), error_message = NULL
+            WHERE account_id = $1 AND id = $2
+            """,
+            account_id,
+            post_id,
+        )
+        return "POSTED"
+    await pool.execute(
+        """
+        UPDATE facebook_post_queue
+        SET status = 'ERROR', error_message = $3
+        WHERE account_id = $1 AND id = $2
+        """,
+        account_id,
+        post_id,
+        f"{posted}/{total or 0} page đã đăng, {errored} page lỗi." if total else "Chưa có Facebook Page nào được cấu hình.",
+    )
+    return "ERROR"
+
+
 async def claim_post(account_id: str, post_id: int):
     await ensure_schema()
     return await (await db.get_pool()).fetchrow(
@@ -178,34 +264,6 @@ async def claim_post(account_id: str, post_id: int):
         """,
         account_id,
         post_id,
-    )
-
-
-async def mark_posted(account_id: str, post_id: int, facebook_post_id: str) -> None:
-    await ensure_schema()
-    await (await db.get_pool()).execute(
-        """
-        UPDATE facebook_post_queue
-        SET status = 'POSTED', facebook_post_id = $3, posted_at = now(), error_message = NULL
-        WHERE account_id = $1 AND id = $2
-        """,
-        account_id,
-        post_id,
-        facebook_post_id,
-    )
-
-
-async def mark_error(account_id: str, post_id: int, message: str) -> None:
-    await ensure_schema()
-    await (await db.get_pool()).execute(
-        """
-        UPDATE facebook_post_queue
-        SET status = 'ERROR', error_message = $3
-        WHERE account_id = $1 AND id = $2 AND status = 'POSTING'
-        """,
-        account_id,
-        post_id,
-        message[:1000],
     )
 
 

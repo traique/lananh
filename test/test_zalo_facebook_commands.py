@@ -7,20 +7,15 @@ from channels import facebook_commands
 async def test_facebook_group_commands_use_separate_repository(monkeypatch):
     saved = {}
 
-    async def fake_add(account_id, group_id, alias, page_key="default"):
-        saved.update(account_id=account_id, group_id=group_id, alias=alias, page_key=page_key)
+    async def fake_add(account_id, group_id, alias):
+        saved.update(account_id=account_id, group_id=group_id, alias=alias)
 
     monkeypatch.setattr(facebook_commands.facebook_repository, "add_group", fake_add)
     result = await facebook_commands.maybe_handle_facebook_command(
         "B", "/fb_themnhom 123 Deal Team"
     )
 
-    assert saved == {
-        "account_id": "B",
-        "group_id": "123",
-        "alias": "deal team",
-        "page_key": "default",
-    }
+    assert saved == {"account_id": "B", "group_id": "123", "alias": "deal team"}
     assert "Không ảnh hưởng /tongket" in result.messages[0]
 
 
@@ -259,7 +254,86 @@ async def test_fb_link_auto_converts_all_urls_in_one_batch(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_fb_link_manual_single_url_refuses_multi_product_post(monkeypatch):
+async def test_fb_ok_posts_to_every_configured_page_and_retries_only_failed_one(monkeypatch):
+    row = {
+        "id": 42,
+        "status": "PENDING_APPROVAL",
+        "original_content": "Deal không có link Shopee",
+        "processed_content": "Deal không có link Shopee",
+    }
+    targets: dict[str, dict] = {}
+
+    async def fake_get_post(account_id, post_id):
+        return row
+
+    async def fake_links(account_id, urls):
+        return {}
+
+    async def fake_media(post_id):
+        return []
+
+    async def fake_claim(account_id, post_id):
+        if row["status"] not in ("PENDING_APPROVAL", "ERROR"):
+            return None
+        row["status"] = "POSTING"
+        return row
+
+    async def fake_ensure_targets(post_id, page_keys):
+        for key in page_keys:
+            targets.setdefault(key, {"page_key": key, "status": "PENDING", "facebook_post_id": None})
+
+    async def fake_list_targets(post_id):
+        return list(targets.values())
+
+    calls = {"page1": 0, "page2": 0}
+
+    async def fake_publish(content, media, page_key):
+        calls[page_key] += 1
+        if page_key == "page2" and calls[page_key] == 1:
+            raise facebook_commands.FacebookPublishError("page2 tạm lỗi")
+        published = type("P", (), {})()
+        published.post_id = f"{page_key}-post-id"
+        published.permalink_url = f"https://facebook.com/{page_key}"
+        published.visibility_confirmed = True
+        return published
+
+    async def fake_record_posted(post_id, page_key, facebook_post_id, permalink_url):
+        targets[page_key] = {"page_key": page_key, "status": "POSTED", "facebook_post_id": facebook_post_id}
+
+    async def fake_record_error(post_id, page_key, message):
+        targets[page_key] = {"page_key": page_key, "status": "ERROR", "facebook_post_id": None, "error_message": message}
+
+    async def fake_finalize(account_id, post_id):
+        if all(t["status"] == "POSTED" for t in targets.values()):
+            row["status"] = "POSTED"
+            return "POSTED"
+        row["status"] = "ERROR"
+        return "ERROR"
+
+    monkeypatch.setattr(facebook_commands.facebook_repository, "get_post", fake_get_post)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "get_affiliate_links", fake_links)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "get_media", fake_media)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "claim_post", fake_claim)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "ensure_targets", fake_ensure_targets)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "list_targets", fake_list_targets)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "record_target_posted", fake_record_posted)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "record_target_error", fake_record_error)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "finalize_post_status", fake_finalize)
+    monkeypatch.setattr(facebook_commands, "configured_page_keys", lambda: ["page1", "page2"])
+    monkeypatch.setattr(facebook_commands, "publish_page_post", fake_publish)
+
+    first = await facebook_commands.maybe_handle_facebook_command("B", "/fb_ok 42")
+    assert "page1" in targets and targets["page1"]["status"] == "POSTED"
+    assert targets["page2"]["status"] == "ERROR"
+    assert "Page lỗi: page2" in first.messages[0]
+    assert row["status"] == "ERROR"
+
+    second = await facebook_commands.maybe_handle_facebook_command("B", "/fb_ok 42")
+    assert targets["page2"]["status"] == "POSTED"
+    assert "đã đăng trước đó" in second.messages[0]  # page1 untouched
+    assert calls == {"page1": 1, "page2": 2}  # page1 published exactly once, never retried
+    assert "tất cả" in second.messages[0].lower() or "tất cả" in second.messages[0]
+    assert row["status"] == "POSTED"
     row = {
         "id": 11,
         "status": "PENDING_APPROVAL",

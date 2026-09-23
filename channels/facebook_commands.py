@@ -151,14 +151,11 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         ])
 
     if command == "/fb_nhom":
-        groups = await facebook_repository.list_groups_with_pages(account_id)
+        groups = await facebook_repository.list_groups(account_id)
         if not groups:
-            return ChannelResult(["Chưa có nhóm nguồn Facebook. Dùng /fb_themnhom <group_id> <tên-gợi-nhớ> [page_key]."])
+            return ChannelResult(["Chưa có nhóm nguồn Facebook. Dùng /fb_themnhom <group_id> <tên-gợi-nhớ>."])
         lines = ["📣 Nhóm nguồn đăng Facebook:"]
-        lines.extend(
-            f"{i}. {alias} — {group_id} → page: {page_key}"
-            for i, (group_id, alias, page_key) in enumerate(groups, 1)
-        )
+        lines.extend(f"{i}. {alias} — {group_id}" for i, (group_id, alias) in enumerate(groups, 1))
         return ChannelResult(["\n".join(lines)])
 
     if command == "/fb_pages":
@@ -169,31 +166,25 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
                 "cho page mặc định, hoặc FACEBOOK_PAGE_ID_<key> + FACEBOOK_PAGE_ACCESS_TOKEN_<key> "
                 "cho page bổ sung (ví dụ key=2)."
             ])
-        lines = ["📄 Facebook Page đã cấu hình (dùng làm <page_key> trong /fb_themnhom):"]
+        lines = [
+            "📄 Facebook Page đã cấu hình — /fb_ok sẽ đăng lên TẤT CẢ các page này:",
+        ]
         lines.extend(f"- {key}" for key in pages)
         return ChannelResult(["\n".join(lines)])
 
     if command == "/fb_themnhom":
-        parts = raw.split(maxsplit=3)
+        parts = raw.split(maxsplit=2)
         if len(parts) < 2:
-            return ChannelResult(["Cú pháp: /fb_themnhom <group_id> <tên-gợi-nhớ> [page_key]"])
+            return ChannelResult(["Cú pháp: /fb_themnhom <group_id> <tên-gợi-nhớ>"])
         group_id = parts[1].strip()
-        alias = (parts[2].strip() if len(parts) >= 3 else group_id).lower()
-        page_key = parts[3].strip() if len(parts) == 4 else "default"
-        if not group_id or not alias or len(alias) > 100 or not page_key:
-            return ChannelResult(["Group ID, tên gợi nhớ hoặc page_key không hợp lệ."])
-        available_pages = configured_page_keys()
-        if available_pages and page_key not in available_pages:
-            return ChannelResult([
-                f"Page_key '{page_key}' chưa được cấu hình. Dùng /fb_pages để xem danh sách."
-            ])
+        alias = (parts[2].strip() if len(parts) == 3 else group_id).lower()
+        if not group_id or not alias or len(alias) > 100:
+            return ChannelResult(["Group ID hoặc tên gợi nhớ không hợp lệ."])
         try:
-            await facebook_repository.add_group(account_id, group_id, alias, page_key)
+            await facebook_repository.add_group(account_id, group_id, alias)
         except asyncpg.UniqueViolationError:
             return ChannelResult([f"Tên gợi nhớ “{alias}” đang được dùng cho nhóm Facebook khác."])
-        return ChannelResult([
-            f"✅ Đã thêm nhóm Facebook {alias} ({group_id}) → đăng lên page '{page_key}'. Không ảnh hưởng /tongket."
-        ])
+        return ChannelResult([f"✅ Đã thêm nhóm Facebook {alias} ({group_id}). Không ảnh hưởng /tongket."])
 
     if command == "/fb_xoanhom":
         parts = raw.split(maxsplit=1)
@@ -348,35 +339,65 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
             content = content.replace(source_url, affiliate_url)
         if content != current["processed_content"]:
             await facebook_repository.update_content(account_id, post_id, content)
+
+        page_keys = configured_page_keys()
+        if not page_keys:
+            return ChannelResult([
+                f"❌ Chưa cấu hình Facebook Page nào (FACEBOOK_PAGE_ID/FACEBOOK_PAGE_ACCESS_TOKEN). "
+                f"Dùng /fb_pages để kiểm tra. Bài #{post_id} vẫn được giữ nguyên."
+            ])
+
         claimed = await facebook_repository.claim_post(account_id, post_id)
         if not claimed:
+            existing_targets = await facebook_repository.list_targets(post_id)
+            if existing_targets and all(t["status"] == "POSTED" for t in existing_targets):
+                return ChannelResult([f"Bài #{post_id} đã đăng xong trên tất cả page rồi. Dùng /fb_check {post_id} để xem lại."])
             return ChannelResult([f"Bài #{post_id} đã được xử lý hoặc đang đăng."])
+
+        # Add a target row for every page currently configured. Rows for
+        # pages that already succeeded or already failed on a previous
+        # /fb_ok run are left exactly as they are.
+        await facebook_repository.ensure_targets(post_id, page_keys)
+        targets = {t["page_key"]: t for t in await facebook_repository.list_targets(post_id)}
+        to_attempt = [key for key in page_keys if targets[key]["status"] != "POSTED"]
+        already_posted = [key for key in page_keys if targets[key]["status"] == "POSTED"]
+
         media_rows = await facebook_repository.get_media(post_id)
         media = [(row["mime_type"], bytes(row["content"])) for row in media_rows]
-        try:
-            published = await publish_page_post(
-                claimed["processed_content"], media, claimed["page_key"]
+
+        lines = [f"📤 Đang đăng bài #{post_id} lên {len(page_keys)} Facebook Page..."]
+        for page_key in already_posted:
+            t = targets[page_key]
+            lines.append(f"⏭️ Page '{page_key}': đã đăng trước đó (Post ID: {t['facebook_post_id']}), không đụng tới.")
+
+        failed_keys: list[str] = []
+        for page_key in to_attempt:
+            try:
+                published = await publish_page_post(claimed["processed_content"], media, page_key)
+            except Exception as exc:
+                await facebook_repository.record_target_error(post_id, page_key, str(exc))
+                failed_keys.append(page_key)
+                lines.append(f"❌ Page '{page_key}': đăng thất bại — {exc}")
+                continue
+            await facebook_repository.record_target_posted(
+                post_id, page_key, published.post_id, published.permalink_url
             )
-        except FacebookPublishError as exc:
-            await facebook_repository.mark_error(account_id, post_id, str(exc))
-            return ChannelResult([f"❌ Đăng Facebook thất bại cho bài #{post_id}: {exc}"])
-        except Exception as exc:
-            await facebook_repository.mark_error(account_id, post_id, str(exc))
-            return ChannelResult([f"❌ Đăng Facebook thất bại cho bài #{post_id}: {exc}"])
-        await facebook_repository.mark_posted(account_id, post_id, published.post_id)
-        lines = [f"✅ Đã đăng bài #{post_id} lên Facebook. Post ID: {published.post_id}"]
-        if published.permalink_url:
-            lines.append(f"🔗 Link bài: {published.permalink_url}")
-        if published.visibility_confirmed:
-            lines.append("🌐 Graph API xác nhận bài đang ở trạng thái published/public trên Page.")
+            detail = f"✅ Page '{page_key}': đã đăng. Post ID: {published.post_id}"
+            if published.permalink_url:
+                detail += f" — {published.permalink_url}"
+            if not published.visibility_confirmed:
+                detail += (
+                    f" (⚠️ chưa xác minh chắc chắn published/public, dùng /fb_check {post_id} để kiểm tra lại)"
+                )
+            lines.append(detail)
+
+        overall = await facebook_repository.finalize_post_status(account_id, post_id)
+        if overall == "POSTED":
+            lines.append(f"🎉 Bài #{post_id} đã đăng xong trên tất cả {len(page_keys)} page.")
         else:
-            status = published.status
             lines.append(
-                "⚠️ Facebook đã nhận và is_published không phải false, nhưng bot chưa xác minh chắc chắn "
-                "bài đã xuất hiện trong published_posts/Timeline. Hãy mở Link bài bằng tài khoản khác hoặc "
-                f"dùng /fb_check {post_id}. "
-                f"(is_published={status.is_published}, is_hidden={status.is_hidden}, "
-                f"timeline={status.timeline_visibility}, in_published_posts={status.in_published_posts})"
+                f"⚠️ Page lỗi: {', '.join(failed_keys)}. Bài #{post_id} vẫn được giữ, các page đã đăng OK sẽ không bị đăng lại. "
+                f"Chạy lại /fb_ok {post_id} để chỉ thử lại (các) page lỗi."
             )
         return ChannelResult(["\n".join(lines)])
 
@@ -388,27 +409,33 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         row = await facebook_repository.get_post(account_id, post_id)
         if not row:
             return ChannelResult([f"Không tìm thấy bài #{post_id}."])
-        facebook_post_id = (row["facebook_post_id"] or "").strip()
-        if not facebook_post_id:
-            return ChannelResult([f"Bài #{post_id} chưa có Facebook Post ID; có thể chưa được /fb_ok thành công."])
-        try:
-            status = await inspect_page_post(facebook_post_id, row["page_key"])
-        except FacebookPublishError as exc:
-            return ChannelResult([f"❌ Không kiểm tra được bài #{post_id}: {exc}"])
-        lines = [
-            f"🔎 FACEBOOK CHECK #{post_id}",
-            f"Post ID: {facebook_post_id}",
-            f"is_published: {status.is_published}",
-            f"is_hidden: {status.is_hidden}",
-            f"timeline_visibility: {status.timeline_visibility or 'không trả về'}",
-            f"in_published_posts: {status.in_published_posts}",
-        ]
-        if status.permalink_url:
-            lines.append(f"Link bài: {status.permalink_url}")
-        if status.public_visibility_confirmed:
-            lines.append("✅ Graph API xác nhận bài đang published và không bị ẩn.")
-        else:
-            lines.append("⚠️ Chưa xác nhận được bài là post public bình thường trên Timeline.")
+        targets = await facebook_repository.list_targets(post_id)
+        if not targets:
+            return ChannelResult([f"Bài #{post_id} chưa từng /fb_ok nên chưa có page nào để kiểm tra."])
+        lines = [f"🔎 FACEBOOK CHECK #{post_id}"]
+        for t in targets:
+            page_key = t["page_key"]
+            if t["status"] != "POSTED" or not (t["facebook_post_id"] or "").strip():
+                state = "chưa đăng" if t["status"] == "PENDING" else f"lỗi — {t['error_message'] or 'không rõ nguyên nhân'}"
+                lines.append(f"— Page '{page_key}': {state}")
+                continue
+            try:
+                status = await inspect_page_post(t["facebook_post_id"], page_key)
+            except FacebookPublishError as exc:
+                lines.append(f"— Page '{page_key}': không kiểm tra được — {exc}")
+                continue
+            lines.append(
+                f"— Page '{page_key}': Post ID {t['facebook_post_id']} | "
+                f"is_published={status.is_published} | is_hidden={status.is_hidden} | "
+                f"timeline={status.timeline_visibility or 'không trả về'} | "
+                f"in_published_posts={status.in_published_posts}"
+            )
+            if status.permalink_url:
+                lines.append(f"  🔗 {status.permalink_url}")
+            lines.append(
+                "  ✅ published/public đã xác nhận." if status.public_visibility_confirmed
+                else "  ⚠️ chưa xác nhận chắc chắn published/public."
+            )
         return ChannelResult(["\n".join(lines)])
 
     return None

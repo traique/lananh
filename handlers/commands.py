@@ -139,14 +139,16 @@ HELP_TEXT = (
     "📣 *Zalo → Facebook Page (tách riêng khỏi /tongket):*\n"
     "/fb\\_nhom — xem các nhóm nguồn Facebook\n"
     "/fb\\_themnhom <group_id> <tên> — thêm nhóm Zalo làm nguồn đăng Facebook\n"
+    "/fb\\_pages — xem các Facebook Page đã cấu hình (fb\\_ok sẽ đăng lên tất cả)\n"
     "/fb\\_xoanhom <group_id|tên> — bỏ nhóm khỏi luồng Facebook\n"
     "/fb\\_xem <post_id> — xem lại bài đang chờ duyệt\n"
     "/fb\\_sua <post_id> <nội dung> — sửa nội dung bài chờ\n"
     "/fb\\_link <post_id> — tự chuyển mọi link Shopee sang Affiliate short-link\n"
     "/fb\\_link <post_id> <affiliate_url> — fallback thủ công khi bài chỉ có 1 link\n"
     "/fb\\_link <post_id> <source_url> <affiliate_url> — fallback từng link khi bài có nhiều link\n"
-    "/fb\\_ok <post_id> — duyệt và đăng Facebook Page\n"
-    "/fb\\_check <post_id> — kiểm tra bài đã published/công khai và lấy permalink\n"
+    "/fb\\_ok <post_id> — duyệt và đăng lên TẤT CẢ Facebook Page đang cấu hình; "
+    "page nào lỗi sẽ báo riêng, chạy lại /fb\\_ok để chỉ thử lại page lỗi, page đã đăng OK không bị đụng tới\n"
+    "/fb\\_check <post_id> — kiểm tra từng page đã published/công khai chưa, lấy permalink\n"
     "/fb\\_boqua <post_id> — bỏ bài chờ\n"
     "/fb\\_reset — xóa bài Facebook đã lưu, reset ID về #1 khi có thể\n"
     "/zalopair, /zaloadmin, /zalohaquyen, /zalokhoa, /zalomokhoa, /zaloxoa, /zalodanhsach — quản lý user Zalo\n"
@@ -841,6 +843,11 @@ async def dangnoi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 @common.restricted
 async def fb_nhom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _facebook_command(update, context, "/fb_nhom")
+
+
+@common.restricted
+async def fb_pages_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_pages")
 
 
 @common.restricted

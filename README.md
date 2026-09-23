@@ -256,10 +256,33 @@ Luồng Facebook dùng danh sách `zalo_facebook_groups` riêng, không dùng
 `zalo_groups` của `/tongket`. Một nhóm có thể nằm ở một hoặc cả hai danh sách;
 thêm/xóa ở luồng Facebook không thay đổi dữ liệu tổng kết nhóm.
 
+#### Cấu hình 1 hoặc nhiều Facebook Page
+
+Page mặc định (`"default"`):
+
+```env
+FACEBOOK_PAGE_ID=...
+FACEBOOK_PAGE_ACCESS_TOKEN=...
+FACEBOOK_GRAPH_VERSION=v26.0   # tùy chọn
+```
+
+Muốn đăng thêm Page thứ 2 trở đi, thêm hậu tố `_<page_key>` (key tuỳ chọn,
+ví dụ `2`, `3`...):
+
+```env
+FACEBOOK_PAGE_ID_2=...
+FACEBOOK_PAGE_ACCESS_TOKEN_2=...
+```
+
+`/fb_pages` liệt kê mọi page_key đang được cấu hình đầy đủ (có cả ID lẫn
+access token). **Không cần gán page cho từng nhóm Zalo** — mọi nhóm nguồn đều
+dùng chung tập page này khi đăng.
+
 Các lệnh `/fb_*` dùng được từ **Zalo admin, Telegram owner và Zoom jid đã pair**:
 
 ```text
 /fb_nhom
+/fb_pages
 /fb_themnhom <group_id> <alias>
 /fb_xoanhom <group_id-or-alias>
 /fb_xem <post_id>
@@ -268,7 +291,7 @@ Các lệnh `/fb_*` dùng được từ **Zalo admin, Telegram owner và Zoom ji
 /fb_link <post_id> <affiliate_url>  # fallback thủ công khi chỉ có 1 link
 /fb_link <post_id> <source_url> <affiliate_url>  # fallback từng link khi bài có nhiều link
 /fb_ok <post_id>
-/fb_check <post_id>  # kiểm tra post đã published/công khai và lấy permalink
+/fb_check <post_id>  # kiểm tra từng page đã published/công khai và lấy permalink
 /fb_boqua <post_id>
 /fb_reset
 ```
@@ -292,8 +315,16 @@ Quy trình vận hành:
    `/fb_link <post_id> <affiliate_url>` (1 link) hoặc
    `/fb_link <post_id> <source_url> <affiliate_url>` (bài có nhiều link).
 6. Có thể sửa caption bằng `/fb_sua <post_id> <nội dung mới>`.
-7. Gõ `/fb_ok <post_id>` để đăng lên Facebook Page; nếu vẫn còn Shopee link
-   chưa có affiliate thì bot từ chối đăng. Dùng `/fb_boqua <post_id>` để bỏ. `/fb_reset` xóa toàn bộ bài Facebook đã lưu của tài khoản hiện tại; nếu không còn bài của tài khoản khác, ID bài mới sẽ bắt đầu lại từ `#1`.
+7. Gõ `/fb_ok <post_id>` để đăng — bot đăng **lần lượt lên TẤT CẢ Facebook
+   Page đang được cấu hình** (xem `/fb_pages`); nếu vẫn còn Shopee link chưa
+   có affiliate thì bot từ chối đăng cho cả loạt. Kết quả từng page được báo
+   riêng: page đăng thành công hiện Post ID + link, page lỗi hiện lý do lỗi.
+   Bài vẫn ở trạng thái chờ nếu còn ít nhất 1 page lỗi — gõ lại `/fb_ok
+   <post_id>` để bot **chỉ thử lại đúng (các) page đã lỗi lần trước**, các
+   page đã đăng thành công sẽ không bị đăng lại/không bị đụng tới. Dùng
+   `/fb_boqua <post_id>` để bỏ bài. `/fb_reset` xóa toàn bộ bài Facebook đã lưu
+   của tài khoản hiện tại; nếu không còn bài của tài khoản khác, ID bài mới sẽ
+   bắt đầu lại từ `#1`.
 
 Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài nhóm Zalo vẫn do
 `zalo-gateway` thực hiện. `account_id` cho các lệnh `/fb_*` trên Telegram/Zoom
@@ -351,9 +382,17 @@ trạng thái chờ duyệt. Chạy lại các bước 3–8 để nạp session
 
 Nếu `/admin` báo không tìm thấy ô Custom Link, bản bot sẽ chờ SPA render tối đa theo
 `SHOPEE_BROWSER_ACTION_TIMEOUT_SEC`, dò cả iframe/contenteditable và ghi chẩn đoán an toàn
-vào Render logs. Một lượt browser có hard-timeout `SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC` nên
-không thể giữ `/fb_link` treo vô hạn. Nếu lỗi vẫn lặp lại sau khi deploy bản mới, kiểm tra
-Render logs để xem URL/frame/nút mà Shopee thực tế đã render; không cần gửi cookie/session.
+vào Render logs. Một lượt browser có hard-timeout tự tính từ tổng các timeout con
+(`SHOPEE_BROWSER_NAV_TIMEOUT_SEC` × 2 lần thử route SPA + `SHOPEE_BROWSER_ACTION_TIMEOUT_SEC`
++ `SHOPEE_BROWSER_RESULT_TIMEOUT_SEC`, nhân theo số link trong 1 batch, cộng
+`SHOPEE_BROWSER_LAUNCH_BUDGET_SEC` cho thời gian khởi động Chromium) nên không thể giữ
+`/fb_link` treo vô hạn, nhưng cũng không chặn ngang một lượt chạy chậm-nhưng-vẫn-đang-hoạt-động
+trên máy chủ yếu (vd Render Free) — trước đây timeout tổng là một số cố định 90 giây, có thể
+nhỏ hơn tổng các timeout con cộng lại và khiến `/fb_link` báo "vượt quá thời gian xử lý" dù
+không có gì thực sự bị treo. `SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC` giờ chỉ còn là **sàn tối
+thiểu** (mặc định 90s) — chỉ có tác dụng khi bạn đặt nó CAO hơn mức tự tính ở trên. Nếu lỗi
+timeout vẫn lặp lại sau khi deploy bản mới, kiểm tra Render logs để xem URL/frame/nút mà
+Shopee thực tế đã render; không cần gửi cookie/session.
 
 Production container chỉ cài Chromium **headless shell** và browser chỉ chạy on-demand,
 concurrency toàn cục = 1. Ảnh/media/font trên Shopee bị chặn tải để giảm RAM/CPU; browser
@@ -362,7 +401,9 @@ concurrency toàn cục = 1. Ảnh/media/font trên Shopee bị chặn tải đ�
 Các biến tùy chọn: `SHOPEE_AFFILIATE_AUTO_ENABLED` (mặc định `true`),
 `SHOPEE_AFFILIATE_CUSTOM_LINK_URL`, `SHOPEE_RESOLVE_TIMEOUT_SEC`,
 `SHOPEE_BROWSER_NAV_TIMEOUT_SEC`, `SHOPEE_BROWSER_ACTION_TIMEOUT_SEC`,
-`SHOPEE_BROWSER_RESULT_TIMEOUT_SEC`, `SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC` (mặc định 90 giây).
+`SHOPEE_BROWSER_RESULT_TIMEOUT_SEC`, `SHOPEE_BROWSER_LAUNCH_BUDGET_SEC` (mặc định 20 giây,
+đệm cho Chromium cold-start), `SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC` (sàn tối thiểu, mặc định
+90 giây — xem giải thích ở trên).
 
 ## Lệnh chính
 
@@ -396,13 +437,14 @@ Các biến tùy chọn: `SHOPEE_AFFILIATE_AUTO_ENABLED` (mặc định `true`),
 | `/tongket <alias> [24h\|7d\|homnay\|homqua]` | Tổng kết nhóm Zalo (AI) |
 | `/dangnoi <alias>` | Xem nguyên văn thảo luận nhóm Zalo hôm nay |
 | `/fb_nhom` | Xem danh sách nhóm Zalo làm nguồn đăng Facebook |
+| `/fb_pages` | Xem các Facebook Page đã cấu hình (`/fb_ok` đăng lên tất cả) |
 | `/fb_themnhom <group_id> <alias>` | Thêm nhóm vào luồng Zalo → Facebook, độc lập `/tongket` |
 | `/fb_xoanhom <group_id\|alias>` | Bỏ nhóm khỏi luồng Facebook |
 | `/fb_xem <post_id>` | Xem bài Facebook đang chờ duyệt |
 | `/fb_sua <post_id> <nội dung>` | Sửa nội dung bài Facebook đang chờ |
 | `/fb_link <post_id>` | Tự chuyển mọi link Shopee qua Custom Link chính thức; có fallback nhập short-link thủ công |
-| `/fb_ok <post_id>` | Duyệt và đăng bài lên Facebook Page |
-| `/fb_check <post_id>` | Kiểm tra `is_published`, trạng thái ẩn/Timeline, `published_posts` và permalink của bài đã đăng |
+| `/fb_ok <post_id>` | Duyệt và đăng lên **tất cả** Facebook Page đã cấu hình; page lỗi được báo riêng, page đã đăng OK không bị đăng lại khi chạy lại lệnh |
+| `/fb_check <post_id>` | Kiểm tra từng page: `is_published`, trạng thái ẩn/Timeline, `published_posts` và permalink |
 | `/fb_boqua <post_id>` | Bỏ bài Facebook đang chờ |
 | `/fb_reset` | Xóa toàn bộ bài Facebook đã lưu của tài khoản; reset ID về `#1` khi hàng đợi chung trống |
 | `/zalopair <id_zalo> [tên]` | Cấp quyền thành viên cho 1 tài khoản Zalo |
@@ -475,6 +517,8 @@ truy cập. Trang cho phép:
 
 - Bật/tắt 9Router, Tavily, Agnes AI (tạo ảnh) và trí nhớ dài hạn theo từng user.
 - Reset cooldown provider, đổi `PROVIDER_ORDER`.
+- Đổi model và **API key** override theo từng provider (bao gồm 9Router); riêng
+  9Router còn có ô đổi **Base URL** (để trống = dùng `ROUTER9_BASE_URL` từ env).
 - Xem thống kê **lượt gọi theo user/kênh** và **theo model** (`/admin/api/usage`,
   `/admin/api/usage/models`) — cùng số liệu với lệnh `/thongke` ở trên, chỉ
   khác là xem trên web thay vì chat.

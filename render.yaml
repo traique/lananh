@@ -122,3 +122,36 @@ services:
         sync: false
       - key: ZOOM_ACCOUNT_ID
         sync: false
+      # Facebook Page publishing (Zalo -> duyệt -> đăng Facebook Page).
+      # Page mặc định ("default" khi dùng /fb_pages):
+      - key: FACEBOOK_PAGE_ID
+        sync: false
+      - key: FACEBOOK_PAGE_ACCESS_TOKEN
+        sync: false
+      - key: FACEBOOK_GRAPH_VERSION
+        value: v26.0
+      # Page thứ 2 trở đi (tuỳ chọn): thêm hậu tố _<page_key>, vd _2. /fb_ok sẽ
+      # tự đăng lên MỌI page có đủ cả 2 biến FACEBOOK_PAGE_ID_*/FACEBOOK_PAGE_ACCESS_TOKEN_*.
+      - key: FACEBOOK_PAGE_ID_2
+        sync: false
+      - key: FACEBOOK_PAGE_ACCESS_TOKEN_2
+        sync: false
+      # Shopee Affiliate Custom Link browser automation (không cần Open API).
+      - key: SHOPEE_AFFILIATE_AUTO_ENABLED
+        value: "true"
+      - key: SHOPEE_AFFILIATE_CUSTOM_LINK_URL
+        value: https://affiliate.shopee.vn/offer/custom_link
+      - key: SHOPEE_RESOLVE_TIMEOUT_SEC
+        value: "12"
+      - key: SHOPEE_BROWSER_NAV_TIMEOUT_SEC
+        value: "35"
+      - key: SHOPEE_BROWSER_ACTION_TIMEOUT_SEC
+        value: "10"
+      - key: SHOPEE_BROWSER_RESULT_TIMEOUT_SEC
+        value: "20"
+      - key: SHOPEE_BROWSER_LAUNCH_BUDGET_SEC
+        value: "20"
+      # Sàn tối thiểu; timeout thực tế = max(giá trị này, tổng các timeout
+      # Shopee ở trên nhân theo số link + thời gian khởi động Chromium).
+      - key: SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC
+        value: "90"
