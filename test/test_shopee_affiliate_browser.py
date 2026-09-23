@@ -92,7 +92,7 @@ async def test_convert_urls_browser_has_hard_timeout(monkeypatch):
     monkeypatch.setattr(shopee.facebook_repository, "get_affiliate_links_by_canonical", fake_canonical)
     monkeypatch.setattr(shopee, "resolve_shopee_url", fake_resolve)
     monkeypatch.setattr(shopee, "_launch_and_convert", slow_browser)
-    monkeypatch.setattr(shopee.config, "SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr(shopee, "_browser_batch_timeout_sec", lambda item_count: 0.01)
 
     with pytest.raises(shopee.ShopeeAffiliateError, match="vượt quá thời gian"):
         await shopee.convert_urls("A", [source])

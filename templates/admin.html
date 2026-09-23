@@ -344,6 +344,12 @@ function providerCard(p) {
   const enableControl = p.enabled_editable
     ? `<button class="secondary small provider-toggle" data-provider="${p.provider}">${p.enabled ? 'Tắt' : 'Bật'}</button>`
     : `<span class="pill ${p.enabled ? 'ok' : 'bad'}">${p.enabled ? 'bật' : 'tắt'}</span>`;
+  const baseUrlRow = p.provider === 'router9' ? `
+      <div class="field-row">
+        <input class="base-url-input" placeholder="Base URL (để trống = dùng ROUTER9_BASE_URL env)" value="${p.base_url_override || ''}" data-default="${p.base_url || ''}">
+        <button class="secondary small save-base-url" data-provider="${p.provider}">Lưu Base URL</button>
+      </div>
+      <div class="field-label">Base URL hiện dùng: ${p.base_url || '(chưa cấu hình)'}${p.base_url_overridden ? ' (đã override)' : ' (mặc định env)'}</div>` : '';
   return `
     <div class="provider-card" data-provider="${p.provider}">
       <div class="provider-head">
@@ -358,6 +364,7 @@ function providerCard(p) {
         <button class="secondary small save-model" data-provider="${p.provider}">Lưu model</button>
       </div>
       <div class="field-label">Model hiện dùng: ${p.model}${p.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
+      ${baseUrlRow}
       <div class="field-row">
         <input class="key-input" type="password" placeholder="${p.api_key_masked || 'API key (để trống = giữ nguyên)'}" data-provider="${p.provider}">
         <button class="secondary small save-key" data-provider="${p.provider}">Lưu key</button>
@@ -382,6 +389,20 @@ async function loadProviders() {
         msg(`${btn.dataset.provider}: đã lưu model.`);
         loadProviders();
       } catch (e) { msg('Lưu model thất bại: ' + e.message, true); }
+    };
+  });
+  document.querySelectorAll('.save-base-url').forEach(btn => {
+    btn.onclick = async () => {
+      const card = btn.closest('.provider-card');
+      const input = card.querySelector('.base-url-input');
+      try {
+        const result = await api('/admin/api/providers/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: btn.dataset.provider, base_url: input.value.trim() }),
+        });
+        msg(result.warning || `${btn.dataset.provider}: đã lưu Base URL.`, Boolean(result.warning));
+        loadProviders();
+      } catch (e) { msg('Lưu Base URL thất bại: ' + e.message, true); }
     };
   });
   document.querySelectorAll('.save-key').forEach(btn => {

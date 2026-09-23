@@ -25,18 +25,32 @@ async def list_groups(account_id: str) -> list[tuple[str, str]]:
     return [(row["group_id"], row["alias"]) for row in rows]
 
 
-async def add_group(account_id: str, group_id: str, alias: str) -> None:
+async def list_groups_with_pages(account_id: str) -> list[tuple[str, str, str]]:
+    """Same as list_groups but also returns each group's destination page_key."""
+    await ensure_schema()
+    rows = await (await db.get_pool()).fetch(
+        """
+        SELECT group_id, alias, page_key FROM zalo_facebook_groups
+        WHERE account_id = $1 ORDER BY alias
+        """,
+        account_id,
+    )
+    return [(row["group_id"], row["alias"], row["page_key"]) for row in rows]
+
+
+async def add_group(account_id: str, group_id: str, alias: str, page_key: str = "default") -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
         """
-        INSERT INTO zalo_facebook_groups (account_id, group_id, alias)
-        VALUES ($1, $2, $3)
+        INSERT INTO zalo_facebook_groups (account_id, group_id, alias, page_key)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (account_id, group_id)
-        DO UPDATE SET alias = EXCLUDED.alias, updated_at = now()
+        DO UPDATE SET alias = EXCLUDED.alias, page_key = EXCLUDED.page_key, updated_at = now()
         """,
         account_id,
         group_id,
         alias.lower(),
+        page_key,
     )
 
 
@@ -68,20 +82,20 @@ async def create_post(
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            allowed = await conn.fetchval(
-                "SELECT 1 FROM zalo_facebook_groups WHERE account_id = $1 AND group_id = $2",
+            page_key = await conn.fetchval(
+                "SELECT page_key FROM zalo_facebook_groups WHERE account_id = $1 AND group_id = $2",
                 account_id,
                 group_id,
             )
-            if not allowed:
+            if page_key is None:
                 return None
             post_id = await conn.fetchval(
                 """
                 INSERT INTO facebook_post_queue (
                     account_id, group_id, sender_id, sender_name,
-                    source_message_ids, original_content, processed_content
+                    source_message_ids, original_content, processed_content, page_key
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $6)
+                VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
                 RETURNING id
                 """,
                 account_id,
@@ -90,6 +104,7 @@ async def create_post(
                 sender_name[:500],
                 source_message_ids,
                 content,
+                page_key,
             )
             for position, (mime_type, body) in enumerate(media):
                 await conn.execute(

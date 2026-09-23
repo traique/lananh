@@ -13,6 +13,7 @@ from core import config
 from services.channel_result import ChannelResult
 from services.facebook_page_service import (
     FacebookPublishError,
+    configured_page_keys,
     inspect_page_post,
     publish_page_post,
 )
@@ -150,26 +151,49 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         ])
 
     if command == "/fb_nhom":
-        groups = await facebook_repository.list_groups(account_id)
+        groups = await facebook_repository.list_groups_with_pages(account_id)
         if not groups:
-            return ChannelResult(["Chưa có nhóm nguồn Facebook. Dùng /fb_themnhom <group_id> <tên-gợi-nhớ>."])
+            return ChannelResult(["Chưa có nhóm nguồn Facebook. Dùng /fb_themnhom <group_id> <tên-gợi-nhớ> [page_key]."])
         lines = ["📣 Nhóm nguồn đăng Facebook:"]
-        lines.extend(f"{i}. {alias} — {group_id}" for i, (group_id, alias) in enumerate(groups, 1))
+        lines.extend(
+            f"{i}. {alias} — {group_id} → page: {page_key}"
+            for i, (group_id, alias, page_key) in enumerate(groups, 1)
+        )
+        return ChannelResult(["\n".join(lines)])
+
+    if command == "/fb_pages":
+        pages = configured_page_keys()
+        if not pages:
+            return ChannelResult([
+                "Chưa cấu hình Facebook Page nào. Đặt FACEBOOK_PAGE_ID + FACEBOOK_PAGE_ACCESS_TOKEN "
+                "cho page mặc định, hoặc FACEBOOK_PAGE_ID_<key> + FACEBOOK_PAGE_ACCESS_TOKEN_<key> "
+                "cho page bổ sung (ví dụ key=2)."
+            ])
+        lines = ["📄 Facebook Page đã cấu hình (dùng làm <page_key> trong /fb_themnhom):"]
+        lines.extend(f"- {key}" for key in pages)
         return ChannelResult(["\n".join(lines)])
 
     if command == "/fb_themnhom":
-        parts = raw.split(maxsplit=2)
+        parts = raw.split(maxsplit=3)
         if len(parts) < 2:
-            return ChannelResult(["Cú pháp: /fb_themnhom <group_id> <tên-gợi-nhớ>"])
+            return ChannelResult(["Cú pháp: /fb_themnhom <group_id> <tên-gợi-nhớ> [page_key]"])
         group_id = parts[1].strip()
-        alias = (parts[2].strip() if len(parts) == 3 else group_id).lower()
-        if not group_id or not alias or len(alias) > 100:
-            return ChannelResult(["Group ID hoặc tên gợi nhớ không hợp lệ."])
+        alias = (parts[2].strip() if len(parts) >= 3 else group_id).lower()
+        page_key = parts[3].strip() if len(parts) == 4 else "default"
+        if not group_id or not alias or len(alias) > 100 or not page_key:
+            return ChannelResult(["Group ID, tên gợi nhớ hoặc page_key không hợp lệ."])
+        available_pages = configured_page_keys()
+        if available_pages and page_key not in available_pages:
+            return ChannelResult([
+                f"Page_key '{page_key}' chưa được cấu hình. Dùng /fb_pages để xem danh sách."
+            ])
         try:
-            await facebook_repository.add_group(account_id, group_id, alias)
+            await facebook_repository.add_group(account_id, group_id, alias, page_key)
         except asyncpg.UniqueViolationError:
             return ChannelResult([f"Tên gợi nhớ “{alias}” đang được dùng cho nhóm Facebook khác."])
-        return ChannelResult([f"✅ Đã thêm nhóm Facebook {alias} ({group_id}). Không ảnh hưởng /tongket."])
+        return ChannelResult([
+            f"✅ Đã thêm nhóm Facebook {alias} ({group_id}) → đăng lên page '{page_key}'. Không ảnh hưởng /tongket."
+        ])
 
     if command == "/fb_xoanhom":
         parts = raw.split(maxsplit=1)
@@ -330,7 +354,9 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         media_rows = await facebook_repository.get_media(post_id)
         media = [(row["mime_type"], bytes(row["content"])) for row in media_rows]
         try:
-            published = await publish_page_post(claimed["processed_content"], media)
+            published = await publish_page_post(
+                claimed["processed_content"], media, claimed["page_key"]
+            )
         except FacebookPublishError as exc:
             await facebook_repository.mark_error(account_id, post_id, str(exc))
             return ChannelResult([f"❌ Đăng Facebook thất bại cho bài #{post_id}: {exc}"])
@@ -366,7 +392,7 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         if not facebook_post_id:
             return ChannelResult([f"Bài #{post_id} chưa có Facebook Post ID; có thể chưa được /fb_ok thành công."])
         try:
-            status = await inspect_page_post(facebook_post_id)
+            status = await inspect_page_post(facebook_post_id, row["page_key"])
         except FacebookPublishError as exc:
             return ChannelResult([f"❌ Không kiểm tra được bài #{post_id}: {exc}"])
         lines = [

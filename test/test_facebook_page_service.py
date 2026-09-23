@@ -17,7 +17,7 @@ async def test_publish_feed_is_explicitly_published_and_returns_permalink(monkey
     monkeypatch.setattr(
         facebook_page_service,
         "_settings",
-        lambda: ("page123", "token", "v26.0"),
+        lambda page_key="default": ("page123", "token", "v26.0"),
     )
 
     async def fake_post(client, url, **kwargs):
@@ -53,7 +53,7 @@ async def test_multi_photo_final_feed_is_explicitly_published(monkeypatch):
     monkeypatch.setattr(
         facebook_page_service,
         "_settings",
-        lambda: ("page123", "token", "v26.0"),
+        lambda page_key="default": ("page123", "token", "v26.0"),
     )
 
     async def fake_post(client, url, **kwargs):

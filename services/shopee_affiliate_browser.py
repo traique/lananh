@@ -494,6 +494,36 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
     return results
 
 
+def _browser_batch_timeout_sec(item_count: int) -> float:
+    """Worst-case time a healthy ``_launch_and_convert`` run can legitimately need.
+
+    ``SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC`` used to be a flat 90s regardless of the
+    other Shopee timeouts. With the default sub-timeouts (nav 35s tried up to
+    twice for the SPA dashboard/custom-link redirect, field-wait 20s, result
+    poll 20s) a single item alone can legitimately need over 120s, before even
+    counting Chromium's own cold start on a small Render instance. That made
+    the outer safety timeout fire on slow-but-otherwise-working runs, which
+    then told the person to reload their session for a problem that was
+    really just not enough time budgeted. This computes a floor from the
+    actual configured sub-timeouts (times the number of items sharing this
+    one browser session) so the outer timeout only fires on a genuine hang.
+    ``SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC`` still applies as a minimum/override
+    for anyone who wants a larger explicit ceiling.
+    """
+    per_item = (
+        config.SHOPEE_BROWSER_NAV_TIMEOUT_SEC * 2  # first nav + one SPA-redirect retry
+        + 1  # sleep between the two navigations
+        + max(5, config.SHOPEE_BROWSER_ACTION_TIMEOUT_SEC * 2)  # field-mount wait
+        + config.SHOPEE_BROWSER_ACTION_TIMEOUT_SEC  # fill/click
+        + config.SHOPEE_BROWSER_RESULT_TIMEOUT_SEC  # result poll
+    )
+    launch_budget = config.SHOPEE_BROWSER_LAUNCH_BUDGET_SEC  # Chromium cold start on a small Render instance
+    return max(
+        config.SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC,
+        launch_budget + per_item * max(1, item_count),
+    )
+
+
 async def convert_urls(account_id: str, source_urls: list[str]) -> list[AffiliateConversion]:
     """Convert all URLs with at most one Chromium launch for the whole batch."""
     unique_sources = list(dict.fromkeys(source_urls))
@@ -558,7 +588,7 @@ async def convert_urls(account_id: str, source_urls: list[str]) -> list[Affiliat
             to_convert = [item for key, item in missing_by_key.items() if key not in second_cache]
             if to_convert:
                 try:
-                    async with asyncio.timeout(config.SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC):
+                    async with asyncio.timeout(_browser_batch_timeout_sec(len(to_convert))):
                         generated = await _launch_and_convert(to_convert)
                 except TimeoutError as exc:
                     raise ShopeeAffiliateError(

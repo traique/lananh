@@ -41,15 +41,46 @@ class FacebookPublishedPost:
     status: FacebookPostStatus
 
 
-def _settings() -> tuple[str, str, str]:
-    page_id = os.getenv("FACEBOOK_PAGE_ID", "").strip()
-    token = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN", "").strip()
-    version = os.getenv("FACEBOOK_GRAPH_VERSION", "v26.0").strip() or "v26.0"
+def _env_suffix(page_key: str) -> str:
+    """"default" keeps the original FACEBOOK_PAGE_ID/... env names so existing
+    single-page deployments need no changes. Any other key (e.g. "2") reads
+    FACEBOOK_PAGE_ID_2 / FACEBOOK_PAGE_ACCESS_TOKEN_2 instead."""
+    return "" if page_key == "default" else f"_{page_key}"
+
+
+def _settings(page_key: str = "default") -> tuple[str, str, str]:
+    suffix = _env_suffix(page_key)
+    page_id = os.getenv(f"FACEBOOK_PAGE_ID{suffix}", "").strip()
+    token = os.getenv(f"FACEBOOK_PAGE_ACCESS_TOKEN{suffix}", "").strip()
+    version = (
+        os.getenv(f"FACEBOOK_GRAPH_VERSION{suffix}", "").strip()
+        or os.getenv("FACEBOOK_GRAPH_VERSION", "v26.0").strip()
+        or "v26.0"
+    )
     if not page_id or not token:
         raise FacebookPublishError(
-            "Chưa cấu hình FACEBOOK_PAGE_ID và FACEBOOK_PAGE_ACCESS_TOKEN."
+            f"Chưa cấu hình FACEBOOK_PAGE_ID{suffix} và FACEBOOK_PAGE_ACCESS_TOKEN{suffix} "
+            f"cho page '{page_key}'."
         )
     return page_id, token, version
+
+
+def configured_page_keys() -> list[str]:
+    """Every page_key with both env vars set, "default" first."""
+    keys = []
+    if os.getenv("FACEBOOK_PAGE_ID", "").strip() and os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN", "").strip():
+        keys.append("default")
+    for name in os.environ:
+        prefix = "FACEBOOK_PAGE_ID_"
+        if not name.startswith(prefix):
+            continue
+        key = name[len(prefix):]
+        if (
+            os.getenv(name, "").strip()
+            and os.getenv(f"FACEBOOK_PAGE_ACCESS_TOKEN_{key}", "").strip()
+        ):
+            keys.append(key)
+    return keys
 
 
 async def _graph_post(client: httpx.AsyncClient, url: str, **kwargs) -> dict:
@@ -145,9 +176,9 @@ async def _read_post_status(
     )
 
 
-async def inspect_page_post(post_id: str) -> FacebookPostStatus:
+async def inspect_page_post(post_id: str, page_key: str = "default") -> FacebookPostStatus:
     """Inspect a previously-created Page post for public/timeline visibility."""
-    page_id, token, version = _settings()
+    page_id, token, version = _settings(page_key)
     base = f"https://graph.facebook.com/{version}"
     timeout = httpx.Timeout(30.0, connect=15.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -189,9 +220,9 @@ async def _verify_new_post(
 
 
 async def publish_page_post(
-    content: str, media: list[tuple[str, bytes]]
+    content: str, media: list[tuple[str, bytes]], page_key: str = "default"
 ) -> FacebookPublishedPost:
-    page_id, token, version = _settings()
+    page_id, token, version = _settings(page_key)
     base = f"https://graph.facebook.com/{version}"
     timeout = httpx.Timeout(60.0, connect=15.0)
     async with httpx.AsyncClient(timeout=timeout) as client:

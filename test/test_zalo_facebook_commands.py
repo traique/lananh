@@ -7,15 +7,20 @@ from channels import facebook_commands
 async def test_facebook_group_commands_use_separate_repository(monkeypatch):
     saved = {}
 
-    async def fake_add(account_id, group_id, alias):
-        saved.update(account_id=account_id, group_id=group_id, alias=alias)
+    async def fake_add(account_id, group_id, alias, page_key="default"):
+        saved.update(account_id=account_id, group_id=group_id, alias=alias, page_key=page_key)
 
     monkeypatch.setattr(facebook_commands.facebook_repository, "add_group", fake_add)
     result = await facebook_commands.maybe_handle_facebook_command(
         "B", "/fb_themnhom 123 Deal Team"
     )
 
-    assert saved == {"account_id": "B", "group_id": "123", "alias": "deal team"}
+    assert saved == {
+        "account_id": "B",
+        "group_id": "123",
+        "alias": "deal team",
+        "page_key": "default",
+    }
     assert "Không ảnh hưởng /tongket" in result.messages[0]
 
 
