@@ -149,6 +149,11 @@ services:
         value: "10"
       - key: SHOPEE_BROWSER_RESULT_TIMEOUT_SEC
         value: "20"
+      # Riêng cho bước chờ SPA Shopee mount xong ô Custom Link (không dùng
+      # chung với ACTION_TIMEOUT_SEC nữa) - CPU yếu như Render Free có thể
+      # cần nhiều hơn hẳn timeout thao tác thường.
+      - key: SHOPEE_BROWSER_FIELD_WAIT_SEC
+        value: "45"
       - key: SHOPEE_BROWSER_LAUNCH_BUDGET_SEC
         value: "20"
       # Sàn tối thiểu; timeout thực tế = max(giá trị này, tổng các timeout

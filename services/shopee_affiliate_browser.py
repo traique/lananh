@@ -258,6 +258,23 @@ async def _visible_input(page):
     return None
 
 
+_PAGE_SNAPSHOT_JS = """
+() => {
+    const body = document.body;
+    return {
+        readyState: document.readyState,
+        title: document.title,
+        elementCount: document.querySelectorAll('*').length,
+        scriptCount: document.querySelectorAll('script').length,
+        bodyTextSnippet: (body && body.innerText ? body.innerText : '').slice(0, 300),
+        hasSpinnerLike: !!document.querySelector(
+            '[class*="loading" i], [class*="spinner" i], [class*="skeleton" i]'
+        ),
+    };
+}
+"""
+
+
 async def _wait_for_custom_link_field(page):
     """Wait for the SPA to render the Custom Link field.
 
@@ -265,7 +282,7 @@ async def _wait_for_custom_link_field(page):
     Shopee's React/Vue bundle can take several more seconds to mount the actual
     dashboard component, so probing once caused false "UI changed" failures.
     """
-    timeout_sec = max(5, config.SHOPEE_BROWSER_ACTION_TIMEOUT_SEC * 2)
+    timeout_sec = config.SHOPEE_BROWSER_FIELD_WAIT_SEC
     deadline = asyncio.get_running_loop().time() + timeout_sec
     last_url = page.url
     while asyncio.get_running_loop().time() < deadline:
@@ -287,9 +304,13 @@ async def _wait_for_custom_link_field(page):
                 button_texts.extend(t.strip() for t in texts if t.strip())
             except Exception:
                 continue
+        try:
+            snapshot = await page.evaluate(_PAGE_SNAPSHOT_JS)
+        except Exception:
+            snapshot = None
         logger.warning(
-            "Shopee Custom Link field not found after %.1fs; url=%s frames=%r buttons=%r",
-            timeout_sec, last_url, frame_urls, button_texts[:15],
+            "Shopee Custom Link field not found after %.1fs; url=%s frames=%r buttons=%r snapshot=%r",
+            timeout_sec, last_url, frame_urls, button_texts[:15], snapshot,
         )
     except Exception:
         logger.warning("Shopee Custom Link field not found; diagnostic collection failed", exc_info=True)
@@ -542,9 +563,10 @@ def _browser_batch_timeout_sec(item_count: int) -> float:
 
     ``SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC`` used to be a flat 90s regardless of the
     other Shopee timeouts. With the default sub-timeouts (nav 35s tried up to
-    twice for the SPA dashboard/custom-link redirect, field-wait 20s, result
-    poll 20s) a single item alone can legitimately need over 120s, before even
-    counting Chromium's own cold start on a small Render instance. That made
+    twice for the SPA dashboard/custom-link redirect, field-wait
+    ``SHOPEE_BROWSER_FIELD_WAIT_SEC``, result poll 20s) a single item alone can
+    legitimately need well over 120s, before even counting Chromium's own cold
+    start on a small Render instance. That made
     the outer safety timeout fire on slow-but-otherwise-working runs, which
     then told the person to reload their session for a problem that was
     really just not enough time budgeted. This computes a floor from the
@@ -556,7 +578,7 @@ def _browser_batch_timeout_sec(item_count: int) -> float:
     per_item = (
         config.SHOPEE_BROWSER_NAV_TIMEOUT_SEC * 2  # first nav + one SPA-redirect retry
         + 1  # sleep between the two navigations
-        + max(5, config.SHOPEE_BROWSER_ACTION_TIMEOUT_SEC * 2)  # field-mount wait
+        + config.SHOPEE_BROWSER_FIELD_WAIT_SEC  # SPA mount wait
         + config.SHOPEE_BROWSER_ACTION_TIMEOUT_SEC  # fill/click
         + config.SHOPEE_BROWSER_RESULT_TIMEOUT_SEC  # result poll
     )

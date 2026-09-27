@@ -381,18 +381,22 @@ Khi session hết hạn hoặc Shopee yêu cầu đăng nhập/CAPTCHA lại, bo
 trạng thái chờ duyệt. Chạy lại các bước 3–8 để nạp session mới; không cần thay đổi code.
 
 Nếu `/admin` báo không tìm thấy ô Custom Link, bản bot sẽ chờ SPA render tối đa theo
-`SHOPEE_BROWSER_ACTION_TIMEOUT_SEC`, dò cả iframe/contenteditable và ghi chẩn đoán an toàn
-vào Render logs. Một lượt browser có hard-timeout tự tính từ tổng các timeout con
-(`SHOPEE_BROWSER_NAV_TIMEOUT_SEC` × 2 lần thử route SPA + `SHOPEE_BROWSER_ACTION_TIMEOUT_SEC`
-+ `SHOPEE_BROWSER_RESULT_TIMEOUT_SEC`, nhân theo số link trong 1 batch, cộng
-`SHOPEE_BROWSER_LAUNCH_BUDGET_SEC` cho thời gian khởi động Chromium) nên không thể giữ
-`/fb_link` treo vô hạn, nhưng cũng không chặn ngang một lượt chạy chậm-nhưng-vẫn-đang-hoạt-động
-trên máy chủ yếu (vd Render Free) — trước đây timeout tổng là một số cố định 90 giây, có thể
-nhỏ hơn tổng các timeout con cộng lại và khiến `/fb_link` báo "vượt quá thời gian xử lý" dù
-không có gì thực sự bị treo. `SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC` giờ chỉ còn là **sàn tối
-thiểu** (mặc định 90s) — chỉ có tác dụng khi bạn đặt nó CAO hơn mức tự tính ở trên. Nếu lỗi
-timeout vẫn lặp lại sau khi deploy bản mới, kiểm tra Render logs để xem URL/frame/nút mà
-Shopee thực tế đã render; không cần gửi cookie/session.
+`SHOPEE_BROWSER_FIELD_WAIT_SEC` (mặc định 45 giây — tách riêng khỏi
+`SHOPEE_BROWSER_ACTION_TIMEOUT_SEC` vì đây là chờ React/Vue mount xong cả trang, không phải
+một thao tác đơn lẻ), dò cả iframe/contenteditable, và ghi chẩn đoán an toàn vào Render
+logs (URL, danh sách frame, danh sách nút tìm thấy, snippet nội dung trang) khi hết giờ vẫn
+chưa thấy ô nhập. Việc tìm ô nhập/nút bấm/link kết quả đều chạy bằng 1 lệnh JavaScript duy
+nhất bên trong trình duyệt thay vì hàng chục lệnh Playwright rời rạc — trên CPU yếu (Render
+Free) mỗi lệnh rời rạc có thể tự nó mất vài giây, nhân lên hàng chục lần sẽ nuốt hết ngân
+sách timeout dù trang đã tải xong. Một lượt browser có hard-timeout tự tính từ tổng các
+timeout con (`SHOPEE_BROWSER_NAV_TIMEOUT_SEC` × 2 lần thử route SPA + `SHOPEE_BROWSER_FIELD_WAIT_SEC`
++ `SHOPEE_BROWSER_ACTION_TIMEOUT_SEC` + `SHOPEE_BROWSER_RESULT_TIMEOUT_SEC`, nhân theo số
+link trong 1 batch, cộng `SHOPEE_BROWSER_LAUNCH_BUDGET_SEC` cho thời gian khởi động Chromium)
+nên không thể giữ `/fb_link` treo vô hạn, nhưng cũng không chặn ngang một lượt chạy
+chậm-nhưng-vẫn-đang-hoạt-động trên máy chủ yếu. `SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC` chỉ còn là
+**sàn tối thiểu** (mặc định 90s) — chỉ có tác dụng khi bạn đặt nó CAO hơn mức tự tính ở trên.
+Nếu lỗi timeout vẫn lặp lại sau khi deploy bản mới, kiểm tra Render logs để xem URL/frame/nút/
+snippet nội dung mà Shopee thực tế đã render; không cần gửi cookie/session.
 
 Production container chỉ cài Chromium **headless shell** và browser chỉ chạy on-demand,
 concurrency toàn cục = 1. Ảnh/media/font trên Shopee bị chặn tải để giảm RAM/CPU; browser
@@ -401,6 +405,7 @@ concurrency toàn cục = 1. Ảnh/media/font trên Shopee bị chặn tải đ�
 Các biến tùy chọn: `SHOPEE_AFFILIATE_AUTO_ENABLED` (mặc định `true`),
 `SHOPEE_AFFILIATE_CUSTOM_LINK_URL`, `SHOPEE_RESOLVE_TIMEOUT_SEC`,
 `SHOPEE_BROWSER_NAV_TIMEOUT_SEC`, `SHOPEE_BROWSER_ACTION_TIMEOUT_SEC`,
+`SHOPEE_BROWSER_FIELD_WAIT_SEC` (mặc định 45 giây, chờ SPA mount — xem giải thích ở trên),
 `SHOPEE_BROWSER_RESULT_TIMEOUT_SEC`, `SHOPEE_BROWSER_LAUNCH_BUDGET_SEC` (mặc định 20 giây,
 đệm cho Chromium cold-start), `SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC` (sàn tối thiểu, mặc định
 90 giây — xem giải thích ở trên).

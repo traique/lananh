@@ -373,6 +373,12 @@ SHOPEE_RESOLVE_TIMEOUT_SEC = _env_int("SHOPEE_RESOLVE_TIMEOUT_SEC", 12)
 SHOPEE_BROWSER_NAV_TIMEOUT_SEC = _env_int("SHOPEE_BROWSER_NAV_TIMEOUT_SEC", 35)
 SHOPEE_BROWSER_ACTION_TIMEOUT_SEC = _env_int("SHOPEE_BROWSER_ACTION_TIMEOUT_SEC", 10)
 SHOPEE_BROWSER_RESULT_TIMEOUT_SEC = _env_int("SHOPEE_BROWSER_RESULT_TIMEOUT_SEC", 20)
+# Separate from SHOPEE_BROWSER_ACTION_TIMEOUT_SEC on purpose: this is how long
+# the SPA gets to actually mount its dashboard component after navigation
+# (domcontentloaded only means the JS shell downloaded, not that React/Vue has
+# rendered anything yet). On a CPU-throttled host like Render Free this can
+# legitimately take much longer than a single UI action's timeout.
+SHOPEE_BROWSER_FIELD_WAIT_SEC = _env_int("SHOPEE_BROWSER_FIELD_WAIT_SEC", 45)
 SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC = _env_int("SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC", 90)
 SHOPEE_BROWSER_LAUNCH_BUDGET_SEC = _env_int("SHOPEE_BROWSER_LAUNCH_BUDGET_SEC", 20)
 
