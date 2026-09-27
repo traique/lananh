@@ -13,9 +13,12 @@ WORKDIR /app
 
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
-# Render Free: install only Chromium headless shell, not the full headed browser.
-# This keeps the image/runtime footprint lower while matching Playwright exactly.
+# Render Free: install Chromium's headless shell (lighter than the full
+# headed browser) plus WebKit, which is being trial-run because it tends to
+# have a smaller RAM footprint - see SHOPEE_BROWSER_ENGINE in core/config.py.
+# Both installed so switching engines is just an env var, no rebuild.
 RUN playwright install --with-deps --only-shell chromium \
+    && playwright install --with-deps webkit \
     && rm -rf /var/lib/apt/lists/*
 
 COPY zalo-gateway/package.json zalo-gateway/package-lock.json zalo-gateway/tsconfig.json ./zalo-gateway/

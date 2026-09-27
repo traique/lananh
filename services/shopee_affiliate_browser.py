@@ -431,6 +431,7 @@ async def _convert_on_page(page, destination_url: str) -> str:
         timeout=config.SHOPEE_BROWSER_NAV_TIMEOUT_SEC * 1000,
     )
     logger.info("Shopee convert: goto #1 xong sau %.1fs, url hiện tại=%s", loop.time() - t0, page.url)
+    _log_memory("sau goto #1")
     await _assert_logged_in(page)
     # Some authenticated sessions first land on /dashboard before the router has
     # restored the requested SPA route. Retry the official Custom Link URL once.
@@ -472,6 +473,24 @@ async def _convert_on_page(page, destination_url: str) -> str:
     raise ShopeeUiChanged("Shopee không trả về link affiliate rút gọn trong thời gian chờ.")
 
 
+def _log_memory(tag: str) -> None:
+    """Log MemAvailable from /proc/meminfo. The abrupt, no-shutdown-log restart
+    pattern seen in production (supervisord just respawns 'web'/'zalo-gateway'
+    with no SIGTERM/graceful-stop lines first) is the signature of an OOM
+    kill, not a timeout - Chromium plus the Python bot plus the Node Zalo
+    gateway can add up to more than a small Render instance's RAM. This makes
+    that visible in the logs instead of guessing from Render's Metrics tab.
+    """
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    logger.info("Shopee convert: [mem] %s (%s)", line.strip(), tag)
+                    return
+    except Exception:
+        pass
+
+
 async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, str]:
     state = await shopee_affiliate_session.load()
     if not state:
@@ -492,26 +511,52 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
     context = None
     loop = asyncio.get_running_loop()
     t_start = loop.time()
+    engine_name = config.SHOPEE_BROWSER_ENGINE
+    _log_memory(f"trước khi khởi động {engine_name}")
     try:
         async with async_playwright() as playwright:
-            logger.info("Shopee convert: đang khởi động Chromium cho %d link...", len(resolved))
-            browser = await playwright.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--disable-extensions",
-                    "--disable-background-networking",
-                    "--disable-sync",
-                    "--metrics-recording-only",
-                    "--mute-audio",
-                    "--no-first-run",
-                    "--disable-default-apps",
-                    "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
-                ],
-            )
-            logger.info("Shopee convert: Chromium đã sẵn sàng sau %.1fs", loop.time() - t_start)
+            if config.SHOPEE_BROWSER_CDP_URL:
+                logger.info(
+                    "Shopee convert: đang kết nối browser bên ngoài qua CDP (%s) cho %d link...",
+                    config.SHOPEE_BROWSER_CDP_URL, len(resolved),
+                )
+                browser = await playwright.chromium.connect_over_cdp(config.SHOPEE_BROWSER_CDP_URL)
+            else:
+                logger.info("Shopee convert: đang khởi động %s cho %d link...", engine_name, len(resolved))
+                if engine_name == "webkit":
+                    # WebKit does not understand Chromium's command-line switches
+                    # (--no-sandbox, --disable-gpu, --js-flags, ...); passing any of
+                    # them would just fail to launch. It needs no extra args here.
+                    engine = playwright.webkit
+                    launch_kwargs: dict = {}
+                else:
+                    engine = playwright.chromium
+                    launch_kwargs = {
+                        "args": [
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                            "--disable-extensions",
+                            "--disable-background-networking",
+                            "--disable-sync",
+                            "--metrics-recording-only",
+                            "--mute-audio",
+                            "--no-first-run",
+                            "--disable-default-apps",
+                            "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
+                            # Memory, not just CPU/time, looks like the real ceiling on
+                            # a small Render instance (see _log_memory docstring above).
+                            "--disable-background-timer-throttling",
+                            "--disable-renderer-backgrounding",
+                            "--blink-settings=imagesEnabled=false",
+                            "--js-flags=--max-old-space-size=192",
+                            "--renderer-process-limit=1",
+                            "--disable-software-rasterizer",
+                        ],
+                    }
+                browser = await engine.launch(headless=True, **launch_kwargs)
+            logger.info("Shopee convert: %s đã sẵn sàng sau %.1fs", engine_name, loop.time() - t_start)
+            _log_memory(f"sau khi {engine_name} sẵn sàng")
             context = await browser.new_context(
                 storage_state=state,
                 viewport={"width": 1024, "height": 768},
@@ -675,7 +720,7 @@ async def convert_urls(account_id: str, source_urls: list[str]) -> list[Affiliat
                         budget, len(to_convert),
                     )
                     raise ShopeeAffiliateError(
-                        "Shopee Affiliate vượt quá thời gian xử lý; Chromium đã được hủy để tránh treo bot. "
+                        "Shopee Affiliate vượt quá thời gian xử lý; trình duyệt đã được hủy để tránh treo bot. "
                         "Thử lại một lần, hoặc nạp lại session nếu lỗi lặp lại."
                     ) from exc
             else:

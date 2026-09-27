@@ -365,6 +365,19 @@ ADMIN_SESSION_TTL_SEC = _env_int("ADMIN_SESSION_TTL_SEC", 12 * 3600)
 # worker uses the official logged-in Custom Link page and an encrypted Playwright
 # storage_state stored in PostgreSQL. Chromium is launched only on cache misses.
 SHOPEE_AFFILIATE_AUTO_ENABLED = _env_bool("SHOPEE_AFFILIATE_AUTO_ENABLED", True)
+# "chromium" or "webkit". WebKit is being trial-run on Render Free because it
+# tends to have a smaller RAM footprint than Chromium, which is the leading
+# suspect for the OOM kills seen in production (abrupt container restarts
+# with no graceful-shutdown log lines, right in the middle of a Shopee
+# conversion). Both engines are installed in the image (see Dockerfile) so
+# this can be flipped back to "chromium" with no rebuild if WebKit turns out
+# to render Shopee's SPA differently or trips anti-bot checks differently.
+SHOPEE_BROWSER_ENGINE = os.getenv("SHOPEE_BROWSER_ENGINE", "webkit").strip().lower()
+# Optional: skip launching a browser in this container entirely and connect to
+# one already running elsewhere (a bigger machine, Browserless, Lightpanda,
+# etc.) via CDP. Takes priority over SHOPEE_BROWSER_ENGINE when set. Leave
+# empty to keep launching locally.
+SHOPEE_BROWSER_CDP_URL = os.getenv("SHOPEE_BROWSER_CDP_URL", "").strip()
 SHOPEE_AFFILIATE_CUSTOM_LINK_URL = os.getenv(
     "SHOPEE_AFFILIATE_CUSTOM_LINK_URL",
     "https://affiliate.shopee.vn/offer/custom_link",

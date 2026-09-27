@@ -402,6 +402,25 @@ Production container chỉ cài Chromium **headless shell** và browser chỉ ch
 concurrency toàn cục = 1. Ảnh/media/font trên Shopee bị chặn tải để giảm RAM/CPU; browser
 đóng ngay sau mỗi batch `/fb_link`. Bot không tự vượt CAPTCHA.
 
+`SHOPEE_BROWSER_ENGINE` (`chromium` mặc định trong code, nhưng `.env.example`/`render.yaml`
+đang đặt sẵn `webkit` để thử nghiệm) chọn engine Playwright dùng để mở Custom Link. Đổi
+sang thử vì nghi Chromium là nguyên nhân bot bị **OOM-kill** trên Render Free (RAM 512MB
+phải chia cho Python + Node zalo-gateway + Chromium cùng lúc — dấu hiệu là container tự
+restart giữa chừng, log không có bước tắt êm SIGTERM). Cả hai engine đều được cài sẵn
+trong image (xem `Dockerfile`) nên đổi qua lại chỉ cần sửa biến env, không cần build lại.
+Theo dõi Render Metrics (RAM) sau khi đổi; nếu WebKit vẫn OOM hoặc bị Shopee chặn khác đi,
+đổi `SHOPEE_BROWSER_ENGINE=chromium` để quay lại.
+
+Nếu cả hai engine tại chỗ vẫn không đủ (RAM Render Free quá nhỏ để chạy song song với
+Python + Node), `SHOPEE_BROWSER_CDP_URL` cho phép **không mở browser trong container này
+nữa** mà kết nối tới một browser đang chạy sẵn ở nơi khác qua Chrome DevTools Protocol (một
+máy khác nhiều RAM hơn, hoặc dịch vụ như Lightpanda/Browserless) — ưu tiên hơn
+`SHOPEE_BROWSER_ENGINE` khi được đặt. Lưu ý nếu định dùng
+[Lightpanda](https://github.com/lightpanda-io/browser): dự án còn beta, tự nhận hỗ trợ
+Playwright là "WIP", không có tầng render layout đầy đủ, và hỗ trợ Web API mới "partial" —
+nên thử thủ công với đúng trang Custom Link của Shopee trước khi đưa vào production, đừng
+coi là thay thế chắc ăn 1-đổi-1 cho Chromium/WebKit.
+
 Các biến tùy chọn: `SHOPEE_AFFILIATE_AUTO_ENABLED` (mặc định `true`),
 `SHOPEE_AFFILIATE_CUSTOM_LINK_URL`, `SHOPEE_RESOLVE_TIMEOUT_SEC`,
 `SHOPEE_BROWSER_NAV_TIMEOUT_SEC`, `SHOPEE_BROWSER_ACTION_TIMEOUT_SEC`,

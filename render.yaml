@@ -139,6 +139,16 @@ services:
       # Shopee Affiliate Custom Link browser automation (không cần Open API).
       - key: SHOPEE_AFFILIATE_AUTO_ENABLED
         value: "true"
+      # "chromium" hoặc "webkit" - đang thử webkit để giảm RAM, nghi là
+      # nguyên nhân OOM-kill trên Render Free. Đổi lại "chromium" không cần
+      # build lại image, cả 2 engine đều đã cài sẵn.
+      - key: SHOPEE_BROWSER_ENGINE
+        value: webkit
+      # Tuỳ chọn nâng cao: để trống theo mặc định. Điền vào (vd
+      # ws://host-khac:9222) để kết nối một browser chạy sẵn ở nơi khác qua
+      # CDP thay vì tự mở trong container này - ưu tiên hơn SHOPEE_BROWSER_ENGINE.
+      - key: SHOPEE_BROWSER_CDP_URL
+        value: ""
       - key: SHOPEE_AFFILIATE_CUSTOM_LINK_URL
         value: https://affiliate.shopee.vn/offer/custom_link
       - key: SHOPEE_RESOLVE_TIMEOUT_SEC
