@@ -392,35 +392,53 @@ async def _assert_logged_in(page) -> None:
 
 
 async def _convert_on_page(page, destination_url: str) -> str:
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    logger.info("Shopee convert: bắt đầu goto Custom Link cho %s", destination_url)
     await page.goto(
         config.SHOPEE_AFFILIATE_CUSTOM_LINK_URL,
         wait_until="domcontentloaded",
         timeout=config.SHOPEE_BROWSER_NAV_TIMEOUT_SEC * 1000,
     )
+    logger.info("Shopee convert: goto #1 xong sau %.1fs, url hiện tại=%s", loop.time() - t0, page.url)
     await _assert_logged_in(page)
     # Some authenticated sessions first land on /dashboard before the router has
     # restored the requested SPA route. Retry the official Custom Link URL once.
     if "/offer/custom_link" not in urlsplit(page.url).path.casefold():
+        logger.info(
+            "Shopee convert: route chưa đúng (%s), thử goto lại lần 2", page.url
+        )
         await asyncio.sleep(1)
+        t1 = loop.time()
         await page.goto(
             config.SHOPEE_AFFILIATE_CUSTOM_LINK_URL,
             wait_until="domcontentloaded",
             timeout=config.SHOPEE_BROWSER_NAV_TIMEOUT_SEC * 1000,
         )
+        logger.info("Shopee convert: goto #2 xong sau %.1fs, url hiện tại=%s", loop.time() - t1, page.url)
         await _assert_logged_in(page)
     field = await _wait_for_custom_link_field(page)
+    logger.info("Shopee convert: đã thấy ô Custom Link sau %.1fs tổng cộng", loop.time() - t0)
     await field.fill(destination_url)
     await _click_get_link(page)
+    logger.info("Shopee convert: đã bấm Lấy link, chờ kết quả (tổng %.1fs)", loop.time() - t0)
 
-    deadline = asyncio.get_running_loop().time() + config.SHOPEE_BROWSER_RESULT_TIMEOUT_SEC
-    while asyncio.get_running_loop().time() < deadline:
+    deadline = loop.time() + config.SHOPEE_BROWSER_RESULT_TIMEOUT_SEC
+    while loop.time() < deadline:
         await _assert_logged_in(page)
         affiliate_url = await _extract_affiliate_url(page, destination_url)
         if affiliate_url:
             if (urlsplit(affiliate_url).hostname or "").lower() != "s.shopee.vn":
                 raise ShopeeUiChanged("Shopee trả link không phải dạng s.shopee.vn như yêu cầu.")
+            logger.info(
+                "Shopee convert: có link affiliate sau %.1fs tổng cộng", loop.time() - t0
+            )
             return affiliate_url
         await asyncio.sleep(0.5)
+    logger.warning(
+        "Shopee convert: hết %.1fs chờ kết quả mà không thấy link affiliate; url hiện tại=%s",
+        config.SHOPEE_BROWSER_RESULT_TIMEOUT_SEC, page.url,
+    )
     raise ShopeeUiChanged("Shopee không trả về link affiliate rút gọn trong thời gian chờ.")
 
 
@@ -442,8 +460,11 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
     results: dict[str, str] = {}
     browser = None
     context = None
+    loop = asyncio.get_running_loop()
+    t_start = loop.time()
     try:
         async with async_playwright() as playwright:
+            logger.info("Shopee convert: đang khởi động Chromium cho %d link...", len(resolved))
             browser = await playwright.chromium.launch(
                 headless=True,
                 args=[
@@ -460,6 +481,7 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
                     "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
                 ],
             )
+            logger.info("Shopee convert: Chromium đã sẵn sàng sau %.1fs", loop.time() - t_start)
             context = await browser.new_context(
                 storage_state=state,
                 viewport={"width": 1024, "height": 768},
@@ -469,9 +491,17 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
             page = await context.new_page()
             await page.route("**/*", _block_heavy_resources)
 
-            for item in resolved:
+            for idx, item in enumerate(resolved, 1):
+                t_item = loop.time()
+                logger.info(
+                    "Shopee convert: [%d/%d] bắt đầu %s", idx, len(resolved), item.destination_url
+                )
                 affiliate_url = await _convert_on_page(page, item.destination_url)
                 results[item.canonical_key] = affiliate_url
+                logger.info(
+                    "Shopee convert: [%d/%d] xong sau %.1fs (tổng batch %.1fs)",
+                    idx, len(resolved), loop.time() - t_item, loop.time() - t_start,
+                )
 
             # Shopee may rotate auth cookies during normal navigation. Persist the
             # refreshed state before closing the ephemeral browser.
@@ -481,6 +511,10 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
     except PlaywrightTimeoutError as exc:
         raise ShopeeAffiliateError("Shopee Affiliate phản hồi quá chậm hoặc giao diện chưa tải xong.") from exc
     finally:
+        logger.info(
+            "Shopee convert: đóng browser sau %.1fs tổng cộng cho batch %d link (%d link xong)",
+            loop.time() - t_start, len(resolved), len(results),
+        )
         if context is not None:
             try:
                 await context.close()
@@ -574,7 +608,15 @@ async def convert_urls(account_id: str, source_urls: list[str]) -> list[Affiliat
             missing_by_key.setdefault(item.canonical_key, item)
 
     if missing_by_key:
+        logger.info(
+            "Shopee convert: %d link cần browser (%s); đang chờ tới lượt (_browser_lock)...",
+            len(missing_by_key), ", ".join(list(missing_by_key)[:5]),
+        )
+        lock_wait_t0 = asyncio.get_running_loop().time()
         async with _browser_lock:
+            lock_wait_sec = asyncio.get_running_loop().time() - lock_wait_t0
+            if lock_wait_sec > 1:
+                logger.info("Shopee convert: chờ _browser_lock mất %.1fs", lock_wait_sec)
             # Another queued request may have populated the cache while this one waited.
             second_cache = {
                 key: affiliate
@@ -587,10 +629,20 @@ async def convert_urls(account_id: str, source_urls: list[str]) -> list[Affiliat
             }
             to_convert = [item for key, item in missing_by_key.items() if key not in second_cache]
             if to_convert:
+                budget = _browser_batch_timeout_sec(len(to_convert))
+                logger.info(
+                    "Shopee convert: bắt đầu batch %d link, ngân sách timeout %.1fs",
+                    len(to_convert), budget,
+                )
                 try:
-                    async with asyncio.timeout(_browser_batch_timeout_sec(len(to_convert))):
+                    async with asyncio.timeout(budget):
                         generated = await _launch_and_convert(to_convert)
                 except TimeoutError as exc:
+                    logger.warning(
+                        "Shopee convert: hết ngân sách %.1fs cho %d link — xem log 'Shopee convert:' phía "
+                        "trên để biết dừng ở bước nào (goto/field/click/result).",
+                        budget, len(to_convert),
+                    )
                     raise ShopeeAffiliateError(
                         "Shopee Affiliate vượt quá thời gian xử lý; Chromium đã được hủy để tránh treo bot. "
                         "Thử lại một lần, hoặc nạp lại session nếu lỗi lặp lại."
