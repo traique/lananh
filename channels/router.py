@@ -135,51 +135,72 @@ async def receive(
     x_zalo_bridge_secret: str | None = Header(default=None),
 ):
     await _auth_sender(x_zalo_bridge_secret, payload.sender_id)
-    async with assistant_turn():
-        cached = await idempotency.get_zalo_response(
-            payload.account_id,
-            payload.message_id,
-            "text",
-        )
-        if cached is not None:
-            return ZaloMessageResponse.model_validate(cached)
+    cached = await idempotency.get_zalo_response(
+        payload.account_id,
+        payload.message_id,
+        "text",
+    )
+    if cached is not None:
+        return ZaloMessageResponse.model_validate(cached)
 
-        zalo_user = await zalo_users.resolve(payload.sender_id)
-        if zalo_user is None:
-            # Người lạ CHƯA pair: im lặng với sender (không lộ ra là bot chưa
-            # cấu hình xong), chỉ âm thầm báo owner Telegram. KHÔNG cache
-            # response rỗng - nếu owner pair xong rồi người này nhắn lại
-            # (message_id mới) vẫn xử lý bình thường như mọi tin nhắn khác.
-            zalo_users.notify_unpaired(payload.sender_id, payload.sender_name)
-            return ZaloMessageResponse(messages=[], provider=None)
-        if not zalo_user.is_active:
-            return ZaloMessageResponse(messages=[messages_module.ZALO_LOCKED_REPLY], provider=None)
+    zalo_user = await zalo_users.resolve(payload.sender_id)
+    if zalo_user is None:
+        # Người lạ CHƯA pair: im lặng với sender (không lộ ra là bot chưa
+        # cấu hình xong), chỉ âm thầm báo owner Telegram. KHÔNG cache
+        # response rỗng - nếu owner pair xong rồi người này nhắn lại
+        # (message_id mới) vẫn xử lý bình thường như mọi tin nhắn khác.
+        zalo_users.notify_unpaired(payload.sender_id, payload.sender_name)
+        return ZaloMessageResponse(messages=[], provider=None)
+    if not zalo_user.is_active:
+        return ZaloMessageResponse(messages=[messages_module.ZALO_LOCKED_REPLY], provider=None)
 
-        result = None
-        if zalo_user.is_admin:
-            result = await maybe_handle_facebook_command(payload.account_id, payload.text)
-            if result is None:
-                result = await maybe_handle_group_command(payload.account_id, payload.text)
-        if result is None:
-            # user_id RIÊNG cho từng external_id (zalo_user.internal_user_id) -
-            # KHÔNG dùng _shared_user_id()/config.ALLOWED_USER_ID nữa, để cách
-            # ly hoàn toàn ngữ cảnh chat/trí nhớ giữa từng người nhắn Zalo và
-            # giữa họ với chủ bot Telegram. Xem docstring channels/zalo_users.py.
-            result = await handle_channel_text(
-                zalo_user.internal_user_id, payload.text.strip(), zalo_user.is_admin
+    # Facebook post-queue commands (/fb_*) are handled OUTSIDE assistant_turn()
+    # on purpose. /fb_link can run Playwright/Chromium for up to ~2 phút on a
+    # slow host, and it already has its own atomicity (claim_post's guarded
+    # UPDATE) and its own global Playwright lock. Running it under
+    # assistant_turn() used to hold that lock for the whole browser session,
+    # which froze EVERY other Telegram/Zalo conversation for as long as the
+    # Shopee conversion took - that is the "treo bot luôn" symptom, not a bug
+    # in the Shopee flow itself.
+    result = None
+    if zalo_user.is_admin:
+        result = await maybe_handle_facebook_command(payload.account_id, payload.text)
+
+    if result is None:
+        async with assistant_turn():
+            # Re-check: a duplicate delivery of the same message could have
+            # been processed by another request while we were waiting for the
+            # lock above.
+            cached = await idempotency.get_zalo_response(
+                payload.account_id,
+                payload.message_id,
+                "text",
             )
-        response = ZaloMessageResponse(
-            messages=_zalo_chunks(result.messages),
-            provider=result.provider,
-            image_b64=result.image_b64,
-        )
-        await idempotency.save_zalo_response(
-            payload.account_id,
-            payload.message_id,
-            "text",
-            response.model_dump(),
-        )
-        return response
+            if cached is not None:
+                return ZaloMessageResponse.model_validate(cached)
+            if zalo_user.is_admin:
+                result = await maybe_handle_group_command(payload.account_id, payload.text)
+            if result is None:
+                # user_id RIÊNG cho từng external_id (zalo_user.internal_user_id) -
+                # KHÔNG dùng _shared_user_id()/config.ALLOWED_USER_ID nữa, để cách
+                # ly hoàn toàn ngữ cảnh chat/trí nhớ giữa từng người nhắn Zalo và
+                # giữa họ với chủ bot Telegram. Xem docstring channels/zalo_users.py.
+                result = await handle_channel_text(
+                    zalo_user.internal_user_id, payload.text.strip(), zalo_user.is_admin
+                )
+
+    response = ZaloMessageResponse(
+        messages=_zalo_chunks(result.messages),
+        provider=result.provider,
+        image_b64=result.image_b64,
+    )
+    await idempotency.save_zalo_response(
+        payload.account_id,
+        payload.message_id,
+        "text",
+        response.model_dump(),
+    )
+    return response
 
 
 @router.post("/image-prompt", response_model=ZaloMessageResponse)

@@ -626,84 +626,112 @@ def _zoom_chunks(outputs: list[str]) -> list[str]:
 
 
 async def _process_zoom_event(event: "zoom.ZoomEvent") -> None:
-    async with assistant_turn():
-        try:
-            pairing = await db.zoom_get_pairing()
-            if pairing is None or pairing[0] != event.sender_jid:
-                logger.info("Zoom: tin nhắn từ jid chưa pair (%s), bỏ qua + báo owner.", event.sender_jid)
-                if application is not None:
-                    try:
-                        await application.bot.send_message(
-                            chat_id=config.ALLOWED_USER_ID,
-                            text=messages.ZOOM_UNPAIRED_ALERT.format(jid=event.sender_jid),
-                        )
-                    except Exception:
-                        logger.warning("Không gửi được cảnh báo Zoom chưa pair.", exc_info=True)
-                return
+    try:
+        pairing = await db.zoom_get_pairing()
+        if pairing is None or pairing[0] != event.sender_jid:
+            logger.info("Zoom: tin nhắn từ jid chưa pair (%s), bỏ qua + báo owner.", event.sender_jid)
+            if application is not None:
+                try:
+                    await application.bot.send_message(
+                        chat_id=config.ALLOWED_USER_ID,
+                        text=messages.ZOOM_UNPAIRED_ALERT.format(jid=event.sender_jid),
+                    )
+                except Exception:
+                    logger.warning("Không gửi được cảnh báo Zoom chưa pair.", exc_info=True)
+            return
 
-            cached = await idempotency.get_zalo_response(
-                event.account_id or "zoom-bot", event.event_id, "zoom-text"
+        cached = await idempotency.get_zalo_response(
+            event.account_id or "zoom-bot", event.event_id, "zoom-text"
+        )
+        if cached is not None:
+            reply_texts = cached.get("messages", [])
+            image_url = cached.get("image_url")
+        else:
+            # Zoom admin dùng chung lệnh quản lý nhóm Zalo và /fb_* với Zalo admin.
+            # Request Zoom không có account_id Zalo nên ưu tiên lấy từ session đang
+            # đăng nhập; fallback resolver cũ để tương thích session cũ.
+            zalo_account_id = (
+                await zalo_session.load_account_id()
+                or await zalo_repository.resolve_default_account_id()
             )
-            if cached is not None:
-                reply_texts = cached.get("messages", [])
-                image_url = cached.get("image_url")
-            else:
-                # Zoom admin dùng chung lệnh quản lý nhóm Zalo và /fb_* với Zalo admin.
-                # Request Zoom không có account_id Zalo nên ưu tiên lấy từ session đang
-                # đăng nhập; fallback resolver cũ để tương thích session cũ.
-                zalo_account_id = (
-                    await zalo_session.load_account_id()
-                    or await zalo_repository.resolve_default_account_id()
+            # /fb_* chạy NGOÀI assistant_turn() cố ý: /fb_link có thể mở
+            # Chromium tới ~2 phút trên máy chậm, và nó đã có atomic riêng
+            # (claim_post) + lock Playwright riêng. Giữ assistant_turn() (lock
+            # dùng chung cho cả Telegram/Zalo/Zoom) suốt thời gian đó sẽ đứng
+            # hình TOÀN BỘ hội thoại khác trong lúc chờ Shopee convert xong.
+            facebook_result = (
+                await facebook_commands.maybe_handle_facebook_command(
+                    zalo_account_id, event.text.strip()
                 )
-                facebook_result = (
-                    await facebook_commands.maybe_handle_facebook_command(
-                        zalo_account_id, event.text.strip()
-                    )
-                    if zalo_account_id
-                    else None
-                )
-                group_result = None
-                if facebook_result is None and zalo_account_id:
-                    group_result = await group_commands.maybe_handle_group_command(
-                        zalo_account_id, event.text.strip()
-                    )
-                admin_result = facebook_result or group_result
-                if admin_result is not None:
-                    reply_texts = _zoom_chunks(admin_result.messages)
-                    provider = None
-                    image_url = None
-                else:
-                    result = await handle_channel_text(config.ALLOWED_USER_ID, event.text.strip(), channel="zoom")
-                    reply_texts = _zoom_chunks(result.messages)
-                    provider = result.provider
-                    image_url = result.image_url
+                if zalo_account_id
+                else None
+            )
+            if facebook_result is not None:
+                reply_texts = _zoom_chunks(facebook_result.messages)
+                provider = None
+                image_url = None
                 await idempotency.save_zalo_response(
                     event.account_id or "zoom-bot",
                     event.event_id,
                     "zoom-text",
                     {"messages": reply_texts, "provider": provider, "image_url": image_url},
                 )
+            else:
+                async with assistant_turn():
+                    # Re-check: một lượt gửi trùng của cùng event có thể đã
+                    # được xử lý xong trong lúc ta chờ lock ở trên.
+                    cached = await idempotency.get_zalo_response(
+                        event.account_id or "zoom-bot", event.event_id, "zoom-text"
+                    )
+                    if cached is not None:
+                        reply_texts = cached.get("messages", [])
+                        image_url = cached.get("image_url")
+                    else:
+                        group_result = (
+                            await group_commands.maybe_handle_group_command(
+                                zalo_account_id, event.text.strip()
+                            )
+                            if zalo_account_id
+                            else None
+                        )
+                        if group_result is not None:
+                            reply_texts = _zoom_chunks(group_result.messages)
+                            provider = None
+                            image_url = None
+                        else:
+                            result = await handle_channel_text(
+                                config.ALLOWED_USER_ID, event.text.strip(), channel="zoom"
+                            )
+                            reply_texts = _zoom_chunks(result.messages)
+                            provider = result.provider
+                            image_url = result.image_url
+                        await idempotency.save_zalo_response(
+                            event.account_id or "zoom-bot",
+                            event.event_id,
+                            "zoom-text",
+                            {"messages": reply_texts, "provider": provider, "image_url": image_url},
+                        )
 
-            for chunk in reply_texts:
-                await zoom.send_message(
-                    event.reply_jid, chunk, user_jid=event.sender_jid, account_id=event.account_id
+        for chunk in reply_texts:
+            await zoom.send_message(
+                event.reply_jid, chunk, user_jid=event.sender_jid, account_id=event.account_id
+            )
+        if image_url:
+            try:
+                await zoom.send_image_message(
+                    event.reply_jid,
+                    image_url,
+                    user_jid=event.sender_jid,
+                    account_id=event.account_id,
                 )
-            if image_url:
-                try:
-                    await zoom.send_image_message(
-                        event.reply_jid,
-                        image_url,
-                        user_jid=event.sender_jid,
-                        account_id=event.account_id,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Không gửi được ảnh qua Zoom (event_id=%s), text đã gửi bình thường.",
-                        event.event_id,
-                        exc_info=True,
-                    )
-        except Exception:
-            logger.exception("Lỗi xử lý sự kiện Zoom event_id=%s", event.event_id)
+            except Exception:
+                logger.warning(
+                    "Không gửi được ảnh qua Zoom (event_id=%s), text đã gửi bình thường.",
+                    event.event_id,
+                    exc_info=True,
+                )
+    except Exception:
+        logger.exception("Lỗi xử lý sự kiện Zoom event_id=%s", event.event_id)
 
 
 @api.post(config.ZOOM_WEBHOOK_PATH)

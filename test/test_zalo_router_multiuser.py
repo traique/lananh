@@ -168,7 +168,81 @@ async def test_each_zalo_user_gets_own_internal_user_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_normal_chat_falls_through_to_handle_channel_text(monkeypatch):
+async def test_facebook_command_does_not_hold_assistant_turn_lock(monkeypatch):
+    """Locks in the /fb_link freeze fix: Facebook commands must be dispatched
+    BEFORE assistant_turn() is entered, so a slow Shopee browser conversion
+    can't block every other Telegram/Zalo conversation."""
+
+    class FakeUser:
+        is_active = True
+        is_admin = True
+        internal_user_id = -5
+
+    class PoisonedLock:
+        async def __aenter__(self):
+            raise AssertionError(
+                "assistant_turn() should NOT be entered when a Facebook "
+                "command already produced a result."
+            )
+
+        async def __aexit__(self, *exc):
+            return False
+
+    async def fake_resolve(external_id):
+        return FakeUser()
+
+    async def fake_facebook_command(account_id, text):
+        return ChannelResult(["✅ đã xử lý facebook"])
+
+    monkeypatch.setattr(zalo_router.zalo_users, "resolve", fake_resolve)
+    monkeypatch.setattr(zalo_router, "maybe_handle_facebook_command", fake_facebook_command)
+    monkeypatch.setattr(zalo_router, "assistant_turn", lambda: PoisonedLock())
+
+    response = await zalo_router.receive(_payload(text="/fb_link 143"), "s3cr3t")
+    assert response.messages == ["✅ đã xử lý facebook"]
+
+
+@pytest.mark.asyncio
+async def test_non_facebook_message_still_uses_assistant_turn_lock(monkeypatch):
+    """Sanity check for the fix above: normal chat/group-command turns must
+    still be serialized through assistant_turn() as before."""
+
+    class FakeUser:
+        is_active = True
+        is_admin = True
+        internal_user_id = -6
+
+    entered = {"count": 0}
+
+    class CountingLock:
+        async def __aenter__(self):
+            entered["count"] += 1
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    async def fake_resolve(external_id):
+        return FakeUser()
+
+    async def fake_facebook_command(account_id, text):
+        return None
+
+    async def fake_group_command(account_id, text):
+        return None
+
+    async def fake_handle_channel_text(user_id, text, is_admin=True):
+        return ChannelResult(["chat bình thường"])
+
+    monkeypatch.setattr(zalo_router.zalo_users, "resolve", fake_resolve)
+    monkeypatch.setattr(zalo_router, "maybe_handle_facebook_command", fake_facebook_command)
+    monkeypatch.setattr(zalo_router, "maybe_handle_group_command", fake_group_command)
+    monkeypatch.setattr(zalo_router, "handle_channel_text", fake_handle_channel_text)
+    monkeypatch.setattr(zalo_router, "assistant_turn", lambda: CountingLock())
+
+    response = await zalo_router.receive(_payload(text="xin chào"), "s3cr3t")
+    assert entered["count"] == 1
+    assert response.messages == ["chat bình thường"]
     class FakeUser:
         is_active = True
         is_admin = True
