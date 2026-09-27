@@ -188,63 +188,73 @@ async def _page_scopes(page):
     return scopes
 
 
+_INPUT_SELECTORS_JS = [
+    # Prefer explicit accessibility/placeholder hints first.
+    'textarea[placeholder*="link" i]',
+    'input[placeholder*="link" i]',
+    'textarea[placeholder*="liên kết" i]',
+    'input[placeholder*="liên kết" i]',
+    'textarea[aria-label*="link" i]',
+    'input[aria-label*="link" i]',
+    'textarea[aria-label*="liên kết" i]',
+    'input[aria-label*="liên kết" i]',
+    # Some component libraries use an editable div rather than a native input.
+    '[contenteditable="true"][role="textbox"]',
+    '[contenteditable="true"]',
+    # Last-resort native controls. Descriptor filtering below avoids obvious
+    # Sub-ID/code/search fields.
+    'textarea',
+    'input[type="url"]',
+    'input[type="text"]',
+    'input:not([type])',
+]
+_REJECTED_DESCRIPTOR_TOKENS = [
+    # Shopee exposes optional Sub ID fields near Custom Link. Do not
+    # accidentally put the product URL there. Search/header inputs are also
+    # poor fallbacks when the actual component is still loading.
+    "sub", "mã", "code", "search", "tìm kiếm", "keyword", "campaign", "chiến dịch",
+]
+# Runs entirely inside the browser in ONE round trip. The previous version did
+# one Playwright<->Chromium round trip per selector/attribute (locator.count(),
+# then is_visible()/get_attribute() x4 per match) - on a CPU-starved host each
+# of those round trips can itself take seconds, so a single poll of
+# _wait_for_custom_link_field could easily need 100+ round trips and blow
+# through the whole budget without ever actually being stuck on anything.
+_FIND_INPUT_JS = """
+([selectors, rejected]) => {
+    for (const sel of selectors) {
+        let els;
+        try { els = document.querySelectorAll(sel); } catch (e) { continue; }
+        for (const el of els) {
+            const rect = el.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) continue;
+            const style = window.getComputedStyle(el);
+            if (style.visibility === 'hidden' || style.display === 'none') continue;
+            const descriptor = [
+                el.getAttribute('placeholder'), el.getAttribute('aria-label'),
+                el.getAttribute('name'), el.getAttribute('id'),
+            ].filter(Boolean).join(' ').toLowerCase();
+            if (rejected.some((t) => descriptor.includes(t))) continue;
+            return el;
+        }
+    }
+    return null;
+}
+"""
+
+
 async def _visible_input(page):
     """Find the Custom Link source field without assuming one Shopee DOM version."""
-    selectors = [
-        # Prefer explicit accessibility/placeholder hints first.
-        'textarea[placeholder*="link" i]',
-        'input[placeholder*="link" i]',
-        'textarea[placeholder*="liên kết" i]',
-        'input[placeholder*="liên kết" i]',
-        'textarea[aria-label*="link" i]',
-        'input[aria-label*="link" i]',
-        'textarea[aria-label*="liên kết" i]',
-        'input[aria-label*="liên kết" i]',
-        # Some component libraries use an editable div rather than a native input.
-        '[contenteditable="true"][role="textbox"]',
-        '[contenteditable="true"]',
-        # Last-resort native controls. Descriptor filtering below avoids obvious
-        # Sub-ID/code/search fields.
-        'textarea',
-        'input[type="url"]',
-        'input[type="text"]',
-        'input:not([type])',
-    ]
     for scope in await _page_scopes(page):
-        for selector in selectors:
-            try:
-                locator = scope.locator(selector)
-                count = await locator.count()
-            except Exception:
-                continue
-            for idx in range(count):
-                item = locator.nth(idx)
-                try:
-                    if not await item.is_visible():
-                        continue
-                    descriptor = " ".join(
-                        filter(
-                            None,
-                            [
-                                await item.get_attribute("placeholder"),
-                                await item.get_attribute("aria-label"),
-                                await item.get_attribute("name"),
-                                await item.get_attribute("id"),
-                            ],
-                        )
-                    ).casefold()
-                    # Shopee exposes optional Sub ID fields near Custom Link. Do not
-                    # accidentally put the product URL there. Search/header inputs are
-                    # also poor fallbacks when the actual component is still loading.
-                    rejected = (
-                        "sub", "mã", "code", "search", "tìm kiếm", "keyword",
-                        "campaign", "chiến dịch",
-                    )
-                    if any(token in descriptor for token in rejected):
-                        continue
-                    return item
-                except Exception:
-                    continue
+        try:
+            handle = await scope.evaluate_handle(
+                _FIND_INPUT_JS, [_INPUT_SELECTORS_JS, _REJECTED_DESCRIPTOR_TOKENS]
+            )
+            element = handle.as_element()
+        except Exception:
+            continue
+        if element is not None:
+            return element
     return None
 
 
@@ -289,78 +299,77 @@ async def _wait_for_custom_link_field(page):
     )
 
 
-async def _click_get_link(page) -> None:
-    patterns = (
-        r"^\s*Lấy\s*link\s*$",
-        r"^\s*Lấy\s*liên\s*kết\s*$",
-        r"^\s*Tạo\s*link\s*$",
-        r"^\s*Tạo\s*liên\s*kết\s*$",
-        r"^\s*Get\s*link\s*$",
-        r"^\s*Generate\s*link\s*$",
-        r"^\s*Convert\s*$",
-    )
-    for scope in await _page_scopes(page):
-        for pattern in patterns:
-            try:
-                candidate = scope.get_by_role("button", name=re.compile(pattern, re.IGNORECASE))
-                count = await candidate.count()
-            except Exception:
-                continue
-            for idx in range(count):
-                button = candidate.nth(idx)
-                try:
-                    if await button.is_visible() and await button.is_enabled():
-                        await button.click()
-                        return
-                except Exception:
-                    continue
+_BUTTON_TEXTS_JS = [
+    "lấy link", "lấy liên kết", "tạo link", "tạo liên kết",
+    "get link", "generate link", "convert",
+]
+# Same idea as _FIND_INPUT_JS: one round trip instead of up to
+# scopes x patterns role-lookups (get_by_role does accessibility-tree work,
+# which is even slower per round trip than a plain DOM query) plus a second
+# full scopes x labels fallback pass for div/span-styled buttons. This single
+# pass covers both real buttons and styled divs/spans/links at once.
+_FIND_BUTTON_JS = """
+([texts]) => {
+    const isVisible = (el) => {
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        const style = window.getComputedStyle(el);
+        return style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    const nodes = document.querySelectorAll('button, [role="button"], div, span, a');
+    for (const el of nodes) {
+        const text = norm(el.textContent);
+        if (!text || text.length > 40 || !texts.includes(text)) continue;
+        if (!isVisible(el)) continue;
+        if (el.disabled) continue;
+        if (el.getAttribute('aria-disabled') === 'true') continue;
+        return el;
+    }
+    return null;
+}
+"""
 
-    # Some Shopee UI versions render a div/span styled as a button.
+
+async def _click_get_link(page) -> None:
     for scope in await _page_scopes(page):
-        for label in (
-            "Lấy link", "Lấy liên kết", "Tạo link", "Tạo liên kết",
-            "Get link", "Generate link", "Convert",
-        ):
-            try:
-                candidate = scope.get_by_text(label, exact=True)
-                count = await candidate.count()
-            except Exception:
-                continue
-            for idx in range(count):
-                node = candidate.nth(idx)
-                try:
-                    if await node.is_visible():
-                        await node.click()
-                        return
-                except Exception:
-                    continue
+        try:
+            handle = await scope.evaluate_handle(_FIND_BUTTON_JS, [_BUTTON_TEXTS_JS])
+            element = handle.as_element()
+        except Exception:
+            continue
+        if element is not None:
+            await element.click()
+            return
     raise ShopeeUiChanged("Không tìm thấy nút “Lấy link” trên Shopee Affiliate.")
+
+
+_EXTRACT_CANDIDATES_JS = """
+() => {
+    const out = [];
+    document.querySelectorAll('input, textarea').forEach((el) => {
+        if (el.value) out.push(el.value);
+    });
+    document.querySelectorAll('a[href]').forEach((el) => {
+        if (el.href) out.push(el.href);
+    });
+    if (document.body && document.body.innerText) out.push(document.body.innerText);
+    return out;
+}
+"""
 
 
 async def _extract_affiliate_url(page, source_url: str) -> str | None:
     candidates: list[str] = []
     for scope in await _page_scopes(page):
         try:
-            values = await scope.locator("input, textarea").evaluate_all(
-                "els => els.map(e => e.value || '').filter(Boolean)"
-            )
+            values = await scope.evaluate(_EXTRACT_CANDIDATES_JS)
+        except Exception:
+            continue
+        if values:
             candidates.extend(str(value) for value in values)
-        except Exception:
-            pass
-        try:
-            hrefs = await scope.locator("a[href]").evaluate_all(
-                "els => els.map(e => e.href || '').filter(Boolean)"
-            )
-            candidates.extend(str(value) for value in hrefs)
-        except Exception:
-            pass
-        try:
-            body_text = await scope.locator("body").inner_text(timeout=2_000)
-            candidates.append(body_text)
-        except Exception:
-            pass
     for candidate in candidates:
-        for match in _AFFILIATE_URL_RE.findall(str(candidate)):
+        for match in _AFFILIATE_URL_RE.findall(candidate):
             if match != source_url:
                 return match.rstrip(".,);]}")
     return None
