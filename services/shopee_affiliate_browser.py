@@ -473,22 +473,37 @@ async def _convert_on_page(page, destination_url: str) -> str:
     raise ShopeeUiChanged("Shopee không trả về link affiliate rút gọn trong thời gian chờ.")
 
 
-def _log_memory(tag: str) -> None:
-    """Log MemAvailable from /proc/meminfo. The abrupt, no-shutdown-log restart
-    pattern seen in production (supervisord just respawns 'web'/'zalo-gateway'
-    with no SIGTERM/graceful-stop lines first) is the signature of an OOM
-    kill, not a timeout - Chromium plus the Python bot plus the Node Zalo
-    gateway can add up to more than a small Render instance's RAM. This makes
-    that visible in the logs instead of guessing from Render's Metrics tab.
-    """
+def _read_int(path: str) -> int | None:
     try:
-        with open("/proc/meminfo") as fh:
-            for line in fh:
-                if line.startswith("MemAvailable:"):
-                    logger.info("Shopee convert: [mem] %s (%s)", line.strip(), tag)
-                    return
+        with open(path) as fh:
+            raw = fh.read().strip()
+        return None if raw in {"", "max"} else int(raw)
     except Exception:
-        pass
+        return None
+
+
+def _log_memory(tag: str) -> None:
+    """Log container memory usage vs its REAL limit (cgroup), not /proc/meminfo.
+
+    Inside a container /proc/meminfo reports the physical HOST's RAM (e.g. 16GB
+    on a Render node), not the plan's limit (512MB on Free), so it can never
+    show an OOM coming. The limit is enforced by the cgroup.
+    """
+    usage = _read_int("/sys/fs/cgroup/memory.current")  # cgroup v2
+    limit = _read_int("/sys/fs/cgroup/memory.max")
+    if usage is None:  # cgroup v1
+        usage = _read_int("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+        limit = _read_int("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+    if usage is None:
+        return
+    if limit is not None and limit > 1 << 50:  # v1 reports a huge number for "no limit"
+        limit = None
+    logger.info(
+        "Shopee convert: [mem] container dùng %.0fMB / giới hạn %s (%s)",
+        usage / 1048576,
+        f"{limit / 1048576:.0f}MB" if limit else "không rõ",
+        tag,
+    )
 
 
 async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, str]:
@@ -585,6 +600,16 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
             )
     except PlaywrightTimeoutError as exc:
         raise ShopeeAffiliateError("Shopee Affiliate phản hồi quá chậm hoặc giao diện chưa tải xong.") from exc
+    except ShopeeAffiliateError:
+        raise
+    except Exception as exc:
+        # Anything else (engine-specific Playwright error, browser crash, ...)
+        # used to escape as a raw 500 from the Zalo bridge with no message for
+        # the user. Log the real traceback and surface a readable error.
+        logger.exception("Shopee convert: lỗi không mong đợi trong lúc chạy %s", engine_name)
+        raise ShopeeAffiliateError(
+            f"Lỗi khi chạy browser ({engine_name}): {type(exc).__name__}: {str(exc)[:200]}"
+        ) from exc
     finally:
         logger.info(
             "Shopee convert: đóng browser sau %.1fs tổng cộng cho batch %d link (%d link xong)",
