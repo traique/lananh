@@ -236,8 +236,10 @@ async def test_maybe_search_passes_user_id_into_rewrite(monkeypatch):
         captured["history_text"] = history_text
         return ["giá cổ phiếu VNM hôm nay", "giá VNM mới nhất"]
 
-    async def fake_search_web(primary, *, extra_queries=None, deep_read=False):
+    async def fake_search_web(primary, *, extra_queries=None, deep_read=False, topic="general", time_range=None):
         captured["primary"] = primary
+        captured["topic"] = topic
+        captured["time_range"] = time_range
         captured["extra_queries"] = extra_queries
         return web_search.SearchGrounding("grounding", "tavily", True)
 

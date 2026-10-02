@@ -145,6 +145,11 @@ async def build_sector_context(sector_keys: list[str]) -> SectorContext | None:
     if cached and time.monotonic() - cached[0] < _SECTOR_CACHE_TTL:
         return cached[1]
     ctx = await _build_sector_context_uncached(sector_keys)
+    now = time.monotonic()
+    for key in [key for key, (ts, _) in _sector_cache.items() if now - ts >= _SECTOR_CACHE_TTL]:
+        _sector_cache.pop(key, None)
+    if len(_sector_cache) >= 128:
+        _sector_cache.pop(min(_sector_cache, key=lambda key: _sector_cache[key][0]), None)
     _sector_cache[cache_key] = (time.monotonic(), ctx)
     return ctx
 

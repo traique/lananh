@@ -6,12 +6,25 @@ import asyncio
 from dataclasses import dataclass
 import json
 import os
+import logging
+from collections.abc import Awaitable, Callable
 
 import httpx
 
 
 class FacebookPublishError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class FacebookPublicationUncertain(FacebookPublishError):
+    def __init__(self, message: str, *, post_id: str | None = None):
+        super().__init__(message)
+        self.post_id = post_id
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -90,7 +103,10 @@ async def _graph_post(client: httpx.AsyncClient, url: str, **kwargs) -> dict:
             detail = response.json().get("error", {}).get("message")
         except Exception:
             detail = None
-        raise FacebookPublishError(detail or f"Facebook Graph API HTTP {response.status_code}")
+        raise FacebookPublishError(
+            detail or f"Facebook Graph API HTTP {response.status_code}",
+            status_code=response.status_code,
+        )
     data = response.json()
     if not isinstance(data, dict):
         raise FacebookPublishError("Facebook Graph API trả dữ liệu không hợp lệ")
@@ -161,7 +177,7 @@ async def _read_post_status(
                     isinstance(item, dict) and str(item.get("id") or "") == post_id
                     for item in items
                 )
-        except FacebookPublishError:
+        except (FacebookPublishError, httpx.HTTPError):
             # A read-back permission/API change should not erase the stronger
             # per-post ``is_published`` signal. Surface it as unknown instead.
             in_published_posts = None
@@ -220,44 +236,23 @@ async def _verify_new_post(
 
 
 async def publish_page_post(
-    content: str, media: list[tuple[str, bytes]], page_key: str = "default"
+    content: str, media: list[tuple[str, bytes]], page_key: str = "default", *,
+    before_create: Callable[[], Awaitable[None]] | None = None,
+    on_created: Callable[[str], Awaitable[None]] | None = None,
 ) -> FacebookPublishedPost:
     page_id, token, version = _settings(page_key)
     base = f"https://graph.facebook.com/{version}"
     timeout = httpx.Timeout(60.0, connect=15.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         if not media:
-            data = await _graph_post(
-                client,
-                f"{base}/{page_id}/feed",
-                # Be explicit. The Graph API normally defaults to published,
-                # but this prevents accidental draft/dark-post semantics when
-                # API behaviour changes or extra parameters are introduced.
-                data={
+            return await _create_and_verify(
+                client, base=base, page_id=page_id, token=token,
+                payload={
                     "message": content,
                     "published": "true",
                     "access_token": token,
                 },
-            )
-            post_id = data.get("id")
-            if not post_id:
-                raise FacebookPublishError("Facebook không trả về post id")
-            status = await _verify_new_post(
-                client,
-                base=base,
-                page_id=page_id,
-                token=token,
-                post_id=str(post_id),
-            )
-            if status.is_published is False:
-                raise FacebookPublishError(
-                    "Facebook đã tạo post nhưng is_published=false; bot không đánh dấu là đã đăng."
-                )
-            return FacebookPublishedPost(
-                post_id=str(post_id),
-                permalink_url=status.permalink_url,
-                visibility_confirmed=status.public_visibility_confirmed,
-                status=status,
+                before_create=before_create, on_created=on_created,
             )
 
         photo_ids: list[str] = []
@@ -283,25 +278,44 @@ async def publish_page_post(
         }
         for index, photo_id in enumerate(photo_ids):
             payload[f"attached_media[{index}]"] = json.dumps({"media_fbid": photo_id})
-        data = await _graph_post(client, f"{base}/{page_id}/feed", data=payload)
-        post_id = data.get("id")
-        if not post_id:
-            raise FacebookPublishError("Facebook không trả về post id")
+        return await _create_and_verify(
+            client, base=base, page_id=page_id, token=token, payload=payload,
+            before_create=before_create, on_created=on_created,
+        )
 
+
+async def _create_and_verify(
+    client, *, base, page_id, token, payload, before_create, on_created,
+) -> FacebookPublishedPost:
+    if before_create is not None:
+        await before_create()
+    try:
+        data = await _graph_post(client, f"{base}/{page_id}/feed", data=payload)
+    except FacebookPublishError as exc:
+        if exc.status_code is not None and exc.status_code < 500:
+            raise
+        raise FacebookPublicationUncertain("Chưa biết Facebook đã tạo bài hay chưa; cần đối soát.") from exc
+    except Exception as exc:
+        raise FacebookPublicationUncertain("Chưa biết Facebook đã tạo bài hay chưa; cần đối soát.") from exc
+    post_id = str(data.get("id") or "")
+    if not post_id:
+        raise FacebookPublicationUncertain("Facebook không trả post ID; không tự gửi lại thao tác tạo bài.")
+    if on_created is not None:
+        try:
+            await on_created(post_id)
+        except Exception as exc:
+            raise FacebookPublicationUncertain(
+                f"Đã tạo Facebook Post ID {post_id} nhưng chưa lưu được trạng thái.", post_id=post_id,
+            ) from exc
+    try:
         status = await _verify_new_post(
             client,
             base=base,
             page_id=page_id,
             token=token,
-            post_id=str(post_id),
+            post_id=post_id,
         )
-        if status.is_published is False:
-            raise FacebookPublishError(
-                "Facebook đã tạo post nhưng is_published=false; bot không đánh dấu là đã đăng."
-            )
-        return FacebookPublishedPost(
-            post_id=str(post_id),
-            permalink_url=status.permalink_url,
-            visibility_confirmed=status.public_visibility_confirmed,
-            status=status,
-        )
+    except Exception as exc:
+        logger.warning("Facebook Post ID %s đã tạo; đọc trạng thái lỗi (%s).", post_id, type(exc).__name__)
+        status = FacebookPostStatus(post_id, None, None, None, None, None)
+    return FacebookPublishedPost(post_id, status.permalink_url, status.public_visibility_confirmed, status)

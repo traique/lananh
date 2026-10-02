@@ -15,7 +15,7 @@ from services import tools  # noqa: E402
 async def test_save_note_duoc_route_va_thuc_thi(monkeypatch):
     calls = []
 
-    async def fake_add_note(uid, content):
+    async def fake_add_note(uid, content, **delivery):
         calls.append(("add_note", uid, content))
 
     async def fake_generate_utility_json(prompt):
@@ -59,7 +59,7 @@ async def test_set_reminder_toi_thieu_1_phut(monkeypatch):
     đặt được reminder tối thiểu 1 phút, không được lưu due_at ở quá khứ."""
     calls = []
 
-    async def fake_add_reminder(uid, message, due_at):
+    async def fake_add_reminder(uid, message, due_at, **delivery):
         calls.append((uid, message, due_at))
 
     async def fake_generate(prompt):

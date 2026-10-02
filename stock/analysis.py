@@ -428,16 +428,16 @@ def is_portfolio_fact(key: str) -> bool:
 
 
 async def _is_holding_symbol(user_id: int | None, symbol: str) -> bool:
-    """Đoán user có đang giữ `symbol` không, dựa trên fact danh mục đã lưu
-    trong trí nhớ dài hạn - dùng để stock_policy.evaluate_policy() phân biệt
-    HOLD (đang giữ, tín hiệu chưa đủ rõ thì giữ nguyên) với NO_TRADE/SELL
-    (đang cân nhắc mở mới, không có gì để bán). Suy đoán có thể sai (chưa
-    từng nhắc trong chat, hoặc đã bán nhưng chưa cập nhật trí nhớ) - chấp
-    nhận được vì chỉ ảnh hưởng action/label hiển thị, không đổi ngưỡng
-    confidence hay dữ liệu đầu vào."""
+    """Prefer recorded positions; old memory only applies to unmanaged symbols."""
     if user_id is None:
         return False
     try:
+        from stock import portfolio
+        holding = await portfolio.get_holding(user_id, symbol)
+        if holding is not None:
+            return holding.quantity > 0
+        if await portfolio.was_closed(user_id, symbol):
+            return False
         facts = await db.get_facts(user_id)
     except Exception:
         return False

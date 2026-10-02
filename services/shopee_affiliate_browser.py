@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from urllib.parse import parse_qs, parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -380,7 +382,7 @@ _EXTRACT_CANDIDATES_JS = """
 """
 
 
-async def _extract_affiliate_url(page, source_url: str) -> str | None:
+async def _affiliate_candidates(page) -> list[str]:
     candidates: list[str] = []
     for scope in await _page_scopes(page):
         try:
@@ -389,21 +391,37 @@ async def _extract_affiliate_url(page, source_url: str) -> str | None:
             continue
         if values:
             candidates.extend(str(value) for value in values)
-    for candidate in candidates:
-        for match in _AFFILIATE_URL_RE.findall(candidate):
-            if match != source_url:
-                return match.rstrip(".,);]}")
+    return list(dict.fromkeys(
+        match.rstrip(".,);]}")
+        for candidate in candidates for match in _AFFILIATE_URL_RE.findall(candidate)
+    ))
+
+
+async def _extract_affiliate_url(page, source_url: str, previous: set[str] | None = None) -> str | None:
+    for match in await _affiliate_candidates(page):
+        if match != source_url and match not in (previous or set()):
+            return match
     return None
 
 
 async def _assert_logged_in(page) -> None:
+    scopes = await _page_scopes(page)
+    for scope in scopes:
+        parts = urlsplit(scope.url)
+        path = parts.path.casefold()
+        if _is_shopee_host(parts.hostname) and (
+            path.startswith("/verify/") or path.startswith("/captcha")
+        ):
+            logger.warning("Shopee yêu cầu xác minh truy cập tại %s", path)
+            raise ShopeeVerificationRequired(
+                "Shopee đang chặn truy cập bằng bước xác minh (/verify/ hoặc CAPTCHA). "
+                "Đây không phải lỗi thiếu ô Custom Link; tăng timeout không giải quyết được. "
+                "Bot không tự vượt bước xác minh này. Browser headless qua CDP cũng có thể bị chặn. "
+                "Có thể nhập link bằng /fb_link <post_id> <affiliate_url> trong lúc chưa truy cập được."
+            )
     url = page.url.casefold()
     if "login" in url or "signin" in url:
         raise ShopeeSessionExpired("Phiên Shopee Affiliate đã hết hạn; hãy nạp lại session trong /admin.")
-    try:
-        text = (await page.locator("body").inner_text(timeout=3_000)).casefold()
-    except Exception:
-        return
     challenge_markers = (
         "captcha",
         "xác minh bảo mật",
@@ -411,14 +429,19 @@ async def _assert_logged_in(page) -> None:
         "verify you are human",
         "xác nhận bạn không phải robot",
     )
-    if any(marker in text for marker in challenge_markers):
-        raise ShopeeVerificationRequired(
-            "Shopee đang yêu cầu CAPTCHA/xác minh thủ công; bot không tự vượt bước này."
-        )
     # Login pages occasionally keep the custom-link URL while rendering auth in-place.
     login_markers = ("đăng nhập bằng sms", "đăng nhập vào shopee", "login with sms")
-    if any(marker in text for marker in login_markers):
-        raise ShopeeSessionExpired("Phiên Shopee Affiliate đã hết hạn; hãy nạp lại session trong /admin.")
+    for scope in scopes:
+        try:
+            text = (await scope.locator("body").inner_text(timeout=3_000)).casefold()
+        except Exception:
+            continue
+        if any(marker in text for marker in challenge_markers):
+            raise ShopeeVerificationRequired(
+                "Shopee đang yêu cầu CAPTCHA/xác minh thủ công; bot không tự vượt bước này."
+            )
+        if any(marker in text for marker in login_markers):
+            raise ShopeeSessionExpired("Phiên Shopee Affiliate đã hết hạn; hãy nạp lại session trong /admin.")
 
 
 async def _convert_on_page(page, destination_url: str) -> str:
@@ -451,13 +474,14 @@ async def _convert_on_page(page, destination_url: str) -> str:
     field = await _wait_for_custom_link_field(page)
     logger.info("Shopee convert: đã thấy ô Custom Link sau %.1fs tổng cộng", loop.time() - t0)
     await field.fill(destination_url)
+    previous = set(await _affiliate_candidates(page))
     await _click_get_link(page)
     logger.info("Shopee convert: đã bấm Lấy link, chờ kết quả (tổng %.1fs)", loop.time() - t0)
 
     deadline = loop.time() + config.SHOPEE_BROWSER_RESULT_TIMEOUT_SEC
     while loop.time() < deadline:
         await _assert_logged_in(page)
-        affiliate_url = await _extract_affiliate_url(page, destination_url)
+        affiliate_url = await _extract_affiliate_url(page, destination_url, previous)
         if affiliate_url:
             if (urlsplit(affiliate_url).hostname or "").lower() != "s.shopee.vn":
                 raise ShopeeUiChanged("Shopee trả link không phải dạng s.shopee.vn như yêu cầu.")
@@ -471,6 +495,48 @@ async def _convert_on_page(page, destination_url: str) -> str:
         config.SHOPEE_BROWSER_RESULT_TIMEOUT_SEC, page.url,
     )
     raise ShopeeUiChanged("Shopee không trả về link affiliate rút gọn trong thời gian chờ.")
+
+
+async def _verify_affiliate_destination(context, affiliate_url: str, canonical_key: str) -> None:
+    """Resolve in the remote browser, stopping before the product page loads."""
+    page = await context.new_page()
+    verified = False
+    hops = 0
+
+    async def check_navigation(route):
+        nonlocal verified, hops
+        request = route.request
+        if not request.is_navigation_request():
+            await route.abort()
+            return
+        hops += 1
+        try:
+            url = await asyncio.to_thread(_require_shopee_url, request.url)
+        except ShopeeAffiliateError:
+            await route.abort()
+            return
+        if canonical_key_from_url(url) == canonical_key:
+            verified = True
+            await route.abort()
+        elif hops > _MAX_REDIRECTS or urlsplit(url).path.casefold().startswith(("/verify/", "/captcha")):
+            await route.abort()
+        else:
+            await route.continue_()
+
+    try:
+        await page.route("**/*", check_navigation)
+        try:
+            await page.goto(affiliate_url, wait_until="domcontentloaded",
+                            timeout=config.SHOPEE_RESOLVE_TIMEOUT_SEC * 1000)
+        except Exception:
+            # Aborting the matching navigation deliberately makes goto fail.
+            pass
+        if not verified:
+            raise ShopeeAffiliateError(
+                "Không xác minh được link affiliate trỏ đúng sản phẩm nguồn; chưa lưu vào cache."
+            )
+    finally:
+        await _close_browser_resource(page, "verification page")
 
 
 def _read_int(path: str) -> int | None:
@@ -506,7 +572,19 @@ def _log_memory(tag: str) -> None:
     )
 
 
+async def _close_browser_resource(resource, label: str) -> None:
+    try:
+        await resource.close()
+    except Exception:
+        logger.debug("Không đóng được Shopee %s", label, exc_info=True)
+
+
 async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, str]:
+    if not config.SHOPEE_BROWSER_CDP_URL and os.getenv("SHOPEE_LOCAL_BROWSERS_INSTALLED", "true") == "false":
+        raise ShopeeAffiliateError(
+            "Image Render 512 MB dùng browser riêng. Hãy cấu hình SHOPEE_BROWSER_CDP_URL "
+            "trỏ tới service shopee-web trước khi chuyển link."
+        )
     state = await shopee_affiliate_session.load()
     if not state:
         raise ShopeeSessionMissing(
@@ -529,13 +607,26 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
     engine_name = config.SHOPEE_BROWSER_ENGINE
     _log_memory(f"trước khi khởi động {engine_name}")
     try:
-        async with async_playwright() as playwright:
+        async with AsyncExitStack() as resources:
+            playwright = await resources.enter_async_context(async_playwright())
             if config.SHOPEE_BROWSER_CDP_URL:
                 logger.info(
-                    "Shopee convert: đang kết nối browser bên ngoài qua CDP (%s) cho %d link...",
-                    config.SHOPEE_BROWSER_CDP_URL, len(resolved),
+                    "Shopee convert: đang kết nối browser bên ngoài qua CDP cho %d link...",
+                    len(resolved),
                 )
-                browser = await playwright.chromium.connect_over_cdp(config.SHOPEE_BROWSER_CDP_URL)
+                try:
+                    browser = await playwright.chromium.connect_over_cdp(
+                        config.SHOPEE_BROWSER_CDP_URL,
+                        timeout=_browser_launch_budget_sec() * 1000,
+                    )
+                except Exception as exc:
+                    # The shopee-web endpoint contains CDP_TOKEN in its path.
+                    # Playwright errors include that URL; never echo them to logs/chat.
+                    logger.warning("Shopee convert: kết nối CDP thất bại (%s)", type(exc).__name__)
+                    raise ShopeeAffiliateError(
+                        "Không kết nối được browser CDP. Kiểm tra service shopee-web, "
+                        "endpoint/token và việc browser đang bận; Render Free có thể đang khởi động lại."
+                    ) from None
             else:
                 logger.info("Shopee convert: đang khởi động %s cho %d link...", engine_name, len(resolved))
                 if engine_name == "webkit":
@@ -570,6 +661,7 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
                         ],
                     }
                 browser = await engine.launch(headless=True, **launch_kwargs)
+            resources.push_async_callback(_close_browser_resource, browser, "browser")
             logger.info("Shopee convert: %s đã sẵn sàng sau %.1fs", engine_name, loop.time() - t_start)
             _log_memory(f"sau khi {engine_name} sẵn sàng")
             context = await browser.new_context(
@@ -577,16 +669,20 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
                 viewport={"width": 1024, "height": 768},
                 locale="vi-VN",
             )
+            resources.push_async_callback(_close_browser_resource, context, "context")
             context.set_default_timeout(config.SHOPEE_BROWSER_ACTION_TIMEOUT_SEC * 1000)
-            page = await context.new_page()
-            await page.route("**/*", _block_heavy_resources)
-
             for idx, item in enumerate(resolved, 1):
                 t_item = loop.time()
                 logger.info(
                     "Shopee convert: [%d/%d] bắt đầu %s", idx, len(resolved), item.destination_url
                 )
-                affiliate_url = await _convert_on_page(page, item.destination_url)
+                page = await context.new_page()
+                try:
+                    await page.route("**/*", _block_heavy_resources)
+                    affiliate_url = await _convert_on_page(page, item.destination_url)
+                finally:
+                    await _close_browser_resource(page, "conversion page")
+                await _verify_affiliate_destination(context, affiliate_url, item.canonical_key)
                 results[item.canonical_key] = affiliate_url
                 logger.info(
                     "Shopee convert: [%d/%d] xong sau %.1fs (tổng batch %.1fs)",
@@ -615,17 +711,13 @@ async def _launch_and_convert(resolved: list[ResolvedShopeeUrl]) -> dict[str, st
             "Shopee convert: đóng browser sau %.1fs tổng cộng cho batch %d link (%d link xong)",
             loop.time() - t_start, len(resolved), len(results),
         )
-        if context is not None:
-            try:
-                await context.close()
-            except Exception:
-                logger.debug("Không đóng được Shopee browser context", exc_info=True)
-        if browser is not None:
-            try:
-                await browser.close()
-            except Exception:
-                logger.debug("Không đóng được Shopee browser", exc_info=True)
     return results
+
+
+def _browser_launch_budget_sec() -> float:
+    # Render Free wake-up (~1 minute) happens before shopee-web launches Chromium.
+    minimum = 120 if config.SHOPEE_BROWSER_CDP_URL else 1
+    return max(minimum, config.SHOPEE_BROWSER_LAUNCH_BUDGET_SEC)
 
 
 def _browser_batch_timeout_sec(item_count: int) -> float:
@@ -651,8 +743,9 @@ def _browser_batch_timeout_sec(item_count: int) -> float:
         + config.SHOPEE_BROWSER_FIELD_WAIT_SEC  # SPA mount wait
         + config.SHOPEE_BROWSER_ACTION_TIMEOUT_SEC  # fill/click
         + config.SHOPEE_BROWSER_RESULT_TIMEOUT_SEC  # result poll
+        + config.SHOPEE_RESOLVE_TIMEOUT_SEC  # verify the generated product destination
     )
-    launch_budget = config.SHOPEE_BROWSER_LAUNCH_BUDGET_SEC  # Chromium cold start on a small Render instance
+    launch_budget = _browser_launch_budget_sec()
     return max(
         config.SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC,
         launch_budget + per_item * max(1, item_count),

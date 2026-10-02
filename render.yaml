@@ -91,7 +91,15 @@ services:
       - key: ROUTER9_STEP_DELAY_SEC
         value: "3"
       - key: ROUTER9_MAX_CONCURRENCY
-        value: "4"
+        value: "2"
+      - key: GROQ_MAX_CONCURRENCY
+        value: "2"
+      - key: OPENROUTER_MAX_CONCURRENCY
+        value: "2"
+      - key: VNSTOCK_MAX_CONCURRENCY
+        value: "1"
+      - key: ZALO_NODE_HEAP_MB
+        value: "96"
       - key: VNSTOCK_API_KEY
         sync: false
       - key: GROQ_API_KEY
@@ -139,16 +147,11 @@ services:
       # Shopee Affiliate Custom Link browser automation (không cần Open API).
       - key: SHOPEE_AFFILIATE_AUTO_ENABLED
         value: "true"
-      # "chromium" hoặc "webkit" - đang thử webkit để giảm RAM, nghi là
-      # nguyên nhân OOM-kill trên Render Free. Đổi lại "chromium" không cần
-      # build lại image, cả 2 engine đều đã cài sẵn.
+      # Chromium chạy ở Render service riêng; nhập endpoint CDP khi deploy.
       - key: SHOPEE_BROWSER_ENGINE
-        value: webkit
-      # Tuỳ chọn nâng cao: để trống theo mặc định. Điền vào (vd
-      # ws://host-khac:9222) để kết nối một browser chạy sẵn ở nơi khác qua
-      # CDP thay vì tự mở trong container này - ưu tiên hơn SHOPEE_BROWSER_ENGINE.
+        value: chromium
       - key: SHOPEE_BROWSER_CDP_URL
-        value: ""
+        sync: false
       - key: SHOPEE_AFFILIATE_CUSTOM_LINK_URL
         value: https://affiliate.shopee.vn/offer/custom_link
       - key: SHOPEE_RESOLVE_TIMEOUT_SEC

@@ -128,9 +128,11 @@ def _evict_expired(cache: dict, ttl: float) -> None:
     liên tục, không restart theo lịch). Không cần lock/task nền riêng vì chỉ
     gọi ngay trước khi ghi entry mới, đủ để chặn phình không giới hạn."""
     now = time.monotonic()
-    expired = [k for k, (ts, _) in cache.items() if now - ts >= ttl]
+    expired = [k for k, entry in cache.items() if now - entry[0] >= ttl]
     for k in expired:
         cache.pop(k, None)
+    while len(cache) >= 256:
+        cache.pop(min(cache, key=lambda key: cache[key][0]), None)
 
 
 async def fetch_ohlcv(symbol: str, days: int = 90) -> OhlcvSeries:

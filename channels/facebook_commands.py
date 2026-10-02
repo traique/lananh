@@ -13,6 +13,7 @@ from core import config
 from services.channel_result import ChannelResult
 from services.facebook_page_service import (
     FacebookPublishError,
+    FacebookPublicationUncertain,
     configured_page_keys,
     inspect_page_post,
     publish_page_post,
@@ -133,6 +134,26 @@ async def prepare_post(account_id: str, post_id: int) -> None:
             await _admin_notification_callback(preview)
         except Exception:
             logger.warning("Không gửi được preview Facebook tới kênh admin phụ.", exc_info=True)
+
+
+def _replace_caption_links(content, replacements, previous):
+    for source, affiliate in replacements.items():
+        if source in content:
+            content = content.replace(source, affiliate)
+        elif affiliate in content:
+            continue
+        elif previous.get(source) and previous[source] in content and list(previous.values()).count(previous[source]) == 1:
+            content = content.replace(previous[source], affiliate)
+        else:
+            raise ValueError("Caption không còn link nguồn hoặc cache cũ trùng giữa nhiều sản phẩm. "
+                             "Dùng /fb_sua <post_id> <caption chứa lại link Shopee nguồn> rồi /fb_link.")
+    return content
+
+
+async def _previous_caption_links(account_id, row, sources):
+    if any(source not in row["processed_content"] for source in sources):
+        return await facebook_repository.get_previous_affiliate_links(account_id, sources)
+    return {}
 
 
 async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelResult | None:
@@ -334,9 +355,11 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
             ])
         # Never rely only on the cache flag: make sure the actual caption being
         # posted contains the cached official Shopee short links.
-        content = current["processed_content"]
-        for source_url, affiliate_url in cached.items():
-            content = content.replace(source_url, affiliate_url)
+        previous = await _previous_caption_links(account_id, current, source_urls)
+        try:
+            content = _replace_caption_links(current["processed_content"], cached, previous)
+        except ValueError as exc:
+            return ChannelResult([str(exc)])
         if content != current["processed_content"]:
             await facebook_repository.update_content(account_id, post_id, content)
 
@@ -354,52 +377,51 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
                 return ChannelResult([f"Bài #{post_id} đã đăng xong trên tất cả page rồi. Dùng /fb_check {post_id} để xem lại."])
             return ChannelResult([f"Bài #{post_id} đã được xử lý hoặc đang đăng."])
 
-        # Add a target row for every page currently configured. Rows for
-        # pages that already succeeded or already failed on a previous
-        # /fb_ok run are left exactly as they are.
-        await facebook_repository.ensure_targets(post_id, page_keys)
-        targets = {t["page_key"]: t for t in await facebook_repository.list_targets(post_id)}
-        to_attempt = [key for key in page_keys if targets[key]["status"] != "POSTED"]
-        already_posted = [key for key in page_keys if targets[key]["status"] == "POSTED"]
-
-        media_rows = await facebook_repository.get_media(post_id)
-        media = [(row["mime_type"], bytes(row["content"])) for row in media_rows]
-
-        lines = [f"📤 Đang đăng bài #{post_id} lên {len(page_keys)} Facebook Page..."]
-        for page_key in already_posted:
-            t = targets[page_key]
-            lines.append(f"⏭️ Page '{page_key}': đã đăng trước đó (Post ID: {t['facebook_post_id']}), không đụng tới.")
-
-        failed_keys: list[str] = []
-        for page_key in to_attempt:
+        token = claimed["claim_token"]
+        try:
+            async with facebook_repository.keep_post_claim(post_id, token):
+                return await _publish_claimed(account_id, post_id, claimed, page_keys, token)
+        except Exception as exc:
+            logger.warning("Facebook queue #%s xử lý gián đoạn (%s).", post_id, type(exc).__name__)
             try:
-                published = await publish_page_post(claimed["processed_content"], media, page_key)
-            except Exception as exc:
-                await facebook_repository.record_target_error(post_id, page_key, str(exc))
-                failed_keys.append(page_key)
-                lines.append(f"❌ Page '{page_key}': đăng thất bại — {exc}")
-                continue
-            await facebook_repository.record_target_posted(
-                post_id, page_key, published.post_id, published.permalink_url
-            )
-            detail = f"✅ Page '{page_key}': đã đăng. Post ID: {published.post_id}"
-            if published.permalink_url:
-                detail += f" — {published.permalink_url}"
-            if not published.visibility_confirmed:
-                detail += (
-                    f" (⚠️ chưa xác minh chắc chắn published/public, dùng /fb_check {post_id} để kiểm tra lại)"
-                )
-            lines.append(detail)
+                await facebook_repository.release_post_claim(account_id, post_id, token, str(exc))
+            except Exception:
+                logger.warning("Không giải phóng được Facebook claim #%s; lease sẽ phục hồi.", post_id)
+            return ChannelResult([
+                f"⚠️ Bài #{post_id} bị gián đoạn. Bài đã tạo sẽ không được gửi lại; "
+                f"dùng /fb_check {post_id} rồi /fb_ok {post_id} để tiếp tục các page an toàn."
+            ])
 
-        overall = await facebook_repository.finalize_post_status(account_id, post_id)
-        if overall == "POSTED":
-            lines.append(f"🎉 Bài #{post_id} đã đăng xong trên tất cả {len(page_keys)} page.")
-        else:
-            lines.append(
-                f"⚠️ Page lỗi: {', '.join(failed_keys)}. Bài #{post_id} vẫn được giữ, các page đã đăng OK sẽ không bị đăng lại. "
-                f"Chạy lại /fb_ok {post_id} để chỉ thử lại (các) page lỗi."
-            )
-        return ChannelResult(["\n".join(lines)])
+    if command == "/fb_reconcile":
+        parts = raw.split()
+        if len(parts) != 4 or not parts[1].isdigit():
+            return ChannelResult(["Cú pháp: /fb_reconcile <post_id> <page_key> <facebook_post_id>"])
+        post_id, page_key, facebook_id = int(parts[1]), parts[2], parts[3]
+        row = await facebook_repository.get_post(account_id, post_id)
+        if not row:
+            return ChannelResult([f"Không tìm thấy bài #{post_id}."])
+        claimed = await facebook_repository.claim_post(account_id, post_id)
+        if not claimed:
+            return ChannelResult(["Lượt đăng đang chạy hoặc bài đã xử lý; dùng /fb_check để xem trạng thái."])
+        token = claimed["claim_token"]
+        try:
+            async with facebook_repository.keep_post_claim(post_id, token):
+                targets = await facebook_repository.list_targets(post_id)
+                target = next((t for t in targets if t["page_key"] == page_key), None)
+                if not target or target["status"] != "UNKNOWN":
+                    return ChannelResult(["Chỉ đối soát target có trạng thái UNKNOWN."])
+                status = await inspect_page_post(facebook_id, page_key)
+                if status.in_published_posts is not True:
+                    return ChannelResult(["Chưa xác nhận Post ID nằm trong published_posts của Page đã chọn."])
+                await facebook_repository.record_target_posted(
+                    post_id, page_key, facebook_id, status.permalink_url, claim_token=token,
+                )
+                await facebook_repository.finalize_post_status(account_id, post_id, claim_token=token)
+        except Exception as exc:
+            return ChannelResult([f"Không xác minh được Post ID: {type(exc).__name__}."])
+        finally:
+            await facebook_repository.release_post_claim(account_id, post_id, token, "Đối soát chưa hoàn tất.")
+        return ChannelResult([f"Đã đối soát bài #{post_id}, Page '{page_key}' với Post ID {facebook_id}; không tạo lại."])
 
     if command == "/fb_check":
         parts = raw.split(maxsplit=1)
@@ -416,7 +438,10 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         for t in targets:
             page_key = t["page_key"]
             if t["status"] != "POSTED" or not (t["facebook_post_id"] or "").strip():
-                state = "chưa đăng" if t["status"] == "PENDING" else f"lỗi — {t['error_message'] or 'không rõ nguyên nhân'}"
+                state = {
+                    "PENDING": "chưa đăng", "POSTING": "đang tạo bài",
+                    "UNKNOWN": f"chưa rõ kết quả; cần /fb_reconcile {post_id} {page_key} <facebook_post_id>",
+                }.get(t["status"], f"lỗi — {t['error_message'] or 'không rõ nguyên nhân'}")
                 lines.append(f"— Page '{page_key}': {state}")
                 continue
             try:
@@ -439,3 +464,68 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         return ChannelResult(["\n".join(lines)])
 
     return None
+
+
+async def _publish_claimed(account_id, post_id, claimed, page_keys, token):
+    await facebook_repository.ensure_targets(post_id, page_keys)
+    targets = {t["page_key"]: t for t in await facebook_repository.list_targets(post_id)}
+    to_attempt = [key for key in page_keys if targets[key]["status"] in {"PENDING", "ERROR"}
+                  and not targets[key]["facebook_post_id"]]
+    lines = [f"📤 Đang xử lý bài #{post_id} trên {len(page_keys)} Facebook Page..."]
+    for page_key in page_keys:
+        target = targets[page_key]
+        if target["facebook_post_id"]:
+            lines.append(f"⏭️ Page '{page_key}': đã tạo Post ID {target['facebook_post_id']}, không tạo lại.")
+        elif page_key not in to_attempt:
+            lines.append(f"⚠️ Page '{page_key}': chưa rõ kết quả lần tạo trước. "
+                         f"Kiểm tra Page rồi /fb_reconcile {post_id} {page_key} <facebook_post_id>.")
+    media = []
+    if to_attempt:
+        media_rows = await facebook_repository.get_media(post_id)
+        media = [(row["mime_type"], bytes(row["content"])) for row in media_rows]
+
+    for page_key in to_attempt:
+        async def before_create():
+            await facebook_repository.mark_target_creating(post_id, page_key, token)
+
+        async def on_created(facebook_post_id):
+            await facebook_repository.record_target_posted(
+                post_id, page_key, facebook_post_id, None, claim_token=token,
+            )
+
+        try:
+            published = await publish_page_post(
+                claimed["processed_content"], media, page_key,
+                before_create=before_create, on_created=on_created,
+            )
+        except FacebookPublicationUncertain as exc:
+            if exc.post_id:
+                await facebook_repository.record_target_posted(
+                    post_id, page_key, exc.post_id, None, claim_token=token,
+                )
+                lines.append(f"⚠️ Page '{page_key}': đã tạo Post ID {exc.post_id}, cần kiểm tra hiển thị.")
+            else:
+                await facebook_repository.record_target_unknown(post_id, page_key, str(exc), token)
+                lines.append(f"⚠️ Page '{page_key}': chưa rõ đã tạo bài hay chưa; không tự đăng lại. "
+                             f"Dùng /fb_reconcile {post_id} {page_key} <facebook_post_id> sau khi kiểm tra Page.")
+            continue
+        except Exception as exc:
+            await facebook_repository.record_target_error(post_id, page_key, str(exc), claim_token=token)
+            lines.append(f"❌ Page '{page_key}': chưa tạo được bài — {exc}")
+            continue
+        await facebook_repository.record_target_posted(
+            post_id, page_key, published.post_id, published.permalink_url, claim_token=token,
+        )
+        detail = f"✅ Page '{page_key}': đã tạo bài. Post ID: {published.post_id}"
+        if published.permalink_url:
+            detail += f" — {published.permalink_url}"
+        if not published.visibility_confirmed:
+            detail += f" (⚠️ chưa xác minh published/public, dùng /fb_check {post_id})"
+        lines.append(detail)
+    overall = await facebook_repository.finalize_post_status(account_id, post_id, claim_token=token)
+    if overall == "POSTED":
+        lines.append(f"Đã tạo bài trên tất cả {len(page_keys)} page; /fb_check {post_id} để xem trạng thái public.")
+    else:
+        lines.append(f"Bài #{post_id} vẫn được giữ. /fb_ok {post_id} chỉ thử lại page chưa tạo bài an toàn; "
+                     "page chưa rõ kết quả cần đối soát trước.")
+    return ChannelResult(["\n".join(lines)])

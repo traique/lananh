@@ -5,6 +5,11 @@ configuration and queued posts cannot affect /tongket tracked groups.
 """
 
 import secrets
+import asyncio
+import hashlib
+import json
+from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from core import database as db
 
@@ -75,13 +80,18 @@ async def create_post(
             )
             if not allowed:
                 return None
+            event_key = hashlib.sha256(json.dumps(
+                [account_id, group_id, sorted(set(source_message_ids))],
+                ensure_ascii=False, separators=(",", ":"),
+            ).encode()).hexdigest()
             post_id = await conn.fetchval(
                 """
                 INSERT INTO facebook_post_queue (
                     account_id, group_id, sender_id, sender_name,
-                    source_message_ids, original_content, processed_content
+                    source_message_ids, original_content, processed_content, source_event_key
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $6)
+                VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
+                ON CONFLICT (source_event_key) DO NOTHING
                 RETURNING id
                 """,
                 account_id,
@@ -90,7 +100,12 @@ async def create_post(
                 sender_name[:500],
                 source_message_ids,
                 content,
+                event_key,
             )
+            if post_id is None:
+                return await conn.fetchval(
+                    "SELECT id FROM facebook_post_queue WHERE source_event_key = $1", event_key,
+                )
             for position, (mime_type, body) in enumerate(media):
                 await conn.execute(
                     """
@@ -179,38 +194,75 @@ async def list_targets(post_id: int):
 
 
 async def record_target_posted(
-    post_id: int, page_key: str, facebook_post_id: str, permalink_url: str | None
+    post_id: int, page_key: str, facebook_post_id: str, permalink_url: str | None,
+    *, claim_token: str | None = None,
 ) -> None:
     await ensure_schema()
-    await (await db.get_pool()).execute(
+    result = await (await db.get_pool()).execute(
         """
         UPDATE facebook_post_targets
         SET status = 'POSTED', facebook_post_id = $3, permalink_url = $4,
             error_message = NULL, posted_at = now(), updated_at = now()
         WHERE post_id = $1 AND page_key = $2
+          AND ($5::text IS NULL OR EXISTS (
+              SELECT 1 FROM facebook_post_queue WHERE id = $1 AND claim_token = $5
+          ))
         """,
         post_id,
         page_key,
         facebook_post_id,
         permalink_url,
+        claim_token,
     )
+    if result != "UPDATE 1":
+        raise RuntimeError("Facebook publish claim no longer belongs to this worker")
 
 
-async def record_target_error(post_id: int, page_key: str, message: str) -> None:
+async def record_target_error(
+    post_id: int, page_key: str, message: str, *, claim_token: str | None = None,
+) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
         """
         UPDATE facebook_post_targets
         SET status = 'ERROR', error_message = $3, updated_at = now()
         WHERE post_id = $1 AND page_key = $2
+          AND facebook_post_id IS NULL AND status <> 'POSTED'
+          AND ($4::text IS NULL OR EXISTS (
+              SELECT 1 FROM facebook_post_queue WHERE id = $1 AND claim_token = $4
+          ))
         """,
         post_id,
         page_key,
         message[:1000],
+        claim_token,
     )
 
 
-async def finalize_post_status(account_id: str, post_id: int) -> str:
+async def mark_target_creating(post_id: int, page_key: str, claim_token: str) -> None:
+    result = await (await db.get_pool()).execute(
+        """UPDATE facebook_post_targets SET status = 'POSTING', publish_started_at = now(),
+        error_message = NULL, updated_at = now()
+        WHERE post_id = $1 AND page_key = $2 AND status IN ('PENDING', 'ERROR')
+          AND facebook_post_id IS NULL AND EXISTS (
+              SELECT 1 FROM facebook_post_queue WHERE id = $1 AND claim_token = $3
+          )""",
+        post_id, page_key, claim_token,
+    )
+    if result != "UPDATE 1":
+        raise RuntimeError("Facebook publish claim no longer belongs to this worker")
+
+
+async def record_target_unknown(post_id: int, page_key: str, message: str, claim_token: str) -> None:
+    await (await db.get_pool()).execute(
+        """UPDATE facebook_post_targets SET status = 'UNKNOWN', error_message = $3, updated_at = now()
+        WHERE post_id = $1 AND page_key = $2 AND facebook_post_id IS NULL
+          AND EXISTS (SELECT 1 FROM facebook_post_queue WHERE id = $1 AND claim_token = $4)""",
+        post_id, page_key, message[:1000], claim_token,
+    )
+
+
+async def finalize_post_status(account_id: str, post_id: int, *, claim_token: str | None = None) -> str:
     """Recompute facebook_post_queue.status from facebook_post_targets: POSTED
     only once every target page succeeded, ERROR otherwise. Returns the
     resulting overall status."""
@@ -230,41 +282,98 @@ async def finalize_post_status(account_id: str, post_id: int) -> str:
     posted = summary["posted"] if summary else 0
     errored = summary["errored"] if summary else 0
     if total > 0 and posted == total:
-        await pool.execute(
+        result = await pool.execute(
             """
             UPDATE facebook_post_queue
-            SET status = 'POSTED', posted_at = COALESCE(posted_at, now()), error_message = NULL
+            SET status = 'POSTED', posted_at = COALESCE(posted_at, now()), error_message = NULL,
+                claim_token = NULL, lease_until = NULL
             WHERE account_id = $1 AND id = $2
+              AND ($3::text IS NULL OR claim_token = $3)
             """,
             account_id,
             post_id,
+            claim_token,
         )
+        if result != "UPDATE 1":
+            raise RuntimeError("Facebook publish claim lost before finalizing")
         return "POSTED"
-    await pool.execute(
+    result = await pool.execute(
         """
         UPDATE facebook_post_queue
-        SET status = 'ERROR', error_message = $3
+        SET status = 'ERROR', error_message = $3, claim_token = NULL, lease_until = NULL
         WHERE account_id = $1 AND id = $2
+          AND ($4::text IS NULL OR claim_token = $4)
         """,
         account_id,
         post_id,
         f"{posted}/{total or 0} page đã đăng, {errored} page lỗi." if total else "Chưa có Facebook Page nào được cấu hình.",
+        claim_token,
     )
+    if result != "UPDATE 1":
+        raise RuntimeError("Facebook publish claim lost before finalizing")
     return "ERROR"
 
 
 async def claim_post(account_id: str, post_id: int):
     await ensure_schema()
-    return await (await db.get_pool()).fetchrow(
-        """
-        UPDATE facebook_post_queue
-        SET status = 'POSTING', approved_at = COALESCE(approved_at, now()), error_message = NULL
-        WHERE account_id = $1 AND id = $2 AND status IN ('PENDING_APPROVAL', 'ERROR')
-        RETURNING *
-        """,
-        account_id,
-        post_id,
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """UPDATE facebook_post_queue
+                SET status = 'POSTING', approved_at = COALESCE(approved_at, now()),
+                    error_message = NULL, claim_token = $3, lease_until = now() + $4::interval
+                WHERE account_id = $1 AND id = $2 AND (
+                    status IN ('PENDING_APPROVAL', 'ERROR') OR
+                    (status = 'POSTING' AND (lease_until IS NULL OR lease_until <= now()))
+                ) RETURNING *""",
+                account_id, post_id, secrets.token_hex(16), timedelta(minutes=5),
+            )
+            if row is not None:
+                await conn.execute(
+                    """UPDATE facebook_post_targets SET status = CASE
+                        WHEN facebook_post_id IS NOT NULL THEN 'POSTED'
+                        WHEN publish_started_at IS NULL THEN 'ERROR' ELSE 'UNKNOWN' END,
+                        updated_at = now()
+                    WHERE post_id = $1 AND status = 'POSTING'""",
+                    post_id,
+                )
+            return row
+
+
+async def release_post_claim(account_id: str, post_id: int, claim_token: str, message: str) -> None:
+    await (await db.get_pool()).execute(
+        """UPDATE facebook_post_queue SET status = 'ERROR', error_message = $4,
+        claim_token = NULL, lease_until = NULL
+        WHERE account_id = $1 AND id = $2 AND claim_token = $3""",
+        account_id, post_id, claim_token, message[:1000],
     )
+
+
+async def _renew_post(post_id: int, token: str, owner: asyncio.Task) -> None:
+    while True:
+        await asyncio.sleep(30)
+        try:
+            result = await (await db.get_pool()).execute(
+                """UPDATE facebook_post_queue SET lease_until = now() + interval '5 minutes'
+                WHERE id = $1 AND claim_token = $2""", post_id, token,
+            )
+            if result != "UPDATE 1":
+                owner.cancel()
+                return
+        except Exception:
+            owner.cancel()
+            return
+
+
+@asynccontextmanager
+async def keep_post_claim(post_id: int, token: str):
+    heartbeat = asyncio.create_task(_renew_post(post_id, token, asyncio.current_task()))
+    try:
+        yield
+    finally:
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
 
 
 async def reset_posts(account_id: str) -> tuple[int, bool]:
@@ -298,12 +407,13 @@ async def set_affiliate_link(
     await ensure_schema()
     await (await db.get_pool()).execute(
         """
-        INSERT INTO shopee_affiliate_links (account_id, source_url, affiliate_url, canonical_key)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO shopee_affiliate_links (account_id, source_url, affiliate_url, canonical_key, verification_version)
+        VALUES ($1, $2, $3, $4, 1)
         ON CONFLICT (account_id, source_url)
         DO UPDATE SET
             affiliate_url = EXCLUDED.affiliate_url,
             canonical_key = COALESCE(EXCLUDED.canonical_key, shopee_affiliate_links.canonical_key),
+            verification_version = 1,
             updated_at = now()
         """,
         account_id,
@@ -320,7 +430,7 @@ async def get_affiliate_links(account_id: str, source_urls: list[str]) -> dict[s
     rows = await (await db.get_pool()).fetch(
         """
         SELECT source_url, affiliate_url FROM shopee_affiliate_links
-        WHERE account_id = $1 AND source_url = ANY($2::text[])
+        WHERE account_id = $1 AND source_url = ANY($2::text[]) AND verification_version = 1
         """,
         account_id,
         source_urls,
@@ -340,13 +450,23 @@ async def get_affiliate_links_by_canonical(
         """
         SELECT DISTINCT ON (canonical_key) canonical_key, affiliate_url
         FROM shopee_affiliate_links
-        WHERE account_id = $1 AND canonical_key = ANY($2::text[])
+        WHERE account_id = $1 AND canonical_key = ANY($2::text[]) AND verification_version = 1
         ORDER BY canonical_key, updated_at DESC
         """,
         account_id,
         keys,
     )
     return {row["canonical_key"]: row["affiliate_url"] for row in rows}
+
+
+async def get_previous_affiliate_links(account_id: str, source_urls: list[str]) -> dict[str, str]:
+    """Used only to repair captions; unverified rows never authorise publishing."""
+    await ensure_schema()
+    rows = await (await db.get_pool()).fetch(
+        """SELECT source_url, affiliate_url FROM shopee_affiliate_links
+        WHERE account_id = $1 AND source_url = ANY($2::text[])""", account_id, source_urls,
+    )
+    return {row["source_url"]: row["affiliate_url"] for row in rows}
 
 
 async def create_short_link(target_url: str) -> str:

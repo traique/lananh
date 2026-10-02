@@ -195,6 +195,12 @@ async def sell(user_id: int, symbol: str, quantity: float | None = None) -> Hold
             current = float(row["quantity"])
             if quantity is None or quantity >= current:
                 await conn.execute(
+                    """INSERT INTO stock_closed_positions (telegram_user_id, symbol)
+                    VALUES ($1, $2) ON CONFLICT (telegram_user_id, symbol)
+                    DO UPDATE SET closed_at = now()""",
+                    user_id, symbol,
+                )
+                await conn.execute(
                     "DELETE FROM stock_holdings WHERE telegram_user_id = $1 AND symbol = $2",
                     user_id,
                     symbol,
@@ -217,12 +223,27 @@ async def sell(user_id: int, symbol: str, quantity: float | None = None) -> Hold
 
 async def delete_holding(user_id: int, symbol: str) -> bool:
     await ensure_schema()
-    result = await (await db.get_pool()).execute(
-        "DELETE FROM stock_holdings WHERE telegram_user_id = $1 AND symbol = $2",
+    result = await (await db.get_pool()).fetchval(
+        """WITH removed AS (
+            DELETE FROM stock_holdings WHERE telegram_user_id = $1 AND symbol = $2
+            RETURNING telegram_user_id, symbol
+        )
+        INSERT INTO stock_closed_positions (telegram_user_id, symbol)
+        SELECT telegram_user_id, symbol FROM removed
+        ON CONFLICT (telegram_user_id, symbol) DO UPDATE SET closed_at = now()
+        RETURNING symbol""",
         user_id,
         symbol.strip().upper(),
     )
-    return result != "DELETE 0"
+    return result is not None
+
+
+async def was_closed(user_id: int, symbol: str) -> bool:
+    await ensure_schema()
+    return bool(await (await db.get_pool()).fetchval(
+        "SELECT 1 FROM stock_closed_positions WHERE telegram_user_id = $1 AND symbol = $2",
+        user_id, symbol.strip().upper(),
+    ))
 
 
 def _fmt_number(value: float, digits: int = 0) -> str:

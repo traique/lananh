@@ -94,12 +94,16 @@ async def test_ask_strict_search_forces_tool_and_directive(monkeypatch):
     monkeypatch.setattr(orchestrator.router9_client, "get_preferred_model_name", preferred_model)
     monkeypatch.setattr(orchestrator.official_client, "generate", fake_generate)
     monkeypatch.setattr(orchestrator, "_run_provider_chain", fake_chain)
+    async def search_providers():
+        return ["api1"]
+    monkeypatch.setattr(orchestrator, "_search_only_providers", search_providers)
 
     result = await orchestrator.ask("giá vàng", require_real_search=True)
     assert result == "ok"
     assert captured["providers"] == ["api1"]
     assert captured["kwargs"]["enable_search"] is True
-    assert "BẮT BUỘC dùng Google Search" in captured["prompt"]
+    assert captured["prompt"].endswith("giá vàng")
+    assert orchestrator._FORCED_SEARCH_DIRECTIVE in captured["prompt"]
 
 
 @pytest.mark.asyncio

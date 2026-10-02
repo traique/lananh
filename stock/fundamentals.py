@@ -525,6 +525,8 @@ def _evict_fundamentals_cache(now: float) -> None:
     expired = [k for k, (ts, _) in _fundamentals_cache.items() if now - ts >= _FUNDAMENTALS_CACHE_TTL]
     for k in expired:
         _fundamentals_cache.pop(k, None)
+    while len(_fundamentals_cache) >= 128:
+        _fundamentals_cache.pop(min(_fundamentals_cache, key=lambda key: _fundamentals_cache[key][0]), None)
 
 
 async def fetch_fundamentals(symbol: str) -> FundamentalsBundle:

@@ -6,7 +6,7 @@ import hmac
 import io
 import logging
 import time
-from contextlib import asynccontextmanager, redirect_stdout
+from contextlib import asynccontextmanager, nullcontext, redirect_stdout
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -23,7 +23,7 @@ from ai import agnes_client
 from ai.provider_state import provider_state
 from channels import facebook_commands, facebook_repository, group_commands, shopee_affiliate_session, zalo_repository, zalo_scheduler, zalo_session, zalo_users, zoom
 from channels.router import router as zalo_router
-from core import config, database as db, idempotency
+from core import config, database as db, idempotency, webhook_inbox
 from diagnose_router9 import main as diagnose_main
 from services import memory_service
 from services import shopee_affiliate_browser
@@ -31,6 +31,9 @@ from services import morning_news
 from services.background_tasks import stop_tracked_tasks
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.concurrency import assistant_turn
+from services.reminder_delivery import NotificationTarget, notification_target
+from services.telegram_processing import update_error
+from services.request_limits import RequestLimitsMiddleware
 
 logging_setup.configure_logging()
 logger = logging.getLogger(__name__)
@@ -99,9 +102,36 @@ async def _safe_shutdown(label: str, awaitable) -> None:
 async def _process_update(update: Update) -> None:
     """Preserve one cross-channel conversation order for the single owner."""
     if application is None:
-        return
-    async with assistant_turn():
-        await application.process_update(update)
+        raise RuntimeError("Telegram application is not ready")
+    token = update_error.set(None)
+    try:
+        with notification_target(NotificationTarget(
+            "telegram", str(update.effective_chat.id if update.effective_chat else config.ALLOWED_USER_ID),
+            event_key=f"telegram:{update.update_id}",
+        )):
+            message = getattr(update, "effective_message", None)
+            command = (getattr(message, "text", None) or "").strip().lower().split(maxsplit=1)
+            boundary = nullcontext() if command and command[0].startswith("/fb_") else assistant_turn()
+            async with boundary:
+                await application.process_update(update)
+        if update_error.get() is not None:
+            raise update_error.get()
+    finally:
+        update_error.reset(token)
+
+
+async def _process_inbox_event(channel: str, payload: dict) -> None:
+    if channel == "telegram":
+        if application is None:
+            raise RuntimeError("Telegram application is not ready")
+        await _process_update(Update.de_json(payload, application.bot))
+    elif channel == "zoom":
+        event = zoom.parse_event(payload)
+        if event is None:
+            raise ValueError("Invalid Zoom inbox event")
+        await _process_zoom_event(event)
+    else:
+        raise ValueError("Unsupported inbox channel")
 
 
 @asynccontextmanager
@@ -120,6 +150,7 @@ async def lifespan(_: FastAPI):
         await bot_app._post_init(application)
         await application.start()
         app_started = True
+        webhook_inbox.start(_process_inbox_event)
         webhook_url = config.WEBHOOK_BASE_URL.rstrip("/") + config.WEBHOOK_PATH
         await application.bot.set_webhook(
             url=webhook_url,
@@ -134,6 +165,7 @@ async def lifespan(_: FastAPI):
         logger.info("Đang tắt bot...")
         await _safe_shutdown("Zalo scheduler", zalo_scheduler.stop())
         await _safe_shutdown("Morning news scheduler", morning_news.stop())
+        await _safe_shutdown("webhook inbox", webhook_inbox.stop())
         await _safe_shutdown("webhook tasks", _stop_webhook_tasks())
         if app_started:
             await _safe_shutdown("Telegram application stop", application.stop())
@@ -148,6 +180,7 @@ async def lifespan(_: FastAPI):
 
 
 api = FastAPI(lifespan=lifespan)
+api.add_middleware(RequestLimitsMiddleware)
 api.include_router(zalo_router)
 
 
@@ -597,24 +630,17 @@ async def telegram_webhook(request: Request) -> Response:
     if application is None:
         return Response(status_code=503)
 
-    update = Update.de_json(await request.json(), application.bot)
-    if update.update_id is not None:
-        if not await idempotency.claim_telegram_update(update.update_id):
-            return Response(status_code=200)
-
-    task = asyncio.create_task(_process_update(update))
-    _background_tasks.add(task)
-
-    def done(completed: asyncio.Task) -> None:
-        _background_tasks.discard(completed)
-        if completed.cancelled():
-            return
-        try:
-            completed.result()
-        except Exception:
-            logger.exception("Background task xử lý update lỗi không bắt được")
-
-    task.add_done_callback(done)
+    try:
+        payload = await request.json()
+        update = Update.de_json(payload, application.bot)
+        if update.update_id is None:
+            return Response(status_code=400)
+        await webhook_inbox.enqueue("telegram", str(update.update_id), payload)
+    except (ValueError, TypeError, KeyError):
+        return Response(status_code=400)
+    except Exception:
+        logger.warning("Không lưu được Telegram webhook vào inbox.", exc_info=True)
+        return Response(status_code=503)
     return Response(status_code=200)
 
 
@@ -626,6 +652,14 @@ def _zoom_chunks(outputs: list[str]) -> list[str]:
 
 
 async def _process_zoom_event(event: "zoom.ZoomEvent") -> None:
+    with notification_target(NotificationTarget(
+        "zoom", event.reply_jid, event.account_id, event.sender_jid,
+        event_key=f"zoom:{event.account_id}:{event.event_id}",
+    )):
+        await _deliver_zoom_event(event)
+
+
+async def _deliver_zoom_event(event: "zoom.ZoomEvent") -> None:
     try:
         pairing = await db.zoom_get_pairing()
         if pairing is None or pairing[0] != event.sender_jid:
@@ -732,6 +766,7 @@ async def _process_zoom_event(event: "zoom.ZoomEvent") -> None:
                 )
     except Exception:
         logger.exception("Lỗi xử lý sự kiện Zoom event_id=%s", event.event_id)
+        raise
 
 
 @api.post(config.ZOOM_WEBHOOK_PATH)
@@ -773,20 +808,9 @@ async def zoom_webhook(request: Request) -> Response:
         # để Zoom không coi là lỗi và retry vô ích.
         return Response(status_code=200)
 
-    if not await idempotency.claim_zoom_event(event.event_id):
-        return Response(status_code=200)
-
-    task = asyncio.create_task(_process_zoom_event(event))
-    _background_tasks.add(task)
-
-    def done(completed: asyncio.Task) -> None:
-        _background_tasks.discard(completed)
-        if completed.cancelled():
-            return
-        try:
-            completed.result()
-        except Exception:
-            logger.exception("Background task xử lý sự kiện Zoom lỗi không bắt được")
-
-    task.add_done_callback(done)
+    try:
+        await webhook_inbox.enqueue("zoom", event.event_id, payload)
+    except Exception:
+        logger.warning("Không lưu được Zoom webhook vào inbox.", exc_info=True)
+        return Response(status_code=503)
     return Response(status_code=200)

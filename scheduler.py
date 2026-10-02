@@ -35,17 +35,38 @@ async def _notify(user_id: int, text: str) -> bool:
 
 
 async def _process_due_reminders(due: list[tuple[int, int, str]]) -> None:
-    for reminder_id, user_id, message in due:
-        if not await _notify(user_id, f"⏰ Nhắc việc: {message}"):
-            await idempotency.release_reminder_claim(reminder_id)
-            continue
+    for item in due:
+        reminder = idempotency.DueReminder(*item)
         try:
-            await db.mark_reminder_sent(reminder_id)
+            text = f"⏰ Nhắc việc: {reminder.message}"
+            if reminder.channel == "zalo":
+                from channels import zalo_repository, zalo_session
+                account_id = reminder.account_id
+                if not account_id:
+                    account_id = await zalo_session.load_account_id()
+                if not account_id:
+                    raise ValueError("Legacy Zalo reminder needs a connected bot account")
+                await zalo_repository.enqueue_reminder(
+                    reminder.id, account_id, reminder.recipient_id, text
+                )
+                # The gateway acknowledgement marks sent; enqueuing is not delivery.
+                continue
+            if reminder.channel == "zoom":
+                from channels import zoom
+                await zoom.send_message(
+                    reminder.recipient_id, text, user_jid=reminder.user_jid or None,
+                    account_id=reminder.account_id or None,
+                )
+            elif reminder.channel != "telegram" or int(reminder.recipient_id or reminder.user_id) <= 0:
+                raise ValueError("Reminder has no valid channel recipient")
+            elif not await _notify(int(reminder.recipient_id or reminder.user_id), text):
+                await idempotency.release_reminder_claim(reminder.id)
+                continue
+            await db.mark_reminder_sent(reminder.id)
         except Exception:
             logger.warning(
-                "scheduler: gửi reminder id=%s thành công nhưng mark sent lỗi; "
-                "lease sẽ ngăn gửi trùng tức thời.",
-                reminder_id,
+                "scheduler: giao/ghi trạng thái reminder id=%s lỗi; lease giữ lần thử tiếp theo.",
+                reminder.id,
                 exc_info=True,
             )
 

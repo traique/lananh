@@ -12,8 +12,10 @@ tzdata==2024.1
 # -> vnstock 3.5.1 chết KeyError 'data' cho mọi mã; các method Finance công khai
 # trên 4.x cắt còn 4 quý 2018 sai (xem stock/vci_direct.py). Định giá/BCTC đã
 # chuyển sang gọi REST VCI thẳng (stock/vci_direct.py); vnstock còn dùng cho
-# Quote/Trading/Listing/Company.events/news - pin bản mới nhất đã test.
-vnstock==4.0.7
+# Quote/Trading/Listing/Company.events/news. Vnstock chuyển sang kho riêng;
+# Docker và lệnh pip phải có --extra-index-url https://vnstocks.com/api/simple.
+vnstock==4.0.9
+vnai==2.6.2
 pandas==2.2.3
 cryptography==42.0.0
 jinja2==3.1.4

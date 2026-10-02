@@ -69,6 +69,7 @@ COMMANDS = [
     BotCommand("fb_link", "Tự chuyển link Shopee affiliate"),
     BotCommand("fb_ok", "Duyệt và đăng Facebook"),
     BotCommand("fb_check", "Kiểm tra bài Facebook đã công khai"),
+    BotCommand("fb_reconcile", "Đối soát lượt đăng Facebook bị gián đoạn"),
     BotCommand("fb_boqua", "Bỏ bài Facebook chờ"),
     BotCommand("fb_reset", "Xóa bài Facebook đã lưu, reset ID"),
     BotCommand("zalopair", "Cấp quyền thành viên Zalo"),
@@ -198,6 +199,7 @@ def build_application():
         ("fb_link", commands.fb_link_cmd),
         ("fb_ok", commands.fb_ok_cmd),
         ("fb_check", commands.fb_check_cmd),
+        ("fb_reconcile", commands.fb_reconcile_cmd),
         ("fb_boqua", commands.fb_boqua_cmd),
         ("fb_reset", commands.fb_reset_cmd),
         ("zalopair", commands.zalopair_cmd),
@@ -247,6 +249,7 @@ def build_application():
             await tg_format.send_rich(app.bot, uid, text)
         except Exception:
             logger.warning("Không gửi được thông báo.", exc_info=True)
+            raise
 
     scheduler.set_notify_callback(notify)
     return app

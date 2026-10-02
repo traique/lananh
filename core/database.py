@@ -534,12 +534,14 @@ async def set_summary(telegram_user_id: int, summary: str) -> None:
 
 
 @_with_reconnect
-async def add_note(telegram_user_id: int, content: str) -> None:
+async def add_note(telegram_user_id: int, content: str, *, event_key: str | None = None) -> None:
     pool = await get_pool()
     await pool.execute(
-        "INSERT INTO notes (telegram_user_id, content) VALUES ($1, $2)",
+        """INSERT INTO notes (telegram_user_id, content, event_key) VALUES ($1, $2, $3)
+        ON CONFLICT (event_key) DO NOTHING""",
         telegram_user_id,
         content,
+        event_key,
     )
 
 
@@ -560,13 +562,28 @@ async def get_notes(telegram_user_id: int, limit: int = 10) -> list[tuple[str, d
 
 
 @_with_reconnect
-async def add_reminder(telegram_user_id: int, message: str, due_at) -> None:
+async def add_reminder(
+    telegram_user_id: int, message: str, due_at, *, channel: str = "telegram",
+    recipient_id: str | None = None, account_id: str = "", user_jid: str = "",
+    event_key: str | None = None,
+):
+    if channel not in {"telegram", "zalo", "zoom"}:
+        raise ValueError("Kênh nhắc việc không hợp lệ.")
+    recipient_id = recipient_id or str(telegram_user_id)
+    if channel == "zalo" and not account_id:
+        raise ValueError("Thiếu tài khoản Zalo nhận nhắc việc.")
     pool = await get_pool()
-    await pool.execute(
-        "INSERT INTO reminders (telegram_user_id, message, due_at) VALUES ($1, $2, $3)",
+    return await pool.fetchval(
+        """INSERT INTO reminders
+        (telegram_user_id, message, due_at, channel, recipient_id, account_id, user_jid, event_key)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (event_key) DO UPDATE SET event_key = EXCLUDED.event_key
+        RETURNING due_at""",
         telegram_user_id,
         message,
         due_at,
+        channel, recipient_id, account_id, user_jid,
+        event_key,
     )
 
 

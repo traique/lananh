@@ -57,7 +57,7 @@ async def test_build_digest_goi_ai_tong_hop_tu_rss(monkeypatch):
 
     digest = await morning_news.build_digest()
 
-    assert "TIN TỨC BUỔI SÁNG" in digest
+    assert "BẢN TIN SÁNG" in digest
     assert "Thị trường sáng nay có 2 tin đáng chú ý" in digest
 
 

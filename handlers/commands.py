@@ -18,6 +18,8 @@ from handlers import common
 from handlers.prompt_identity import render_instruction, resolve_prompt_identity
 from services import memory_service, rag_clean_service, rag_service, web_search
 from services.telemetry import telemetry
+from services.public_http import public_status
+from services.telegram_processing import record_error
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +54,12 @@ def _get_cached_price(product_name: str) -> str | None:
 
 
 def _set_cached_price(product_name: str, text: str) -> None:
-    _PRICE_CACHE[_normalize_product_key(product_name)] = (time.time(), text)
+    now = time.time()
+    for key in [key for key, (ts, _) in _PRICE_CACHE.items() if now - ts >= _PRICE_CACHE_TTL_SECONDS]:
+        _PRICE_CACHE.pop(key, None)
+    if len(_PRICE_CACHE) >= 128:
+        _PRICE_CACHE.pop(min(_PRICE_CACHE, key=lambda key: _PRICE_CACHE[key][0]), None)
+    _PRICE_CACHE[_normalize_product_key(product_name)] = (now, text)
 
 
 _MD_LINK_RE = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+)\)")
@@ -65,12 +72,12 @@ async def _check_url(client: httpx.AsyncClient, url: str) -> bool | None:
     - những trường hợp này KHÔNG gắn cảnh báo để tránh báo nhầm link tốt
     thành hỏng chỉ vì trang có chặn request tự động."""
     try:
-        resp = await client.head(url, timeout=_LINK_CHECK_TIMEOUT, follow_redirects=True)
-        if resp.status_code in (403, 405):
-            resp = await client.get(url, timeout=_LINK_CHECK_TIMEOUT, follow_redirects=True)
-        if resp.status_code < 400:
+        status = await public_status(client, url, method="HEAD", timeout=_LINK_CHECK_TIMEOUT)
+        if status in (403, 405):
+            status = await public_status(client, url, method="GET", timeout=_LINK_CHECK_TIMEOUT)
+        if status < 400:
             return True
-        if resp.status_code in (404, 410):
+        if status in (404, 410):
             return False
         return None
     except httpx.ConnectError:
@@ -891,6 +898,11 @@ async def fb_check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 @common.restricted
+async def fb_reconcile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_reconcile")
+
+
+@common.restricted
 async def fb_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _facebook_command(update, context, "/fb_reset")
 
@@ -1276,6 +1288,7 @@ async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    record_error(context.error)
     logger.error("Lỗi không được xử lý", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message:
         try:

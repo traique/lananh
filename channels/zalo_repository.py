@@ -259,10 +259,34 @@ async def get_pending_outbox(
     )
 
 
+async def enqueue_reminder(reminder_id: int, account_id: str, recipient_id: str, content: str) -> None:
+    await ensure_schema()
+    await (await db.get_pool()).execute(
+        """INSERT INTO zalo_outbox (account_id, recipient_id, content, reminder_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (reminder_id) WHERE reminder_id IS NOT NULL DO NOTHING""",
+        account_id, recipient_id, content, reminder_id,
+    )
+
+
+async def get_account_outbox(account_id: str, limit: int = 20):
+    await ensure_schema()
+    return await (await db.get_pool()).fetch(
+        """SELECT id, recipient_id, content FROM zalo_outbox
+        WHERE account_id = $1 AND sent_at IS NULL ORDER BY id LIMIT $2""",
+        account_id, limit,
+    )
+
+
 async def mark_outbox_sent(item_id: int) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
-        "UPDATE zalo_outbox SET sent_at = now() WHERE id = $1 AND sent_at IS NULL",
+        """WITH delivered AS (
+            UPDATE zalo_outbox SET sent_at = now() WHERE id = $1 AND sent_at IS NULL
+            RETURNING reminder_id
+        )
+        UPDATE reminders SET sent = true, claimed_at = NULL
+        WHERE id IN (SELECT reminder_id FROM delivered WHERE reminder_id IS NOT NULL)""",
         item_id,
     )
 

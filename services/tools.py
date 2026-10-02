@@ -37,6 +37,7 @@ from zoneinfo import ZoneInfo
 from stock import analysis as stock_analysis
 from core import database as db
 from ai import official_client
+from services.reminder_delivery import current_target
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ async def _tool_save_note(user_id: int, content: str = "") -> str:
     content = (content or "").strip()
     if not content:
         return "Không có nội dung để ghi chú."
-    await db.add_note(user_id, content)
+    await db.add_note(user_id, content, event_key=current_target(user_id).event_key)
     return f'Đã ghi chú: "{content}"'
 
 
@@ -102,7 +103,12 @@ async def _tool_set_reminder(user_id: int, message: str = "", minutes_from_now: 
         minutes = 1.0  # Tối thiểu 1 phút, tránh due_at <= now() bị bỏ qua ở lần quét đầu.
 
     due_at = datetime.now(_VN_TZ) + timedelta(minutes=minutes)
-    await db.add_reminder(user_id, message, due_at)
+    target = current_target(user_id)
+    stored_due_at = await db.add_reminder(
+        user_id, message, due_at, channel=target.channel, recipient_id=target.recipient_id,
+        account_id=target.account_id, user_jid=target.user_jid, event_key=target.event_key,
+    )
+    due_at = stored_due_at or due_at
     return f"Đã đặt nhắc việc lúc {due_at:%H:%M %d/%m} (giờ VN): {message}"
 
 

@@ -110,6 +110,12 @@ def _cached(cache: dict, symbol: str, fetch):
         if hit and time.monotonic() - hit[0] < _CACHE_TTL_SEC:
             return hit[1]
         rows = fetch()
+        expired = [symbol for symbol, (ts, _) in cache.items()
+                   if time.monotonic() - ts >= _CACHE_TTL_SEC]
+        for symbol in expired:
+            cache.pop(symbol, None)
+        if len(cache) >= 128 and key not in cache:
+            cache.pop(min(cache, key=lambda symbol: cache[symbol][0]), None)
         cache[key] = (time.monotonic(), rows)
         return rows
 

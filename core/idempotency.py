@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from core import database as db
 
@@ -35,6 +35,10 @@ async def cleanup_expired(retention: timedelta = RETENTION) -> None:
     # important to prune on schedule.
     await pool.execute(
         "DELETE FROM zalo_direct_responses WHERE created_at < now() - $1::interval",
+        retention,
+    )
+    await pool.execute(
+        "DELETE FROM webhook_inbox WHERE status = 'DONE' AND completed_at < now() - $1::interval",
         retention,
     )
 
@@ -80,11 +84,21 @@ async def claim_telegram_update(update_id: int) -> bool:
     return result == "INSERT 0 1"
 
 
+class DueReminder(NamedTuple):
+    id: int
+    user_id: int
+    message: str
+    channel: str = "telegram"
+    recipient_id: str = ""
+    account_id: str = ""
+    user_jid: str = ""
+
+
 async def claim_due_reminders(
     *,
     limit: int = 20,
     lease: timedelta = timedelta(minutes=5),
-) -> list[tuple[int, int, str]]:
+) -> list[DueReminder]:
     """Lease due reminders so concurrent schedulers cannot send the same row."""
     await ensure_schema()
     rows = await (await db.get_pool()).fetch(
@@ -103,12 +117,16 @@ async def claim_due_reminders(
         SET claimed_at = now()
         FROM due
         WHERE reminder.id = due.id
-        RETURNING reminder.id, reminder.telegram_user_id, reminder.message
+        RETURNING reminder.id, reminder.telegram_user_id, reminder.message,
+                  reminder.channel, reminder.recipient_id, reminder.account_id, reminder.user_jid
         """,
         limit,
         lease,
     )
-    return [(row["id"], row["telegram_user_id"], row["message"]) for row in rows]
+    return [DueReminder(
+        row["id"], row["telegram_user_id"], row["message"], row["channel"],
+        row["recipient_id"], row["account_id"], row["user_jid"],
+    ) for row in rows]
 
 
 async def release_reminder_claim(reminder_id: int) -> None:

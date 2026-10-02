@@ -1,5 +1,7 @@
 # Lananh — Trợ lý AI cá nhân (Telegram · Zalo · Zoom)
 
+Bản sửa Render 512 MB: [mã sửa, migration và hướng dẫn cập nhật hai service](docs/render512-fixes.md).
+
 MVP một người dùng, chạy trên nền Gemini. Hoạt động trên Telegram và tùy chọn
 Zalo/Zoom, dùng chung provider chain Gemini, trí nhớ dài hạn, công cụ, nhắc
 việc và phân tích cổ phiếu Việt Nam.
@@ -420,6 +422,13 @@ máy khác nhiều RAM hơn, hoặc dịch vụ như Lightpanda/Browserless) —
 Playwright là "WIP", không có tầng render layout đầy đủ, và hỗ trợ Web API mới "partial" —
 nên thử thủ công với đúng trang Custom Link của Shopee trước khi đưa vào production, đừng
 coi là thay thế chắc ăn 1-đổi-1 cho Chromium/WebKit.
+
+Nếu browser chạy ở service Render Free riêng bằng repo `traique/shopee-web`, xem
+[hướng dẫn hai dịch vụ Render và lỗi xác minh Shopee](docs/shopee-render-cdp.md).
+Bot tiếp tục nạp session từ DB vào context mới. Frame `/verify/traffic/error` được
+báo là lỗi xác minh ngay cả khi trang chính có body rỗng; tách browser không bảo đảm
+Shopee bỏ chặn. Kết nối CDP có sàn timeout 120 giây cho wake-up, và context/CDP được
+đóng trước driver Playwright.
 
 Các biến tùy chọn: `SHOPEE_AFFILIATE_AUTO_ENABLED` (mặc định `true`),
 `SHOPEE_AFFILIATE_CUSTOM_LINK_URL`, `SHOPEE_RESOLVE_TIMEOUT_SEC`,

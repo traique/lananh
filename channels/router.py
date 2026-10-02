@@ -25,7 +25,8 @@ from channels.zalo_text import to_plain_text
 from core import idempotency
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.channel_image_service import MAX_ZALO_IMAGE_BYTES, handle_channel_image
-from services.concurrency import assistant_turn
+from services.concurrency import assistant_turn, channel_message_turn
+from services.reminder_delivery import NotificationTarget, notification_target
 
 router = APIRouter(prefix="/internal/zalo", tags=["zalo-internal"])
 
@@ -135,6 +136,15 @@ async def receive(
     x_zalo_bridge_secret: str | None = Header(default=None),
 ):
     await _auth_sender(x_zalo_bridge_secret, payload.sender_id)
+    async with channel_message_turn(payload.account_id, payload.message_id, "text"):
+        with notification_target(NotificationTarget(
+            "zalo", payload.conversation_id, payload.account_id,
+            event_key=f"zalo:{payload.account_id}:{payload.message_id}",
+        )):
+            return await _receive_text(payload)
+
+
+async def _receive_text(payload: ZaloMessageRequest):
     cached = await idempotency.get_zalo_response(
         payload.account_id,
         payload.message_id,
@@ -316,7 +326,7 @@ async def facebook_group_post(
         if not body or len(body) > max_image_bytes:
             raise HTTPException(413, "Image too large")
         total_bytes += len(body)
-        if total_bytes > max_image_bytes * 10:
+        if total_bytes > 16 * 1024 * 1024:
             raise HTTPException(413, "Media payload too large")
         media.append((item.mime_type, body))
     if not payload.text.strip() and not media:
@@ -355,3 +365,9 @@ async def ack(
     _auth(x_zalo_bridge_secret)
     await zalo_repository.mark_outbox_sent(item_id)
     return Response(status_code=204)
+
+
+@router.get("/outbox/{account_id}")
+async def account_outbox(account_id: str, x_zalo_bridge_secret: str | None = Header(default=None)):
+    _auth(x_zalo_bridge_secret)
+    return [dict(row) for row in await zalo_repository.get_account_outbox(account_id)]

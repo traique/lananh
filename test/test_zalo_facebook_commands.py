@@ -257,6 +257,7 @@ async def test_fb_link_auto_converts_all_urls_in_one_batch(monkeypatch):
 async def test_fb_ok_posts_to_every_configured_page_and_retries_only_failed_one(monkeypatch):
     row = {
         "id": 42,
+        "claim_token": "claim-42",
         "status": "PENDING_APPROVAL",
         "original_content": "Deal không có link Shopee",
         "processed_content": "Deal không có link Shopee",
@@ -287,23 +288,25 @@ async def test_fb_ok_posts_to_every_configured_page_and_retries_only_failed_one(
 
     calls = {"page1": 0, "page2": 0}
 
-    async def fake_publish(content, media, page_key):
+    async def fake_publish(content, media, page_key, *, before_create, on_created):
         calls[page_key] += 1
+        await before_create()
         if page_key == "page2" and calls[page_key] == 1:
             raise facebook_commands.FacebookPublishError("page2 tạm lỗi")
         published = type("P", (), {})()
         published.post_id = f"{page_key}-post-id"
+        await on_created(published.post_id)
         published.permalink_url = f"https://facebook.com/{page_key}"
         published.visibility_confirmed = True
         return published
 
-    async def fake_record_posted(post_id, page_key, facebook_post_id, permalink_url):
+    async def fake_record_posted(post_id, page_key, facebook_post_id, permalink_url, **claim):
         targets[page_key] = {"page_key": page_key, "status": "POSTED", "facebook_post_id": facebook_post_id}
 
-    async def fake_record_error(post_id, page_key, message):
+    async def fake_record_error(post_id, page_key, message, **claim):
         targets[page_key] = {"page_key": page_key, "status": "ERROR", "facebook_post_id": None, "error_message": message}
 
-    async def fake_finalize(account_id, post_id):
+    async def fake_finalize(account_id, post_id, **claim):
         if all(t["status"] == "POSTED" for t in targets.values()):
             row["status"] = "POSTED"
             return "POSTED"
@@ -313,6 +316,15 @@ async def test_fb_ok_posts_to_every_configured_page_and_retries_only_failed_one(
     monkeypatch.setattr(facebook_commands.facebook_repository, "get_post", fake_get_post)
     monkeypatch.setattr(facebook_commands.facebook_repository, "get_affiliate_links", fake_links)
     monkeypatch.setattr(facebook_commands.facebook_repository, "get_media", fake_media)
+    from contextlib import asynccontextmanager
+    @asynccontextmanager
+    async def fake_keep(*args):
+        yield
+    async def fake_creating(post_id, page_key, token):
+        assert token == "claim-42"
+        targets[page_key]["status"] = "POSTING"
+    monkeypatch.setattr(facebook_commands.facebook_repository, "keep_post_claim", fake_keep)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "mark_target_creating", fake_creating)
     monkeypatch.setattr(facebook_commands.facebook_repository, "claim_post", fake_claim)
     monkeypatch.setattr(facebook_commands.facebook_repository, "ensure_targets", fake_ensure_targets)
     monkeypatch.setattr(facebook_commands.facebook_repository, "list_targets", fake_list_targets)
@@ -325,12 +337,12 @@ async def test_fb_ok_posts_to_every_configured_page_and_retries_only_failed_one(
     first = await facebook_commands.maybe_handle_facebook_command("B", "/fb_ok 42")
     assert "page1" in targets and targets["page1"]["status"] == "POSTED"
     assert targets["page2"]["status"] == "ERROR"
-    assert "Page lỗi: page2" in first.messages[0]
+    assert "❌ Page 'page2'" in first.messages[0]
     assert row["status"] == "ERROR"
 
     second = await facebook_commands.maybe_handle_facebook_command("B", "/fb_ok 42")
     assert targets["page2"]["status"] == "POSTED"
-    assert "đã đăng trước đó" in second.messages[0]  # page1 untouched
+    assert "không tạo lại" in second.messages[0]  # page1 untouched
     assert calls == {"page1": 1, "page2": 2}  # page1 published exactly once, never retried
     assert "tất cả" in second.messages[0].lower() or "tất cả" in second.messages[0]
     assert row["status"] == "POSTED"
