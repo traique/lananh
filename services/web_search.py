@@ -22,6 +22,7 @@ tier (không thêm embedding model, không thêm HTTP dependency mới):
 import asyncio
 import dataclasses
 import logging
+import re
 from dataclasses import dataclass
 
 from ai import orchestrator, tavily_client
@@ -43,9 +44,19 @@ class SearchGrounding:
     tavily_quality_ok: bool
 
 
+# Hỏi giờ/ngày hiện tại: prompt đã có sẵn [Thời điểm hiện tại], search chỉ kéo
+# thêm rác (âm lịch, giờ hoàng đạo, ngày lễ...) khiến câu trả lời lan man.
+_CLOCK_QUESTION_RE = re.compile(
+    r"\b(mấy giờ|bây giờ là|giờ là mấy|giờ này là|hôm nay là (thứ|ngày)|"
+    r"hôm nay (thứ|ngày) mấy|ngày mấy|thứ mấy|ngày bao nhiêu)\b"
+)
+
+
 def looks_like_search_question(text: str) -> bool:
     """Gate search chủ động để chat ngắn/chuyện phiếm không đốt quota."""
     lower = (text or "").lower()
+    if _CLOCK_QUESTION_RE.search(lower):
+        return False
     if len(lower.split()) <= 3 and "?" not in lower:
         return False
     markers = (

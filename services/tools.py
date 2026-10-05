@@ -108,7 +108,7 @@ async def _tool_set_reminder(user_id: int, message: str = "", minutes_from_now: 
         user_id, message, due_at, channel=target.channel, recipient_id=target.recipient_id,
         account_id=target.account_id, user_jid=target.user_jid, event_key=target.event_key,
     )
-    due_at = stored_due_at or due_at
+    due_at = (stored_due_at or due_at).astimezone(_VN_TZ)
     return f"Đã đặt nhắc việc lúc {due_at:%H:%M %d/%m} (giờ VN): {message}"
 
 

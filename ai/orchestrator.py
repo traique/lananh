@@ -18,6 +18,7 @@ tự core.config.PROVIDER_ORDER (mặc định router9 -> groq -> openrouter -> 
 """
 import asyncio
 import logging
+import re
 from typing import Awaitable, Callable, Optional
 
 from core import config, database as db
@@ -60,6 +61,18 @@ def _assert_output_clean(result, provider: str):
         )
         raise OutputContaminatedError(f"{provider} trả output lẫn ký tự CJK")
     return result
+
+
+# Model hay chèn số trích dẫn kiểu [1], [1][2], [1, 2] khi có grounding web;
+# trong chat Telegram/Zalo chúng chỉ là rác. Không đụng link markdown [1](url).
+_CITATION_RE = re.compile(r"[ \t]?\[[1-9]\d?(?:\s*[,\-–]\s*[1-9]\d?)*\](?!\()")
+
+
+def _strip_citations(response):
+    text = getattr(response, "text", None)
+    if isinstance(text, str):
+        response.text = _CITATION_RE.sub("", text)
+    return response
 
 
 def _call_timeout_sec() -> float:
@@ -455,13 +468,13 @@ async def chat(
         )
 
     providers_override = await _search_only_providers() if require_real_search else None
-    return await _run_provider_chain(
+    return _strip_citations(await _run_provider_chain(
         router9_call=_router9_call,
         api_call=_api_call,
         groq_call=_groq_call,
         openrouter_call=_openrouter_call,
         providers_override=providers_override,
-    )
+    ))
 
 
 async def reset_chat() -> None:
