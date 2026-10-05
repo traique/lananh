@@ -88,10 +88,12 @@ async def _preview(account_id: str, post_id: int) -> str:
                 "",
                 "⚠️ Có link Shopee chưa được đổi sang affiliate của bạn.",
                 "Tạo short-link trên Shopee Affiliate rồi nhập:",
-                f"/fb_link {post_id} <affiliate_url>",
+                f"/fb_link {post_id} <link-affiliate>",
             ]
         )
-    lines.extend(["", f"/fb_ok {post_id}  |  /fb_boqua {post_id}"])
+    # One command per line: a renderer that treats _x_ as italics would eat the
+    # underscores of two commands sharing a line ("/fbok ... /fbboqua").
+    lines.extend(["", f"/fb_ok {post_id}", f"/fb_boqua {post_id}"])
     return "\n".join(lines)
 
 

@@ -130,7 +130,10 @@ async def test_preview_includes_original_shopee_link_for_easy_copy(monkeypatch):
 
     assert "Link Shopee gốc (chưa chuyển đổi):" in preview
     assert source_url in preview
-    assert "/fb_link 25 <affiliate_url>" in preview
+    assert "/fb_link 25 <link-affiliate>" in preview
+    # Two "_" on one line get eaten by markdown-italic renderers.
+    assert all(line.count("_") < 2 for line in preview.splitlines() if line.startswith("/fb_"))
+    assert "\n/fb_ok 25\n/fb_boqua 25" in preview
 
 
 @pytest.mark.asyncio
