@@ -397,29 +397,21 @@ async def reset_posts(account_id: str) -> tuple[int, bool]:
             return len(rows), sequence_reset
 
 
-async def set_affiliate_link(
-    account_id: str,
-    source_url: str,
-    affiliate_url: str,
-    *,
-    canonical_key: str | None = None,
-) -> None:
+async def set_affiliate_link(account_id: str, source_url: str, affiliate_url: str) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
         """
-        INSERT INTO shopee_affiliate_links (account_id, source_url, affiliate_url, canonical_key, verification_version)
-        VALUES ($1, $2, $3, $4, 1)
+        INSERT INTO shopee_affiliate_links (account_id, source_url, affiliate_url, verification_version)
+        VALUES ($1, $2, $3, 1)
         ON CONFLICT (account_id, source_url)
         DO UPDATE SET
             affiliate_url = EXCLUDED.affiliate_url,
-            canonical_key = COALESCE(EXCLUDED.canonical_key, shopee_affiliate_links.canonical_key),
             verification_version = 1,
             updated_at = now()
         """,
         account_id,
         source_url,
         affiliate_url,
-        canonical_key,
     )
 
 
@@ -436,27 +428,6 @@ async def get_affiliate_links(account_id: str, source_urls: list[str]) -> dict[s
         source_urls,
     )
     return {row["source_url"]: row["affiliate_url"] for row in rows}
-
-
-async def get_affiliate_links_by_canonical(
-    account_id: str, canonical_keys: list[str]
-) -> dict[str, str]:
-    """Return the newest cached affiliate URL for each canonical product key."""
-    keys = [key for key in dict.fromkeys(canonical_keys) if key]
-    if not keys:
-        return {}
-    await ensure_schema()
-    rows = await (await db.get_pool()).fetch(
-        """
-        SELECT DISTINCT ON (canonical_key) canonical_key, affiliate_url
-        FROM shopee_affiliate_links
-        WHERE account_id = $1 AND canonical_key = ANY($2::text[]) AND verification_version = 1
-        ORDER BY canonical_key, updated_at DESC
-        """,
-        account_id,
-        keys,
-    )
-    return {row["canonical_key"]: row["affiliate_url"] for row in rows}
 
 
 async def get_previous_affiliate_links(account_id: str, source_urls: list[str]) -> dict[str, str]:

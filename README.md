@@ -289,9 +289,8 @@ Các lệnh `/fb_*` dùng được từ **Zalo admin, Telegram owner và Zoom ji
 /fb_xoanhom <group_id-or-alias>
 /fb_xem <post_id>
 /fb_sua <post_id> <nội dung mới>
-/fb_link <post_id>
-/fb_link <post_id> <affiliate_url>  # fallback thủ công khi chỉ có 1 link
-/fb_link <post_id> <source_url> <affiliate_url>  # fallback từng link khi bài có nhiều link
+/fb_link <post_id> <affiliate_url>  # bài chỉ có 1 link Shopee
+/fb_link <post_id> <source_url> <affiliate_url>  # từng link khi bài có nhiều link
 /fb_ok <post_id>
 /fb_check <post_id>  # kiểm tra từng page đã published/công khai và lấy permalink
 /fb_boqua <post_id>
@@ -309,13 +308,10 @@ Quy trình vận hành:
 4. Preview có `post_id` và các link Shopee gốc chưa chuyển đổi để copy. Bot
    gửi preview tới Zalo admin, Telegram owner và Zoom jid đã pair (nếu Zoom
    đang bật); cũng có thể xem lại bằng `/fb_xem <post_id>`.
-5. Nếu có Shopee link, gõ `/fb_link <post_id>`. Bot mở Chromium headless
-   **chỉ khi cache miss**, dùng session Shopee Affiliate đã nạp trong `/admin`,
-   vào trang Custom Link chính thức và lấy short-link `https://s.shopee.vn/...`.
-   Link được cache theo URL nguồn và sản phẩm canonical để lần sau không cần mở browser.
-   Nếu Shopee yêu cầu login/CAPTCHA, bài được giữ nguyên; fallback thủ công là
-   `/fb_link <post_id> <affiliate_url>` (1 link) hoặc
-   `/fb_link <post_id> <source_url> <affiliate_url>` (bài có nhiều link).
+5. Nếu có Shopee link, tự tạo short-link `https://s.shopee.vn/...` trên Shopee
+   Affiliate rồi nhập: `/fb_link <post_id> <affiliate_url>` (1 link) hoặc
+   `/fb_link <post_id> <source_url> <affiliate_url>` (bài có nhiều link, mỗi link một
+   lệnh). Bot chỉ nhận host `s.shopee.vn` và không gọi Shopee để chuyển đổi.
 6. Có thể sửa caption bằng `/fb_sua <post_id> <nội dung mới>`.
 7. Gõ `/fb_ok <post_id>` để đăng — bot đăng **lần lượt lên TẤT CẢ Facebook
    Page đang được cấu hình** (xem `/fb_pages`); nếu vẫn còn Shopee link chưa
@@ -331,112 +327,6 @@ Quy trình vận hành:
 Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài nhóm Zalo vẫn do
 `zalo-gateway` thực hiện. `account_id` cho các lệnh `/fb_*` trên Telegram/Zoom
 được lấy từ Zalo session đang đăng nhập, nên không cần có nhóm `/tongket` trước.
-
-#### Đăng nhập và nạp session Shopee Affiliate cho Render
-
-Render Free không có disk bền, nên bot **không** lưu Chrome profile trên filesystem.
-Session Playwright được mã hóa bằng `SETTINGS_ENC_KEY` rồi lưu vào PostgreSQL.
-Không cần và không được nhập mật khẩu Shopee vào `.env` hay source code.
-
-Thực hiện theo đúng thứ tự sau khi đã deploy bản repo này lên Render:
-
-1. **Trên máy cá nhân**, giải nén/mở repo và mở terminal ngay tại thư mục gốc của repo.
-2. Cài Playwright và Chromium:
-
-   ```bash
-   pip install playwright==1.63.0
-   playwright install chromium
-   ```
-
-3. Chạy script xuất session:
-
-   ```bash
-   python scripts/export_shopee_session.py
-   ```
-
-4. Một cửa sổ Chromium sẽ mở. Đăng nhập **đúng tài khoản Shopee Affiliate** của bạn.
-   Tự nhập OTP hoặc CAPTCHA nếu Shopee yêu cầu. Khi đã vào được hệ thống Affiliate, quay
-   lại terminal và nhấn ENTER. Script sẽ tự mở lại Custom Link, lưu **cookies + localStorage
-   + IndexedDB + OPFS**, rồi tạo một browser context mới để kiểm tra session có restore
-   được hay không. Chỉ tiếp tục khi terminal báo `VERIFY OK`.
-5. Script tạo file `shopee-storage-state.json`. Mở file này và copy **toàn bộ JSON**.
-   Nếu `/admin` hiển thị `state cũ`, hãy export lại bằng script của bản repo mới; không nên
-   tiếp tục dùng file session được tạo bởi exporter cũ.
-6. Mở trang admin của bot đã deploy, ví dụ:
-
-   ```text
-   https://<ten-service>.onrender.com/admin
-   ```
-
-7. Đăng nhập admin → **Shopee Affiliate tự động** → dán toàn bộ JSON vào ô session
-   → bấm **Lưu session**. Trạng thái phải báo session đã được cấu hình.
-8. Ngay trong `/admin`, ở ô **Test convert**, dán thử một link Shopee, ví dụ
-   `https://s.shopee.vn/...`. Kết quả hợp lệ phải là một short-link mới dạng
-   `https://s.shopee.vn/...`. Chỉ sau khi test này thành công mới dùng `/fb_link <post_id>`.
-9. Thử trên bài Facebook đang chờ bằng `/fb_link <post_id>`, kiểm tra lại bằng
-   `/fb_xem <post_id>`, rồi mới `/fb_ok <post_id>`.
-10. Sau khi session đã lưu thành công lên admin, nên xóa `shopee-storage-state.json`
-    trên máy cá nhân vì file chứa cookie/session đăng nhập nhạy cảm. Không gửi file này
-    cho người khác và không commit lên Git.
-
-Khi session hết hạn hoặc Shopee yêu cầu đăng nhập/CAPTCHA lại, bot giữ nguyên bài ở
-trạng thái chờ duyệt. Chạy lại các bước 3–8 để nạp session mới; không cần thay đổi code.
-
-Nếu `/admin` báo không tìm thấy ô Custom Link, bản bot sẽ chờ SPA render tối đa theo
-`SHOPEE_BROWSER_FIELD_WAIT_SEC` (mặc định 45 giây — tách riêng khỏi
-`SHOPEE_BROWSER_ACTION_TIMEOUT_SEC` vì đây là chờ React/Vue mount xong cả trang, không phải
-một thao tác đơn lẻ), dò cả iframe/contenteditable, và ghi chẩn đoán an toàn vào Render
-logs (URL, danh sách frame, danh sách nút tìm thấy, snippet nội dung trang) khi hết giờ vẫn
-chưa thấy ô nhập. Việc tìm ô nhập/nút bấm/link kết quả đều chạy bằng 1 lệnh JavaScript duy
-nhất bên trong trình duyệt thay vì hàng chục lệnh Playwright rời rạc — trên CPU yếu (Render
-Free) mỗi lệnh rời rạc có thể tự nó mất vài giây, nhân lên hàng chục lần sẽ nuốt hết ngân
-sách timeout dù trang đã tải xong. Một lượt browser có hard-timeout tự tính từ tổng các
-timeout con (`SHOPEE_BROWSER_NAV_TIMEOUT_SEC` × 2 lần thử route SPA + `SHOPEE_BROWSER_FIELD_WAIT_SEC`
-+ `SHOPEE_BROWSER_ACTION_TIMEOUT_SEC` + `SHOPEE_BROWSER_RESULT_TIMEOUT_SEC`, nhân theo số
-link trong 1 batch, cộng `SHOPEE_BROWSER_LAUNCH_BUDGET_SEC` cho thời gian khởi động Chromium)
-nên không thể giữ `/fb_link` treo vô hạn, nhưng cũng không chặn ngang một lượt chạy
-chậm-nhưng-vẫn-đang-hoạt-động trên máy chủ yếu. `SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC` chỉ còn là
-**sàn tối thiểu** (mặc định 90s) — chỉ có tác dụng khi bạn đặt nó CAO hơn mức tự tính ở trên.
-Nếu lỗi timeout vẫn lặp lại sau khi deploy bản mới, kiểm tra Render logs để xem URL/frame/nút/
-snippet nội dung mà Shopee thực tế đã render; không cần gửi cookie/session.
-
-Production container chỉ cài Chromium **headless shell** và browser chỉ chạy on-demand,
-concurrency toàn cục = 1. Ảnh/media/font trên Shopee bị chặn tải để giảm RAM/CPU; browser
-đóng ngay sau mỗi batch `/fb_link`. Bot không tự vượt CAPTCHA.
-
-`SHOPEE_BROWSER_ENGINE` (`chromium` mặc định trong code, nhưng `.env.example`/`render.yaml`
-đang đặt sẵn `webkit` để thử nghiệm) chọn engine Playwright dùng để mở Custom Link. Đổi
-sang thử vì nghi Chromium là nguyên nhân bot bị **OOM-kill** trên Render Free (RAM 512MB
-phải chia cho Python + Node zalo-gateway + Chromium cùng lúc — dấu hiệu là container tự
-restart giữa chừng, log không có bước tắt êm SIGTERM). Cả hai engine đều được cài sẵn
-trong image (xem `Dockerfile`) nên đổi qua lại chỉ cần sửa biến env, không cần build lại.
-Theo dõi Render Metrics (RAM) sau khi đổi; nếu WebKit vẫn OOM hoặc bị Shopee chặn khác đi,
-đổi `SHOPEE_BROWSER_ENGINE=chromium` để quay lại.
-
-Nếu cả hai engine tại chỗ vẫn không đủ (RAM Render Free quá nhỏ để chạy song song với
-Python + Node), `SHOPEE_BROWSER_CDP_URL` cho phép **không mở browser trong container này
-nữa** mà kết nối tới một browser đang chạy sẵn ở nơi khác qua Chrome DevTools Protocol (một
-máy khác nhiều RAM hơn, hoặc dịch vụ như Lightpanda/Browserless) — ưu tiên hơn
-`SHOPEE_BROWSER_ENGINE` khi được đặt. Lưu ý nếu định dùng
-[Lightpanda](https://github.com/lightpanda-io/browser): dự án còn beta, tự nhận hỗ trợ
-Playwright là "WIP", không có tầng render layout đầy đủ, và hỗ trợ Web API mới "partial" —
-nên thử thủ công với đúng trang Custom Link của Shopee trước khi đưa vào production, đừng
-coi là thay thế chắc ăn 1-đổi-1 cho Chromium/WebKit.
-
-Nếu browser chạy ở service Render Free riêng bằng repo `traique/shopee-web`, xem
-[hướng dẫn hai dịch vụ Render và lỗi xác minh Shopee](docs/shopee-render-cdp.md).
-Bot tiếp tục nạp session từ DB vào context mới. Frame `/verify/traffic/error` được
-báo là lỗi xác minh ngay cả khi trang chính có body rỗng; tách browser không bảo đảm
-Shopee bỏ chặn. Kết nối CDP có sàn timeout 120 giây cho wake-up, và context/CDP được
-đóng trước driver Playwright.
-
-Các biến tùy chọn: `SHOPEE_AFFILIATE_AUTO_ENABLED` (mặc định `true`),
-`SHOPEE_AFFILIATE_CUSTOM_LINK_URL`, `SHOPEE_RESOLVE_TIMEOUT_SEC`,
-`SHOPEE_BROWSER_NAV_TIMEOUT_SEC`, `SHOPEE_BROWSER_ACTION_TIMEOUT_SEC`,
-`SHOPEE_BROWSER_FIELD_WAIT_SEC` (mặc định 45 giây, chờ SPA mount — xem giải thích ở trên),
-`SHOPEE_BROWSER_RESULT_TIMEOUT_SEC`, `SHOPEE_BROWSER_LAUNCH_BUDGET_SEC` (mặc định 20 giây,
-đệm cho Chromium cold-start), `SHOPEE_BROWSER_TOTAL_TIMEOUT_SEC` (sàn tối thiểu, mặc định
-90 giây — xem giải thích ở trên).
 
 ## Lệnh chính
 
@@ -475,7 +365,7 @@ Các biến tùy chọn: `SHOPEE_AFFILIATE_AUTO_ENABLED` (mặc định `true`),
 | `/fb_xoanhom <group_id\|alias>` | Bỏ nhóm khỏi luồng Facebook |
 | `/fb_xem <post_id>` | Xem bài Facebook đang chờ duyệt |
 | `/fb_sua <post_id> <nội dung>` | Sửa nội dung bài Facebook đang chờ |
-| `/fb_link <post_id>` | Tự chuyển mọi link Shopee qua Custom Link chính thức; có fallback nhập short-link thủ công |
+| `/fb_link <post_id> <affiliate_url>` | Nhập short-link affiliate `s.shopee.vn` cho link Shopee của bài chờ (bài nhiều link: thêm `<source_url>`) |
 | `/fb_ok <post_id>` | Duyệt và đăng lên **tất cả** Facebook Page đã cấu hình; page lỗi được báo riêng, page đã đăng OK không bị đăng lại khi chạy lại lệnh |
 | `/fb_check <post_id>` | Kiểm tra từng page: `is_published`, trạng thái ẩn/Timeline, `published_posts` và permalink |
 | `/fb_boqua <post_id>` | Bỏ bài Facebook đang chờ |

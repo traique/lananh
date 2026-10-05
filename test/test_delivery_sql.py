@@ -253,15 +253,21 @@ async def test_legacy_shopee_cache_requires_confirmation_and_group_post_retries_
         source,
     )
     assert not await facebook.get_affiliate_links("a", [source])
-    assert not await facebook.get_affiliate_links_by_canonical("a", ["item:1:2"])
     assert (await facebook.get_previous_affiliate_links("a", [source]))[source].endswith("old")
-    await facebook.set_affiliate_link(
-        "a", source, "https://s.shopee.vn/new", canonical_key="item:1:2"
-    )
+    await facebook.set_affiliate_link("a", source, "https://s.shopee.vn/new")
     assert (await facebook.get_affiliate_links("a", [source]))[source].endswith("new")
-    assert (await facebook.get_affiliate_links_by_canonical("a", ["item:1:2"]))[
-        "item:1:2"
-    ].endswith("new")
     first = await queue_post(pool)
     assert await queue_post(pool) == first
     assert await pool.fetchval("SELECT count(*) FROM facebook_post_queue") == 1
+
+
+@pytest.mark.asyncio
+async def test_migration_drops_stored_shopee_session_and_keeps_other_settings(delivery_db):
+    pool = delivery_db
+    await pool.execute(
+        "INSERT INTO settings(key,value) VALUES ('shopee:affiliate:storage_state:v1','secret'),"
+        "('other','kept')"
+    )
+    await pool.execute((MIGRATIONS / "009_drop_shopee_session.sql").read_text())
+    assert await pool.fetchval("SELECT count(*) FROM settings WHERE key LIKE 'shopee:%'") == 0
+    assert await pool.fetchval("SELECT value FROM settings WHERE key='other'") == "kept"

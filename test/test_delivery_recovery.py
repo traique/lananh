@@ -14,11 +14,7 @@ from channels import router, facebook_commands
 from channels.contracts import ZaloMessageRequest
 from core import database as db, idempotency, webhook_inbox
 from handlers import commands
-from services import (
-    concurrency,
-    shopee_affiliate_browser as shopee,
-    facebook_page_service as facebook,
-)
+from services import concurrency, facebook_page_service as facebook
 from services.channel_chat_service import ChannelResult
 from services.reminder_delivery import current_target, NotificationTarget, notification_target
 from services.request_limits import RequestLimitsMiddleware, MIB
@@ -314,68 +310,6 @@ async def test_unknown_facebook_target_is_never_reposted(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stale_shopee_link_is_ignored(monkeypatch):
-    monkeypatch.setattr(
-        shopee,
-        "_affiliate_candidates",
-        AsyncMock(return_value=["https://s.shopee.vn/old", "https://s.shopee.vn/new"]),
-    )
-    assert (
-        await shopee._extract_affiliate_url(None, "source", {"https://s.shopee.vn/old"})
-        == "https://s.shopee.vn/new"
-    )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "target,valid",
-    [
-        ("https://shopee.vn/product/1/2", True),
-        ("https://shopee.vn/product/1/3", False),
-        ("https://shopee.vn/verify/traffic/error", False),
-        ("http://127.0.0.1/", False),
-    ],
-)
-async def test_shopee_affiliate_destination_must_match_before_cache(monkeypatch, target, valid):
-    handler = None
-    actions = []
-
-    async def route(pattern, callback):
-        nonlocal handler
-        handler = callback
-
-    async def abort():
-        actions.append("abort")
-
-    async def proceed():
-        actions.append("continue")
-
-    async def goto(*args, **kw):
-        request = SimpleNamespace(url=target, is_navigation_request=lambda: True)
-        await handler(SimpleNamespace(request=request, abort=abort, continue_=proceed))
-        raise RuntimeError("navigation aborted")
-
-    page = SimpleNamespace(route=route, goto=goto, close=AsyncMock())
-
-    def check_url(url):
-        if "127.0.0.1" in url:
-            raise shopee.ShopeeAffiliateError("private")
-        return url
-
-    monkeypatch.setattr(shopee, "_require_shopee_url", check_url)
-    context = SimpleNamespace(new_page=AsyncMock(return_value=page))
-    if valid:
-        await shopee._verify_affiliate_destination(context, "https://s.shopee.vn/new", "item:1:2")
-        assert actions == ["abort"]  # no product payload downloaded
-    else:
-        with pytest.raises(shopee.ShopeeAffiliateError, match="chưa lưu"):
-            await shopee._verify_affiliate_destination(
-                context, "https://s.shopee.vn/new", "item:1:2"
-            )
-    page.close.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_chunked_body_is_rejected_before_downstream_allocation():
     app = AsyncMock()
     middleware = RequestLimitsMiddleware(app)
@@ -515,11 +449,3 @@ async def test_generated_base64_image_limit_preserves_normal_images(monkeypatch)
     ).encode()
     with pytest.raises(agnes_client.AgnesError, match="giới hạn"):
         await agnes_client.generate_image("test")
-
-
-@pytest.mark.asyncio
-async def test_remote_only_image_reports_missing_cdp_configuration(monkeypatch):
-    monkeypatch.setenv("SHOPEE_LOCAL_BROWSERS_INSTALLED", "false")
-    monkeypatch.setattr(shopee.config, "SHOPEE_BROWSER_CDP_URL", "")
-    with pytest.raises(shopee.ShopeeAffiliateError, match="SHOPEE_BROWSER_CDP_URL"):
-        await shopee._launch_and_convert([])

@@ -21,12 +21,11 @@ from ai import orchestrator, provider_overrides
 from ai import groq_client, official_client, openrouter_client, router9_client, tavily_client
 from ai import agnes_client
 from ai.provider_state import provider_state
-from channels import facebook_commands, facebook_repository, group_commands, shopee_affiliate_session, zalo_repository, zalo_scheduler, zalo_session, zalo_users, zoom
+from channels import facebook_commands, facebook_repository, group_commands, zalo_repository, zalo_scheduler, zalo_session, zalo_users, zoom
 from channels.router import router as zalo_router
 from core import config, database as db, idempotency, webhook_inbox
 from diagnose_router9 import main as diagnose_main
 from services import memory_service
-from services import shopee_affiliate_browser
 from services import morning_news
 from services.background_tasks import stop_tracked_tasks
 from services.channel_chat_service import handle_channel_text, split_for_zalo
@@ -495,61 +494,6 @@ async def _memory_user_entries() -> list[dict]:
     return entries
 
 
-@api.get("/admin/api/shopee-affiliate")
-async def admin_shopee_affiliate(request: Request) -> Response:
-    if not _admin_session_valid(request):
-        return Response(status_code=403)
-    session = await shopee_affiliate_session.status()
-    return JSONResponse({
-        **session,
-        "auto_enabled": config.SHOPEE_AFFILIATE_AUTO_ENABLED,
-        "custom_link_url": config.SHOPEE_AFFILIATE_CUSTOM_LINK_URL,
-    })
-
-
-@api.post("/admin/api/shopee-affiliate/session")
-async def admin_shopee_affiliate_session_save(request: Request) -> Response:
-    if not _admin_session_valid(request):
-        return Response(status_code=403)
-    try:
-        body = await request.json()
-        state = body.get("storage_state") if isinstance(body, dict) and "storage_state" in body else body
-        await shopee_affiliate_session.save(state)
-    except (ValueError, TypeError) as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    except RuntimeError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=500)
-    return JSONResponse(await shopee_affiliate_session.status())
-
-
-@api.delete("/admin/api/shopee-affiliate/session")
-async def admin_shopee_affiliate_session_clear(request: Request) -> Response:
-    if not _admin_session_valid(request):
-        return Response(status_code=403)
-    await shopee_affiliate_session.clear()
-    return JSONResponse(await shopee_affiliate_session.status())
-
-
-@api.post("/admin/api/shopee-affiliate/test")
-async def admin_shopee_affiliate_test(request: Request) -> Response:
-    if not _admin_session_valid(request):
-        return Response(status_code=403)
-    body = await request.json()
-    url = str(body.get("url", "")).strip() if isinstance(body, dict) else ""
-    if not url:
-        return JSONResponse({"error": "Thiếu link Shopee để test."}, status_code=400)
-    account_id = await zalo_session.load_account_id() or "admin-shopee-test"
-    try:
-        result = await shopee_affiliate_browser.convert_url(account_id, url)
-    except shopee_affiliate_browser.ShopeeAffiliateError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=422)
-    return JSONResponse({
-        "source_url": result.source_url,
-        "affiliate_url": result.affiliate_url,
-        "from_cache": result.from_cache,
-    })
-
-
 @api.get("/admin/api/memory")
 async def admin_memory(request: Request) -> Response:
     if not _admin_session_valid(request):
@@ -688,11 +632,10 @@ async def _deliver_zoom_event(event: "zoom.ZoomEvent") -> None:
                 await zalo_session.load_account_id()
                 or await zalo_repository.resolve_default_account_id()
             )
-            # /fb_* chạy NGOÀI assistant_turn() cố ý: /fb_link có thể mở
-            # Chromium tới ~2 phút trên máy chậm, và nó đã có atomic riêng
-            # (claim_post) + lock Playwright riêng. Giữ assistant_turn() (lock
-            # dùng chung cho cả Telegram/Zalo/Zoom) suốt thời gian đó sẽ đứng
-            # hình TOÀN BỘ hội thoại khác trong lúc chờ Shopee convert xong.
+            # /fb_* chạy NGOÀI assistant_turn() cố ý: /fb_ok gọi Facebook Graph API
+            # có thể chậm, và nó đã có atomic riêng (claim_post). Giữ
+            # assistant_turn() (lock dùng chung cho cả Telegram/Zalo/Zoom) suốt
+            # thời gian đó sẽ đứng hình TOÀN BỘ hội thoại khác.
             facebook_result = (
                 await facebook_commands.maybe_handle_facebook_command(
                     zalo_account_id, event.text.strip()

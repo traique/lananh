@@ -169,9 +169,8 @@ async def test_each_zalo_user_gets_own_internal_user_id(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_facebook_command_does_not_hold_assistant_turn_lock(monkeypatch):
-    """Locks in the /fb_link freeze fix: Facebook commands must be dispatched
-    BEFORE assistant_turn() is entered, so a slow Shopee browser conversion
-    can't block every other Telegram/Zalo conversation."""
+    """Facebook commands must be dispatched BEFORE assistant_turn() is entered,
+    so a slow publish can't block every other Telegram/Zalo conversation."""
 
     class FakeUser:
         is_active = True
@@ -198,7 +197,7 @@ async def test_facebook_command_does_not_hold_assistant_turn_lock(monkeypatch):
     monkeypatch.setattr(zalo_router, "maybe_handle_facebook_command", fake_facebook_command)
     monkeypatch.setattr(zalo_router, "assistant_turn", lambda: PoisonedLock())
 
-    response = await zalo_router.receive(_payload(text="/fb_link 143"), "s3cr3t")
+    response = await zalo_router.receive(_payload(text="/fb_ok 143"), "s3cr3t")
     assert response.messages == ["✅ đã xử lý facebook"]
 
 

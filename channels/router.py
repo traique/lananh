@@ -165,13 +165,10 @@ async def _receive_text(payload: ZaloMessageRequest):
         return ZaloMessageResponse(messages=[messages_module.ZALO_LOCKED_REPLY], provider=None)
 
     # Facebook post-queue commands (/fb_*) are handled OUTSIDE assistant_turn()
-    # on purpose. /fb_link can run Playwright/Chromium for up to ~2 phút on a
-    # slow host, and it already has its own atomicity (claim_post's guarded
-    # UPDATE) and its own global Playwright lock. Running it under
-    # assistant_turn() used to hold that lock for the whole browser session,
-    # which froze EVERY other Telegram/Zalo conversation for as long as the
-    # Shopee conversion took - that is the "treo bot luôn" symptom, not a bug
-    # in the Shopee flow itself.
+    # on purpose. /fb_ok waits on the Facebook Graph API and already has its own
+    # atomicity (claim_post's guarded UPDATE). Running it under assistant_turn()
+    # would hold that lock for the whole publish and freeze EVERY other
+    # Telegram/Zalo conversation meanwhile.
     result = None
     if zalo_user.is_admin:
         result = await maybe_handle_facebook_command(payload.account_id, payload.text)

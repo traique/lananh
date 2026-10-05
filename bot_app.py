@@ -66,7 +66,7 @@ COMMANDS = [
     BotCommand("fb_xoanhom", "Bỏ nhóm nguồn Facebook"),
     BotCommand("fb_xem", "Xem bài Facebook chờ duyệt"),
     BotCommand("fb_sua", "Sửa bài Facebook chờ duyệt"),
-    BotCommand("fb_link", "Tự chuyển link Shopee affiliate"),
+    BotCommand("fb_link", "Nhập link Shopee affiliate cho bài chờ"),
     BotCommand("fb_ok", "Duyệt và đăng Facebook"),
     BotCommand("fb_check", "Kiểm tra bài Facebook đã công khai"),
     BotCommand("fb_reconcile", "Đối soát lượt đăng Facebook bị gián đoạn"),
