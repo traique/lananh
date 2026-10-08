@@ -88,3 +88,38 @@ async def test_multi_photo_final_feed_is_explicitly_published(monkeypatch):
     assert "attached_media[0]" in final_payload
     assert "attached_media[1]" in final_payload
     assert result.visibility_confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_post_comment_targets_post_with_page_token(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        facebook_page_service, "_settings", lambda page_key="default": ("page123", "tok", "v26.0")
+    )
+
+    async def fake_post(client, url, **kwargs):
+        calls.append((url, kwargs))
+        return {"id": "comment-1"}
+
+    monkeypatch.setattr(facebook_page_service, "_graph_post", fake_post)
+
+    assert await facebook_page_service.post_comment("page123_post456", "link", "default") == "comment-1"
+    assert calls == [(
+        "https://graph.facebook.com/v26.0/page123_post456/comments",
+        {"data": {"message": "link", "access_token": "tok"}},
+    )]
+
+
+@pytest.mark.asyncio
+async def test_post_comment_without_id_is_an_error(monkeypatch):
+    monkeypatch.setattr(
+        facebook_page_service, "_settings", lambda page_key="default": ("page123", "tok", "v26.0")
+    )
+    monkeypatch.setattr(facebook_page_service, "_graph_post", lambda *a, **k: _async({}))
+    with pytest.raises(facebook_page_service.FacebookPublishError):
+        await facebook_page_service.post_comment("p", "link")
+
+
+async def _async(value):
+    return value
+

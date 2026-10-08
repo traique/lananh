@@ -312,11 +312,17 @@ Quy trình vận hành:
    Affiliate rồi nhập: `/fb_link <post_id> <affiliate_url>` (1 link) hoặc
    `/fb_link <post_id> <source_url> <affiliate_url>` (bài có nhiều link, mỗi link một
    lệnh). Bot chỉ nhận host `s.shopee.vn` và không gọi Shopee để chuyển đổi.
-6. Có thể sửa caption bằng `/fb_sua <post_id> <nội dung mới>`.
+   Khi mọi link của bài đã có affiliate, AI tự viết lại bài **không chứa link**; câu
+   "Chi tiết ưu đãi và link sản phẩm mình để ở bình luận đầu tiên nha cả nhà." được
+   nối cuối bài, còn link affiliate được thả vào bình luận đầu tiên của từng Page.
+6. Có thể sửa caption bằng `/fb_sua <post_id> <nội dung mới>` (link Shopee trong
+   caption luôn bị lọc khỏi bài đăng). Ảnh được gắn viền mỏng + logo `assets/lcta_logo.png` ở góc
+   dưới phải khi đăng; ảnh gốc trong hàng đợi không bị đổi.
 7. Gõ `/fb_ok <post_id>` để đăng — bot đăng **lần lượt lên TẤT CẢ Facebook
    Page đang được cấu hình** (xem `/fb_pages`); nếu vẫn còn Shopee link chưa
    có affiliate thì bot từ chối đăng cho cả loạt. Kết quả từng page được báo
-   riêng: page đăng thành công hiện Post ID + link, page lỗi hiện lý do lỗi.
+   riêng (gồm cả việc thả bình luận link; nếu bình luận lỗi, `/fb_ok` chạy lại chỉ thử lại
+   bình luận, không tạo lại bài; token Page cần quyền `pages_manage_engagement`): page đăng thành công hiện Post ID + link, page lỗi hiện lý do lỗi.
    Bài vẫn ở trạng thái chờ nếu còn ít nhất 1 page lỗi — gõ lại `/fb_ok
    <post_id>` để bot **chỉ thử lại đúng (các) page đã lỗi lần trước**, các
    page đã đăng thành công sẽ không bị đăng lại/không bị đụng tới. Dùng

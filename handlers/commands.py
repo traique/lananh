@@ -152,6 +152,7 @@ HELP_TEXT = (
     "/fb\\_sua <post_id> <nội dung> — sửa nội dung bài chờ\n"
     "/fb\\_link <post_id> <affiliate_url> — nhập short-link affiliate khi bài chỉ có 1 link Shopee\n"
     "/fb\\_link <post_id> <source_url> <affiliate_url> — nhập từng link khi bài có nhiều link\n"
+    "(đủ link thì AI tự viết lại bài, link affiliate được thả ở bình luận đầu tiên)\n"
     "/fb\\_ok <post_id> — duyệt và đăng lên TẤT CẢ Facebook Page đang cấu hình; "
     "page nào lỗi sẽ báo riêng, chạy lại /fb\\_ok để chỉ thử lại page lỗi, page đã đăng OK không bị đụng tới\n"
     "/fb\\_check <post_id> — kiểm tra từng page đã published/công khai chưa, lấy permalink\n"

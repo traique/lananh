@@ -306,7 +306,7 @@ async def test_unknown_facebook_target_is_never_reposted(monkeypatch):
     publish.assert_not_awaited()
     media.assert_not_awaited()
     assert "/fb_reconcile" in result.messages[0]
-    finalize.assert_awaited_once_with("acc", 1, claim_token="claim")
+    finalize.assert_awaited_once_with("acc", 1, claim_token="claim", needs_comment=False)
 
 
 @pytest.mark.asyncio
@@ -360,23 +360,6 @@ async def test_concurrent_large_media_receives_retryable_backpressure():
     finish.set()
     await first
     assert not middleware.heavy_active
-
-
-def test_ambiguous_legacy_caption_never_maps_one_shortlink_to_two_products():
-    old = "https://s.shopee.vn/old"
-    previous = {"https://shopee.vn/product/1/2": old, "https://shopee.vn/product/3/4": old}
-    with pytest.raises(ValueError, match="cache cũ trùng"):
-        facebook_commands._replace_caption_links(
-            old, {"https://shopee.vn/product/1/2": "https://s.shopee.vn/new"}, previous
-        )
-    assert (
-        facebook_commands._replace_caption_links(
-            "edited caption " + old,
-            {"https://shopee.vn/product/1/2": "https://s.shopee.vn/new"},
-            {"https://shopee.vn/product/1/2": old},
-        )
-        == "edited caption https://s.shopee.vn/new"
-    )
 
 
 def test_long_lived_caches_are_bounded_and_expired_entries_are_pruned(monkeypatch):

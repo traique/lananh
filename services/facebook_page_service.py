@@ -319,3 +319,18 @@ async def _create_and_verify(
         logger.warning("Facebook Post ID %s đã tạo; đọc trạng thái lỗi (%s).", post_id, type(exc).__name__)
         status = FacebookPostStatus(post_id, None, None, None, None, None)
     return FacebookPublishedPost(post_id, status.permalink_url, status.public_visibility_confirmed, status)
+
+
+async def post_comment(post_id: str, message: str, page_key: str = "default") -> str:
+    _, token, version = _settings(page_key)
+    timeout = httpx.Timeout(30.0, connect=15.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        data = await _graph_post(
+            client,
+            f"https://graph.facebook.com/{version}/{post_id}/comments",
+            data={"message": message, "access_token": token},
+        )
+    comment_id = str(data.get("id") or "")
+    if not comment_id:
+        raise FacebookPublishError("Facebook không trả comment ID")
+    return comment_id

@@ -253,7 +253,6 @@ async def test_legacy_shopee_cache_requires_confirmation_and_group_post_retries_
         source,
     )
     assert not await facebook.get_affiliate_links("a", [source])
-    assert (await facebook.get_previous_affiliate_links("a", [source]))[source].endswith("old")
     await facebook.set_affiliate_link("a", source, "https://s.shopee.vn/new")
     assert (await facebook.get_affiliate_links("a", [source]))[source].endswith("new")
     first = await queue_post(pool)

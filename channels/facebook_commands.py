@@ -1,25 +1,27 @@
 """Admin commands for the isolated Zalo -> Facebook publishing flow."""
 
+import asyncio
 import logging
 import os
-import re
 from typing import Awaitable, Callable
 from urllib.parse import urlparse
 
 import asyncpg
 
 from channels import facebook_repository, zalo_repository
+from services import facebook_caption
 from services.channel_result import ChannelResult
+from services.facebook_caption import find_shopee_urls
+from services.facebook_image import brand_image
 from services.facebook_page_service import (
     FacebookPublishError,
     FacebookPublicationUncertain,
     configured_page_keys,
     inspect_page_post,
+    post_comment,
     publish_page_post,
 )
 
-_URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
-_SHOPEE_HOSTS = ("shopee.vn", "s.shopee.vn", "shope.ee")
 _ALLOWED_AFFILIATE_SCHEMES = {"http", "https"}
 logger = logging.getLogger(__name__)
 _admin_notification_callback: Callable[[str], Awaitable[None]] | None = None
@@ -30,19 +32,6 @@ def set_admin_notification_callback(
 ) -> None:
     global _admin_notification_callback
     _admin_notification_callback = callback
-
-
-def find_shopee_urls(text: str) -> list[str]:
-    urls: list[str] = []
-    for raw in _URL_RE.findall(text or ""):
-        url = raw.rstrip(".,);]}")
-        try:
-            host = (urlparse(url).hostname or "").lower()
-        except ValueError:
-            continue
-        if any(host == domain or host.endswith(f".{domain}") for domain in _SHOPEE_HOSTS):
-            urls.append(url)
-    return list(dict.fromkeys(urls))
 
 
 def _valid_shopee_affiliate_url(value: str) -> bool:
@@ -56,30 +45,46 @@ def _valid_shopee_affiliate_url(value: str) -> bool:
     )
 
 
+async def _cached_affiliates(account_id: str, source_urls: list[str]) -> dict[str, str]:
+    stored = await facebook_repository.get_affiliate_links(account_id, source_urls)
+    return {src: aff for src, aff in stored.items() if _valid_shopee_affiliate_url(aff)}
+
+
+async def _auto_rewrite(account_id: str, row) -> str | None:
+    """Once every Shopee link has an affiliate link, replace the caption (still
+    carrying source links) with a link-free AI rewrite. Returns an admin note
+    when it ran; an already-cleaned or hand-edited caption is left alone."""
+    urls = find_shopee_urls(row["original_content"])
+    if not urls or not find_shopee_urls(row["processed_content"]):
+        return None
+    if len(await _cached_affiliates(account_id, urls)) < len(urls):
+        return None
+    caption, rewritten = await facebook_caption.rewrite_caption(row["processed_content"])
+    await facebook_repository.update_content(account_id, row["id"], caption)
+    if rewritten:
+        return "✍️ AI đã viết lại bài; link affiliate sẽ được thả ở bình luận đầu tiên."
+    return "⚠️ AI chưa viết lại được; giữ bài gốc đã lọc link (có thể /fb_sua rồi /fb_ok)."
+
+
 async def _preview(account_id: str, post_id: int) -> str:
     row = await facebook_repository.get_post(account_id, post_id)
     if not row:
         return f"Không tìm thấy bài #{post_id}."
     media = await facebook_repository.get_media(post_id)
     source_urls = find_shopee_urls(row["original_content"])
-    missing = []
-    if source_urls:
-        cached = {
-            source: affiliate
-            for source, affiliate in (
-                await facebook_repository.get_affiliate_links(account_id, source_urls)
-            ).items()
-            if _valid_shopee_affiliate_url(affiliate)
-        }
-        missing = [url for url in source_urls if url not in cached]
+    cached = await _cached_affiliates(account_id, source_urls)
+    missing = [url for url in source_urls if url not in cached]
     lines = [
         f"📝 BÀI FACEBOOK CHỜ DUYỆT #{post_id}",
         f"Nhóm: {row['group_id']}",
         f"Người đăng: {row['sender_name'] or row['sender_id']}",
         f"Ảnh: {len(media)}",
         "",
-        row["processed_content"] or "(không có caption)",
+        facebook_caption.build_caption(row["processed_content"], bool(source_urls))
+        or "(không có caption)",
     ]
+    if cached:
+        lines.extend(["", "💬 Link sẽ thả ở bình luận đầu tiên:", *cached.values()])
     if source_urls:
         lines.extend(["", "🔗 Link Shopee gốc (chưa chuyển đổi):", *source_urls])
     if missing:
@@ -101,19 +106,7 @@ async def prepare_post(account_id: str, post_id: int) -> None:
     row = await facebook_repository.get_post(account_id, post_id)
     if not row:
         return
-    urls = find_shopee_urls(row["processed_content"])
-    cached = {
-        source: affiliate
-        for source, affiliate in (
-            await facebook_repository.get_affiliate_links(account_id, urls)
-        ).items()
-        if _valid_shopee_affiliate_url(affiliate)
-    }
-    content = row["processed_content"]
-    for source_url, affiliate_url in cached.items():
-        content = content.replace(source_url, affiliate_url)
-    if content != row["processed_content"]:
-        await facebook_repository.update_content(account_id, post_id, content)
+    await _auto_rewrite(account_id, row)
     controller = os.getenv("ZALO_CONTROLLER_ID", "").strip()
     if not controller:
         from channels import zalo_session
@@ -127,26 +120,6 @@ async def prepare_post(account_id: str, post_id: int) -> None:
             await _admin_notification_callback(preview)
         except Exception:
             logger.warning("Không gửi được preview Facebook tới kênh admin phụ.", exc_info=True)
-
-
-def _replace_caption_links(content, replacements, previous):
-    for source, affiliate in replacements.items():
-        if source in content:
-            content = content.replace(source, affiliate)
-        elif affiliate in content:
-            continue
-        elif previous.get(source) and previous[source] in content and list(previous.values()).count(previous[source]) == 1:
-            content = content.replace(previous[source], affiliate)
-        else:
-            raise ValueError("Caption không còn link nguồn hoặc cache cũ trùng giữa nhiều sản phẩm. "
-                             "Dùng /fb_sua <post_id> <caption chứa lại link Shopee nguồn> rồi /fb_link.")
-    return content
-
-
-async def _previous_caption_links(account_id, row, sources):
-    if any(source not in row["processed_content"] for source in sources):
-        return await facebook_repository.get_previous_affiliate_links(account_id, sources)
-    return {}
 
 
 async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelResult | None:
@@ -260,11 +233,10 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
                 "Link affiliate phải là short-link chính thức dạng https://s.shopee.vn/..."
             ])
         await facebook_repository.set_affiliate_link(account_id, source_url, affiliate_url)
-        content = row["processed_content"].replace(source_url, affiliate_url)
-        await facebook_repository.update_content(account_id, post_id, content)
+        note = await _auto_rewrite(account_id, row)
+        saved = f"✅ Đã lưu short affiliate link chính thức cho bài #{post_id}: {affiliate_url}"
         return ChannelResult([
-            f"✅ Đã lưu short affiliate link chính thức cho bài #{post_id}: {affiliate_url}\n\n"
-            f"{await _preview(account_id, post_id)}"
+            "\n".join(filter(None, [saved, note])) + f"\n\n{await _preview(account_id, post_id)}"
         ])
 
     if command == "/fb_boqua":
@@ -285,27 +257,13 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         if not current:
             return ChannelResult([f"Không tìm thấy bài #{post_id}."])
         source_urls = find_shopee_urls(current["original_content"])
-        cached = {
-            source: affiliate
-            for source, affiliate in (
-                await facebook_repository.get_affiliate_links(account_id, source_urls)
-            ).items()
-            if _valid_shopee_affiliate_url(affiliate)
-        }
+        cached = await _cached_affiliates(account_id, source_urls)
         missing = [url for url in source_urls if url not in cached]
         if missing:
             return ChannelResult([
                 f"⚠️ Bài #{post_id} còn link Shopee chưa có affiliate. Dùng /fb_link {post_id} <affiliate_url> để nhập link trước khi đăng."
             ])
-        # Never rely only on the cache flag: make sure the actual caption being
-        # posted contains the cached official Shopee short links.
-        previous = await _previous_caption_links(account_id, current, source_urls)
-        try:
-            content = _replace_caption_links(current["processed_content"], cached, previous)
-        except ValueError as exc:
-            return ChannelResult([str(exc)])
-        if content != current["processed_content"]:
-            await facebook_repository.update_content(account_id, post_id, content)
+        comment = "\n".join(cached[url] for url in source_urls)
 
         page_keys = configured_page_keys()
         if not page_keys:
@@ -324,7 +282,9 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         token = claimed["claim_token"]
         try:
             async with facebook_repository.keep_post_claim(post_id, token):
-                return await _publish_claimed(account_id, post_id, claimed, page_keys, token)
+                return await _publish_claimed(
+                        account_id, post_id, claimed, page_keys, token, comment,
+                    )
         except Exception as exc:
             logger.warning("Facebook queue #%s xử lý gián đoạn (%s).", post_id, type(exc).__name__)
             try:
@@ -360,7 +320,10 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
                 await facebook_repository.record_target_posted(
                     post_id, page_key, facebook_id, status.permalink_url, claim_token=token,
                 )
-                await facebook_repository.finalize_post_status(account_id, post_id, claim_token=token)
+                await facebook_repository.finalize_post_status(
+                    account_id, post_id, claim_token=token,
+                    needs_comment=bool(find_shopee_urls(row["original_content"])),
+                )
         except Exception as exc:
             return ChannelResult([f"Không xác minh được Post ID: {type(exc).__name__}."])
         finally:
@@ -401,6 +364,11 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
             )
             if status.permalink_url:
                 lines.append(f"  🔗 {status.permalink_url}")
+            if find_shopee_urls(row["original_content"]):
+                lines.append(
+                    "  💬 Link bình luận: đã thả." if t.get("comment_id")
+                    else f"  💬 Link bình luận: CHƯA thả — chạy /fb_ok {post_id} để thử lại."
+                )
             lines.append(
                 "  ✅ published/public đã xác nhận." if status.public_visibility_confirmed
                 else "  ⚠️ chưa xác nhận chắc chắn published/public."
@@ -410,7 +378,7 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
     return None
 
 
-async def _publish_claimed(account_id, post_id, claimed, page_keys, token):
+async def _publish_claimed(account_id, post_id, claimed, page_keys, token, comment=""):
     await facebook_repository.ensure_targets(post_id, page_keys)
     targets = {t["page_key"]: t for t in await facebook_repository.list_targets(post_id)}
     to_attempt = [key for key in page_keys if targets[key]["status"] in {"PENDING", "ERROR"}
@@ -423,10 +391,14 @@ async def _publish_claimed(account_id, post_id, claimed, page_keys, token):
         elif page_key not in to_attempt:
             lines.append(f"⚠️ Page '{page_key}': chưa rõ kết quả lần tạo trước. "
                          f"Kiểm tra Page rồi /fb_reconcile {post_id} {page_key} <facebook_post_id>.")
-    media = []
+    media, caption = [], ""
     if to_attempt:
         media_rows = await facebook_repository.get_media(post_id)
-        media = [(row["mime_type"], bytes(row["content"])) for row in media_rows]
+        media = [
+            await asyncio.to_thread(brand_image, row["mime_type"], bytes(row["content"]))
+            for row in media_rows
+        ]
+        caption = facebook_caption.build_caption(claimed["processed_content"], bool(comment))
 
     for page_key in to_attempt:
         async def before_create():
@@ -439,7 +411,7 @@ async def _publish_claimed(account_id, post_id, claimed, page_keys, token):
 
         try:
             published = await publish_page_post(
-                claimed["processed_content"], media, page_key,
+                caption, media, page_key,
                 before_create=before_create, on_created=on_created,
             )
         except FacebookPublicationUncertain as exc:
@@ -466,10 +438,31 @@ async def _publish_claimed(account_id, post_id, claimed, page_keys, token):
         if not published.visibility_confirmed:
             detail += f" (⚠️ chưa xác minh published/public, dùng /fb_check {post_id})"
         lines.append(detail)
-    overall = await facebook_repository.finalize_post_status(account_id, post_id, claim_token=token)
+    if comment:
+        await _post_comments(post_id, comment, token, lines)
+    overall = await facebook_repository.finalize_post_status(
+        account_id, post_id, claim_token=token, needs_comment=bool(comment),
+    )
     if overall == "POSTED":
         lines.append(f"Đã tạo bài trên tất cả {len(page_keys)} page; /fb_check {post_id} để xem trạng thái public.")
     else:
         lines.append(f"Bài #{post_id} vẫn được giữ. /fb_ok {post_id} chỉ thử lại page chưa tạo bài an toàn; "
                      "page chưa rõ kết quả cần đối soát trước.")
     return ChannelResult(["\n".join(lines)])
+
+
+async def _post_comments(post_id, comment, token, lines):
+    for target in await facebook_repository.list_targets(post_id):
+        page_key = target["page_key"]
+        if not target["facebook_post_id"] or target.get("comment_id"):
+            continue
+        try:
+            comment_id = await post_comment(target["facebook_post_id"], comment, page_key)
+        except Exception as exc:
+            lines.append(
+                f"⚠️ Page '{page_key}': bài đã đăng nhưng chưa bình luận được link — {exc}. "
+                f"Chạy lại /fb_ok {post_id} để bình luận lại (kiểm tra Page trước nếu lỗi do mạng)."
+            )
+            continue
+        await facebook_repository.record_target_comment(post_id, page_key, comment_id, token)
+        lines.append(f"💬 Page '{page_key}': đã thả link vào bình luận đầu tiên.")

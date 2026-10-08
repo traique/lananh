@@ -1,3 +1,7 @@
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 
 from channels import facebook_commands
@@ -52,50 +56,58 @@ async def test_fb_ok_requires_affiliate_for_original_shopee_link(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_fb_link_replaces_original_with_official_short_link(monkeypatch):
+async def test_fb_link_saves_link_then_ai_rewrites_caption_without_link(monkeypatch):
+    source = "https://shopee.vn/product/1/2"
     row = {
         "id": 7,
         "status": "PENDING_APPROVAL",
-        "original_content": "Deal https://shopee.vn/product/1/2",
-        "processed_content": "Deal https://shopee.vn/product/1/2",
+        "original_content": f"Deal {source}",
+        "processed_content": f"Deal {source}",
         "group_id": "g1",
         "sender_name": "Lan",
         "sender_id": "u1",
     }
-    updated = {}
+    saved = {}
 
     async def fake_get_post(account_id, post_id):
-        if "content" in updated:
-            return {**row, "processed_content": updated["content"]}
-        return row
+        return {**row, "processed_content": saved.get("content", row["processed_content"])}
 
     async def fake_set_link(account_id, source_url, affiliate_url, **kwargs):
-        updated["source"] = source_url
-        updated["affiliate"] = affiliate_url
+        saved["link"] = (source_url, affiliate_url)
 
     async def fake_update(account_id, post_id, content):
-        updated["content"] = content
+        saved["content"] = content
         return True
 
     async def fake_media(post_id):
         return []
 
     async def fake_links(account_id, urls):
-        return {updated["source"]: updated["affiliate"]} if "source" in updated else {}
+        return {saved["link"][0]: saved["link"][1]} if "link" in saved else {}
 
-    monkeypatch.setattr(facebook_commands.facebook_repository, "get_post", fake_get_post)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "set_affiliate_link", fake_set_link)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "update_content", fake_update)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "get_media", fake_media)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "get_affiliate_links", fake_links)
+    async def fake_rewrite(content):
+        assert source in content
+        return "Hời quá nè", True
+
+    repo = facebook_commands.facebook_repository
+    monkeypatch.setattr(repo, "get_post", fake_get_post)
+    monkeypatch.setattr(repo, "set_affiliate_link", fake_set_link)
+    monkeypatch.setattr(repo, "update_content", fake_update)
+    monkeypatch.setattr(repo, "get_media", fake_media)
+    monkeypatch.setattr(repo, "get_affiliate_links", fake_links)
+    monkeypatch.setattr(facebook_commands.facebook_caption, "rewrite_caption", fake_rewrite)
 
     result = await facebook_commands.maybe_handle_facebook_command(
         "B", "/fb_link 7 https://s.shopee.vn/affiliate123"
     )
 
-    assert updated["content"] == "Deal https://s.shopee.vn/affiliate123"
-    assert "https://s.shopee.vn/affiliate123" in result.messages[0]
-    assert "/r/" not in result.messages[0]
+    assert saved["link"] == (source, "https://s.shopee.vn/affiliate123")
+    assert saved["content"] == "Hời quá nè"
+    message = result.messages[0]
+    assert "AI đã viết lại" in message
+    assert "💬 Link sẽ thả ở bình luận đầu tiên:\nhttps://s.shopee.vn/affiliate123" in message
+    assert "Hời quá nè\n\n" + facebook_commands.facebook_caption.COMMENT_CTA in message
+    assert "/r/" not in message
 
 
 @pytest.mark.asyncio
@@ -247,7 +259,7 @@ async def test_fb_link_rejects_wrong_source_or_non_shopee_affiliate_host(
 
 
 @pytest.mark.asyncio
-async def test_fb_link_with_source_replaces_only_that_product(monkeypatch):
+async def test_fb_link_waits_for_every_product_before_rewriting(monkeypatch):
     first = "https://shopee.vn/product/1/2"
     second = "https://shopee.vn/product/3/4"
     row = {
@@ -259,36 +271,45 @@ async def test_fb_link_with_source_replaces_only_that_product(monkeypatch):
         "sender_name": "Lan",
         "sender_id": "u1",
     }
-    saved = {}
+    links = {}
+    rewritten = []
 
     async def fake_get_post(account_id, post_id):
-        return {**row, "processed_content": saved.get("content", row["processed_content"])}
+        return row
 
     async def fake_set_link(account_id, source_url, affiliate_url):
-        saved["link"] = (source_url, affiliate_url)
+        links[source_url] = affiliate_url
 
     async def fake_update(account_id, post_id, content):
-        saved["content"] = content
+        rewritten.append(content)
         return True
 
     async def fake_media(post_id):
         return []
 
     async def fake_links(account_id, urls):
-        return {}
+        return {u: links[u] for u in urls if u in links}
 
-    monkeypatch.setattr(facebook_commands.facebook_repository, "get_post", fake_get_post)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "set_affiliate_link", fake_set_link)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "update_content", fake_update)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "get_media", fake_media)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "get_affiliate_links", fake_links)
+    async def fake_rewrite(content):
+        return "Hai deal hời", True
+
+    repo = facebook_commands.facebook_repository
+    monkeypatch.setattr(repo, "get_post", fake_get_post)
+    monkeypatch.setattr(repo, "set_affiliate_link", fake_set_link)
+    monkeypatch.setattr(repo, "update_content", fake_update)
+    monkeypatch.setattr(repo, "get_media", fake_media)
+    monkeypatch.setattr(repo, "get_affiliate_links", fake_links)
+    monkeypatch.setattr(facebook_commands.facebook_caption, "rewrite_caption", fake_rewrite)
 
     await facebook_commands.maybe_handle_facebook_command(
         "B", f"/fb_link 9 {second} https://s.shopee.vn/aff2"
     )
+    assert links == {second: "https://s.shopee.vn/aff2"} and rewritten == []
 
-    assert saved["link"] == (second, "https://s.shopee.vn/aff2")
-    assert saved["content"] == f"A {first} B https://s.shopee.vn/aff2"
+    await facebook_commands.maybe_handle_facebook_command(
+        "B", f"/fb_link 9 {first} https://s.shopee.vn/aff1"
+    )
+    assert rewritten == ["Hai deal hời"]
 
 
 @pytest.mark.asyncio
@@ -400,3 +421,80 @@ async def test_fb_ok_posts_to_every_configured_page_and_retries_only_failed_one(
     )
     assert "có 2 link Shopee" in result.messages[0]
     assert "<source_url> <affiliate_url>" in result.messages[0]
+
+
+def _comment_flow(monkeypatch, *, targets, comment_error=None):
+    source, affiliate = "https://shopee.vn/product/1/2", "https://s.shopee.vn/aff"
+    row = {
+        "id": 5,
+        "claim_token": "tok",
+        "status": "PENDING_APPROVAL",
+        "original_content": f"Deal {source}",
+        "processed_content": f"Deal hời {source}",
+    }
+    repo = facebook_commands.facebook_repository
+    mocks = {
+        name: AsyncMock(return_value=value)
+        for name, value in {
+            "ensure_targets": None,
+            "get_media": [],
+            "record_target_posted": None,
+            "record_target_comment": None,
+            "finalize_post_status": "ERROR",
+        }.items()
+    }
+    for name, mock in mocks.items():
+        monkeypatch.setattr(repo, name, mock)
+    monkeypatch.setattr(repo, "get_post", AsyncMock(return_value=row))
+    monkeypatch.setattr(repo, "get_affiliate_links", AsyncMock(return_value={source: affiliate}))
+    monkeypatch.setattr(repo, "claim_post", AsyncMock(return_value=row))
+    monkeypatch.setattr(repo, "list_targets", AsyncMock(side_effect=lambda post_id: targets))
+
+    @asynccontextmanager
+    async def keep(*args):
+        yield
+
+    async def fake_publish(content, media, page_key, **callbacks):
+        mocks["captions"].append(content)
+        targets[0].update(status="POSTED", facebook_post_id="p1")
+        return SimpleNamespace(post_id="p1", permalink_url=None, visibility_confirmed=True)
+
+    mocks["captions"] = []
+    mocks["post_comment"] = AsyncMock(side_effect=comment_error, return_value="c1")
+    monkeypatch.setattr(repo, "keep_post_claim", keep)
+    monkeypatch.setattr(facebook_commands, "configured_page_keys", lambda: ["default"])
+    monkeypatch.setattr(facebook_commands, "publish_page_post", fake_publish)
+    monkeypatch.setattr(facebook_commands, "post_comment", mocks["post_comment"])
+    return mocks, affiliate
+
+
+@pytest.mark.asyncio
+async def test_fb_ok_posts_link_free_caption_then_comments_affiliate_link(monkeypatch):
+    targets = [{"page_key": "default", "status": "PENDING", "facebook_post_id": None, "comment_id": None}]
+    mocks, affiliate = _comment_flow(monkeypatch, targets=targets)
+
+    result = await facebook_commands.maybe_handle_facebook_command("B", "/fb_ok 5")
+
+    assert mocks["captions"] == ["Deal hời\n\n" + facebook_commands.facebook_caption.COMMENT_CTA]
+    mocks["post_comment"].assert_awaited_once_with("p1", affiliate, "default")
+    mocks["record_target_comment"].assert_awaited_once_with(5, "default", "c1", "tok")
+    assert mocks["finalize_post_status"].await_args.kwargs["needs_comment"] is True
+    assert "đã thả link vào bình luận đầu tiên" in result.messages[0]
+
+
+@pytest.mark.asyncio
+async def test_fb_ok_retry_only_comments_when_post_already_created(monkeypatch):
+    targets = [{"page_key": "default", "status": "POSTED", "facebook_post_id": "p1", "comment_id": None}]
+    mocks, affiliate = _comment_flow(
+        monkeypatch, targets=targets,
+        comment_error=[facebook_commands.FacebookPublishError("thiếu quyền"), "c2"],
+    )
+
+    first = await facebook_commands.maybe_handle_facebook_command("B", "/fb_ok 5")
+    assert "chưa bình luận được link — thiếu quyền" in first.messages[0]
+    mocks["record_target_comment"].assert_not_awaited()
+
+    await facebook_commands.maybe_handle_facebook_command("B", "/fb_ok 5")
+    assert mocks["captions"] == []  # post never recreated
+    assert mocks["post_comment"].await_count == 2
+    mocks["record_target_comment"].assert_awaited_once_with(5, "default", "c2", "tok")

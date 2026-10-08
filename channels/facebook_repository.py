@@ -218,6 +218,25 @@ async def record_target_posted(
         raise RuntimeError("Facebook publish claim no longer belongs to this worker")
 
 
+async def record_target_comment(
+    post_id: int, page_key: str, comment_id: str, claim_token: str,
+) -> None:
+    await ensure_schema()
+    result = await (await db.get_pool()).execute(
+        """
+        UPDATE facebook_post_targets SET comment_id = $3, updated_at = now()
+        WHERE post_id = $1 AND page_key = $2 AND facebook_post_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM facebook_post_queue WHERE id = $1 AND claim_token = $4)
+        """,
+        post_id,
+        page_key,
+        comment_id,
+        claim_token,
+    )
+    if result != "UPDATE 1":
+        raise RuntimeError("Facebook publish claim no longer belongs to this worker")
+
+
 async def record_target_error(
     post_id: int, page_key: str, message: str, *, claim_token: str | None = None,
 ) -> None:
@@ -262,21 +281,32 @@ async def record_target_unknown(post_id: int, page_key: str, message: str, claim
     )
 
 
-async def finalize_post_status(account_id: str, post_id: int, *, claim_token: str | None = None) -> str:
+def _error_summary(posted: int, total: int, errored: int, uncommented: int) -> str:
+    text = f"{posted}/{total} page đã đăng, {errored} page lỗi."
+    return f"{text[:-1]}, {uncommented} page chưa bình luận link." if uncommented else text
+
+
+async def finalize_post_status(
+    account_id: str, post_id: int, *, claim_token: str | None = None, needs_comment: bool = False,
+) -> str:
     """Recompute facebook_post_queue.status from facebook_post_targets: POSTED
-    only once every target page succeeded, ERROR otherwise. Returns the
-    resulting overall status."""
+    only once every target page succeeded (and, when ``needs_comment``, got its
+    first comment), ERROR otherwise. Returns the resulting overall status."""
     await ensure_schema()
     pool = await db.get_pool()
     summary = await pool.fetchrow(
         """
         SELECT
             count(*) AS total,
-            count(*) FILTER (WHERE status = 'POSTED') AS posted,
-            count(*) FILTER (WHERE status = 'ERROR') AS errored
+            count(*) FILTER (
+                WHERE status = 'POSTED' AND ($2::boolean IS FALSE OR comment_id IS NOT NULL)
+            ) AS posted,
+            count(*) FILTER (WHERE status = 'ERROR') AS errored,
+            count(*) FILTER (WHERE status = 'POSTED' AND comment_id IS NULL) AS uncommented
         FROM facebook_post_targets WHERE post_id = $1
         """,
         post_id,
+        needs_comment,
     )
     total = summary["total"] if summary else 0
     posted = summary["posted"] if summary else 0
@@ -306,7 +336,8 @@ async def finalize_post_status(account_id: str, post_id: int, *, claim_token: st
         """,
         account_id,
         post_id,
-        f"{posted}/{total or 0} page đã đăng, {errored} page lỗi." if total else "Chưa có Facebook Page nào được cấu hình.",
+        _error_summary(posted, total, errored, summary["uncommented"] if needs_comment else 0)
+        if total else "Chưa có Facebook Page nào được cấu hình.",
         claim_token,
     )
     if result != "UPDATE 1":
@@ -426,16 +457,6 @@ async def get_affiliate_links(account_id: str, source_urls: list[str]) -> dict[s
         """,
         account_id,
         source_urls,
-    )
-    return {row["source_url"]: row["affiliate_url"] for row in rows}
-
-
-async def get_previous_affiliate_links(account_id: str, source_urls: list[str]) -> dict[str, str]:
-    """Used only to repair captions; unverified rows never authorise publishing."""
-    await ensure_schema()
-    rows = await (await db.get_pool()).fetch(
-        """SELECT source_url, affiliate_url FROM shopee_affiliate_links
-        WHERE account_id = $1 AND source_url = ANY($2::text[])""", account_id, source_urls,
     )
     return {row["source_url"]: row["affiliate_url"] for row in rows}
 

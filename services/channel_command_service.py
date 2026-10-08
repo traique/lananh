@@ -42,6 +42,7 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /fb_sua <post_id> <nội dung> — sửa nội dung bài chờ
 /fb_link <post_id> <affiliate_url> — nhập short-link affiliate khi bài chỉ có 1 link Shopee
 /fb_link <post_id> <source_url> <affiliate_url> — nhập từng link khi bài có nhiều link
+(đủ link thì AI tự viết lại bài, link affiliate được thả ở bình luận đầu tiên)
 /fb_ok <post_id> — duyệt và đăng lên TẤT CẢ Facebook Page đang cấu hình; page nào lỗi sẽ báo riêng,
   chạy lại /fb_ok để chỉ thử lại page lỗi, page đã đăng OK không bị đụng tới
 /fb_check <post_id> — kiểm tra từng page đã published/công khai chưa, lấy permalink
