@@ -144,3 +144,15 @@ services:
         sync: false
       - key: FACEBOOK_PAGE_ACCESS_TOKEN_2
         sync: false
+      # Page RIÊNG cho báo cáo chứng khoán + tin CafeF tự động (services/market_page.py).
+      # Không nằm trong /fb_pages và /fb_ok không đăng lên đây; bỏ trống = tắt luồng.
+      - key: FACEBOOK_PAGE_ID_MARKET
+        sync: false
+      - key: FACEBOOK_PAGE_ACCESS_TOKEN_MARKET
+        sync: false
+      # Giờ đăng của Page trên (giờ VN, HH:MM, nhiều mốc cách nhau bằng dấu phẩy).
+      # Báo cáo chứng khoán chỉ chạy thứ 2-6; tin CafeF chạy hằng ngày.
+      - key: MARKET_STOCK_TIMES_VN
+        value: "08:45,15:20"
+      - key: MARKET_NEWS_TIMES_VN
+        value: "08:30"

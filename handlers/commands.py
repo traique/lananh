@@ -858,6 +858,11 @@ async def fb_pages_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 @common.restricted
+async def fb_market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_market")
+
+
+@common.restricted
 async def fb_themnhom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _facebook_command(update, context, "/fb_themnhom")
 

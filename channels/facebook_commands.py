@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import asyncpg
 
 from channels import facebook_repository, zalo_repository
-from services import facebook_caption
+from services import facebook_caption, market_page
 from services.channel_result import ChannelResult
 from services.facebook_caption import find_shopee_urls
 from services.facebook_image import brand_image
@@ -158,6 +158,35 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         ]
         lines.extend(f"- {key}" for key in pages)
         return ChannelResult(["\n".join(lines)])
+
+    if command == "/fb_market":
+        parts = raw.lower().split()
+        if len(parts) < 2 or parts[1] not in ("stock", "news") or parts[2:] not in ([], ["dang"]):
+            return ChannelResult([
+                "Cú pháp: /fb_market <stock|news> [dang]\n"
+                "- stock: báo cáo VN-INDEX; news: tin CafeF\n"
+                "- không có 'dang': chỉ tạo nội dung để xem thử, KHÔNG đăng\n"
+                "- thêm 'dang': đăng thật lên Page chứng khoán (FACEBOOK_PAGE_ID_MARKET)"
+            ])
+        job, publish = parts[1], parts[2:] == ["dang"]
+        try:
+            text = await market_page.run_manual(job, publish=publish)
+        except market_page.MarketPageError as exc:
+            return ChannelResult([f"❌ {exc}"])
+        except FacebookPublicationUncertain:
+            return ChannelResult([
+                "⚠️ Chưa rõ Facebook đã tạo bài hay chưa. Kiểm tra Page chứng khoán trước khi chạy lại."
+            ])
+        except Exception as exc:
+            logger.warning("/fb_market %s lỗi (%s).", job, type(exc).__name__, exc_info=True)
+            return ChannelResult([f"❌ Chạy {job} thất bại: {type(exc).__name__}: {exc}"])
+        if not text:
+            return ChannelResult([f"Không có nội dung để đăng cho {job} (xem log để biết lý do)."])
+        if publish:
+            return ChannelResult([f"✅ Đã đăng {job} lên Page chứng khoán:\n\n{text}"])
+        return ChannelResult([
+            f"👀 XEM THỬ {job} (chưa đăng):\n\n{text}\n\nĐăng thật: /fb_market {job} dang"
+        ])
 
     if command == "/fb_themnhom":
         parts = raw.split(maxsplit=2)

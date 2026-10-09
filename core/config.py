@@ -239,6 +239,11 @@ _MORNING_NEWS_RSS_FEEDS_RAW = os.getenv(
 )
 MORNING_NEWS_RSS_FEEDS = [url.strip() for url in _MORNING_NEWS_RSS_FEEDS_RAW.split(",") if url.strip()]
 
+# Giờ đăng (giờ VN, dạng HH:MM, nhiều mốc cách nhau bằng dấu phẩy) của Page chứng
+# khoán riêng - xem services/market_page.py. Giá trị sai định dạng thì dùng mặc định.
+MARKET_NEWS_TIMES_VN = os.getenv("MARKET_NEWS_TIMES_VN", "08:30").strip()
+MARKET_STOCK_TIMES_VN = os.getenv("MARKET_STOCK_TIMES_VN", "08:45,15:20").strip()
+
 CHAT_SKILL_PATH = Path(os.getenv("CHAT_SKILL_PATH", "chat_skill.yaml").strip())
 # File tham chiếu văn phong/thuật ngữ dịch Nhật-Việt cho lệnh /dich (tùy chọn,
 # fail-open nếu thiếu - xem services/translate_service.py::_reference_guide).

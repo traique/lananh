@@ -134,6 +134,12 @@
   .field-row input:focus{outline:2px solid var(--accent-a);outline-offset:-1px;background:rgba(255,255,255,.85)}
   .field-label{font-size:11px;color:var(--muted);width:100%;margin-top:6px}
 
+  .output{
+    white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.5;
+    background:rgba(255,255,255,.55);border:1px solid rgba(60,60,67,.16);
+    border-radius:var(--radius-sm);padding:12px;margin:12px 0 0;max-height:420px;overflow:auto;
+  }
+
   select{
     padding:6px 10px;border-radius:var(--radius-sm);border:1px solid rgba(60,60,67,.16);
     background:rgba(255,255,255,.6);font-size:12.5px;
@@ -186,6 +192,19 @@
   <section class="tile glass">
     <h2 class="tile-title"><span class="dot"></span>Agnes AI (lệnh /anh - tạo ảnh)</h2>
     <div id="agnes-box" class="muted">Đang tải...</div>
+  </section>
+
+  <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>Page chứng khoán &amp; tin CafeF (tự động)</h2>
+    <div id="market-box" class="muted">Đang tải...</div>
+    <div class="actions">
+      <button class="secondary small market-run" data-job="stock" data-publish="0">Xem thử chứng khoán</button>
+      <button class="secondary small market-run" data-job="news" data-publish="0">Xem thử tin CafeF</button>
+      <button class="small market-run" data-job="stock" data-publish="1">Đăng chứng khoán ngay</button>
+      <button class="small market-run" data-job="news" data-publish="1">Đăng tin CafeF ngay</button>
+    </div>
+    <div class="field-label">Xem thử chỉ tạo nội dung bằng AI, không đăng lên Page. Giờ đăng đổi bằng biến MARKET_STOCK_TIMES_VN / MARKET_NEWS_TIMES_VN.</div>
+    <pre id="market-output" class="output" hidden></pre>
   </section>
 
   <section class="tile glass">
@@ -472,6 +491,60 @@ async function loadTavily() {
   };
 }
 
+const MARKET_JOB_LABEL = { stock: 'Báo cáo chứng khoán', news: 'Tin CafeF' };
+
+function marketBox(m) {
+  const schedule = m.schedule
+    .map(s => `${escapeHtml(s.time)} ${MARKET_JOB_LABEL[s.job]} (${escapeHtml(s.days)})`)
+    .join('<br>');
+  const lastRun = job => escapeHtml(m.last[job] || 'chưa chạy');
+  return `
+    <table>
+      <tr><th>Page</th><td><span class="pill ${m.configured ? 'ok' : 'bad'}">${m.configured ? 'đã cấu hình' : 'chưa có FACEBOOK_PAGE_ID_MARKET / TOKEN'}</span>
+        ${m.busy ? '<span class="pill ok">đang chạy</span>' : ''}</td></tr>
+      <tr><th>Lịch đăng (giờ VN)</th><td>${schedule}</td></tr>
+      <tr><th>Lượt kế tiếp</th><td>${fmtDate(m.next.at)} - ${MARKET_JOB_LABEL[m.next.job]}</td></tr>
+      <tr><th>Lần gần nhất</th><td>Chứng khoán: ${lastRun('stock')}<br>Tin CafeF: ${lastRun('news')}</td></tr>
+    </table>`;
+}
+
+function setMarketButtons(m) {
+  document.querySelectorAll('.market-run').forEach(btn => {
+    btn.disabled = m.busy || (btn.dataset.publish === '1' && !m.configured);
+  });
+}
+
+async function loadMarket() {
+  const m = await api('/admin/api/market_page');
+  document.getElementById('market-box').innerHTML = marketBox(m);
+  setMarketButtons(m);
+}
+
+document.querySelectorAll('.market-run').forEach(btn => {
+  btn.onclick = async () => {
+    const job = btn.dataset.job;
+    const publish = btn.dataset.publish === '1';
+    if (publish && !confirm(`Đăng "${MARKET_JOB_LABEL[job]}" lên Page chứng khoán ngay bây giờ?`)) return;
+    const out = document.getElementById('market-output');
+    document.querySelectorAll('.market-run').forEach(b => { b.disabled = true; });
+    out.hidden = false;
+    out.textContent = 'Đang chạy, có thể mất 1-2 phút...';
+    try {
+      const r = await api('/admin/api/market_page/run', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job, publish }),
+      });
+      out.textContent = r.text || 'Không có nội dung để đăng (xem log server để biết lý do).';
+      msg(r.published ? `${MARKET_JOB_LABEL[job]}: đã đăng lên Page.` : `${MARKET_JOB_LABEL[job]}: xem thử xong, chưa đăng.`);
+    } catch (e) {
+      out.hidden = true;
+      msg(`${MARKET_JOB_LABEL[job]} thất bại: ` + e.message, true);
+    } finally {
+      loadMarket().catch(() => {});
+    }
+  };
+});
+
 function agnesBox(a) {
   return `
     <div class="provider-card" style="border-bottom:none;padding-top:0">
@@ -600,11 +673,13 @@ loadState().catch(e => msg(e.message, true));
 loadProviders().catch(e => msg(e.message, true));
 loadTavily().catch(e => msg(e.message, true));
 loadAgnes().catch(e => msg(e.message, true));
+loadMarket().catch(e => msg(e.message, true));
 loadMemory().catch(e => msg(e.message, true));
 loadUsage().catch(e => msg(e.message, true));
 loadUsageModels().catch(e => msg(e.message, true));
 setInterval(() => {
   loadState().catch(() => {});
+  loadMarket().catch(() => {});
   loadUsage().catch(() => {});
   loadUsageModels().catch(() => {});
 }, 10000);

@@ -78,7 +78,13 @@ def _settings(page_key: str = "default") -> tuple[str, str, str]:
     return page_id, token, version
 
 
-def configured_page_keys() -> list[str]:
+# Page chỉ dành cho luồng tự động (services/market_page.py). Phải loại khỏi
+# configured_page_keys() mặc định, nếu không /fb_ok sẽ đăng cả bài Shopee lên đó.
+MARKET_PAGE_KEY = "MARKET"
+DEDICATED_PAGE_KEYS = frozenset({MARKET_PAGE_KEY})
+
+
+def configured_page_keys(include_dedicated: bool = False) -> list[str]:
     """Every page_key with both env vars set, "default" first."""
     keys = []
     if os.getenv("FACEBOOK_PAGE_ID", "").strip() and os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN", "").strip():
@@ -88,6 +94,8 @@ def configured_page_keys() -> list[str]:
         if not name.startswith(prefix):
             continue
         key = name[len(prefix):]
+        if key in DEDICATED_PAGE_KEYS and not include_dedicated:
+            continue
         if (
             os.getenv(name, "").strip()
             and os.getenv(f"FACEBOOK_PAGE_ACCESS_TOKEN_{key}", "").strip()

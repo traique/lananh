@@ -26,7 +26,7 @@ from channels.router import router as zalo_router
 from core import config, database as db, idempotency, webhook_inbox
 from diagnose_router9 import main as diagnose_main
 from services import memory_service
-from services import morning_news
+from services import market_page, morning_news
 from services.background_tasks import stop_tracked_tasks
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.concurrency import assistant_turn
@@ -159,11 +159,13 @@ async def lifespan(_: FastAPI):
         logger.info("Webhook đã set tới: %s", webhook_url)
         zalo_scheduler.start()
         morning_news.start()
+        market_page.start()
         yield
     finally:
         logger.info("Đang tắt bot...")
         await _safe_shutdown("Zalo scheduler", zalo_scheduler.stop())
         await _safe_shutdown("Morning news scheduler", morning_news.stop())
+        await _safe_shutdown("Market page scheduler", market_page.stop())
         await _safe_shutdown("webhook inbox", webhook_inbox.stop())
         await _safe_shutdown("webhook tasks", _stop_webhook_tasks())
         if app_started:
@@ -485,6 +487,32 @@ async def admin_agnes_update(request: Request) -> Response:
         "api_key_masked": _mask_api_key(api_key or ""),
         "api_key_overridden": bool(await provider_overrides.get_api_key_override("agnes")),
     })
+
+
+@api.get("/admin/api/market_page")
+async def admin_market_page(request: Request) -> Response:
+    if not _admin_session_valid(request):
+        return Response(status_code=403)
+    return JSONResponse(await market_page.status())
+
+
+@api.post("/admin/api/market_page/run")
+async def admin_market_page_run(request: Request) -> Response:
+    """Body: {"job": "stock"|"news", "publish"?: bool}. Không có publish = chỉ tạo nội dung xem thử."""
+    if not _admin_session_valid(request):
+        return Response(status_code=403)
+    body = await request.json()
+    job, publish = body.get("job"), bool(body.get("publish"))
+    if job not in ("stock", "news"):
+        return Response(status_code=400)
+    try:
+        text = await market_page.run_manual(job, publish=publish)
+    except market_page.MarketPageError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    except Exception as exc:
+        logger.warning("Admin market_page %s lỗi (%s).", job, type(exc).__name__, exc_info=True)
+        return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=502)
+    return JSONResponse({"published": publish and bool(text), "text": text})
 
 
 async def _memory_user_entries() -> list[dict]:

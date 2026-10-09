@@ -37,6 +37,7 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /fb_nhom — xem nhóm nguồn Facebook
 /fb_themnhom <group_id> <tên> — thêm nhóm Zalo làm nguồn đăng Facebook
 /fb_pages — xem các Facebook Page đã cấu hình (fb_ok sẽ đăng lên tất cả)
+/fb_market <stock|news> [dang] — xem thử bài Page chứng khoán/tin CafeF; thêm 'dang' để đăng thật
 /fb_xoanhom <group_id|tên> — bỏ nhóm khỏi luồng Facebook
 /fb_xem <post_id> — xem bài đang chờ duyệt
 /fb_sua <post_id> <nội dung> — sửa nội dung bài chờ

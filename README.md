@@ -280,6 +280,32 @@ FACEBOOK_PAGE_ACCESS_TOKEN_2=...
 access token). **Không cần gán page cho từng nhóm Zalo** — mọi nhóm nguồn đều
 dùng chung tập page này khi đăng.
 
+#### Page riêng cho chứng khoán + tin CafeF (`market_page`)
+
+Hai luồng tự động chuyển từ n8n sang `services/market_page.py` đăng lên một Page
+**tách hẳn** khỏi Page Shopee: báo cáo VN-INDEX/DNSE (08:45 và 15:20, thứ 2-6, kèm
+biểu đồ) và bản tin CafeF (08:30 hằng ngày, kèm comment bài nổi bật). Cấu hình bằng key
+`MARKET`:
+
+```env
+FACEBOOK_PAGE_ID_MARKET=...
+FACEBOOK_PAGE_ACCESS_TOKEN_MARKET=...
+```
+
+Page này không xuất hiện trong `/fb_pages` và `/fb_ok` không đăng bài Shopee lên đó.
+Bỏ trống 2 biến là tắt luồng. Nội dung do AI chain của bot sinh (không cần Gemini key riêng).
+
+- **Giờ đăng** (giờ VN, `HH:MM`, nhiều mốc cách nhau bằng dấu phẩy): `MARKET_STOCK_TIMES_VN`
+  (mặc định `08:45,15:20`, chỉ thứ 2-6) và `MARKET_NEWS_TIMES_VN` (mặc định `08:30`, hằng ngày).
+  Đổi giá trị trong Render rồi deploy lại; giá trị sai định dạng thì dùng mặc định.
+- **Chạy thủ công**: `/fb_market <stock|news>` chỉ tạo nội dung để xem thử (không đăng);
+  `/fb_market <stock|news> dang` đăng thật. Dùng được từ Telegram, Zalo admin và Zoom.
+  Trang `/admin` có mục "Page chứng khoán & tin CafeF" với các nút tương ứng, kèm lịch và
+  kết quả lần chạy gần nhất.
+- **Tuân thủ**: prompt cấm khuyến nghị mua/bán/tỷ trọng/giá mục tiêu; mỗi bài tự gắn dòng
+  nguồn (DNSE, CafeF) và lời miễn trừ trách nhiệm. Nếu AI vẫn viết cụm khuyến nghị giao dịch
+  thì bài bị bỏ, không đăng (xem log `market_page`).
+
 Các lệnh `/fb_*` dùng được từ **Zalo admin, Telegram owner và Zoom jid đã pair**:
 
 ```text
