@@ -3,6 +3,7 @@
 import base64
 import binascii
 import hmac
+import logging
 import os
 from urllib.parse import unquote
 
@@ -25,9 +26,11 @@ from channels.zalo_text import to_plain_text
 from core import idempotency
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.channel_image_service import MAX_ZALO_IMAGE_BYTES, handle_channel_image
+from services.facebook_caption import is_voucher_only
 from services.concurrency import assistant_turn, channel_message_turn
 from services.reminder_delivery import NotificationTarget, notification_target
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/zalo", tags=["zalo-internal"])
 
 
@@ -328,6 +331,15 @@ async def facebook_group_post(
         media.append((item.mime_type, body))
     if not payload.text.strip() and not media:
         raise HTTPException(400, "Empty Facebook post")
+    # Bài chỉ báo mã giảm giá (không ảnh, không giá sản phẩm) không đáng đăng Page.
+    # FACEBOOK_SKIP_VOUCHER_POSTS=0 để tắt bộ lọc này.
+    if (
+        not media
+        and os.getenv("FACEBOOK_SKIP_VOUCHER_POSTS", "1").strip() != "0"
+        and is_voucher_only(payload.text)
+    ):
+        logger.info("Bỏ qua bài Zalo chỉ có mã giảm giá (nhóm %s).", payload.group_id)
+        return Response(status_code=204)
     post_id = await facebook_repository.create_post(
         account_id=payload.account_id,
         group_id=payload.group_id,

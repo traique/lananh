@@ -119,8 +119,10 @@ def _vn_date(iso_date: str) -> str:
 _DNSE_URL = "https://services.entrade.com.vn/chart-api/v2/ohlcs/{kind}"
 _QUICKCHART_URL = "https://quickchart.io/chart"
 _INDEX_SYMBOLS = frozenset({"VNINDEX", "VN30", "HNXINDEX", "HNX30", "UPCOMINDEX", "UPINDEX"})
+# Chỉ tải mã thực sự đi vào bài: VNINDEX + cổ phiếu. HNXINDEX/UPCOMINDEX từng nằm trong
+# danh sách n8n nhưng DNSE trả 400 và báo cáo không dùng tới chúng.
 _REPORT_SYMBOLS = (
-    "VNINDEX", "VN30", "HNXINDEX", "UPCOMINDEX",
+    "VNINDEX", "VN30",
     "VIC", "VHM", "VRE", "FPT", "MWG", "HPG",
     "VCB", "BID", "CTG", "MBB", "TCB",
     "SSI", "VND", "HCM", "VCI", "GVR", "IJC",

@@ -280,6 +280,11 @@ FACEBOOK_PAGE_ACCESS_TOKEN_2=...
 access token). **Không cần gán page cho từng nhóm Zalo** — mọi nhóm nguồn đều
 dùng chung tập page này khi đăng.
 
+**Lọc bài chỉ có mã giảm giá:** bài từ nhóm Zalo nguồn mà chỉ báo mã/săn deal (nhắc "lưu mã",
+"mã giảm", "deal VIP"..., không có giá sản phẩm, không kèm ảnh, dưới 400 ký tự) sẽ bị bỏ, không
+vào hàng chờ duyệt (có dòng log "Bỏ qua bài Zalo chỉ có mã giảm giá"). Đặt
+`FACEBOOK_SKIP_VOUCHER_POSTS=0` để tắt. Bài có ảnh hoặc có giá luôn được giữ.
+
 #### Page riêng cho chứng khoán + tin CafeF (`market_page`)
 
 Hai luồng tự động chuyển từ n8n sang `services/market_page.py` đăng lên một Page

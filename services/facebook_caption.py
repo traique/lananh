@@ -2,6 +2,7 @@
 
 import logging
 import re
+import unicodedata
 from urllib.parse import urlparse
 
 from ai import orchestrator
@@ -32,6 +33,45 @@ def _is_shopee(url: str) -> bool:
     except ValueError:
         return False
     return any(host == domain or host.endswith(f".{domain}") for domain in _SHOPEE_HOSTS)
+
+
+# Bài "chỉ có mã giảm giá": thông báo lưu mã / săn deal, không có sản phẩm cụ thể để đăng.
+# So khớp trên chữ đã bỏ dấu để bắt cả bài viết không dấu. Cố ý hẹp: bỏ sót một bài thì
+# vẫn còn bước duyệt thủ công, còn loại nhầm bài sản phẩm thì mất bài.
+_VOUCHER_RE = re.compile(
+    r"\b(ma\s+(giam|freeship|free\s+ship|shopee|voucher)|luu\s+ma|san\s+ma|thu\s+thap\s+ma|"
+    r"nhap\s+ma|voucher|deal\s+vip|shopee\s*vip|san\s+deal)\b"
+)
+# Có giá cụ thể (giá 99k, chỉ còn 129.000đ...) thì là bài sản phẩm. "tối đa 500K" của
+# mã giảm không tính là giá nên không nằm trong mẫu này.
+_PRICE_RE = re.compile(
+    r"\bgia\s*(chi\s*|con\s*|tu\s*|sale\s*)?[:\-]?\s*\d"
+    r"|\b(chi\s+con|chi\s+tu|dong\s+gia|con)\s*\d[\d.,]*\s*(k|d|vnd|nghin|ngan|tr|trieu)\b"
+    r"|\d[\d.,]*\s*(d|vnd|₫)(?![a-z])"
+)
+# Số tiền là điều kiện/mức giảm của mã ("đơn từ 0Đ", "tối đa 500K", "giảm 20.000đ"), không phải
+# giá sản phẩm; bỏ đi trước khi tìm giá. "chỉ từ 99k" là giá nên không bị bỏ.
+_THRESHOLD_RE = re.compile(
+    r"(?<!chi )\b(tu|toi\s+da|toi\s+thieu|giam)\s*\d[\d.,]*\s*(k|d|vnd|₫|nghin|ngan|tr|trieu)?(?![a-z])"
+)
+_VOUCHER_ONLY_MAX_CHARS = 400
+
+
+def _fold(text: str) -> str:
+    """Chữ thường, bỏ dấu tiếng Việt (đ -> d)."""
+    decomposed = unicodedata.normalize("NFD", (text or "").lower().replace("đ", "d"))
+    return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+
+
+def is_voucher_only(text: str) -> bool:
+    """True khi bài chỉ báo mã giảm giá/săn deal: nhắc mã, không có giá sản phẩm, ngắn.
+    Người gọi chỉ áp dụng cho bài không kèm ảnh (bài sản phẩm gần như luôn có ảnh)."""
+    body = " ".join(_fold(_URL_RE.sub(" ", text or "")).split())
+    if not body or len(body) > _VOUCHER_ONLY_MAX_CHARS:
+        return False
+    if _VOUCHER_RE.search(body) is None:
+        return False
+    return _PRICE_RE.search(_THRESHOLD_RE.sub(" ", body)) is None
 
 
 def find_shopee_urls(text: str) -> list[str]:
