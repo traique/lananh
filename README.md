@@ -280,10 +280,20 @@ FACEBOOK_PAGE_ACCESS_TOKEN_2=...
 access token). **Không cần gán page cho từng nhóm Zalo** — mọi nhóm nguồn đều
 dùng chung tập page này khi đăng.
 
-**Lọc bài chỉ có mã giảm giá:** bài từ nhóm Zalo nguồn mà chỉ báo mã/săn deal (nhắc "lưu mã",
-"mã giảm", "deal VIP"..., không có giá sản phẩm, không kèm ảnh, dưới 400 ký tự) sẽ bị bỏ, không
-vào hàng chờ duyệt (có dòng log "Bỏ qua bài Zalo chỉ có mã giảm giá"). Đặt
-`FACEBOOK_SKIP_VOUCHER_POSTS=0` để tắt. Bài có ảnh hoặc có giá luôn được giữ.
+**Lọc bài từ nhóm Zalo trước khi vào hàng chờ Facebook** (`channels/router.py`,
+`services/facebook_caption.skip_reason`). Gateway gộp ảnh + chữ của cùng một người gửi trong
+8 giây thành một bài, rồi bộ lọc mới áp dụng lên bài đã gộp. Bài bị bỏ (trả 204, ghi log
+"Bỏ qua bài Zalo (<lý do>)") khi:
+
+- **Có ảnh nhưng không có caption**: chỉ có ảnh, hoặc ảnh + link, hoặc ảnh + vài chữ ngắn như
+  "Link mua:" (caption cần từ 10 chữ/số trở lên, không tính link kể cả link không có `https://`).
+- **Có caption nhưng không có ảnh** (kể cả khi gateway không tải được ảnh).
+- **Chỉ báo mã giảm giá/săn deal**: nhắc "lưu mã", "mã giảm", "deal VIP"... mà không có giá sản
+  phẩm, dưới 400 ký tự.
+
+Tắt từng bộ lọc trên Render: `FACEBOOK_REQUIRE_PHOTO_AND_CAPTION=0` (cho phép bài thiếu ảnh/caption),
+`FACEBOOK_SKIP_VOUCHER_POSTS=0` (giữ bài mã giảm giá). Lưu ý: ảnh gửi trước rồi caption gửi sau
+quá 8 giây sẽ thành hai bài riêng và cả hai đều bị bỏ.
 
 #### Page riêng cho chứng khoán + tin CafeF (`market_page`)
 

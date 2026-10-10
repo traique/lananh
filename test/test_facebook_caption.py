@@ -75,3 +75,46 @@ def test_voucher_only_posts_are_detected(text):
 )
 def test_product_posts_and_unrelated_text_are_not_voucher_only(text):
     assert not caption.is_voucher_only(text)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Tai nghe Bluetooth XYZ chính hãng https://s.shopee.vn/a", True),
+        ("Tai nghe XYZ chính hãng", True),
+        ("Hot nè mn ơi", False),  # quá ngắn để là caption
+        ("Link: https://s.shopee.vn/a", False),
+        ("Link mua: https://s.shopee.vn/a", False),
+        ("Link mua: s.shopee.vn/abcDEF123", False),  # link không có https://
+        ("shope.ee/abcdef", False),
+        ("www.shopee.vn/product/1/2", False),
+        ("https://s.shopee.vn/a", False),
+        ("🔥🔥🔥 !!! https://s.shopee.vn/a", False),
+        ("", False),
+    ],
+)
+def test_has_caption_ignores_links_emoji_and_punctuation(text, expected):
+    assert caption.has_caption(text) is expected
+
+
+def test_skip_reason_requires_both_photo_and_caption():
+    product = "Tai nghe Bluetooth XYZ giá 199k https://s.shopee.vn/a"
+
+    assert caption.skip_reason(product, True) is None
+    assert caption.skip_reason(product, False) == "có caption nhưng không có ảnh"
+    assert caption.skip_reason("", True) == "có ảnh nhưng không có caption"
+    assert caption.skip_reason("Link: https://s.shopee.vn/a", True) == "có ảnh nhưng không có caption"
+
+
+def test_skip_reason_voucher_filter_applies_to_posts_with_photo_too():
+    voucher = "Lưu mã giảm 50% lúc 0H tại banner này https://s.shopee.vn/a"
+
+    assert caption.skip_reason(voucher, True) == "chỉ báo mã giảm giá"
+    assert caption.skip_reason(voucher, True, skip_voucher=False) is None
+
+
+def test_skip_reason_switches_can_be_turned_off_independently():
+    text_only = "Áo khoác dù chống nắng siêu nhẹ https://s.shopee.vn/a"
+
+    assert caption.skip_reason(text_only, False, require_photo_and_caption=False) is None
+    assert caption.skip_reason("", True, require_photo_and_caption=False) is None

@@ -26,7 +26,7 @@ from channels.zalo_text import to_plain_text
 from core import idempotency
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.channel_image_service import MAX_ZALO_IMAGE_BYTES, handle_channel_image
-from services.facebook_caption import is_voucher_only
+from services.facebook_caption import skip_reason
 from services.concurrency import assistant_turn, channel_message_turn
 from services.reminder_delivery import NotificationTarget, notification_target
 
@@ -47,6 +47,11 @@ class ControllerPayload(BaseModel):
 
 def _secret():
     return os.getenv("ZALO_BRIDGE_SECRET", "").strip()
+
+
+def _env_on(name: str) -> bool:
+    """Bộ lọc mặc định bật; đặt biến = 0 để tắt."""
+    return os.getenv(name, "1").strip() != "0"
 
 
 def _auth(value):
@@ -331,14 +336,19 @@ async def facebook_group_post(
         media.append((item.mime_type, body))
     if not payload.text.strip() and not media:
         raise HTTPException(400, "Empty Facebook post")
-    # Bài chỉ báo mã giảm giá (không ảnh, không giá sản phẩm) không đáng đăng Page.
-    # FACEBOOK_SKIP_VOUCHER_POSTS=0 để tắt bộ lọc này.
-    if (
-        not media
-        and os.getenv("FACEBOOK_SKIP_VOUCHER_POSTS", "1").strip() != "0"
-        and is_voucher_only(payload.text)
-    ):
-        logger.info("Bỏ qua bài Zalo chỉ có mã giảm giá (nhóm %s).", payload.group_id)
+    # Lọc ở đây (sau khi gateway đã gộp ảnh + chữ cùng người gửi). Trả 204 chứ không báo lỗi:
+    # gateway coi mọi mã khác 2xx là lỗi tạm và thử lại mãi bài đó mỗi 15 giây.
+    reason = skip_reason(
+        payload.text,
+        bool(media),
+        require_photo_and_caption=_env_on("FACEBOOK_REQUIRE_PHOTO_AND_CAPTION"),
+        skip_voucher=_env_on("FACEBOOK_SKIP_VOUCHER_POSTS"),
+    )
+    if reason:
+        logger.info(
+            "Bỏ qua bài Zalo (%s) nhóm=%s người gửi=%s: %.60s",
+            reason, payload.group_id, payload.sender_id, " ".join(payload.text.split()),
+        )
         return Response(status_code=204)
     post_id = await facebook_repository.create_post(
         account_id=payload.account_id,

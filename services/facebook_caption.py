@@ -64,14 +64,54 @@ def _fold(text: str) -> str:
 
 
 def is_voucher_only(text: str) -> bool:
-    """True khi bài chỉ báo mã giảm giá/săn deal: nhắc mã, không có giá sản phẩm, ngắn.
-    Người gọi chỉ áp dụng cho bài không kèm ảnh (bài sản phẩm gần như luôn có ảnh)."""
-    body = " ".join(_fold(_URL_RE.sub(" ", text or "")).split())
+    """True khi bài chỉ báo mã giảm giá/săn deal: nhắc mã, không có giá sản phẩm, ngắn."""
+    body = " ".join(_fold(_without_links(text)).split())
     if not body or len(body) > _VOUCHER_ONLY_MAX_CHARS:
         return False
     if _VOUCHER_RE.search(body) is None:
         return False
     return _PRICE_RE.search(_THRESHOLD_RE.sub(" ", body)) is None
+
+
+# Để đếm chữ trong caption phải bỏ cả link không có "https://" (s.shopee.vn/abc, shope.ee/x).
+_LINK_LIKE_RE = re.compile(
+    r"(?:https?://|www\.)\S+|\b(?:[a-z0-9-]+\.)+(?:vn|com|ee|me|net|link|co)\b\S*",
+    re.IGNORECASE,
+)
+# "Link mua:" (7 ký tự) chưa phải caption; tên sản phẩm ngắn nhất cũng cỡ "Tai nghe XYZ".
+_MIN_CAPTION_CHARS = 10
+
+
+def _without_links(text: str) -> str:
+    return _LINK_LIKE_RE.sub(" ", text or "")
+
+
+def has_caption(text: str) -> bool:
+    """Có chữ thật ngoài link: "Link mua: https://..." hay chỉ emoji không tính là caption."""
+    return sum(ch.isalnum() for ch in _without_links(text)) >= _MIN_CAPTION_CHARS
+
+
+def skip_reason(
+    text: str,
+    has_media: bool,
+    *,
+    require_photo_and_caption: bool = True,
+    skip_voucher: bool = True,
+) -> str | None:
+    """Lý do một bài Zalo không được đưa vào hàng chờ Facebook; None = giữ lại.
+
+    `text`/`has_media` là bài đã gộp: gateway nối ảnh và chữ của cùng một người gửi trong
+    cửa sổ 8 giây thành một bài, nên ảnh gửi trước rồi caption gửi sau vẫn được tính đủ.
+    """
+    caption = has_caption(text)
+    if require_photo_and_caption:
+        if not has_media:
+            return "có caption nhưng không có ảnh"
+        if not caption:
+            return "có ảnh nhưng không có caption"
+    if skip_voucher and caption and is_voucher_only(text):
+        return "chỉ báo mã giảm giá"
+    return None
 
 
 def find_shopee_urls(text: str) -> list[str]:

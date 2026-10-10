@@ -146,7 +146,11 @@ services:
         sync: false
       # Page RIÊNG cho báo cáo chứng khoán + tin CafeF tự động (services/market_page.py).
       # Không nằm trong /fb_pages và /fb_ok không đăng lên đây; bỏ trống = tắt luồng.
-      # 1 = bỏ qua bài Zalo chỉ báo mã giảm giá (không ảnh, không giá sản phẩm); 0 = tắt lọc.
+      # Lọc bài từ nhóm Zalo trước khi vào hàng chờ Facebook (1 = bật, 0 = tắt):
+      # chỉ nhận bài có ĐỦ cả ảnh lẫn caption.
+      - key: FACEBOOK_REQUIRE_PHOTO_AND_CAPTION
+        value: "1"
+      # Bỏ bài chỉ báo mã giảm giá/săn deal (không có giá sản phẩm, ngắn).
       - key: FACEBOOK_SKIP_VOUCHER_POSTS
         value: "1"
       - key: FACEBOOK_PAGE_ID_MARKET
