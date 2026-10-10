@@ -53,6 +53,71 @@ async def test_with_reconnect_khong_nuot_loi_khac_loi_ket_noi(monkeypatch):
         await broken()
 
 
+@pytest.mark.asyncio
+async def test_with_reconnect_chi_reset_dung_pool_vua_dung(monkeypatch):
+    """Pool lỗi là pool get_pool() đã trả cho lượt gọi này, KHÔNG phải pool
+    global tại thời điểm bắt lỗi (có thể đã là pool mới của coroutine khác)."""
+    old_pool, new_pool = object(), object()
+    reset_args = []
+
+    async def fake_reset_pool(failed_pool):
+        reset_args.append(failed_pool)
+
+    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+    monkeypatch.setattr(db, "_pool", old_pool)
+
+    @db._with_reconnect
+    async def uses_pool():
+        pool = await db.get_pool()
+        if pool is old_pool:
+            db._pool = new_pool  # coroutine khác vừa thay pool
+            raise asyncpg.InterfaceError("connection is closed")
+        return "ok"
+
+    assert await uses_pool() == "ok"
+    assert reset_args == [old_pool]
+    monkeypatch.setattr(db, "_pool", None)
+
+
+@pytest.mark.asyncio
+async def test_with_reconnect_khong_retry_insert_khi_mat_ket_noi_giua_chung(monkeypatch):
+    calls = {"n": 0}
+
+    async def fake_reset_pool(failed_pool):
+        return None
+
+    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+
+    @db._with_reconnect(idempotent=False)
+    async def insert():
+        calls["n"] += 1
+        raise asyncpg.ConnectionDoesNotExistError("closed in the middle of operation")
+
+    with pytest.raises(asyncpg.ConnectionDoesNotExistError):
+        await insert()
+    assert calls["n"] == 1  # không gửi lại INSERT có thể đã commit
+
+
+@pytest.mark.asyncio
+async def test_with_reconnect_van_retry_insert_khi_chua_gui_lenh(monkeypatch):
+    calls = {"n": 0}
+
+    async def fake_reset_pool(failed_pool):
+        return None
+
+    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+
+    @db._with_reconnect(idempotent=False)
+    async def insert():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise asyncpg.InterfaceError("cannot perform operation: connection is closed")
+        return 1
+
+    assert await insert() == 1
+    assert calls["n"] == 2
+
+
 # ─── get_pool: singleton ─────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

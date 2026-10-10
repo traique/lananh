@@ -11,6 +11,8 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
+from services import http_client
+
 
 class FacebookPublishError(RuntimeError):
     def __init__(self, message: str, *, status_code: int | None = None):
@@ -205,7 +207,7 @@ async def inspect_page_post(post_id: str, page_key: str = "default") -> Facebook
     page_id, token, version = _settings(page_key)
     base = f"https://graph.facebook.com/{version}"
     timeout = httpx.Timeout(30.0, connect=15.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with http_client.scoped(timeout=timeout) as client:
         return await _read_post_status(
             client,
             base=base,
@@ -251,7 +253,7 @@ async def publish_page_post(
     page_id, token, version = _settings(page_key)
     base = f"https://graph.facebook.com/{version}"
     timeout = httpx.Timeout(60.0, connect=15.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with http_client.scoped(timeout=timeout) as client:
         if not media:
             return await _create_and_verify(
                 client, base=base, page_id=page_id, token=token,
@@ -332,7 +334,7 @@ async def _create_and_verify(
 async def post_comment(post_id: str, message: str, page_key: str = "default") -> str:
     _, token, version = _settings(page_key)
     timeout = httpx.Timeout(30.0, connect=15.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with http_client.scoped(timeout=timeout) as client:
         data = await _graph_post(
             client,
             f"https://graph.facebook.com/{version}/{post_id}/comments",

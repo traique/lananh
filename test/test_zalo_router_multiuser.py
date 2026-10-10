@@ -32,7 +32,7 @@ def _payload(sender_id="z1", sender_name="Người dùng", text="xin chào", mes
 @pytest.fixture(autouse=True)
 def patch_common(monkeypatch):
     monkeypatch.setattr(zalo_router, "_secret", lambda: "s3cr3t")
-    monkeypatch.setattr(zalo_router, "assistant_turn", lambda: _FakeContextManager())
+    monkeypatch.setattr(zalo_router, "assistant_turn", lambda *_a, **_k: _FakeContextManager())
 
     async def fake_get_cached(*args, **kwargs):
         return None
@@ -195,7 +195,7 @@ async def test_facebook_command_does_not_hold_assistant_turn_lock(monkeypatch):
 
     monkeypatch.setattr(zalo_router.zalo_users, "resolve", fake_resolve)
     monkeypatch.setattr(zalo_router, "maybe_handle_facebook_command", fake_facebook_command)
-    monkeypatch.setattr(zalo_router, "assistant_turn", lambda: PoisonedLock())
+    monkeypatch.setattr(zalo_router, "assistant_turn", lambda *_a, **_k: PoisonedLock())
 
     response = await zalo_router.receive(_payload(text="/fb_ok 143"), "s3cr3t")
     assert response.messages == ["✅ đã xử lý facebook"]
@@ -237,11 +237,15 @@ async def test_non_facebook_message_still_uses_assistant_turn_lock(monkeypatch):
     monkeypatch.setattr(zalo_router, "maybe_handle_facebook_command", fake_facebook_command)
     monkeypatch.setattr(zalo_router, "maybe_handle_group_command", fake_group_command)
     monkeypatch.setattr(zalo_router, "handle_channel_text", fake_handle_channel_text)
-    monkeypatch.setattr(zalo_router, "assistant_turn", lambda: CountingLock())
+    monkeypatch.setattr(zalo_router, "assistant_turn", lambda *_a, **_k: CountingLock())
 
     response = await zalo_router.receive(_payload(text="xin chào"), "s3cr3t")
     assert entered["count"] == 1
     assert response.messages == ["chat bình thường"]
+
+
+@pytest.mark.asyncio
+async def test_admin_plain_chat_falls_through_to_channel_text(monkeypatch):
     class FakeUser:
         is_active = True
         is_admin = True
@@ -257,6 +261,10 @@ async def test_non_facebook_message_still_uses_assistant_turn_lock(monkeypatch):
         return ChannelResult(["chat bình thường"])
 
     monkeypatch.setattr(zalo_router.zalo_users, "resolve", fake_resolve)
+    async def fake_facebook_command(account_id, text):
+        return None
+
+    monkeypatch.setattr(zalo_router, "maybe_handle_facebook_command", fake_facebook_command)
     monkeypatch.setattr(zalo_router, "maybe_handle_group_command", fake_group_command)
     monkeypatch.setattr(zalo_router, "handle_channel_text", fake_handle_channel_text)
 

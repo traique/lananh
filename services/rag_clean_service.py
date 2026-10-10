@@ -19,7 +19,6 @@ import base64
 import logging
 import os
 import re
-import unicodedata
 from pathlib import Path
 
 from services.rag_service import RAG_DIR

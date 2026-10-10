@@ -9,12 +9,19 @@ Chuyển từ 2 workflow n8n:
 Giờ đăng đổi qua MARKET_STOCK_TIMES_VN / MARKET_NEWS_TIMES_VN. ``run_manual`` chạy
 ngoài lịch cho lệnh /fb_market và trang admin (mặc định chỉ xem thử, không đăng).
 
+Chống đăng sai/trùng: mỗi phiên giao dịch chỉ đăng 1 lần (kể cả đăng tay), ngày nghỉ
+lễ không đăng lại phiên cũ, bản tin chỉ dùng tin 24 giờ qua và bỏ nếu không có tin mới.
+Lịch chạy bù sau khi restart và thử lại khi AI/DNSE lỗi (MARKET_CATCHUP_MIN,
+MARKET_RETRY_MIN, MARKET_MAX_ATTEMPTS). Ảnh đăng kèm có khung + logo như luồng Zalo.
+
 Page cấu hình bằng FACEBOOK_PAGE_ID_MARKET / FACEBOOK_PAGE_ACCESS_TOKEN_MARKET và
 không nằm trong configured_page_keys() mặc định nên /fb_ok không đăng lên đây.
 """
 import asyncio
+import json
 import logging
 import math
+import os
 import re
 import statistics
 from datetime import date, datetime, time, timedelta, timezone
@@ -26,10 +33,13 @@ import feedparser
 import httpx
 from bs4 import BeautifulSoup
 
+from services import http_client
+
 from ai import orchestrator
 from core import config
 from core import database as db
 from services import web_reader
+from services.facebook_image import brand_image
 from services.facebook_page_service import (
     MARKET_PAGE_KEY,
     FacebookPublicationUncertain,
@@ -50,6 +60,18 @@ class MarketPageError(RuntimeError):
     """Lỗi vận hành báo được cho người gọi (page chưa cấu hình, đang có job chạy)."""
 
 
+class MarketSkip(Exception):
+    """Job cố ý không đăng (đã đăng phiên này, không có tin mới, chưa có dữ liệu...).
+
+    ``retry=True``: có thể có dữ liệu sau ít phút (DNSE chưa cập nhật phiên hôm nay)
+    nên lịch sẽ thử lại trong khung chạy bù; ``retry=False``: xong lượt này luôn.
+    """
+
+    def __init__(self, reason: str, *, retry: bool = False):
+        super().__init__(reason)
+        self.retry = retry
+
+
 def _parse_times(raw: str, default: tuple[time, ...]) -> tuple[time, ...]:
     try:
         parsed = tuple(
@@ -64,8 +86,8 @@ def _parse_times(raw: str, default: tuple[time, ...]) -> tuple[time, ...]:
 
 
 def _schedule() -> tuple[tuple[str, time, range], ...]:
-    """(job, giờ VN, các thứ chạy; Monday=0). Không có lịch nghỉ lễ: ngày lễ trong
-    tuần báo cáo sẽ lặp lại phiên gần nhất."""
+    """(job, giờ VN, các thứ chạy; Monday=0). Ngày nghỉ lễ trong tuần: job stock tự
+    bỏ qua vì DNSE không có phiên hôm nay (xem _is_current_session)."""
     news = _parse_times(config.MARKET_NEWS_TIMES_VN, _DEFAULT_NEWS_TIMES)
     stock = _parse_times(config.MARKET_STOCK_TIMES_VN, _DEFAULT_STOCK_TIMES)
     return tuple(("news", at, range(7)) for at in news) + tuple(
@@ -101,12 +123,27 @@ _STYLE_RULES = """PHONG CÁCH VIẾT:
 - Không nhắc tới việc mình được cung cấp dữ liệu: cấm viết "theo dữ liệu được cung cấp", "các tin được cung cấp", "trong phạm vi dữ liệu". Thiếu thông tin thì bỏ chi tiết đó, không thông báo là thiếu.
 - Thay đổi độ dài câu và đoạn, không lặp một mẫu mở đầu ở nhiều đoạn.
 - Số liệu theo kiểu Việt Nam (dấu chấm ngăn hàng nghìn, dấu phẩy thập phân), làm tròn gọn."""
-# Cụm từ khuyến nghị giao dịch rõ ràng. Cố ý hẹp: "khối ngoại bán ròng", "áp lực chốt lời"
-# là mô tả thị trường bình thường, không được chặn nhầm.
+# Cụm từ khuyến nghị giao dịch. Bắt câu có ý "khuyên làm gì" (nên/có thể/hãy/canh/ưu tiên
+# + mua/bán/giải ngân/chốt lời...), không bắt mô tả thị trường: "khối ngoại bán ròng",
+# "áp lực chốt lời", "lực mua vào cuối phiên", "ngân hàng đẩy mạnh giải ngân tín dụng".
+_ADVICE_ACTION = (
+    r"(mua|bán|nắm giữ|giữ|gom|tích lũy|tích luỹ|giải ngân|chốt lời|cắt lỗ|cơ cấu|"
+    r"(gia tăng|tăng|giảm|hạ|nâng)\s+tỷ trọng|đứng ngoài|bắt đáy|lướt sóng|trading)"
+)
 _ADVICE_RE = re.compile(
-    r"(nên|khuyến nghị|khuyến cáo|đề xuất|gợi ý)\s+(mua|bán|nắm giữ|giải ngân|"
-    r"(gia tăng|tăng|giảm|hạ)\s+tỷ trọng)|giá mục tiêu|tỷ trọng\s+(cổ phiếu|tiền mặt)",
+    r"(nên|khuyến nghị|khuyến cáo|đề xuất|gợi ý|hãy|có thể|cân nhắc|ưu tiên|canh|chờ|"
+    r"tranh thủ|thận trọng)\s+(cân nhắc\s+|tiếp tục\s+|từng bước\s+)?"
+    + _ADVICE_ACTION
+    + r"(?!\s+(ròng|tháo))"
+    + r"|giá mục tiêu|tỷ trọng\s+(cổ phiếu|tiền mặt)|(hạ|giảm|tăng|nâng)\s+tỷ trọng"
+    r"|vùng\s+(mua|bán|gom|giải ngân)|điểm\s+(mua|bán)|chốt lời\s+(một phần|từng phần)"
+    r"|(mua|bán)\s+(thăm dò|trading|lướt)",
     re.IGNORECASE,
+)
+_ADVICE_RETRY_NOTE = (
+    "\n\nLƯU Ý: bản trước bị loại vì có câu mang tính khuyến nghị giao dịch "
+    "(ví dụ \"nên/có thể/canh mua\", \"ưu tiên giải ngân\", \"chốt lời một phần\", "
+    "\"vùng mua\"). Viết lại, chỉ mô tả và phân tích, không có hành động nào cho người đọc."
 )
 
 
@@ -116,6 +153,33 @@ def _has_investment_advice(text: str) -> bool:
 
 def _vn_date(iso_date: str) -> str:
     return date.fromisoformat(iso_date).strftime("%d/%m/%Y")
+
+
+def _vn_number(value: float, digits: int = 1) -> str:
+    """Kiểu Việt Nam: chấm ngăn nghìn, phẩy thập phân (1234.5 -> "1.234,5")."""
+    return f"{value:,.{digits}f}".replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def _today() -> date:
+    return datetime.now(_VN_TZ).date()
+
+
+def _env_int(name: str, default: int, low: int, high: int) -> int:
+    try:
+        return max(low, min(high, int(os.getenv(name, str(default)))))
+    except ValueError:
+        return default
+
+
+async def _ask_clean(prompt: str, clean=lambda text: text) -> str | None:
+    """Hỏi AI; nếu bài có câu khuyến nghị thì hỏi lại 1 lần kèm cảnh báo, vẫn có thì bỏ."""
+    for attempt in range(2):
+        response = await orchestrator.ask(prompt if attempt == 0 else prompt + _ADVICE_RETRY_NOTE)
+        text = clean(getattr(response, "text", None) or "")
+        if not _has_investment_advice(text):
+            return text
+        logger.warning("market_page: bài AI có câu khuyến nghị (lần %d).", attempt + 1)
+    return None
 
 
 # ─── Báo cáo chứng khoán ────────────────────────────────────────────────────
@@ -182,15 +246,16 @@ def _ema(values: list[float], n: int) -> float | None:
 
 
 def _rsi(values: list[float], n: int = 14) -> float | None:
+    """RSI theo Wilder (cách TradingView/app chứng khoán tính) để số liệu khớp
+    với những gì người đọc tự kiểm tra."""
     if len(values) < n + 1:
         return None
-    gain = loss = 0.0
-    for prev, cur in zip(values[-n - 1:-1], values[-n:]):
-        delta = cur - prev
-        if delta > 0:
-            gain += delta
-        else:
-            loss -= delta
+    deltas = [cur - prev for prev, cur in zip(values[:-1], values[1:])]
+    gain = sum(d for d in deltas[:n] if d > 0) / n
+    loss = sum(-d for d in deltas[:n] if d < 0) / n
+    for delta in deltas[n:]:
+        gain = (gain * (n - 1) + max(delta, 0.0)) / n
+        loss = (loss * (n - 1) + max(-delta, 0.0)) / n
     return 100.0 if loss == 0 else 100 - 100 / (1 + gain / loss)
 
 
@@ -247,6 +312,7 @@ def _build_report(rows: dict[str, list[dict]]) -> dict | None:
     return {
         "report_date": rows["VNINDEX"][-1]["date"],
         "vnindex": next(m for m in metrics if m["symbol"] == "VNINDEX"),
+        "tracked": len(moves),
         "advancers": sum(m["change_pct"] > 0 for m in moves),
         "decliners": sum(m["change_pct"] < 0 for m in moves),
         "unchanged": sum(m["change_pct"] == 0 for m in moves),
@@ -278,7 +344,7 @@ def _movers(rows: list[dict]) -> str:
 
 def _stock_prompt(report: dict) -> str:
     vn = report["vnindex"]
-    volume = f"{vn['volume'] / 1e6:,.1f}".replace(".", ",") + " triệu" if vn["volume"] else "N/A"
+    volume = _vn_number(vn["volume"] / 1e6) + " triệu" if vn["volume"] else "N/A"
     session = _vn_date(report["report_date"])
     return f"""Bạn là chuyên viên phân tích của một công ty chứng khoán, viết bản nhận định cuối phiên cho Fanpage đầu tư. Người đọc là nhà đầu tư cá nhân, đọc trên điện thoại.
 
@@ -287,7 +353,7 @@ DỮ LIỆU PHIÊN {session}:
 - Khối lượng khớp {volume} cổ phiếu, bằng {_fmt(vn['vol_ratio'], 1)}x trung bình 20 phiên.
 - Vị trí đóng cửa trong biên độ phiên: {vn['close_position']} (1.0 = sát đỉnh phiên, 0.0 = sát đáy phiên).
 - MA20 = {_fmt(vn['ma20'])}, MA50 = {_fmt(vn['ma50'])}, RSI(14) = {_fmt(vn['rsi14'])}, MACD = {_fmt(vn['macd'])}, dải Bollinger {_fmt(vn['bb_lower'])} - {_fmt(vn['bb_upper'])}.
-- Độ rộng (nhóm 17 cổ phiếu vốn hóa lớn theo dõi): {report['advancers']} mã tăng, {report['decliners']} mã giảm, {report['unchanged']} mã đứng giá. {report['pct_above_ma20']}% số mã nằm trên MA20.
+- Trong nhóm {report['tracked']} cổ phiếu hệ thống theo dõi (KHÔNG phải toàn thị trường): {report['advancers']} mã tăng, {report['decliners']} mã giảm, {report['unchanged']} mã đứng giá. {report['pct_above_ma20']}% số mã nằm trên MA20.
 - Mã tăng mạnh nhất: {_movers(report['gainers'])}
 - Mã giảm mạnh nhất: {_movers(report['losers'])}
 
@@ -300,6 +366,7 @@ CẤU TRÚC BÀI:
 CÁCH DIỄN ĐẠT SỐ LIỆU:
 - Khối lượng quy ra triệu cổ phiếu; điểm số lấy 2 chữ số thập phân; RSI, MACD lấy 1 chữ số.
 - Vị trí đóng cửa diễn đạt bằng lời (ví dụ "đóng cửa ở nửa dưới biên độ phiên"), không nêu con số x/1.0.
+- Khi nói về số mã tăng/giảm, ghi rõ là "trong nhóm cổ phiếu theo dõi", không gọi là độ rộng toàn thị trường.
 - Chỉ dùng số liệu ở trên. Không suy diễn nguyên nhân từ tin tức, khối ngoại hay yếu tố vĩ mô vì không có trong dữ liệu.
 
 {_STYLE_RULES}
@@ -333,7 +400,7 @@ async def _fetch_all_bars() -> dict[str, list[dict]]:
     now = int(datetime.now(timezone.utc).timestamp())
     gate = asyncio.Semaphore(_DNSE_CONCURRENCY)
     headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
+    async with http_client.scoped(timeout=30, headers=headers) as client:
         results = await asyncio.gather(
             *(_fetch_bars(client, gate, symbol, now) for symbol in _REPORT_SYMBOLS)
         )
@@ -346,7 +413,7 @@ def _chart_config(bars: list[dict], report_date: str) -> dict:
     return {
         "type": "line",
         "data": {
-            "labels": [bar["date"][5:] for bar in last],
+            "labels": [f"{bar['date'][8:10]}/{bar['date'][5:7]}" for bar in last],
             "datasets": [{
                 "label": "Điểm số VN-INDEX",
                 "data": prices,
@@ -371,7 +438,7 @@ def _chart_config(bars: list[dict], report_date: str) -> dict:
                 "legend": {"display": False},
                 "title": {
                     "display": True,
-                    "text": f"DIỄN BIẾN VN-INDEX ĐẾN {report_date}",
+                    "text": f"DIỄN BIẾN VN-INDEX ĐẾN {_vn_date(report_date)}",
                     "font": {"size": 16},
                 },
             },
@@ -386,7 +453,7 @@ async def _render_chart(bars: list[dict], report_date: str) -> bytes | None:
         "format": "png", "chart": _chart_config(bars, report_date),
     }
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with http_client.scoped(timeout=30) as client:
             response = await client.post(_QUICKCHART_URL, json=payload)
         response.raise_for_status()
     except httpx.HTTPError as exc:
@@ -406,29 +473,62 @@ def _stock_footer(report: dict) -> str:
     )
 
 
+_STOCK_SESSION_KEY = "market_page:stock:session:{date}"
+
+
+def _is_current_session(report_date: str) -> bool:
+    """Dữ liệu mới nhất có phải phiên hôm nay không. Sai khi nghỉ lễ (DNSE chỉ có
+    phiên trước) hoặc DNSE chưa cập nhật xong phiên vừa đóng cửa."""
+    return report_date == _today().isoformat()
+
+
+def _clean_stock_text(text: str) -> str:
+    return text.replace("*", "").strip()
+
+
 async def _post_stock_report(dry_run: bool = False) -> str | None:
-    """Trả nội dung bài (đã đăng, hoặc chỉ tạo khi dry_run); None nếu không có gì để đăng."""
+    """Trả nội dung bài (đã đăng, hoặc chỉ tạo khi dry_run); None nếu AI lỗi/không đạt.
+
+    Raise MarketSkip khi không nên đăng: chưa có dữ liệu phiên hôm nay (nghỉ lễ hoặc
+    DNSE chậm - lịch sẽ thử lại), hoặc phiên này đã được đăng (kể cả đăng tay).
+    Xem thử (dry_run) bỏ qua hai kiểm tra này để vẫn xem được nội dung.
+    """
     rows = await _fetch_all_bars()
     report = _build_report(rows)
     if report is None:
         logger.warning("market_page: DNSE không trả dữ liệu VNINDEX, bỏ báo cáo.")
         return None
+    session_key = _STOCK_SESSION_KEY.format(date=report["report_date"])
+    if not dry_run:
+        if not _is_current_session(report["report_date"]):
+            raise MarketSkip(
+                f"chưa có dữ liệu phiên hôm nay (mới nhất là phiên {_vn_date(report['report_date'])}"
+                " - nghỉ lễ hoặc DNSE chưa cập nhật)",
+                retry=True,
+            )
+        if await db.get_setting(session_key):
+            raise MarketSkip(f"phiên {_vn_date(report['report_date'])} đã được đăng")
 
-    response = await orchestrator.ask(_stock_prompt(report))
-    text = (getattr(response, "text", None) or "").replace("*", "").strip()
+    text = await _ask_clean(_stock_prompt(report), _clean_stock_text)
+    if text is None:
+        logger.warning("market_page: nhận định vẫn chứa khuyến nghị mua/bán, không đăng.")
+        return None
     if len(text) < _MIN_POST_CHARS:
         logger.warning("market_page: AI trả nhận định bất thường (%d ký tự), bỏ.", len(text))
-        return None
-    if _has_investment_advice(text):
-        logger.warning("market_page: nhận định chứa khuyến nghị mua/bán, không đăng.")
         return None
     text = f"{text}\n\n{_stock_footer(report)}"
     if dry_run:
         return text
 
     chart = await _render_chart(rows["VNINDEX"], report["report_date"])
-    media = [("image/png", chart)] if chart else []
-    await publish_page_post(text, media, MARKET_PAGE_KEY)
+    media = [await asyncio.to_thread(brand_image, "image/png", chart)] if chart else []
+    try:
+        await publish_page_post(text, media, MARKET_PAGE_KEY)
+    except FacebookPublicationUncertain:
+        # Có thể bài đã lên: coi như phiên đã đăng để không tạo bài thứ hai.
+        await db.set_setting(session_key, "uncertain")
+        raise
+    await db.set_setting(session_key, "1")
     return text
 
 
@@ -526,10 +626,10 @@ CÁC TIN CẦN TỔNG HỢP:
 
 
 def _rewrite_prompt(article: str) -> str:
-    return f"""Bạn là biên tập viên báo tài chính. Hãy tóm lược bài báo dưới đây thành bài khoảng 180-280 từ để đăng làm bình luận Facebook.
+    return f"""Bạn là biên tập viên báo tài chính. Hãy tóm lược bài báo dưới đây thành một đoạn ngắn khoảng 80-120 từ để đăng làm bình luận Facebook, kèm link đọc bài gốc (hệ thống tự thêm link). Chỉ nêu các ý chính, không chép lại câu chữ của bài gốc.
 
 QUY TẮC BẮT BUỘC:
-1. Xuất nội dung trực tiếp, bắt đầu ngay bằng tiêu đề (viết như tiêu đề báo, không viết hoa toàn bộ). Không có lời dẫn kiểu "Dưới đây là...".
+1. Xuất nội dung trực tiếp, bắt đầu ngay bằng một dòng tiêu đề ngắn (không viết hoa toàn bộ). Không có lời dẫn kiểu "Dưới đây là...".
 2. Không dùng dấu * hay ** (Facebook không hỗ trợ Markdown), không hashtag.
 3. Mỗi đoạn viết liền mạch, chỉ xuống 2 dòng khi sang ý mới. Không tự ngắt dòng giữa câu.
 4. Giữ nguyên số liệu chính xác của bài gốc, không thêm thông tin ngoài bài gốc.
@@ -603,23 +703,43 @@ async def _load_article(entry: _Entry) -> tuple[str, tuple[str, bytes] | None]:
     return content, await _download_image(image_url) if image_url else None
 
 
+_NEWS_MAX_AGE_HOURS = 24
+_NEWS_MIN_FRESH_ITEMS = 3
+_NEWS_LAST_LINKS_KEY = "market_page:news:last_links"
+# Tỷ lệ tin trùng với bản tin trước mà vẫn coi là "không có tin mới".
+_NEWS_REPEAT_RATIO = 0.7
+
+
+def _fresh_entries(entries: list[_Entry], now: datetime) -> list[_Entry]:
+    """Chỉ tin đăng trong 24 giờ qua (tin không có ngày đăng bị bỏ)."""
+    cutoff = now - timedelta(hours=_NEWS_MAX_AGE_HOURS)
+    return [e for e in entries if e.published and e.published >= cutoff]
+
+
 def _news_footer(today: date) -> str:
     return (
-        f"📰 Nguồn: CafeF (cafef.vn), chuyên mục Thị trường chứng khoán, tổng hợp ngày {today:%d/%m/%Y}.\n\n"
+        "📰 Nguồn: CafeF (cafef.vn), chuyên mục Thị trường chứng khoán, "
+        f"tin trong 24 giờ đến {today:%d/%m/%Y}.\n\n"
         f"{_DISCLAIMER}"
     )
+
+
+def _news_image_mode() -> str:
+    """branded (mặc định): ảnh bài nổi bật + khung trắng + logo như luồng Zalo;
+    none: đăng chữ không ảnh (an toàn nhất về bản quyền ảnh)."""
+    mode = os.getenv("MARKET_NEWS_IMAGE", "branded").strip().lower()
+    return mode if mode in {"branded", "none"} else "branded"
 
 
 async def _comment_rewrite(post_id: str, entry: _Entry, article: str) -> None:
     # Bài chính đã lên; AI hay Facebook lỗi ở bước comment không được làm job thất bại.
     try:
-        response = await orchestrator.ask(_rewrite_prompt(article))
-        comment = _clean_news_text(getattr(response, "text", None) or "")
-        if comment and _has_investment_advice(comment):
+        comment = await _ask_clean(_rewrite_prompt(article), _clean_news_text)
+        if comment is None:
             logger.warning("market_page: bản viết lại chứa khuyến nghị mua/bán, không comment.")
             return
         if comment:
-            source = f"📰 Nguồn: CafeF — {entry.title}\n{entry.link}"
+            source = f"📰 Đọc bài gốc trên CafeF: {entry.title}\n{entry.link}"
             await post_comment(
                 post_id, f"{comment}\n\n{source}\n{_DISCLAIMER_SHORT}", MARKET_PAGE_KEY
             )
@@ -633,23 +753,46 @@ async def _post_news(dry_run: bool = False) -> str | None:
     if not entries:
         logger.warning("market_page: feed CafeF rỗng, bỏ bản tin.")
         return None
+    now = datetime.now(timezone.utc)
+    fresh = _fresh_entries(entries, now)[:_NEWS_DIGEST_ITEMS]
+    if len(fresh) < _NEWS_MIN_FRESH_ITEMS:
+        raise MarketSkip(
+            f"chỉ có {len(fresh)} tin trong 24 giờ qua (cần ít nhất {_NEWS_MIN_FRESH_ITEMS})",
+            retry=True,
+        )
+    links = sorted({e.link for e in fresh if e.link})
+    if not dry_run:
+        try:
+            previous = set(json.loads(await db.get_setting(_NEWS_LAST_LINKS_KEY) or "[]"))
+        except ValueError:
+            previous = set()
+        if links and len(previous & set(links)) >= _NEWS_REPEAT_RATIO * len(links):
+            raise MarketSkip("không có đủ tin mới so với bản tin trước")
 
-    response = await orchestrator.ask(_digest_prompt(entries[:_NEWS_DIGEST_ITEMS]))
-    text = _clean_news_text(getattr(response, "text", None) or "")
+    text = await _ask_clean(_digest_prompt(fresh), _clean_news_text)
+    if text is None:
+        logger.warning("market_page: bản tin vẫn chứa khuyến nghị mua/bán, không đăng.")
+        return None
     if len(text) < _MIN_POST_CHARS:
         logger.warning("market_page: AI trả bản tin bất thường (%d ký tự), bỏ.", len(text))
-        return None
-    if _has_investment_advice(text):
-        logger.warning("market_page: bản tin chứa khuyến nghị mua/bán, không đăng.")
         return None
     today = datetime.now(_VN_TZ).date()
     text = f"{text}\n\n{_news_footer(today)}"
     if dry_run:
         return text
 
-    featured = _pick_entry(entries, today)
+    featured = _pick_entry(fresh, today)
     article, image = await _load_article(featured) if featured else ("", None)
-    published = await publish_page_post(text, [image] if image else [], MARKET_PAGE_KEY)
+    media = []
+    if image and _news_image_mode() == "branded":
+        media = [await asyncio.to_thread(brand_image, *image)]
+    try:
+        published = await publish_page_post(text, media, MARKET_PAGE_KEY)
+    except FacebookPublicationUncertain:
+        # Có thể bài đã lên: ghi lại bộ tin để không đăng lại cùng nội dung.
+        await db.set_setting(_NEWS_LAST_LINKS_KEY, json.dumps(links))
+        raise
+    await db.set_setting(_NEWS_LAST_LINKS_KEY, json.dumps(links))
     if article:
         await _comment_rewrite(published.post_id, featured, article)
     return text
@@ -686,18 +829,30 @@ async def _execute(job: str, *, dry_run: bool = False) -> str | None:
     async with _run_lock:
         try:
             text = await _JOBS[job](dry_run=dry_run)
+        except MarketSkip as skip:
+            if not dry_run:
+                await _record(job, f"bỏ qua: {skip}")
+            raise
         except Exception as exc:
             if not dry_run:
                 await _record(job, f"lỗi {type(exc).__name__}")
             raise
         if not dry_run:
-            await _record(job, "đã đăng" if text else "bỏ qua, không có nội dung")
+            await _record(job, "đã đăng" if text else "chưa đăng được (AI lỗi/bài không đạt), sẽ thử lại")
         return text
 
 
+def _slot_key(job: str, when: datetime) -> str:
+    return f"market_page:{job}:{when:%Y-%m-%dT%H%M}"
+
+
 async def run_once(job: str, when: datetime, *, force: bool = False) -> bool:
-    """Chạy 1 lượt theo lịch; mỗi (job, giờ) chỉ đăng một lần dù loop bị đánh thức lại."""
-    key = f"market_page:{job}:{when:%Y-%m-%dT%H%M}"
+    """Chạy 1 lượt theo lịch; mỗi (job, giờ) chỉ đăng một lần dù loop bị đánh thức lại.
+
+    Trả True khi slot đã xong (đăng được, không rõ kết quả, hoặc cố ý bỏ qua không
+    cần thử lại); False khi nên thử lại sau (AI lỗi, chưa có dữ liệu phiên...).
+    """
+    key = _slot_key(job, when)
     if not force and await db.get_setting(key):
         return False
     try:
@@ -705,6 +860,9 @@ async def run_once(job: str, when: datetime, *, force: bool = False) -> bool:
     except FacebookPublicationUncertain:
         logger.error("market_page: %s chưa rõ Facebook đã tạo bài chưa, không tự đăng lại.", job)
         done = True
+    except MarketSkip as skip:
+        logger.info("market_page: %s bỏ qua - %s.", job, skip)
+        done = not skip.retry
     if done:
         await db.set_setting(key, "1")
     return done
@@ -722,7 +880,10 @@ async def run_manual(job: str, *, publish: bool) -> str | None:
         )
     if _run_lock.locked():
         raise MarketPageError("Đang có job chứng khoán chạy, thử lại sau ít phút.")
-    return await _execute(job, dry_run=not publish)
+    try:
+        return await _execute(job, dry_run=not publish)
+    except MarketSkip as skip:
+        raise MarketPageError(f"Không đăng: {skip}.") from skip
 
 
 async def status() -> dict:
@@ -740,16 +901,66 @@ async def status() -> dict:
     }
 
 
-async def _loop() -> None:
-    while True:
-        when, job = _next_slot(datetime.now(_VN_TZ))
-        await asyncio.sleep(max(0.0, (when - datetime.now(_VN_TZ)).total_seconds()))
+# Chạy bù / thử lại: Render restart (deploy, hết RAM) đúng giờ đăng, hoặc AI/DNSE lỗi
+# lúc chạy, không còn làm mất bài cả ngày. Slot được thử lại mỗi MARKET_RETRY_MIN phút,
+# tối đa MARKET_MAX_ATTEMPTS lần, trong MARKET_CATCHUP_MIN phút kể từ giờ đăng.
+_TICK_SEC = 60
+_attempts: dict[str, tuple[int, datetime]] = {}
+
+
+def _catchup() -> timedelta:
+    return timedelta(minutes=_env_int("MARKET_CATCHUP_MIN", 120, 0, 720))
+
+
+def _retry_gap() -> timedelta:
+    return timedelta(minutes=_env_int("MARKET_RETRY_MIN", 10, 1, 120))
+
+
+def _max_attempts() -> int:
+    return _env_int("MARKET_MAX_ATTEMPTS", 4, 1, 20)
+
+
+def _due_slots(now: datetime) -> list[tuple[str, datetime]]:
+    """Các slot hôm nay đã tới giờ và còn trong khung chạy bù."""
+    due = []
+    for job, at, weekdays in _schedule():
+        when = datetime.combine(now.date(), at, _VN_TZ)
+        if now.weekday() in weekdays and when <= now < when + _catchup():
+            due.append((job, when))
+    return sorted(due, key=lambda item: item[1])
+
+
+async def _tick(now: datetime) -> None:
+    for job, when in _due_slots(now):
+        key = _slot_key(job, when)
+        count, last = _attempts.get(key, (0, None))
+        if count >= _max_attempts() or (last is not None and now - last < _retry_gap()):
+            continue
+        if await db.get_setting(key):
+            continue
+        _attempts[key] = (count + 1, now)
+        if count:
+            logger.info("market_page: thử lại %s lần %d.", job, count + 1)
         try:
             await run_once(job, when)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("market_page: lỗi khi chạy job %s.", job)
+    # Bỏ bộ đếm của các slot đã qua khung để dict không phình.
+    for key in [k for k, (_, last) in _attempts.items() if now - last > timedelta(days=1)]:
+        del _attempts[key]
+
+
+async def _loop() -> None:
+    while True:
+        try:
+            await _tick(datetime.now(_VN_TZ))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("market_page: vòng lịch lỗi.")
+        await asyncio.sleep(_TICK_SEC)
 
 
 def start() -> None:

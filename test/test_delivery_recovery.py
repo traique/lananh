@@ -364,7 +364,7 @@ async def test_concurrent_large_media_receives_retryable_backpressure():
 
 def test_long_lived_caches_are_bounded_and_expired_entries_are_pruned(monkeypatch):
     import time
-    from stock import providers, vci_direct, fundamentals
+    from stock import providers, vci_direct
 
     cache = {str(i): (time.monotonic(), object()) for i in range(300)}
     providers._evict_expired(cache, 90)

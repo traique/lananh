@@ -232,3 +232,7 @@ async def check_status() -> tuple[bool, str]:
         missing_key_msg="Chưa cấu hình ROUTER9_API_KEY",
         expected_error=Router9Error,
     )
+
+
+# Public accessors (dùng bởi web_admin) - tránh module khác gọi hàm private.
+api_key = _api_key

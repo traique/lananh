@@ -1,45 +1,459 @@
-import { BoundedSerialQueue, readLimitedBody } from "./limits.js";
-import{randomInt}from"node:crypto";import{createServer}from"node:http";import{LoginQRCallbackEventType,ThreadType,Zalo,type Credentials}from"zca-js";import{ackOutbox,callBridge,callImageBridge,clearController,clearSession,fetchAllowedGroups,fetchFacebookGroups,fetchOutbox,loadController,loadSavedSession,saveController,saveSession,storeFacebookGroupPost,storeGroupMessage}from"./bridge.js";import{loadConfig}from"./config.js";
-const config=loadConfig(),zalo=new Zalo({selfListen:false,checkUpdate:false,logging:false});let api:any=null,qr:string|null=null,state="idle",loginPromise:Promise<void>|null=null,allowedGroups=new Set<string>(),facebookGroups=new Set<string>();let pairing:{code:string;expires:number}|null=null;const seen=new Set<string>();const directQueue=new BoundedSerialQueue(64),groupQueue=new BoundedSerialQueue(128);let outboxBusy=false;const MAX_IMAGE_BYTES=8*1024*1024;const ZALO_CHUNK_LIMIT=1800;const FACEBOOK_GROUP_WINDOW_MS=8000;type FacebookBuffer={groupId:string;senderId:string;senderName:string;messageIds:string[];texts:string[];media:{mime:string;bytes:Uint8Array}[];timer:NodeJS.Timeout};const facebookBuffers=new Map<string,FacebookBuffer>();
-function isTransientNetworkError(e:any):boolean{const c=e?.cause?.code||e?.code;const msg=String(e?.message||e);return c==="ECONNRESET"||c==="ETIMEDOUT"||c==="EPIPE"||c==="ECONNREFUSED"||msg.includes("fetch failed")}
-async function sleep(ms:number){return new Promise(r=>setTimeout(r,ms))}
-function remember(id:string){if(seen.has(id))return false;seen.add(id);if(seen.size>5000)seen.delete(seen.values().next().value!);return true;}async function send(target:string,chunks:string[],imageB64?:string|null){for(const x of chunks)if(x.trim())await api.sendMessage({msg:x},target,ThreadType.User);if(imageB64){const data=Buffer.from(imageB64,"base64");if(!data.length){await api.sendMessage({msg:"❌ Tạo ảnh xong nhưng dữ liệu ảnh rỗng"},target,ThreadType.User)}else{let lastErr:any=null,ok=false;for(let attempt=0;attempt<3&&!ok;attempt++){try{if(attempt>0)await sleep(1500*attempt);await api.sendMessage({msg:"",attachments:[{data,filename:`agnes-${Date.now()}.png`,metadata:{totalSize:data.length}}]},target,ThreadType.User);ok=true}catch(e){lastErr=e;console.error(`[zalo] send image failed (lần ${attempt+1}/3)`,e);if(!isTransientNetworkError(e))break}}if(!ok)await api.sendMessage({msg:`❌ Tạo ảnh xong nhưng gửi thất bại: ${lastErr instanceof Error?lastErr.message:"lỗi không xác định"}`},target,ThreadType.User)}}}function splitForZalo(text:string,limit=ZALO_CHUNK_LIMIT):string[]{const out:string[]=[];let rest=(text||"").trim();while(rest.length>limit){let cut=rest.lastIndexOf("\n\n",limit);if(cut<limit/2)cut=rest.lastIndexOf("\n",limit);if(cut<limit/2)cut=rest.lastIndexOf(" ",limit);if(cut<=0)cut=limit;out.push(rest.slice(0,cut).trim());rest=rest.slice(cut).trim();}if(rest)out.push(rest);return out.length?out:[text];}async function groups(){if(!api)return;try{allowedGroups=await fetchAllowedGroups(config)}catch(e){console.error("[zalo] summary group refresh failed",e)}try{facebookGroups=await fetchFacebookGroups(config)}catch(e){console.error("[zalo] Facebook group refresh failed",e)}}async function outbox(){if(!api)return;for(const x of await fetchOutbox(config)){await send(x.recipient_id,splitForZalo(x.content));await ackOutbox(config,x.id);}}
-function allowedMediaHost(host:string){const h=host.toLowerCase();return["zalo.me","zaloapp.com","zadn.vn","zdn.vn","zalo.cloud","znews.vn"].some(x=>h===x||h.endsWith(`.${x}`));}
-function imageCandidates(content:any):string[]{const found:string[]=[];const visit=(value:any,depth:number)=>{if(depth>4||value==null)return;if(typeof value==="string"){if(/^https?:\/\//i.test(value)){try{const u=new URL(value);if(allowedMediaHost(u.hostname))found.push(value)}catch{}}else if((value.startsWith("{")||value.startsWith("["))&&value.length<20000){try{visit(JSON.parse(value),depth+1)}catch{}}return}if(Array.isArray(value)){for(const x of value)visit(x,depth+1);return}if(typeof value==="object")for(const key of["hdUrl","originUrl","href","url","thumb","thumbUrl","params",...Object.keys(value)])if(key in value)visit(value[key],depth+1)};visit(content,0);return[...new Set(found)];}
-function sniffImage(bytes:Uint8Array):string|null{if(bytes.length>=3&&bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff)return"image/jpeg";if(bytes.length>=8&&bytes[0]===0x89&&bytes[1]===0x50&&bytes[2]===0x4e&&bytes[3]===0x47)return"image/png";if(bytes.length>=12&&String.fromCharCode(...bytes.slice(0,4))==="RIFF"&&String.fromCharCode(...bytes.slice(8,12))==="WEBP")return"image/webp";return null;}
-async function downloadImage(urls:string[]):Promise<{bytes:Uint8Array;mime:string}>{if(!urls.length)throw new Error("Payload ảnh không có URL media được hỗ trợ");const reasons:string[]=[];for(const raw of urls){let host="unknown";try{const source=new URL(raw);host=source.hostname;if(!allowedMediaHost(host)){reasons.push(`${host}: domain bị chặn`);continue}const ctx:any=api?.getContext?.();const cookie=ctx?.cookie?.getCookieStringSync?.(raw)||"";const response=await fetch(raw,{redirect:"follow",headers:{"user-agent":ctx?.userAgent||config.userAgent,"referer":"https://chat.zalo.me/",...(cookie?{cookie}:{})},signal:AbortSignal.timeout(30000)});const finalUrl=new URL(response.url||raw);if(!allowedMediaHost(finalUrl.hostname)){reasons.push(`${host}: redirect ngoài Zalo`);continue}if(!response.ok){reasons.push(`${host}: HTTP ${response.status}`);continue}const declared=Number(response.headers.get("content-length")||0);if(declared>MAX_IMAGE_BYTES)throw new Error("Ảnh lớn hơn 8 MB");const bytes=await readLimitedBody(response,MAX_IMAGE_BYTES);if(!bytes.length||bytes.length>MAX_IMAGE_BYTES)throw new Error("Ảnh trống hoặc lớn hơn 8 MB");const headerMime=(response.headers.get("content-type")||"").split(";",1)[0].toLowerCase();const mime=sniffImage(bytes)||(["image/jpeg","image/png","image/webp"].includes(headerMime)?headerMime:null);if(!mime){reasons.push(`${host}: MIME ${headerMime||"không rõ"}`);continue}return{bytes,mime}}catch(e){reasons.push(`${host}: ${e instanceof Error?e.message:"lỗi tải"}`)}}throw new Error(`Không tải được ảnh từ Zalo (${reasons.slice(0,3).join("; ")})`)}
-function scheduleFacebookFlush(key:string,delay=FACEBOOK_GROUP_WINDOW_MS){
- const timer=setTimeout(()=>{groupQueue.add(()=>flushFacebookBuffer(key)).catch(error=>{
-  console.error("[zalo] Facebook buffer retained for retry",error);
-  const pending=facebookBuffers.get(key);if(pending)pending.timer=scheduleFacebookFlush(key,15000);
- })},delay);timer.unref();return timer;
+import { randomInt } from "node:crypto";
+import { LoginQRCallbackEventType, ThreadType, Zalo, type Credentials } from "zca-js";
+import {
+  ackOutbox,
+  callBridge,
+  callImageBridge,
+  clearController,
+  clearSession,
+  fetchAllowedGroups,
+  fetchFacebookGroups,
+  fetchOutbox,
+  loadController,
+  loadSavedSession,
+  saveController,
+  saveSession,
+  storeFacebookGroupPost,
+  storeGroupMessage,
+} from "./bridge.js";
+import { loadConfig } from "./config.js";
+import { startControlServer } from "./control-server.js";
+import { FacebookPostBuffer } from "./facebook-buffer.js";
+import { BoundedSerialQueue } from "./limits.js";
+import { downloadImage, imageCandidates } from "./media.js";
+import {
+  SeenIds,
+  errorMessage,
+  isConnectionRefused,
+  isTransientNetworkError,
+  sleep,
+  splitForZalo,
+} from "./text.js";
+import type { MediaItem, ZaloApi, ZaloMessage } from "./types.js";
+
+const config = loadConfig();
+const zalo = new Zalo({ selfListen: false, checkUpdate: false, logging: false });
+
+let api: ZaloApi | null = null;
+let qr: string | null = null;
+let state = "idle";
+let loginPromise: Promise<void> | null = null;
+let allowedGroups = new Set<string>();
+let facebookGroups = new Set<string>();
+let pairing: { code: string; expires: number } | null = null;
+let outboxBusy = false;
+
+const seen = new SeenIds(5000);
+const directQueue = new BoundedSerialQueue(64);
+const groupQueue = new BoundedSerialQueue(128);
+const facebookBuffer = new FacebookPostBuffer({
+  store: (post) => storeFacebookGroupPost(config, post),
+  enqueue: (work) => groupQueue.add(work),
+  windowMs: config.facebookMergeWindowMs,
+});
+
+const GROUP_ADMIN_COMMAND = /^\/(themnhom|xoanhom|fb_themnhom|fb_xoanhom)\b/i;
+
+// ─── Gửi tin ────────────────────────────────────────────────────────────────
+
+async function sendImage(client: ZaloApi, target: string, imageB64: string): Promise<void> {
+  const data = Buffer.from(imageB64, "base64");
+  if (!data.length) {
+    await client.sendMessage(
+      { msg: "❌ Tạo ảnh xong nhưng dữ liệu ảnh rỗng" },
+      target,
+      ThreadType.User,
+    );
+    return;
+  }
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      if (attempt > 0) await sleep(1500 * attempt);
+      await client.sendMessage(
+        {
+          msg: "",
+          attachments: [
+            { data, filename: `agnes-${Date.now()}.png`, metadata: { totalSize: data.length } },
+          ],
+        },
+        target,
+        ThreadType.User,
+      );
+      return;
+    } catch (error) {
+      lastError = error;
+      console.error(`[zalo] send image failed (lần ${attempt + 1}/3)`, error);
+      if (!isTransientNetworkError(error)) break;
+    }
+  }
+  await client.sendMessage(
+    { msg: `❌ Tạo ảnh xong nhưng gửi thất bại: ${errorMessage(lastError)}` },
+    target,
+    ThreadType.User,
+  );
 }
-async function flushFacebookBuffer(key:string){
- const pending=facebookBuffers.get(key);if(!pending)return;
- clearTimeout(pending.timer);
- try {
-  await storeFacebookGroupPost(config,{groupId:pending.groupId,messageIds:pending.messageIds,senderId:pending.senderId,senderName:pending.senderName,text:pending.texts.join("\n").trim(),media:pending.media});
-  facebookBuffers.delete(key);
- } catch(error){pending.timer=scheduleFacebookFlush(key,15000);throw error}
+
+async function send(target: string, chunks: string[], imageB64?: string | null): Promise<void> {
+  const client = api;
+  if (!client) throw new Error("Zalo is not connected");
+  for (const chunk of chunks) {
+    if (chunk.trim()) await client.sendMessage({ msg: chunk }, target, ThreadType.User);
+  }
+  if (imageB64) await sendImage(client, target, imageB64);
 }
-async function queueFacebookPost(groupId:string,senderId:string,senderName:string,messageId:string,text:string,media:{mime:string;bytes:Uint8Array}[]){
- const key=`${groupId}:${senderId}`;
- const mediaSize=(items:{bytes:Uint8Array}[])=>items.reduce((sum,item)=>sum+item.bytes.length,0);
- let current=facebookBuffers.get(key);
- if(current&&(current.messageIds.length>=50||current.media.length+media.length>10||mediaSize(current.media)+mediaSize(media)>16*1024*1024||current.texts.join("\n").length+text.length+1>20000)){
-  clearTimeout(current.timer);await flushFacebookBuffer(key);current=undefined;
- }
- while(facebookBuffers.size>=64||Array.from(facebookBuffers.values()).reduce((sum,p)=>sum+mediaSize(p.media),0)+mediaSize(media)>16*1024*1024){
-  const oldest=facebookBuffers.keys().next().value;if(oldest===undefined)break;
-  clearTimeout(facebookBuffers.get(oldest)!.timer);await flushFacebookBuffer(oldest);
- }
- current=facebookBuffers.get(key);
- const schedule=()=>scheduleFacebookFlush(key);
- if(current){clearTimeout(current.timer);current.messageIds.push(messageId);if(text)current.texts.push(text.slice(0,20000));current.media.push(...media);current.timer=schedule();return}
- facebookBuffers.set(key,{groupId,senderId,senderName,messageIds:[messageId],texts:text?[text.slice(0,20000)]:[],media:[...media],timer:schedule()});
+
+// ─── Đồng bộ với Python ─────────────────────────────────────────────────────
+
+async function refreshGroups(): Promise<void> {
+  if (!api) return;
+  try {
+    allowedGroups = await fetchAllowedGroups(config);
+  } catch (error) {
+    console.error("[zalo] summary group refresh failed", error);
+  }
+  try {
+    facebookGroups = await fetchFacebookGroups(config);
+  } catch (error) {
+    console.error("[zalo] Facebook group refresh failed", error);
+  }
 }
-async function listGroups(id:string){const r:any=await api.getAllGroups(),ids=Object.keys(r?.gridVerMap||{}),lines=[ids.length?"Các nhóm B đang tham gia:":"Chưa có nhóm."];for(const gid of ids.slice(0,100)){try{const i:any=await api.getGroupInfo(gid),d=i?.changed_groups?.[gid]||i?.gridInfoMap?.[gid];lines.push(`• ${d?.name||"Không rõ tên"} — ${gid}`)}catch{lines.push(`• ${gid}`)}}await send(id,splitForZalo(lines.join("\n")))}
-async function attach(next:any){api=next;state="connected";qr=null;config.accountId=String(api.getOwnId()||config.accountId);await groups();const listener:any=api.listener;listener.on("message",(m:any)=>{if(m.isSelf)return;const content=m.data?.content;const text=typeof content==="string"?content.trim():String(content?.title||"").trim();const urls=typeof content==="object"?imageCandidates(content):[];const caption=typeof content==="object"?String(content?.description||content?.title||"").trim():"";const sender=String(m.data?.uidFrom||""),id=String(m.data?.msgId||m.data?.cliMsgId||"");if((!text&&!urls.length)||!id||!remember(id))return;if(m.type===ThreadType.User&&pairing&&text){if(Date.now()>pairing.expires)pairing=null;else if(text===`/pair ${pairing.code}`){directQueue.add(async()=>{config.controllerId=sender;await saveController(config,sender);pairing=null;await send(String(m.threadId),["✅ Ghép đôi thành công. Tài khoản này giờ có thể điều khiển bot B."])}).catch(console.error);return}}if(m.type===ThreadType.Group){const gid=String(m.threadId),senderName=String(m.data?.dName||"");let ts=Number(m.data?.ts||Date.now());if(ts<1e12)ts*=1000;if(allowedGroups.has(gid)&&text)groupQueue.add(()=>storeGroupMessage(config,{groupId:gid,messageId:id,senderId:sender,senderName,text,sentAtMs:ts})).catch(console.error);if(facebookGroups.has(gid)){const postText=text||caption;groupQueue.add(async()=>{const media:{mime:string;bytes:Uint8Array}[]=[];if(urls.length){try{const image=await downloadImage(urls);media.push({mime:image.mime,bytes:image.bytes})}catch(e){console.error("[zalo] Facebook group image download failed",e)}}if(postText||media.length)await queueFacebookPost(gid,sender,senderName,id,postText,media)}).catch(console.error)}return}if(m.type!==ThreadType.User)return;directQueue.add(async()=>{if(urls.length&&!text.startsWith("/")){try{const image=await downloadImage(urls);const r=await callImageBridge(config,sender,id,caption,image.mime,image.bytes);if(r.messages.length)await send(String(m.threadId),["🖼️ Đã nhận ảnh, đang viết prompt...",...r.messages])}catch(e){await send(String(m.threadId),[`❌ Không xử lý được ảnh: ${e instanceof Error?e.message:"lỗi không xác định"}`])}return}if(text.toLowerCase()==="/nhomzalo"){if(!config.controllerId||sender!==config.controllerId){await send(String(m.threadId),["Lệnh này chỉ dành cho chủ bot (chưa ghép đôi /pair)."]);return}return listGroups(String(m.threadId))}const r=await callBridge(config,{senderId:sender,senderName:String(m.data?.dName||""),conversationId:String(m.threadId),messageId:id,text});await send(String(m.threadId),r.messages,r.image_b64);if(/^\/(themnhom|xoanhom|fb_themnhom|fb_xoanhom)\b/i.test(text))await groups()}).catch(console.error)});listener.on("disconnected",()=>{api=null;state="disconnected"});listener.on("closed",()=>{api=null;state="closed"});listener.on("error",console.error);listener.start();console.log(`[zalo] listener started account=${config.accountId}`)}
-async function persist(next:any){const c:any=next.getContext();await saveSession(config,{cookie:c.cookie.serializeSync(),imei:c.imei,userAgent:c.userAgent,accountId:String(next.getOwnId())})}async function startQr(){if(api||loginPromise)return;state="waiting_qr";qr=null;loginPromise=(async()=>{try{const next=await zalo.loginQR({userAgent:config.userAgent},async(e:any)=>{if(e.type===LoginQRCallbackEventType.QRCodeGenerated){qr=String(e.data?.image||e.data?.qrData||"").replace(/^data:image\/png;base64,/,"");state="qr_ready"}else if(e.type===LoginQRCallbackEventType.QRCodeScanned){qr=null;state="scanned"}else if(e.type===LoginQRCallbackEventType.QRCodeExpired){qr=null;state="expired"}else if(e.type===LoginQRCallbackEventType.QRCodeDeclined){qr=null;state="declined"}});state="saving_session";await persist(next);await attach(next)}catch(e){qr=null;state="error";console.error("[zalo] QR login failed",e)}finally{loginPromise=null}})()}
-function refused(e:any){return e?.cause?.code==="ECONNREFUSED"||String(e?.cause||e).includes("ECONNREFUSED")}async function bootstrap(attempt=0){try{state="waiting_backend";if(!config.controllerId)config.controllerId=await loadController(config);let s:any={};if(config.cookie&&config.imei)s={cookie:config.cookie,imei:config.imei,userAgent:config.userAgent};else s=await loadSavedSession(config);if(s?.cookie&&s?.imei){state="restoring";await attach(await zalo.login({cookie:s.cookie,imei:s.imei,userAgent:s.userAgent||config.userAgent}as Credentials))}else state="awaiting_login"}catch(e){if(refused(e)&&attempt<10){state="waiting_backend";const delay=Math.min(5000,1000*(attempt+1));setTimeout(()=>bootstrap(attempt+1),delay).unref();return}state="awaiting_login";console.error("[zalo] restore failed",e)}}
-createServer(async(req,res)=>{res.setHeader("content-type","application/json");try{if(req.method==="GET"&&req.url==="/status"){res.end(JSON.stringify({state,connected:!!api,accountId:api?String(api.getOwnId()):null,controllerPaired:!!config.controllerId,qr}));return}if(req.method==="POST"&&req.url==="/login/qr"){await startQr();res.end(JSON.stringify({ok:true,state}));return}if(req.method==="POST"&&req.url==="/pairing/start"){if(!api){res.statusCode=409;res.end(JSON.stringify({error:"Zalo is not connected"}));return}pairing={code:String(randomInt(100000,1000000)),expires:Date.now()+300000};res.end(JSON.stringify({code:pairing.code,expiresAt:pairing.expires}));return}if(req.method==="POST"&&req.url==="/logout"){try{api?.listener?.stop?.()}catch{}api=null;qr=null;pairing=null;config.controllerId="";state="awaiting_login";await clearSession(config);await clearController(config);res.end(JSON.stringify({ok:true}));return}res.statusCode=404;res.end(JSON.stringify({error:"not found"}))}catch(e){res.statusCode=500;res.end(JSON.stringify({error:e instanceof Error?e.message:"error"}))}}).listen(config.controlPort,"127.0.0.1");setInterval(groups,config.groupRefreshMs).unref();setInterval(()=>{if(outboxBusy)return;outboxBusy=true;outbox().catch(console.error).finally(()=>{outboxBusy=false})},config.outboxPollMs).unref();bootstrap();
+
+async function deliverOutbox(): Promise<void> {
+  if (!api) return;
+  for (const item of await fetchOutbox(config)) {
+    await send(item.recipient_id, splitForZalo(item.content));
+    await ackOutbox(config, item.id);
+  }
+}
+
+async function listGroups(threadId: string): Promise<void> {
+  const client = api;
+  if (!client) return;
+  const all = await client.getAllGroups();
+  const ids = Object.keys(all?.gridVerMap || {});
+  const lines = [ids.length ? "Các nhóm B đang tham gia:" : "Chưa có nhóm."];
+  for (const gid of ids.slice(0, 100)) {
+    try {
+      const info = await client.getGroupInfo(gid);
+      const detail = info?.changed_groups?.[gid] || info?.gridInfoMap?.[gid];
+      lines.push(`• ${detail?.name || "Không rõ tên"} — ${gid}`);
+    } catch {
+      lines.push(`• ${gid}`);
+    }
+  }
+  await send(threadId, splitForZalo(lines.join("\n")));
+}
+
+async function fetchImage(urls: string[], attempts = 2): Promise<MediaItem> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) await sleep(2000);
+    const ctx = api?.getContext?.();
+    try {
+      return await downloadImage(urls, {
+        userAgent: ctx?.userAgent || config.userAgent,
+        cookieFor: (url) => ctx?.cookie?.getCookieStringSync?.(url) || "",
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+// ─── Xử lý tin nhắn ─────────────────────────────────────────────────────────
+
+type ParsedMessage = {
+  text: string;
+  caption: string;
+  urls: string[];
+  sender: string;
+  senderName: string;
+  id: string;
+  threadId: string;
+};
+
+function parseMessage(message: ZaloMessage): ParsedMessage {
+  const content = message.data?.content as
+    | string
+    | { title?: unknown; description?: unknown }
+    | undefined;
+  const isObject = typeof content === "object" && content !== null;
+  return {
+    text:
+      typeof content === "string"
+        ? content.trim()
+        : String((isObject && content.title) || "").trim(),
+    caption: isObject ? String(content.description || content.title || "").trim() : "",
+    urls: isObject ? imageCandidates(content) : [],
+    sender: String(message.data?.uidFrom || ""),
+    senderName: String(message.data?.dName || ""),
+    id: String(message.data?.msgId || message.data?.cliMsgId || ""),
+    threadId: String(message.threadId),
+  };
+}
+
+/** Trả về true nếu tin nhắn là mã ghép đôi hợp lệ (đã xử lý). */
+function handlePairing(msg: ParsedMessage): boolean {
+  if (!pairing || !msg.text) return false;
+  if (Date.now() > pairing.expires) {
+    pairing = null;
+    return false;
+  }
+  if (msg.text !== `/pair ${pairing.code}`) return false;
+  directQueue
+    .add(async () => {
+      config.controllerId = msg.sender;
+      await saveController(config, msg.sender);
+      pairing = null;
+      await send(msg.threadId, [
+        "✅ Ghép đôi thành công. Tài khoản này giờ có thể điều khiển bot B.",
+      ]);
+    })
+    .catch(console.error);
+  return true;
+}
+
+function handleGroupMessage(message: ZaloMessage, msg: ParsedMessage): void {
+  const gid = msg.threadId;
+  let sentAtMs = Number(message.data?.ts || Date.now());
+  if (sentAtMs < 1e12) sentAtMs *= 1000;
+  if (allowedGroups.has(gid) && msg.text) {
+    groupQueue
+      .add(() =>
+        storeGroupMessage(config, {
+          groupId: gid,
+          messageId: msg.id,
+          senderId: msg.sender,
+          senderName: msg.senderName,
+          text: msg.text,
+          sentAtMs,
+        }),
+      )
+      .catch(console.error);
+  }
+  if (!facebookGroups.has(gid)) return;
+  const postText = msg.text || msg.caption;
+  groupQueue
+    .add(async () => {
+      const media: MediaItem[] = [];
+      if (msg.urls.length) {
+        try {
+          // Ảnh nhóm: thử lại 1 lần, vì tải hỏng = bài bị bộ lọc bỏ ("không có ảnh").
+          media.push(await fetchImage(msg.urls, 2));
+        } catch (error) {
+          console.error("[zalo] Facebook group image download failed", error);
+        }
+      }
+      if (postText || media.length) {
+        await facebookBuffer.add(gid, msg.sender, msg.senderName, msg.id, postText, media);
+      }
+    })
+    .catch(console.error);
+}
+
+async function handleDirectMessage(msg: ParsedMessage): Promise<void> {
+  if (msg.urls.length && !msg.text.startsWith("/")) {
+    try {
+      const image = await fetchImage(msg.urls, 1);
+      const reply = await callImageBridge(
+        config,
+        msg.sender,
+        msg.id,
+        msg.caption,
+        image.mime,
+        image.bytes,
+      );
+      if (reply.messages.length) {
+        await send(msg.threadId, ["🖼️ Đã nhận ảnh, đang viết prompt...", ...reply.messages]);
+      }
+    } catch (error) {
+      await send(msg.threadId, [`❌ Không xử lý được ảnh: ${errorMessage(error)}`]);
+    }
+    return;
+  }
+  if (msg.text.toLowerCase() === "/nhomzalo") {
+    if (!config.controllerId || msg.sender !== config.controllerId) {
+      await send(msg.threadId, ["Lệnh này chỉ dành cho chủ bot (chưa ghép đôi /pair)."]);
+      return;
+    }
+    await listGroups(msg.threadId);
+    return;
+  }
+  const reply = await callBridge(config, {
+    senderId: msg.sender,
+    senderName: msg.senderName,
+    conversationId: msg.threadId,
+    messageId: msg.id,
+    text: msg.text,
+  });
+  await send(msg.threadId, reply.messages, reply.image_b64);
+  if (GROUP_ADMIN_COMMAND.test(msg.text)) await refreshGroups();
+}
+
+function onMessage(message: ZaloMessage): void {
+  if (message.isSelf) return;
+  const msg = parseMessage(message);
+  if ((!msg.text && !msg.urls.length) || !msg.id || !seen.remember(msg.id)) return;
+  if (message.type === ThreadType.User && handlePairing(msg)) return;
+  if (message.type === ThreadType.Group) {
+    handleGroupMessage(message, msg);
+    return;
+  }
+  if (message.type !== ThreadType.User) return;
+  directQueue.add(() => handleDirectMessage(msg)).catch(console.error);
+}
+
+// ─── Đăng nhập / phiên ──────────────────────────────────────────────────────
+
+async function attach(next: ZaloApi): Promise<void> {
+  api = next;
+  state = "connected";
+  qr = null;
+  config.accountId = String(next.getOwnId() || config.accountId);
+  await refreshGroups();
+  const listener = next.listener;
+  listener.on("message", onMessage);
+  listener.on("disconnected", () => {
+    api = null;
+    state = "disconnected";
+  });
+  listener.on("closed", () => {
+    api = null;
+    state = "closed";
+  });
+  listener.on("error", console.error);
+  listener.start();
+  console.log(`[zalo] listener started account=${config.accountId}`);
+}
+
+async function persist(next: ZaloApi): Promise<void> {
+  const ctx = next.getContext();
+  await saveSession(config, {
+    cookie: ctx.cookie.serializeSync(),
+    imei: ctx.imei,
+    userAgent: ctx.userAgent,
+    accountId: String(next.getOwnId()),
+  });
+}
+
+type QrEvent = { type: number; data?: { image?: string; qrData?: string } };
+
+function onQrEvent(event: QrEvent): void {
+  if (event.type === LoginQRCallbackEventType.QRCodeGenerated) {
+    qr = String(event.data?.image || event.data?.qrData || "").replace(
+      /^data:image\/png;base64,/,
+      "",
+    );
+    state = "qr_ready";
+  } else if (event.type === LoginQRCallbackEventType.QRCodeScanned) {
+    qr = null;
+    state = "scanned";
+  } else if (event.type === LoginQRCallbackEventType.QRCodeExpired) {
+    qr = null;
+    state = "expired";
+  } else if (event.type === LoginQRCallbackEventType.QRCodeDeclined) {
+    qr = null;
+    state = "declined";
+  }
+}
+
+async function startQr(): Promise<string> {
+  if (api || loginPromise) return state;
+  state = "waiting_qr";
+  qr = null;
+  loginPromise = (async () => {
+    try {
+      const next = (await zalo.loginQR({ userAgent: config.userAgent }, onQrEvent)) as ZaloApi;
+      state = "saving_session";
+      await persist(next);
+      await attach(next);
+    } catch (error) {
+      qr = null;
+      state = "error";
+      console.error("[zalo] QR login failed", error);
+    } finally {
+      loginPromise = null;
+    }
+  })();
+  return state;
+}
+
+type SavedSession = { cookie?: unknown; imei?: string; userAgent?: string };
+
+async function bootstrap(attempt = 0): Promise<void> {
+  try {
+    state = "waiting_backend";
+    if (!config.controllerId) config.controllerId = await loadController(config);
+    const session: SavedSession =
+      config.cookie && config.imei
+        ? { cookie: config.cookie, imei: config.imei, userAgent: config.userAgent }
+        : ((await loadSavedSession(config)) as SavedSession);
+    if (session?.cookie && session?.imei) {
+      state = "restoring";
+      const credentials: Credentials = {
+        cookie: session.cookie,
+        imei: session.imei,
+        userAgent: session.userAgent || config.userAgent,
+      };
+      await attach((await zalo.login(credentials)) as ZaloApi);
+    } else {
+      state = "awaiting_login";
+    }
+  } catch (error) {
+    // Python (uvicorn) có thể khởi động chậm hơn Node trong cùng container.
+    if (isConnectionRefused(error) && attempt < 10) {
+      state = "waiting_backend";
+      const delay = Math.min(5000, 1000 * (attempt + 1));
+      setTimeout(() => void bootstrap(attempt + 1), delay).unref();
+      return;
+    }
+    state = "awaiting_login";
+    console.error("[zalo] restore failed", error);
+  }
+}
+
+// ─── Khởi động ──────────────────────────────────────────────────────────────
+
+startControlServer(config.controlPort, {
+  status: () => ({
+    state,
+    connected: !!api,
+    accountId: api ? String(api.getOwnId()) : null,
+    controllerPaired: !!config.controllerId,
+    qr,
+  }),
+  startQr,
+  startPairing: () => {
+    if (!api) return null;
+    pairing = { code: String(randomInt(100000, 1000000)), expires: Date.now() + 300000 };
+    return { code: pairing.code, expiresAt: pairing.expires };
+  },
+  logout: async () => {
+    try {
+      api?.listener?.stop?.();
+    } catch {
+      // Listener đã đóng: bỏ qua.
+    }
+    api = null;
+    qr = null;
+    pairing = null;
+    config.controllerId = "";
+    state = "awaiting_login";
+    await clearSession(config);
+    await clearController(config);
+  },
+});
+
+setInterval(() => void refreshGroups(), config.groupRefreshMs).unref();
+setInterval(() => {
+  if (outboxBusy) return;
+  outboxBusy = true;
+  deliverOutbox()
+    .catch(console.error)
+    .finally(() => {
+      outboxBusy = false;
+    });
+}, config.outboxPollMs).unref();
+void bootstrap();

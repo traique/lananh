@@ -16,6 +16,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from services import http_client
+
 from core import config
 from core.text_normalize import nfc
 
@@ -99,7 +101,7 @@ def build_url_validation_response(plain_token: str) -> dict:
 
 
 async def _fetch_access_token() -> tuple[str, int]:
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+    async with http_client.scoped(timeout=_HTTP_TIMEOUT) as client:
         response = await client.post(
             _TOKEN_URL,
             params={"grant_type": "client_credentials"},
@@ -181,7 +183,7 @@ async def _post_message_once(to_jid: str, text: str, user_jid: str, account_id: 
         "is_markdown_support": True,
         "content": {"body": [{"type": "message", "text": text}]},
     }
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+    async with http_client.scoped(timeout=_HTTP_TIMEOUT) as client:
         response = await client.post(
             _MESSAGE_URL, json=body, headers={"Authorization": f"Bearer {token}"}
         )
@@ -309,7 +311,7 @@ async def _post_image_message_once(
             ]
         },
     }
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+    async with http_client.scoped(timeout=_HTTP_TIMEOUT) as client:
         response = await client.post(
             _MESSAGE_URL, json=body, headers={"Authorization": f"Bearer {token}"}
         )

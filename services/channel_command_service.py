@@ -48,7 +48,9 @@ HELP = """📖 Lệnh trên Zalo/Zoom
   chạy lại /fb_ok để chỉ thử lại page lỗi, page đã đăng OK không bị đụng tới
 /fb_check <post_id> — kiểm tra từng page đã published/công khai chưa, lấy permalink
 /fb_boqua <post_id> — bỏ bài chờ
-/fb_reset — xóa toàn bộ bài Facebook đã lưu của tài khoản, reset ID về #1 khi có thể"""
+/fb_reset — xóa toàn bộ bài Facebook đã lưu của tài khoản, reset ID về #1 khi có thể
+/fb_boloc [reset] — thống kê bộ lọc: bao nhiêu bài vào hàng chờ, bị bỏ/trùng vì sao, số bài đang chờ
+(hàng chờ giữ tối đa 150 bài, bài trùng trong 7 ngày không được đưa vào)"""
 
 # Ảnh do lệnh /anh tạo ra được "gửi kèm" bằng ContextVar thay vì đổi kiểu trả
 # về của maybe_handle_command() (đang là tuple[list[str], str|None] và có

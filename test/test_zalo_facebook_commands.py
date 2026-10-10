@@ -105,8 +105,11 @@ async def test_fb_link_saves_link_then_ai_rewrites_caption_without_link(monkeypa
     assert saved["content"] == "Hời quá nè"
     message = result.messages[0]
     assert "AI đã viết lại" in message
-    assert "💬 Link sẽ thả ở bình luận đầu tiên:\nhttps://s.shopee.vn/affiliate123" in message
-    assert "Hời quá nè\n\n" + facebook_commands.facebook_caption.COMMENT_CTA in message
+    fc = facebook_commands.facebook_caption
+    assert "💬 Bình luận đầu tiên:\n" + fc.build_comment(
+        ["https://s.shopee.vn/affiliate123"], seed=7
+    ) in message
+    assert "Hời quá nè\n\n" + fc.COMMENT_CTAS[7 % len(fc.COMMENT_CTAS)] in message
     assert "/r/" not in message
 
 
@@ -475,8 +478,13 @@ async def test_fb_ok_posts_link_free_caption_then_comments_affiliate_link(monkey
 
     result = await facebook_commands.maybe_handle_facebook_command("B", "/fb_ok 5")
 
-    assert mocks["captions"] == ["Deal hời\n\n" + facebook_commands.facebook_caption.COMMENT_CTA]
-    mocks["post_comment"].assert_awaited_once_with("p1", affiliate, "default")
+    fc = facebook_commands.facebook_caption
+    # Câu dẫn và câu mở bình luận đổi theo post_id để Page không lặp một câu.
+    assert mocks["captions"] == ["Deal hời\n\n" + fc.COMMENT_CTAS[5 % len(fc.COMMENT_CTAS)]]
+    mocks["post_comment"].assert_awaited_once_with(
+        "p1", fc.build_comment([affiliate], seed=5), "default"
+    )
+    assert affiliate in mocks["post_comment"].await_args.args[1]
     mocks["record_target_comment"].assert_awaited_once_with(5, "default", "c1", "tok")
     assert mocks["finalize_post_status"].await_args.kwargs["needs_comment"] is True
     assert "đã thả link vào bình luận đầu tiên" in result.messages[0]

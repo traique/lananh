@@ -1,6 +1,5 @@
 """Supabase persistence for dynamically managed Zalo groups and summaries."""
 
-import asyncio
 import os
 from datetime import datetime
 

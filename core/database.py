@@ -1,5 +1,6 @@
 """Supabase Postgres - bền hơn SQLite vì ổ đĩa local trên Render free tier là ephemeral."""
 import asyncio
+import contextvars
 import functools
 import logging
 from datetime import datetime, timezone
@@ -42,6 +43,8 @@ async def _reset_pool(failed_pool: Optional[asyncpg.pool.Pool]) -> None:
     thấy bị lỗi đã cũ) sẽ không được phép đóng pool MỚI mà coroutine chạy
     trước vừa tạo xong (race condition "domino" phá pool đang sống)."""
     global _pool
+    if failed_pool is None:
+        return
     async with _pool_lock:
         if _pool is not failed_pool:
             return
@@ -53,18 +56,50 @@ async def _reset_pool(failed_pool: Optional[asyncpg.pool.Pool]) -> None:
             _pool = None
 
 
-def _with_reconnect(func):
+# Pool mà lượt gọi DB hiện tại THỰC SỰ dùng (get_pool() ghi lại). Nhờ vậy
+# _with_reconnect chỉ reset đúng pool vừa lỗi, không đóng nhầm pool MỚI mà
+# một coroutine khác vừa tạo (bản cũ đọc biến global `_pool` lúc bắt lỗi nên
+# cơ chế chống race của _reset_pool bị vô hiệu).
+_pool_in_use: contextvars.ContextVar[Optional[asyncpg.pool.Pool]] = contextvars.ContextVar(
+    "_pool_in_use", default=None
+)
+
+
+def _safe_to_retry(exc: BaseException, idempotent: bool) -> bool:
+    """Câu lệnh idempotent (SELECT/UPSERT/DELETE theo khoá) luôn retry được.
+
+    Câu INSERT không idempotent chỉ retry khi chắc chắn lệnh CHƯA tới server:
+    ``ConnectionDoesNotExistError`` ("connection was closed in the middle of
+    operation") có thể xảy ra SAU khi server đã commit, retry sẽ tạo bản ghi
+    trùng - lỗi đó được ném ra cho nơi gọi.
+    """
+    if idempotent:
+        return True
+    return not isinstance(exc, asyncpg.ConnectionDoesNotExistError)
+
+
+def _with_reconnect(func=None, *, idempotent: bool = True):
     # Supabase free tier tự pause DB sau ~1 tuần không hoạt động, khiến pool
-    # cũ giữ connection đã chết -> raise lỗi kết nối. Bắt lỗi, reset pool rồi
-    # thử lại đúng 1 lần để tự phục hồi thay vì crash.
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
-        try:
-            return await func(*args, **kwargs)
-        except _CONNECTION_ERRORS:
-            await _reset_pool(_pool)
-            return await func(*args, **kwargs)
-    return wrapper
+    # cũ giữ connection đã chết -> raise lỗi kết nối. Bắt lỗi, reset ĐÚNG pool
+    # vừa lỗi rồi thử lại đúng 1 lần (nếu an toàn) để tự phục hồi.
+    def decorate(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            token = _pool_in_use.set(None)
+            try:
+                return await fn(*args, **kwargs)
+            except _CONNECTION_ERRORS as exc:
+                await _reset_pool(_pool_in_use.get())
+                if not _safe_to_retry(exc, idempotent):
+                    raise
+                return await fn(*args, **kwargs)
+            finally:
+                _pool_in_use.reset(token)
+
+        return wrapper
+
+    return decorate(func) if func is not None else decorate
+
 
 # Chỉ giữ tối đa N prompt gần nhất / user - results liên quan tự xoá theo
 # (ON DELETE CASCADE). Tránh bảng phình vô hạn theo thời gian (đặc biệt vì
@@ -73,6 +108,12 @@ HISTORY_RETENTION_LIMIT = 20
 
 
 async def get_pool() -> asyncpg.pool.Pool:
+    pool = await _get_or_create_pool()
+    _pool_in_use.set(pool)
+    return pool
+
+
+async def _get_or_create_pool() -> asyncpg.pool.Pool:
     global _pool
     if _pool is not None:
         return _pool
@@ -82,6 +123,10 @@ async def get_pool() -> asyncpg.pool.Pool:
                 config.DATABASE_URL,
                 min_size=1,
                 max_size=5,
+                # Đóng connection rảnh sau 60s: Supavisor/Supabase hay cắt
+                # connection idle, giữ lại chỉ tạo lỗi "connection is closed" ở
+                # lượt kế tiếp (và tốn RAM vô ích).
+                max_inactive_connection_lifetime=60,
                 command_timeout=30,
                 ssl="require",
                 # PgBouncer/Supavisor transaction mode không giữ prepared statement
@@ -166,7 +211,7 @@ async def init_db() -> None:
     )
 
 
-@_with_reconnect
+@_with_reconnect(idempotent=False)
 async def save_prompt(telegram_user_id: int, command_type: str, prompt: str, channel: str = "telegram") -> int:
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -232,7 +277,7 @@ async def usage_by_user(since_hours: int = 24 * 7) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-@_with_reconnect
+@_with_reconnect(idempotent=False)
 async def record_provider_call(provider: str, model: str) -> None:
     """Ghi 1 lượt gọi thành công của provider/model (bảng provider_calls) -
     gọi từ ai/orchestrator.py::_run_provider_chain ngay sau mỗi lần 1
@@ -266,7 +311,7 @@ async def usage_by_model(since_hours: int = 24 * 7) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-@_with_reconnect
+@_with_reconnect(idempotent=False)
 async def save_result(
     prompt_id: int,
     result_type: str,
@@ -313,7 +358,7 @@ async def get_history(telegram_user_id: int, limit: int = 10):
 CHAT_MESSAGES_RETENTION_LIMIT = 200
 
 
-@_with_reconnect
+@_with_reconnect(idempotent=False)
 async def add_chat_message(telegram_user_id: int, role: str, content: str) -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -456,7 +501,7 @@ async def clear_facts(telegram_user_id: int) -> None:
     await pool.execute("DELETE FROM user_facts WHERE telegram_user_id = $1", telegram_user_id)
 
 
-@_with_reconnect
+@_with_reconnect(idempotent=False)
 async def add_highlight(telegram_user_id: int, content: str, keep_n: int) -> None:
     """Thêm 1 dòng "ý quan trọng" mới, rồi cắt về `keep_n` dòng mới nhất/user
     (dòng cũ nhất tự rơi ra) - xem services/memory_service.py."""
@@ -533,7 +578,7 @@ async def set_summary(telegram_user_id: int, summary: str) -> None:
 # ─── Function calling: notes + reminders (xem services/tools.py, scheduler.py) ──────
 
 
-@_with_reconnect
+@_with_reconnect(idempotent=False)
 async def add_note(telegram_user_id: int, content: str, *, event_key: str | None = None) -> None:
     pool = await get_pool()
     await pool.execute(
@@ -561,7 +606,7 @@ async def get_notes(telegram_user_id: int, limit: int = 10) -> list[tuple[str, d
     return [(r["content"], r["created_at"]) for r in rows]
 
 
-@_with_reconnect
+@_with_reconnect(idempotent=False)
 async def add_reminder(
     telegram_user_id: int, message: str, due_at, *, channel: str = "telegram",
     recipient_id: str | None = None, account_id: str = "", user_jid: str = "",
@@ -606,7 +651,7 @@ CHAT_EMBEDDINGS_RETENTION_LIMIT = 500
 SEMANTIC_SEARCH_MAX_DISTANCE = 0.5
 
 
-@_with_reconnect
+@_with_reconnect(idempotent=False)
 async def add_chat_embedding(telegram_user_id: int, content: str, embedding: list[float]) -> None:
     if not VECTOR_ENABLED:
         return

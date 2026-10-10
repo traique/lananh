@@ -2,7 +2,8 @@
 
 Bản sửa Render 512 MB: [mã sửa, migration và hướng dẫn cập nhật hai service](docs/render512-fixes.md).
 
-MVP một người dùng, chạy trên nền Gemini. Hoạt động trên Telegram và tùy chọn
+Trợ lý cho một chủ sở hữu (Zalo có thể thêm thành viên), chạy trên provider chain
+9Router → Groq → OpenRouter → Google AI Studio. Hoạt động trên Telegram và tùy chọn
 Zalo/Zoom, dùng chung provider chain Gemini, trí nhớ dài hạn, công cụ, nhắc
 việc và phân tích cổ phiếu Việt Nam.
 
@@ -18,7 +19,9 @@ Repository được thiết kế cho **một chủ sở hữu**:
 - Session/token nhạy cảm được mã hóa trước khi lưu database.
 - Webhook và background tasks được drain khi shutdown.
 - Backtest nặng bị chặn trên Render Web Service.
-- Python và TypeScript có lint, format, test và CI.
+- Python và TypeScript có lint, format, test và CI (`.github/workflows/ci.yml`).
+- Mỗi người dùng có hàng đợi riêng; tổng lượt AI song song bị chặn bởi
+  `MAX_CONCURRENT_TURNS` (mặc định 2) để vừa RAM 512 MB.
 
 Đây không phải hệ thống multi-tenant, nền tảng tư vấn tài chính được cấp phép hoặc broker đặt lệnh.
 
@@ -28,7 +31,7 @@ Repository được thiết kế cho **một chủ sở hữu**:
 
 - Provider chain: 9Router (gateway OpenAI-compatible) → Groq (miễn phí) → OpenRouter (miễn phí) → AI Studio key 1 → key 2.
 - Tự cooldown provider hết quota và probe lại 9Router; 9Router chạm timeout (mặc định 120s) thì chuyển provider luôn, không retry thêm lượt nữa.
-- Tác vụ cần Google Search thật (`require_real_search`) dùng riêng 1 chuỗi: Groq `compound-mini` (tool search tích hợp, miễn phí) → Gemini grounding (API key 1/2) - bỏ qua 9Router và OpenRouter vì không đảm bảo có tool search thật.
+- Tác vụ cần Google Search thật (`require_real_search`) dùng riêng 1 chuỗi: Groq `compound-mini` (tool search tích hợp, miễn phí) → Gemini grounding (API key 1/2) → OpenRouter (lưới an toàn cuối, không đảm bảo có tool search thật) - bỏ qua 9Router.
 - Lịch sử theo phiên và trí nhớ dài hạn trên Supabase Postgres.
 - Ghi chú, reminder và facts danh mục qua ngôn ngữ tự nhiên.
 - Tìm giá sản phẩm bằng grounded search chính thức.
@@ -80,7 +83,7 @@ Năng lực hiện tại:
 - Chuỗi giá 260 phiên: SMA200 + trend 1 năm vào bối cảnh dài hạn.
 - Điều chỉnh cổ tức tiền mặt từ dữ liệu corporate actions (VCI) — chỉ áp dụng khi ngày GDKHQ VÀ độ lớn gap khớp nhau, gap còn lại vẫn được cảnh báo (`stock/corporate_actions.py`).
 - Gate theo market regime, data quality, setup và risk/reward.
-- `BUY`, `HOLD`, `WATCH`, `SELL`, `NO_TRADE` do code quyết định; LLM chỉ diễn giải — ngoại trừ bước "Manager" cuối pipeline debate được phép chọn action khác hệ thống (có cảnh báo rõ trên báo cáo, và KHÔNG được suy ra vùng giá nào cho action đó; mọi số entry/stop/target/tỷ trọng vẫn chỉ do code chốt).
+- `BUY`, `HOLD`, `WATCH`, `SELL`, `NO_TRADE` do code quyết định; LLM chỉ diễn giải. Bước "Manager" cuối pipeline debate có thể phản biện trong phần lập luận nhưng KHÔNG đổi được action (code ép lại action của policy); mọi số entry/stop/target/tỷ trọng chỉ do code chốt.
 - Vùng mua, stop, target, R:R, position sizing và kịch bản bull/base/bear.
 - Fundamental theo ngành: ưu tiên P/B cho ngân hàng, chứng khoán, bảo hiểm và bất động sản; P/E ở nhóm phù hợp.
 - Walk-forward backtest có phí, thuế bán, slippage, T+, và 30% out-of-sample.
@@ -281,19 +284,46 @@ access token). **Không cần gán page cho từng nhóm Zalo** — mọi nhóm 
 dùng chung tập page này khi đăng.
 
 **Lọc bài từ nhóm Zalo trước khi vào hàng chờ Facebook** (`channels/router.py`,
-`services/facebook_caption.skip_reason`). Gateway gộp ảnh + chữ của cùng một người gửi trong
-8 giây thành một bài, rồi bộ lọc mới áp dụng lên bài đã gộp. Bài bị bỏ (trả 204, ghi log
-"Bỏ qua bài Zalo (<lý do>)") khi:
+`services/facebook_caption.skip_reason`). Gateway gộp ảnh + chữ liên tiếp của cùng một người
+gửi thành một bài (chờ tối đa `ZALO_FB_MERGE_WINDOW_MS`, mặc định 30 giây kể từ tin cuối) và
+tự tách khi người bán đăng liên tục nhiều sản phẩm: caption mới mở bài mới; với kiểu "ảnh trước
+rồi caption", ảnh mới sau một bài đã đủ ảnh + chữ cũng mở bài mới. Ảnh tải lỗi được thử lại 1 lần.
+Bài bị bỏ (trả 204, ghi log "Bỏ qua bài Zalo (<lý do>)") khi:
 
 - **Có ảnh nhưng không có caption**: chỉ có ảnh, hoặc ảnh + link, hoặc ảnh + vài chữ ngắn như
   "Link mua:" (caption cần từ 10 chữ/số trở lên, không tính link kể cả link không có `https://`).
-- **Có caption nhưng không có ảnh** (kể cả khi gateway không tải được ảnh).
+- **Có caption nhưng không có ảnh** (kể cả khi gateway không tải được ảnh sau 2 lần thử).
 - **Chỉ báo mã giảm giá/săn deal**: nhắc "lưu mã", "mã giảm", "deal VIP"... mà không có giá sản
-  phẩm, dưới 400 ký tự.
+  phẩm, dưới 400 ký tự. Giá nhận cả dạng "159k", "1tr2", "1.299.000", "199.000đ"; con số là điều
+  kiện của mã ("đơn 0đ", "tối đa 50k", "max 30k", "hoàn xu 15%") không tính là giá. Bài có link
+  Shopee trỏ thẳng tới một sản phẩm (`...-i.<shop>.<item>`, `/product/<shop>/<item>`) luôn giữ.
+- **Trùng lặp** với bài trong `FACEBOOK_DEDUP_DAYS` ngày (mặc định 7, kể cả bài đã đăng/bỏ qua/
+  đã bị dọn): cùng nội dung (bỏ dấu, link, ký tự đặc biệt); cùng sản phẩm/short-link Shopee; chữ
+  gần giống và cùng bộ giá; ảnh trùng và chữ khá giống; hoặc toàn bộ ảnh (từ 2 ảnh) đều trùng.
+  Ảnh trùng một mình không tính (người bán hay dùng chung banner); cùng mẫu chữ nhưng khác giá là
+  deal mới. Xem `services/facebook_dedup.py`.
 
 Tắt từng bộ lọc trên Render: `FACEBOOK_REQUIRE_PHOTO_AND_CAPTION=0` (cho phép bài thiếu ảnh/caption),
-`FACEBOOK_SKIP_VOUCHER_POSTS=0` (giữ bài mã giảm giá). Lưu ý: ảnh gửi trước rồi caption gửi sau
-quá 8 giây sẽ thành hai bài riêng và cả hai đều bị bỏ.
+`FACEBOOK_SKIP_VOUCHER_POSTS=0` (giữ bài mã giảm giá). Dùng `/fb_boloc` để xem bộ lọc đã giữ/bỏ
+bao nhiêu bài, lý do và các bài bị bỏ gần nhất (`/fb_boloc reset` để đếm lại).
+
+**Dung lượng Supabase (free tier 500 MB).** Ảnh được nén trước khi lưu (cạnh dài tối đa 2048px,
+JPEG, bỏ EXIF) và bị xoá ngay khi bài đăng xong hoặc bị `/fb_boqua`. Hàng chờ giữ tối đa
+`FACEBOOK_MAX_PENDING` bài chờ duyệt (mặc định 150): vượt ngưỡng thì tự xoá bài chờ **cũ nhất**
+và báo trong tin xem trước (không đụng bài lỗi hoặc đã đăng một phần). Bài đã đăng/bỏ qua cũ hơn
+`FACEBOOK_HISTORY_DAYS` ngày (mặc định 30) được dọn tự động, tối đa 1 lần/giờ.
+
+**Tự thu hồi dung lượng (VACUUM FULL).** Xoá ảnh chỉ tạo chỗ trống để Postgres tái dùng; con số
+"Database size" trên Supabase chỉ giảm sau `VACUUM FULL`. Job `services/db_maintenance.py` tự chạy
+lệnh này cho `facebook_post_media` tối đa 1 lần/tuần (mặc định 3h sáng Chủ nhật giờ VN) và CHỈ khi:
+lãng phí >= 50 MB và >= một nửa bảng, không có bài đang ở trạng thái POSTING, và DB cộng bản chép
+tạm vẫn dưới 95% `DB_SIZE_LIMIT_MB`. Lấy khoá tối đa 5 giây, không được thì bỏ lượt. Kết quả trước/sau
+báo qua Telegram. Tắt bằng `DB_AUTO_VACUUM_FULL=0`. Xem trước quyết định: `GET /admin/api/db-usage`.
+
+**AI viết lại bài** khi đã đủ link affiliate: giọng người bán kể cho bạn bè, tránh văn mẫu
+("siêu phẩm", "không thể bỏ lỡ"...), tối đa 2-3 emoji, không Markdown. Bản viết lại phải giữ đúng
+mọi con số của bài gốc; sai/thiếu thì hỏi lại AI 1 lần, vẫn sai thì giữ bài gốc đã lọc link. Câu
+dẫn xuống bình luận và câu mở đầu bình luận link đổi theo từng bài.
 
 #### Page riêng cho chứng khoán + tin CafeF (`market_page`)
 
@@ -318,8 +348,23 @@ Bỏ trống 2 biến là tắt luồng. Nội dung do AI chain của bot sinh (
   Trang `/admin` có mục "Page chứng khoán & tin CafeF" với các nút tương ứng, kèm lịch và
   kết quả lần chạy gần nhất.
 - **Tuân thủ**: prompt cấm khuyến nghị mua/bán/tỷ trọng/giá mục tiêu; mỗi bài tự gắn dòng
-  nguồn (DNSE, CafeF) và lời miễn trừ trách nhiệm. Nếu AI vẫn viết cụm khuyến nghị giao dịch
-  thì bài bị bỏ, không đăng (xem log `market_page`).
+  nguồn (DNSE, CafeF) và lời miễn trừ trách nhiệm. Bộ lọc bắt cả câu khuyến nghị "mềm" ("có thể
+  canh mua", "ưu tiên giải ngân", "chốt lời một phần", "vùng mua"...) nhưng không chặn mô tả
+  thị trường ("khối ngoại bán ròng", "bán tháo", "ngân hàng giải ngân tín dụng"). Gặp khuyến
+  nghị thì AI được viết lại 1 lần, vẫn còn thì bài bị bỏ.
+- **Không đăng sai/trùng**: mỗi phiên giao dịch chỉ đăng 1 lần, kể cả đã đăng tay bằng
+  `/fb_market stock dang`; ngày nghỉ lễ (DNSE không có phiên hôm nay) không đăng lại phiên cũ.
+  Bản tin chỉ dùng tin CafeF trong 24 giờ qua (cần ít nhất 3 tin) và bỏ qua nếu phần lớn tin
+  trùng bản tin trước.
+- **Chạy bù và thử lại**: lỡ giờ do Render restart, hoặc AI/DNSE lỗi, thì lịch thử lại mỗi
+  `MARKET_RETRY_MIN` phút (mặc định 10), tối đa `MARKET_MAX_ATTEMPTS` lần (mặc định 4), trong
+  `MARKET_CATCHUP_MIN` phút kể từ giờ đăng (mặc định 120).
+- **Số liệu**: RSI theo Wilder (khớp TradingView/app chứng khoán); số mã tăng/giảm ghi rõ là
+  "trong nhóm cổ phiếu theo dõi", không phải toàn thị trường; số định dạng kiểu Việt Nam; biểu
+  đồ ghi ngày dd/mm.
+- **Ảnh**: biểu đồ VN-INDEX và ảnh bài CafeF nổi bật được gắn khung trắng + logo giống ảnh luồng
+  Zalo → Facebook. `MARKET_NEWS_IMAGE=none` để đăng bản tin không kèm ảnh CafeF (an toàn nhất về
+  bản quyền ảnh). Comment bài nổi bật chỉ tóm tắt ngắn 80-120 từ kèm link đọc bài gốc.
 
 Các lệnh `/fb_*` dùng được từ **Zalo admin, Telegram owner và Zoom jid đã pair**:
 
@@ -417,6 +462,7 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/fb_check <post_id>` | Kiểm tra từng page: `is_published`, trạng thái ẩn/Timeline, `published_posts` và permalink |
 | `/fb_boqua <post_id>` | Bỏ bài Facebook đang chờ |
 | `/fb_reset` | Xóa toàn bộ bài Facebook đã lưu của tài khoản; reset ID về `#1` khi hàng đợi chung trống |
+| `/fb_boloc [reset]` | Thống kê bộ lọc: số bài vào hàng chờ, bị bỏ/trùng theo lý do, số bài đang chờ |
 | `/zalopair <id_zalo> [tên]` | Cấp quyền thành viên cho 1 tài khoản Zalo |
 | `/zaloadmin <id_zalo> [tên]` | Cấp/nâng quyền admin (dùng được lệnh nhóm và `/fb_*`) |
 | `/zalohaquyen <id_zalo>` | Hạ 1 admin về thành viên thường |
@@ -523,15 +569,17 @@ GitHub Actions keep-alive workflow riêng, có thể tắt hẳn vì UptimeRobot
 ## Kiểm tra chất lượng
 
 ```bash
-pip install -r requirements-dev.txt
+pip install --extra-index-url https://vnstocks.com/api/simple -r requirements-dev.txt
 ruff check .
-ruff format --check .
+ruff format --check <file đã sửa>   # repo cũ chưa format toàn bộ
 python -m compileall -q .
 pytest -q
 
 cd zalo-gateway
 npm install
 npm run check
+npm run format:check
+npm test
 ```
 
 CI chạy các kiểm tra Python và TypeScript trên push và pull request.
@@ -548,6 +596,9 @@ stock/              Market data, validation, policy và backtest
 rag/                Kho kiến thức .md cho lệnh /rag (mỗi heading 1 mẩu kiến thức)
 zalo-gateway/        Node.js Zalo listener
 web.py               FastAPI webhook entrypoint (Telegram + Zoom)
+web_admin.py         Trang /admin và admin API (đăng nhập có giới hạn số lần sai);
+                     /admin/api/memory-usage: RAM container + từng tiến trình;
+                     /admin/api/db-usage: dung lượng bảng ảnh và job VACUUM FULL
 main.py              Local long-polling entrypoint
 bot_app.py           Telegram app factory và lifecycle
 ```

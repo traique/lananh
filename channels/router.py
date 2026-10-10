@@ -1,5 +1,6 @@
 """Authenticated HTTP bridge used by the local zca-js process."""
 
+import asyncio
 import base64
 import binascii
 import hmac
@@ -26,7 +27,9 @@ from channels.zalo_text import to_plain_text
 from core import idempotency
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.channel_image_service import MAX_ZALO_IMAGE_BYTES, handle_channel_image
+from services import facebook_dedup, facebook_intake_stats
 from services.facebook_caption import skip_reason
+from services.facebook_image import compact_image, image_dhash
 from services.concurrency import assistant_turn, channel_message_turn
 from services.reminder_delivery import NotificationTarget, notification_target
 
@@ -175,14 +178,14 @@ async def _receive_text(payload: ZaloMessageRequest):
     # Facebook post-queue commands (/fb_*) are handled OUTSIDE assistant_turn()
     # on purpose. /fb_ok waits on the Facebook Graph API and already has its own
     # atomicity (claim_post's guarded UPDATE). Running it under assistant_turn()
-    # would hold that lock for the whole publish and freeze EVERY other
-    # Telegram/Zalo conversation meanwhile.
+    # would block this user's chat and hold a MAX_CONCURRENT_TURNS slot for the
+    # whole publish.
     result = None
     if zalo_user.is_admin:
         result = await maybe_handle_facebook_command(payload.account_id, payload.text)
 
     if result is None:
-        async with assistant_turn():
+        async with assistant_turn(f"zalo:{zalo_user.internal_user_id}"):
             # Re-check: a duplicate delivery of the same message could have
             # been processed by another request while we were waiting for the
             # lock above.
@@ -242,7 +245,7 @@ async def image_prompt(
     if not zalo_user.is_active:
         return ZaloMessageResponse(messages=[messages_module.ZALO_LOCKED_REPLY], provider=None)
 
-    async with assistant_turn():
+    async with assistant_turn(f"zalo:{zalo_user.internal_user_id}"):
         cached = await idempotency.get_zalo_response(
             x_zalo_account_id,
             x_zalo_message_id,
@@ -349,18 +352,55 @@ async def facebook_group_post(
             "Bỏ qua bài Zalo (%s) nhóm=%s người gửi=%s: %.60s",
             reason, payload.group_id, payload.sender_id, " ".join(payload.text.split()),
         )
+        facebook_intake_stats.record(reason, payload.text)
         return Response(status_code=204)
-    post_id = await facebook_repository.create_post(
-        account_id=payload.account_id,
-        group_id=payload.group_id,
-        sender_id=payload.sender_id,
-        sender_name=payload.sender_name,
-        source_message_ids=payload.message_ids,
-        content=payload.text.strip(),
-        media=media,
-    )
-    if post_id is not None:
-        await prepare_post(payload.account_id, post_id)
+    # Nén ảnh TRƯỚC khi lưu (Supabase free tier 500 MB) và lấy dHash để chống trùng.
+    # Xử lý tuần tự từng ảnh để giữ đỉnh RAM thấp trên máy 512 MB.
+    stored_media: list[tuple[str, bytes]] = []
+    image_hashes: list[int] = []
+    for mime_type, body in media:
+        stored = await asyncio.to_thread(compact_image, mime_type, body)
+        stored_media.append(stored)
+        digest = await asyncio.to_thread(image_dhash, stored[1])
+        if digest is not None:
+            image_hashes.append(digest)
+    media.clear()
+    fingerprint = facebook_dedup.build_fingerprint(payload.text, image_hashes)
+    try:
+        post_id = await facebook_repository.create_post(
+            account_id=payload.account_id,
+            group_id=payload.group_id,
+            sender_id=payload.sender_id,
+            sender_name=payload.sender_name,
+            source_message_ids=payload.message_ids,
+            content=payload.text.strip(),
+            media=stored_media,
+            fingerprint=fingerprint,
+        )
+    except facebook_repository.DuplicatePostError as exc:
+        logger.info(
+            "Bỏ qua bài Zalo trùng (%s) nhóm=%s người gửi=%s: %.60s",
+            exc, payload.group_id, payload.sender_id, " ".join(payload.text.split()),
+        )
+        facebook_intake_stats.record(f"trùng lặp: {exc.match.reason}", payload.text)
+        return Response(status_code=204)
+    if post_id is None:
+        return Response(status_code=204)
+    facebook_intake_stats.record(facebook_intake_stats.QUEUED)
+    note = None
+    pruned = await facebook_repository.enforce_pending_cap(payload.account_id)
+    if pruned:
+        facebook_intake_stats.record(facebook_intake_stats.PRUNED, amount=len(pruned))
+        shown = ", ".join(f"#{i}" for i in pruned[:10]) + ("..." if len(pruned) > 10 else "")
+        note = (
+            f"🧹 Hàng chờ vượt {facebook_repository.max_pending()} bài: "
+            f"đã tự xoá {len(pruned)} bài chờ cũ nhất ({shown})."
+        )
+    await prepare_post(payload.account_id, post_id, note=note)
+    try:
+        await facebook_repository.prune_history()
+    except Exception:
+        logger.warning("Dọn dữ liệu Facebook cũ lỗi; thử lại lần sau.", exc_info=True)
     return Response(status_code=204)
 
 @router.get("/outbox/{account_id}/{recipient_id}", response_model=list[ZaloOutboxItem])

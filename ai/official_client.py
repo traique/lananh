@@ -244,3 +244,6 @@ async def check_ai_studio_status(idx: int) -> tuple[bool, str]:
         return True, "OK"
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
+
+
+model_for = _model_for

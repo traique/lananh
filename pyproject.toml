@@ -8,7 +8,13 @@ extend-exclude = ["zalo-gateway/dist"]
 force-exclude = true
 
 [tool.ruff.lint]
-select = ["E9", "F63", "F7", "F82"]
+# E9/F63/F7/F82: lỗi cú pháp/undefined name. F401/F811/F841: import thừa,
+# định nghĩa trùng (đã từng che mất 1 test bị dán đè), biến không dùng.
+select = ["E9", "F63", "F7", "F82", "F401", "F811", "F841"]
+
+[tool.ruff.lint.per-file-ignores]
+# Smoke test import module để bắt lỗi import, không dùng tên.
+"test/test_stock_import_smoke.py" = ["F401"]
 
 [tool.ruff.format]
 # Hai file dưới đây là code lõi phân tích chứng khoán, viết trước khi repo áp

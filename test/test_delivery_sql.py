@@ -22,7 +22,11 @@ MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 @pytest_asyncio.fixture
 async def sql_pool(monkeypatch):
     if os.getenv("TEST_PGLITE") == "1":
-        from test.sql_support.pglite_pool import Pool
+        # "test" trùng tên package chuẩn của Python -> import theo đường dẫn.
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "sql_support"))
+        from pglite_pool import Pool
 
         pool = await Pool.create()
         try:
@@ -270,3 +274,98 @@ async def test_migration_drops_stored_shopee_session_and_keeps_other_settings(de
     await pool.execute((MIGRATIONS / "009_drop_shopee_session.sql").read_text())
     assert await pool.fetchval("SELECT count(*) FROM settings WHERE key LIKE 'shopee:%'") == 0
     assert await pool.fetchval("SELECT value FROM settings WHERE key='other'") == "kept"
+
+
+async def _queue(text, msg_id, *, media=None, fingerprint=True):
+    from services import facebook_dedup
+
+    return await facebook.create_post(
+        account_id="a",
+        group_id="g",
+        sender_id="s",
+        sender_name="n",
+        source_message_ids=[msg_id],
+        content=text,
+        media=media or [],
+        fingerprint=facebook_dedup.build_fingerprint(text) if fingerprint else None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_posts_never_enter_queue_and_retries_still_resolve(delivery_db):
+    pool = delivery_db
+    await facebook.add_group("a", "g", "group")
+    first = await _queue("Áo khoác dù chống nắng 159k https://s.shopee.vn/AbC", "m1")
+    # Gateway gửi lại đúng sự kiện cũ -> trả bài cũ, không bị coi là trùng.
+    assert await _queue("Áo khoác dù chống nắng 159k https://s.shopee.vn/AbC", "m1") == first
+    with pytest.raises(facebook.DuplicatePostError) as exc:
+        await _queue("Caption khác hẳn nhưng cùng link https://s.shopee.vn/AbC", "m2")
+    assert exc.value.match.post_id == first
+    assert await pool.fetchval("SELECT count(*) FROM facebook_post_queue") == 1
+    assert await pool.fetchval("SELECT count(*) FROM facebook_post_fingerprints") == 1
+
+
+@pytest.mark.asyncio
+async def test_pending_cap_deletes_oldest_pending_only(delivery_db):
+    pool = delivery_db
+    await facebook.add_group("a", "g", "group")
+    ids = [
+        await _queue(f"Sản phẩm số {i} rất đẹp giá {100 + i}k https://s.shopee.vn/p{i}", f"m{i}")
+        for i in range(6)
+    ]
+    # Bài lỗi (đã có page đăng) không bao giờ bị xoá tự động.
+    await pool.execute("UPDATE facebook_post_queue SET status = 'ERROR' WHERE id = $1", ids[0])
+    await pool.execute(
+        "UPDATE facebook_post_queue SET created_at = now() - make_interval(mins => 10 - id::int)"
+    )
+    pruned = await facebook.enforce_pending_cap("a", limit=3)
+    assert pruned == ids[1:3]
+    remaining = [r["id"] for r in await pool.fetch("SELECT id FROM facebook_post_queue ORDER BY id")]
+    assert remaining == [ids[0], *ids[3:]]
+    # Dấu vân tay của bài bị xoá vẫn chặn bài đăng lại.
+    with pytest.raises(facebook.DuplicatePostError):
+        await _queue("Sản phẩm số 1 rất đẹp giá 101k https://s.shopee.vn/p1", "again")
+
+
+@pytest.mark.asyncio
+async def test_media_is_dropped_after_reject_and_history_is_pruned(delivery_db):
+    pool = delivery_db
+    await facebook.add_group("a", "g", "group")
+    post_id = await _queue("Bài có ảnh để bỏ qua nha mọi người", "m1", media=[("image/jpeg", b"x" * 10)])
+    assert await pool.fetchval("SELECT count(*) FROM facebook_post_media") == 1
+    assert await facebook.reject_post("a", post_id)
+    assert await pool.fetchval("SELECT count(*) FROM facebook_post_media") == 0
+    await pool.execute(
+        "UPDATE facebook_post_queue SET created_at = now() - interval '40 days' WHERE id = $1",
+        post_id,
+    )
+    await pool.execute("UPDATE facebook_post_fingerprints SET created_at = now() - interval '40 days'")
+    result = await facebook.prune_history(force=True)
+    assert result["posts"] == 1 and result["fingerprints"] == 1
+    assert await pool.fetchval("SELECT count(*) FROM facebook_post_queue") == 0
+
+
+@pytest.mark.asyncio
+async def test_reset_clears_fingerprints_so_ids_can_restart(delivery_db):
+    pool = delivery_db
+    await facebook.add_group("a", "g", "group")
+    await _queue("Một bài để reset nha mọi người ơi", "m1")
+    await facebook.reset_posts("a")
+    assert await pool.fetchval("SELECT count(*) FROM facebook_post_fingerprints") == 0
+    assert await _queue("Một bài để reset nha mọi người ơi", "m2") == 1
+
+
+@pytest.mark.asyncio
+async def test_vacuum_full_reclaims_space_of_deleted_media(delivery_db):
+    from services import db_maintenance
+
+    await facebook.add_group("a", "g", "group")
+    post_id = await _queue(
+        "Bài nhiều ảnh để thử thu hồi dung lượng", "m1",
+        media=[("image/jpeg", bytes(range(256)) * 4000) for _ in range(5)],
+    )
+    await facebook.reject_post("a", post_id)  # xoá ảnh
+    usage = await db_maintenance.measure()
+    assert usage.live_bytes == 0 and usage.posting == 0
+    before, after = await db_maintenance.vacuum_full()
+    assert after <= before

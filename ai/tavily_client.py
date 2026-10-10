@@ -225,3 +225,7 @@ async def search(
         time_range=time_range,
     )
     return format_search_results(response)
+
+
+# Public accessors (dùng bởi web_admin) - tránh module khác gọi hàm private.
+api_key = _api_key

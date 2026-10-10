@@ -4,9 +4,15 @@ export class BoundedSerialQueue {
   private pending = 0;
   constructor(private readonly capacity: number) {}
   add(work: () => Promise<unknown>): Promise<void> {
-    if (this.pending >= this.capacity) return Promise.reject(new Error("Zalo queue overloaded; event rejected"));
+    if (this.pending >= this.capacity)
+      return Promise.reject(new Error("Zalo queue overloaded; event rejected"));
     this.pending++;
-    const job = this.tail.then(work).then(() => undefined).finally(() => { this.pending--; });
+    const job = this.tail
+      .then(work)
+      .then(() => undefined)
+      .finally(() => {
+        this.pending--;
+      });
     this.tail = job.catch(() => undefined);
     return job;
   }
@@ -19,7 +25,7 @@ export async function readLimitedBody(response: Response, maxBytes: number): Pro
   let size = 0;
   try {
     while (true) {
-      const {value, done} = await reader.read();
+      const { value, done } = await reader.read();
       if (done) break;
       size += value.length;
       if (size > maxBytes) throw new Error("Image exceeds download limit");
@@ -27,7 +33,10 @@ export async function readLimitedBody(response: Response, maxBytes: number): Pro
     }
     const result = new Uint8Array(size);
     let offset = 0;
-    for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
     return result;
   } finally {
     await reader.cancel().catch(() => undefined);

@@ -144,3 +144,8 @@ async def generate_image(prompt: str, *, size: str = "1024x1024") -> GeneratedIm
         await _record_call()
         return GeneratedImage(data=image, url=None)
     raise AgnesError("Agnes AI trả về ảnh không có url hoặc b64_json")
+
+
+# Public accessors (dùng bởi web_admin) - tránh module khác gọi hàm private.
+api_key = _api_key
+model_name = _model

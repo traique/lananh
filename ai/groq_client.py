@@ -114,3 +114,8 @@ async def check_status() -> tuple[bool, str]:
     return await openai_compatible.check_status(
         generate, api_key=await _api_key(), missing_key_msg="Chưa cấu hình GROQ_API_KEY"
     )
+
+
+# Public accessors (dùng bởi web_admin) - tránh module khác gọi hàm private.
+api_key = _api_key
+model_name = _model

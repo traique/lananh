@@ -15,6 +15,8 @@ from core import config, database as db, idempotency
 from handlers import chat_router, commands, media_handler, portfolio_commands, zalo_login
 from services import channel_chat_service
 from services import monitor_service
+from services import db_maintenance
+from services import http_client
 from services import web_reader
 from services.background_tasks import stop_tracked_tasks
 from stock import portfolio
@@ -73,6 +75,7 @@ COMMANDS = [
     BotCommand("fb_reconcile", "Đối soát lượt đăng Facebook bị gián đoạn"),
     BotCommand("fb_boqua", "Bỏ bài Facebook chờ"),
     BotCommand("fb_reset", "Xóa bài Facebook đã lưu, reset ID"),
+    BotCommand("fb_boloc", "Thống kê bộ lọc Zalo → Facebook"),
     BotCommand("zalopair", "Cấp quyền thành viên Zalo"),
     BotCommand("zaloadmin", "Cấp quyền admin Zalo"),
     BotCommand("zalohaquyen", "Hạ quyền admin Zalo về thành viên"),
@@ -134,6 +137,7 @@ async def _post_shutdown(app):
     await run_step("Agnes AI client", agnes_client.close())
 
     await run_step("stock HTTP client", stock_providers.close_http_client())
+    await run_step("shared HTTP client", http_client.close())
     await run_step("database pool", db.close_pool())
 
 
@@ -204,6 +208,7 @@ def build_application():
         ("fb_reconcile", commands.fb_reconcile_cmd),
         ("fb_boqua", commands.fb_boqua_cmd),
         ("fb_reset", commands.fb_reset_cmd),
+        ("fb_boloc", commands.fb_boloc_cmd),
         ("zalopair", commands.zalopair_cmd),
         ("zaloadmin", commands.zaloadmin_cmd),
         ("zalohaquyen", commands.zalohaquyen_cmd),
@@ -245,6 +250,7 @@ def build_application():
             logger.warning("Không gửi được preview Facebook tới Zoom admin.", exc_info=True)
 
     facebook_commands.set_admin_notification_callback(notify_facebook_admins)
+    db_maintenance.set_notifier(notify_facebook_admins)
 
     async def notify(uid, text):
         try:

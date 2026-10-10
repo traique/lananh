@@ -118,3 +118,80 @@ def test_skip_reason_switches_can_be_turned_off_independently():
 
     assert caption.skip_reason(text_only, False, require_photo_and_caption=False) is None
     assert caption.skip_reason("", True, require_photo_and_caption=False) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Áo thun nam 159K, nhập mã giảm 20K https://s.shopee.vn/a",
+        "Son kem lì 89k săn voucher 0h nha https://s.shopee.vn/a",
+        "Nồi chiên 1tr2 lưu mã giảm thêm 100k https://s.shopee.vn/a",
+        "Quạt mini 1.299.000 nhập mã giảm https://s.shopee.vn/a",
+        "Váy hoa nhí, lưu mã giảm 15% https://shopee.vn/vay-hoa-i.123.456",
+        "Tai nghe XYZ voucher 30k https://shopee.vn/product/11/22",
+    ],
+)
+def test_product_posts_previously_dropped_are_now_kept(text):
+    """Trước đây giá dạng "159K", "1tr2", "1.299.000" không được nhận là giá nên
+    bài sản phẩm có nhắc mã giảm bị loại nhầm là "chỉ báo mã giảm giá"."""
+    assert not caption.is_voucher_only(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Lưu mã freeship max 30k đơn 0đ https://s.shopee.vn/a",
+        "Voucher hoàn xu 15% tối đa 100k https://s.shopee.vn/a",
+        "Săn mã giảm 100k đơn 500k lúc 12h https://s.shopee.vn/a",
+        "Mã giảm 10% giảm tối đa 50.000đ https://s.shopee.vn/a",
+    ],
+)
+def test_pure_voucher_posts_are_still_dropped(text):
+    assert caption.is_voucher_only(text)
+
+
+def test_cta_varies_by_post_but_is_stable_per_post():
+    ctas = {caption.build_caption(f"Deal {SOURCE}", True, seed=i) for i in range(6)}
+    assert len(ctas) == len(caption.COMMENT_CTAS)
+    assert caption.build_caption(f"Deal {SOURCE}", True, seed=3) == caption.build_caption(
+        f"Deal {SOURCE}", True, seed=3
+    )
+    once = caption.build_caption(f"Deal {SOURCE}", True, seed=3)
+    assert caption.build_caption(once, True, seed=4) == once  # không thêm câu dẫn lần 2
+
+
+def test_build_comment_puts_each_link_on_its_own_line():
+    text = caption.build_comment(["https://s.shopee.vn/a", "https://s.shopee.vn/b"], seed=1)
+    assert text.splitlines()[1:] == ["https://s.shopee.vn/a", "https://s.shopee.vn/b"]
+    assert caption.build_comment([], seed=1) == ""
+
+
+def test_missing_numbers_ignores_separators():
+    assert caption.missing_numbers("Giá 199.000đ giảm 15%", "chỉ 199,000 đ, giảm 15 %") == []
+    assert caption.missing_numbers("Giá 199k, 2 màu", "giá 189k, 2 màu") == ["199"]
+
+
+@pytest.mark.asyncio
+async def test_rewrite_retries_once_when_a_price_is_changed(monkeypatch):
+    ask = AsyncMock(
+        side_effect=[
+            SimpleNamespace(text="Áo đẹp giá 189k"),
+            SimpleNamespace(text="Dưới đây là bài viết lại:\n\n**Áo đẹp** chỉ 199k"),
+        ]
+    )
+    monkeypatch.setattr(caption.orchestrator, "ask", ask)
+    assert await caption.rewrite_caption(f"Áo đẹp 199k {SOURCE}") == ("Áo đẹp chỉ 199k", True)
+    assert "199" in ask.await_args_list[1].args[0].split("LƯU Ý")[1]
+
+
+@pytest.mark.asyncio
+async def test_rewrite_keeps_original_when_ai_keeps_inventing_numbers(monkeypatch):
+    ask = AsyncMock(return_value=SimpleNamespace(text="Áo đẹp giá 189k"))
+    monkeypatch.setattr(caption.orchestrator, "ask", ask)
+    assert await caption.rewrite_caption(f"Áo đẹp 199k {SOURCE}") == ("Áo đẹp 199k", False)
+    assert ask.await_count == 2
+
+
+def test_rewrite_prompt_asks_for_human_voice_without_cliches():
+    prompt = caption._REWRITE_PROMPT
+    assert "người thật" in prompt and "Siêu phẩm" in prompt and "Markdown" in prompt

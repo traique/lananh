@@ -3,10 +3,15 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
+    "format": "prettier --write \"src/**/*.ts\" \"*.mjs\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"*.mjs\"",
+    "test": "npm run build && node --test test-*.mjs",
     "start": "node dist/index.js",
     "login:qr": "npm run build && node dist/qr-login.js"
   },
@@ -15,6 +20,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
+    "prettier": "3.3.3",
     "typescript": "^5.7.2"
   }
 }

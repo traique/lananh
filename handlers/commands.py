@@ -145,19 +145,20 @@ HELP_TEXT = (
     "/nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo\n"
     "📣 *Zalo → Facebook Page (tách riêng khỏi /tongket):*\n"
     "/fb\\_nhom — xem các nhóm nguồn Facebook\n"
-    "/fb\\_themnhom <group_id> <tên> — thêm nhóm Zalo làm nguồn đăng Facebook\n"
+    "/fb\\_themnhom <group\\_id> <tên> — thêm nhóm Zalo làm nguồn đăng Facebook\n"
     "/fb\\_pages — xem các Facebook Page đã cấu hình (fb\\_ok sẽ đăng lên tất cả)\n"
-    "/fb\\_xoanhom <group_id|tên> — bỏ nhóm khỏi luồng Facebook\n"
-    "/fb\\_xem <post_id> — xem lại bài đang chờ duyệt\n"
-    "/fb\\_sua <post_id> <nội dung> — sửa nội dung bài chờ\n"
-    "/fb\\_link <post_id> <affiliate_url> — nhập short-link affiliate khi bài chỉ có 1 link Shopee\n"
-    "/fb\\_link <post_id> <source_url> <affiliate_url> — nhập từng link khi bài có nhiều link\n"
+    "/fb\\_xoanhom <group\\_id|tên> — bỏ nhóm khỏi luồng Facebook\n"
+    "/fb\\_xem <post\\_id> — xem lại bài đang chờ duyệt\n"
+    "/fb\\_sua <post\\_id> <nội dung> — sửa nội dung bài chờ\n"
+    "/fb\\_link <post\\_id> <affiliate\\_url> — nhập short-link affiliate khi bài chỉ có 1 link Shopee\n"
+    "/fb\\_link <post\\_id> <source\\_url> <affiliate\\_url> — nhập từng link khi bài có nhiều link\n"
     "(đủ link thì AI tự viết lại bài, link affiliate được thả ở bình luận đầu tiên)\n"
-    "/fb\\_ok <post_id> — duyệt và đăng lên TẤT CẢ Facebook Page đang cấu hình; "
+    "/fb\\_ok <post\\_id> — duyệt và đăng lên TẤT CẢ Facebook Page đang cấu hình; "
     "page nào lỗi sẽ báo riêng, chạy lại /fb\\_ok để chỉ thử lại page lỗi, page đã đăng OK không bị đụng tới\n"
-    "/fb\\_check <post_id> — kiểm tra từng page đã published/công khai chưa, lấy permalink\n"
-    "/fb\\_boqua <post_id> — bỏ bài chờ\n"
+    "/fb\\_check <post\\_id> — kiểm tra từng page đã published/công khai chưa, lấy permalink\n"
+    "/fb\\_boqua <post\\_id> — bỏ bài chờ\n"
     "/fb\\_reset — xóa bài Facebook đã lưu, reset ID về #1 khi có thể\n"
+    "/fb\\_boloc \\[reset] — thống kê bộ lọc Zalo→Facebook (bài giữ/bỏ/trùng, số bài chờ)\n"
     "/zalopair, /zaloadmin, /zalohaquyen, /zalokhoa, /zalomokhoa, /zaloxoa, /zalodanhsach — quản lý user Zalo\n"
     "/help — hiển thị hướng dẫn này"
 )
@@ -910,6 +911,11 @@ async def fb_reconcile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 @common.restricted
 async def fb_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _facebook_command(update, context, "/fb_reset")
+
+
+@common.restricted
+async def fb_boloc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_boloc")
 
 @common.restricted
 async def model_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

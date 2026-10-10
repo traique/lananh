@@ -37,6 +37,8 @@ services:
         sync: false
       - key: GOOGLE_AI_STUDIO_MODEL
         value: gemini-3.5-flash-lite
+      - key: MAX_CONCURRENT_TURNS
+        value: "2"
       - key: ZALO_ENABLED
         value: "true"
       - key: ZALO_COOKIE_JSON
@@ -153,6 +155,22 @@ services:
       # Bỏ bài chỉ báo mã giảm giá/săn deal (không có giá sản phẩm, ngắn).
       - key: FACEBOOK_SKIP_VOUCHER_POSTS
         value: "1"
+      # Hàng chờ tối đa (vượt thì tự xoá bài chờ cũ nhất), số ngày chống trùng,
+      # số ngày giữ bài đã đăng/bỏ qua (ảnh của chúng bị xoá ngay).
+      - key: FACEBOOK_MAX_PENDING
+        value: "150"
+      - key: FACEBOOK_DEDUP_DAYS
+        value: "7"
+      - key: FACEBOOK_HISTORY_DAYS
+        value: "30"
+      # Thời gian chờ gộp ảnh + caption cùng người gửi trong nhóm nguồn (ms).
+      - key: ZALO_FB_MERGE_WINDOW_MS
+        value: "30000"
+      # Tự VACUUM FULL bảng ảnh 1 lần/tuần (3h sáng Chủ nhật giờ VN) khi an toàn.
+      - key: DB_AUTO_VACUUM_FULL
+        value: "1"
+      - key: DB_SIZE_LIMIT_MB
+        value: "500"
       - key: FACEBOOK_PAGE_ID_MARKET
         sync: false
       - key: FACEBOOK_PAGE_ACCESS_TOKEN_MARKET
@@ -163,3 +181,13 @@ services:
         value: "15:20"
       - key: MARKET_NEWS_TIMES_VN
         value: "08:30"
+      # Ảnh bản tin: branded (ảnh bài CafeF + khung/logo) hoặc none (không ảnh).
+      - key: MARKET_NEWS_IMAGE
+        value: "branded"
+      # Chạy bù/thử lại khi lỡ giờ hoặc lỗi: khung (phút), khoảng cách (phút), số lần.
+      - key: MARKET_CATCHUP_MIN
+        value: "120"
+      - key: MARKET_RETRY_MIN
+        value: "10"
+      - key: MARKET_MAX_ATTEMPTS
+        value: "4"

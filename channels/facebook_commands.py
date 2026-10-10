@@ -80,11 +80,16 @@ async def _preview(account_id: str, post_id: int) -> str:
         f"Người đăng: {row['sender_name'] or row['sender_id']}",
         f"Ảnh: {len(media)}",
         "",
-        facebook_caption.build_caption(row["processed_content"], bool(source_urls))
+        facebook_caption.build_caption(row["processed_content"], bool(source_urls), seed=post_id)
         or "(không có caption)",
     ]
     if cached:
-        lines.extend(["", "💬 Link sẽ thả ở bình luận đầu tiên:", *cached.values()])
+        lines.extend([
+            "", "💬 Bình luận đầu tiên:",
+            facebook_caption.build_comment(
+                [cached[url] for url in source_urls if url in cached], seed=post_id,
+            ),
+        ])
     if source_urls:
         lines.extend(["", "🔗 Link Shopee gốc (chưa chuyển đổi):", *source_urls])
     if missing:
@@ -102,7 +107,7 @@ async def _preview(account_id: str, post_id: int) -> str:
     return "\n".join(lines)
 
 
-async def prepare_post(account_id: str, post_id: int) -> None:
+async def prepare_post(account_id: str, post_id: int, note: str | None = None) -> None:
     row = await facebook_repository.get_post(account_id, post_id)
     if not row:
         return
@@ -113,6 +118,8 @@ async def prepare_post(account_id: str, post_id: int) -> None:
 
         controller = await zalo_session.load_controller()
     preview = await _preview(account_id, post_id)
+    if note:
+        preview = f"{preview}\n\n{note}"
     if controller:
         await zalo_repository.enqueue_outbox(account_id, controller, preview)
     if _admin_notification_callback is not None:
@@ -135,6 +142,18 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         return ChannelResult([
             f"✅ Đã xóa {deleted} bài Facebook của tài khoản này. "
             "ID chưa thể về #1 vì vẫn còn bài của tài khoản Facebook/Zalo khác trong hàng đợi."
+        ])
+
+    if command == "/fb_boloc":
+        from services import facebook_intake_stats
+
+        if raw.lower().split()[1:] == ["reset"]:
+            facebook_intake_stats.reset()
+            return ChannelResult(["✅ Đã đặt lại thống kê bộ lọc."])
+        pending = await facebook_repository.count_pending(account_id)
+        return ChannelResult([
+            facebook_intake_stats.summary()
+            + f"\n\n📥 Đang chờ duyệt: {pending}/{facebook_repository.max_pending()} bài."
         ])
 
     if command == "/fb_nhom":
@@ -292,7 +311,9 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
             return ChannelResult([
                 f"⚠️ Bài #{post_id} còn link Shopee chưa có affiliate. Dùng /fb_link {post_id} <affiliate_url> để nhập link trước khi đăng."
             ])
-        comment = "\n".join(cached[url] for url in source_urls)
+        comment = facebook_caption.build_comment(
+            [cached[url] for url in source_urls], seed=post_id,
+        )
 
         page_keys = configured_page_keys()
         if not page_keys:
@@ -427,7 +448,9 @@ async def _publish_claimed(account_id, post_id, claimed, page_keys, token, comme
             await asyncio.to_thread(brand_image, row["mime_type"], bytes(row["content"]))
             for row in media_rows
         ]
-        caption = facebook_caption.build_caption(claimed["processed_content"], bool(comment))
+        caption = facebook_caption.build_caption(
+            claimed["processed_content"], bool(comment), seed=post_id,
+        )
 
     for page_key in to_attempt:
         async def before_create():

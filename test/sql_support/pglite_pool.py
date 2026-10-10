@@ -48,8 +48,8 @@ class Pool:
                 return v.isoformat()
             if isinstance(v, timedelta):
                 return f"{v.total_seconds()} seconds"
-            if isinstance(v, bytes):
-                return "\\x" + v.hex()
+            if isinstance(v, (bytes, bytearray, memoryview)):
+                return {"__bytes__": bytes(v).hex()}
             return v
 
         self.proc.stdin.write(
@@ -73,7 +73,7 @@ class Pool:
                     row[k] = datetime.fromisoformat(v.replace("Z", "+00:00"))
         return result
 
-    async def execute(self, sql, *params):
+    async def execute(self, sql, *params, timeout=None):
         r = await self.query(sql, params)
         cmd = r["command"]
         n = r["affectedRows"]

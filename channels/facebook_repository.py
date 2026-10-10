@@ -8,10 +8,44 @@ import secrets
 import asyncio
 import hashlib
 import json
+import logging
+import os
+import time
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from core import database as db
+from services import facebook_dedup
+
+logger = logging.getLogger(__name__)
+
+
+class DuplicatePostError(Exception):
+    """Bài mới trùng một bài đã có trong FACEBOOK_DEDUP_DAYS ngày gần đây."""
+
+    def __init__(self, match: "facebook_dedup.DuplicateMatch"):
+        super().__init__(f"{match.reason} (bài #{match.post_id})")
+        self.match = match
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+def max_pending() -> int:
+    """Số bài chờ duyệt tối đa; vượt ngưỡng thì tự xoá bài chờ CŨ NHẤT."""
+    return _env_int("FACEBOOK_MAX_PENDING", 150)
+
+
+def history_days() -> int:
+    """Bài đã đăng/đã bỏ qua giữ lại bao nhiêu ngày (ảnh của chúng bị xoá ngay)."""
+    return _env_int("FACEBOOK_HISTORY_DAYS", 30)
+
+
+_DEDUP_SCAN_LIMIT = 500
 
 
 async def ensure_schema() -> None:
@@ -68,7 +102,14 @@ async def create_post(
     source_message_ids: list[str],
     content: str,
     media: list[tuple[str, bytes]],
+    fingerprint: "facebook_dedup.Fingerprint | None" = None,
 ) -> int | None:
+    """Đưa bài vào hàng chờ. Trả về post_id (bài cũ nếu gateway gửi lại đúng sự
+    kiện đã nhận), None nếu nhóm không còn là nguồn Facebook.
+
+    Có ``fingerprint`` thì so với các bài trong FACEBOOK_DEDUP_DAYS ngày; trùng
+    -> raise DuplicatePostError và KHÔNG ghi gì vào DB.
+    """
     await ensure_schema()
     pool = await db.get_pool()
     async with pool.acquire() as conn:
@@ -84,6 +125,30 @@ async def create_post(
                 [account_id, group_id, sorted(set(source_message_ids))],
                 ensure_ascii=False, separators=(",", ":"),
             ).encode()).hexdigest()
+            existing = await conn.fetchval(
+                "SELECT id FROM facebook_post_queue WHERE source_event_key = $1", event_key,
+            )
+            if existing is not None:
+                return int(existing)
+            if fingerprint is not None:
+                # Khoá theo tài khoản trong transaction: 2 bài giống nhau tới cùng lúc
+                # không thể cùng lọt qua bước so trùng.
+                await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", account_id)
+                recent = await conn.fetch(
+                    """
+                    SELECT post_id, text_hash, product_keys, image_hashes, folded_text
+                    FROM facebook_post_fingerprints
+                    WHERE account_id = $1 AND created_at > now() - make_interval(days => $2)
+                    ORDER BY created_at DESC
+                    LIMIT $3
+                    """,
+                    account_id,
+                    facebook_dedup.dedup_days(),
+                    _DEDUP_SCAN_LIMIT,
+                )
+                match = facebook_dedup.find_duplicate(fingerprint, recent)
+                if match is not None:
+                    raise DuplicatePostError(match)
             post_id = await conn.fetchval(
                 """
                 INSERT INTO facebook_post_queue (
@@ -106,18 +171,137 @@ async def create_post(
                 return await conn.fetchval(
                     "SELECT id FROM facebook_post_queue WHERE source_event_key = $1", event_key,
                 )
-            for position, (mime_type, body) in enumerate(media):
-                await conn.execute(
+            if media:
+                await conn.executemany(
                     """
                     INSERT INTO facebook_post_media (post_id, position, mime_type, content)
                     VALUES ($1, $2, $3, $4)
                     """,
+                    [
+                        (post_id, position, mime_type, body)
+                        for position, (mime_type, body) in enumerate(media)
+                    ],
+                )
+            if fingerprint is not None:
+                await conn.execute(
+                    """
+                    INSERT INTO facebook_post_fingerprints (
+                        post_id, account_id, text_hash, product_keys, image_hashes, folded_text
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    ON CONFLICT (post_id) DO NOTHING
+                    """,
                     post_id,
-                    position,
-                    mime_type,
-                    body,
+                    account_id,
+                    fingerprint.text_hash,
+                    fingerprint.product_keys,
+                    fingerprint.image_hashes,
+                    fingerprint.folded_text,
                 )
             return int(post_id)
+
+
+async def enforce_pending_cap(account_id: str, limit: int | None = None) -> list[int]:
+    """Giữ tối đa ``limit`` (mặc định FACEBOOK_MAX_PENDING=150) bài chờ duyệt.
+
+    Xoá bài PENDING_APPROVAL cũ nhất vượt ngưỡng (ảnh/target xoá theo CASCADE).
+    Không đụng bài ERROR/POSTING hay bài đã có page đăng thành công. Dấu vân tay
+    vẫn giữ nên bài bị xoá không lọt lại vào hàng chờ khi được đăng lại.
+    """
+    limit = max_pending() if limit is None else limit
+    await ensure_schema()
+    rows = await (await db.get_pool()).fetch(
+        """
+        DELETE FROM facebook_post_queue
+        WHERE id IN (
+            SELECT q.id FROM facebook_post_queue q
+            WHERE q.account_id = $1 AND q.status = 'PENDING_APPROVAL'
+              AND NOT EXISTS (
+                  SELECT 1 FROM facebook_post_targets t
+                  WHERE t.post_id = q.id AND t.facebook_post_id IS NOT NULL
+              )
+            ORDER BY q.created_at DESC, q.id DESC
+            OFFSET $2
+        )
+        RETURNING id
+        """,
+        account_id,
+        limit,
+    )
+    return sorted(int(row["id"]) for row in rows)
+
+
+async def count_pending(account_id: str) -> int:
+    await ensure_schema()
+    return int(await (await db.get_pool()).fetchval(
+        "SELECT count(*) FROM facebook_post_queue WHERE account_id = $1 AND status = 'PENDING_APPROVAL'",
+        account_id,
+    ) or 0)
+
+
+async def delete_media(post_id: int) -> None:
+    """Ảnh chỉ cần cho lúc đăng; bài đã đăng xong/bỏ qua thì xoá để nhẹ DB."""
+    await (await db.get_pool()).execute(
+        "DELETE FROM facebook_post_media WHERE post_id = $1", post_id,
+    )
+
+
+_PRUNE_INTERVAL_SEC = 3600
+_last_prune_monotonic: float | None = None
+
+
+async def prune_history(*, force: bool = False) -> dict[str, int]:
+    """Dọn dữ liệu cũ cho Supabase free tier; chạy tối đa 1 lần/giờ.
+
+    - Ảnh của bài POSTED/REJECTED (sót lại từ trước).
+    - Bài POSTED/REJECTED cũ hơn FACEBOOK_HISTORY_DAYS ngày.
+    - Dấu vân tay cũ hơn max(FACEBOOK_DEDUP_DAYS, FACEBOOK_HISTORY_DAYS) ngày.
+    """
+    global _last_prune_monotonic
+    now = time.monotonic()
+    if (
+        not force
+        and _last_prune_monotonic is not None
+        and now - _last_prune_monotonic < _PRUNE_INTERVAL_SEC
+    ):
+        return {}
+    _last_prune_monotonic = now
+    await ensure_schema()
+    pool = await db.get_pool()
+    keep_days = history_days()
+    media = await pool.execute(
+        """
+        DELETE FROM facebook_post_media m
+        USING facebook_post_queue q
+        WHERE m.post_id = q.id AND q.status IN ('POSTED', 'REJECTED')
+        """
+    )
+    posts = await pool.execute(
+        """
+        DELETE FROM facebook_post_queue
+        WHERE status IN ('POSTED', 'REJECTED')
+          AND created_at < now() - make_interval(days => $1)
+        """,
+        keep_days,
+    )
+    fingerprints = await pool.execute(
+        """
+        DELETE FROM facebook_post_fingerprints
+        WHERE created_at < now() - make_interval(days => $1)
+        """,
+        max(keep_days, facebook_dedup.dedup_days()),
+    )
+
+    def count(status: str) -> int:
+        try:
+            return int(status.split()[-1])
+        except (ValueError, IndexError, AttributeError):
+            return 0
+
+    result = {"media": count(media), "posts": count(posts), "fingerprints": count(fingerprints)}
+    if any(result.values()):
+        logger.info("Dọn dữ liệu Facebook: %s", result)
+    return result
 
 
 async def get_post(account_id: str, post_id: int):
@@ -164,7 +348,10 @@ async def reject_post(account_id: str, post_id: int) -> bool:
         account_id,
         post_id,
     )
-    return result != "UPDATE 0"
+    if result == "UPDATE 0":
+        return False
+    await delete_media(post_id)
+    return True
 
 
 async def ensure_targets(post_id: int, page_keys: list[str]) -> None:
@@ -326,6 +513,7 @@ async def finalize_post_status(
         )
         if result != "UPDATE 1":
             raise RuntimeError("Facebook publish claim lost before finalizing")
+        await delete_media(post_id)
         return "POSTED"
     result = await pool.execute(
         """
@@ -421,9 +609,14 @@ async def reset_posts(account_id: str) -> tuple[int, bool]:
                 "DELETE FROM facebook_post_queue WHERE account_id = $1 RETURNING id",
                 account_id,
             )
+            await conn.execute(
+                "DELETE FROM facebook_post_fingerprints WHERE account_id = $1", account_id,
+            )
             remaining = await conn.fetchval("SELECT COUNT(*) FROM facebook_post_queue")
             sequence_reset = int(remaining or 0) == 0
             if sequence_reset:
+                # ID bài sẽ đánh lại từ #1: dấu vân tay mang post_id cũ phải đi theo.
+                await conn.execute("DELETE FROM facebook_post_fingerprints")
                 await conn.execute("ALTER SEQUENCE facebook_post_queue_id_seq RESTART WITH 1")
             return len(rows), sequence_reset
 

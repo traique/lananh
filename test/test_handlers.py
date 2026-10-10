@@ -136,3 +136,15 @@ async def test_telemetry_failure_khong_raise_khi_db_loi(monkeypatch):
     # Không được raise ra ngoài - đây là hàm xử lý lỗi, bản thân nó lỗi thì
     # không được phép làm crash luồng xử lý chính.
     await telemetry.failure(7, "chat", ValueError("x"))
+
+
+def test_help_text_khong_con_dau_gach_duoi_chua_escape():
+    """HELP_TEXT gửi bằng parse_mode="Markdown" (legacy): mọi dấu "_" chưa escape
+    sẽ bị Telegram hiểu là mở/đóng in nghiêng -> chữ lộn xộn hoặc lỗi
+    "Can't parse entities". Dấu "*" phải đi theo cặp."""
+    import re
+
+    from handlers import commands
+
+    assert not re.search(r"(?<!\\)_", commands.HELP_TEXT)
+    assert commands.HELP_TEXT.count("*") % 2 == 0
