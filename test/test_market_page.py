@@ -129,6 +129,9 @@ def test_build_report_breadth_and_movers():
     assert [m["symbol"] for m in report["gainers"]][0] == "AAA"
     assert [m["symbol"] for m in report["losers"]][0] == "BBB"
     assert "DDD" not in {m["symbol"] for m in report["gainers"] + report["losers"]}
+    # mã giảm không được lọt vào danh sách tăng và ngược lại, dù chưa đủ 5 mã mỗi chiều
+    assert [m["symbol"] for m in report["gainers"]] == ["AAA"]
+    assert [m["symbol"] for m in report["losers"]] == ["BBB"]
 
 
 def test_stock_prompt_contains_the_computed_numbers():
@@ -138,7 +141,8 @@ def test_stock_prompt_contains_the_computed_numbers():
 
     prompt = market_page._stock_prompt(report)
 
-    assert "Điểm đóng cửa: 1212.0 (+1.0%)" in prompt
+    assert "VN-Index đóng cửa 1212.0 điểm (+1.0%)" in prompt
+    assert "Khối lượng khớp 0,0 triệu" in prompt or "triệu cổ phiếu" in prompt
     assert "AAA (+10.0%" in prompt
 
 
@@ -233,12 +237,13 @@ def test_parse_article_falls_back_to_og_image_and_handles_missing_body():
 # ─── Lịch ───────────────────────────────────────────────────────────────────
 
 
-def test_next_slot_orders_the_three_daily_slots():
+def test_next_slot_orders_the_daily_slots():
     friday = lambda h, m: datetime(2026, 10, 9, h, m, tzinfo=VN)  # noqa: E731
 
     assert market_page._next_slot(friday(8, 0)) == (friday(8, 30), "news")
-    assert market_page._next_slot(friday(8, 30)) == (friday(8, 45), "stock")
-    assert market_page._next_slot(friday(9, 0)) == (friday(15, 20), "stock")
+    assert market_page._next_slot(friday(8, 30)) == (friday(15, 20), "stock")
+    saturday_news = datetime(2026, 10, 10, 8, 30, tzinfo=VN)
+    assert market_page._next_slot(friday(15, 20)) == (saturday_news, "news")
 
 
 def test_next_slot_skips_stock_report_on_weekend_but_keeps_news():
@@ -361,7 +366,8 @@ async def test_stock_report_publishes_chart_and_text_to_market_page(monkeypatch)
     assert result == content
     assert "*" not in content and content.startswith("📌")
     assert "Nguồn: dữ liệu giá và khối lượng từ DNSE" in content and "02/09/2026" in content
-    assert "Miễn trừ trách nhiệm" in content and content.rstrip().endswith("#chungkhoanvietnam")
+    assert "không phải khuyến nghị đầu tư" in content
+    assert content.rstrip().endswith("#chungkhoanvietnam")
     assert media == [("image/png", b"png-bytes")]
     assert page_key == "MARKET"
 
@@ -416,7 +422,7 @@ def _news_fakes(monkeypatch, *, comment_error=None):
 
     async def fake_ask(prompt):
         calls.prompts.append(prompt)
-        if comment_error and "biên tập viên" in prompt:
+        if comment_error and "tóm lược" in prompt:
             raise comment_error
         return SimpleNamespace(text="Nội dung đã tổng hợp khá dài để vượt ngưỡng tối thiểu. " * 3)
 
@@ -445,7 +451,7 @@ async def test_news_posts_digest_with_article_image_then_comments_rewrite(monkey
     assert result == content
     assert page_key == "MARKET"
     assert media == [("image/jpeg", b"jpg-bytes")]
-    assert "Nguồn: CafeF (cafef.vn)" in content and "Miễn trừ trách nhiệm" in content
+    assert "Nguồn: CafeF (cafef.vn)" in content and "không phải khuyến nghị đầu tư" in content
     assert "VN-Index bùng nổ" in calls.prompts[0]
     post_id, comment, comment_page = calls.comments[0]
     assert post_id == "page_post" and comment_page == "MARKET"
@@ -498,8 +504,11 @@ def test_prompts_forbid_advice_and_demand_sources():
     digest = market_page._digest_prompt([_entry("Tin A", "tóm tắt")])
     rewrite = market_page._rewrite_prompt("Nội dung bài")
 
-    assert "KHÔNG khuyến nghị mua/bán/nắm giữ" in stock and "DNSE" in stock
+    assert "KHÔNG khuyến nghị mua/bán/nắm giữ" in stock and "PHIÊN 02/09/2026" in stock
     assert "tỷ lệ phân bổ" not in stock
+    for prompt in (stock, digest, rewrite):
+        assert "PHONG CÁCH VIẾT" in prompt and "theo dữ liệu được cung cấp" in prompt  # nằm trong danh sách cấm
+    assert "tóm lược" not in digest  # fake AI trong test phân biệt prompt comment bằng từ này
     assert "TUYỆT ĐỐI KHÔNG đưa ra khuyến nghị mua/bán/nắm giữ" in digest and "theo CafeF" in digest
     assert "bỏ phần đó" in rewrite
 
@@ -543,7 +552,7 @@ async def test_news_comment_with_trade_advice_is_skipped_but_post_stays(monkeypa
     calls = _news_fakes(monkeypatch)
 
     async def ask(prompt):
-        if "biên tập viên" in prompt:
+        if "tóm lược" in prompt:
             return SimpleNamespace(text="SSI khuyến nghị mua cổ phiếu HPG, giá mục tiêu 30.000.")
         return SimpleNamespace(text="Bản tin đã tổng hợp khá dài để vượt ngưỡng tối thiểu. " * 3)
 
@@ -574,7 +583,7 @@ async def test_dry_run_returns_text_without_chart_or_publish(monkeypatch):
 
     text = await market_page._post_stock_report(dry_run=True)
 
-    assert "Miễn trừ trách nhiệm" in text and "DNSE" in text
+    assert "không phải khuyến nghị đầu tư" in text and "DNSE" in text
 
 
 @pytest.mark.asyncio
@@ -654,7 +663,6 @@ def test_schedule_defaults_and_weekday_rules():
 
     assert [(job, f"{at:%H:%M}", len(days)) for job, at, days in rows] == [
         ("news", "08:30", 7),
-        ("stock", "08:45", 5),
         ("stock", "15:20", 5),
     ]
 
@@ -668,7 +676,7 @@ async def test_status_reports_schedule_next_slot_and_last_runs(store, monkeypatc
     info = await market_page.status()
 
     assert info["configured"] is True and info["busy"] is False
-    assert [row["time"] for row in info["schedule"]] == ["08:30", "08:45", "15:20"]
+    assert [row["time"] for row in info["schedule"]] == ["08:30", "15:20"]
     assert info["next"]["job"] in {"news", "stock"}
     assert info["last"] == {"stock": "09/10 08:45 — đã đăng", "news": None}
 

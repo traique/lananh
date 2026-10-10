@@ -2,7 +2,7 @@
 
 Chuyển từ 2 workflow n8n:
 - ``stock``: nến DNSE -> chỉ báo -> AI nhận định -> ảnh biểu đồ VN-INDEX + caption.
-  Mặc định 08:45 và 15:20, thứ Hai-thứ Sáu.
+  Mặc định 15:20 (kết phiên), thứ Hai-thứ Sáu.
 - ``news``: RSS CafeF -> AI tổng hợp thành bài đăng (kèm ảnh bài nổi bật nếu có),
   rồi comment bản viết lại của chính bài nổi bật đó. Mặc định 08:30 hằng ngày.
 
@@ -43,7 +43,7 @@ _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _task: asyncio.Task | None = None
 
 _DEFAULT_NEWS_TIMES = (time(8, 30),)
-_DEFAULT_STOCK_TIMES = (time(8, 45), time(15, 20))
+_DEFAULT_STOCK_TIMES = (time(15, 20),)
 
 
 class MarketPageError(RuntimeError):
@@ -87,16 +87,20 @@ _USER_AGENT = (
 # việc AI có nhớ viết hay không.
 
 _DISCLAIMER = (
-    "⚠️ Miễn trừ trách nhiệm: Nội dung được tổng hợp tự động bằng AI từ dữ liệu và tin tức "
-    "công khai, chỉ mang tính chất tham khảo và cung cấp thông tin. Đây KHÔNG phải lời khuyên "
-    "hay khuyến nghị đầu tư mua, bán hoặc nắm giữ bất kỳ chứng khoán nào. Số liệu có thể có độ "
-    "trễ hoặc sai sót. Nhà đầu tư tự cân nhắc và chịu hoàn toàn trách nhiệm với quyết định của "
-    "mình; Page không chịu trách nhiệm đối với mọi tổn thất phát sinh từ việc sử dụng thông tin này."
+    "⚠️ Nội dung chỉ mang tính tham khảo, không phải khuyến nghị đầu tư. "
+    "Nhà đầu tư tự chịu trách nhiệm với quyết định của mình."
 )
 _DISCLAIMER_SHORT = (
-    "⚠️ Nội dung do AI biên tập lại từ bài gốc, chỉ mang tính tham khảo, không phải khuyến nghị "
-    "đầu tư; quyền đối với bài gốc thuộc về CafeF và tác giả."
+    "⚠️ Nội dung biên tập lại từ bài gốc của CafeF, chỉ mang tính tham khảo, "
+    "không phải khuyến nghị đầu tư."
 )
+_STYLE_RULES = """PHONG CÁCH VIẾT:
+- Văn phong báo chí tài chính: câu ngắn, chủ động, đi thẳng vào sự việc; mỗi ý đi kèm số liệu hoặc sự kiện cụ thể.
+- Tránh giọng AI và giọng quảng cáo: không dùng các cụm sáo rỗng như "đáng chú ý", "cho thấy rằng", "phản ánh", "hàm ý", "bức tranh", "sôi động", "bùng nổ", "đột biến", "trong bối cảnh", "nhìn chung", "có thể nói"; không câu hỏi tu từ, không lời chào hay kêu gọi người đọc; không viết hoa toàn bộ câu; không lạm dụng emoji.
+- Không rào đón dài dòng: chỉ dè dặt một lần khi thật sự cần, tuyệt đối không viết kiểu "chưa đủ cơ sở để kết luận" hay "chưa thể khẳng định hoàn toàn".
+- Không nhắc tới việc mình được cung cấp dữ liệu: cấm viết "theo dữ liệu được cung cấp", "các tin được cung cấp", "trong phạm vi dữ liệu". Thiếu thông tin thì bỏ chi tiết đó, không thông báo là thiếu.
+- Thay đổi độ dài câu và đoạn, không lặp một mẫu mở đầu ở nhiều đoạn.
+- Số liệu theo kiểu Việt Nam (dấu chấm ngăn hàng nghìn, dấu phẩy thập phân), làm tròn gọn."""
 # Cụm từ khuyến nghị giao dịch rõ ràng. Cố ý hẹp: "khối ngoại bán ròng", "áp lực chốt lời"
 # là mô tả thị trường bình thường, không được chặn nhầm.
 _ADVICE_RE = re.compile(
@@ -250,8 +254,10 @@ def _build_report(rows: dict[str, list[dict]]) -> dict | None:
             round(sum(bool(m["above_ma20"]) for m in stocks) / len(stocks) * 100, 1)
             if stocks else 0
         ),
-        "gainers": sorted(moves, key=lambda m: m["change_pct"], reverse=True)[:5],
-        "losers": sorted(moves, key=lambda m: m["change_pct"])[:5],
+        "gainers": sorted(
+            (m for m in moves if m["change_pct"] > 0), key=lambda m: m["change_pct"], reverse=True
+        )[:5],
+        "losers": sorted((m for m in moves if m["change_pct"] < 0), key=lambda m: m["change_pct"])[:5],
     }
 
 
@@ -272,35 +278,34 @@ def _movers(rows: list[dict]) -> str:
 
 def _stock_prompt(report: dict) -> str:
     vn = report["vnindex"]
-    volume = f"{int(vn['volume']):,}" if vn["volume"] else "N/A"
-    return f"""Bạn là chuyên gia phân tích dữ liệu thị trường chứng khoán Việt Nam.
-Hãy viết bài nhận định thị trường chuyên sâu cho phiên ngày {report['report_date']} dựa trên bộ dữ liệu định lượng sau:
+    volume = f"{vn['volume'] / 1e6:,.1f}".replace(".", ",") + " triệu" if vn["volume"] else "N/A"
+    session = _vn_date(report["report_date"])
+    return f"""Bạn là chuyên viên phân tích của một công ty chứng khoán, viết bản nhận định cuối phiên cho Fanpage đầu tư. Người đọc là nhà đầu tư cá nhân, đọc trên điện thoại.
 
-1. CHỈ SỐ VN-INDEX & HÀNH VI GIÁ (PRICE ACTION & VOLUME):
-- Điểm đóng cửa: {_fmt(vn['close'])} ({_signed(vn['change_pct'] or 0)}%)
-- Khối lượng: {volume} CP (tương đương {_fmt(vn['vol_ratio'], 1)}x trung bình 20 phiên).
-- Vị trí đóng nến: {vn['close_position']}/1.0 (1.0 là đỉnh phiên, 0.0 là đáy phiên - dùng để đánh giá áp lực bán hay lực cầu kéo cuối phiên).
-- Hệ thống chỉ báo: MA20 = {_fmt(vn['ma20'])}, MA50 = {_fmt(vn['ma50'])}, RSI(14) = {_fmt(vn['rsi14'])}, MACD = {_fmt(vn['macd'])}, Dải Bollinger [{_fmt(vn['bb_lower'])} - {_fmt(vn['bb_upper'])}].
+DỮ LIỆU PHIÊN {session}:
+- VN-Index đóng cửa {_fmt(vn['close'])} điểm ({_signed(vn['change_pct'] or 0)}%).
+- Khối lượng khớp {volume} cổ phiếu, bằng {_fmt(vn['vol_ratio'], 1)}x trung bình 20 phiên.
+- Vị trí đóng cửa trong biên độ phiên: {vn['close_position']} (1.0 = sát đỉnh phiên, 0.0 = sát đáy phiên).
+- MA20 = {_fmt(vn['ma20'])}, MA50 = {_fmt(vn['ma50'])}, RSI(14) = {_fmt(vn['rsi14'])}, MACD = {_fmt(vn['macd'])}, dải Bollinger {_fmt(vn['bb_lower'])} - {_fmt(vn['bb_upper'])}.
+- Độ rộng (nhóm 17 cổ phiếu vốn hóa lớn theo dõi): {report['advancers']} mã tăng, {report['decliners']} mã giảm, {report['unchanged']} mã đứng giá. {report['pct_above_ma20']}% số mã nằm trên MA20.
+- Mã tăng mạnh nhất: {_movers(report['gainers'])}
+- Mã giảm mạnh nhất: {_movers(report['losers'])}
 
-2. ĐỘ RỘNG THỊ TRƯỜNG & DÒNG TIỀN NỘI TẠI:
-- Độ rộng: {report['advancers']} mã tăng / {report['decliners']} mã giảm / {report['unchanged']} mã tham chiếu.
-- Tỷ lệ cổ phiếu giữ xu hướng trên MA20: {report['pct_above_ma20']}%.
-- Top tích cực: {_movers(report['gainers'])}
-- Top tiêu cực: {_movers(report['losers'])}
+CẤU TRÚC BÀI:
+- Dòng đầu là tiêu đề, bắt đầu bằng 📌: một câu ngắn (tối đa 15 từ) nêu kết quả phiên kèm một con số chính, viết như tiêu đề báo (không viết hoa toàn bộ).
+- Tiếp theo là 4 phần, mỗi phần mở đầu bằng một dòng nhãn ngắn (không đánh số): "Diễn biến phiên", "Dòng tiền và độ rộng", "Kỹ thuật", "Cần theo dõi". Mỗi phần 2-4 câu hoặc vài gạch đầu dòng ngắn.
+- "Cần theo dõi" nêu 2-3 kịch bản dạng "nếu... thì...", gắn với các mốc MA20, MA50, biên Bollinger. Chỉ mô tả, không đưa ra hành động giao dịch.
+- Dài khoảng 250-350 từ.
 
-YÊU CẦU ĐỊNH DẠNG & NỘI DUNG (Facebook Fanpage):
-- Cấu trúc bài viết:
-  📌 [TIÊU ĐỀ BẮT MẮT TÓM TẮT TRẠNG THÁI PHIÊN]
-  1. Diễn biến & Hành vi Dòng tiền: Phân tích tương quan giá - khối lượng (vol bùng nổ, cạn kiệt hay áp lực xả cuối phiên qua vị trí đóng nến).
-  2. Nội tại thị trường: Nhận định độ rộng và phân hóa (có hiện tượng kéo trụ xanh vỏ đỏ lòng hay dòng tiền lan tỏa thực chất).
-  3. Xu hướng kỹ thuật: Kiểm định các ngưỡng MA20, MA50, RSI và dải Bollinger.
-  4. Các mốc cần theo dõi: Nêu các vùng giá/chỉ báo đáng chú ý (MA20, MA50, biên Bollinger) và các kịch bản có thể xảy ra theo dạng "nếu... thì thị trường có thể...". Chỉ MÔ TẢ, không đưa ra hành động giao dịch.
-- Độ dài: Khoảng 300 - 400 từ, định dạng xuống dòng, bullet point dễ đọc trên điện thoại.
-- Văn phong: Điềm tĩnh, khách quan, giàu góc nhìn chuyên môn, tránh cảm tính hoặc hô hào.
+CÁCH DIỄN ĐẠT SỐ LIỆU:
+- Khối lượng quy ra triệu cổ phiếu; điểm số lấy 2 chữ số thập phân; RSI, MACD lấy 1 chữ số.
+- Vị trí đóng cửa diễn đạt bằng lời (ví dụ "đóng cửa ở nửa dưới biên độ phiên"), không nêu con số x/1.0.
+- Chỉ dùng số liệu ở trên. Không suy diễn nguyên nhân từ tin tức, khối ngoại hay yếu tố vĩ mô vì không có trong dữ liệu.
+
+{_STYLE_RULES}
 
 QUY ĐỊNH BẮT BUỘC (tuân thủ pháp lý):
-- TUYỆT ĐỐI KHÔNG khuyến nghị mua/bán/nắm giữ, KHÔNG đề xuất tỷ trọng cổ phiếu/tiền mặt, KHÔNG nêu giá mục tiêu, KHÔNG gợi ý mã cụ thể nên mua hay nên bán. Chỉ phân tích và mô tả dữ liệu.
-- Chỉ dùng các số liệu được cung cấp ở trên, không bịa thêm số liệu hay tin tức bên ngoài. Khi nêu số liệu, ghi rõ theo dữ liệu DNSE của phiên {_vn_date(report['report_date'])}.
+- TUYỆT ĐỐI KHÔNG khuyến nghị mua/bán/nắm giữ, KHÔNG đề xuất tỷ trọng cổ phiếu/tiền mặt, KHÔNG nêu giá mục tiêu, KHÔNG gợi ý mã cụ thể nên mua hay nên bán. Chỉ phân tích và mô tả.
 - KHÔNG tự viết phần "Nguồn", lời miễn trừ trách nhiệm hay hashtag (hệ thống sẽ tự thêm)."""
 
 
@@ -495,43 +500,45 @@ def _digest_prompt(entries: list[_Entry]) -> str:
         f"Tin {i}:\nTiêu đề: {e.title}\nTóm tắt: {e.summary or 'Không có tóm tắt'}\n---\n"
         for i, e in enumerate(entries, start=1)
     )
-    return f"""Bạn là một AI chuyên gia tổng hợp tin tức thị trường. Nhiệm vụ của bạn là:
+    return f"""Bạn là biên tập viên mục thị trường chứng khoán của một trang tin tài chính. Từ các tin của CafeF bên dưới, hãy viết MỘT bản tin tổng hợp để đăng Fanpage, khoảng 250-400 từ, đọc trên điện thoại.
 
-Đọc và phân tích toàn bộ nội dung được cung cấp dưới đây.
-Xác định các sự kiện, xu hướng hoặc thông tin nổi bật nhất, phù hợp với sở thích của người dùng Facebook.
-Tổng hợp thành một bài viết ngắn gọn, súc tích, khoảng 300-500 từ, theo phong cách gần gũi, dễ đọc, thu hút, bao gồm:
-- Câu mở đầu hấp dẫn, gây chú ý ngay lập tức.
-- Nội dung chính trình bày các thông tin quan trọng, sắp xếp logic, dùng ngôn ngữ tự nhiên, sinh động.
-- Giữ giọng điệu trung lập, thân thiện, tránh quá trang trọng, diễn đạt trôi chảy.
-- Nếu có mâu thuẫn giữa các nguồn, chọn thông tin đáng tin cậy nhất hoặc bỏ qua để giữ bài viết nhẹ nhàng.
+CẤU TRÚC:
+- Dòng đầu là tiêu đề: tối đa 16 từ, nêu sự việc chính của thị trường, viết như tiêu đề báo (không viết hoa toàn bộ), không ghi ngày.
+- Đoạn mở 2-3 câu nêu diễn biến chính của thị trường. Ghi "theo CafeF" đúng một lần trong đoạn này.
+- Thân bài gồm 3-5 mục, mỗi mục mở đầu bằng dấu "-", 1-3 câu, gom các tin cùng chủ đề (thị trường chung, khối ngoại, cổ phiếu biến động lớn, doanh nghiệp/trái phiếu/cổ tức). Chỉ chọn tin quan trọng, bỏ tin vụn.
+- Không có đoạn kết, không lời kêu gọi.
 
-QUY ĐỊNH BẮT BUỘC (tuân thủ pháp lý và dẫn nguồn):
-- Mọi thông tin phải xuất phát từ các tin được cung cấp bên dưới (nguồn CafeF); ghi "theo CafeF" khi nêu sự kiện hoặc số liệu quan trọng. Không tự thêm số liệu, dự đoán hay tin ngoài các tin này.
-- TUYỆT ĐỐI KHÔNG đưa ra khuyến nghị mua/bán/nắm giữ hay giá mục tiêu. Nếu tin có nhắc khuyến nghị của một tổ chức/cá nhân thì bỏ qua phần đó.
+NGUYÊN TẮC NỘI DUNG:
+- Chỉ dùng thông tin trong các tin bên dưới, không tự thêm số liệu, dự đoán hay tin ngoài. Mâu thuẫn giữa các tin thì chọn thông tin đáng tin hơn hoặc bỏ qua.
+- Chi tiết nào không có tên cụ thể (ví dụ "một cổ phiếu", "một doanh nghiệp") thì bỏ chi tiết đó thay vì viết mơ hồ.
+- Dự báo số liệu của tổ chức phân tích thì nêu rõ tên tổ chức và ghi đó là dự báo.
+
+{_STYLE_RULES}
+
+QUY ĐỊNH BẮT BUỘC (tuân thủ pháp lý):
+- TUYỆT ĐỐI KHÔNG đưa ra khuyến nghị mua/bán/nắm giữ hay giá mục tiêu. Tin có nhắc khuyến nghị của tổ chức/cá nhân thì bỏ qua phần đó.
+- Facebook không hỗ trợ Markdown: không dùng dấu * hay **.
 - KHÔNG tự viết phần "Nguồn" hay lời miễn trừ trách nhiệm ở cuối bài (hệ thống sẽ tự thêm).
 
-LƯU Ý QUAN TRỌNG VỀ ĐỊNH DẠNG FACEBOOK:
-- Facebook KHÔNG hỗ trợ Markdown, TUYỆT ĐỐI KHÔNG dùng dấu sao (**) hoặc (*) để in đậm.
-- Các tiêu đề hay điểm nhấn chỉ cần VIẾT HOA chữ cái đầu hoặc VIẾT HOA CẢ CÂU, kết hợp emoji nhẹ nhàng và gạch đầu dòng (-) thông thường.
-
-Nội dung cần tổng hợp:
-Dưới đây là tổng hợp các tin tức thị trường mới nhất:
+CÁC TIN CẦN TỔNG HỢP:
 
 {blocks}"""
 
 
 def _rewrite_prompt(article: str) -> str:
-    return f"""Bạn là một biên tập viên truyền thông chuyên nghiệp. Hãy viết lại bài báo dưới đây thành bài đăng Facebook/comment ngắn gọn, súc tích và mạch lạc.
+    return f"""Bạn là biên tập viên báo tài chính. Hãy tóm lược bài báo dưới đây thành bài khoảng 180-280 từ để đăng làm bình luận Facebook.
 
 QUY TẮC BẮT BUỘC:
-1. XUẤT NỘI DUNG TRỰC TIẾP: Tuyệt đối KHÔNG có lời mở đầu hoặc dẫn chuyện như "Dưới đây là bài viết...", "Chào các bạn...". Bắt đầu ngay bằng Tiêu đề.
-2. KHÔNG DÙNG DẤU SAO: Tuyệt đối không dùng dấu * hoặc ** để in đậm (Facebook không hỗ trợ). Tiêu đề hãy VIẾT HOA hoặc dùng emoji.
-3. QUY TẮC XUỐNG DÒNG: Mỗi đoạn văn phải viết liền mạch, tuyệt đối KHÔNG tự ý ngắt dòng giữa chừng khi câu chưa kết thúc. Chỉ xuống 2 dòng (\\n\\n) khi chuyển sang một ý/tiêu đề mới.
-4. Ngôn từ tự nhiên, giữ nguyên số liệu chính xác từ bài gốc, không dùng hashtag, không thêm thông tin ngoài bài gốc.
+1. Xuất nội dung trực tiếp, bắt đầu ngay bằng tiêu đề (viết như tiêu đề báo, không viết hoa toàn bộ). Không có lời dẫn kiểu "Dưới đây là...".
+2. Không dùng dấu * hay ** (Facebook không hỗ trợ Markdown), không hashtag.
+3. Mỗi đoạn viết liền mạch, chỉ xuống 2 dòng khi sang ý mới. Không tự ngắt dòng giữa câu.
+4. Giữ nguyên số liệu chính xác của bài gốc, không thêm thông tin ngoài bài gốc.
 5. Nếu bài gốc có khuyến nghị mua/bán/nắm giữ hoặc giá mục tiêu của tổ chức/cá nhân nào, hãy bỏ phần đó.
 6. KHÔNG tự viết phần "Nguồn" hay lời miễn trừ trách nhiệm (hệ thống sẽ tự thêm).
 
-Dưới đây là nội dung bài báo:
+{_STYLE_RULES}
+
+Nội dung bài báo:
 {article}"""
 
 

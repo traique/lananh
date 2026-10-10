@@ -156,6 +156,6 @@ services:
       # Giờ đăng của Page trên (giờ VN, HH:MM, nhiều mốc cách nhau bằng dấu phẩy).
       # Báo cáo chứng khoán chỉ chạy thứ 2-6; tin CafeF chạy hằng ngày.
       - key: MARKET_STOCK_TIMES_VN
-        value: "08:45,15:20"
+        value: "15:20"
       - key: MARKET_NEWS_TIMES_VN
         value: "08:30"

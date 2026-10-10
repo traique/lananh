@@ -288,7 +288,7 @@ vào hàng chờ duyệt (có dòng log "Bỏ qua bài Zalo chỉ có mã giảm
 #### Page riêng cho chứng khoán + tin CafeF (`market_page`)
 
 Hai luồng tự động chuyển từ n8n sang `services/market_page.py` đăng lên một Page
-**tách hẳn** khỏi Page Shopee: báo cáo VN-INDEX/DNSE (08:45 và 15:20, thứ 2-6, kèm
+**tách hẳn** khỏi Page Shopee: báo cáo VN-INDEX/DNSE (15:20 kết phiên, thứ 2-6, kèm
 biểu đồ) và bản tin CafeF (08:30 hằng ngày, kèm comment bài nổi bật). Cấu hình bằng key
 `MARKET`:
 
@@ -301,7 +301,7 @@ Page này không xuất hiện trong `/fb_pages` và `/fb_ok` không đăng bài
 Bỏ trống 2 biến là tắt luồng. Nội dung do AI chain của bot sinh (không cần Gemini key riêng).
 
 - **Giờ đăng** (giờ VN, `HH:MM`, nhiều mốc cách nhau bằng dấu phẩy): `MARKET_STOCK_TIMES_VN`
-  (mặc định `08:45,15:20`, chỉ thứ 2-6) và `MARKET_NEWS_TIMES_VN` (mặc định `08:30`, hằng ngày).
+  (mặc định `15:20` - kết phiên, chỉ thứ 2-6) và `MARKET_NEWS_TIMES_VN` (mặc định `08:30`, hằng ngày).
   Đổi giá trị trong Render rồi deploy lại; giá trị sai định dạng thì dùng mặc định.
 - **Chạy thủ công**: `/fb_market <stock|news>` chỉ tạo nội dung để xem thử (không đăng);
   `/fb_market <stock|news> dang` đăng thật. Dùng được từ Telegram, Zalo admin và Zoom.
