@@ -369,3 +369,12 @@ async def test_vacuum_full_reclaims_space_of_deleted_media(delivery_db):
     assert usage.live_bytes == 0 and usage.posting == 0
     before, after = await db_maintenance.vacuum_full()
     assert after <= before
+
+
+@pytest.mark.asyncio
+async def test_list_pending_for_refilter_returns_media_count(delivery_db):
+    await facebook.add_group("a", "g", "group")
+    with_photo = await _queue("Bài có ảnh nha mọi người ơi", "m1", media=[("image/jpeg", b"x")])
+    without = await _queue("Bài không có ảnh nha mọi người", "m2")
+    rows = await facebook.list_pending_for_refilter("a")
+    assert {(r["id"], int(r["media_count"])) for r in rows} == {(with_photo, 1), (without, 0)}

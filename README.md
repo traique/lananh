@@ -297,6 +297,9 @@ Bài bị bỏ (trả 204, ghi log "Bỏ qua bài Zalo (<lý do>)") khi:
   phẩm, dưới 400 ký tự. Giá nhận cả dạng "159k", "1tr2", "1.299.000", "199.000đ"; con số là điều
   kiện của mã ("đơn 0đ", "tối đa 50k", "max 30k", "hoàn xu 15%") không tính là giá. Bài có link
   Shopee trỏ thẳng tới một sản phẩm (`...-i.<shop>.<item>`, `/product/<shop>/<item>`) luôn giữ.
+  Nhận cả bài "canh mã/back" theo khung giờ: "15H BACK SVIP 25% MAX 999K/300K", "15H CANH BACK
+  MÃ TRENDY", "BACK MÃ BÁCH HÓA", "LOẠT MÃ EXTRA", "Mã FB 30%", "ÁP TOÀN SÀN"; vế sau dấu "/"
+  ("999K/300K") là đơn tối thiểu, không tính là giá.
 - **Trùng lặp** với bài trong `FACEBOOK_DEDUP_DAYS` ngày (mặc định 7, kể cả bài đã đăng/bỏ qua/
   đã bị dọn): cùng nội dung (bỏ dấu, link, ký tự đặc biệt); cùng sản phẩm/short-link Shopee; chữ
   gần giống và cùng bộ giá; ảnh trùng và chữ khá giống; hoặc toàn bộ ảnh (từ 2 ảnh) đều trùng.
@@ -462,6 +465,7 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/fb_check <post_id>` | Kiểm tra từng page: `is_published`, trạng thái ẩn/Timeline, `published_posts` và permalink |
 | `/fb_boqua <post_id>` | Bỏ bài Facebook đang chờ |
 | `/fb_reset` | Xóa toàn bộ bài Facebook đã lưu của tài khoản; reset ID về `#1` khi hàng đợi chung trống |
+| `/fb_loclai` | Chạy lại bộ lọc hiện tại cho các bài đang chờ; bài không đạt chuyển sang bỏ qua (xoá ảnh) |
 | `/fb_boloc [reset]` | Thống kê bộ lọc: số bài vào hàng chờ, bị bỏ/trùng theo lý do, số bài đang chờ |
 | `/zalopair <id_zalo> [tên]` | Cấp quyền thành viên cho 1 tài khoản Zalo |
 | `/zaloadmin <id_zalo> [tên]` | Cấp/nâng quyền admin (dùng được lệnh nhóm và `/fb_*`) |

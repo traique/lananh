@@ -125,3 +125,11 @@ phiếu, giảm heap Node.
   bỏ qua dòng này); footer ghi "; số liệu VN-Index: DNSE" chỉ khi có dùng số đó. Nhóm tin cố định:
   Thị trường, Khối ngoại, Cổ phiếu nổi bật, Cổ đông và lãnh đạo, Doanh nghiệp, Quy định và sàn.
   Cấm lặp ý giữa đoạn mở và các mục.
+
+## Đợt 7: lọc bài "canh mã/back"
+
+- Bộ lọc mã giảm giá nhận thêm dạng bài theo khung giờ của nhóm ("15H BACK SVIP", "CANH BACK MÃ
+  TRENDY", "BACK MÃ BÁCH HÓA", "LOẠT MÃ EXTRA", "Mã FB 30%", "ÁP TOÀN SÀN", "không cần đổi link");
+  "999K/300K" không còn bị hiểu nhầm là giá sản phẩm. Kiểm thử bằng 5 bài thật bị lọt và 6 bài
+  sản phẩm có từ dễ nhầm ("back to school", "mã màu", "mà giá chỉ"...).
+- Lệnh `/fb_loclai`: chạy lại bộ lọc cho các bài đang chờ duyệt, bỏ bài không đạt.

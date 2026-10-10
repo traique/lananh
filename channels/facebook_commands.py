@@ -13,6 +13,11 @@ from services import facebook_caption, market_page
 from services.channel_result import ChannelResult
 from services.facebook_caption import find_shopee_urls
 from services.facebook_image import brand_image
+
+
+def _env_on(name: str) -> bool:
+    """Bộ lọc mặc định bật; đặt biến = 0 để tắt (cùng quy ước với channels/router.py)."""
+    return os.getenv(name, "1").strip() != "0"
 from services.facebook_page_service import (
     FacebookPublishError,
     FacebookPublicationUncertain,
@@ -143,6 +148,28 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
             f"✅ Đã xóa {deleted} bài Facebook của tài khoản này. "
             "ID chưa thể về #1 vì vẫn còn bài của tài khoản Facebook/Zalo khác trong hàng đợi."
         ])
+
+    if command == "/fb_loclai":
+        # Chạy lại bộ lọc hiện tại cho các bài đang chờ (bài vào hàng chờ trước khi
+        # bộ lọc được cải thiện). Bài bị lọc chuyển sang "bỏ qua" và xoá ảnh.
+        rows = await facebook_repository.list_pending_for_refilter(account_id)
+        removed: list[tuple[int, str]] = []
+        for row in rows:
+            reason = facebook_caption.skip_reason(
+                row["original_content"] or "",
+                int(row["media_count"] or 0) > 0,
+                require_photo_and_caption=_env_on("FACEBOOK_REQUIRE_PHOTO_AND_CAPTION"),
+                skip_voucher=_env_on("FACEBOOK_SKIP_VOUCHER_POSTS"),
+            )
+            if reason and await facebook_repository.reject_post(account_id, int(row["id"])):
+                removed.append((int(row["id"]), reason))
+        if not removed:
+            return ChannelResult([f"✅ Đã kiểm tra {len(rows)} bài chờ: không có bài nào cần bỏ."])
+        lines = [f"🧹 Đã bỏ {len(removed)}/{len(rows)} bài chờ không đạt bộ lọc:"]
+        lines += [f"• #{post_id}: {reason}" for post_id, reason in removed[:30]]
+        if len(removed) > 30:
+            lines.append(f"... và {len(removed) - 30} bài khác.")
+        return ChannelResult(["\n".join(lines)])
 
     if command == "/fb_boloc":
         from services import facebook_intake_stats

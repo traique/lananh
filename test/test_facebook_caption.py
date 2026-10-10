@@ -195,3 +195,34 @@ async def test_rewrite_keeps_original_when_ai_keeps_inventing_numbers(monkeypatc
 def test_rewrite_prompt_asks_for_human_voice_without_cliches():
     prompt = caption._REWRITE_PROMPT
     assert "người thật" in prompt and "Siêu phẩm" in prompt and "Markdown" in prompt
+
+
+# Bài thật từ nhóm Zalo (10/2026) lọt bộ lọc cũ: "canh mã/back" theo khung giờ.
+REAL_VOUCHER_POSTS = [
+    "💸15H BACK SVIP 25% MAX 999K/300K https://s.shopee.vn/5fpPUonmi1",
+    "💸15H BACK MXH 30% 50% ÁP TOÀN SÀN (không cần đổi link)\n► Mã FB 30% tối đa 300k đơn 50K\n"
+    "► Mã Instagram 50% tối đa 50K/50K https://s.shopee.vn/5fpPUbs8sj",
+    "💸15H CANH BACK Mã Trendy\n► Áp list: https://s.shopee.vn/8KqAfYyzqI https://s.shopee.vn/2VsNiqJlAc",
+    "💸15H BACK MÃ BÁCH HÓA https://s.shopee.vn/7AeDHTeF5m",
+    "15H CANH BACK LOẠT MÃ EXTRA CŨNG NGON\n🔥 https://s.shopee.vn/9peySmH6Wp",
+]
+
+
+@pytest.mark.parametrize("text", REAL_VOUCHER_POSTS)
+def test_real_back_voucher_posts_are_skipped(text):
+    assert caption.skip_reason(text, True) == "chỉ báo mã giảm giá"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Balo back to school chống nước 199k https://s.shopee.vn/a",
+        "Son kem lì màu đỏ gạch, mã màu 02, giá 89k https://s.shopee.vn/a",
+        "Kem chống nắng mà giá chỉ 99k thôi https://s.shopee.vn/a",
+        "Nồi chiên không dầu 5L 1tr2, áp mã giảm thêm https://s.shopee.vn/a",
+        "Váy hoa nhí 15h sale https://shopee.vn/vay-hoa-i.123.456",
+        "Tai nghe bluetooth chống ồn, pin 30 giờ https://s.shopee.vn/a",
+    ],
+)
+def test_product_posts_with_similar_words_are_kept(text):
+    assert caption.skip_reason(text, True) is None

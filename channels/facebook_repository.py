@@ -239,6 +239,25 @@ async def count_pending(account_id: str) -> int:
     ) or 0)
 
 
+async def list_pending_for_refilter(account_id: str):
+    """Bài đang chờ duyệt (chưa page nào đăng) kèm số ảnh, để chạy lại bộ lọc."""
+    await ensure_schema()
+    return await (await db.get_pool()).fetch(
+        """
+        SELECT q.id, q.original_content,
+               (SELECT count(*) FROM facebook_post_media m WHERE m.post_id = q.id) AS media_count
+        FROM facebook_post_queue q
+        WHERE q.account_id = $1 AND q.status = 'PENDING_APPROVAL'
+          AND NOT EXISTS (
+              SELECT 1 FROM facebook_post_targets t
+              WHERE t.post_id = q.id AND t.facebook_post_id IS NOT NULL
+          )
+        ORDER BY q.id
+        """,
+        account_id,
+    )
+
+
 async def delete_media(post_id: int) -> None:
     """Ảnh chỉ cần cho lúc đăng; bài đã đăng xong/bỏ qua thì xoá để nhẹ DB."""
     await (await db.get_pool()).execute(

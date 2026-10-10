@@ -159,6 +159,8 @@ HELP_TEXT = (
     "/fb\\_boqua <post\\_id> — bỏ bài chờ\n"
     "/fb\\_reset — xóa bài Facebook đã lưu, reset ID về #1 khi có thể\n"
     "/fb\\_boloc \\[reset] — thống kê bộ lọc Zalo→Facebook (bài giữ/bỏ/trùng, số bài chờ)\n"
+    "/fb\\_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt\n"
+    "/fb\\_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt\n"
     "/zalopair, /zaloadmin, /zalohaquyen, /zalokhoa, /zalomokhoa, /zaloxoa, /zalodanhsach — quản lý user Zalo\n"
     "/help — hiển thị hướng dẫn này"
 )
@@ -916,6 +918,11 @@ async def fb_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 @common.restricted
 async def fb_boloc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _facebook_command(update, context, "/fb_boloc")
+
+
+@common.restricted
+async def fb_loclai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _facebook_command(update, context, "/fb_loclai")
 
 @common.restricted
 async def model_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

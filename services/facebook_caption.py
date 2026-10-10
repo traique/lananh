@@ -102,8 +102,18 @@ def _is_shopee(url: str) -> bool:
 # vẫn còn bước duyệt thủ công, còn loại nhầm bài sản phẩm thì mất bài.
 _VOUCHER_RE = re.compile(
     r"\b(ma\s+(giam|freeship|free\s+ship|shopee|voucher)|luu\s+ma|san\s+ma|thu\s+thap\s+ma|"
-    r"nhap\s+ma|voucher|deal\s+vip|shopee\s*vip|san\s+deal)\b"
+    r"nhap\s+ma|voucher|deal\s+vip|shopee\s*vip|san\s+deal"
+    # Bài "canh mã/back" theo khung giờ: "15H BACK SVIP 25%", "15H CANH BACK MÃ TRENDY",
+    # "BACK MÃ BÁCH HÓA", "LOẠT MÃ EXTRA", "Mã FB 30%", "ÁP TOÀN SÀN".
+    r"|\d{1,2}\s*h\s+(canh\s+)?(back|san|ma|deal|sale)"
+    r"|canh\s+(back|ma|deal|sale)|back\s+(xu|ma|svip|vip|mxh|\d+\s*%)|hoan\s+xu"
+    r"|ma\s+(fb|facebook|instagram|mxh|live|livestream|video|extra|xtra|trendy|bach\s+hoa|"
+    r"hoan\s+xu|toan\s+san|svip|vip|choice|mall|spaylater|shopeepay|zalopay|ngan\s+hang)"
+    r"|(loat|list)\s+ma|svip|ap\s+(toan\s+san|list)|khong\s+can\s+doi\s+link)\b"
 )
+# "max 999K/300K", "tối đa 50K/50K": vế sau dấu "/" là giá trị đơn tối thiểu của mã,
+# không phải giá sản phẩm.
+_PAIR_AMOUNT_RE = re.compile(r"\s*/\s*\d[\d.,]*\s*(k|d|vnd|₫|tr|trieu)?\b")
 # Có giá cụ thể (giá 99k, chỉ còn 129.000đ...) thì là bài sản phẩm. "tối đa 500K" của
 # mã giảm không tính là giá nên không nằm trong mẫu này.
 _PRICE_RE = re.compile(
@@ -143,7 +153,7 @@ def is_voucher_only(text: str) -> bool:
     # "/product/<shop>/<item>") là bài sản phẩm dù có nhắc mã giảm.
     if any(_PRODUCT_URL_RE.search(url) for url in find_shopee_urls(text)):
         return False
-    return _PRICE_RE.search(_THRESHOLD_RE.sub(" ", body)) is None
+    return _PRICE_RE.search(_THRESHOLD_RE.sub(" ", _PAIR_AMOUNT_RE.sub(" ", body))) is None
 
 
 # Để đếm chữ trong caption phải bỏ cả link không có "https://" (s.shopee.vn/abc, shope.ee/x).

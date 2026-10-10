@@ -506,3 +506,30 @@ async def test_fb_ok_retry_only_comments_when_post_already_created(monkeypatch):
     assert mocks["captions"] == []  # post never recreated
     assert mocks["post_comment"].await_count == 2
     mocks["record_target_comment"].assert_awaited_once_with(5, "default", "c2", "tok")
+
+
+@pytest.mark.asyncio
+async def test_fb_loclai_rejects_pending_posts_that_fail_current_filter(monkeypatch):
+    rows = [
+        {"id": 65, "original_content": "💸15H BACK MÃ BÁCH HÓA https://s.shopee.vn/7AeDHTeF5m", "media_count": 1},
+        {"id": 70, "original_content": "Áo khoác dù chống nắng 159k https://s.shopee.vn/x", "media_count": 1},
+        {"id": 71, "original_content": "Quạt mini để bàn siêu êm https://s.shopee.vn/y", "media_count": 0},
+    ]
+    rejected = []
+
+    async def pending(account_id):
+        return rows
+
+    async def reject(account_id, post_id):
+        rejected.append(post_id)
+        return True
+
+    monkeypatch.setattr(facebook_commands.facebook_repository, "list_pending_for_refilter", pending)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "reject_post", reject)
+
+    result = await facebook_commands.maybe_handle_facebook_command("acc", "/fb_loclai")
+
+    assert rejected == [65, 71]
+    text = result.messages[0]
+    assert "Đã bỏ 2/3" in text and "#65: chỉ báo mã giảm giá" in text
+    assert "#71: có caption nhưng không có ảnh" in text
