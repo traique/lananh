@@ -155,6 +155,16 @@ def _vn_date(iso_date: str) -> str:
     return date.fromisoformat(iso_date).strftime("%d/%m/%Y")
 
 
+# Dấu trích dẫn kiểu "[3]", "[11][15]", "[2, 4]", "[1-3]", "【5】" mà model có tra web
+# hay tự thêm. Bài Facebook đọc tự nhiên, nguồn đã ghi ở cuối bài.
+_CITATION_RE = re.compile(r"\s*(?:\[\s*\d+(?:\s*[,;\-–]\s*\d+)*\s*\]|【[^】]*】)+")
+
+
+def _strip_citations(text: str) -> str:
+    text = _CITATION_RE.sub("", text or "")
+    return re.sub(r"[ \t]+([.,;:])", r"\1", text)
+
+
 def _vn_number(value: float, digits: int = 1) -> str:
     """Kiểu Việt Nam: chấm ngăn nghìn, phẩy thập phân (1234.5 -> "1.234,5")."""
     return f"{value:,.{digits}f}".replace(",", "_").replace(".", ",").replace("_", ".")
@@ -259,6 +269,17 @@ def _rsi(values: list[float], n: int = 14) -> float | None:
     return 100.0 if loss == 0 else 100 - 100 / (1 + gain / loss)
 
 
+def _streak(closes: list[float]) -> int:
+    """Số phiên tăng (+) hoặc giảm (-) liên tiếp tính tới phiên mới nhất."""
+    streak = 0
+    for prev, cur in zip(reversed(closes[:-1]), reversed(closes)):
+        step = (cur > prev) - (cur < prev)
+        if step == 0 or (streak and (streak > 0) != (step > 0)):
+            break
+        streak += step
+    return streak
+
+
 def _round(value: float | None, digits: int = 2) -> float | None:
     return None if value is None else round(value, digits)
 
@@ -288,6 +309,10 @@ def _indicators(symbol: str, bars: list[dict]) -> dict:
         "change_pct": (
             round((latest["close"] - prev["close"]) / prev["close"] * 100, 2) if prev else None
         ),
+        "change_points": _round(latest["close"] - prev["close"]) if prev else None,
+        "high": _round(latest["high"]),
+        "low": _round(latest["low"]),
+        "streak": _streak(closes),
         "volume": latest["volume"],
         "vol_ratio": _round(vol_ratio),
         "close_position": round(close_position, 2),
@@ -342,32 +367,55 @@ def _movers(rows: list[dict]) -> str:
     ) or "Không có mã đáng chú ý"
 
 
+def _ma_zone_note(vn: dict) -> str:
+    """MA20 và MA50 gần trùng nhau thì gợi ý gọi là một vùng, tránh nhắc 2 mốc như 2 ngưỡng."""
+    ma20, ma50 = vn.get("ma20"), vn.get("ma50")
+    if ma20 and ma50 and abs(ma20 - ma50) / ma20 < 0.005:
+        low, high = sorted((ma20, ma50))
+        return (
+            f"\n- MA20 và MA50 gần trùng nhau: gọi chung là vùng {_vn_number(low, 2)}-"
+            f"{_vn_number(high, 2)} điểm, không tách thành hai mốc."
+        )
+    return ""
+
+
+def _streak_text(streak: int) -> str:
+    if streak <= -2:
+        return f"phiên giảm thứ {-streak} liên tiếp"
+    if streak >= 2:
+        return f"phiên tăng thứ {streak} liên tiếp"
+    return "không có chuỗi tăng/giảm liên tiếp đáng kể"
+
+
 def _stock_prompt(report: dict) -> str:
     vn = report["vnindex"]
     volume = _vn_number(vn["volume"] / 1e6) + " triệu" if vn["volume"] else "N/A"
     session = _vn_date(report["report_date"])
+    points = vn.get("change_points")
+    points_text = f"{_signed(points)} điểm, " if points is not None else ""
     return f"""Bạn là chuyên viên phân tích của một công ty chứng khoán, viết bản nhận định cuối phiên cho Fanpage đầu tư. Người đọc là nhà đầu tư cá nhân, đọc trên điện thoại.
 
-DỮ LIỆU PHIÊN {session}:
-- VN-Index đóng cửa {_fmt(vn['close'])} điểm ({_signed(vn['change_pct'] or 0)}%).
+DỮ LIỆU PHIÊN {session} (đây là TOÀN BỘ dữ liệu được dùng):
+- VN-Index đóng cửa {_fmt(vn['close'])} điểm ({points_text}{_signed(vn['change_pct'] or 0)}%), {_streak_text(vn.get('streak', 0))}.
+- Cao nhất phiên {_fmt(vn.get('high'))}, thấp nhất phiên {_fmt(vn.get('low'))} điểm.
 - Khối lượng khớp {volume} cổ phiếu, bằng {_fmt(vn['vol_ratio'], 1)}x trung bình 20 phiên.
 - Vị trí đóng cửa trong biên độ phiên: {vn['close_position']} (1.0 = sát đỉnh phiên, 0.0 = sát đáy phiên).
-- MA20 = {_fmt(vn['ma20'])}, MA50 = {_fmt(vn['ma50'])}, RSI(14) = {_fmt(vn['rsi14'])}, MACD = {_fmt(vn['macd'])}, dải Bollinger {_fmt(vn['bb_lower'])} - {_fmt(vn['bb_upper'])}.
+- MA20 = {_fmt(vn['ma20'])}, MA50 = {_fmt(vn['ma50'])}, RSI(14) = {_fmt(vn['rsi14'])}, MACD = {_fmt(vn['macd'])}, dải Bollinger {_fmt(vn['bb_lower'])} - {_fmt(vn['bb_upper'])}.{_ma_zone_note(vn)}
 - Trong nhóm {report['tracked']} cổ phiếu hệ thống theo dõi (KHÔNG phải toàn thị trường): {report['advancers']} mã tăng, {report['decliners']} mã giảm, {report['unchanged']} mã đứng giá. {report['pct_above_ma20']}% số mã nằm trên MA20.
 - Mã tăng mạnh nhất: {_movers(report['gainers'])}
 - Mã giảm mạnh nhất: {_movers(report['losers'])}
 
 CẤU TRÚC BÀI:
 - Dòng đầu là tiêu đề, bắt đầu bằng 📌: một câu ngắn (tối đa 15 từ) nêu kết quả phiên kèm một con số chính, viết như tiêu đề báo (không viết hoa toàn bộ).
-- Tiếp theo là 4 phần, mỗi phần mở đầu bằng một dòng nhãn ngắn (không đánh số): "Diễn biến phiên", "Dòng tiền và độ rộng", "Kỹ thuật", "Cần theo dõi". Mỗi phần 2-4 câu hoặc vài gạch đầu dòng ngắn.
-- "Cần theo dõi" nêu 2-3 kịch bản dạng "nếu... thì...", gắn với các mốc MA20, MA50, biên Bollinger. Chỉ mô tả, không đưa ra hành động giao dịch.
+- Tiếp theo là 4 phần, mỗi phần mở đầu bằng một dòng nhãn ngắn (không đánh số): "Diễn biến phiên", "Dòng tiền và độ rộng", "Kỹ thuật", "Cần theo dõi". Mỗi phần 2-4 câu hoặc vài gạch đầu dòng ngắn. Không lặp lại cùng một ý (ví dụ vị trí so với MA) ở hai phần.
+- "Cần theo dõi" nêu 2-3 kịch bản dạng "nếu... thì...", mỗi kịch bản gắn với MỘT mốc cụ thể (MA, biên Bollinger, đỉnh/đáy phiên) và nói rõ điều đó có nghĩa gì bằng lời thường (ví dụ "xu hướng ngắn hạn cải thiện", "áp lực giảm còn kéo dài"). Không dùng thuật ngữ rỗng như "khu vực kiểm định cân bằng", không viết câu không có thông tin như "vùng thấp hơn tiếp tục được theo dõi". Chỉ mô tả, không đưa ra hành động giao dịch.
 - Dài khoảng 250-350 từ.
 
 CÁCH DIỄN ĐẠT SỐ LIỆU:
 - Khối lượng quy ra triệu cổ phiếu; điểm số lấy 2 chữ số thập phân; RSI, MACD lấy 1 chữ số.
 - Vị trí đóng cửa diễn đạt bằng lời (ví dụ "đóng cửa ở nửa dưới biên độ phiên"), không nêu con số x/1.0.
-- Khi nói về số mã tăng/giảm, ghi rõ là "trong nhóm cổ phiếu theo dõi", không gọi là độ rộng toàn thị trường.
-- Chỉ dùng số liệu ở trên. Không suy diễn nguyên nhân từ tin tức, khối ngoại hay yếu tố vĩ mô vì không có trong dữ liệu.
+- CHỈ dùng số liệu ở trên, không tra cứu hay thêm số liệu nào khác. Không suy diễn nguyên nhân từ tin tức, khối ngoại hay yếu tố vĩ mô vì không có trong dữ liệu.
+- Không ghi chú thích hay số trích dẫn kiểu [1], [3].
 
 {_STYLE_RULES}
 
@@ -482,8 +530,69 @@ def _is_current_session(report_date: str) -> bool:
     return report_date == _today().isoformat()
 
 
+_DATE_RE = re.compile(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b")
+_NUMBER_TOKEN_RE = re.compile(r"(?<![A-Za-z(\d])\d{1,3}(?:\.\d{3})+(?:,\d+)?|(?<![A-Za-z(\d.,])\d+(?:[.,]\d+)?")
+
+
+def _parse_vn_number(token: str) -> tuple[float, int]:
+    """(giá trị, số chữ số thập phân) của số kiểu VN "1.735,09" hoặc kiểu "1735.09"."""
+    if "," in token:
+        whole, frac = token.replace(".", "").split(",", 1)
+        return float(f"{whole}.{frac}"), len(frac)
+    if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", token):
+        return float(token.replace(".", "")), 0
+    frac = token.split(".", 1)[1] if "." in token else ""
+    return float(token), len(frac)
+
+
+def _report_numbers(report: dict) -> list[float]:
+    values: list[float] = []
+
+    def walk(value):
+        if isinstance(value, bool):
+            return
+        if isinstance(value, (int, float)) and math.isfinite(value):
+            values.extend((float(value), abs(float(value))))
+            if abs(value) >= 1e5:  # khối lượng: bài viết theo đơn vị triệu
+                values.append(abs(value) / 1e6)
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                walk(item)
+
+    walk(report)
+    return values
+
+
+def unknown_numbers(text: str, report: dict) -> list[str]:
+    """Số liệu trong bài không khớp dữ liệu đã tính (dấu hiệu AI tự tra web hoặc bịa).
+
+    Chỉ kiểm tra số có phần thập phân hoặc từ 100 trở lên (điểm số, khối lượng, %
+    lẻ); bỏ qua ngày tháng, "MA20", "RSI(14)", số đếm nhỏ. Cho phép sai số làm tròn
+    theo đúng số chữ số thập phân AI viết.
+    """
+    allowed = _report_numbers(report)
+    unknown = []
+    for token in _NUMBER_TOKEN_RE.findall(_DATE_RE.sub(" ", text)):
+        value, decimals = _parse_vn_number(token)
+        if decimals == 0 and value < 100:
+            continue
+        tolerance = 0.5 * 10 ** -decimals + 1e-9 if decimals else 0.5 + 0.0006 * value
+        if not any(abs(value - a) <= tolerance for a in allowed):
+            unknown.append(token)
+    return unknown
+
+
+_UNKNOWN_NUMBER_NOTE = (
+    "\n\nLƯU Ý: bản trước có số liệu không nằm trong dữ liệu đã cho: {numbers}. "
+    "Chỉ dùng đúng các con số trong phần DỮ LIỆU PHIÊN, không tra cứu hay tự tính thêm."
+)
+
+
 def _clean_stock_text(text: str) -> str:
-    return text.replace("*", "").strip()
+    return _strip_citations(text).replace("*", "").strip()
 
 
 async def _post_stock_report(dry_run: bool = False) -> str | None:
@@ -509,10 +618,19 @@ async def _post_stock_report(dry_run: bool = False) -> str | None:
         if await db.get_setting(session_key):
             raise MarketSkip(f"phiên {_vn_date(report['report_date'])} đã được đăng")
 
-    text = await _ask_clean(_stock_prompt(report), _clean_stock_text)
+    prompt = _stock_prompt(report)
+    text = await _ask_clean(prompt, _clean_stock_text)
     if text is None:
         logger.warning("market_page: nhận định vẫn chứa khuyến nghị mua/bán, không đăng.")
         return None
+    foreign = unknown_numbers(text, report)
+    if foreign:
+        logger.warning("market_page: nhận định có số liệu lạ %s, hỏi lại AI.", foreign)
+        note = _UNKNOWN_NUMBER_NOTE.format(numbers=", ".join(foreign[:10]))
+        text = await _ask_clean(prompt + note, _clean_stock_text)
+        if text is None or unknown_numbers(text, report):
+            logger.warning("market_page: AI vẫn dùng số liệu ngoài dữ liệu, không đăng lượt này.")
+            return None
     if len(text) < _MIN_POST_CHARS:
         logger.warning("market_page: AI trả nhận định bất thường (%d ký tự), bỏ.", len(text))
         return None
@@ -612,6 +730,8 @@ NGUYÊN TẮC NỘI DUNG:
 - Chỉ dùng thông tin trong các tin bên dưới, không tự thêm số liệu, dự đoán hay tin ngoài. Mâu thuẫn giữa các tin thì chọn thông tin đáng tin hơn hoặc bỏ qua.
 - Chi tiết nào không có tên cụ thể (ví dụ "một cổ phiếu", "một doanh nghiệp") thì bỏ chi tiết đó thay vì viết mơ hồ.
 - Dự báo số liệu của tổ chức phân tích thì nêu rõ tên tổ chức và ghi đó là dự báo.
+- Viết như một bản tin đọc liền mạch: KHÔNG ghi số thứ tự tin hay chú thích kiểu [1], [11][15], không viết "tin số...". Không ghép hai sự việc không liên quan bằng "dù", "nhờ", "do" khi tin không nói chúng liên quan.
+- Mỗi mục chỉ giữ tin có ý nghĩa với nhà đầu tư (diễn biến thị trường, khối ngoại, cổ phiếu lớn biến động, kết quả kinh doanh, cổ tức, giao dịch lớn của cổ đông/lãnh đạo). Bỏ tin thủ tục nhỏ (xử phạt chậm công bố thông tin, miễn nhiệm ở công ty nhỏ) trừ khi không còn tin nào khác.
 
 {_STYLE_RULES}
 
@@ -643,7 +763,7 @@ Nội dung bài báo:
 
 
 def _clean_news_text(text: str) -> str:
-    text = _LEAD_IN_RE.sub("", text).replace("*", "")
+    text = _LEAD_IN_RE.sub("", _strip_citations(text)).replace("*", "")
     return _SOFT_BREAK_RE.sub(" ", text).strip()
 
 
@@ -717,11 +837,7 @@ def _fresh_entries(entries: list[_Entry], now: datetime) -> list[_Entry]:
 
 
 def _news_footer(today: date) -> str:
-    return (
-        "📰 Nguồn: CafeF (cafef.vn), chuyên mục Thị trường chứng khoán, "
-        f"tin trong 24 giờ đến {today:%d/%m/%Y}.\n\n"
-        f"{_DISCLAIMER}"
-    )
+    return f"📰 Nguồn: CafeF (cafef.vn)\n\n{_DISCLAIMER}"
 
 
 def _news_image_mode() -> str:

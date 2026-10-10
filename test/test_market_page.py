@@ -152,7 +152,7 @@ def test_stock_prompt_contains_the_computed_numbers():
 
     prompt = market_page._stock_prompt(report)
 
-    assert "VN-Index đóng cửa 1212.0 điểm (+1.0%)" in prompt
+    assert "VN-Index đóng cửa 1212.0 điểm (+12.0 điểm, +1.0%)" in prompt
     assert "Khối lượng khớp 0,0 triệu" in prompt or "triệu cổ phiếu" in prompt
     assert "AAA (+10.0%" in prompt
 
@@ -1025,3 +1025,80 @@ async def test_tick_runs_missed_slot_after_restart_and_stops_once_done(store, mo
     await market_page._tick(datetime(2026, 10, 9, 15, 47, tzinfo=VN))  # vừa khởi động lại
     await market_page._tick(datetime(2026, 10, 9, 16, 30, tzinfo=VN))
     assert len(runs) == 1
+
+
+# ─── Góp ý từ bản xem thử thật (10/10/2026) ─────────────────────────────────
+
+_REAL_REPORT = {
+    "report_date": "2026-10-09",
+    "vnindex": {
+        "close": 1735.09, "change_pct": -0.22, "change_points": -3.88, "high": 1744.89,
+        "low": 1724.17, "streak": -3, "volume": 819_300_000.0, "vol_ratio": 1.25,
+        "close_position": 0.53, "ma20": 1779.01, "ma50": 1779.82, "rsi14": 37.2,
+        "macd": -14.5, "bb_upper": 1835.09, "bb_lower": 1722.93,
+    },
+    "tracked": 17, "advancers": 8, "decliners": 7, "unchanged": 2, "pct_above_ma20": 11.8,
+    "gainers": [{"symbol": "TCB", "change_pct": 1.41, "vol_ratio": 1.1}],
+    "losers": [{"symbol": "FPT", "change_pct": -3.02, "vol_ratio": 1.89}],
+}
+
+
+def test_citation_markers_are_removed_from_posts():
+    text = "Khối ngoại bán ròng gần 13.500 tỷ đồng, theo CafeF [11][15]. PNJ tăng trần [15].\nBán 2,58 triệu cổ phiếu [2, 4]."
+    cleaned = market_page._clean_news_text(text)
+    assert "[" not in cleaned
+    assert "theo CafeF. PNJ tăng trần." in cleaned
+    assert "[3]" not in market_page._clean_stock_text("giảm thứ ba liên tiếp [3]. Chỉ số")
+
+
+def test_news_footer_is_short_source_plus_disclaimer():
+    footer = market_page._news_footer(date(2026, 10, 10))
+    assert footer.startswith("📰 Nguồn: CafeF (cafef.vn)\n\n⚠️")
+    assert "24 giờ" not in footer and "chuyên mục" not in footer
+
+
+def test_news_prompt_forbids_citations_and_trivial_items():
+    prompt = market_page._digest_prompt([_entry("Tin A", "tóm tắt")])
+    assert "[1], [11][15]" in prompt and "Bỏ tin thủ tục nhỏ" in prompt
+
+
+def test_streak_counts_consecutive_sessions():
+    assert market_page._streak([10, 11, 10, 9, 8]) == -3
+    assert market_page._streak([10, 9, 10, 11]) == 2
+    assert market_page._streak([10, 10]) == 0
+
+
+def test_stock_prompt_gives_points_high_low_streak_and_merged_ma_zone():
+    prompt = market_page._stock_prompt(_REAL_REPORT)
+    assert "1735.09 điểm (-3.88 điểm, -0.22%), phiên giảm thứ 3 liên tiếp" in prompt
+    assert "Cao nhất phiên 1744.89, thấp nhất phiên 1724.17" in prompt
+    assert "vùng 1.779,01-1.779,82 điểm" in prompt
+    assert "khu vực kiểm định cân bằng" in prompt  # nằm trong danh sách cấm
+
+
+def test_real_preview_numbers_all_come_from_the_data():
+    text = (
+        "📌 VN-Index giảm 0,22%, thanh khoản đạt 819,3 triệu cổ phiếu\n"
+        "VN-Index giảm 3,88 điểm, đóng cửa tại 1.735,09 điểm. Biên độ 1.724,17–1.744,89 điểm. "
+        "Khối lượng 1,25 lần trung bình 20 phiên; 11,8% số mã trên MA20. FPT giảm 3,02% "
+        "với khối lượng 1,89 lần. RSI(14) 37,2, MACD âm 14,5, Bollinger 1.722,93 - 1.835,09. "
+        "Phiên 09/10/2026."
+    )
+    assert market_page.unknown_numbers(text, _REAL_REPORT) == []
+    invented = text + " Khối ngoại bán ròng 512,4 tỷ, mốc 1.700 điểm."
+    assert market_page.unknown_numbers(invented, _REAL_REPORT) == ["512,4", "1.700"]
+
+
+@pytest.mark.asyncio
+async def test_stock_post_with_invented_numbers_is_retried_then_dropped(monkeypatch):
+    published, prompts = [], []
+    _stock_fakes(monkeypatch, published)
+
+    async def ask(prompt):
+        prompts.append(prompt)
+        return SimpleNamespace(text="📌 Phiên tăng\n" + "Khối ngoại mua ròng 512,4 tỷ đồng. " * 5)
+
+    monkeypatch.setattr(orchestrator, "ask", ask)
+
+    assert await market_page._post_stock_report() is None
+    assert published == [] and "512,4" in prompts[-1]

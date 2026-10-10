@@ -102,3 +102,14 @@ phiếu, giảm heap Node.
 - RSI theo Wilder, độ rộng ghi rõ là nhóm theo dõi, biểu đồ dd/mm.
 - Ảnh biểu đồ và ảnh bài CafeF gắn khung + logo như luồng Zalo; `MARKET_NEWS_IMAGE=none` để tắt
   ảnh CafeF. Comment chỉ tóm tắt 80-120 từ kèm link bài gốc.
+
+## Đợt 5: góp ý từ bản xem thử thật
+
+- Bỏ số trích dẫn kiểu [3], [11][15] khỏi bài (model có tra web hay tự thêm); prompt cấm luôn.
+- Footer bản tin rút gọn: "📰 Nguồn: CafeF (cafef.vn)" + lời miễn trừ.
+- Báo cáo phiên: thêm số điểm thay đổi, cao/thấp phiên, chuỗi tăng/giảm liên tiếp vào dữ liệu để
+  AI không phải tra web; MA20/MA50 gần trùng thì gọi chung một vùng; kịch bản "Cần theo dõi" phải
+  có ý nghĩa cụ thể, cấm thuật ngữ rỗng.
+- Kiểm tra số liệu: mọi con số trong báo cáo phiên phải khớp dữ liệu đã tính (cho phép làm tròn);
+  có số lạ thì hỏi lại AI 1 lần, vẫn còn thì bỏ lượt (lịch thử lại sau 10 phút).
+- Bản tin: không ghép hai sự việc không liên quan bằng "dù/nhờ/do", bỏ tin thủ tục nhỏ.
