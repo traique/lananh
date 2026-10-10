@@ -113,3 +113,15 @@ phiếu, giảm heap Node.
 - Kiểm tra số liệu: mọi con số trong báo cáo phiên phải khớp dữ liệu đã tính (cho phép làm tròn);
   có số lạ thì hỏi lại AI 1 lần, vẫn còn thì bỏ lượt (lịch thử lại sau 10 phút).
 - Bản tin: không ghép hai sự việc không liên quan bằng "dù/nhờ/do", bỏ tin thủ tục nhỏ.
+
+## Đợt 6: góp ý bản xem thử lần 2
+
+- Báo cáo phiên: thêm giá mở cửa và đóng cửa phiên trước; cấm mô tả diễn biến trong phiên
+  ("cuối phiên", "lực bán tăng dần"...) vì dữ liệu không có; phát hiện được thì AI viết lại.
+- Mốc giá cách nhau < 0,3% gộp thành một vùng; bot tự chọn mốc gần nhất phía trên và phía dưới,
+  "Cần theo dõi" đúng 2 kịch bản (lên/xuống).
+- RSI/MACD không ghi đơn vị "điểm" (phát hiện thì viết lại).
+- Bản tin: thêm dòng số liệu VN-Index phiên gần nhất từ DNSE cho mục "Thị trường" (lỗi DNSE thì
+  bỏ qua dòng này); footer ghi "; số liệu VN-Index: DNSE" chỉ khi có dùng số đó. Nhóm tin cố định:
+  Thị trường, Khối ngoại, Cổ phiếu nổi bật, Cổ đông và lãnh đạo, Doanh nghiệp, Quy định và sàn.
+  Cấm lặp ý giữa đoạn mở và các mục.

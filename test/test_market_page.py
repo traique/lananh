@@ -16,6 +16,7 @@ from core import database as db  # noqa: E402
 from services import facebook_page_service, market_page  # noqa: E402
 
 VN = ZoneInfo("Asia/Ho_Chi_Minh")
+_REAL_SNAPSHOT = market_page._market_snapshot  # bản gốc, trước khi fixture tự động thay
 
 
 class FakeSettingsStore:
@@ -37,6 +38,11 @@ def _isolated_settings(monkeypatch):
     monkeypatch.setattr(db, "get_setting", fake.get)
     monkeypatch.setattr(db, "set_setting", fake.set)
     monkeypatch.setattr(market_page, "_is_current_session", lambda report_date: True)
+
+    async def no_snapshot():
+        return None
+
+    monkeypatch.setattr(market_page, "_market_snapshot", no_snapshot)
     return fake
 
 
@@ -1071,7 +1077,7 @@ def test_streak_counts_consecutive_sessions():
 def test_stock_prompt_gives_points_high_low_streak_and_merged_ma_zone():
     prompt = market_page._stock_prompt(_REAL_REPORT)
     assert "1735.09 điểm (-3.88 điểm, -0.22%), phiên giảm thứ 3 liên tiếp" in prompt
-    assert "Cao nhất phiên 1744.89, thấp nhất phiên 1724.17" in prompt
+    assert "cao nhất phiên 1744.89, thấp nhất phiên 1724.17" in prompt
     assert "vùng 1.779,01-1.779,82 điểm" in prompt
     assert "khu vực kiểm định cân bằng" in prompt  # nằm trong danh sách cấm
 
@@ -1102,3 +1108,99 @@ async def test_stock_post_with_invented_numbers_is_retried_then_dropped(monkeypa
 
     assert await market_page._post_stock_report() is None
     assert published == [] and "512,4" in prompts[-1]
+
+
+
+# ─── Đợt chỉnh 2 từ bản xem thử ─────────────────────────────────────────────
+
+
+def test_parse_bars_keeps_open_and_indicators_expose_prev_close():
+    body = {"t": [1_700_000_000, 1_700_086_400], "o": [1730.0, 1739.5], "h": [1745.0, 1744.89],
+            "l": [1725.0, 1724.17], "c": [1738.97, 1735.09], "v": [1e8, 2e8]}
+    out = market_page._indicators("VNINDEX", market_page._parse_bars("VNINDEX", body))
+    assert out["open"] == 1739.5 and out["prev_close"] == 1738.97
+    assert out["change_points"] == -3.88
+
+
+def test_key_levels_merge_nearby_marks_and_pick_one_above_one_below():
+    above, below = market_page._key_levels(_REAL_REPORT["vnindex"])
+    assert above == ("đỉnh phiên", 1744.89, 1744.89)
+    assert below[0] == "biên dưới Bollinger + đáy phiên" and below[1:] == (1722.93, 1724.17)
+    prompt = market_page._stock_prompt(_REAL_REPORT)
+    assert "PHÍA TRÊN giá đóng cửa: 1.744,89 điểm (đỉnh phiên)" in prompt
+    assert "PHÍA DƯỚI giá đóng cửa: vùng 1.722,93-1.724,17 điểm" in prompt
+    assert "ĐÚNG 2 kịch bản" in prompt
+
+
+def test_intraday_story_and_indicator_units_are_flagged():
+    issues = market_page.stock_issues(
+        "Lực bán tăng về cuối phiên khiến chỉ số giảm. RSI(14) ở 37,2 điểm.", _REAL_REPORT
+    )
+    assert any("diễn biến trong phiên" in i for i in issues)
+    assert any("RSI/MACD" in i for i in issues)
+    ok = "Đóng cửa ở nửa trên biên độ phiên. RSI(14) ở 37,2, MACD ở -14,5. Đỉnh phiên 1.744,89 điểm."
+    assert market_page.stock_issues(ok, _REAL_REPORT) == []
+
+
+@pytest.mark.asyncio
+async def test_stock_text_with_intraday_story_is_rewritten(monkeypatch):
+    published, prompts = [], []
+    _stock_fakes(monkeypatch, published)
+    answers = iter([
+        "📌 Phiên giảm\n" + "Lực bán tăng về cuối phiên. " * 6,
+        "📌 Phiên giảm\n" + "Chỉ số đóng cửa ở nửa trên biên độ. " * 6,
+    ])
+
+    async def ask(prompt):
+        prompts.append(prompt)
+        return SimpleNamespace(text=next(answers))
+
+    monkeypatch.setattr(orchestrator, "ask", ask)
+
+    assert "nửa trên biên độ" in await market_page._post_stock_report()
+    assert "diễn biến trong phiên" in prompts[1]
+
+
+def test_digest_prompt_uses_fixed_groups_snapshot_and_no_repetition():
+    prompt = market_page._digest_prompt(
+        [_entry("Tin A", "tóm tắt")], "Phiên 09/10/2026: VN-Index đóng cửa 1.735,09 điểm."
+    )
+    assert "Quy định và sàn" in prompt and "Cổ đông và lãnh đạo" in prompt
+    assert "Không lặp ý" in prompt
+    assert "từ DNSE, KHÔNG phải từ CafeF" in prompt and "1.735,09" in prompt
+    assert "SỐ LIỆU PHIÊN" not in market_page._digest_prompt([_entry("Tin A", "tóm tắt")])
+
+
+@pytest.mark.asyncio
+async def test_news_footer_credits_dnse_only_when_index_numbers_are_used(monkeypatch):
+    _news_fakes(monkeypatch)
+
+    async def snapshot():
+        return "Phiên 09/10/2026: VN-Index đóng cửa 1.735,09 điểm, giảm 3,88 điểm (0,22%)."
+
+    monkeypatch.setattr(market_page, "_market_snapshot", snapshot)
+    text = await market_page._post_news(dry_run=True)
+    assert "📰 Nguồn: CafeF (cafef.vn); số liệu VN-Index: DNSE" in text
+
+    async def failing():
+        raise RuntimeError("DNSE lỗi")
+
+    monkeypatch.setattr(market_page, "_market_snapshot", failing)
+    text = await market_page._post_news(dry_run=True)
+    assert "📰 Nguồn: CafeF (cafef.vn)\n\n" in text  # DNSE lỗi: bản tin vẫn chạy
+
+
+@pytest.mark.asyncio
+async def test_market_snapshot_line_is_vietnamese_formatted(monkeypatch):
+    bars = _bars([1738.97, 1735.09], volume=819_300_000.0)
+
+    async def fake_fetch(client, gate, symbol, now):
+        assert symbol == "VNINDEX"
+        return bars
+
+    monkeypatch.setattr(market_page, "_fetch_bars", fake_fetch)
+    line = await _REAL_SNAPSHOT()
+    assert line == (
+        "Phiên 02/09/2026: VN-Index đóng cửa 1.735,09 điểm, giảm 3,88 điểm (0,22%), "
+        "khối lượng khớp 819,3 triệu cổ phiếu."
+    )

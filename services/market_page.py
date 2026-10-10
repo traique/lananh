@@ -222,7 +222,7 @@ def _num(values: list, index: int) -> float | None:
 def _parse_bars(symbol: str, body: dict) -> list[dict]:
     """DNSE trả giá cổ phiếu theo nghìn đồng, chỉ số theo điểm."""
     scale = 1 if symbol in _INDEX_SYMBOLS else 1000
-    t, h, l, c, v = (body.get(key) or [] for key in "thlcv")
+    t, o, h, l, c, v = (body.get(key) or [] for key in "tohlcv")
     bars = []
     for i in range(len(t)):
         close = _num(c, i)
@@ -232,6 +232,7 @@ def _parse_bars(symbol: str, body: dict) -> list[dict]:
         bars.append({
             "ts": ts,
             "date": datetime.fromtimestamp(ts, _VN_TZ).date().isoformat(),
+            "open": (_num(o, i) or close) * scale,
             "high": (_num(h, i) or close) * scale,
             "low": (_num(l, i) or close) * scale,
             "close": close * scale,
@@ -310,6 +311,8 @@ def _indicators(symbol: str, bars: list[dict]) -> dict:
             round((latest["close"] - prev["close"]) / prev["close"] * 100, 2) if prev else None
         ),
         "change_points": _round(latest["close"] - prev["close"]) if prev else None,
+        "open": _round(latest.get("open")),
+        "prev_close": _round(prev["close"]) if prev else None,
         "high": _round(latest["high"]),
         "low": _round(latest["low"]),
         "streak": _streak(closes),
@@ -379,6 +382,52 @@ def _ma_zone_note(vn: dict) -> str:
     return ""
 
 
+_LEVEL_MERGE_PCT = 0.003  # mốc cách nhau < 0,3% coi là một mốc
+
+
+def _key_levels(vn: dict) -> tuple[tuple[str, float, float] | None, tuple[str, float, float] | None]:
+    """(mốc gần nhất phía trên, phía dưới) giá đóng cửa: (tên, giá thấp, giá cao).
+
+    Các mốc (đỉnh/đáy phiên, MA20/MA50, biên Bollinger) cách nhau < 0,3% được gộp
+    thành một vùng để AI không viết hai kịch bản cho cùng một chỗ.
+    """
+    close = vn.get("close")
+    if not close:
+        return None, None
+    named = [
+        ("đỉnh phiên", vn.get("high")),
+        ("đáy phiên", vn.get("low")),
+        ("MA20", vn.get("ma20")),
+        ("MA50", vn.get("ma50")),
+        ("biên trên Bollinger", vn.get("bb_upper")),
+        ("biên dưới Bollinger", vn.get("bb_lower")),
+    ]
+    levels = sorted((price, name) for name, price in named if price)
+    zones: list[list] = []  # [giá thấp, giá cao, [tên]]
+    for price, name in levels:
+        if zones and (price - zones[-1][1]) / zones[-1][1] < _LEVEL_MERGE_PCT:
+            zones[-1][1] = price
+            zones[-1][2].append(name)
+        else:
+            zones.append([price, price, [name]])
+    above = [z for z in zones if z[0] > close * (1 + _LEVEL_MERGE_PCT / 2)]
+    below = [z for z in zones if z[1] < close * (1 - _LEVEL_MERGE_PCT / 2)]
+
+    def pack(zone):
+        return (" + ".join(zone[2]), zone[0], zone[1]) if zone else None
+
+    return pack(above[0] if above else None), pack(below[-1] if below else None)
+
+
+def _level_text(level: tuple[str, float, float] | None) -> str:
+    if level is None:
+        return "không có"
+    name, low, high = level
+    if high - low < 0.005:
+        return f"{_vn_number(low, 2)} điểm ({name})"
+    return f"vùng {_vn_number(low, 2)}-{_vn_number(high, 2)} điểm ({name})"
+
+
 def _streak_text(streak: int) -> str:
     if streak <= -2:
         return f"phiên giảm thứ {-streak} liên tiếp"
@@ -391,13 +440,16 @@ def _stock_prompt(report: dict) -> str:
     vn = report["vnindex"]
     volume = _vn_number(vn["volume"] / 1e6) + " triệu" if vn["volume"] else "N/A"
     session = _vn_date(report["report_date"])
+    above, below = _key_levels(vn)
     points = vn.get("change_points")
     points_text = f"{_signed(points)} điểm, " if points is not None else ""
     return f"""Bạn là chuyên viên phân tích của một công ty chứng khoán, viết bản nhận định cuối phiên cho Fanpage đầu tư. Người đọc là nhà đầu tư cá nhân, đọc trên điện thoại.
 
 DỮ LIỆU PHIÊN {session} (đây là TOÀN BỘ dữ liệu được dùng):
 - VN-Index đóng cửa {_fmt(vn['close'])} điểm ({points_text}{_signed(vn['change_pct'] or 0)}%), {_streak_text(vn.get('streak', 0))}.
-- Cao nhất phiên {_fmt(vn.get('high'))}, thấp nhất phiên {_fmt(vn.get('low'))} điểm.
+- Mở cửa {_fmt(vn.get('open'))}, cao nhất phiên {_fmt(vn.get('high'))}, thấp nhất phiên {_fmt(vn.get('low'))} điểm; đóng cửa phiên trước {_fmt(vn.get('prev_close'))} điểm.
+- Mốc gần nhất PHÍA TRÊN giá đóng cửa: {_level_text(above)}.
+- Mốc gần nhất PHÍA DƯỚI giá đóng cửa: {_level_text(below)}.
 - Khối lượng khớp {volume} cổ phiếu, bằng {_fmt(vn['vol_ratio'], 1)}x trung bình 20 phiên.
 - Vị trí đóng cửa trong biên độ phiên: {vn['close_position']} (1.0 = sát đỉnh phiên, 0.0 = sát đáy phiên).
 - MA20 = {_fmt(vn['ma20'])}, MA50 = {_fmt(vn['ma50'])}, RSI(14) = {_fmt(vn['rsi14'])}, MACD = {_fmt(vn['macd'])}, dải Bollinger {_fmt(vn['bb_lower'])} - {_fmt(vn['bb_upper'])}.{_ma_zone_note(vn)}
@@ -408,12 +460,14 @@ DỮ LIỆU PHIÊN {session} (đây là TOÀN BỘ dữ liệu được dùng):
 CẤU TRÚC BÀI:
 - Dòng đầu là tiêu đề, bắt đầu bằng 📌: một câu ngắn (tối đa 15 từ) nêu kết quả phiên kèm một con số chính, viết như tiêu đề báo (không viết hoa toàn bộ).
 - Tiếp theo là 4 phần, mỗi phần mở đầu bằng một dòng nhãn ngắn (không đánh số): "Diễn biến phiên", "Dòng tiền và độ rộng", "Kỹ thuật", "Cần theo dõi". Mỗi phần 2-4 câu hoặc vài gạch đầu dòng ngắn. Không lặp lại cùng một ý (ví dụ vị trí so với MA) ở hai phần.
-- "Cần theo dõi" nêu 2-3 kịch bản dạng "nếu... thì...", mỗi kịch bản gắn với MỘT mốc cụ thể (MA, biên Bollinger, đỉnh/đáy phiên) và nói rõ điều đó có nghĩa gì bằng lời thường (ví dụ "xu hướng ngắn hạn cải thiện", "áp lực giảm còn kéo dài"). Không dùng thuật ngữ rỗng như "khu vực kiểm định cân bằng", không viết câu không có thông tin như "vùng thấp hơn tiếp tục được theo dõi". Chỉ mô tả, không đưa ra hành động giao dịch.
+- "Cần theo dõi" gồm ĐÚNG 2 kịch bản dạng "nếu... thì...": một kịch bản với mốc gần nhất phía trên và một với mốc gần nhất phía dưới (đã cho ở phần dữ liệu, dùng đúng tên và giá). Mỗi kịch bản nói rõ điều đó có nghĩa gì bằng lời thường (ví dụ "xu hướng ngắn hạn cải thiện", "áp lực giảm còn kéo dài"), không lặp lại vế "nếu" ở vế "thì". Không dùng thuật ngữ rỗng như "khu vực kiểm định cân bằng", không viết câu không có thông tin như "vùng thấp hơn tiếp tục được theo dõi". Chỉ mô tả, không đưa ra hành động giao dịch.
 - Dài khoảng 250-350 từ.
 
 CÁCH DIỄN ĐẠT SỐ LIỆU:
 - Khối lượng quy ra triệu cổ phiếu; điểm số lấy 2 chữ số thập phân; RSI, MACD lấy 1 chữ số.
-- Vị trí đóng cửa diễn đạt bằng lời (ví dụ "đóng cửa ở nửa dưới biên độ phiên"), không nêu con số x/1.0.
+- Vị trí đóng cửa diễn đạt bằng lời, MỘT lần (ví dụ "đóng cửa ở nửa dưới biên độ phiên"), không nêu con số x/1.0.
+- RSI và MACD là chỉ báo, KHÔNG ghi đơn vị "điểm" (viết "RSI(14) ở 37,2", "MACD ở -14,5").
+- Dữ liệu chỉ có giá mở cửa, cao, thấp, đóng cửa: KHÔNG mô tả diễn biến theo thời gian trong phiên ("đầu phiên", "cuối phiên", "phiên chiều", "lực bán tăng dần", "về cuối phiên") vì không biết các mức giá xảy ra lúc nào.
 - CHỈ dùng số liệu ở trên, không tra cứu hay thêm số liệu nào khác. Không suy diễn nguyên nhân từ tin tức, khối ngoại hay yếu tố vĩ mô vì không có trong dữ liệu.
 - Không ghi chú thích hay số trích dẫn kiểu [1], [3].
 
@@ -453,6 +507,28 @@ async def _fetch_all_bars() -> dict[str, list[dict]]:
             *(_fetch_bars(client, gate, symbol, now) for symbol in _REPORT_SYMBOLS)
         )
     return dict(zip(_REPORT_SYMBOLS, results))
+
+
+async def _market_snapshot() -> str | None:
+    """Một dòng số liệu phiên gần nhất của VN-Index (DNSE) cho bản tin sáng.
+
+    Tin CafeF trong feed thường không ghi điểm số; có dòng này thì mục "Thị trường"
+    của bản tin có số cụ thể. Lỗi DNSE thì bản tin vẫn chạy, chỉ không có dòng này.
+    """
+    now = int(datetime.now(timezone.utc).timestamp())
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    async with http_client.scoped(timeout=30, headers=headers) as client:
+        bars = await _fetch_bars(client, asyncio.Semaphore(1), "VNINDEX", now)
+    if len(bars) < 2:
+        return None
+    vn = _indicators("VNINDEX", bars)
+    volume = f", khối lượng khớp {_vn_number(vn['volume'] / 1e6)} triệu cổ phiếu" if vn["volume"] else ""
+    return (
+        f"Phiên {_vn_date(vn['date'])}: VN-Index đóng cửa {_vn_number(vn['close'], 2)} điểm, "
+        f"{'tăng' if vn['change_points'] > 0 else 'giảm' if vn['change_points'] < 0 else 'đứng giá'} "
+        f"{_vn_number(abs(vn['change_points']), 2)} điểm ({_vn_number(abs(vn['change_pct']), 2)}%)"
+        f"{volume}."
+    )
 
 
 def _chart_config(bars: list[dict], report_date: str) -> dict:
@@ -585,9 +661,32 @@ def unknown_numbers(text: str, report: dict) -> list[str]:
     return unknown
 
 
-_UNKNOWN_NUMBER_NOTE = (
-    "\n\nLƯU Ý: bản trước có số liệu không nằm trong dữ liệu đã cho: {numbers}. "
-    "Chỉ dùng đúng các con số trong phần DỮ LIỆU PHIÊN, không tra cứu hay tự tính thêm."
+_INTRADAY_RE = re.compile(
+    r"\b(đầu phiên|cuối phiên|giữa phiên|phiên sáng|phiên chiều|về cuối|cuối ngày|"
+    r"tăng dần|giảm dần|lực bán tăng|lực mua tăng|nửa cuối phiên|nửa đầu phiên)\b",
+    re.IGNORECASE,
+)
+_INDICATOR_UNIT_RE = re.compile(r"\b(RSI|MACD)\b[^.\n;]{0,25}?\d[\d.,]*\s*điểm", re.IGNORECASE)
+
+
+def stock_issues(text: str, report: dict) -> list[str]:
+    """Lỗi cần AI viết lại: số liệu ngoài dữ liệu, mô tả diễn biến trong phiên mà
+    dữ liệu không có, RSI/MACD ghi đơn vị "điểm"."""
+    issues = []
+    numbers = unknown_numbers(text, report)
+    if numbers:
+        issues.append("số liệu không có trong dữ liệu: " + ", ".join(numbers[:10]))
+    intraday = sorted({m.group(0).lower() for m in _INTRADAY_RE.finditer(text)})
+    if intraday:
+        issues.append("mô tả diễn biến trong phiên mà dữ liệu không có: " + ", ".join(intraday))
+    if _INDICATOR_UNIT_RE.search(text):
+        issues.append('ghi RSI/MACD kèm đơn vị "điểm"')
+    return issues
+
+
+_ISSUES_NOTE = (
+    "\n\nLƯU Ý: bản trước bị loại vì {issues}. Viết lại, chỉ dùng đúng dữ liệu ở phần "
+    "DỮ LIỆU PHIÊN, không tra cứu hay tự tính thêm."
 )
 
 
@@ -623,13 +722,15 @@ async def _post_stock_report(dry_run: bool = False) -> str | None:
     if text is None:
         logger.warning("market_page: nhận định vẫn chứa khuyến nghị mua/bán, không đăng.")
         return None
-    foreign = unknown_numbers(text, report)
-    if foreign:
-        logger.warning("market_page: nhận định có số liệu lạ %s, hỏi lại AI.", foreign)
-        note = _UNKNOWN_NUMBER_NOTE.format(numbers=", ".join(foreign[:10]))
-        text = await _ask_clean(prompt + note, _clean_stock_text)
-        if text is None or unknown_numbers(text, report):
-            logger.warning("market_page: AI vẫn dùng số liệu ngoài dữ liệu, không đăng lượt này.")
+    issues = stock_issues(text, report)
+    if issues:
+        logger.warning("market_page: nhận định chưa đạt (%s), hỏi lại AI.", "; ".join(issues))
+        text = await _ask_clean(prompt + _ISSUES_NOTE.format(issues="; ".join(issues)), _clean_stock_text)
+        remaining = stock_issues(text, report) if text is not None else ["khuyến nghị"]
+        if remaining:
+            logger.warning(
+                "market_page: AI vẫn chưa đạt (%s), không đăng lượt này.", "; ".join(remaining)
+            )
             return None
     if len(text) < _MIN_POST_CHARS:
         logger.warning("market_page: AI trả nhận định bất thường (%d ký tự), bỏ.", len(text))
@@ -713,7 +814,14 @@ def _pick_entry(entries: list[_Entry], today) -> _Entry | None:
     return max(pool, key=_news_score) if pool else None
 
 
-def _digest_prompt(entries: list[_Entry]) -> str:
+_NEWS_GROUPS = (
+    "Thị trường", "Khối ngoại", "Cổ phiếu nổi bật", "Cổ đông và lãnh đạo", "Doanh nghiệp",
+    "Quy định và sàn",
+)
+_NEWS_GROUP_LIST = ", ".join(_NEWS_GROUPS)
+
+
+def _digest_prompt(entries: list[_Entry], snapshot: str | None = None) -> str:
     blocks = "".join(
         f"Tin {i}:\nTiêu đề: {e.title}\nTóm tắt: {e.summary or 'Không có tóm tắt'}\n---\n"
         for i, e in enumerate(entries, start=1)
@@ -723,7 +831,8 @@ def _digest_prompt(entries: list[_Entry]) -> str:
 CẤU TRÚC:
 - Dòng đầu là tiêu đề: tối đa 16 từ, nêu sự việc chính của thị trường, viết như tiêu đề báo (không viết hoa toàn bộ), không ghi ngày.
 - Đoạn mở 2-3 câu nêu diễn biến chính của thị trường. Ghi "theo CafeF" đúng một lần trong đoạn này.
-- Thân bài gồm 3-5 mục, mỗi mục mở đầu bằng dấu "-", 1-3 câu, gom các tin cùng chủ đề (thị trường chung, khối ngoại, cổ phiếu biến động lớn, doanh nghiệp/trái phiếu/cổ tức). Chỉ chọn tin quan trọng, bỏ tin vụn.
+- Thân bài gồm 3-5 mục, mỗi mục mở đầu bằng "- <Tên nhóm>: ", 1-3 câu. Tên nhóm CHỈ chọn trong danh sách sau, mỗi nhóm dùng tối đa một lần, nhóm không có tin thì bỏ: {_NEWS_GROUP_LIST}. "Quy định và sàn" dành cho tin của UBCKNN, HOSE, HNX, VSDC (danh sách ký quỹ, quy định giao dịch...); "Doanh nghiệp" gồm kết quả kinh doanh, cổ tức, phát hành trái phiếu, thông báo của doanh nghiệp. Chỉ chọn tin quan trọng, bỏ tin vụn.
+- Không lặp ý: sự việc đã nêu ở đoạn mở thì không kể lại ở các mục (hoặc ngược lại, chỉ nêu ngắn ở đoạn mở và để chi tiết ở mục).
 - Không có đoạn kết, không lời kêu gọi.
 
 NGUYÊN TẮC NỘI DUNG:
@@ -740,9 +849,19 @@ QUY ĐỊNH BẮT BUỘC (tuân thủ pháp lý):
 - Facebook không hỗ trợ Markdown: không dùng dấu * hay **.
 - KHÔNG tự viết phần "Nguồn" hay lời miễn trừ trách nhiệm ở cuối bài (hệ thống sẽ tự thêm).
 
-CÁC TIN CẦN TỔNG HỢP:
+{_snapshot_block(snapshot)}CÁC TIN CẦN TỔNG HỢP:
 
 {blocks}"""
+
+
+def _snapshot_block(snapshot: str | None) -> str:
+    if not snapshot:
+        return ""
+    return (
+        "SỐ LIỆU PHIÊN GẦN NHẤT (từ DNSE, KHÔNG phải từ CafeF - không viết \"theo CafeF\" "
+        "cho các số này; dùng cho mục \"Thị trường\", chép đúng số):\n"
+        f"{snapshot}\n\n"
+    )
 
 
 def _rewrite_prompt(article: str) -> str:
@@ -836,8 +955,11 @@ def _fresh_entries(entries: list[_Entry], now: datetime) -> list[_Entry]:
     return [e for e in entries if e.published and e.published >= cutoff]
 
 
-def _news_footer(today: date) -> str:
-    return f"📰 Nguồn: CafeF (cafef.vn)\n\n{_DISCLAIMER}"
+def _news_footer(today: date, with_index_data: bool = False) -> str:
+    source = "📰 Nguồn: CafeF (cafef.vn)"
+    if with_index_data:
+        source += "; số liệu VN-Index: DNSE"
+    return f"{source}\n\n{_DISCLAIMER}"
 
 
 def _news_image_mode() -> str:
@@ -885,7 +1007,12 @@ async def _post_news(dry_run: bool = False) -> str | None:
         if links and len(previous & set(links)) >= _NEWS_REPEAT_RATIO * len(links):
             raise MarketSkip("không có đủ tin mới so với bản tin trước")
 
-    text = await _ask_clean(_digest_prompt(fresh), _clean_news_text)
+    try:
+        snapshot = await _market_snapshot()
+    except Exception:
+        logger.warning("market_page: không lấy được số liệu VN-Index cho bản tin.", exc_info=True)
+        snapshot = None
+    text = await _ask_clean(_digest_prompt(fresh, snapshot), _clean_news_text)
     if text is None:
         logger.warning("market_page: bản tin vẫn chứa khuyến nghị mua/bán, không đăng.")
         return None
@@ -893,7 +1020,7 @@ async def _post_news(dry_run: bool = False) -> str | None:
         logger.warning("market_page: AI trả bản tin bất thường (%d ký tự), bỏ.", len(text))
         return None
     today = datetime.now(_VN_TZ).date()
-    text = f"{text}\n\n{_news_footer(today)}"
+    text = f"{text}\n\n{_news_footer(today, with_index_data=bool(snapshot))}"
     if dry_run:
         return text
 
