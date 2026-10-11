@@ -3,13 +3,16 @@
 import asyncio
 import base64
 import binascii
+import functools
 import hmac
+import ipaddress
 import logging
 import os
+import time
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from pydantic import BaseModel, Field
 
 import messages as messages_module
 from channels import facebook_repository, zalo_repository, zalo_session, zalo_users
@@ -24,7 +27,8 @@ from channels.contracts import (
 from channels.facebook_commands import maybe_handle_facebook_command, prepare_post
 from channels.group_commands import maybe_handle_group_command
 from channels.zalo_text import to_plain_text
-from core import idempotency
+from core import alerts, idempotency
+from core.envutil import env_on
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.channel_image_service import MAX_ZALO_IMAGE_BYTES, handle_channel_image
 from services import facebook_dedup, facebook_intake_stats
@@ -34,7 +38,80 @@ from services.concurrency import assistant_turn, channel_message_turn
 from services.reminder_delivery import NotificationTarget, notification_target
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/internal/zalo", tags=["zalo-internal"])
+
+# Bridge chỉ dành cho zalo-gateway chạy CÙNG container (gọi qua loopback). Trên
+# Render cổng web là public nên ngoài bridge secret còn chặn theo địa chỉ gọi tới.
+_DEFAULT_ALLOWED_HOSTS = "127.0.0.1,::1"
+# Request đi qua proxy (Render, Cloudflare...) luôn mang 1 trong các header này;
+# gateway gọi thẳng loopback thì không. Chặn cả khi uvicorn tin proxy
+# (FORWARDED_ALLOW_IPS) và đã đổi client.host thành IP do header khai báo.
+_FORWARDED_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip")
+_REJECT_LOG_INTERVAL_SEC = 60.0
+_last_reject_log = 0.0
+
+
+@functools.lru_cache(maxsize=8)
+def _parse_allowed_hosts(raw: str) -> tuple[tuple, frozenset[str]]:
+    """Tách danh sách (vd "127.0.0.1,::1,10.0.0.0/8,testclient") thành mạng IP + tên host."""
+    networks, names = [], set()
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            names.add(item.lower())
+    return tuple(networks), frozenset(names)
+
+
+def _host_allowed(host: str | None) -> bool:
+    if not host:
+        return False
+    raw = os.getenv("ZALO_BRIDGE_ALLOWED_HOSTS", "").strip() or _DEFAULT_ALLOWED_HOSTS
+    networks, names = _parse_allowed_hosts(raw)
+    if host.lower() in names:
+        return True
+    try:
+        addr = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    # Socket dual-stack báo IPv4 dạng "::ffff:127.0.0.1".
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped
+    return any(addr in network for network in networks)
+
+
+def _env_flag(name: str) -> bool:
+    """Cờ mặc định TẮT; đặt biến = 1/true để bật."""
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _reject_caller(host: str | None, reason: str) -> None:
+    global _last_reject_log
+    now = time.monotonic()
+    # Bot dò quét có thể gọi liên tục: log tối đa 1 dòng/phút.
+    if now - _last_reject_log >= _REJECT_LOG_INTERVAL_SEC:
+        _last_reject_log = now
+        logger.warning("Chặn request /internal/zalo từ %s (%s).", host or "?", reason)
+    raise HTTPException(403, "Forbidden")
+
+
+async def _require_local_caller(request: Request) -> None:
+    host = request.client.host if request.client else None
+    if not _host_allowed(host):
+        _reject_caller(host, "địa chỉ ngoài ZALO_BRIDGE_ALLOWED_HOSTS")
+    if not _env_flag("ZALO_BRIDGE_ALLOW_FORWARDED") and any(
+        name in request.headers for name in _FORWARDED_HEADERS
+    ):
+        _reject_caller(host, "request đi qua proxy")
+
+
+router = APIRouter(
+    prefix="/internal/zalo",
+    tags=["zalo-internal"],
+    dependencies=[Depends(_require_local_caller)],
+)
 
 
 class SessionPayload(BaseModel):
@@ -48,13 +125,13 @@ class ControllerPayload(BaseModel):
     controllerId: str
 
 
+class OutboxFailurePayload(BaseModel):
+    error: str = ""
+    chunks_sent: int = Field(default=0, ge=0)
+
+
 def _secret():
     return os.getenv("ZALO_BRIDGE_SECRET", "").strip()
-
-
-def _env_on(name: str) -> bool:
-    """Bộ lọc mặc định bật; đặt biến = 0 để tắt."""
-    return os.getenv(name, "1").strip() != "0"
 
 
 def _auth(value):
@@ -148,10 +225,14 @@ async def receive(
 ):
     await _auth_sender(x_zalo_bridge_secret, payload.sender_id)
     async with channel_message_turn(payload.account_id, payload.message_id, "text"):
-        with notification_target(NotificationTarget(
-            "zalo", payload.conversation_id, payload.account_id,
-            event_key=f"zalo:{payload.account_id}:{payload.message_id}",
-        )):
+        with notification_target(
+            NotificationTarget(
+                "zalo",
+                payload.conversation_id,
+                payload.account_id,
+                event_key=f"zalo:{payload.account_id}:{payload.message_id}",
+            )
+        ):
             return await _receive_text(payload)
 
 
@@ -231,7 +312,10 @@ async def image_prompt(
     x_zalo_account_id: str = Header(default="zalo-bot"),
 ):
     await _auth_sender(x_zalo_bridge_secret, x_zalo_sender_id)
-    size = int(request.headers.get("content-length", "0") or 0)
+    try:
+        size = int(request.headers.get("content-length", "0") or 0)
+    except ValueError:
+        raise HTTPException(400, "Invalid Content-Length")
     if size > MAX_ZALO_IMAGE_BYTES:
         raise HTTPException(413, "Image too large")
     body = await request.body()
@@ -315,8 +399,6 @@ async def group_message(
     return Response(status_code=204)
 
 
-
-
 @router.post("/facebook-group-post", status_code=204)
 async def facebook_group_post(
     payload: ZaloFacebookPostRequest,
@@ -325,7 +407,10 @@ async def facebook_group_post(
     _auth(x_zalo_bridge_secret)
     media: list[tuple[str, bytes]] = []
     total_bytes = 0
-    max_image_bytes = int(os.getenv("ZALO_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
+    try:
+        max_image_bytes = int(os.getenv("ZALO_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
+    except ValueError:
+        max_image_bytes = 8 * 1024 * 1024
     for item in payload.media:
         try:
             body = base64.b64decode(item.data_b64, validate=True)
@@ -340,17 +425,20 @@ async def facebook_group_post(
     if not payload.text.strip() and not media:
         raise HTTPException(400, "Empty Facebook post")
     # Lọc ở đây (sau khi gateway đã gộp ảnh + chữ cùng người gửi). Trả 204 chứ không báo lỗi:
-    # gateway coi mọi mã khác 2xx là lỗi tạm và thử lại mãi bài đó mỗi 15 giây.
+    # gateway thử lại bài bị lỗi (4xx: 1 lần rồi bỏ, 5xx/mạng: backoff có giới hạn).
     reason = skip_reason(
         payload.text,
         bool(media),
-        require_photo_and_caption=_env_on("FACEBOOK_REQUIRE_PHOTO_AND_CAPTION"),
-        skip_voucher=_env_on("FACEBOOK_SKIP_VOUCHER_POSTS"),
+        require_photo_and_caption=env_on("FACEBOOK_REQUIRE_PHOTO_AND_CAPTION"),
+        skip_voucher=env_on("FACEBOOK_SKIP_VOUCHER_POSTS"),
     )
     if reason:
         logger.info(
             "Bỏ qua bài Zalo (%s) nhóm=%s người gửi=%s: %.60s",
-            reason, payload.group_id, payload.sender_id, " ".join(payload.text.split()),
+            reason,
+            payload.group_id,
+            payload.sender_id,
+            " ".join(payload.text.split()),
         )
         facebook_intake_stats.record(reason, payload.text)
         return Response(status_code=204)
@@ -380,7 +468,10 @@ async def facebook_group_post(
     except facebook_repository.DuplicatePostError as exc:
         logger.info(
             "Bỏ qua bài Zalo trùng (%s) nhóm=%s người gửi=%s: %.60s",
-            exc, payload.group_id, payload.sender_id, " ".join(payload.text.split()),
+            exc,
+            payload.group_id,
+            payload.sender_id,
+            " ".join(payload.text.split()),
         )
         facebook_intake_stats.record(f"trùng lặp: {exc.match.reason}", payload.text)
         return Response(status_code=204)
@@ -403,6 +494,7 @@ async def facebook_group_post(
         logger.warning("Dọn dữ liệu Facebook cũ lỗi; thử lại lần sau.", exc_info=True)
     return Response(status_code=204)
 
+
 @router.get("/outbox/{account_id}/{recipient_id}", response_model=list[ZaloOutboxItem])
 async def outbox(
     account_id: str,
@@ -424,6 +516,43 @@ async def ack(
     _auth(x_zalo_bridge_secret)
     await zalo_repository.mark_outbox_sent(item_id)
     return Response(status_code=204)
+
+
+@router.post("/outbox/{item_id}/failed")
+async def outbox_failed(
+    item_id: int,
+    payload: OutboxFailurePayload,
+    x_zalo_bridge_secret: str | None = Header(default=None),
+):
+    """Gateway báo gửi 1 tin outbox lỗi (sau khi đã gửi được ``chunks_sent`` đoạn).
+
+    Tin được hẹn thử lại theo backoff; quá ZALO_OUTBOX_MAX_ATTEMPTS lần thì bỏ
+    cuộc và báo chủ bot 1 lần, các tin phía sau không bị chặn."""
+    _auth(x_zalo_bridge_secret)
+    error = " ".join(payload.error.split())[: zalo_repository.OUTBOX_ERROR_MAX_CHARS]
+    error = error or "lỗi không rõ"
+    row = await zalo_repository.mark_outbox_failed(item_id, error, payload.chunks_sent)
+    if row is None:
+        return {"status": "ignored"}
+    if row["failed"]:
+        logger.warning(
+            "Bỏ cuộc tin Zalo outbox #%s tới %s sau %s lần lỗi: %s",
+            item_id,
+            row["recipient_id"],
+            row["attempts"],
+            error,
+        )
+        alerts.send(
+            messages_module.ZALO_OUTBOX_FAILED_ALERT.format(
+                item_id=item_id,
+                recipient=row["recipient_id"],
+                attempts=row["attempts"],
+                error=error[:200],
+            )
+        )
+        return {"status": "failed", "attempts": row["attempts"]}
+    logger.info("Tin Zalo outbox #%s lỗi lần %s, sẽ thử lại: %s", item_id, row["attempts"], error)
+    return {"status": "retry", "attempts": row["attempts"]}
 
 
 @router.get("/outbox/{account_id}")

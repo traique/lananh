@@ -13,6 +13,21 @@ def _retention_days() -> int:
         return 30
 
 
+# Outbox: gateway báo gửi lỗi -> hẹn thử lại sau BASE * 2^(lần lỗi - 1) giây
+# (trần MAX), quá ZALO_OUTBOX_MAX_ATTEMPTS lần thì bỏ cuộc (failed_at) để 1 tin
+# không gửi được (vd người nhận chặn bot) không chặn mọi tin phía sau.
+OUTBOX_RETRY_BASE_SEC = 120
+OUTBOX_RETRY_MAX_SEC = 1800
+OUTBOX_ERROR_MAX_CHARS = 500
+
+
+def outbox_max_attempts() -> int:
+    try:
+        return max(1, min(20, int(os.getenv("ZALO_OUTBOX_MAX_ATTEMPTS", "5"))))
+    except ValueError:
+        return 5
+
+
 async def ensure_schema() -> None:
     await db.ensure_migrations()
 
@@ -248,7 +263,8 @@ async def get_pending_outbox(
         """
         SELECT id, content
         FROM zalo_outbox
-        WHERE account_id = $1 AND recipient_id = $2 AND sent_at IS NULL
+        WHERE account_id = $1 AND recipient_id = $2
+          AND sent_at IS NULL AND failed_at IS NULL
         ORDER BY id
         LIMIT $3
         """,
@@ -258,25 +274,51 @@ async def get_pending_outbox(
     )
 
 
-async def enqueue_reminder(reminder_id: int, account_id: str, recipient_id: str, content: str) -> None:
+async def enqueue_reminder(
+    reminder_id: int, account_id: str, recipient_id: str, content: str
+) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
         """INSERT INTO zalo_outbox (account_id, recipient_id, content, reminder_id)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (reminder_id) WHERE reminder_id IS NOT NULL DO NOTHING""",
-        account_id, recipient_id, content, reminder_id,
+        account_id,
+        recipient_id,
+        content,
+        reminder_id,
     )
 
 
+@db.with_reconnect
 async def get_account_outbox(account_id: str, limit: int = 20):
+    """Tin chờ gửi của 1 tài khoản bot, cũ trước.
+
+    Bỏ qua tin đã bỏ cuộc (failed_at) và tin đang chờ backoff. Giữ thứ tự theo
+    TỪNG người nhận: tin sau của người có tin trước đang chờ thử lại cũng đợi
+    (không chen lên trước phần còn lại của 1 tin dài), người nhận khác vẫn đi.
+    """
     await ensure_schema()
     return await (await db.get_pool()).fetch(
-        """SELECT id, recipient_id, content FROM zalo_outbox
-        WHERE account_id = $1 AND sent_at IS NULL ORDER BY id LIMIT $2""",
-        account_id, limit,
+        """
+        SELECT o.id, o.recipient_id, o.content, o.chunks_sent
+        FROM zalo_outbox o
+        WHERE o.account_id = $1 AND o.sent_at IS NULL AND o.failed_at IS NULL
+          AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= now())
+          AND NOT EXISTS (
+              SELECT 1 FROM zalo_outbox e
+              WHERE e.account_id = o.account_id AND e.recipient_id = o.recipient_id
+                AND e.id < o.id AND e.sent_at IS NULL AND e.failed_at IS NULL
+                AND e.next_attempt_at > now()
+          )
+        ORDER BY o.id
+        LIMIT $2
+        """,
+        account_id,
+        limit,
     )
 
 
+@db.with_reconnect
 async def mark_outbox_sent(item_id: int) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
@@ -287,6 +329,54 @@ async def mark_outbox_sent(item_id: int) -> None:
         UPDATE reminders SET sent = true, claimed_at = NULL
         WHERE id IN (SELECT reminder_id FROM delivered WHERE reminder_id IS NOT NULL)""",
         item_id,
+    )
+
+
+@db.with_reconnect(idempotent=False)
+async def mark_outbox_failed(item_id: int, error: str, chunks_sent: int = 0):
+    """Ghi 1 lần gửi lỗi: tăng attempts, lưu lỗi + số đoạn đã gửi được, hẹn giờ
+    thử lại; đủ ``outbox_max_attempts()`` lần thì đặt failed_at (bỏ cuộc).
+
+    Tin nhắc việc bị bỏ cuộc được đánh dấu sent (đã xử lý xong): scheduler
+    không claim lại mãi một reminder mà outbox (unique theo reminder_id) sẽ
+    không bao giờ tạo lại tin. Trả record (id, recipient_id, attempts, failed,
+    reminder_id) hoặc None nếu tin không còn chờ gửi (đã gửi/đã bỏ cuộc/không có).
+    """
+    await ensure_schema()
+    return await (await db.get_pool()).fetchrow(
+        """
+        WITH bumped AS (
+            UPDATE zalo_outbox
+            SET attempts = attempts + 1,
+                last_error = $2::text,
+                chunks_sent = GREATEST(chunks_sent, $3::integer),
+                failed_at = CASE WHEN attempts + 1 >= $4::integer THEN now() END,
+                next_attempt_at = CASE
+                    WHEN attempts + 1 >= $4::integer THEN NULL
+                    ELSE now() + LEAST(
+                        $6::double precision,
+                        $5::double precision * power(2, attempts)
+                    ) * INTERVAL '1 second'
+                END
+            WHERE id = $1 AND sent_at IS NULL AND failed_at IS NULL
+            RETURNING id, recipient_id, attempts, failed_at, reminder_id
+        ),
+        abandoned AS (
+            UPDATE reminders SET sent = true, claimed_at = NULL
+            WHERE id IN (
+                SELECT reminder_id FROM bumped
+                WHERE failed_at IS NOT NULL AND reminder_id IS NOT NULL
+            )
+        )
+        SELECT id, recipient_id, attempts, failed_at IS NOT NULL AS failed, reminder_id
+        FROM bumped
+        """,
+        item_id,
+        (error or "")[:OUTBOX_ERROR_MAX_CHARS],
+        max(0, int(chunks_sent or 0)),
+        outbox_max_attempts(),
+        OUTBOX_RETRY_BASE_SEC,
+        OUTBOX_RETRY_MAX_SEC,
     )
 
 

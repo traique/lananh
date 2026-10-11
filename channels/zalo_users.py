@@ -28,6 +28,7 @@ muốn tiếp tục đúng mạch hội thoại Telegram khi chat qua Zalo, họ
 Mọi id Zalo CHƯA pair khi nhắn cho bot đều bị bỏ qua ÂM THẦM (không lộ ra là
 bot chưa cấu hình xong cho người lạ) - chỉ báo cho owner Telegram qua
 send_alert(), owner tự quyết định có pair hay không."""
+
 from __future__ import annotations
 
 import asyncio
@@ -49,7 +50,25 @@ VALID_STATUSES = {STATUS_ACTIVE, STATUS_SUSPENDED}
 
 _alert_callback: Optional[Callable[[str], Awaitable[None]]] = None
 _background_tasks: set[asyncio.Task] = set()
-_notified_unpaired: set[str] = set()
+# id chưa pair đã báo owner (dict dùng như set có thứ tự chèn) - có trần để
+# 1 đợt spam từ hàng nghìn id lạ không làm phình RAM; vượt trần thì quên id cũ
+# nhất (cùng lắm owner nhận lại 1 cảnh báo cho id đó).
+_NOTIFIED_UNPAIRED_MAX = 1000
+_notified_unpaired: dict[str, None] = {}
+
+# Dữ liệu cá nhân khoá theo internal_user_id (cột telegram_user_id) - /zaloxoa
+# xoá sạch cùng lúc với pairing (chat, trí nhớ, ghi chú, lịch sử, danh mục).
+# user_calls (chỉ đếm lượt gọi, không có nội dung) được giữ cho thống kê.
+_USER_DATA_TABLES = (
+    "chat_messages",
+    "user_facts",
+    "user_memory_summary",
+    "user_memory_highlights",
+    "notes",
+    "prompts",
+    "stock_holdings",
+    "stock_closed_positions",
+)
 
 
 def set_alert_callback(fn: Callable[[str], Awaitable[None]]) -> None:
@@ -75,7 +94,9 @@ def notify_unpaired(external_id: str, display_name: str = "") -> None:
     luôn bị chặn ở tầng resolve())."""
     if not external_id or external_id in _notified_unpaired:
         return
-    _notified_unpaired.add(external_id)
+    _notified_unpaired[external_id] = None
+    while len(_notified_unpaired) > _NOTIFIED_UNPAIRED_MAX:
+        _notified_unpaired.pop(next(iter(_notified_unpaired)))
     ten = f" ({display_name})" if display_name else ""
     text = (
         f"🔔 Zalo id={external_id}{ten} vừa nhắn cho bot nhưng chưa được cấp quyền.\n"
@@ -116,6 +137,7 @@ def _row_to_user(row) -> ZaloUser:
     )
 
 
+@db.with_reconnect
 async def resolve(external_id: str) -> Optional[ZaloUser]:
     await ensure_schema()
     row = await (await db.get_pool()).fetchrow(
@@ -126,6 +148,7 @@ async def resolve(external_id: str) -> Optional[ZaloUser]:
     return _row_to_user(row) if row else None
 
 
+@db.with_reconnect
 async def _upsert(external_id: str, display_name: str, role: str) -> ZaloUser:
     await ensure_schema()
     row = await (await db.get_pool()).fetchrow(
@@ -162,6 +185,7 @@ async def pair_as_admin(external_id: str, display_name: str = "") -> ZaloUser:
     return await _upsert(external_id, display_name, ROLE_ADMIN)
 
 
+@db.with_reconnect
 async def demote_to_user(external_id: str) -> bool:
     """Hạ quyền 1 admin về user (thành viên thường). Trả False nếu chưa pair."""
     await ensure_schema()
@@ -172,6 +196,7 @@ async def demote_to_user(external_id: str) -> bool:
     return result != "UPDATE 0"
 
 
+@db.with_reconnect
 async def set_status(external_id: str, status: str) -> bool:
     if status not in VALID_STATUSES:
         raise ValueError(f"status không hợp lệ: {status}")
@@ -184,15 +209,42 @@ async def set_status(external_id: str, status: str) -> bool:
     return result != "UPDATE 0"
 
 
-async def remove(external_id: str) -> bool:
-    await ensure_schema()
-    result = await (await db.get_pool()).execute(
-        "DELETE FROM zalo_users WHERE external_id = $1", external_id
+async def _delete_user_data(conn, internal_user_id: int) -> None:
+    """Xoá mọi dữ liệu cá nhân của 1 Zalo user (trong transaction của caller).
+
+    Chỉ nhận id ÂM (dải Zalo) - không bao giờ được đụng dữ liệu chủ bot."""
+    if internal_user_id >= 0:
+        raise ValueError("internal_user_id của Zalo user phải âm")
+    # Tin nhắc việc đang chờ gửi qua outbox cũng bỏ (FK chỉ SET NULL, tin vẫn sẽ đi).
+    await conn.execute(
+        "DELETE FROM zalo_outbox WHERE sent_at IS NULL AND reminder_id IN "
+        "(SELECT id FROM reminders WHERE telegram_user_id = $1)",
+        internal_user_id,
     )
-    _notified_unpaired.discard(external_id)
-    return result != "DELETE 0"
+    await conn.execute("DELETE FROM reminders WHERE telegram_user_id = $1", internal_user_id)
+    for table in _USER_DATA_TABLES:
+        await conn.execute(f"DELETE FROM {table} WHERE telegram_user_id = $1", internal_user_id)
+    await conn.execute("DELETE FROM settings WHERE key = $1", f"memory_enabled_{internal_user_id}")
 
 
+@db.with_reconnect(idempotent=False)
+async def remove(external_id: str) -> bool:
+    """Gỡ pairing VÀ xoá toàn bộ dữ liệu cá nhân của user đó (1 transaction)."""
+    await ensure_schema()
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            internal_user_id = await conn.fetchval(
+                "DELETE FROM zalo_users WHERE external_id = $1 RETURNING internal_user_id",
+                external_id,
+            )
+            if internal_user_id is not None:
+                await _delete_user_data(conn, int(internal_user_id))
+    _notified_unpaired.pop(external_id, None)
+    return internal_user_id is not None
+
+
+@db.with_reconnect
 async def list_users() -> list[ZaloUser]:
     await ensure_schema()
     rows = await (await db.get_pool()).fetch(
