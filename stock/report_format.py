@@ -264,24 +264,35 @@ _TASK_DONE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Cụm từ MẠNH chỉ xuất hiện trong câu disclaimer. Bản cũ còn tính cả cụm
+# lỏng ("cân nhắc kỹ trước khi", "quyết định cuối cùng", "khuyến nghị đầu
+# tư") nên 1 câu kết luận kiểu "MUA FPT, anh cân nhắc kỹ trước khi vào lệnh"
+# bị coi là disclaimer: đoạn phân tích phía sau chứa "khuyến nghị đầu tư" bị
+# XOÁ, còn disclaimer chuẩn thì không được thêm.
 _DISCLAIMER_HINTS = (
     "chỉ là tham khảo",
     "chỉ mang tính tham khảo",
+    "mang tính tham khảo",
     "không phải khuyến nghị",
     "không phải là khuyến nghị",
+    "không phải lời khuyên",
     "tự chịu trách nhiệm",
-    "quyết định cuối cùng",
-    "cân nhắc kỹ trước khi",
-    "khuyến nghị đầu tư",
     "không đảm bảo kết quả",
     "trong quá khứ không đảm bảo",
+)
+# Đoạn chứa từ hành động/kế hoạch hoặc chữ số là NỘI DUNG phân tích, không
+# bao giờ bị coi là disclaimer thuần (không bao giờ bị xoá).
+_ANALYSIS_WORDS_RE = re.compile(
+    r"(?<!\w)(mua|bán|giữ|gom|đứng ngoài|theo dõi|cắt lỗ|chốt lời|kết luận|vùng|stop|target|"
+    r"buy|sell|hold|watch|no_trade|tỷ trọng|r:r)(?!\w)",
+    re.IGNORECASE,
 )
 
 # Disclaimer CỐ ĐỊNH, không phụ thuộc LLM diễn giải lại mỗi lần. Giữ câu
 # chữ trung tính vì backtest là dữ liệu TÙY CHỌN: runtime Render hiện chặn
 # heavy backtest và báo cáo chỉ được nhắc backtest khi có thống kê thật cho
 # đúng setup. clean_analysis_output() lo việc LLM tự thêm/lặp disclaimer;
-# ensure_disclaimer() bên dưới lo trường hợp LLM quên dòng cảnh báo.
+# ensure_disclaimer() bên dưới LUÔN đặt đúng 1 dòng chuẩn này ở cuối.
 STANDARD_DISCLAIMER = (
     "Thông tin trên chỉ mang tính tham khảo, không phải khuyến nghị đầu tư; "
     "quyết định cuối cùng và rủi ro thuộc về anh nha."
@@ -289,14 +300,20 @@ STANDARD_DISCLAIMER = (
 
 # Đoạn dài hơn ngưỡng này được coi là nội dung phân tích thật, không phải
 # disclaimer - tránh xoá oan một đoạn lập luận chỉ vì có chữ "tham khảo".
-_DISCLAIMER_MAX_LEN = 400
+_DISCLAIMER_MAX_LEN = 300
 
 
 def _is_disclaimer(block: str) -> bool:
+    """Đoạn THUẦN disclaimer: ngắn, có cụm disclaimer mạnh, không có chữ số
+    và không có từ hành động/kế hoạch. Chỉ đoạn thuần mới được gộp/xoá."""
     if len(block) > _DISCLAIMER_MAX_LEN:
         return False
+    if any(ch.isdigit() for ch in block):
+        return False
     lowered = block.lower()
-    return any(hint in lowered for hint in _DISCLAIMER_HINTS)
+    if not any(hint in lowered for hint in _DISCLAIMER_HINTS):
+        return False
+    return not _ANALYSIS_WORDS_RE.search(block)
 
 
 def clean_analysis_output(text: str) -> str:
@@ -327,17 +344,120 @@ def clean_analysis_output(text: str) -> str:
 
 
 def ensure_disclaimer(text: str) -> str:
-    """Đảm bảo LUÔN có đúng 1 dòng disclaimer chuẩn ở cuối báo cáo.
+    """LUÔN kết thúc báo cáo bằng đúng 1 dòng STANDARD_DISCLAIMER.
 
-    Gọi SAU clean_analysis_output(). clean_analysis_output() xử lý trường
-    hợp LLM thêm disclaimer NHIỀU LẦN; hàm này xử lý trường hợp ngược lại -
-    LLM bỏ quên hoàn toàn, hoặc kết quả rơi vào nhánh fallback không qua
-    LLM. Không đụng vào bất kỳ con số/kết luận nào, chỉ thêm 1 dòng cố định
-    nếu chưa có block nào khớp _DISCLAIMER_HINTS.
+    Gọi SAU clean_analysis_output(). Các đoạn disclaimer THUẦN do LLM tự viết
+    (xem _is_disclaimer - tiêu chí chặt, không bao giờ khớp đoạn phân tích)
+    được thay bằng dòng chuẩn để không lặp; mọi đoạn nội dung khác giữ nguyên.
+    Idempotent: gọi nhiều lần vẫn chỉ có 1 dòng chuẩn ở cuối.
     """
     if not text:
         return text
     blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
-    if any(_is_disclaimer(b) for b in blocks):
-        return text
-    return f"{text}\n\n{STANDARD_DISCLAIMER}"
+    kept = [b for b in blocks if b != STANDARD_DISCLAIMER and not _is_disclaimer(b)]
+    if not kept:
+        return STANDARD_DISCLAIMER
+    return "\n\n".join(kept) + "\n\n" + STANDARD_DISCLAIMER
+
+
+# ─── Kiểm tra bản diễn giải LLM với Decision của policy ─────────────────────
+# Hợp đồng "action và mọi con số do stock/policy.py chốt" trước đây chỉ là
+# câu chữ trong prompt. Các hàm dưới đây là lớp chặn TRONG CODE: phát hiện
+# nhãn hành động mâu thuẫn, ngôn ngữ kế hoạch giao dịch ở chế độ chỉ tham
+# khảo, và mốc giá không có trong dữ liệu hệ thống đã cấp.
+
+_ACTION_LABEL_PATTERNS: dict[str, tuple[str, ...]] = {
+    # Nhãn VIẾT HOA (cách LLM nêu kết luận) + tên action tiếng Anh.
+    "BUY": (r"(?<![\w])BUY(?![\w])", r"(?<![\w])MUA(?![\w])"),
+    "SELL": (r"(?<![\w])SELL(?![\w])", r"(?<![\w])BÁN(?![\w])"),
+    "HOLD": (r"(?<![\w])HOLD(?![\w])", r"(?<![\w])GIỮ(?![\w])"),
+    "WATCH": (r"(?<![\w])WATCH(?![\w])", r"(?<![\w])THEO DÕI(?![\w])"),
+    "NO_TRADE": (r"(?<![\w])NO_TRADE(?![\w])", r"(?<![\w])ĐỨNG NGOÀI(?![\w])"),
+}
+# Khuyến nghị bằng chữ thường - chỉ các cụm rõ nghĩa "khuyên làm".
+_ADVICE_PATTERNS: dict[str, tuple[str, ...]] = {
+    "BUY": (r"(?<!\w)nên (?:mua|gom|giải ngân|vào lệnh)(?!\w)", r"(?<!\w)canh mua(?!\w)"),
+    # Không gồm "nên cắt lỗ/chốt lời": kế hoạch BUY/HOLD hợp lệ luôn có câu
+    # "nếu thủng stop thì nên cắt lỗ", "chốt 1/2 tại T1".
+    "SELL": (r"(?<!\w)nên (?:bán|thoát hàng|thoát vị thế)(?!\w)",),
+}
+_NEGATION_WORDS = ("không", "chưa", "đừng", "tránh", "chẳng", "not ", "no ", "chớ")
+# Câu điều kiện ("nếu thủng 48.500 thì nên bán") là kịch bản, không phải đổi
+# action - chỉ bỏ qua khi kiểm action của bản ĐẦY ĐỦ; bản tham khảo cho thành
+# viên vẫn cấm cả câu điều kiện có vùng giá/khuyến nghị.
+_CONDITIONAL_WORDS = ("nếu", "khi ", "trường hợp", "kịch bản")
+_NEGATION_WINDOW = 18
+_CONDITIONAL_WINDOW = 60
+_PLAN_LANGUAGE_RE = re.compile(
+    r"(?<!\w)(vùng mua|điểm mua|giá mua|cắt lỗ|chốt lời|stop[- ]?loss|stop|target|"
+    r"take profit|r:r|tỷ trọng (?:đề xuất|tham khảo|vị thế|giải ngân|mua)|% ?nav|"
+    r"nên mua|nên bán|nên giữ|nên gom|nên cắt|nên chốt)(?!\w)",
+    re.IGNORECASE,
+)
+_PRICE_NUMBER_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:\.\d{3})+|\d{5,7})(?:,\d+)?(?![\d.])")
+
+
+def _negated(text: str, start: int) -> bool:
+    window = text[max(0, start - _NEGATION_WINDOW) : start].lower()
+    return any(word in window for word in _NEGATION_WORDS)
+
+
+def _conditional(text: str, start: int) -> bool:
+    """Cụm nằm trong câu điều kiện/kịch bản (tính từ đầu câu hiện tại)."""
+    window = text[max(0, start - _CONDITIONAL_WINDOW) : start]
+    # Chỉ tách câu ở dấu câu + khoảng trắng: "48.500" là số, không phải hết câu.
+    sentence = re.split(r"[.!?](?:\s|$)|\n", window)[-1].lower()
+    return any(word in sentence for word in _CONDITIONAL_WORDS)
+
+
+def find_action_conflicts(text: str, allowed_actions: set[str] | frozenset[str]) -> list[str]:
+    """Các nhãn/cụm khuyến nghị hành động trong `text` KHÔNG thuộc
+    `allowed_actions` (bỏ qua chỗ bị phủ định: "không MUA đuổi", "chưa nên mua").
+    Trả list mô tả ngắn (rỗng = không mâu thuẫn)."""
+    if not text:
+        return []
+    conflicts: list[str] = []
+    for action, patterns in _ACTION_LABEL_PATTERNS.items():
+        if action in allowed_actions:
+            continue
+        for pattern in patterns:
+            for match in re.finditer(pattern, text):
+                if not _negated(text, match.start()):
+                    conflicts.append(f"{action}:{match.group(0)}")
+    for action, patterns in _ADVICE_PATTERNS.items():
+        if action in allowed_actions:
+            continue
+        for pattern in patterns:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                if not _negated(text, match.start()) and not _conditional(text, match.start()):
+                    conflicts.append(f"{action}:{match.group(0)}")
+    return conflicts
+
+
+def find_plan_language(text: str) -> list[str]:
+    """Ngôn ngữ kế hoạch giao dịch (vùng mua, stop, target, R:R, tỷ trọng,
+    "nên mua/bán"...) - bị cấm ở báo cáo chỉ tham khảo cho thành viên."""
+    if not text:
+        return []
+    return [m.group(0) for m in _PLAN_LANGUAGE_RE.finditer(text) if not _negated(text, m.start())]
+
+
+def _normalize_price_token(token: str) -> int | None:
+    digits = token.split(",")[0].replace(".", "")
+    return int(digits) if digits.isdigit() else None
+
+
+def price_numbers(text: str) -> set[int]:
+    """Mọi số dạng giá/khối lượng (>= 1.000 viết kiểu VN, hoặc 5-7 chữ số liền)."""
+    out: set[int] = set()
+    for match in _PRICE_NUMBER_RE.finditer(text or ""):
+        value = _normalize_price_token(match.group(1))
+        if value is not None and value >= 1000:
+            out.add(value)
+    return out
+
+
+def find_unknown_prices(text: str, allowed_text: str) -> list[int]:
+    """Số dạng giá trong `text` không xuất hiện ở `allowed_text` (prompt đã cấp)."""
+    allowed = price_numbers(allowed_text)
+    return sorted(value for value in price_numbers(text) if value not in allowed)

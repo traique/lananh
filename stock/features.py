@@ -6,6 +6,7 @@ Giữ nguyên các hàm chỉ báo thuần toán từng có ở phiên bản cũ
 test tính tay), bổ sung ATR/Donchian breakout/volume percentile/signal
 agreement theo yêu cầu Stock.md.
 """
+
 from dataclasses import dataclass, field
 
 
@@ -40,7 +41,10 @@ def round_order_price(v: float, exchange: str | None = None) -> float:
 
 
 def calc_relative_strength(
-    symbol_closes: list[float], benchmark_closes: list[float], *, lookback: int = 65,
+    symbol_closes: list[float],
+    benchmark_closes: list[float],
+    *,
+    lookback: int = 65,
 ) -> float:
     """Hiệu suất tương đối so với benchmark trên cùng horizon cố định.
 
@@ -52,8 +56,8 @@ def calc_relative_strength(
     bars = min(lookback, len(symbol_closes) - 1, len(benchmark_closes) - 1)
     if bars <= 0:
         return 0.0
-    sym = symbol_closes[-(bars + 1):]
-    bench = benchmark_closes[-(bars + 1):]
+    sym = symbol_closes[-(bars + 1) :]
+    bench = benchmark_closes[-(bars + 1) :]
     return round(trend_pct(sym) - trend_pct(bench), 2)
 
 
@@ -62,6 +66,7 @@ def trend_pct(closes: list[float]) -> float:
 
 
 # ─── RSI (Wilder) ────────────────────────────────────────────────────────────
+
 
 def calc_rsi(closes: list[float], period: int = 14) -> float | None:
     """Trả None khi chưa đủ dữ liệu - KHÔNG bịa giá trị 50 (trung tính) trông
@@ -94,6 +99,7 @@ def calc_rsi(closes: list[float], period: int = 14) -> float | None:
 
 # ─── Momentum (hồi quy tuyến tính) ───────────────────────────────────────────
 
+
 def calc_momentum_slope(closes: list[float], period: int = 10) -> float:
     s = closes[-period:]
     n = len(s)
@@ -107,6 +113,7 @@ def calc_momentum_slope(closes: list[float], period: int = 10) -> float:
 
 
 # ─── SMA / EMA ───────────────────────────────────────────────────────────────
+
 
 def calc_sma(closes: list[float], period: int) -> float | None:
     """Trả None khi chưa đủ `period` phiên - KHÔNG trả close hiện tại làm
@@ -143,6 +150,7 @@ def calc_ema(closes: list[float], period: int) -> float | None:
 
 
 # ─── MACD(12,26,9) ───────────────────────────────────────────────────────────
+
 
 @dataclass
 class MACDResult:
@@ -183,6 +191,7 @@ def calc_macd(closes: list[float]) -> MACDResult:
 
 # ─── Bollinger Bands(20, 2σ) ─────────────────────────────────────────────────
 
+
 @dataclass
 class BollingerResult:
     upper: float
@@ -203,7 +212,7 @@ def calc_bollinger(closes: list[float], price: float) -> BollingerResult:
     sl = closes[-period:]
     middle = sum(sl) / period
     variance = sum((v - middle) ** 2 for v in sl) / period
-    std_dev = variance ** 0.5
+    std_dev = variance**0.5
     upper = middle + 2 * std_dev
     lower = middle - 2 * std_dev
     width = ((upper - lower) / middle) * 100 if middle > 0 else 5.0
@@ -212,12 +221,18 @@ def calc_bollinger(closes: list[float], price: float) -> BollingerResult:
     # thật ("vượt band"), clamp sẽ làm %B=100 mâu thuẫn với Donchian báo
     # breakout cùng lúc.
     return BollingerResult(
-        round(upper), round(middle), round(lower), round(width, 2),
-        round(pct_b, 1), width < 5, available=True,
+        round(upper),
+        round(middle),
+        round(lower),
+        round(width, 2),
+        round(pct_b, 1),
+        width < 5,
+        available=True,
     )
 
 
 # ─── Multi-timeframe trend ───────────────────────────────────────────────────
+
 
 @dataclass
 class MultiTimeframe:
@@ -249,10 +264,19 @@ def calc_multi_timeframe(closes: list[float]) -> MultiTimeframe:
         alignment = "bearish"
     else:
         alignment = "mixed"
-    return MultiTimeframe(round(t1w, 2), round(t1m, 2), round(t3m, 2), alignment, bars_used_3m=max(bars_3m, 0), trend_1y=round(t1y, 2), bars_used_1y=max(bars_1y, 0))
+    return MultiTimeframe(
+        round(t1w, 2),
+        round(t1m, 2),
+        round(t3m, 2),
+        alignment,
+        bars_used_3m=max(bars_3m, 0),
+        trend_1y=round(t1y, 2),
+        bars_used_1y=max(bars_1y, 0),
+    )
 
 
 # ─── SMA cross (golden/death) ────────────────────────────────────────────────
+
 
 @dataclass
 class CrossSignal:
@@ -287,6 +311,7 @@ def calc_cross_signal(closes: list[float]) -> CrossSignal:
 
 
 # ─── ADX(14) ──────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class ADXResult:
@@ -325,7 +350,12 @@ def _has_real_hl(closes: list[float], highs: list[float] | None, lows: list[floa
     return bars_with_real_range >= len(closes) * 0.5
 
 
-def calc_adx(closes: list[float], highs: list[float] | None = None, lows: list[float] | None = None, period: int = 14) -> ADXResult:
+def calc_adx(
+    closes: list[float],
+    highs: list[float] | None = None,
+    lows: list[float] | None = None,
+    period: int = 14,
+) -> ADXResult:
     """Chỉ tính ADX khi có high/low THẬT (không tự tổng hợp H/L từ close - số
     bịa trông như chỉ báo thật sẽ chảy vào scoring một cách âm thầm). Nếu
     thiếu dữ liệu (không đủ phiên hoặc không có H/L thật) -> available=False,
@@ -356,7 +386,7 @@ def calc_adx(closes: list[float], highs: list[float] | None = None, lows: list[f
         s = v + di_minus_series[i]
         dx_series.append((abs(v - di_minus_series[i]) / s * 100) if s > 0 else 0)
 
-    valid_dx = dx_series[period - 1:]
+    valid_dx = dx_series[period - 1 :]
     if len(valid_dx) < period:
         return ADXResult(0.0, 0.0, 0.0, False, available=False)
     # ADX = Wilder RMA của DX (seed bằng SMA `period` giá trị DX đầu, rồi đệ
@@ -374,7 +404,10 @@ def calc_adx(closes: list[float], highs: list[float] | None = None, lows: list[f
 
 # ─── ATR(14) - dùng cho stop/target theo biến động thật, không phải %price ──
 
-def calc_atr(closes: list[float], highs: list[float] | None, lows: list[float] | None, period: int = 14) -> float | None:
+
+def calc_atr(
+    closes: list[float], highs: list[float] | None, lows: list[float] | None, period: int = 14
+) -> float | None:
     """Average True Range (Wilder). Trả None nếu thiếu H/L thật hoặc chưa đủ
     dữ liệu - KHÔNG suy ra ATR xấp xỉ từ %price vì nó che giấu việc thiếu dữ
     liệu thật, giống lý do calc_adx từ chối bịa H/L."""
@@ -391,6 +424,7 @@ def calc_atr(closes: list[float], highs: list[float] | None, lows: list[float] |
 
 # ─── Donchian breakout state ─────────────────────────────────────────────────
 
+
 @dataclass
 class DonchianState:
     upper: float | None
@@ -398,14 +432,16 @@ class DonchianState:
     state: str  # breakout_up | breakout_down | inside | unknown
 
 
-def calc_donchian_breakout(highs: list[float], lows: list[float], closes: list[float], period: int = 20) -> DonchianState:
+def calc_donchian_breakout(
+    highs: list[float], lows: list[float], closes: list[float], period: int = 20
+) -> DonchianState:
     """So giá đóng cửa hiện tại với kênh Donchian ĐƯỢC TÍNH TRƯỚC phiên hiện
     tại (loại bar cuối ra khỏi kênh) - nếu tính cả bar cuối, breakout sẽ
     không bao giờ xảy ra vì bar cuối luôn nằm trong chính kênh của nó."""
     if len(highs) < period + 1 or len(lows) < period + 1 or not closes:
         return DonchianState(None, None, "unknown")
-    prior_highs = highs[-period - 1:-1]
-    prior_lows = lows[-period - 1:-1]
+    prior_highs = highs[-period - 1 : -1]
+    prior_lows = lows[-period - 1 : -1]
     upper, lower = max(prior_highs), min(prior_lows)
     price = closes[-1]
     if price > upper:
@@ -419,15 +455,23 @@ def calc_donchian_breakout(highs: list[float], lows: list[float], closes: list[f
 
 # ─── Support/Resistance, Bias MA, MA alignment, trend score ─────────────────
 
+
 @dataclass
 class SupportResistance:
     support: float | None
     resistance: float | None
     dist_to_support: float
     dist_to_resistance: float
+    # Đỉnh/đáy của các phiên TRƯỚC phiên hiện tại (loại bar cuối). Policy dùng
+    # mốc này làm "kháng cự thật" để đo R:R: đỉnh trong phiên của chính nến
+    # breakout không phải vùng cản, dùng nó sẽ bóp R:R của mọi breakout.
+    resistance_prior: float | None = None
+    support_prior: float | None = None
 
 
-def calc_support_resistance(highs: list[float], lows: list[float], price: float, lookback: int = 30) -> SupportResistance:
+def calc_support_resistance(
+    highs: list[float], lows: list[float], price: float, lookback: int = 30
+) -> SupportResistance:
     length = min(len(highs), len(lows), lookback)
     if length == 0:
         return SupportResistance(None, None, 0.0, 0.0)
@@ -437,27 +481,78 @@ def calc_support_resistance(highs: list[float], lows: list[float], price: float,
     support = min(recent_lows)
     dist_support = round((price - support) / support * 100, 1) if support > 0 else 0.0
     dist_resistance = round((price - resistance) / resistance * 100, 1) if resistance > 0 else 0.0
-    return SupportResistance(round(support), round(resistance), dist_support, dist_resistance)
+    resistance_prior = round(max(recent_highs[:-1])) if length >= 2 else None
+    support_prior = round(min(recent_lows[:-1])) if length >= 2 else None
+    return SupportResistance(
+        round(support),
+        round(resistance),
+        dist_support,
+        dist_resistance,
+        resistance_prior=resistance_prior,
+        support_prior=support_prior,
+    )
+
+
+# ─── Căn VNINDEX theo NGÀY (không theo chỉ số mảng) ─────────────────────────
+
+_ISO_DATE_LEN = 10
+
+
+def _looks_iso_dates(dates) -> bool:
+    if not dates:
+        return False
+    return all(
+        isinstance(d, str) and len(d) >= _ISO_DATE_LEN and d[4] == "-" and d[7] == "-"
+        for d in (dates[0], dates[-1])
+    )
+
+
+def benchmark_end_indices(
+    symbol_dates, benchmark_dates, symbol_len: int, benchmark_len: int
+) -> list[int]:
+    """Với mỗi bar i của mã, trả số bar benchmark có ngày <= ngày của bar i
+    (dùng làm cận phải khi cắt chuỗi VNINDEX ``[:end]``).
+
+    Căn theo chỉ số mảng (cách cũ) sai khi mã thiếu phiên (tạm ngừng giao
+    dịch) hoặc niêm yết muộn hơn: bar i của mã có thể ứng với VNINDEX của
+    TƯƠNG LAI (look-ahead) hoặc của vài năm trước. Chỉ khi không có ngày
+    chuẩn YYYY-MM-DD ở cả hai phía mới rơi về căn theo chỉ số (giữ tương
+    thích dữ liệu tổng hợp trong test).
+    """
+    from bisect import bisect_right
+
+    if (
+        _looks_iso_dates(symbol_dates)
+        and _looks_iso_dates(benchmark_dates)
+        and len(symbol_dates) >= symbol_len
+        and len(benchmark_dates) >= benchmark_len
+    ):
+        bench = [d[:_ISO_DATE_LEN] for d in benchmark_dates[:benchmark_len]]
+        return [bisect_right(bench, symbol_dates[i][:_ISO_DATE_LEN]) for i in range(symbol_len)]
+    return [min(i + 1, benchmark_len) for i in range(symbol_len)]
 
 
 # ─── B1: S/R theo swing pivot + clustering (thay calc_support_resistance thô
 #     max/min - giữ hàm cũ làm fallback khi không tìm được pivot nào) ───────
 
+
 @dataclass
 class PriceLevel:
     price: float
-    touches: int        # số lần giá test vùng này
-    kind: str            # support | resistance
-    strength: float      # 0..1: kết hợp touches + độ gần giá hiện tại
+    touches: int  # số lần giá test vùng này
+    kind: str  # support | resistance
+    strength: float  # 0..1: kết hợp touches + độ gần giá hiện tại
 
 
 @dataclass
 class KeyLevels:
-    supports: list[PriceLevel] = field(default_factory=list)     # sort gần giá nhất trước
+    supports: list[PriceLevel] = field(default_factory=list)  # sort gần giá nhất trước
     resistances: list[PriceLevel] = field(default_factory=list)  # sort gần giá nhất trước
 
 
-def _find_swing_pivots(highs: list[float], lows: list[float], window: int) -> tuple[list[float], list[float]]:
+def _find_swing_pivots(
+    highs: list[float], lows: list[float], window: int
+) -> tuple[list[float], list[float]]:
     """Swing high tại i khi highs[i] == max(highs[i-w:i+w+1]); swing low
     tương tự. KHÔNG dùng bar cuối cùng (chưa xác nhận - cần w phiên sau đó
     để biết đó thực sự là đỉnh/đáy cục bộ)."""
@@ -466,8 +561,8 @@ def _find_swing_pivots(highs: list[float], lows: list[float], window: int) -> tu
     # range dừng trước bar cuối window để không xét các bar chưa đủ w phiên
     # xác nhận phía sau (bao gồm luôn bar cuối cùng của toàn chuỗi).
     for i in range(window, n - window):
-        h_window = highs[i - window: i + window + 1]
-        l_window = lows[i - window: i + window + 1]
+        h_window = highs[i - window : i + window + 1]
+        l_window = lows[i - window : i + window + 1]
         if highs[i] == max(h_window):
             swing_highs.append(highs[i])
         if lows[i] == min(l_window):
@@ -495,8 +590,12 @@ def _cluster_pivots(pivots: list[float], cluster_pct: float) -> list[tuple[float
 
 
 def find_key_levels(
-    highs: list[float], lows: list[float], closes: list[float],
-    lookback: int = 60, pivot_window: int = 3, cluster_pct: float = 1.5,
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    lookback: int = 60,
+    pivot_window: int = 3,
+    cluster_pct: float = 1.5,
 ) -> KeyLevels:
     min_bars = pivot_window * 2 + 2
     if len(highs) < min_bars or len(lows) < min_bars or not closes:
@@ -586,6 +685,7 @@ def calc_trend_score(ma_align: MAAlignment, rsi14: float | None, macd_histogram:
 
 # ─── Thanh khoản: volume hiện tại vs trung bình 20 phiên + percentile ───────
 
+
 @dataclass
 class Liquidity:
     avg_volume_20: float
@@ -623,7 +723,9 @@ def calc_distribution_days(closes: list[float], volumes: list[float], lookback: 
     return count
 
 
-def calc_liquidity(volumes: list[float], min_avg_volume: float = 100_000, percentile_lookback: int = 60) -> Liquidity | None:
+def calc_liquidity(
+    volumes: list[float], min_avg_volume: float = 100_000, percentile_lookback: int = 60
+) -> Liquidity | None:
     """So khối lượng khớp phiên gần nhất với trung bình 20 phiên + percentile
     trong `percentile_lookback` phiên gần nhất.
 
@@ -636,13 +738,15 @@ def calc_liquidity(volumes: list[float], min_avg_volume: float = 100_000, percen
         return None
     # avg20 loại trừ phiên hiện tại (20 phiên TRƯỚC đó) - nếu gồm cả bar cuối,
     # volume hiện tại tự pha loãng mẫu mà nó đang được so sánh với.
-    window = volumes[-21:-1] if len(volumes) >= 21 else (volumes[:-1] if len(volumes) > 1 else volumes)
+    window = (
+        volumes[-21:-1] if len(volumes) >= 21 else (volumes[:-1] if len(volumes) > 1 else volumes)
+    )
     if not window:
         return None
     avg20 = sum(window) / len(window)
     current = volumes[-1]
     ratio = (current / avg20) * 100 if avg20 > 0 else 0.0
-    history = volumes[-percentile_lookback - 1:-1] if len(volumes) > 1 else []
+    history = volumes[-percentile_lookback - 1 : -1] if len(volumes) > 1 else []
     percentile = _percentile_rank(current, history)
     return Liquidity(
         avg_volume_20=round(avg20),
@@ -654,6 +758,7 @@ def calc_liquidity(volumes: list[float], min_avg_volume: float = 100_000, percen
 
 
 # ─── Signal stats tổng hợp (trend/momentum/volume/volatility) ──────────────
+
 
 @dataclass
 class SignalStats:
@@ -690,18 +795,22 @@ def calc_signal_stats(closes: list[float], volumes: list[float], price: float) -
     if len(returns) >= 2:
         mean = sum(returns) / len(returns)
         variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
-        volatility = (max(variance, 0) ** 0.5) * 100 * (5 ** 0.5)
+        volatility = (max(variance, 0) ** 0.5) * 100 * (5**0.5)
     else:
         volatility = 2.0
 
     return SignalStats(
-        round(trend_3m, 2), round(volatility, 2), round(momentum, 2), round(volume_trend, 2),
+        round(trend_3m, 2),
+        round(volatility, 2),
+        round(momentum, 2),
+        round(volume_trend, 2),
         round(rsi14, 1) if rsi14 is not None else None,
     )
 
 
 # ─── Session metrics thuần (không phán xét is_selloff/hard_no_buy - tầng
 #     policy tự áp ngưỡng để giữ feature layer chỉ tính toán) ────────────────
+
 
 @dataclass
 class SessionMetrics:
@@ -710,7 +819,9 @@ class SessionMetrics:
     volume_ratio_pct: float  # volume phiên gần nhất vs TB20 phiên trước đó
 
 
-def calc_session_metrics(closes: list[float], highs: list[float], lows: list[float], volumes: list[float]) -> SessionMetrics | None:
+def calc_session_metrics(
+    closes: list[float], highs: list[float], lows: list[float], volumes: list[float]
+) -> SessionMetrics | None:
     if len(closes) < 2:
         return None
     price, prev_close = closes[-1], closes[-2]
@@ -736,6 +847,7 @@ def calc_session_metrics(closes: list[float], highs: list[float], lows: list[flo
 
 # ─── Enhanced indicators bundle + signal agreement + summary text ──────────
 
+
 @dataclass
 class EnhancedIndicators:
     macd: MACDResult
@@ -752,7 +864,12 @@ class EnhancedIndicators:
     sma200: float | None = None  # xu hướng dài hạn; None khi < 200 phiên (fetch 260 ngày)
 
 
-def build_enhanced_indicators(closes: list[float], price: float, highs: list[float] | None = None, lows: list[float] | None = None) -> EnhancedIndicators:
+def build_enhanced_indicators(
+    closes: list[float],
+    price: float,
+    highs: list[float] | None = None,
+    lows: list[float] | None = None,
+) -> EnhancedIndicators:
     atr14 = calc_atr(closes, highs, lows)
     atr_pct = round(atr14 / price * 100, 2) if atr14 is not None and price > 0 else None
     sma20 = calc_sma(closes, 20)
@@ -801,7 +918,11 @@ def calc_signal_agreement(ind: EnhancedIndicators) -> float:
         if ind.cross.death_cross:
             votes.append(-1.0)
         if not ind.cross.golden_cross and not ind.cross.death_cross:
-            votes.append(1.0 if (ind.cross.above_sma20 and ind.cross.above_sma50) else (-1.0 if not ind.cross.above_sma20 and not ind.cross.above_sma50 else 0.0))
+            votes.append(
+                1.0
+                if (ind.cross.above_sma20 and ind.cross.above_sma50)
+                else (-1.0 if not ind.cross.above_sma20 and not ind.cross.above_sma50 else 0.0)
+            )
 
     if ind.adx.available and ind.adx.trending:
         votes.append(1.0 if ind.adx.di_plus > ind.adx.di_minus else -1.0)
@@ -825,9 +946,13 @@ def build_indicator_summary(ind: EnhancedIndicators, symbol: str) -> str:
         f"3M {'+' if tf.trend_3m > 0 else ''}{tf.trend_3m}% -> {tf.alignment.upper()}"
     )
     if tf.bars_used_1y >= 250:
-        lines.append(f"1Y: {'+' if tf.trend_1y > 0 else ''}{tf.trend_1y}% (xu hướng dài hạn ~1 năm)")
+        lines.append(
+            f"1Y: {'+' if tf.trend_1y > 0 else ''}{tf.trend_1y}% (xu hướng dài hạn ~1 năm)"
+        )
     cross_note = f" ⚡ {macd.crossover.upper()} CROSSOVER" if macd.crossover != "none" else ""
-    lines.append(f"MACD: line {'+' if macd.macd_line > 0 else ''}{macd.macd_line} | hist {'+' if macd.histogram > 0 else ''}{macd.histogram}{cross_note}")
+    lines.append(
+        f"MACD: line {'+' if macd.macd_line > 0 else ''}{macd.macd_line} | hist {'+' if macd.histogram > 0 else ''}{macd.histogram}{cross_note}"
+    )
     if bb.available:
         bb_note = " 🔥 SQUEEZE (sắp breakout)" if bb.squeeze else ""
         lines.append(f"BB: %B={bb.pct_b}% | width={bb.width}%{bb_note}")
@@ -845,7 +970,9 @@ def build_indicator_summary(ind: EnhancedIndicators, symbol: str) -> str:
         cross_parts.append("above SMA50" if cross.above_sma50 else "below SMA50")
     lines.append("SMA: " + " | ".join(cross_parts))
     if adx.available:
-        lines.append(f"ADX: {adx.adx} ({'xu hướng mạnh' if adx.trending else 'sideway'}) | +DI {adx.di_plus} vs -DI {adx.di_minus}")
+        lines.append(
+            f"ADX: {adx.adx} ({'xu hướng mạnh' if adx.trending else 'sideway'}) | +DI {adx.di_plus} vs -DI {adx.di_minus}"
+        )
     else:
         lines.append("ADX: chưa đủ dữ liệu H/L thật")
     if ind.donchian.state != "unknown":

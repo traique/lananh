@@ -1,27 +1,34 @@
-"""Điều chỉnh chuỗi giá bằng dữ liệu corporate actions (cổ tức tiền mặt).
+"""Điều chỉnh chuỗi giá bằng dữ liệu corporate actions (cổ tức tiền mặt, cổ
+tức bằng cổ phiếu, cổ phiếu thưởng, chia tách).
 
-Bối cảnh: stock/price_adjust.py chỉ PHÁT HIỆN gap nghi GDKHQ (không sửa số),
-vì không có nguồn corporate action. Module này dùng tiếp bước đó: lấy lịch
-cổ tức tiền mặt từ vnstock/VCI (nguồn không chính thức, không SLA), và CHỈ
-khi dữ liệu cổ tức CÙNG THỜI ĐIỂM lẫn ĐỘ LỚN gap khớp nhau mới điều chỉnh
-ngược chuỗi giá trước ngày GDKHQ.
+Bối cảnh: stock/price_adjust.py chỉ PHÁT HIỆN gap nghi GDKHQ (không sửa số).
+Module này dùng tiếp bước đó: lấy lịch sự kiện quyền từ vnstock/VCI (nguồn
+không chính thức, không SLA), và CHỈ khi dữ liệu sự kiện CÙNG THỜI ĐIỂM lẫn
+ĐỘ LỚN gap khớp nhau mới điều chỉnh ngược chuỗi giá trước ngày GDKHQ.
 
 Nguyên tắc an toàn (đọc trước khi sửa):
-- Một sự kiện cổ tức chỉ được dùng để điều chỉnh khi gap thực tế giảm đúng
-  trong khoảng [0.4x, 1.7x] mức giảm lý thuyết dps/prev_close. Nếu dữ liệu
-  cổ tức sai (sai ngày, sai số tiền, nhầm tỷ lệ cổ phiếu thưởng) thì gap sẽ
-  không khớp và sự kiện bị BỎ - không bao giờ điều chỉnh theo dữ liệu không
-  được giá xác nhận.
-- Điều chỉnh kiểu back-adjust (nhân các bar TRƯỚC ngày GDKHQ với factor
-  (prev_close - dps)/prev_close): giá hiện tại giữ nguyên hệ quy chiếu, chỉ
-  lịch sử được hạ xuống - đúng thứ indicator cần (SMA200/Donchian/trend).
+- Một sự kiện cổ tức tiền chỉ được dùng để điều chỉnh khi gap thực tế giảm
+  đúng trong khoảng [0.4x, 1.7x] mức giảm lý thuyết dps/prev_close.
+- Sự kiện cổ phiếu (thưởng/cổ tức cổ phiếu/chia tách, tỷ lệ r cổ phiếu mới
+  trên 1 cổ phiếu cũ) chỉ được dùng khi giá sau GDKHQ khớp giá tham chiếu lý
+  thuyết prev_close/(1+r) trong biên ±_STOCK_EVENT_MOVE_TOLERANCE (đủ chứa
+  biến động giao dịch bình thường của chính phiên đó). Phát hành quyền mua
+  có giá mua ưu đãi nên KHÔNG điều chỉnh theo công thức này - bỏ qua.
+- Dữ liệu sai (sai ngày, sai tỷ lệ) thì gap sẽ không khớp và sự kiện bị BỎ -
+  không bao giờ điều chỉnh theo dữ liệu không được giá xác nhận.
+- Điều chỉnh kiểu back-adjust (nhân các bar TRƯỚC ngày GDKHQ với factor):
+  giá hiện tại giữ nguyên hệ quy chiếu, chỉ lịch sử được hạ xuống. Với sự
+  kiện cổ phiếu, khối lượng trước GDKHQ được nhân (1+r) cho cùng đơn vị cổ
+  phiếu.
 - Sau điều chỉnh, chạy lại price_adjust trên chuỗi mới; gap còn lại không giải
   thích được phải được nêu trong note (không được im lặng).
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -34,6 +41,31 @@ _FETCH_TIMEOUT_SEC = 15
 # >= 50 được coi là VND/cp thật (5.000 VND/cp là mức cao thực tế).
 _PAR_VALUE_VND = 10_000.0
 
+# Biên lệch cho phép giữa giá sau GDKHQ và giá tham chiếu lý thuyết của sự
+# kiện cổ phiếu: 10% đủ chứa biên độ trần/sàn HOSE (7%)/HNX (10%) của chính
+# phiên GDKHQ, nhưng đủ chặt để tỷ lệ sai (vd 1:1 thay vì 1:4) bị loại.
+_STOCK_EVENT_MOVE_TOLERANCE = 0.10
+# Tỷ lệ cổ phiếu mới/cũ hợp lý: 1% (cổ tức cổ phiếu nhỏ) .. 10x (chia tách).
+_MIN_STOCK_RATIO = 0.01
+_MAX_STOCK_RATIO = 10.0
+
+# Từ khoá nhận diện sự kiện cổ phiếu trong tiêu đề sự kiện VCI.
+_STOCK_EVENT_KEYWORDS = (
+    "cổ phiếu thưởng",
+    "thưởng cổ phiếu",
+    "cổ tức bằng cổ phiếu",
+    "chia tách",
+    "trả cổ tức bằng cổ phiếu",
+    "phát hành cổ phiếu để trả cổ tức",
+    "bonus",
+    "stock dividend",
+    "split",
+)
+# Phát hành quyền mua có giá ưu đãi -> công thức prev/(1+r) không đúng -> bỏ.
+_RIGHTS_KEYWORDS = ("quyền mua", "giá phát hành", "phát hành thêm cho cổ đông hiện hữu", "rights")
+_RATIO_PAIR_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*:\s*(\d+(?:[.,]\d+)?)")
+_RATIO_PCT_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*%")
+
 
 @dataclass
 class DividendEvent:
@@ -42,10 +74,21 @@ class DividendEvent:
 
 
 @dataclass
+class StockEvent:
+    """Sự kiện làm tăng số cổ phiếu không kèm dòng tiền: thưởng, cổ tức cổ
+    phiếu, chia tách. ratio = số cổ phiếu MỚI nhận trên 1 cổ phiếu cũ."""
+
+    ex_date: str
+    ratio: float
+    label: str = ""
+
+
+@dataclass
 class AdjustmentOutcome:
     closes: list[float] = field(default_factory=list)
     highs: list[float] = field(default_factory=list)
     lows: list[float] = field(default_factory=list)
+    volumes: list[float] = field(default_factory=list)
     events_applied: int = 0
     unexplained_gaps: int = 0
     note: str = ""
@@ -60,6 +103,54 @@ def normalize_dps(value: float | None) -> float | None:
     if value <= 50:
         return round(value / 100 * _PAR_VALUE_VND, 2)  # 10 -> 1.000 VND (% mệnh giá)
     return round(value, 2)  # VND/cp thật
+
+
+def _to_number(text: str) -> float | None:
+    try:
+        return float(text.replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_stock_ratio(raw) -> float | None:
+    """Chuẩn hoá tỷ lệ sự kiện cổ phiếu về "số cổ phiếu mới / 1 cổ phiếu cũ".
+
+    Quy ước VN: "tỷ lệ 100:25" / "4:1" = sở hữu 100 (4) cổ phiếu cũ nhận 25 (1)
+    cổ phiếu mới -> 0.25; "25%" -> 0.25; số thực <= 10 coi là tỷ lệ trực tiếp
+    nếu < 1 (0.25), số 1..100 coi là phần trăm (25 -> 0.25). Trả None nếu
+    không suy ra được tỷ lệ hợp lý - KHÔNG đoán liều.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        value = float(raw)
+        if value != value or value <= 0:  # NaN / không dương
+            return None
+        ratio = value if value < 1 else value / 100
+    else:
+        text = str(raw).strip().lower()
+        if not text or text == "nan":
+            return None
+        pair = _RATIO_PAIR_RE.search(text)
+        pct = _RATIO_PCT_RE.search(text)
+        if pair:
+            old, new = _to_number(pair.group(1)), _to_number(pair.group(2))
+            if not old or not new or old <= 0 or new <= 0:
+                return None
+            ratio = new / old
+        elif pct:
+            value = _to_number(pct.group(1))
+            if value is None or value <= 0:
+                return None
+            ratio = value / 100
+        else:
+            value = _to_number(text)
+            if value is None:
+                return None
+            return parse_stock_ratio(value)
+    if not (_MIN_STOCK_RATIO <= ratio <= _MAX_STOCK_RATIO):
+        return None
+    return round(ratio, 6)
 
 
 def _to_date_str(raw) -> str:
@@ -105,85 +196,163 @@ def _find_ex_index(dates: list[str], ex_date: str) -> int | None:
     return best if best_dist is not None and best_dist <= 1 else None
 
 
-async def fetch_dividends(symbol: str) -> list[DividendEvent]:
-    """Lịch cổ tức tiền mặt qua vnstock/VCI. Không bao giờ raise - lỗi chỉ
-    trả [] (khi đó module này hoàn toàn vô hiệu, hệ thống quay về hành vi
-    price_adjust cũ)."""
+def _parse_events_frame(df) -> tuple[list[DividendEvent], list[StockEvent]]:
+    """Tách DataFrame events() của VCI thành cổ tức tiền và sự kiện cổ phiếu.
+
+    Không phụ thuộc tên cột cứng: tìm cột theo từ khoá. event_code DIV = cổ
+    tức tiền, ISS = phát hành (thưởng/cổ tức cổ phiếu/chia tách/quyền mua -
+    phân loại tiếp bằng tiêu đề)."""
+    if df is None or getattr(df, "empty", True):
+        return [], []
+    cols = {str(c).strip().lower(): c for c in df.columns}
+
+    def pick(*keywords: str):
+        for kw in keywords:
+            for low, orig in cols.items():
+                if kw in low:
+                    return orig
+        return None
+
+    code_col = pick("event_code", "event_list_code")
+    ex_col = pick("exright", "ex_date", "gdkhq")
+    cash_col = pick("value_per_share", "cash", "dividend", "tiền mặt", "cổ tức tiền")
+    ratio_col = pick("ratio", "exrate", "tỷ lệ", "ty_le")
+    title_col = pick("event_title", "title", "event_name", "nội dung")
+
+    dividends: list[DividendEvent] = []
+    stock_events: list[StockEvent] = []
+    for _, row in df.iterrows():
+        code = ""
+        if code_col is not None and row[code_col] is not None:
+            code = str(row[code_col]).strip().upper()
+        title = (
+            str(row[title_col]).strip()
+            if title_col is not None and row[title_col] is not None
+            else ""
+        )
+        lowered_title = title.lower()
+        ex_date = _to_date_str(row[ex_col]) if ex_col is not None else ""
+
+        is_stock_event = code == "ISS" or any(kw in lowered_title for kw in _STOCK_EVENT_KEYWORDS)
+        if code in ("", "DIV") and not is_stock_event:
+            if cash_col is None:
+                continue
+            if code == "" and ex_col is None:
+                continue
+            try:
+                value = float(row[cash_col])
+            except (TypeError, ValueError, KeyError):
+                continue
+            dividends.append(DividendEvent(ex_date=ex_date, cash_value=value))
+            continue
+        if not is_stock_event:
+            continue
+        if any(kw in lowered_title for kw in _RIGHTS_KEYWORDS):
+            continue
+        ratio = parse_stock_ratio(row[ratio_col]) if ratio_col is not None else None
+        if ratio is None and title:
+            ratio = parse_stock_ratio(title)
+        if ratio is None or not ex_date:
+            continue
+        stock_events.append(StockEvent(ex_date=ex_date, ratio=ratio, label=title[:80]))
+    return dividends, stock_events
+
+
+async def fetch_corporate_events(symbol: str) -> tuple[list[DividendEvent], list[StockEvent]]:
+    """Lịch cổ tức tiền + sự kiện cổ phiếu qua vnstock/VCI. Không bao giờ
+    raise - lỗi chỉ trả ([], []) (khi đó module này vô hiệu, hệ thống quay về
+    hành vi chỉ cảnh báo của price_adjust)."""
     from stock.providers import ensure_vnstock_api_key, get_vnstock_semaphore
 
     try:
         ensure_vnstock_api_key()
         from vnstock.explorer.vci import Company
     except ImportError:
-        return []
+        return [], []
 
-    def _sync() -> list[DividendEvent]:
+    def _sync() -> tuple[list[DividendEvent], list[StockEvent]]:
         try:
-            # vnstock 4.x đã GỠ Company.dividends() - lịch cổ tức tiền mặt
-            # giờ nằm trong Company.events() với event_code == "DIV", kèm
-            # exright_date (GDKHQ) và value_per_share (VND/cp đã chuẩn, vd
-            # 500.0 = 500 VND/cp - không còn quy ước % mệnh giá lẫn lộn).
+            # vnstock 4.x: lịch quyền nằm trong Company.events() (event_code
+            # DIV = cổ tức tiền, ISS = phát hành cổ phiếu), kèm exright_date.
             df = Company(symbol=symbol, show_log=False).events()
         except Exception:
-            logger.warning("vnstock: dividends lỗi cho %s", symbol, exc_info=True)
-            return []
-        if df is None or df.empty:
-            return []
-        cols = {str(c).strip().lower(): c for c in df.columns}
-
-        def pick(*keywords: str):
-            for kw in keywords:
-                for low, orig in cols.items():
-                    if kw in low:
-                        return orig
-            return None
-
-        code_col = pick("event_code")
-        ex_col = pick("exright", "ex", "gdkhq")
-        cash_col = pick("value_per_share", "cash", "dividend", "tiền mặt", "cổ tức tiền")
-        if cash_col is None or (code_col is None and ex_col is None):
-            return []
-        events: list[DividendEvent] = []
-        for _, row in df.iterrows():
-            if code_col is not None:
-                code = str(row[code_col]).strip().upper() if row[code_col] is not None else ""
-                if code and code != "DIV":
-                    # events() trả MỌI sự kiện (ĐHĐCĐ, niêm yết bổ sung,
-                    # giao dịch nội bộ...) - chỉ cổ tức tiền mới dùng được
-                    # để điều chỉnh giá.
-                    continue
-            try:
-                value = float(row[cash_col])
-            except (TypeError, ValueError, KeyError):
-                continue
-            ex_date = _to_date_str(row[ex_col]) if ex_col is not None else ""
-            events.append(DividendEvent(ex_date=ex_date, cash_value=value))
-        return events
+            logger.warning("vnstock: events lỗi cho %s", symbol, exc_info=True)
+            return [], []
+        return _parse_events_frame(df)
 
     try:
         async with get_vnstock_semaphore():
             return await asyncio.wait_for(asyncio.to_thread(_sync), timeout=_FETCH_TIMEOUT_SEC)
     except Exception:
-        logger.warning("fetch_dividends lỗi cho %s", symbol, exc_info=True)
-        return []
+        logger.warning("fetch_corporate_events lỗi cho %s", symbol, exc_info=True)
+        return [], []
 
 
-def apply_dividend_adjustment(
+async def fetch_dividends(symbol: str) -> list[DividendEvent]:
+    """Giữ tương thích: chỉ phần cổ tức tiền của fetch_corporate_events."""
+    dividends, _ = await fetch_corporate_events(symbol)
+    return dividends
+
+
+def _scale_before(
+    outcome: AdjustmentOutcome, index: int, price_factor: float, volume_factor: float = 1.0
+) -> None:
+    for j in range(index):
+        outcome.closes[j] = round(outcome.closes[j] * price_factor, 2)
+        if j < len(outcome.highs):
+            outcome.highs[j] = round(outcome.highs[j] * price_factor, 2)
+        if j < len(outcome.lows):
+            outcome.lows[j] = round(outcome.lows[j] * price_factor, 2)
+        if volume_factor != 1.0 and j < len(outcome.volumes):
+            outcome.volumes[j] = outcome.volumes[j] * volume_factor
+
+
+def apply_corporate_adjustment(
     closes: list[float],
     highs: list[float],
     lows: list[float],
     dates: list[str],
-    events: list[DividendEvent],
+    dividends: list[DividendEvent],
+    stock_events: list[StockEvent] | None = None,
+    volumes: list[float] | None = None,
 ) -> AdjustmentOutcome:
-    """Điều chỉnh ngược chuỗi giá cho các sự kiện cổ tức được gap XÁC NHẬN."""
+    """Điều chỉnh ngược chuỗi giá cho các sự kiện được gap XÁC NHẬN."""
     from stock import price_adjust
 
-    outcome = AdjustmentOutcome(closes=list(closes), highs=list(highs), lows=list(lows))
-    if not closes or not events:
+    outcome = AdjustmentOutcome(
+        closes=list(closes),
+        highs=list(highs),
+        lows=list(lows),
+        volumes=list(volumes or []),
+    )
+    if not closes or (not dividends and not stock_events):
         return outcome
 
     applied: list[str] = []
-    for ev in events:
+    # Sự kiện cổ phiếu trước (gap lớn), cổ tức tiền sau - kiểm tra khớp của
+    # mỗi sự kiện dùng giá tại chính ngày GDKHQ nên thứ tự không đổi factor.
+    for ev in stock_events or []:
+        i = _find_ex_index(dates, ev.ex_date)
+        if i is None or i < 1 or i >= len(outcome.closes):
+            continue
+        prev_close = outcome.closes[i - 1]
+        close_i = outcome.closes[i]
+        if prev_close <= 0 or close_i <= 0:
+            continue
+        reference = prev_close / (1 + ev.ratio)
+        implied_move = close_i / reference - 1
+        if abs(implied_move) > _STOCK_EVENT_MOVE_TOLERANCE:
+            logger.debug(
+                "Sự kiện cổ phiếu %s tỷ lệ %s không khớp gap (%.2f%% so với tham chiếu) - bỏ qua",
+                ev.ex_date,
+                ev.ratio,
+                implied_move * 100,
+            )
+            continue
+        _scale_before(outcome, i, 1 / (1 + ev.ratio), 1 + ev.ratio)
+        applied.append(f"{ev.ex_date} (cổ phiếu, tỷ lệ {ev.ratio * 100:.4g}%)".replace(".", ","))
+
+    for ev in dividends:
         dps = normalize_dps(ev.cash_value)
         if dps is None:
             continue
@@ -201,47 +370,65 @@ def apply_dividend_adjustment(
         if not (expected_drop_pct * 0.4 <= actual_drop_pct <= expected_drop_pct * 1.7):
             logger.debug(
                 "Cổ tức %s ngày %s (%s VND/cp) không khớp gap %.2f%% (kỳ vọng %.2f%%) - bỏ qua",
-                ev.cash_value, ev.ex_date, dps, actual_drop_pct, expected_drop_pct,
+                ev.cash_value,
+                ev.ex_date,
+                dps,
+                actual_drop_pct,
+                expected_drop_pct,
             )
             continue
-        factor = (prev_close - dps) / prev_close
-        for j in range(i):
-            outcome.closes[j] = round(outcome.closes[j] * factor, 2)
-            if j < len(outcome.highs):
-                outcome.highs[j] = round(outcome.highs[j] * factor, 2)
-            if j < len(outcome.lows):
-                outcome.lows[j] = round(outcome.lows[j] * factor, 2)
+        _scale_before(outcome, i, (prev_close - dps) / prev_close)
         applied.append(f"{ev.ex_date} ({dps:,.0f} VND/cp)".replace(",", "."))
 
     # Chạy lại kiểm tra trên chuỗi ĐÃ điều chỉnh: gap còn lại là gap chưa
-    # giải thích được (sự kiện khác nguồn không có, hoặc cổ phiếu thưởng).
+    # giải thích được (sự kiện nguồn không có/sai tỷ lệ).
     remaining = price_adjust.detect_price_gaps(outcome.closes, dates)
     outcome.events_applied = len(applied)
     outcome.unexplained_gaps = len(remaining)
     if applied:
         detail = "; ".join(applied[:3])
         note = (
-            f"ℹ️ Chuỗi giá ĐÃ điều chỉnh cổ tức tiền mặt cho {len(applied)} sự kiện GDKHQ "
-            f"({detail}) bằng dữ liệu corporate actions - SMA/trend/ATR trên chuỗi này "
-            "so sánh được qua các mốc quyền."
+            f"ℹ️ Chuỗi giá ĐÃ điều chỉnh theo dữ liệu quyền cho {len(applied)} sự kiện GDKHQ "
+            f"({detail}) - SMA/trend/ATR trên chuỗi này so sánh được qua các mốc quyền."
         )
         if remaining:
             note += (
-                f" Vẫn còn {len(remaining)} gap vượt biên độ không giải thích được bằng cổ tức - "
+                f" Vẫn còn {len(remaining)} gap vượt biên độ không giải thích được bằng dữ liệu quyền - "
                 "các mốc giá TRƯỚC gap đó vẫn không cùng hệ quy chiếu, KHÔNG dùng làm hỗ trợ/kháng cự."
             )
         outcome.note = note
     return outcome
 
 
-async def adjust_with_dividends(symbol: str, closes, highs, lows, dates) -> AdjustmentOutcome:
-    """Fetch cổ tức rồi điều chỉnh nếu khớp. Chuỗi không gap thì không tốn
-    request nào (điều chỉnh chỉ có ý nghĩa khi có dấu hiệu chưa điều chỉnh)."""
+def apply_dividend_adjustment(
+    closes: list[float],
+    highs: list[float],
+    lows: list[float],
+    dates: list[str],
+    events: list[DividendEvent],
+) -> AdjustmentOutcome:
+    """Giữ tương thích: chỉ điều chỉnh cổ tức tiền."""
+    return apply_corporate_adjustment(closes, highs, lows, dates, events)
+
+
+async def adjust_with_corporate_actions(
+    symbol: str, closes, highs, lows, dates, volumes=None
+) -> AdjustmentOutcome:
+    """Fetch sự kiện quyền rồi điều chỉnh nếu khớp. Chuỗi không gap thì không
+    tốn request nào (điều chỉnh chỉ có ý nghĩa khi có dấu hiệu chưa điều chỉnh)."""
     from stock import price_adjust
 
+    unchanged = AdjustmentOutcome(
+        closes=list(closes), highs=list(highs), lows=list(lows), volumes=list(volumes or [])
+    )
     if not closes or not price_adjust.detect_price_gaps(closes, dates):
-        return AdjustmentOutcome(closes=list(closes), highs=list(highs), lows=list(lows))
-    events = await fetch_dividends(symbol)
-    if not events:
-        return AdjustmentOutcome(closes=list(closes), highs=list(highs), lows=list(lows))
-    return apply_dividend_adjustment(closes, highs, lows, dates, events)
+        return unchanged
+    dividends, stock_events = await fetch_corporate_events(symbol)
+    if not dividends and not stock_events:
+        return unchanged
+    return apply_corporate_adjustment(closes, highs, lows, dates, dividends, stock_events, volumes)
+
+
+async def adjust_with_dividends(symbol: str, closes, highs, lows, dates) -> AdjustmentOutcome:
+    """Giữ tương thích tên cũ - giờ dùng cả sự kiện cổ phiếu."""
+    return await adjust_with_corporate_actions(symbol, closes, highs, lows, dates)

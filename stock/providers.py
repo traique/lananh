@@ -5,6 +5,7 @@ Nguồn dùng ở đây đều CÔNG KHAI, KHÔNG CẦN API KEY:
 - DNSE price-api (GraphQL): giá khớp lệnh gần nhất, realtime, chỉ áp dụng cho cổ phiếu.
 - Google News RSS: tin tức theo mã.
 """
+
 import asyncio
 import logging
 import math
@@ -66,6 +67,7 @@ def get_vnstock_semaphore() -> asyncio.Semaphore:
     global _vnstock_semaphore
     if _vnstock_semaphore is None:
         from core import config
+
         _vnstock_semaphore = asyncio.Semaphore(max(1, config.VNSTOCK_MAX_CONCURRENCY))
     return _vnstock_semaphore
 
@@ -83,11 +85,13 @@ def ensure_vnstock_api_key() -> None:
         return
     _vnstock_auth_attempted = True
     import os
+
     api_key = os.getenv("VNSTOCK_API_KEY", "").strip()
     if not api_key:
         return
     try:
         from vnstock.core.utils.auth import register_user
+
         register_user(api_key=api_key)
     except Exception:
         logger.warning("vnstock: đăng ký API key thất bại, tiếp tục ở mức Guest.", exc_info=True)
@@ -110,7 +114,7 @@ class OhlcvSeries:
     lows: list = field(default_factory=list)
     volumes: list = field(default_factory=list)
     dates: list = field(default_factory=list)
-    source: str = 'unknown'
+    source: str = "unknown"
     is_adjusted: bool | None = None
 
     @property
@@ -146,14 +150,21 @@ async def fetch_ohlcv(symbol: str, days: int = 90) -> OhlcvSeries:
         return cached[1]
     primary = await _fetch_ohlcv_dnse(sym, days)
     from stock.validation import ohlcv_contract_errors
-    primary_errors = ohlcv_contract_errors(primary.closes, primary.highs, primary.lows, primary.volumes, primary.dates)
+
+    primary_errors = ohlcv_contract_errors(
+        primary.closes, primary.highs, primary.lows, primary.volumes, primary.dates
+    )
     if primary.closes and not primary_errors:
         series = primary
     else:
         _provider_failures["dnse"] += 1
-        logger.warning("DNSE unusable for %s (%s); trying vnstock/VCI", sym, primary_errors or "empty")
+        logger.warning(
+            "DNSE unusable for %s (%s); trying vnstock/VCI", sym, primary_errors or "empty"
+        )
         fallback = await _fetch_ohlcv_vnstock(sym, days)
-        fallback_errors = ohlcv_contract_errors(fallback.closes, fallback.highs, fallback.lows, fallback.volumes, fallback.dates)
+        fallback_errors = ohlcv_contract_errors(
+            fallback.closes, fallback.highs, fallback.lows, fallback.volumes, fallback.dates
+        )
         if fallback.closes and not fallback_errors:
             series = fallback
         else:
@@ -183,7 +194,9 @@ async def _fetch_ohlcv_dnse(symbol: str, days: int = 90) -> OhlcvSeries:
     }
     try:
         res = await get_http_client().get(
-            endpoint, params=params, headers={"User-Agent": USER_AGENT, "Accept": "application/json"}
+            endpoint,
+            params=params,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
         )
         if res.status_code != 200:
             return OhlcvSeries(symbol=sym)
@@ -193,7 +206,9 @@ async def _fetch_ohlcv_dnse(symbol: str, days: int = 90) -> OhlcvSeries:
         return OhlcvSeries(symbol=sym)
 
     if not isinstance(data, dict):
-        logger.warning("fetch_ohlcv(%s): DNSE trả schema không hợp lệ (%s)", sym, type(data).__name__)
+        logger.warning(
+            "fetch_ohlcv(%s): DNSE trả schema không hợp lệ (%s)", sym, type(data).__name__
+        )
         return OhlcvSeries(symbol=sym)
 
     t = data.get("t") or []
@@ -232,66 +247,139 @@ async def _fetch_ohlcv_dnse(symbol: str, days: int = 90) -> OhlcvSeries:
     volumes = [b[4] for b in bars]
     dates = [datetime.fromtimestamp(b[0], tz=_VN_TZ).strftime("%Y-%m-%d") for b in bars]
 
-    return OhlcvSeries(symbol=sym, closes=closes, highs=highs, lows=lows, volumes=volumes, dates=dates, source="dnse")
+    return OhlcvSeries(
+        symbol=sym,
+        closes=closes,
+        highs=highs,
+        lows=lows,
+        volumes=volumes,
+        dates=dates,
+        source="dnse",
+    )
+
 
 _provider_failures = {"dnse": 0, "vnstock": 0}
-def provider_health_snapshot(): return dict(_provider_failures)
+
+
+def provider_health_snapshot():
+    return dict(_provider_failures)
+
 
 def _fetch_ohlcv_vnstock_sync(symbol, days):
     try:
         ensure_vnstock_api_key()
         from vnstock.explorer.vci import Quote
-        end=datetime.now(_VN_TZ).date(); start=end-timedelta(days=int(days*1.7)+30)
-        df=Quote(symbol=dnse_symbol(symbol), show_log=False).history(start=start.isoformat(), end=end.isoformat(), interval="1D")
-        if df is None or df.empty: return OhlcvSeries(symbol=symbol, source="vnstock-vci")
-        cols={str(c).strip().lower():c for c in df.columns}
-        def pick(*names): return next((cols[n] for n in names if n in cols), None)
-        dc,cc,hc,lc,vc=pick("time","date","trading_date"),pick("close"),pick("high"),pick("low"),pick("volume","match_volume")
-        if any(x is None for x in (dc,cc,hc,lc,vc)): return OhlcvSeries(symbol=symbol, source="vnstock-vci")
-        rows=[]
-        for _,r in df.iterrows():
-            try: rows.append((str(r[dc])[:10],float(r[hc]),float(r[lc]),float(r[cc]),float(r[vc])))
-            except (TypeError,ValueError,KeyError): pass
-        rows=sorted(rows)[-days:]
-        if not rows: return OhlcvSeries(symbol=symbol, source="vnstock-vci")
-        median=sorted(r[3] for r in rows)[len(rows)//2]; scale=1 if is_index_symbol(symbol) or median>=1000 else PRICE_SCALE
-        return OhlcvSeries(symbol, [round(r[3]*scale) for r in rows], [round(r[1]*scale) for r in rows], [round(r[2]*scale) for r in rows], [r[4] for r in rows], [r[0] for r in rows], "vnstock-vci")
+
+        end = datetime.now(_VN_TZ).date()
+        start = end - timedelta(days=int(days * 1.7) + 30)
+        df = Quote(symbol=dnse_symbol(symbol), show_log=False).history(
+            start=start.isoformat(), end=end.isoformat(), interval="1D"
+        )
+        if df is None or df.empty:
+            return OhlcvSeries(symbol=symbol, source="vnstock-vci")
+        cols = {str(c).strip().lower(): c for c in df.columns}
+
+        def pick(*names):
+            return next((cols[n] for n in names if n in cols), None)
+
+        dc, cc, hc, lc, vc = (
+            pick("time", "date", "trading_date"),
+            pick("close"),
+            pick("high"),
+            pick("low"),
+            pick("volume", "match_volume"),
+        )
+        if any(x is None for x in (dc, cc, hc, lc, vc)):
+            return OhlcvSeries(symbol=symbol, source="vnstock-vci")
+        rows = []
+        for _, r in df.iterrows():
+            try:
+                rows.append(
+                    (str(r[dc])[:10], float(r[hc]), float(r[lc]), float(r[cc]), float(r[vc]))
+                )
+            except (TypeError, ValueError, KeyError):
+                pass
+        rows = sorted(rows)[-days:]
+        if not rows:
+            return OhlcvSeries(symbol=symbol, source="vnstock-vci")
+        median = sorted(r[3] for r in rows)[len(rows) // 2]
+        scale = 1 if is_index_symbol(symbol) or median >= 1000 else PRICE_SCALE
+        return OhlcvSeries(
+            symbol,
+            [round(r[3] * scale) for r in rows],
+            [round(r[1] * scale) for r in rows],
+            [round(r[2] * scale) for r in rows],
+            [r[4] for r in rows],
+            [r[0] for r in rows],
+            "vnstock-vci",
+        )
     except Exception:
-        logger.warning("vnstock fallback failed for %s", symbol, exc_info=True); return OhlcvSeries(symbol=symbol, source="vnstock-vci")
+        logger.warning("vnstock fallback failed for %s", symbol, exc_info=True)
+        return OhlcvSeries(symbol=symbol, source="vnstock-vci")
+
+
 async def _fetch_ohlcv_vnstock(symbol, days):
     try:
         async with get_vnstock_semaphore():
-            return await asyncio.wait_for(asyncio.to_thread(_fetch_ohlcv_vnstock_sync, symbol, days), timeout=20)
-    except (TimeoutError, asyncio.TimeoutError): return OhlcvSeries(symbol=symbol, source="vnstock-vci")
+            return await asyncio.wait_for(
+                asyncio.to_thread(_fetch_ohlcv_vnstock_sync, symbol, days), timeout=20
+            )
+    except (TimeoutError, asyncio.TimeoutError):
+        return OhlcvSeries(symbol=symbol, source="vnstock-vci")
+
 
 def _fetch_symbol_universe_sync():
     try:
         ensure_vnstock_api_key()
         from vnstock import Listing
-        df=Listing(source="VCI").all_symbols(); cols={str(c).lower():c for c in df.columns}
-        c=next((cols[k] for k in ("symbol","ticker","code") if k in cols),None)
-        return sorted({str(v).strip().upper() for v in df[c] if c is not None and _SYMBOL_RE.fullmatch(str(v).strip().upper())})
-    except Exception: return []
+
+        df = Listing(source="VCI").all_symbols()
+        cols = {str(c).lower(): c for c in df.columns}
+        c = next((cols[k] for k in ("symbol", "ticker", "code") if k in cols), None)
+        return sorted(
+            {
+                str(v).strip().upper()
+                for v in df[c]
+                if c is not None and _SYMBOL_RE.fullmatch(str(v).strip().upper())
+            }
+        )
+    except Exception:
+        return []
+
+
 async def fetch_symbol_universe():
     try:
         async with get_vnstock_semaphore():
-            symbols=await asyncio.wait_for(asyncio.to_thread(_fetch_symbol_universe_sync), timeout=30)
-    except (TimeoutError, asyncio.TimeoutError): symbols=[]
-    if symbols: return symbols
+            symbols = await asyncio.wait_for(
+                asyncio.to_thread(_fetch_symbol_universe_sync), timeout=30
+            )
+    except (TimeoutError, asyncio.TimeoutError):
+        symbols = []
+    if symbols:
+        return symbols
     from stock.sector import ALL_KNOWN_SYMBOLS
+
     return sorted(ALL_KNOWN_SYMBOLS)
 
+
 _EXCHANGE_MAP_TTL = 24 * 3600
+# Lần lấy thất bại/rỗng chỉ cache ngắn: trước đây map rỗng bị giữ 24h, cả ngày
+# mọi mã HOSE dùng bước giá 100đ dù nguồn đã hồi phục sau vài phút.
+_EXCHANGE_MAP_NEGATIVE_TTL = 10 * 60
 _exchange_map_cache: tuple[float, dict[str, str]] | None = None
+
 
 def _fetch_exchange_map_sync() -> dict[str, str]:
     try:
         ensure_vnstock_api_key()
         from vnstock import Listing
+
         df = Listing(source="VCI").symbols_by_exchange()
         cols = {str(c).lower().replace("_", ""): c for c in df.columns}
         symbol_col = next((cols[k] for k in ("symbol", "ticker", "code") if k in cols), None)
-        exchange_col = next((cols[k] for k in ("exchange", "exchangename", "market", "floor") if k in cols), None)
+        exchange_col = next(
+            (cols[k] for k in ("exchange", "exchangename", "market", "floor") if k in cols), None
+        )
         if symbol_col is None or exchange_col is None:
             return {}
         result = {}
@@ -311,26 +399,35 @@ def _fetch_exchange_map_sync() -> dict[str, str]:
         logger.debug("Không lấy được exchange map từ vnstock", exc_info=True)
         return {}
 
+
 async def fetch_symbol_exchange(symbol: str) -> str | None:
     """Best-effort resolve sàn; thiếu dữ liệu thì caller dùng tick 100đ an toàn."""
     global _exchange_map_cache
     now = time.monotonic()
-    if _exchange_map_cache is None or now - _exchange_map_cache[0] >= _EXCHANGE_MAP_TTL:
+    ttl = (
+        _EXCHANGE_MAP_TTL
+        if _exchange_map_cache and _exchange_map_cache[1]
+        else _EXCHANGE_MAP_NEGATIVE_TTL
+    )
+    if _exchange_map_cache is None or now - _exchange_map_cache[0] >= ttl:
         try:
             async with get_vnstock_semaphore():
-                mapping = await asyncio.wait_for(asyncio.to_thread(_fetch_exchange_map_sync), timeout=30)
+                mapping = await asyncio.wait_for(
+                    asyncio.to_thread(_fetch_exchange_map_sync), timeout=30
+                )
         except (TimeoutError, asyncio.TimeoutError):
             mapping = {}
         _exchange_map_cache = (now, mapping)
     return _exchange_map_cache[1].get(symbol.strip().upper())
+
 
 async def fetch_current_price(symbol: str) -> float:
     series = await fetch_ohlcv(symbol, days=5)
     return series.price
 
 
-_VERIFY_CACHE_TTL_POS = 24 * 3600    # kết quả TỒN TẠI - cache 24h như cũ
-_VERIFY_CACHE_TTL_NEG = 10 * 60      # kết quả "không tồn tại" - chỉ cache 10 phút
+_VERIFY_CACHE_TTL_POS = 24 * 3600  # kết quả TỒN TẠI - cache 24h như cũ
+_VERIFY_CACHE_TTL_NEG = 10 * 60  # kết quả "không tồn tại" - chỉ cache 10 phút
 _verify_cache: dict[str, tuple[float, bool, int]] = {}  # (ts, result, ttl)
 
 
@@ -388,11 +485,7 @@ async def fetch_realtime_tick(symbol: str) -> float | None:
         )
         if res.status_code == 200:
             data = res.json()
-            ticks = (
-                (data.get("data") or {})
-                .get("GetKrxTicksBySymbols", {})
-                .get("ticks", [])
-            )
+            ticks = (data.get("data") or {}).get("GetKrxTicksBySymbols", {}).get("ticks", [])
             if ticks:
                 match_price = ticks[0].get("matchPrice")
                 if match_price:
@@ -407,7 +500,8 @@ async def fetch_quote(symbol: str) -> Quote | None:
     # OHLCV và realtime tick là 2 request độc lập - chạy song song thay vì
     # await tuần tự (trước đây tốn thêm một RTT mạng mỗi lần quote).
     series, realtime_price = await asyncio.gather(
-        fetch_ohlcv(sym, days=5), fetch_realtime_tick(sym),
+        fetch_ohlcv(sym, days=5),
+        fetch_realtime_tick(sym),
     )
     if not series.closes:
         return None
@@ -429,8 +523,13 @@ async def fetch_quote(symbol: str) -> Quote | None:
     change = round(price - prev_close, 2)
     change_pct = round((change / prev_close) * 100, 2) if prev_close else 0.0
     return Quote(
-        symbol=sym, price=price, prev_close=prev_close,
-        change=change, change_pct=change_pct, date=date, is_realtime=is_realtime,
+        symbol=sym,
+        price=price,
+        prev_close=prev_close,
+        change=change,
+        change_pct=change_pct,
+        date=date,
+        is_realtime=is_realtime,
     )
 
 
@@ -441,8 +540,31 @@ NEWS_MAX_ITEMS = 8
 
 NOISE_KEYWORDS = ["cw", "chứng quyền", "cmw"]
 NEGATION_WORDS = ["không", "chưa", "chẳng", "chớ", "đừng", "thay vì", "ngoại trừ"]
-POS_WORDS = ["tăng", "lãi", "mua", "tích cực", "kỷ lục", "phục hồi", "tăng trưởng", "bứt phá", "vượt", "khởi sắc"]
-NEG_WORDS = ["giảm", "lỗ", "bán", "rủi ro", "phạt", "vi phạm", "sụt", "bán tháo", "tụt", "hạ", "yếu"]
+POS_WORDS = [
+    "tăng",
+    "lãi",
+    "mua",
+    "tích cực",
+    "kỷ lục",
+    "phục hồi",
+    "tăng trưởng",
+    "bứt phá",
+    "vượt",
+    "khởi sắc",
+]
+NEG_WORDS = [
+    "giảm",
+    "lỗ",
+    "bán",
+    "rủi ro",
+    "phạt",
+    "vi phạm",
+    "sụt",
+    "bán tháo",
+    "tụt",
+    "hạ",
+    "yếu",
+]
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -535,9 +657,19 @@ async def fetch_news(symbol: str) -> list[NewsHeadline]:
         except (ValueError, TypeError):
             pass
         seen.add(key)
-        source = _extract_tag(item, "source") or (raw_title.split(" - ")[-1].strip() if " - " in raw_title else "")
+        source = _extract_tag(item, "source") or (
+            raw_title.split(" - ")[-1].strip() if " - " in raw_title else ""
+        )
         link = _extract_tag(item, "link")
-        news.append(NewsHeadline(title=title, source=source, pub_date=pub_date_raw, url=link, sentiment=sentiment_score(title)))
+        news.append(
+            NewsHeadline(
+                title=title,
+                source=source,
+                pub_date=pub_date_raw,
+                url=link,
+                sentiment=sentiment_score(title),
+            )
+        )
 
     return news
 
