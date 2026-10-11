@@ -134,6 +134,12 @@
   .field-row input:focus{outline:2px solid var(--accent-a);outline-offset:-1px;background:rgba(255,255,255,.85)}
   .field-label{font-size:11px;color:var(--muted);width:100%;margin-top:6px}
 
+  .output{
+    white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.5;
+    background:rgba(255,255,255,.55);border:1px solid rgba(60,60,67,.16);
+    border-radius:var(--radius-sm);padding:12px;margin:12px 0 0;max-height:420px;overflow:auto;
+  }
+
   select{
     padding:6px 10px;border-radius:var(--radius-sm);border:1px solid rgba(60,60,67,.16);
     background:rgba(255,255,255,.6);font-size:12.5px;
@@ -189,6 +195,19 @@
   </section>
 
   <section class="tile glass">
+    <h2 class="tile-title"><span class="dot"></span>Page chứng khoán &amp; tin CafeF (tự động)</h2>
+    <div id="market-box" class="muted">Đang tải...</div>
+    <div class="actions">
+      <button class="secondary small market-run" data-job="stock" data-publish="0">Xem thử chứng khoán</button>
+      <button class="secondary small market-run" data-job="news" data-publish="0">Xem thử tin CafeF</button>
+      <button class="small market-run" data-job="stock" data-publish="1">Đăng chứng khoán ngay</button>
+      <button class="small market-run" data-job="news" data-publish="1">Đăng tin CafeF ngay</button>
+    </div>
+    <div class="field-label">Xem thử chỉ tạo nội dung bằng AI, không đăng lên Page. Giờ đăng đổi bằng biến MARKET_STOCK_TIMES_VN / MARKET_NEWS_TIMES_VN.</div>
+    <pre id="market-output" class="output" hidden></pre>
+  </section>
+
+  <section class="tile glass">
     <h2 class="tile-title"><span class="dot"></span>Trí nhớ dài hạn theo user</h2>
     <div class="muted" style="margin-bottom:12px">
       Mỗi tin nhắn khi trí nhớ đang bật sẽ tốn thêm 2-3 lượt gọi Google AI Studio
@@ -235,6 +254,18 @@ function msg(text, isError) {
   el.style.color = isError ? 'var(--bad-fg)' : 'var(--ok-fg)';
 }
 
+// Mọi giá trị từ server (tên user Zalo, model, URL...) đều phải qua esc() trước
+// khi ghép vào innerHTML/attribute - tên hiển thị Zalo do người lạ tự đặt.
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+const esc = escapeHtml;
+
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
   if (res.status === 403) { window.location.reload(); throw new Error('phiên đăng nhập hết hạn'); }
@@ -268,8 +299,8 @@ function renderState(s) {
   table.innerHTML = '<tr><th>Provider</th><th>Status</th><th></th></tr>' +
     COOLDOWN_PROVIDERS.map(name => {
       const { label, ok } = fmtCooldown(s[`${name}_exhausted_until`] || 0);
-      const resetBtn = ok ? '' : `<button class="secondary small cooldown-reset" data-provider="${name}">Reset</button>`;
-      return `<tr><td>${name}</td><td><span class="pill ${ok ? 'ok' : 'bad'}">${label}</span></td><td>${resetBtn}</td></tr>`;
+      const resetBtn = ok ? '' : `<button class="secondary small cooldown-reset" data-provider="${esc(name)}">Reset</button>`;
+      return `<tr><td>${esc(name)}</td><td><span class="pill ${ok ? 'ok' : 'bad'}">${esc(label)}</span></td><td>${resetBtn}</td></tr>`;
     }).join('');
   table.querySelectorAll('.cooldown-reset').forEach(btn => {
     btn.onclick = () => resetCooldown(btn.dataset.provider);
@@ -316,34 +347,34 @@ document.getElementById('router9-retry').onclick = async () => {
 
 function providerCard(p) {
   const enableControl = p.enabled_editable
-    ? `<button class="secondary small provider-toggle" data-provider="${p.provider}">${p.enabled ? 'Tắt' : 'Bật'}</button>`
+    ? `<button class="secondary small provider-toggle" data-provider="${esc(p.provider)}">${p.enabled ? 'Tắt' : 'Bật'}</button>`
     : `<span class="pill ${p.enabled ? 'ok' : 'bad'}">${p.enabled ? 'bật' : 'tắt'}</span>`;
-  const baseUrlRow = p.provider === 'router9' ? `
+  const baseUrlControl = p.provider === 'router9' ? `
       <div class="field-row">
-        <input class="base-url-input" placeholder="Base URL (để trống = dùng ROUTER9_BASE_URL env)" value="${p.base_url_override || ''}" data-default="${p.base_url || ''}">
-        <button class="secondary small save-base-url" data-provider="${p.provider}">Lưu Base URL</button>
+        <input class="base-url-input" type="url" placeholder="Base URL (để trống = dùng biến Render)" value="${esc(p.base_url_override || '')}">
+        <button class="secondary small save-base-url" data-provider="router9">Lưu Base URL</button>
       </div>
-      <div class="field-label">Base URL hiện dùng: ${p.base_url || '(chưa cấu hình)'}${p.base_url_overridden ? ' (đã override)' : ' (mặc định env)'}</div>` : '';
+      <div class="field-label">Base URL hiện dùng: ${esc(p.base_url)}${p.base_url_overridden ? ' (đã override)' : ' (ROUTER9_BASE_URL trên Render)'}</div>` : '';
   return `
-    <div class="provider-card" data-provider="${p.provider}">
+    <div class="provider-card" data-provider="${esc(p.provider)}">
       <div class="provider-head">
-        <span class="provider-name">${p.provider}</span>
+        <span class="provider-name">${esc(p.provider)}</span>
         <span>
           <span class="pill ${p.api_key_configured ? 'ok' : 'bad'}">${p.api_key_configured ? 'key OK' : 'chưa có key'}</span>
           ${enableControl}
         </span>
       </div>
       <div class="field-row">
-        <input class="model-input" placeholder="model (để trống = mặc định)" value="${p.model_overridden ? p.model : ''}" data-default="${p.model}">
-        <button class="secondary small save-model" data-provider="${p.provider}">Lưu model</button>
+        <input class="model-input" placeholder="model (để trống = mặc định)" value="${esc(p.model_overridden ? p.model : '')}">
+        <button class="secondary small save-model" data-provider="${esc(p.provider)}">Lưu model</button>
       </div>
-      <div class="field-label">Model hiện dùng: ${p.model}${p.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
-      ${baseUrlRow}
+      <div class="field-label">Model hiện dùng: ${esc(p.model)}${p.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
       <div class="field-row">
-        <input class="key-input" type="password" placeholder="${p.api_key_masked || 'API key (để trống = giữ nguyên)'}" data-provider="${p.provider}">
-        <button class="secondary small save-key" data-provider="${p.provider}">Lưu key</button>
+        <input class="key-input" type="password" placeholder="${esc(p.api_key_masked || 'API key (để trống = giữ nguyên)')}" data-provider="${esc(p.provider)}">
+        <button class="secondary small save-key" data-provider="${esc(p.provider)}">Lưu key</button>
       </div>
       <div class="field-label">${p.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
+      ${baseUrlControl}
     </div>`;
 }
 
@@ -365,20 +396,6 @@ async function loadProviders() {
       } catch (e) { msg('Lưu model thất bại: ' + e.message, true); }
     };
   });
-  document.querySelectorAll('.save-base-url').forEach(btn => {
-    btn.onclick = async () => {
-      const card = btn.closest('.provider-card');
-      const input = card.querySelector('.base-url-input');
-      try {
-        const result = await api('/admin/api/providers/update', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: btn.dataset.provider, base_url: input.value.trim() }),
-        });
-        msg(result.warning || `${btn.dataset.provider}: đã lưu Base URL.`, Boolean(result.warning));
-        loadProviders();
-      } catch (e) { msg('Lưu Base URL thất bại: ' + e.message, true); }
-    };
-  });
   document.querySelectorAll('.save-key').forEach(btn => {
     btn.onclick = async () => {
       const card = btn.closest('.provider-card');
@@ -392,6 +409,22 @@ async function loadProviders() {
         msg(`${btn.dataset.provider}: đã lưu API key.`);
         loadProviders();
       } catch (e) { msg('Lưu API key thất bại: ' + e.message, true); }
+    };
+  });
+  document.querySelectorAll('.save-base-url').forEach(btn => {
+    btn.onclick = async () => {
+      const card = btn.closest('.provider-card');
+      const input = card.querySelector('.base-url-input');
+      try {
+        const result = await api('/admin/api/providers/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: 'router9', base_url: input.value.trim() }),
+        });
+        msg(result.warning || (result.base_url_overridden
+          ? 'router9: đã lưu Base URL.'
+          : 'router9: đã dùng lại ROUTER9_BASE_URL từ Render.'), Boolean(result.warning));
+        loadProviders();
+      } catch (e) { msg('Lưu Base URL thất bại: ' + e.message, true); }
     };
   });
   document.querySelectorAll('.provider-toggle').forEach(btn => {
@@ -427,7 +460,7 @@ function tavilyBox(t) {
         </span>
       </div>
       <div class="field-row">
-        <input type="password" id="tavily-key-input" placeholder="${t.api_key_masked || 'API key (để trống = giữ nguyên)'}">
+        <input type="password" id="tavily-key-input" placeholder="${esc(t.api_key_masked || 'API key (để trống = giữ nguyên)')}">
         <button class="secondary small" id="tavily-save-key">Lưu key</button>
       </div>
       <div class="field-label">${t.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
@@ -461,6 +494,64 @@ async function loadTavily() {
   };
 }
 
+const MARKET_JOB_LABEL = { stock: 'Báo cáo chứng khoán', news: 'Tin CafeF' };
+
+function marketJobLabel(job) {
+  return esc(MARKET_JOB_LABEL[job] || job);
+}
+
+function marketBox(m) {
+  const schedule = m.schedule
+    .map(s => `${esc(s.time)} ${marketJobLabel(s.job)} (${esc(s.days)})`)
+    .join('<br>');
+  const lastRun = job => esc(m.last[job] || 'chưa chạy');
+  return `
+    <table>
+      <tr><th>Page</th><td><span class="pill ${m.configured ? 'ok' : 'bad'}">${m.configured ? 'đã cấu hình' : 'chưa có FACEBOOK_PAGE_ID_MARKET / TOKEN'}</span>
+        ${m.busy ? '<span class="pill ok">đang chạy</span>' : ''}</td></tr>
+      <tr><th>Lịch đăng (giờ VN)</th><td>${schedule}</td></tr>
+      <tr><th>Lượt kế tiếp</th><td>${esc(fmtDate(m.next.at))} - ${marketJobLabel(m.next.job)}</td></tr>
+      <tr><th>Lần gần nhất</th><td>Chứng khoán: ${lastRun('stock')}<br>Tin CafeF: ${lastRun('news')}</td></tr>
+    </table>`;
+}
+
+function setMarketButtons(m) {
+  document.querySelectorAll('.market-run').forEach(btn => {
+    btn.disabled = m.busy || (btn.dataset.publish === '1' && !m.configured);
+  });
+}
+
+async function loadMarket() {
+  const m = await api('/admin/api/market_page');
+  document.getElementById('market-box').innerHTML = marketBox(m);
+  setMarketButtons(m);
+}
+
+document.querySelectorAll('.market-run').forEach(btn => {
+  btn.onclick = async () => {
+    const job = btn.dataset.job;
+    const publish = btn.dataset.publish === '1';
+    if (publish && !confirm(`Đăng "${MARKET_JOB_LABEL[job]}" lên Page chứng khoán ngay bây giờ?`)) return;
+    const out = document.getElementById('market-output');
+    document.querySelectorAll('.market-run').forEach(b => { b.disabled = true; });
+    out.hidden = false;
+    out.textContent = 'Đang chạy, có thể mất 1-2 phút...';
+    try {
+      const r = await api('/admin/api/market_page/run', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job, publish }),
+      });
+      out.textContent = r.text || 'Không có nội dung để đăng (xem log server để biết lý do).';
+      msg(r.published ? `${MARKET_JOB_LABEL[job]}: đã đăng lên Page.` : `${MARKET_JOB_LABEL[job]}: xem thử xong, chưa đăng.`);
+    } catch (e) {
+      out.hidden = true;
+      msg(`${MARKET_JOB_LABEL[job]} thất bại: ` + e.message, true);
+    } finally {
+      loadMarket().catch(() => {});
+    }
+  };
+});
+
 function agnesBox(a) {
   return `
     <div class="provider-card" style="border-bottom:none;padding-top:0">
@@ -472,12 +563,12 @@ function agnesBox(a) {
         </span>
       </div>
       <div class="field-row">
-        <input id="agnes-model-input" placeholder="model (để trống = mặc định)" value="${a.model_overridden ? a.model : ''}">
+        <input id="agnes-model-input" placeholder="model (để trống = mặc định)" value="${esc(a.model_overridden ? a.model : '')}">
         <button class="secondary small" id="agnes-save-model">Lưu model</button>
       </div>
-      <div class="field-label">Model hiện dùng: ${a.model}${a.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
+      <div class="field-label">Model hiện dùng: ${esc(a.model)}${a.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
       <div class="field-row">
-        <input type="password" id="agnes-key-input" placeholder="${a.api_key_masked || 'API key (để trống = giữ nguyên)'}">
+        <input type="password" id="agnes-key-input" placeholder="${esc(a.api_key_masked || 'API key (để trống = giữ nguyên)')}">
         <button class="secondary small" id="agnes-save-key">Lưu key</button>
       </div>
       <div class="field-label">${a.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
@@ -533,9 +624,9 @@ async function loadMemory() {
   table.innerHTML = '<tr><th>User</th><th>Trạng thái</th><th></th></tr>' +
     users.map(u => `
       <tr>
-        <td>${u.label}</td>
+        <td>${esc(u.label)}</td>
         <td><span class="pill ${u.enabled ? 'ok' : 'bad'}">${u.enabled ? 'bật' : 'tắt'}</span></td>
-        <td><button class="secondary small memory-toggle" data-user="${u.user_id}" data-enabled="${u.enabled}">${u.enabled ? 'Tắt' : 'Bật'}</button></td>
+        <td><button class="secondary small memory-toggle" data-user="${esc(u.user_id)}" data-enabled="${u.enabled ? 'true' : 'false'}">${u.enabled ? 'Tắt' : 'Bật'}</button></td>
       </tr>`).join('');
   table.querySelectorAll('.memory-toggle').forEach(btn => {
     btn.onclick = async () => {
@@ -562,7 +653,7 @@ async function loadUsage() {
     return;
   }
   table.innerHTML = '<tr><th>Kênh</th><th>User</th><th>Lượt gọi</th><th>Gần nhất</th></tr>' +
-    rows.map(r => `<tr><td>${r.channel_label}</td><td>${r.label}</td><td>${r.calls}</td><td>${fmtDate(r.last_call_at)}</td></tr>`).join('');
+    rows.map(r => `<tr><td>${esc(r.channel_label)}</td><td>${esc(r.label)}</td><td>${esc(r.calls)}</td><td>${esc(fmtDate(r.last_call_at))}</td></tr>`).join('');
 }
 document.getElementById('usage-range').onchange = () => loadUsage().catch(e => msg(e.message, true));
 
@@ -575,7 +666,7 @@ async function loadUsageModels() {
     return;
   }
   table.innerHTML = '<tr><th>Provider</th><th>Model</th><th>Lượt gọi</th><th>Gần nhất</th></tr>' +
-    rows.map(r => `<tr><td>${r.provider}</td><td class="muted" style="font-family:var(--mono)">${r.model}</td><td>${r.calls}</td><td>${fmtDate(r.last_call_at)}</td></tr>`).join('');
+    rows.map(r => `<tr><td>${esc(r.provider)}</td><td class="muted" style="font-family:var(--mono)">${esc(r.model)}</td><td>${esc(r.calls)}</td><td>${esc(fmtDate(r.last_call_at))}</td></tr>`).join('');
 }
 document.getElementById('usage-models-range').onchange = () => loadUsageModels().catch(e => msg(e.message, true));
 
@@ -589,11 +680,13 @@ loadState().catch(e => msg(e.message, true));
 loadProviders().catch(e => msg(e.message, true));
 loadTavily().catch(e => msg(e.message, true));
 loadAgnes().catch(e => msg(e.message, true));
+loadMarket().catch(e => msg(e.message, true));
 loadMemory().catch(e => msg(e.message, true));
 loadUsage().catch(e => msg(e.message, true));
 loadUsageModels().catch(e => msg(e.message, true));
 setInterval(() => {
   loadState().catch(() => {});
+  loadMarket().catch(() => {});
   loadUsage().catch(() => {});
   loadUsageModels().catch(() => {});
 }, 10000);
