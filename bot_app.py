@@ -9,10 +9,26 @@ from telegram.request import HTTPXRequest
 
 import scheduler
 import tg_format
-from ai import agnes_client, orchestrator, router9_client, groq_client, openrouter_client, tavily_client
+from ai import (
+    agnes_client,
+    orchestrator,
+    router9_client,
+    groq_client,
+    openrouter_client,
+    tavily_client,
+)
 from channels import facebook_commands, zalo_users, zoom
 from core import config, database as db, idempotency
-from handlers import chat_router, commands, media_handler, portfolio_commands, zalo_login
+from handlers import (
+    chat_router,
+    commands,
+    media_handler,
+    pairing_commands,
+    portfolio_commands,
+    provider_commands,
+    zalo_bridge_commands,
+    zalo_login,
+)
 from services import channel_chat_service
 from services import monitor_service
 from services import db_maintenance
@@ -111,8 +127,7 @@ async def _post_shutdown(app):
     await run_step("Telegram scheduler", scheduler.stop())
     await run_step("idempotency cleanup task", idempotency.stop_cleanup_task())
     await run_step("provider monitor task", monitor_service.stop())
-    await run_step("Telegram memory tasks", chat_router.stop_background_tasks())
-    await run_step("channel memory tasks", channel_chat_service.stop_background_tasks())
+    await run_step("chat memory tasks", channel_chat_service.stop_background_tasks())
 
     probe_task = orchestrator._probe_task
     orchestrator._probe_task = None
@@ -175,8 +190,8 @@ def build_application():
         ("memory", commands.memory_cmd),
         ("forget", commands.forget_cmd),
         ("notes", commands.notes_cmd),
-        ("model", commands.model_cmd),
-        ("status", commands.status_cmd),
+        ("model", provider_commands.model_cmd),
+        ("status", provider_commands.status_cmd),
         ("thongke", commands.thongke_cmd),
         ("agent", commands.agent_cmd),
         ("rag", commands.rag_cmd),
@@ -184,40 +199,40 @@ def build_application():
         ("bangtinsang", commands.bangtinsang_cmd),
         ("bantinsang", commands.bangtinsang_cmd),
         ("tintuc", commands.tintuc_cmd),
-        ("userouter9", commands.userouter9_cmd),
-        ("router9", commands.router9_toggle_cmd),
-        ("tavily", commands.tavily_toggle_cmd),
-        ("anh", commands.anh_cmd),
-        ("zoompair", commands.zoompair_cmd),
-        ("zoomxoa", commands.zoomxoa_cmd),
-        ("zoomstatus", commands.zoomstatus_cmd),
-        ("nhom", commands.nhom_cmd),
-        ("themnhom", commands.themnhom_cmd),
-        ("xoanhom", commands.xoanhom_cmd),
-        ("tongket", commands.tongket_cmd),
-        ("dangnoi", commands.dangnoi_cmd),
-        ("fb_nhom", commands.fb_nhom_cmd),
-        ("fb_pages", commands.fb_pages_cmd),
-        ("fb_market", commands.fb_market_cmd),
-        ("fb_themnhom", commands.fb_themnhom_cmd),
-        ("fb_xoanhom", commands.fb_xoanhom_cmd),
-        ("fb_xem", commands.fb_xem_cmd),
-        ("fb_sua", commands.fb_sua_cmd),
-        ("fb_link", commands.fb_link_cmd),
-        ("fb_ok", commands.fb_ok_cmd),
-        ("fb_check", commands.fb_check_cmd),
-        ("fb_reconcile", commands.fb_reconcile_cmd),
-        ("fb_boqua", commands.fb_boqua_cmd),
-        ("fb_reset", commands.fb_reset_cmd),
-        ("fb_boloc", commands.fb_boloc_cmd),
-        ("fb_loclai", commands.fb_loclai_cmd),
-        ("zalopair", commands.zalopair_cmd),
-        ("zaloadmin", commands.zaloadmin_cmd),
-        ("zalohaquyen", commands.zalohaquyen_cmd),
-        ("zalokhoa", commands.zalokhoa_cmd),
-        ("zalomokhoa", commands.zalomokhoa_cmd),
-        ("zaloxoa", commands.zaloxoa_cmd),
-        ("zalodanhsach", commands.zalodanhsach_cmd),
+        ("userouter9", provider_commands.userouter9_cmd),
+        ("router9", provider_commands.router9_toggle_cmd),
+        ("tavily", provider_commands.tavily_toggle_cmd),
+        ("anh", provider_commands.anh_cmd),
+        ("zoompair", pairing_commands.zoompair_cmd),
+        ("zoomxoa", pairing_commands.zoomxoa_cmd),
+        ("zoomstatus", pairing_commands.zoomstatus_cmd),
+        ("nhom", zalo_bridge_commands.nhom_cmd),
+        ("themnhom", zalo_bridge_commands.themnhom_cmd),
+        ("xoanhom", zalo_bridge_commands.xoanhom_cmd),
+        ("tongket", zalo_bridge_commands.tongket_cmd),
+        ("dangnoi", zalo_bridge_commands.dangnoi_cmd),
+        ("fb_nhom", zalo_bridge_commands.fb_nhom_cmd),
+        ("fb_pages", zalo_bridge_commands.fb_pages_cmd),
+        ("fb_market", zalo_bridge_commands.fb_market_cmd),
+        ("fb_themnhom", zalo_bridge_commands.fb_themnhom_cmd),
+        ("fb_xoanhom", zalo_bridge_commands.fb_xoanhom_cmd),
+        ("fb_xem", zalo_bridge_commands.fb_xem_cmd),
+        ("fb_sua", zalo_bridge_commands.fb_sua_cmd),
+        ("fb_link", zalo_bridge_commands.fb_link_cmd),
+        ("fb_ok", zalo_bridge_commands.fb_ok_cmd),
+        ("fb_check", zalo_bridge_commands.fb_check_cmd),
+        ("fb_reconcile", zalo_bridge_commands.fb_reconcile_cmd),
+        ("fb_boqua", zalo_bridge_commands.fb_boqua_cmd),
+        ("fb_reset", zalo_bridge_commands.fb_reset_cmd),
+        ("fb_boloc", zalo_bridge_commands.fb_boloc_cmd),
+        ("fb_loclai", zalo_bridge_commands.fb_loclai_cmd),
+        ("zalopair", pairing_commands.zalopair_cmd),
+        ("zaloadmin", pairing_commands.zaloadmin_cmd),
+        ("zalohaquyen", pairing_commands.zalohaquyen_cmd),
+        ("zalokhoa", pairing_commands.zalokhoa_cmd),
+        ("zalomokhoa", pairing_commands.zalomokhoa_cmd),
+        ("zaloxoa", pairing_commands.zaloxoa_cmd),
+        ("zalodanhsach", pairing_commands.zalodanhsach_cmd),
     ]
     for name, handler in command_handlers:
         app.add_handler(CommandHandler(name, handler))

@@ -21,7 +21,9 @@ ALL_PROVIDERS_DOWN_ALERT = (
     "(9Router chết/tắt + các provider còn lại đều đang cooldown hết quota). "
     "Mọi lệnh AI sẽ báo lỗi cho tới khi có provider hồi phục - gõ /status để xem chi tiết."
 )
-ALL_PROVIDERS_RECOVERED_ALERT = "✅ Đã có ít nhất 1 provider dùng lại được, bot hoạt động bình thường trở lại."
+ALL_PROVIDERS_RECOVERED_ALERT = (
+    "✅ Đã có ít nhất 1 provider dùng lại được, bot hoạt động bình thường trở lại."
+)
 
 # ─── Zalo Team Chat (nhiều tài khoản, phân quyền admin/user) ───────────────
 ZALO_LOCKED_REPLY = "Tài khoản Zalo đang bị tạm khóa."
@@ -33,7 +35,9 @@ ZOOM_UNPAIRED_ALERT = (
 )
 
 # ─── Phân tích cổ phiếu ──────────────────────────────────────────────────────
-STOCK_FETCH_ERROR = "Em không lấy được dữ liệu giá cho mã {symbol} lúc này, anh thử lại sau ít phút nhé."
+STOCK_FETCH_ERROR = (
+    "Em không lấy được dữ liệu giá cho mã {symbol} lúc này, anh thử lại sau ít phút nhé."
+)
 STOCK_ANALYZE_FAILED = "❌ Lỗi khi phân tích {symbol}, bỏ qua mã này."
 STOCK_QUOTE_FAILED = "❌ Lỗi khi lấy giá {symbol}, bỏ qua mã này."
 # Dùng khi tin nhắn rõ ràng đang hỏi giá nhưng hệ thống không nhận ra mã nào.
@@ -41,10 +45,28 @@ STOCK_QUOTE_FAILED = "❌ Lỗi khi lấy giá {symbol}, bỏ qua mã này."
 # thật và bịa ra một con số nghe hợp lý.
 STOCK_SYMBOL_UNRESOLVED = (
     "Anh ơi em chưa tra ra mã cổ phiếu nào trong câu này nên không dám đọc giá đại đâu ạ. "
-    "Anh gõ lại mã in HOA giúp em nha (vd: GVR), hoặc thêm chữ \"cổ phiếu\" phía trước."
+    'Anh gõ lại mã in HOA giúp em nha (vd: GVR), hoặc thêm chữ "cổ phiếu" phía trước.'
 )
 
 # ─── Chat & lệnh chung ───────────────────────────────────────────────────────
 INVALID_COMMAND = "Lệnh không hợp lệ. Gõ /help để xem danh sách lệnh."
 CHAT_GENERIC_ERROR = "Gemini không phản hồi gì, thử lại nhé."
 PHOTO_TIMEOUT_ERROR = "❌ Tải ảnh từ Telegram bị timeout. Anh gửi lại ảnh hoặc thử ảnh nhỏ hơn nhé."
+
+# --- runtime ---
+WEBHOOK_DEAD_ALERT = (
+    "⚠️ Sự kiện {channel}/{event_id} lỗi {attempts} lần liên tiếp ({error}) - "
+    "đã ngừng thử lại (DEAD). Xem log server nếu cần xử lý tay."
+)
+CHAT_TURN_TIMEOUT_ERROR = "Hết {seconds}s chờ AI trả lời (mọi provider đều chậm/lỗi)."
+MARKET_PAGE_UNCERTAIN_ALERT = (
+    "⚠️ Page chứng khoán: lượt đăng {job} ({key}) bị gián đoạn giữa chừng nên chưa rõ "
+    "bài đã lên Facebook hay chưa. Bot KHÔNG tự đăng lại - anh kiểm tra Page, "
+    "nếu chưa có bài thì đăng tay bằng /fb_market {job} dang."
+)
+
+# --- zalo gateway ---
+ZALO_OUTBOX_FAILED_ALERT = (
+    "⚠️ Tin Zalo #{item_id} gửi tới {recipient} lỗi {attempts} lần liên tiếp ({error}) - "
+    "đã ngừng thử lại để không chặn các tin sau."
+)
