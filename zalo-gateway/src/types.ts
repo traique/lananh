@@ -26,9 +26,11 @@ export type ZaloMessage = {
 
 export type ZaloListener = {
   on(event: "message", handler: (message: ZaloMessage) => void): void;
-  on(event: "disconnected" | "closed", handler: () => void): void;
+  on(event: "connected", handler: () => void): void;
+  on(event: "disconnected" | "closed", handler: (code?: number, reason?: string) => void): void;
   on(event: "error", handler: (error: unknown) => void): void;
-  start(): void;
+  /** retryOnClose: zca-js tự kết nối lại khi socket đóng với mã Zalo cho phép thử lại. */
+  start(options?: { retryOnClose?: boolean }): void;
   stop?(): void;
 };
 

@@ -3,6 +3,12 @@ import type { MediaItem } from "./types.js";
 
 const WINDOW_MS = 8000;
 const RETRY_MS = 15000;
+/** Trần thời gian chờ giữa 2 lần thử lại (backoff nhân đôi từ RETRY_MS). */
+const MAX_RETRY_DELAY_MS = 5 * 60 * 1000;
+/** Lỗi tạm (5xx/mạng/timeout): thử tối đa chừng này lần (~18 phút) rồi bỏ bài. */
+const MAX_TRANSIENT_ATTEMPTS = 8;
+/** Lỗi do chính bài (4xx như 400/413): thử lại 1 lần rồi bỏ. */
+const MAX_CLIENT_ERROR_ATTEMPTS = 2;
 const MAX_MESSAGES_PER_POST = 50;
 const MAX_MEDIA_PER_POST = 10;
 const MAX_TEXT_CHARS = 20000;
@@ -19,6 +25,8 @@ type PendingPost = {
   media: MediaItem[];
   /** Tin đầu tiên của bài là ảnh hay chữ: cho biết người gửi đăng "ảnh trước" hay "caption trước". */
   firstKind: "media" | "text";
+  /** Số lần gửi sang Python đã lỗi. */
+  attempts: number;
   timer: NodeJS.Timeout;
 };
 
@@ -30,10 +38,23 @@ export type FacebookBufferDeps = {
   enqueue: (work: () => Promise<unknown>) => Promise<void>;
   windowMs?: number;
   retryMs?: number;
+  maxRetryDelayMs?: number;
+  maxAttempts?: number;
 };
 
 const mediaSize = (items: { bytes: Uint8Array }[]) =>
   items.reduce((sum, item) => sum + item.bytes.length, 0);
+
+/**
+ * Lỗi do chính nội dung bài (4xx: 400 sai dữ liệu, 413 quá lớn...) - gửi lại y
+ * nguyên cũng lỗi tiếp. 408/429 là lỗi tạm thời.
+ */
+export function isPermanentPostError(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null)?.status;
+  return (
+    typeof status === "number" && status >= 400 && status < 500 && status !== 408 && status !== 429
+  );
+}
 
 /**
  * Tin mới có mở đầu một bài KHÁC không (thay vì bổ sung cho bài đang gom)?
@@ -64,17 +85,24 @@ export function startsNewPost(
 
 /**
  * Gom các tin nhắn liên tiếp của cùng người trong cùng nhóm (trong ~8 giây)
- * thành MỘT bài Facebook chờ duyệt. Lỗi gửi sang Python -> giữ buffer và thử lại.
+ * thành MỘT bài Facebook chờ duyệt. Lỗi gửi sang Python -> giữ buffer và thử
+ * lại có giới hạn: lỗi 4xx thử 1 lần nữa rồi bỏ, lỗi tạm thì backoff tới
+ * MAX_TRANSIENT_ATTEMPTS lần. Bộ đệm đầy thì bỏ bài cũ nhất, KHÔNG bao giờ làm
+ * mất tin mới vì bài cũ gửi lỗi.
  */
 export class FacebookPostBuffer {
   private readonly buffers = new Map<string, PendingPost>();
   private readonly windowMs: number;
   private readonly retryMs: number;
+  private readonly maxRetryDelayMs: number;
+  private readonly maxAttempts: number;
   private sequence = 0;
 
   constructor(private readonly deps: FacebookBufferDeps) {
     this.windowMs = deps.windowMs ?? WINDOW_MS;
     this.retryMs = deps.retryMs ?? RETRY_MS;
+    this.maxRetryDelayMs = deps.maxRetryDelayMs ?? MAX_RETRY_DELAY_MS;
+    this.maxAttempts = Math.max(1, deps.maxAttempts ?? MAX_TRANSIENT_ATTEMPTS);
   }
 
   get size(): number {
@@ -86,17 +114,45 @@ export class FacebookPostBuffer {
       this.deps
         .enqueue(() => this.flush(key))
         .catch((error) => {
-          // flush() đã tự hẹn giờ thử lại khi lỗi; ở đây chỉ log.
-          console.error("[zalo] Facebook buffer retained for retry", error);
+          // Hàng đợi nhóm đầy nên chưa gửi được: hẹn lại, không để bài nằm im mãi.
+          console.error("[zalo] Facebook buffer flush not queued; retry later", error);
+          const pending = this.buffers.get(key);
+          if (pending && pending.timer === timer) pending.timer = this.schedule(key, this.retryMs);
         });
     }, delay);
     timer.unref();
     return timer;
   }
 
-  async flush(key: string): Promise<void> {
+  /** Chờ bao lâu trước lần thử kế; null = bỏ bài. */
+  private retryDelay(error: unknown, attempts: number): number | null {
+    if (isPermanentPostError(error)) {
+      return attempts < MAX_CLIENT_ERROR_ATTEMPTS ? this.retryMs : null;
+    }
+    if (attempts >= this.maxAttempts) return null;
+    return Math.min(this.maxRetryDelayMs, this.retryMs * 2 ** (attempts - 1));
+  }
+
+  private drop(key: string, reason: string, error?: unknown): void {
     const pending = this.buffers.get(key);
     if (!pending) return;
+    clearTimeout(pending.timer);
+    this.buffers.delete(key);
+    console.error(
+      `[zalo] Bỏ bài Facebook nhóm=${pending.groupId} người gửi=${pending.senderId} ` +
+        `(${pending.messageIds.length} tin, ${pending.media.length} ảnh): ${reason}`,
+      error ?? "",
+    );
+  }
+
+  /**
+   * Gửi bài đang gom sang Python. Không bao giờ ném lỗi: lỗi -> hẹn thử lại
+   * hoặc bỏ bài theo loại lỗi (`evicting`: bỏ luôn để lấy chỗ cho tin mới).
+   * Trả true nếu bài đã gửi xong (hoặc không còn).
+   */
+  async flush(key: string, evicting = false): Promise<boolean> {
+    const pending = this.buffers.get(key);
+    if (!pending) return true;
     clearTimeout(pending.timer);
     try {
       await this.deps.store({
@@ -107,10 +163,23 @@ export class FacebookPostBuffer {
         text: pending.texts.join("\n").trim(),
         media: pending.media,
       });
-      this.buffers.delete(key);
+      if (this.buffers.get(key) === pending) this.buffers.delete(key);
+      return true;
     } catch (error) {
-      pending.timer = this.schedule(key, this.retryMs);
-      throw error;
+      pending.attempts++;
+      const delay = this.retryDelay(error, pending.attempts);
+      if (evicting) {
+        this.drop(key, "bộ đệm đầy và gửi lỗi", error);
+      } else if (delay === null) {
+        this.drop(key, `gửi lỗi ${pending.attempts} lần`, error);
+      } else {
+        console.error(
+          `[zalo] Facebook post flush failed (lần ${pending.attempts}); thử lại sau ${delay}ms`,
+          error,
+        );
+        pending.timer = this.schedule(key, delay);
+      }
+      return false;
     }
   }
 
@@ -143,20 +212,17 @@ export class FacebookPostBuffer {
       const detachedKey = `${key}#${++this.sequence}`;
       this.buffers.delete(key);
       this.buffers.set(detachedKey, current);
-      try {
-        await this.flush(detachedKey);
-      } catch (error) {
-        console.error("[zalo] Facebook post flush failed; will retry", error);
-      }
+      await this.flush(detachedKey);
     }
-    // Giữ RAM trong giới hạn: đẩy bài cũ nhất đi trước khi nhận thêm.
+    // Giữ RAM trong giới hạn: đẩy bài cũ nhất đi trước khi nhận thêm. Gửi lỗi
+    // thì bỏ luôn bài cũ đó (đã log) - tin mới không bao giờ bị mất vì bài cũ.
     while (
       this.buffers.size >= MAX_BUFFERS ||
       this.totalBufferedBytes() + mediaSize(media) > MAX_BUFFERED_MEDIA_BYTES
     ) {
       const oldest = this.buffers.keys().next().value;
       if (oldest === undefined) break;
-      await this.flush(oldest);
+      await this.flush(oldest, true);
     }
     const existing = this.buffers.get(key);
     const clippedText = text.slice(0, MAX_TEXT_CHARS);
@@ -176,6 +242,7 @@ export class FacebookPostBuffer {
       texts: text ? [clippedText] : [],
       media: [...media],
       firstKind: media.length && !text.trim() ? "media" : "text",
+      attempts: 0,
       timer: this.schedule(key, this.windowMs),
     });
   }
