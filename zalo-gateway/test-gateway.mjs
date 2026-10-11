@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { allowedMediaHost, downloadImage, imageCandidates, sniffImage } from "./dist/media.js";
-import { SeenIds, isTransientNetworkError, splitForZalo } from "./dist/text.js";
-import { FacebookPostBuffer } from "./dist/facebook-buffer.js";
+import { KnownSenders, SeenIds, isTransientNetworkError, splitForZalo } from "./dist/text.js";
+import { FacebookPostBuffer, isPermanentPostError } from "./dist/facebook-buffer.js";
+import { BridgeHttpError } from "./dist/bridge.js";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
@@ -182,4 +183,84 @@ test("gửi bài cũ lỗi khi tách bài không làm mất tin mới", async ()
   await buffer.add("g", "u", "An", "b1", "Quần B https://s.shopee.vn/b", [IMG]);
   await new Promise((r) => setTimeout(r, 120));
   assert.deepEqual(stored.sort(), [["a1"], ["b1"]]);
+});
+
+test("isPermanentPostError: 4xx là lỗi của bài (trừ 408/429), 5xx và lỗi mạng là tạm", () => {
+  assert.equal(isPermanentPostError(new BridgeHttpError("FB", 413, "too large")), true);
+  assert.equal(isPermanentPostError(new BridgeHttpError("FB", 400, "bad")), true);
+  assert.equal(isPermanentPostError(new BridgeHttpError("FB", 429, "slow down")), false);
+  assert.equal(isPermanentPostError(new BridgeHttpError("FB", 503, "down")), false);
+  assert.equal(isPermanentPostError(new Error("fetch failed")), false);
+});
+
+test("bài bị 413 chỉ thử lại 1 lần rồi bỏ, không lặp mãi", async () => {
+  let calls = 0;
+  const buffer = new FacebookPostBuffer({
+    store: async () => {
+      calls++;
+      throw new BridgeHttpError("Facebook group post", 413, "Media payload too large");
+    },
+    enqueue: (work) => work().then(() => undefined),
+    windowMs: 10,
+    retryMs: 15,
+  });
+  await buffer.add("g", "u", "An", "m1", "x", [IMG]);
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(calls, 2);
+  assert.equal(buffer.size, 0);
+});
+
+test("lỗi 5xx: thử lại có backoff tới trần số lần rồi bỏ", async () => {
+  const at = [];
+  const buffer = new FacebookPostBuffer({
+    store: async () => {
+      at.push(Date.now());
+      throw new BridgeHttpError("Facebook group post", 500, "boom");
+    },
+    enqueue: (work) => work().then(() => undefined),
+    windowMs: 5,
+    retryMs: 10,
+    maxAttempts: 4,
+  });
+  await buffer.add("g", "u", "An", "m1", "x", []);
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(at.length, 4);
+  assert.equal(buffer.size, 0);
+  // Khoảng cách tăng dần (10, 20, 40ms) - cho phép sai số hẹn giờ.
+  assert.ok(at[3] - at[2] > at[1] - at[0]);
+});
+
+test("bộ đệm đầy và bài cũ nhất gửi lỗi: bỏ bài cũ, tin mới không bị mất", async () => {
+  const stored = [];
+  const buffer = new FacebookPostBuffer({
+    store: async (post) => {
+      if (post.senderId === "u0") throw new BridgeHttpError("Facebook group post", 500, "boom");
+      stored.push(post.senderId);
+    },
+    enqueue: (work) => work().then(() => undefined),
+    windowMs: 60000,
+  });
+  for (let i = 0; i < 64; i++) await buffer.add("g", `u${i}`, "An", `m${i}`, `tin ${i}`, []);
+  assert.equal(buffer.size, 64);
+  await buffer.add("g", "u64", "An", "m64", "tin mới", []);
+  assert.equal(buffer.size, 64);
+  assert.deepEqual(stored, []);
+  // Bài mới nằm trong bộ đệm, gửi được khi flush.
+  assert.equal(await buffer.flush("g:u64"), true);
+  assert.deepEqual(stored, ["u64"]);
+});
+
+test("KnownSenders chỉ nhớ người đã được trả lời, LRU có trần", () => {
+  const known = new KnownSenders(2);
+  assert.equal(known.has("a"), false);
+  known.mark("a");
+  known.mark("b");
+  known.mark("a"); // dùng lại -> "b" thành cũ nhất
+  known.mark("c");
+  assert.equal(known.has("a"), true);
+  assert.equal(known.has("b"), false);
+  assert.equal(known.has("c"), true);
+  assert.equal(known.size, 2);
+  known.mark("");
+  assert.equal(known.size, 2);
 });

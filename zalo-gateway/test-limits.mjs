@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BoundedSerialQueue, readLimitedBody } from "./dist/limits.js";
+import {
+  BoundedSerialQueue,
+  KeyedRateLimiter,
+  KeyedSerialQueue,
+  QueueFullError,
+  readLimitedBody,
+} from "./dist/limits.js";
 test("queue bounds waiting events, preserves order, and recovers after failures", async () => {
   const q = new BoundedSerialQueue(2),
     order = [];
@@ -53,4 +59,86 @@ test("streamed image chunks assemble without truncation", async () => {
     },
   });
   assert.deepEqual(await readLimitedBody(new Response(stream), 3), new Uint8Array([1, 2, 3]));
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+test("KeyedSerialQueue: cùng người tuần tự đúng thứ tự, khác người chạy song song có trần", async () => {
+  const q = new KeyedSerialQueue({ concurrency: 2, perKeyCapacity: 5, capacity: 10 });
+  const gates = { a1: deferred(), b1: deferred(), c1: deferred() };
+  const started = [];
+  const job = (name) => async () => {
+    started.push(name);
+    if (gates[name]) await gates[name].promise;
+  };
+  const done = [
+    q.add("a", job("a1")),
+    q.add("a", job("a2")),
+    q.add("b", job("b1")),
+    q.add("c", job("c1")),
+  ];
+  await tick();
+  // a1 và b1 chạy (trần 2); a2 đợi a1, c1 đợi slot.
+  assert.deepEqual(started, ["a1", "b1"]);
+  assert.equal(q.running, 2);
+  gates.b1.resolve();
+  await tick();
+  // Slot của b nhường cho khoá đang chờ lâu nhất (c), a2 vẫn đợi a1.
+  assert.deepEqual(started, ["a1", "b1", "c1"]);
+  gates.a1.resolve();
+  await tick();
+  assert.deepEqual(started, ["a1", "b1", "c1", "a2"]);
+  gates.c1.resolve();
+  await Promise.all(done);
+  assert.equal(q.keys, 0, "khoá rảnh phải được xoá khỏi Map");
+  assert.equal(q.pending, 0);
+  assert.equal(q.running, 0);
+});
+
+test("KeyedSerialQueue: trần backlog mỗi người và tổng, lỗi 1 việc không chặn việc sau", async () => {
+  const q = new KeyedSerialQueue({ concurrency: 1, perKeyCapacity: 2, capacity: 3 });
+  const gate = deferred();
+  const first = q.add("a", async () => {
+    await gate.promise;
+    throw new Error("boom");
+  });
+  const second = q.add("a", async () => undefined);
+  await assert.rejects(
+    q.add("a", async () => undefined),
+    (error) => {
+      assert.ok(error instanceof QueueFullError);
+      assert.equal(error.scope, "key");
+      return true;
+    },
+  );
+  // Tổng việc CHỜ (chưa chạy): a2 + b1 + c1 = 3 -> việc thứ 4 bị từ chối.
+  const b = q.add("b", async () => undefined);
+  const c = q.add("c", async () => undefined);
+  await assert.rejects(
+    q.add("d", async () => undefined),
+    (error) => error.scope === "global",
+  );
+  gate.resolve();
+  await assert.rejects(first, /boom/);
+  await Promise.all([second, b, c]);
+  assert.equal(q.keys, 0);
+  await q.add("a", async () => undefined);
+});
+
+test("KeyedRateLimiter cho phép 1 lần mỗi khoảng và giới hạn số khoá nhớ", () => {
+  const limiter = new KeyedRateLimiter(1000, 2);
+  assert.equal(limiter.allow("a", 0), true);
+  assert.equal(limiter.allow("a", 500), false);
+  assert.equal(limiter.allow("a", 1500), true);
+  limiter.allow("b", 1500);
+  limiter.allow("c", 1500);
+  assert.equal(limiter.size, 2);
+  assert.equal(limiter.allow("a", 1600), true, "khoá cũ nhất đã bị đẩy ra");
 });
