@@ -49,8 +49,8 @@ phục thành test riêng). Thêm `.github/workflows/ci.yml`.
 - Container vẫn chạy root.
 - Cột `telegram_user_id` vẫn chứa cả id nội bộ của user Zalo; đổi tên cần migration
   và sửa nhiều truy vấn, lợi ích không tương xứng rủi ro.
-- `handlers/commands.py` chưa tách nhỏ: nhiều test monkeypatch trực tiếp vào module
-  này, tách cần làm cẩn thận ở một lần riêng.
+- ~~`handlers/commands.py` chưa tách nhỏ~~ — đã tách ở đợt 10/2026 (xem
+  `docs/review-2026-10.md`).
 
 ## Đợt 2: luồng Zalo → hàng chờ Facebook
 
