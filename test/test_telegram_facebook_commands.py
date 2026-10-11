@@ -1,6 +1,6 @@
 import pytest
 
-from handlers import commands
+from handlers import zalo_bridge_commands as bridge
 
 
 class FakeMessage:
@@ -27,18 +27,16 @@ async def test_telegram_facebook_command_uses_zalo_session_account(monkeypatch):
     async def fake_command(account_id, text):
         seen["account_id"] = account_id
         seen["text"] = text
-        return commands.facebook_commands.ChannelResult(["ok"])
+        return bridge.facebook_commands.ChannelResult(["ok"])
 
     async def fake_reply(message, text):
         replies.append(text)
 
-    monkeypatch.setattr(commands.zalo_session, "load_account_id", fake_account_id)
-    monkeypatch.setattr(
-        commands.facebook_commands, "maybe_handle_facebook_command", fake_command
-    )
-    monkeypatch.setattr(commands.common, "reply_long_text", fake_reply)
+    monkeypatch.setattr(bridge.zalo_session, "load_account_id", fake_account_id)
+    monkeypatch.setattr(bridge.facebook_commands, "maybe_handle_facebook_command", fake_command)
+    monkeypatch.setattr(bridge.common, "reply_long_text", fake_reply)
 
-    await commands._facebook_command(
+    await bridge._facebook_command(
         FakeUpdate(), FakeContext(["25", "https://s.shopee.vn/new"]), "/fb_link"
     )
 

@@ -107,25 +107,31 @@ def test_ensure_disclaimer_appends_when_missing():
     assert out.count(rf.STANDARD_DISCLAIMER) == 1
 
 
-def test_ensure_disclaimer_does_not_duplicate_when_already_present():
+def test_ensure_disclaimer_replaces_llm_disclaimer_with_standard_once():
+    """Hành vi cũ chấp nhận disclaimer do LLM tự viết thay cho dòng chuẩn - và
+    vì tiêu chí lỏng, một câu kết luận có "cân nhắc kỹ trước khi" cũng được
+    coi là disclaimer. Nay LUÔN có đúng 1 dòng chuẩn ở cuối; disclaimer THUẦN
+    của LLM được thay (không lặp), nội dung phân tích giữ nguyên."""
     text = (
-        "Nội dung phân tích chính.\n\n"
-        "Đây chỉ là tham khảo, không phải khuyến nghị đầu tư nha anh."
+        "Nội dung phân tích chính.\n\nĐây chỉ là tham khảo, không phải khuyến nghị đầu tư nha anh."
     )
     out = rf.ensure_disclaimer(text)
-    assert out == text
-    assert rf.STANDARD_DISCLAIMER not in out
+    assert out.startswith("Nội dung phân tích chính.")
+    assert out.endswith(rf.STANDARD_DISCLAIMER)
+    assert out.count(rf.STANDARD_DISCLAIMER) == 1
+    assert "nha anh" not in out
+    assert rf.ensure_disclaimer(out) == out  # idempotent
 
 
-def test_ensure_disclaimer_recognizes_past_performance_wording():
-    """Disclaimer do LLM tự viết dùng đúng cụm 'không đảm bảo kết quả' -
-    không được thêm chồng thêm 1 dòng cố định nữa."""
+def test_ensure_disclaimer_past_performance_wording_still_ends_with_standard():
     text = (
         "Backtest cho tỷ lệ thắng 62%.\n\n"
         "Kết quả backtest trong quá khứ không đảm bảo kết quả tương lai."
     )
     out = rf.ensure_disclaimer(text)
-    assert out == text
+    assert "Backtest cho tỷ lệ thắng 62%." in out
+    assert out.endswith(rf.STANDARD_DISCLAIMER)
+    assert out.count(rf.STANDARD_DISCLAIMER) == 1
 
 
 def test_ensure_disclaimer_handles_empty_text():

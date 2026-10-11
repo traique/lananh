@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from handlers.prompt_identity import (
+from services.prompt_identity import (
     GIRL_KEYWORDS,
     KEEP_FACE_KEYWORDS,
     IDENTITY_LOCK_GIRL,
@@ -86,5 +86,13 @@ def test_identity_lock_separates_skin_realism_from_scene_styling():
 
 
 def test_identity_lock_forbids_face_drift_from_variable_attributes():
-    for attribute in ("hairstyle", "expression", "clothing", "pose", "camera", "lighting", "environment"):
+    for attribute in (
+        "hairstyle",
+        "expression",
+        "clothing",
+        "pose",
+        "camera",
+        "lighting",
+        "environment",
+    ):
         assert attribute in IDENTITY_LOCK_GIRL

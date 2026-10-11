@@ -1,10 +1,11 @@
 """Đọc string constant từ file .py bằng ast thay vì import module.
 
-handlers/commands.py và handlers/media_handler.py import httpx/telegram ở
-module level - không phải môi trường test nào cũng cài các dependency đó.
+Template prompt nằm ở services/prompt_templates.py; đọc bằng ast để test chỉ
+kiểm nội dung chuỗi, không phụ thuộc dependency lúc import (httpx/telegram...).
 Dùng chung ở test_prompt_templates.py, test_text_prompt_modes.py và
 test_photo_prompt_modes.py.
 """
+
 import ast
 from pathlib import Path
 
@@ -16,6 +17,8 @@ def read_string_constant(filename: str, constant_name: str) -> str:
     for node in module.body:
         if not isinstance(node, ast.Assign):
             continue
-        if any(isinstance(target, ast.Name) and target.id == constant_name for target in node.targets):
+        if any(
+            isinstance(target, ast.Name) and target.id == constant_name for target in node.targets
+        ):
             return ast.literal_eval(node.value)
     raise AssertionError(f"Missing constant: {constant_name}")

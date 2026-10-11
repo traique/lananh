@@ -80,7 +80,9 @@ async def test_natural_language_partial_sell(monkeypatch):
 
     monkeypatch.setattr(portfolio_service, "sell_holding", fake_sell)
 
-    result = await portfolio_service.maybe_handle_natural_language(2, "Bán FPT 50")
+    # Chỉ CÂU KỂ đã bán mới ghi nhận (trước đây "Bán FPT 50" trần cũng ghi -
+    # cùng regex đó làm "Có nên bán FPT không?" xoá sạch vị thế).
+    result = await portfolio_service.maybe_handle_natural_language(2, "Đã bán FPT 50")
 
     assert result == "đã bán"
     assert calls == [(2, "FPT", 50)]

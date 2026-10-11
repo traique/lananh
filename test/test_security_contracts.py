@@ -51,6 +51,7 @@ async def test_strict_search_fails_without_official_api_key(monkeypatch):
     monkeypatch.setattr(config, "GOOGLE_AI_STUDIO_API_KEY_1", None)
     monkeypatch.setattr(config, "GOOGLE_AI_STUDIO_API_KEY_2", None)
     monkeypatch.setattr(provider_overrides, "_api_key_cache", {})
+
     async def fake_get_setting(key):
         return None
 
@@ -65,6 +66,7 @@ async def test_strict_search_keeps_only_configured_official_providers(monkeypatc
     monkeypatch.setattr(config, "GOOGLE_AI_STUDIO_API_KEY_2", None)
     monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "api2", "api1"])
     monkeypatch.setattr(provider_overrides, "_api_key_cache", {})
+
     async def fake_get_setting(key):
         return None
 
@@ -87,15 +89,26 @@ async def test_ask_strict_search_forces_tool_and_directive(monkeypatch):
         captured.update(idx=idx, prompt=prompt, kwargs=kwargs)
         return "ok"
 
-    async def fake_chain(*, router9_call, api_call, providers_override, groq_call=None, openrouter_call=None):
+    async def fake_chain(
+        *,
+        router9_call,
+        api_call,
+        providers_override,
+        groq_call=None,
+        openrouter_call=None,
+        allow_cjk=False,
+    ):
         captured["providers"] = providers_override
+        captured["allow_cjk"] = allow_cjk
         return await api_call(1)
 
     monkeypatch.setattr(orchestrator.router9_client, "get_preferred_model_name", preferred_model)
     monkeypatch.setattr(orchestrator.official_client, "generate", fake_generate)
     monkeypatch.setattr(orchestrator, "_run_provider_chain", fake_chain)
+
     async def search_providers():
         return ["api1"]
+
     monkeypatch.setattr(orchestrator, "_search_only_providers", search_providers)
 
     result = await orchestrator.ask("giá vàng", require_real_search=True)
