@@ -1,0 +1,155 @@
+# CI: chạy đúng các lệnh kiểm tra trong AGENTS.md.
+# - python-format: ruff check toàn repo + ruff format --check CHỈ trên file .py
+#   thay đổi (repo cũ chưa format toàn bộ; pyproject bật force-exclude để
+#   [tool.ruff.format].exclude vẫn áp dụng cho đường dẫn tường minh).
+# - python-test: pytest -q.
+# - sql-pglite: test SQL state-transition trên PGlite (Node 22).
+# - zalo-gateway: tsc + prettier + node --test.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --extra-index-url https://vnstocks.com/api/simple -r requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format (changed .py files only)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          else
+            base="$PUSH_BEFORE_SHA"
+          fi
+          # Push nhánh mới (before = 000...0), force-push mất commit cũ, hoặc
+          # thiếu SHA: so với commit liền trước.
+          if [ -z "$base" ] || [ -z "${base//0/}" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            if git rev-parse --verify --quiet HEAD~1 >/dev/null; then
+              base="HEAD~1"
+            else
+              echo "Không có commit trước để so sánh; bỏ qua format check."
+              exit 0
+            fi
+          fi
+          mapfile -t files < <(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.py')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "Không có file .py thay đổi so với $base."
+            exit 0
+          fi
+          printf 'Kiểm tra format:\n'
+          printf '  %s\n' "${files[@]}"
+          ruff format --check -- "${files[@]}"
+
+  python-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --extra-index-url https://vnstocks.com/api/simple -r requirements-dev.txt
+
+      - name: Pytest
+        run: pytest -q
+
+  sql-pglite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: test/sql_support/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --extra-index-url https://vnstocks.com/api/simple -r requirements-dev.txt
+
+      - name: Install PGlite
+        working-directory: test/sql_support
+        run: npm ci
+
+      - name: SQL tests on PGlite
+        env:
+          TEST_PGLITE: "1"
+        run: pytest -q test/test_delivery_sql.py
+
+  zalo-gateway:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zalo-gateway
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: zalo-gateway/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Test
+        run: npm test
