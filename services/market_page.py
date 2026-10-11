@@ -17,6 +17,7 @@ MARKET_RETRY_MIN, MARKET_MAX_ATTEMPTS). Ảnh đăng kèm có khung + logo như 
 Page cấu hình bằng FACEBOOK_PAGE_ID_MARKET / FACEBOOK_PAGE_ACCESS_TOKEN_MARKET và
 không nằm trong configured_page_keys() mặc định nên /fb_ok không đăng lên đây.
 """
+
 import asyncio
 import json
 import logging
@@ -35,9 +36,11 @@ from bs4 import BeautifulSoup
 
 from services import http_client
 
+import messages
 from ai import orchestrator
-from core import config
+from core import alerts, config
 from core import database as db
+from core.envutil import env_int
 from services import web_reader
 from services.facebook_image import brand_image
 from services.facebook_page_service import (
@@ -47,6 +50,7 @@ from services.facebook_page_service import (
     post_comment,
     publish_page_post,
 )
+from stock import features, providers
 
 logger = logging.getLogger(__name__)
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -142,8 +146,8 @@ _ADVICE_RE = re.compile(
 )
 _ADVICE_RETRY_NOTE = (
     "\n\nLƯU Ý: bản trước bị loại vì có câu mang tính khuyến nghị giao dịch "
-    "(ví dụ \"nên/có thể/canh mua\", \"ưu tiên giải ngân\", \"chốt lời một phần\", "
-    "\"vùng mua\"). Viết lại, chỉ mô tả và phân tích, không có hành động nào cho người đọc."
+    '(ví dụ "nên/có thể/canh mua", "ưu tiên giải ngân", "chốt lời một phần", '
+    '"vùng mua"). Viết lại, chỉ mô tả và phân tích, không có hành động nào cho người đọc.'
 )
 
 
@@ -157,6 +161,9 @@ def _vn_date(iso_date: str) -> str:
 
 # Dấu trích dẫn kiểu "[3]", "[11][15]", "[2, 4]", "[1-3]", "【5】" mà model có tra web
 # hay tự thêm. Bài Facebook đọc tự nhiên, nguồn đã ghi ở cuối bài.
+# Cố ý KHÁC ai/orchestrator._strip_citations (chat): bên đó chỉ bỏ [1]..[99] và
+# giữ link markdown [1](url); bài Page không có markdown nên ở đây bỏ mạnh tay hơn
+# (mọi số, 【】, dấu ";") và dọn khoảng trắng thừa trước dấu câu.
 _CITATION_RE = re.compile(r"\s*(?:\[\s*\d+(?:\s*[,;\-–]\s*\d+)*\s*\]|【[^】]*】)+")
 
 
@@ -174,13 +181,6 @@ def _today() -> date:
     return datetime.now(_VN_TZ).date()
 
 
-def _env_int(name: str, default: int, low: int, high: int) -> int:
-    try:
-        return max(low, min(high, int(os.getenv(name, str(default)))))
-    except ValueError:
-        return default
-
-
 async def _ask_clean(prompt: str, clean=lambda text: text) -> str | None:
     """Hỏi AI; nếu bài có câu khuyến nghị thì hỏi lại 1 lần kèm cảnh báo, vẫn có thì bỏ."""
     for attempt in range(2):
@@ -192,18 +192,123 @@ async def _ask_clean(prompt: str, clean=lambda text: text) -> str | None:
     return None
 
 
+# ─── Chống đăng trùng khi bị cắt giữa lúc đăng ─────────────────────────────
+# Trước khi gọi Facebook ghi 1 dấu "đang đăng" (inflight) vào DB; đăng xong (hoặc
+# chắc chắn thất bại trước khi tạo bài) mới xoá. Process chết/redeploy giữa chừng
+# -> dấu còn đó -> lượt sau KHÔNG đăng lại nội dung đó mà báo chủ bot kiểm tra
+# Page. Bước đăng còn được shield: stop() không huỷ ngang lượt đăng đang chạy mà
+# chờ tối đa _PUBLISH_DRAIN_SEC cho Facebook trả lời để kịp ghi kết quả.
+_INFLIGHT_KEY = "market_page:inflight:{job}"
+_PUBLISH_DRAIN_SEC = 25.0
+_publish_tasks: set[asyncio.Task] = set()
+
+
+async def _begin_publish(job: str, key: str, **extra) -> None:
+    started = datetime.now(_VN_TZ).isoformat(timespec="seconds")
+    await db.set_setting(
+        _INFLIGHT_KEY.format(job=job), json.dumps({"key": key, "at": started, **extra})
+    )
+
+
+async def _end_publish(job: str) -> None:
+    await db.set_setting(_INFLIGHT_KEY.format(job=job), "")
+
+
+def _alert_uncertain(job: str, key: str) -> None:
+    logger.error("market_page: lượt đăng %s (%s) chưa rõ kết quả - không tự đăng lại.", job, key)
+    alerts.send(messages.MARKET_PAGE_UNCERTAIN_ALERT.format(job=job, key=key))
+
+
+async def _recover_interrupted(job: str) -> None:
+    """Lượt đăng trước bị cắt ngang (dấu inflight còn) -> đánh dấu nội dung đó là
+    'chưa rõ' để không đăng lại, báo chủ bot 1 lần, rồi xoá dấu."""
+    raw = await db.get_setting(_INFLIGHT_KEY.format(job=job))
+    if not raw:
+        return
+    try:
+        info = json.loads(raw)
+    except ValueError:
+        info = {}
+    key = str(info.get("key") or "?")
+    await _end_publish(job)
+    if job == "stock":
+        if key != "?" and await db.get_setting(key) == "1":
+            return  # đã ghi thành công ngay trước khi chết
+        if key != "?":
+            await db.set_setting(key, "uncertain")
+    else:
+        links = info.get("links")
+        if isinstance(links, list):
+            try:
+                recorded = json.loads(await db.get_setting(_NEWS_LAST_LINKS_KEY) or "[]")
+            except ValueError:
+                recorded = []
+            if recorded == links:
+                return
+            await db.set_setting(_NEWS_LAST_LINKS_KEY, json.dumps(links))
+    _alert_uncertain(job, key)
+
+
+async def _guarded_publish(job, key, publish, on_success, on_uncertain, extra=None):
+    await _begin_publish(job, key, **(extra or {}))
+    try:
+        result = await publish()
+    except FacebookPublicationUncertain:
+        await on_uncertain()
+        await _end_publish(job)
+        _alert_uncertain(job, key)
+        raise
+    except Exception:
+        # Facebook từ chối rõ ràng / lỗi trước khi tạo bài: chưa có bài nào, cho thử lại.
+        await _end_publish(job)
+        raise
+    await on_success(result)
+    await _end_publish(job)
+    return result
+
+
+async def _publish_shielded(job, key, publish, on_success, on_uncertain, extra=None):
+    task = asyncio.create_task(_guarded_publish(job, key, publish, on_success, on_uncertain, extra))
+    _publish_tasks.add(task)
+    task.add_done_callback(_publish_tasks.discard)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        if not task.done():
+            logger.warning("market_page: đang đăng %s thì bị dừng; chờ Facebook trả lời.", job)
+            await asyncio.wait({task}, timeout=_PUBLISH_DRAIN_SEC)
+        raise
+
+
 # ─── Báo cáo chứng khoán ────────────────────────────────────────────────────
 
-_DNSE_URL = "https://services.entrade.com.vn/chart-api/v2/ohlcs/{kind}"
+# Tải OHLCV riêng thay vì stock.providers.fetch_ohlcv: bên đó làm tròn giá về số
+# nguyên (VN-Index mất phần thập phân điểm), bỏ giá mở cửa, cache 90s và có
+# fallback vnstock - không hợp với bài báo cáo cần đúng điểm số chỉ số.
+_DNSE_URL = providers.DNSE_OHLC_BASE + "/{kind}"
 _QUICKCHART_URL = "https://quickchart.io/chart"
-_INDEX_SYMBOLS = frozenset({"VNINDEX", "VN30", "HNXINDEX", "HNX30", "UPCOMINDEX", "UPINDEX"})
 # Chỉ tải mã thực sự đi vào bài: VNINDEX + cổ phiếu. HNXINDEX/UPCOMINDEX từng nằm trong
 # danh sách n8n nhưng DNSE trả 400 và báo cáo không dùng tới chúng.
 _REPORT_SYMBOLS = (
-    "VNINDEX", "VN30",
-    "VIC", "VHM", "VRE", "FPT", "MWG", "HPG",
-    "VCB", "BID", "CTG", "MBB", "TCB",
-    "SSI", "VND", "HCM", "VCI", "GVR", "IJC",
+    "VNINDEX",
+    "VN30",
+    "VIC",
+    "VHM",
+    "VRE",
+    "FPT",
+    "MWG",
+    "HPG",
+    "VCB",
+    "BID",
+    "CTG",
+    "MBB",
+    "TCB",
+    "SSI",
+    "VND",
+    "HCM",
+    "VCI",
+    "GVR",
+    "IJC",
 )
 _HISTORY_DAYS = 180
 _BARS_KEPT = 120
@@ -221,7 +326,7 @@ def _num(values: list, index: int) -> float | None:
 
 def _parse_bars(symbol: str, body: dict) -> list[dict]:
     """DNSE trả giá cổ phiếu theo nghìn đồng, chỉ số theo điểm."""
-    scale = 1 if symbol in _INDEX_SYMBOLS else 1000
+    scale = 1 if providers.is_index_symbol(symbol) else 1000
     t, o, h, l, c, v = (body.get(key) or [] for key in "tohlcv")
     bars = []
     for i in range(len(t)):
@@ -229,45 +334,29 @@ def _parse_bars(symbol: str, body: dict) -> list[dict]:
         ts = _num(t, i)
         if close is None or ts is None or close <= 0:
             continue
-        bars.append({
-            "ts": ts,
-            "date": datetime.fromtimestamp(ts, _VN_TZ).date().isoformat(),
-            "open": (_num(o, i) or close) * scale,
-            "high": (_num(h, i) or close) * scale,
-            "low": (_num(l, i) or close) * scale,
-            "close": close * scale,
-            "volume": _num(v, i) or 0.0,
-        })
+        bars.append(
+            {
+                "ts": ts,
+                "date": datetime.fromtimestamp(ts, _VN_TZ).date().isoformat(),
+                "open": (_num(o, i) or close) * scale,
+                "high": (_num(h, i) or close) * scale,
+                "low": (_num(l, i) or close) * scale,
+                "close": close * scale,
+                "volume": _num(v, i) or 0.0,
+            }
+        )
     bars.sort(key=lambda bar: bar["ts"])
     return bars[-_BARS_KEPT:]
 
 
-def _sma(values: list[float], n: int) -> float | None:
-    return sum(values[-n:]) / n if len(values) >= n else None
-
-
-def _ema(values: list[float], n: int) -> float | None:
-    if len(values) < n:
-        return None
-    ema = sum(values[:n]) / n
-    k = 2 / (n + 1)
-    for value in values[n:]:
-        ema = value * k + ema * (1 - k)
-    return ema
-
-
 def _rsi(values: list[float], n: int = 14) -> float | None:
     """RSI theo Wilder (cách TradingView/app chứng khoán tính) để số liệu khớp
-    với những gì người đọc tự kiểm tra."""
+    với những gì người đọc tự kiểm tra - dùng stock.features.calc_rsi. Khác duy
+    nhất: chuỗi đi ngang hoàn toàn calc_rsi trả None, bài Page giữ 100 như cũ."""
     if len(values) < n + 1:
         return None
-    deltas = [cur - prev for prev, cur in zip(values[:-1], values[1:])]
-    gain = sum(d for d in deltas[:n] if d > 0) / n
-    loss = sum(-d for d in deltas[:n] if d < 0) / n
-    for delta in deltas[n:]:
-        gain = (gain * (n - 1) + max(delta, 0.0)) / n
-        loss = (loss * (n - 1) + max(-delta, 0.0)) / n
-    return 100.0 if loss == 0 else 100 - 100 / (1 + gain / loss)
+    rsi = features.calc_rsi(values, n)
+    return 100.0 if rsi is None else rsi
 
 
 def _streak(closes: list[float]) -> int:
@@ -291,18 +380,18 @@ def _indicators(symbol: str, bars: list[dict]) -> dict:
     latest = bars[-1]
     prev = bars[-2] if len(bars) > 1 else None
 
-    ma20, ma50 = _sma(closes, 20), _sma(closes, 50)
+    ma20, ma50 = features.calc_sma(closes, 20), features.calc_sma(closes, 50)
     sd20 = statistics.pstdev(closes[-20:]) if len(closes) >= 20 else None
     bb_upper = ma20 + 2 * sd20 if ma20 is not None and sd20 is not None else None
     bb_lower = ma20 - 2 * sd20 if ma20 is not None and sd20 is not None else None
     bb_width = (bb_upper - bb_lower) / ma20 * 100 if bb_upper is not None and ma20 else None
 
-    vol_ma20 = _sma(volumes, 20)
+    vol_ma20 = features.calc_sma(volumes, 20)
     vol_ratio = latest["volume"] / vol_ma20 if vol_ma20 and latest["volume"] else None
     spread = latest["high"] - latest["low"]
     close_position = (latest["close"] - latest["low"]) / spread if spread > 0 else 0.5
 
-    ema12, ema26 = _ema(closes, 12), _ema(closes, 26)
+    ema12, ema26 = features.calc_ema(closes, 12), features.calc_ema(closes, 26)
     return {
         "symbol": symbol,
         "date": latest["date"],
@@ -335,7 +424,7 @@ def _build_report(rows: dict[str, list[dict]]) -> dict | None:
     if not rows.get("VNINDEX"):
         return None
     metrics = [_indicators(symbol, bars) for symbol, bars in rows.items() if bars]
-    stocks = [m for m in metrics if m["symbol"] not in _INDEX_SYMBOLS]
+    stocks = [m for m in metrics if not providers.is_index_symbol(m["symbol"])]
     moves = [m for m in stocks if m["change_pct"] is not None]
     return {
         "report_date": rows["VNINDEX"][-1]["date"],
@@ -346,12 +435,15 @@ def _build_report(rows: dict[str, list[dict]]) -> dict | None:
         "unchanged": sum(m["change_pct"] == 0 for m in moves),
         "pct_above_ma20": (
             round(sum(bool(m["above_ma20"]) for m in stocks) / len(stocks) * 100, 1)
-            if stocks else 0
+            if stocks
+            else 0
         ),
         "gainers": sorted(
             (m for m in moves if m["change_pct"] > 0), key=lambda m: m["change_pct"], reverse=True
         )[:5],
-        "losers": sorted((m for m in moves if m["change_pct"] < 0), key=lambda m: m["change_pct"])[:5],
+        "losers": sorted((m for m in moves if m["change_pct"] < 0), key=lambda m: m["change_pct"])[
+            :5
+        ],
     }
 
 
@@ -364,10 +456,13 @@ def _signed(pct: float) -> str:
 
 
 def _movers(rows: list[dict]) -> str:
-    return ", ".join(
-        f"{m['symbol']} ({_signed(m['change_pct'])}%, Vol {_fmt(m['vol_ratio'], 1)}x TB20)"
-        for m in rows
-    ) or "Không có mã đáng chú ý"
+    return (
+        ", ".join(
+            f"{m['symbol']} ({_signed(m['change_pct'])}%, Vol {_fmt(m['vol_ratio'], 1)}x TB20)"
+            for m in rows
+        )
+        or "Không có mã đáng chú ý"
+    )
 
 
 def _ma_zone_note(vn: dict) -> str:
@@ -385,7 +480,9 @@ def _ma_zone_note(vn: dict) -> str:
 _LEVEL_MERGE_PCT = 0.003  # mốc cách nhau < 0,3% coi là một mốc
 
 
-def _key_levels(vn: dict) -> tuple[tuple[str, float, float] | None, tuple[str, float, float] | None]:
+def _key_levels(
+    vn: dict,
+) -> tuple[tuple[str, float, float] | None, tuple[str, float, float] | None]:
     """(mốc gần nhất phía trên, phía dưới) giá đóng cửa: (tên, giá thấp, giá cao).
 
     Các mốc (đỉnh/đáy phiên, MA20/MA50, biên Bollinger) cách nhau < 0,3% được gộp
@@ -446,16 +543,16 @@ def _stock_prompt(report: dict) -> str:
     return f"""Bạn là chuyên viên phân tích của một công ty chứng khoán, viết bản nhận định cuối phiên cho Fanpage đầu tư. Người đọc là nhà đầu tư cá nhân, đọc trên điện thoại.
 
 DỮ LIỆU PHIÊN {session} (đây là TOÀN BỘ dữ liệu được dùng):
-- VN-Index đóng cửa {_fmt(vn['close'])} điểm ({points_text}{_signed(vn['change_pct'] or 0)}%), {_streak_text(vn.get('streak', 0))}.
-- Mở cửa {_fmt(vn.get('open'))}, cao nhất phiên {_fmt(vn.get('high'))}, thấp nhất phiên {_fmt(vn.get('low'))} điểm; đóng cửa phiên trước {_fmt(vn.get('prev_close'))} điểm.
+- VN-Index đóng cửa {_fmt(vn["close"])} điểm ({points_text}{_signed(vn["change_pct"] or 0)}%), {_streak_text(vn.get("streak", 0))}.
+- Mở cửa {_fmt(vn.get("open"))}, cao nhất phiên {_fmt(vn.get("high"))}, thấp nhất phiên {_fmt(vn.get("low"))} điểm; đóng cửa phiên trước {_fmt(vn.get("prev_close"))} điểm.
 - Mốc gần nhất PHÍA TRÊN giá đóng cửa: {_level_text(above)}.
 - Mốc gần nhất PHÍA DƯỚI giá đóng cửa: {_level_text(below)}.
-- Khối lượng khớp {volume} cổ phiếu, bằng {_fmt(vn['vol_ratio'], 1)}x trung bình 20 phiên.
-- Vị trí đóng cửa trong biên độ phiên: {vn['close_position']} (1.0 = sát đỉnh phiên, 0.0 = sát đáy phiên).
-- MA20 = {_fmt(vn['ma20'])}, MA50 = {_fmt(vn['ma50'])}, RSI(14) = {_fmt(vn['rsi14'])}, MACD = {_fmt(vn['macd'])}, dải Bollinger {_fmt(vn['bb_lower'])} - {_fmt(vn['bb_upper'])}.{_ma_zone_note(vn)}
-- Trong nhóm {report['tracked']} cổ phiếu hệ thống theo dõi (KHÔNG phải toàn thị trường): {report['advancers']} mã tăng, {report['decliners']} mã giảm, {report['unchanged']} mã đứng giá. {report['pct_above_ma20']}% số mã nằm trên MA20.
-- Mã tăng mạnh nhất: {_movers(report['gainers'])}
-- Mã giảm mạnh nhất: {_movers(report['losers'])}
+- Khối lượng khớp {volume} cổ phiếu, bằng {_fmt(vn["vol_ratio"], 1)}x trung bình 20 phiên.
+- Vị trí đóng cửa trong biên độ phiên: {vn["close_position"]} (1.0 = sát đỉnh phiên, 0.0 = sát đáy phiên).
+- MA20 = {_fmt(vn["ma20"])}, MA50 = {_fmt(vn["ma50"])}, RSI(14) = {_fmt(vn["rsi14"])}, MACD = {_fmt(vn["macd"])}, dải Bollinger {_fmt(vn["bb_lower"])} - {_fmt(vn["bb_upper"])}.{_ma_zone_note(vn)}
+- Trong nhóm {report["tracked"]} cổ phiếu hệ thống theo dõi (KHÔNG phải toàn thị trường): {report["advancers"]} mã tăng, {report["decliners"]} mã giảm, {report["unchanged"]} mã đứng giá. {report["pct_above_ma20"]}% số mã nằm trên MA20.
+- Mã tăng mạnh nhất: {_movers(report["gainers"])}
+- Mã giảm mạnh nhất: {_movers(report["losers"])}
 
 CẤU TRÚC BÀI:
 - Dòng đầu là tiêu đề, bắt đầu bằng 📌: một câu ngắn (tối đa 15 từ) nêu kết quả phiên kèm một con số chính, viết như tiêu đề báo (không viết hoa toàn bộ).
@@ -481,7 +578,7 @@ QUY ĐỊNH BẮT BUỘC (tuân thủ pháp lý):
 async def _fetch_bars(
     client: httpx.AsyncClient, gate: asyncio.Semaphore, symbol: str, now: int
 ) -> list[dict]:
-    kind = "index" if symbol in _INDEX_SYMBOLS else "stock"
+    kind = "index" if providers.is_index_symbol(symbol) else "stock"
     params = {
         "from": now - _HISTORY_DAYS * 86400,
         "to": now,
@@ -522,7 +619,9 @@ async def _market_snapshot() -> str | None:
     if len(bars) < 2:
         return None
     vn = _indicators("VNINDEX", bars)
-    volume = f", khối lượng khớp {_vn_number(vn['volume'] / 1e6)} triệu cổ phiếu" if vn["volume"] else ""
+    volume = (
+        f", khối lượng khớp {_vn_number(vn['volume'] / 1e6)} triệu cổ phiếu" if vn["volume"] else ""
+    )
     return (
         f"Phiên {_vn_date(vn['date'])}: VN-Index đóng cửa {_vn_number(vn['close'], 2)} điểm, "
         f"{'tăng' if vn['change_points'] > 0 else 'giảm' if vn['change_points'] < 0 else 'đứng giá'} "
@@ -538,16 +637,18 @@ def _chart_config(bars: list[dict], report_date: str) -> dict:
         "type": "line",
         "data": {
             "labels": [f"{bar['date'][8:10]}/{bar['date'][5:7]}" for bar in last],
-            "datasets": [{
-                "label": "Điểm số VN-INDEX",
-                "data": prices,
-                "borderColor": "#2563eb",
-                "backgroundColor": "rgba(37, 99, 235, 0.15)",
-                "fill": True,
-                "tension": 0.25,
-                "pointRadius": 3,
-                "pointBackgroundColor": "#2563eb",
-            }],
+            "datasets": [
+                {
+                    "label": "Điểm số VN-INDEX",
+                    "data": prices,
+                    "borderColor": "#2563eb",
+                    "backgroundColor": "rgba(37, 99, 235, 0.15)",
+                    "fill": True,
+                    "tension": 0.25,
+                    "pointRadius": 3,
+                    "pointBackgroundColor": "#2563eb",
+                }
+            ],
         },
         "options": {
             "responsive": True,
@@ -573,8 +674,12 @@ def _chart_config(bars: list[dict], report_date: str) -> dict:
 async def _render_chart(bars: list[dict], report_date: str) -> bytes | None:
     """Biểu đồ chỉ là phần kèm theo: lỗi thì bài vẫn đăng dạng văn bản."""
     payload = {
-        "version": "4", "backgroundColor": "#ffffff", "width": 800, "height": 450,
-        "format": "png", "chart": _chart_config(bars, report_date),
+        "version": "4",
+        "backgroundColor": "#ffffff",
+        "width": 800,
+        "height": 450,
+        "format": "png",
+        "chart": _chart_config(bars, report_date),
     }
     try:
         async with http_client.scoped(timeout=30) as client:
@@ -607,7 +712,9 @@ def _is_current_session(report_date: str) -> bool:
 
 
 _DATE_RE = re.compile(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b")
-_NUMBER_TOKEN_RE = re.compile(r"(?<![A-Za-z(\d])\d{1,3}(?:\.\d{3})+(?:,\d+)?|(?<![A-Za-z(\d.,])\d+(?:[.,]\d+)?")
+_NUMBER_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z(\d])\d{1,3}(?:\.\d{3})+(?:,\d+)?|(?<![A-Za-z(\d.,])\d+(?:[.,]\d+)?"
+)
 
 
 def _parse_vn_number(token: str) -> tuple[float, int]:
@@ -655,7 +762,7 @@ def unknown_numbers(text: str, report: dict) -> list[str]:
         value, decimals = _parse_vn_number(token)
         if decimals == 0 and value < 100:
             continue
-        tolerance = 0.5 * 10 ** -decimals + 1e-9 if decimals else 0.5 + 0.0006 * value
+        tolerance = 0.5 * 10**-decimals + 1e-9 if decimals else 0.5 + 0.0006 * value
         if not any(abs(value - a) <= tolerance for a in allowed):
             unknown.append(token)
     return unknown
@@ -708,13 +815,20 @@ async def _post_stock_report(dry_run: bool = False) -> str | None:
         return None
     session_key = _STOCK_SESSION_KEY.format(date=report["report_date"])
     if not dry_run:
+        await _recover_interrupted("stock")
         if not _is_current_session(report["report_date"]):
             raise MarketSkip(
                 f"chưa có dữ liệu phiên hôm nay (mới nhất là phiên {_vn_date(report['report_date'])}"
                 " - nghỉ lễ hoặc DNSE chưa cập nhật)",
                 retry=True,
             )
-        if await db.get_setting(session_key):
+        state = await db.get_setting(session_key)
+        if state == "uncertain":
+            raise MarketSkip(
+                f"phiên {_vn_date(report['report_date'])} có lượt đăng chưa rõ kết quả "
+                "(không tự đăng lại)"
+            )
+        if state:
             raise MarketSkip(f"phiên {_vn_date(report['report_date'])} đã được đăng")
 
     prompt = _stock_prompt(report)
@@ -725,7 +839,9 @@ async def _post_stock_report(dry_run: bool = False) -> str | None:
     issues = stock_issues(text, report)
     if issues:
         logger.warning("market_page: nhận định chưa đạt (%s), hỏi lại AI.", "; ".join(issues))
-        text = await _ask_clean(prompt + _ISSUES_NOTE.format(issues="; ".join(issues)), _clean_stock_text)
+        text = await _ask_clean(
+            prompt + _ISSUES_NOTE.format(issues="; ".join(issues)), _clean_stock_text
+        )
         remaining = stock_issues(text, report) if text is not None else ["khuyến nghị"]
         if remaining:
             logger.warning(
@@ -741,13 +857,21 @@ async def _post_stock_report(dry_run: bool = False) -> str | None:
 
     chart = await _render_chart(rows["VNINDEX"], report["report_date"])
     media = [await asyncio.to_thread(brand_image, "image/png", chart)] if chart else []
-    try:
-        await publish_page_post(text, media, MARKET_PAGE_KEY)
-    except FacebookPublicationUncertain:
+
+    async def mark_posted(_published):
+        await db.set_setting(session_key, "1")
+
+    async def mark_uncertain():
         # Có thể bài đã lên: coi như phiên đã đăng để không tạo bài thứ hai.
         await db.set_setting(session_key, "uncertain")
-        raise
-    await db.set_setting(session_key, "1")
+
+    await _publish_shielded(
+        "stock",
+        session_key,
+        lambda: publish_page_post(text, media, MARKET_PAGE_KEY),
+        mark_posted,
+        mark_uncertain,
+    )
     return text
 
 
@@ -759,17 +883,53 @@ _ARTICLE_MAX_CHARS = 8000
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024
 _IMAGE_MIMES = frozenset({"image/jpeg", "image/png", "image/webp"})
 _AD_IMAGE_MARKERS = (
-    "/ads/", "/quangcao/", "_300x250", "_728x90", "/banner/", "googleads", "doubleclick.net",
+    "/ads/",
+    "/quangcao/",
+    "_300x250",
+    "_728x90",
+    "/banner/",
+    "googleads",
+    "doubleclick.net",
 )
 _NEWS_KEYWORDS = (
-    "vn-index", "hnx-index", "upcom-index",
-    "tăng mạnh", "giảm sâu", "biến động", "đảo chiều", "bùng nổ", "tích cực", "tiêu cực",
-    "thanh khoản", "tỷ đô",
-    "chính sách", "nghị định", "thông tư", "lãi suất", "tỷ giá", "ngân hàng nhà nước", "ubcknn",
-    "khối ngoại", "bán ròng", "mua ròng",
-    "kqkd", "kết quả kinh doanh", "lợi nhuận", "doanh thu",
-    "cổ tức", "phát hành", "niêm yết", "hose", "hnx",
-    "vic", "vhm", "vre", "hpg", "fpt", "mwg", "gvr",
+    "vn-index",
+    "hnx-index",
+    "upcom-index",
+    "tăng mạnh",
+    "giảm sâu",
+    "biến động",
+    "đảo chiều",
+    "bùng nổ",
+    "tích cực",
+    "tiêu cực",
+    "thanh khoản",
+    "tỷ đô",
+    "chính sách",
+    "nghị định",
+    "thông tư",
+    "lãi suất",
+    "tỷ giá",
+    "ngân hàng nhà nước",
+    "ubcknn",
+    "khối ngoại",
+    "bán ròng",
+    "mua ròng",
+    "kqkd",
+    "kết quả kinh doanh",
+    "lợi nhuận",
+    "doanh thu",
+    "cổ tức",
+    "phát hành",
+    "niêm yết",
+    "hose",
+    "hnx",
+    "vic",
+    "vhm",
+    "vre",
+    "hpg",
+    "fpt",
+    "mwg",
+    "gvr",
 )
 _LEAD_IN_RE = re.compile(r"^Dưới đây là.*?\n+", re.IGNORECASE)
 _SOFT_BREAK_RE = re.compile(r"(?<=[^\n])\n(?=[a-zA-Z0-9à-ỹÀ-Ỹ])")
@@ -790,12 +950,14 @@ def _parse_entries(feed_bytes: bytes) -> list[_Entry]:
     entries = []
     for item in feedparser.parse(feed_bytes).entries:
         stamp = item.get("published_parsed")
-        entries.append(_Entry(
-            title=_collapse(item.get("title") or "Không có tiêu đề"),
-            summary=_collapse(BeautifulSoup(item.get("summary") or "", "lxml").get_text(" ")),
-            link=item.get("link") or "",
-            published=datetime(*stamp[:6], tzinfo=timezone.utc) if stamp else None,
-        ))
+        entries.append(
+            _Entry(
+                title=_collapse(item.get("title") or "Không có tiêu đề"),
+                summary=_collapse(BeautifulSoup(item.get("summary") or "", "lxml").get_text(" ")),
+                link=item.get("link") or "",
+                published=datetime(*stamp[:6], tzinfo=timezone.utc) if stamp else None,
+            )
+        )
     return entries
 
 
@@ -806,16 +968,17 @@ def _news_score(entry: _Entry) -> int:
 
 def _pick_entry(entries: list[_Entry], today) -> _Entry | None:
     """Bài nhiều từ khóa nhất trong ngày; không có bài hôm nay thì lấy bài đầu feed."""
-    todays = [
-        e for e in entries
-        if e.published and e.published.astimezone(_VN_TZ).date() == today
-    ]
+    todays = [e for e in entries if e.published and e.published.astimezone(_VN_TZ).date() == today]
     pool = todays or entries[:1]
     return max(pool, key=_news_score) if pool else None
 
 
 _NEWS_GROUPS = (
-    "Thị trường", "Khối ngoại", "Cổ phiếu nổi bật", "Cổ đông và lãnh đạo", "Doanh nghiệp",
+    "Thị trường",
+    "Khối ngoại",
+    "Cổ phiếu nổi bật",
+    "Cổ đông và lãnh đạo",
+    "Doanh nghiệp",
     "Quy định và sàn",
 )
 _NEWS_GROUP_LIST = ", ".join(_NEWS_GROUPS)
@@ -858,8 +1021,8 @@ def _snapshot_block(snapshot: str | None) -> str:
     if not snapshot:
         return ""
     return (
-        "SỐ LIỆU PHIÊN GẦN NHẤT (từ DNSE, KHÔNG phải từ CafeF - không viết \"theo CafeF\" "
-        "cho các số này; dùng cho mục \"Thị trường\", chép đúng số):\n"
+        'SỐ LIỆU PHIÊN GẦN NHẤT (từ DNSE, KHÔNG phải từ CafeF - không viết "theo CafeF" '
+        'cho các số này; dùng cho mục "Thị trường", chép đúng số):\n'
         f"{snapshot}\n\n"
     )
 
@@ -912,8 +1075,9 @@ def _parse_article(html: str, page_url: str) -> tuple[str, str | None]:
     return _collapse(body.get_text(" "))[:_ARTICLE_MAX_CHARS], image
 
 
-async def _get(url: str) -> httpx.Response:
-    response = await web_reader._get_public(url, headers={"User-Agent": _USER_AGENT})
+async def _get(url: str, **limits) -> httpx.Response:
+    """GET công khai qua web_reader (chống SSRF, đọc stream có trần byte)."""
+    response = await web_reader._get_public(url, headers={"User-Agent": _USER_AGENT}, **limits)
     if response.status_code != 200:
         raise web_reader.WebReaderError(f"HTTP {response.status_code} khi đọc {url}")
     return response
@@ -921,7 +1085,7 @@ async def _get(url: str) -> httpx.Response:
 
 async def _download_image(url: str) -> tuple[str, bytes] | None:
     try:
-        response = await _get(url)
+        response = await _get(url, max_bytes=_MAX_IMAGE_BYTES, allowed_types=tuple(_IMAGE_MIMES))
     except (httpx.HTTPError, web_reader.WebReaderError) as exc:
         logger.warning("market_page: không tải được ảnh bài viết (%s).", exc)
         return None
@@ -934,7 +1098,7 @@ async def _download_image(url: str) -> tuple[str, bytes] | None:
 async def _load_article(entry: _Entry) -> tuple[str, tuple[str, bytes] | None]:
     """(nội dung bài, ảnh đại diện); thiếu phần nào trả rỗng/None phần đó."""
     try:
-        page = await _get(entry.link)
+        page = await _get(entry.link, allowed_types=web_reader.HTML_TYPES, truncate=True)
     except (httpx.HTTPError, web_reader.WebReaderError) as exc:
         logger.warning("market_page: không đọc được bài '%s' (%s).", entry.link, exc)
         return "", None
@@ -986,7 +1150,7 @@ async def _comment_rewrite(post_id: str, entry: _Entry, article: str) -> None:
 
 
 async def _post_news(dry_run: bool = False) -> str | None:
-    feed = await _get(_NEWS_RSS)
+    feed = await _get(_NEWS_RSS, allowed_types=web_reader.FEED_TYPES)
     entries = _parse_entries(feed.content)
     if not entries:
         logger.warning("market_page: feed CafeF rỗng, bỏ bản tin.")
@@ -1000,6 +1164,7 @@ async def _post_news(dry_run: bool = False) -> str | None:
         )
     links = sorted({e.link for e in fresh if e.link})
     if not dry_run:
+        await _recover_interrupted("news")
         try:
             previous = set(json.loads(await db.get_setting(_NEWS_LAST_LINKS_KEY) or "[]"))
         except ValueError:
@@ -1029,13 +1194,19 @@ async def _post_news(dry_run: bool = False) -> str | None:
     media = []
     if image and _news_image_mode() == "branded":
         media = [await asyncio.to_thread(brand_image, *image)]
-    try:
-        published = await publish_page_post(text, media, MARKET_PAGE_KEY)
-    except FacebookPublicationUncertain:
-        # Có thể bài đã lên: ghi lại bộ tin để không đăng lại cùng nội dung.
+
+    async def record_links(*_):
+        # Đăng xong, hoặc có thể bài đã lên: ghi lại bộ tin để không đăng lại cùng nội dung.
         await db.set_setting(_NEWS_LAST_LINKS_KEY, json.dumps(links))
-        raise
-    await db.set_setting(_NEWS_LAST_LINKS_KEY, json.dumps(links))
+
+    published = await _publish_shielded(
+        "news",
+        f"bản tin {today:%d/%m/%Y}",
+        lambda: publish_page_post(text, media, MARKET_PAGE_KEY),
+        record_links,
+        record_links,
+        extra={"links": links},
+    )
     if article:
         await _comment_rewrite(published.post_id, featured, article)
     return text
@@ -1081,7 +1252,9 @@ async def _execute(job: str, *, dry_run: bool = False) -> str | None:
                 await _record(job, f"lỗi {type(exc).__name__}")
             raise
         if not dry_run:
-            await _record(job, "đã đăng" if text else "chưa đăng được (AI lỗi/bài không đạt), sẽ thử lại")
+            await _record(
+                job, "đã đăng" if text else "chưa đăng được (AI lỗi/bài không đạt), sẽ thử lại"
+            )
         return text
 
 
@@ -1152,15 +1325,15 @@ _attempts: dict[str, tuple[int, datetime]] = {}
 
 
 def _catchup() -> timedelta:
-    return timedelta(minutes=_env_int("MARKET_CATCHUP_MIN", 120, 0, 720))
+    return timedelta(minutes=env_int("MARKET_CATCHUP_MIN", 120, 0, 720))
 
 
 def _retry_gap() -> timedelta:
-    return timedelta(minutes=_env_int("MARKET_RETRY_MIN", 10, 1, 120))
+    return timedelta(minutes=env_int("MARKET_RETRY_MIN", 10, 1, 120))
 
 
 def _max_attempts() -> int:
-    return _env_int("MARKET_MAX_ATTEMPTS", 4, 1, 20)
+    return env_int("MARKET_MAX_ATTEMPTS", 4, 1, 20)
 
 
 def _due_slots(now: datetime) -> list[tuple[str, datetime]]:
@@ -1211,7 +1384,8 @@ def start() -> None:
     if MARKET_PAGE_KEY not in configured_page_keys(include_dedicated=True):
         logger.info(
             "market_page: chưa có FACEBOOK_PAGE_ID_%s/FACEBOOK_PAGE_ACCESS_TOKEN_%s, không bật.",
-            MARKET_PAGE_KEY, MARKET_PAGE_KEY,
+            MARKET_PAGE_KEY,
+            MARKET_PAGE_KEY,
         )
         return
     if _task is None or _task.done():
@@ -1220,11 +1394,16 @@ def start() -> None:
 
 async def stop() -> None:
     global _task
-    if _task is None:
-        return
-    _task.cancel()
-    try:
-        await _task
-    except asyncio.CancelledError:
-        pass
-    _task = None
+    task, _task = _task, None
+    if task is not None:
+        # Lượt đăng đang chạy được shield (xem _publish_shielded): cancel ở đây chỉ
+        # dừng vòng lịch, bước đăng dở được chờ tối đa _PUBLISH_DRAIN_SEC.
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    # Lượt đăng thủ công (/fb_market, trang admin) đang dở cũng được chờ cho xong.
+    pending = [t for t in _publish_tasks if not t.done()]
+    if pending:
+        await asyncio.wait(pending, timeout=_PUBLISH_DRAIN_SEC)

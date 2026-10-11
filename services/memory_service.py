@@ -17,11 +17,10 @@ Gồm 3 phần, lưu trong 3 bảng riêng (xem core/database.py):
   chat, tìm lại theo ngữ nghĩa khi cần) - đã BỎ (2 lượt gọi embed_text/tin
   nhắn, tốn quota, đôi khi tìm trật) để đổi lấy user_memory_highlights ở
   trên: rẻ hơn hẳn, luôn chính xác, đổi lại chỉ nhớ được N dòng gần nhất
-  thay vì toàn bộ lịch sử. Bảng chat_embeddings + các hàm liên quan trong
-  core/database.py (add_chat_embedding/semantic_search/clear_chat_embeddings)
-  vẫn giữ nguyên, không xoá - chỉ ngưng gọi, để dễ quay lại nếu cần.
+  thay vì toàn bộ lịch sử. Code pgvector đã gỡ hẳn, bảng chat_embeddings
+  được migration 014 xoá.
 
-Luồng dùng (xem handlers/chat_router.py):
+Luồng dùng (xem services/channel_chat_service.py::run_chat_turn, chung mọi kênh):
 1. Trước khi gọi Gemini: build_memory_context(user_id) -> chèn vào
    ai.orchestrator.chat(..., memory_context=...). CHỈ chèn ở tin nhắn ĐẦU
    TIÊN của 1 phiên chat mới (session rỗng) - giữa 1 mạch chat liên tục,
@@ -37,6 +36,7 @@ Việc trích xuất fact/tóm tắt/highlight gọi official_client.generate_ut
 hình API key chính thức nào, toàn bộ tính năng trí nhớ dài hạn tự tắt êm
 (không lỗi, không ảnh hưởng chat chính vẫn chạy qua router9 như trước).
 """
+
 import asyncio
 import logging
 
@@ -56,10 +56,11 @@ async def set_enabled(user_id: int, enabled: bool) -> None:
     await db.set_setting(f"{_SETTING_ENABLED_PREFIX}{user_id}", "1" if enabled else "0")
     logger.info("Trí nhớ dài hạn user_id=%s: %s.", user_id, "bật" if enabled else "tắt")
 
+
 # Khoá riêng / user cho update_memory() - hàm này đọc facts/summary hiện có
 # rồi ghi lại bản đã hợp nhất, nên 2 lượt chạy song song của CÙNG 1 user (vd
 # nhắn liên tiếp nhanh, mỗi tin nhắn tự spawn 1 background task ở
-# handlers/chat_router.py) có thể đọc cùng bản cũ rồi ghi đè lẫn nhau, mất phần cập
+# services/channel_chat_service.py) có thể đọc cùng bản cũ rồi ghi đè lẫn nhau, mất phần cập
 # nhật của lượt chạy trước. Dùng dict thay vì 1 lock chung để không chặn lẫn
 # nhau giữa các user khác (dù bot hiện chỉ phục vụ 1 user, giữ đúng tương lai
 # mở rộng đa user).
@@ -97,6 +98,7 @@ def _release_lock(user_id: int) -> None:
         return
     _lock_users.pop(user_id, None)
     _user_locks.pop(user_id, None)
+
 
 # Trần số fact lưu / user, tránh user_facts phình vô hạn qua thời gian nếu
 # Gemini trích xuất quá tay (vd nhớ nhầm chuyện phiếm thành "sự thật").
@@ -175,7 +177,7 @@ def _build_extraction_prompt(
 async def update_memory(user_id: int, user_text: str, model_text: str) -> None:
     """Trích xuất fact/highlight mới + cập nhật rolling summary sau 1 lượt
     chat thành công. KHÔNG BAO GIỜ raise ra ngoài - đây là tác vụ chạy ngầm
-    (asyncio.create_task ở handlers/chat_router.py), lỗi ở đây không được phép ảnh
+    (asyncio.create_task ở services/channel_chat_service.py), lỗi ở đây không được phép ảnh
     hưởng luồng trả lời chính cho người dùng."""
     if not await is_enabled(user_id):
         return

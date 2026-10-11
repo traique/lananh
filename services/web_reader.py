@@ -15,6 +15,8 @@ hostname nội bộ, userinfo giả mạo, ký tự điều khiển...). Detecto
 page của Jina/Cloudflare bên dưới cũng adapt cùng repo để tránh coi CAPTCHA
 là nội dung thật.
 """
+
+import asyncio
 import ipaddress
 import logging
 import socket
@@ -108,21 +110,89 @@ def normalize_public_http_url(raw_url: str) -> str:
             continue
     return raw_url
 
+
+async def normalize_public_http_url_async(raw_url: str) -> str:
+    """Như normalize_public_http_url() nhưng phân giải DNS trong thread riêng -
+    getaddrinfo đồng bộ có thể chặn cả event loop (mọi người dùng) vài giây."""
+    return await asyncio.to_thread(normalize_public_http_url, raw_url)
+
+
 _REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 _MAX_REDIRECTS = 5
+# Header mô tả body GỐC trên đường truyền - body trả về đã giải nén/cắt nên bỏ.
+_DROP_HEADERS = {"content-encoding", "content-length", "transfer-encoding"}
+# Loại nội dung được phép cho từng kiểu đọc (so khớp chuỗi con, không phân
+# biệt hoa thường). Server không gửi Content-Type thì vẫn cho đọc.
+HTML_TYPES = ("text/html", "application/xhtml+xml", "text/plain", "text/xml", "application/xml")
+TEXT_TYPES = ("text/",)
+FEED_TYPES = ("xml", "rss", "atom", "text/")
 
 
-async def _get_public(url: str, **kwargs) -> httpx.Response:
-    """GET an URL while validating every redirect hop against the SSRF guard."""
-    current = normalize_public_http_url(url)
+def _content_type(response: httpx.Response) -> str:
+    return response.headers.get("content-type", "").split(";")[0].strip().lower()
+
+
+async def _read_limited(response: httpx.Response, max_bytes: int, truncate: bool) -> bytes:
+    """Đọc body dạng stream, dừng NGAY khi vượt max_bytes (tính sau giải nén,
+    nên cả gzip bomb cũng không nạp quá trần vào RAM)."""
+    declared = response.headers.get("content-length")
+    if not truncate and declared and declared.isdigit() and int(declared) > max_bytes:
+        raise WebReaderError(f"Nội dung quá lớn (> {max_bytes // 1024} KB), không đọc.")
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in response.aiter_bytes():
+        if size + len(chunk) > max_bytes:
+            if not truncate:
+                raise WebReaderError(f"Nội dung quá lớn (> {max_bytes // 1024} KB), không đọc.")
+            chunks.append(chunk[: max_bytes - size])
+            logger.info("Cắt nội dung %s ở %s byte.", response.request.url, max_bytes)
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    return b"".join(chunks)
+
+
+async def _get_public(
+    url: str,
+    *,
+    max_bytes: Optional[int] = None,
+    allowed_types: Optional[tuple[str, ...]] = None,
+    truncate: bool = False,
+    **kwargs,
+) -> httpx.Response:
+    """GET an URL while validating every redirect hop against the SSRF guard.
+
+    Body được đọc dạng stream với trần ``max_bytes`` (mặc định
+    WEB_READER_MAX_BYTES): vượt trần thì cắt (``truncate=True``, dùng cho
+    HTML/text) hoặc raise WebReaderError. Phản hồi 200 có Content-Type ngoài
+    ``allowed_types`` (vd PDF, video khi cần HTML) bị từ chối TRƯỚC khi tải body.
+    Trả httpx.Response đã đọc sẵn body (giữ interface .text/.content/.headers)."""
+    limit = max_bytes or config.WEB_READER_MAX_BYTES
+    current = await normalize_public_http_url_async(url)
     for _ in range(_MAX_REDIRECTS + 1):
-        response = await _get_client().get(current, **kwargs)
-        if response.status_code not in _REDIRECT_STATUS_CODES:
-            return response
-        location = response.headers.get("location")
-        if not location:
-            return response
-        current = normalize_public_http_url(urljoin(current, location))
+        location = None
+        async with _get_client().stream("GET", current, **kwargs) as response:
+            if response.status_code in _REDIRECT_STATUS_CODES:
+                location = response.headers.get("location")
+            if not location:
+                ctype = _content_type(response)
+                if (
+                    response.status_code == 200
+                    and allowed_types
+                    and ctype
+                    and not any(kind in ctype for kind in allowed_types)
+                ):
+                    raise WebReaderError(f"Loại nội dung không hỗ trợ ({ctype}).")
+                body = await _read_limited(response, limit, truncate)
+                headers = [
+                    (key, value)
+                    for key, value in response.headers.multi_items()
+                    if key.lower() not in _DROP_HEADERS
+                ]
+                return httpx.Response(
+                    response.status_code, headers=headers, content=body, request=response.request
+                )
+        current = await normalize_public_http_url_async(urljoin(current, location))
     raise WebReaderError(f"Link chuyển hướng quá {_MAX_REDIRECTS} lần.")
 
 
@@ -171,7 +241,12 @@ async def _fetch_direct(url: str) -> str:
     HTML thô với User-Agent giả trình duyệt rồi bóc text bằng BeautifulSoup
     (đã có sẵn qua dependency của vnstock, không thêm gánh nặng RAM đáng kể
     trên Render free)."""
-    response = await _get_public(url, headers={"User-Agent": _FALLBACK_USER_AGENT})
+    response = await _get_public(
+        url,
+        headers={"User-Agent": _FALLBACK_USER_AGENT},
+        allowed_types=HTML_TYPES,
+        truncate=True,
+    )
     if response.status_code != 200:
         raise WebReaderError(f"Không đọc được link (HTTP {response.status_code}).")
 
@@ -188,20 +263,22 @@ async def read_url(raw_url: str) -> str:
     truy cập bình thường) thì rơi xuống _fetch_direct() - tự fetch HTML rồi
     bóc text bằng BeautifulSoup. Raise WebReaderError nếu URL không hợp lệ/
     bị chặn, hoặc CẢ 2 cách đều lỗi."""
-    url = normalize_public_http_url(raw_url)
+    url = await normalize_public_http_url_async(raw_url)
 
     text = ""
     status_code: Optional[int] = None
     try:
-        response = await _get_public(f"{_JINA_READER_BASE_URL}{url}")
+        response = await _get_public(
+            f"{_JINA_READER_BASE_URL}{url}", allowed_types=TEXT_TYPES, truncate=True
+        )
         status_code = response.status_code
         if status_code == 200:
             if _is_antibot_page(response.content):
                 logger.info("Jina Reader trả challenge page cho '%s', thử fetch trực tiếp.", url)
             else:
                 text = response.text.strip()
-    except httpx.HTTPError as exc:
-        logger.warning("Jina Reader lỗi mạng cho '%s' (%s), thử fetch trực tiếp.", url, exc)
+    except (httpx.HTTPError, WebReaderError) as exc:
+        logger.warning("Jina Reader lỗi cho '%s' (%s), thử fetch trực tiếp.", url, exc)
 
     if not text:
         if status_code is not None and status_code != 200:
@@ -222,10 +299,10 @@ async def read_rss(raw_url: str, limit: int = 0) -> str:
     link. Raise WebReaderError nếu URL không hợp lệ/bị chặn hoặc feed lỗi."""
     import feedparser
 
-    url = normalize_public_http_url(raw_url)
+    url = await normalize_public_http_url_async(raw_url)
     limit = limit if limit and limit > 0 else config.RSS_READER_MAX_ITEMS
 
-    response = await _get_public(url)
+    response = await _get_public(url, allowed_types=FEED_TYPES)
     if response.status_code != 200:
         raise WebReaderError(f"Không đọc được feed (HTTP {response.status_code}).")
 

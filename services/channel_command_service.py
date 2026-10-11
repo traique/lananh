@@ -1,12 +1,18 @@
 """Text command implementation for non-Telegram channels."""
+
 import base64
 import contextvars
 
 from ai import agnes_client, orchestrator, router9_client, tavily_client
 from core import config, database as db
-from handlers import commands as telegram_commands
-from handlers.prompt_identity import render_instruction, resolve_prompt_identity
-from services import memory_service, translate_service
+from core.text_utils import parse_on_off
+from services import (
+    memory_service,
+    price_search,
+    prompt_templates,
+    translate_service,
+    usage_stats,
+)
 from services.telemetry import telemetry
 
 HELP = """📖 Lệnh trên Zalo/Zoom
@@ -88,20 +94,21 @@ def _arg(text: str) -> str:
     return text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) == 2 else ""
 
 
-async def _prompt(user_id: int, description: str, channel: str = "zalo") -> tuple[list[str], str | None]:
+async def _prompt(
+    user_id: int, description: str, channel: str = "zalo"
+) -> tuple[list[str], str | None]:
     if not description:
         return ["Cú pháp: /prompt <mô tả muốn tạo prompt>"], None
-    identity = resolve_prompt_identity(description, context="text")
-    instruction = render_instruction(
-        telegram_commands.TEXT_PROMPT_INSTRUCTION_BASE, identity, user_desc=description
-    )
+    instruction, identity = prompt_templates.build_text_instruction(description)
     hint = identity.mode_hint
     prompt_id = await telemetry.start(user_id, "prompt_generator", description, channel=channel)
     try:
         response = await orchestrator.ask(instruction)
         output = (response.text or "").strip()
         await telemetry.success(prompt_id, "prompt_generator", output or "(không có nội dung)")
-        return ([f"{hint}\n\n{output}"] if output else ["Gemini không trả về prompt, hãy thử lại."]), ("api" if getattr(response, "used_fallback", False) else None)
+        return (
+            [f"{hint}\n\n{output}"] if output else ["Gemini không trả về prompt, hãy thử lại."]
+        ), ("api" if getattr(response, "used_fallback", False) else None)
     except Exception as exc:
         await telemetry.failure(prompt_id, "prompt_generator", exc)
         return ["❌ Có lỗi khi tạo prompt. Hãy thử lại sau."], None
@@ -110,15 +117,15 @@ async def _prompt(user_id: int, description: str, channel: str = "zalo") -> tupl
 async def _price(user_id: int, product: str, channel: str = "zalo") -> tuple[list[str], str | None]:
     if not product:
         return ["Cú pháp: /gia <tên sản phẩm>, ví dụ /gia iPhone 16 Pro"], None
-    cached = telegram_commands._get_cached_price(product)
+    cached = price_search.get_cached_price(product)
     if cached:
         return [cached], None
     prompt_id = await telemetry.start(user_id, "price_search", product, channel=channel)
     try:
-        output, used_fallback = await telegram_commands._search_price(product)
-        output = await telegram_commands._verify_links(output)
+        output, used_fallback = await price_search.search_price(product)
+        output = await price_search.verify_links(output)
         if output:
-            telegram_commands._set_cached_price(product, output)
+            price_search.set_cached_price(product, output)
         await telemetry.success(prompt_id, "price_search", output or "(không có nội dung)")
         return [output or "Không tìm được giá lúc này."], ("api" if used_fallback else None)
     except Exception as exc:
@@ -126,7 +133,9 @@ async def _price(user_id: int, product: str, channel: str = "zalo") -> tuple[lis
         return ["❌ Có lỗi khi tìm giá sản phẩm."], None
 
 
-async def _translate(user_id: int, argument: str, channel: str = "zalo") -> tuple[list[str], str | None]:
+async def _translate(
+    user_id: int, argument: str, channel: str = "zalo"
+) -> tuple[list[str], str | None]:
     if not argument.strip():
         return [
             "Cú pháp: /dich [ja>vi|vi>ja] <nội dung>\n"
@@ -172,9 +181,13 @@ async def _translate(user_id: int, argument: str, channel: str = "zalo") -> tupl
     return [f"🇯🇵↔🇻🇳 {label}\n\n{result}"], provider
 
 
-async def _agent(user_id: int, question: str, channel: str = "zalo") -> tuple[list[str], str | None]:
+async def _agent(
+    user_id: int, question: str, channel: str = "zalo"
+) -> tuple[list[str], str | None]:
     if not question:
-        return ["Dùng: /agent <câu hỏi>\nVí dụ: /agent so sánh giá iPhone 15 và iPhone 15 Pro"], None
+        return [
+            "Dùng: /agent <câu hỏi>\nVí dụ: /agent so sánh giá iPhone 15 và iPhone 15 Pro"
+        ], None
     from ai import agent_service
 
     prompt_id = await telemetry.start(user_id, "agent", question, channel=channel)
@@ -222,9 +235,13 @@ async def _morning_news_now() -> list[str]:
 
     result = await morning_news.run_once(force=True)
     if result.content is None:
-        return ["Không có nội dung để gửi (tất cả nguồn RSS đều lỗi, hoặc model tổng hợp trả lời bất thường - xem log)."]
+        return [
+            "Không có nội dung để gửi (tất cả nguồn RSS đều lỗi, hoặc model tổng hợp trả lời bất thường - xem log)."
+        ]
     if not result.sent_zalo and not result.sent_zoom:
-        return ["Đã tổng hợp được bản tin nhưng KHÔNG gửi được tới đâu cả (chưa pair Zalo lẫn Zoom, hoặc gửi bị lỗi - xem log)."]
+        return [
+            "Đã tổng hợp được bản tin nhưng KHÔNG gửi được tới đâu cả (chưa pair Zalo lẫn Zoom, hoặc gửi bị lỗi - xem log)."
+        ]
     kenh = []
     if result.sent_zalo:
         kenh.append("Zalo")
@@ -232,7 +249,9 @@ async def _morning_news_now() -> list[str]:
         kenh.append("Zoom")
     if len(kenh) < 2:
         thieu = "Zoom" if "Zoom" not in kenh else "Zalo"
-        return [f"✅ Đã gửi Bản tin sáng qua {' và '.join(kenh)} (KHÔNG gửi được {thieu} - chưa pair hoặc lỗi, xem log)."]
+        return [
+            f"✅ Đã gửi Bản tin sáng qua {' và '.join(kenh)} (KHÔNG gửi được {thieu} - chưa pair hoặc lỗi, xem log)."
+        ]
     return ["✅ Đã gửi Bản tin sáng tới Zalo và Zoom."]
 
 
@@ -246,19 +265,23 @@ async def _news_now() -> list[str]:
 
     content = await morning_news.build_digest(mode="on_demand")
     if not content:
-        return ["Không tổng hợp được điểm tin lúc này (các nguồn RSS đều lỗi hoặc AI trả lời bất thường)."]
+        return [
+            "Không tổng hợp được điểm tin lúc này (các nguồn RSS đều lỗi hoặc AI trả lời bất thường)."
+        ]
     return [content]
 
 
-async def _generate_image(argument: str, is_admin: bool, channel: str) -> tuple[list[str], str | None]:
-    lowered = argument.strip().lower()
-    if lowered in telegram_commands._ROUTER9_ON_ARGS or lowered in telegram_commands._ROUTER9_OFF_ARGS:
+async def _generate_image(
+    argument: str, is_admin: bool, channel: str
+) -> tuple[list[str], str | None]:
+    enabled = parse_on_off(argument)
+    if enabled is not None:
         if not is_admin:
             return ["Lệnh này chỉ dành cho admin."], None
-        enabled = lowered in telegram_commands._ROUTER9_ON_ARGS
         await agnes_client.set_enabled(enabled)
         return (
-            ["✅ Đã bật tạo ảnh (Agnes AI)."] if enabled
+            ["✅ Đã bật tạo ảnh (Agnes AI)."]
+            if enabled
             else ["🔴 Đã tắt tạo ảnh cho tới khi bật lại bằng /anh on."]
         ), None
     if not argument.strip():
@@ -305,14 +328,15 @@ async def maybe_handle_command(
     if command == "/anh":
         return await _generate_image(argument, is_admin, channel)
     if command == "/reset":
-        await orchestrator.reset_chat(); await db.clear_chat(user_id)
+        await orchestrator.reset_chat()
+        await db.clear_chat(user_id)
         return ["🔄 Đã xoá ngữ cảnh hội thoại."], None
     if command == "/memory":
-        lowered = argument.strip().lower()
-        if lowered in telegram_commands._ROUTER9_ON_ARGS:
+        toggle = parse_on_off(argument)
+        if toggle is True:
             await memory_service.set_enabled(user_id, True)
             return ["✅ Đã bật trí nhớ dài hạn."], None
-        if lowered in telegram_commands._ROUTER9_OFF_ARGS:
+        if toggle is False:
             await memory_service.set_enabled(user_id, False)
             return ["🔴 Đã tắt trí nhớ dài hạn. Dùng /memory on để bật lại."], None
         facts, summary = await db.get_facts(user_id), await db.get_summary(user_id)
@@ -321,7 +345,8 @@ async def maybe_handle_command(
         if not facts and not summary:
             return [f"🧠 Chưa có trí nhớ dài hạn.{status_line}"], None
         lines = ["🧠 Trí nhớ dài hạn:"]
-        if summary: lines.append(f"\nTóm tắt: {summary}")
+        if summary:
+            lines.append(f"\nTóm tắt: {summary}")
         lines.extend(f"• {key}: {value}" for key, value in facts)
         lines.append(status_line)
         return ["\n".join(lines)], None
@@ -330,10 +355,29 @@ async def maybe_handle_command(
         return ["🗑️ Đã xoá toàn bộ trí nhớ dài hạn."], None
     if command == "/notes":
         notes = await db.get_notes(user_id, limit=10)
-        return (["📝 Chưa có ghi chú nào."] if not notes else ["📝 Ghi chú gần đây:\n" + "\n".join(f"• {content} ({created.strftime('%H:%M %d/%m')})" for content, created in notes)]), None
+        return (
+            ["📝 Chưa có ghi chú nào."]
+            if not notes
+            else [
+                "📝 Ghi chú gần đây:\n"
+                + "\n".join(
+                    f"• {content} ({created.strftime('%H:%M %d/%m')})" for content, created in notes
+                )
+            ]
+        ), None
     if command == "/history":
         rows = await db.get_history(user_id, limit=10)
-        return (["Chưa có lịch sử nào."] if not rows else ["🕙 10 lượt gần nhất:\n" + "\n".join(f"• [{kind}] {prompt[:80]} ({created[:16].replace('T', ' ')})" for kind, prompt, created, _ in rows)]), None
+        return (
+            ["Chưa có lịch sử nào."]
+            if not rows
+            else [
+                "🕙 10 lượt gần nhất:\n"
+                + "\n".join(
+                    f"• [{kind}] {prompt[:80]} ({created[:16].replace('T', ' ')})"
+                    for kind, prompt, created, _ in rows
+                )
+            ]
+        ), None
 
     # /status, /userouter9, /model đổi CẤU HÌNH TOÀN CỤC (provider đang dùng,
     # model chat) - ảnh hưởng MỌI người dùng trên MỌI kênh, không riêng người
@@ -342,7 +386,24 @@ async def maybe_handle_command(
     # không thể vô tình/cố ý phá cấu hình chung của cả bot.
     # /rag: kiến thức cá nhân trong rag/ nên cũng khóa admin như /agent - thành
     # viên thường không được mổ xẻ kho kiến thức riêng của chủ bot.
-    if command in {"/status", "/userouter9", "/router9", "/tavily", "/model", "/thongke", "/agent", "/rag", "/ragxuly", "/bangtinsang", "/bantinsang", "/tintuc"} and not is_admin:
+    if (
+        command
+        in {
+            "/status",
+            "/userouter9",
+            "/router9",
+            "/tavily",
+            "/model",
+            "/thongke",
+            "/agent",
+            "/rag",
+            "/ragxuly",
+            "/bangtinsang",
+            "/bantinsang",
+            "/tintuc",
+        }
+        and not is_admin
+    ):
         return ["Lệnh này chỉ dành cho admin."], None
     if command == "/agent":
         return await _agent(user_id, argument, channel)
@@ -356,35 +417,44 @@ async def maybe_handle_command(
         return await _news_now(), None
     if command == "/status":
         state = orchestrator.get_provider_state_snapshot()
-        return [f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}"], None
+        return [
+            f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}"
+        ], None
     if command == "/thongke":
-        # Dùng chung logic/format với Telegram (handlers/commands.py) - xem
-        # docstring _build_thongke_text ở đó.
-        hours = telegram_commands._parse_thongke_hours(argument)
-        return [await telegram_commands._build_thongke_text(hours, use_html=False)], None
+        # Dùng chung logic/format với Telegram - xem services/usage_stats.py.
+        hours = usage_stats.parse_thongke_hours(argument)
+        return [await usage_stats.build_thongke_text(hours, use_html=False)], None
     if command == "/userouter9":
         ok, detail = await orchestrator.try_router9_now()
-        return (["✅ 9Router hoạt động, đã chuyển về 9Router."] if ok else [f"❌ 9Router vẫn lỗi: {detail[:250]}"]), None
+        return (
+            ["✅ 9Router hoạt động, đã chuyển về 9Router."]
+            if ok
+            else [f"❌ 9Router vẫn lỗi: {detail[:250]}"]
+        ), None
     if command == "/router9":
-        lowered = argument.strip().lower()
-        if lowered in telegram_commands._ROUTER9_ON_ARGS:
+        toggle = parse_on_off(argument)
+        if toggle is True:
             await orchestrator.set_router9_enabled(True)
             return ["✅ Đã bật 9Router."], None
-        if lowered in telegram_commands._ROUTER9_OFF_ARGS:
+        if toggle is False:
             await orchestrator.set_router9_enabled(False)
             return ["🔴 Đã tắt 9Router cho tới khi bật lại bằng /router9 on."], None
         enabled = orchestrator.get_provider_state_snapshot()["router9_enabled"]
-        return [f"9Router đang {'BẬT' if enabled else 'TẮT'}. Dùng /router9 on hoặc /router9 off để đổi."], None
+        return [
+            f"9Router đang {'BẬT' if enabled else 'TẮT'}. Dùng /router9 on hoặc /router9 off để đổi."
+        ], None
     if command == "/tavily":
-        lowered = argument.strip().lower()
-        if lowered in telegram_commands._ROUTER9_ON_ARGS:
+        toggle = parse_on_off(argument)
+        if toggle is True:
             await tavily_client.set_enabled(True)
             return ["✅ Đã bật tra web Tavily trước khi trả lời."], None
-        if lowered in telegram_commands._ROUTER9_OFF_ARGS:
+        if toggle is False:
             await tavily_client.set_enabled(False)
             return ["🔴 Đã tắt Tavily, chat trở lại luồng bình thường."], None
         enabled = await tavily_client.get_enabled()
-        return [f"Tavily đang {'BẬT' if enabled else 'TẮT'}. Dùng /tavily on hoặc /tavily off để đổi."], None
+        return [
+            f"Tavily đang {'BẬT' if enabled else 'TẮT'}. Dùng /tavily on hoặc /tavily off để đổi."
+        ], None
     if command == "/model":
         if not argument:
             current = await router9_client.get_preferred_model_name()
@@ -394,11 +464,13 @@ async def maybe_handle_command(
                 f"phòng, API luôn dùng model mặc định ({config.GOOGLE_AI_STUDIO_MODEL})."
             ], None
         if argument.lower() in {"auto", "default", "reset"}:
-            await router9_client.set_preferred_model_name(None); await orchestrator.reset_chat()
+            await router9_client.set_preferred_model_name(None)
+            await orchestrator.reset_chat()
             return ["🔄 Đã về model tự động."], None
         name = await router9_client.find_model(argument)
         if name is None:
             return [f"Không tìm thấy model khớp “{argument}”."], None
-        await router9_client.set_preferred_model_name(name); await orchestrator.reset_chat()
+        await router9_client.set_preferred_model_name(name)
+        await orchestrator.reset_chat()
         return [f"✅ Đã đổi model sang {name}."], None
     return ["Lệnh chưa được hỗ trợ. Gõ /help để xem danh sách."], None
