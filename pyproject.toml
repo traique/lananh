@@ -30,3 +30,7 @@ exclude = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["test"]
+# Thêm thư mục gốc repo vào sys.path để chạy riêng 1 file test bằng lệnh
+# `pytest` (không qua `python -m pytest`) vẫn import được core/, services/...
+# - CI chạy `pytest -q test/test_delivery_sql.py` riêng cho job PGlite.
+pythonpath = ["."]
