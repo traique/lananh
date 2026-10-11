@@ -6,6 +6,7 @@ import logging
 from datetime import timedelta
 from typing import Any, NamedTuple
 
+from core import config
 from core import database as db
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ async def ensure_schema() -> None:
     await db.ensure_migrations()
 
 
+@db.with_reconnect
 async def cleanup_expired(retention: timedelta = RETENTION) -> None:
     """Delete idempotency/cache rows older than the retention window."""
     await ensure_schema()
@@ -40,6 +42,11 @@ async def cleanup_expired(retention: timedelta = RETENTION) -> None:
     await pool.execute(
         "DELETE FROM webhook_inbox WHERE status = 'DONE' AND completed_at < now() - $1::interval",
         retention,
+    )
+    # Dòng DEAD giữ lâu hơn (tra cứu sự cố) rồi mới xoá - kèm payload.
+    await pool.execute(
+        "DELETE FROM webhook_inbox WHERE status = 'DEAD' AND completed_at < now() - $1::interval",
+        timedelta(days=config.WEBHOOK_DEAD_RETENTION_DAYS),
     )
 
 
@@ -70,6 +77,9 @@ async def stop_cleanup_task() -> None:
         await task
     except asyncio.CancelledError:
         pass
+
+
+@db.with_reconnect(idempotent=False)
 async def claim_telegram_update(update_id: int) -> bool:
     """Atomically claim a Telegram update across restarts and instances."""
     await ensure_schema()
@@ -94,6 +104,7 @@ class DueReminder(NamedTuple):
     user_jid: str = ""
 
 
+@db.with_reconnect(idempotent=False)
 async def claim_due_reminders(
     *,
     limit: int = 20,
@@ -123,12 +134,21 @@ async def claim_due_reminders(
         limit,
         lease,
     )
-    return [DueReminder(
-        row["id"], row["telegram_user_id"], row["message"], row["channel"],
-        row["recipient_id"], row["account_id"], row["user_jid"],
-    ) for row in rows]
+    return [
+        DueReminder(
+            row["id"],
+            row["telegram_user_id"],
+            row["message"],
+            row["channel"],
+            row["recipient_id"],
+            row["account_id"],
+            row["user_jid"],
+        )
+        for row in rows
+    ]
 
 
+@db.with_reconnect
 async def release_reminder_claim(reminder_id: int) -> None:
     """Release a failed delivery for retry on the next scheduler pass."""
     await ensure_schema()
@@ -138,6 +158,7 @@ async def release_reminder_claim(reminder_id: int) -> None:
     )
 
 
+@db.with_reconnect(idempotent=False)
 async def claim_zoom_event(event_id: str) -> bool:
     """Atomically claim a Zoom webhook event (Zoom retries on non-200/slow response)."""
     await ensure_schema()
@@ -152,6 +173,7 @@ async def claim_zoom_event(event_id: str) -> bool:
     return result == "INSERT 0 1"
 
 
+@db.with_reconnect
 async def get_zalo_response(
     account_id: str,
     message_id: str,
@@ -173,6 +195,7 @@ async def get_zalo_response(
     return json.loads(value) if isinstance(value, str) else dict(value)
 
 
+@db.with_reconnect
 async def save_zalo_response(
     account_id: str,
     message_id: str,
