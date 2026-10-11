@@ -1,12 +1,12 @@
 """Helper dùng chung cho mọi handler Telegram: kiểm soát truy cập (bot chỉ
 phục vụ 1 user), tải file an toàn, và reply dài/rich text. Tách riêng khỏi
-từng handlers/*.py cụ thể vì cả commands.py, chat_router.py, stock_handler.py,
-media_handler.py đều cần.
+từng handlers/*.py cụ thể vì mọi handler Telegram (commands.py,
+provider_commands.py, chat_router.py, stock_handler.py, media_handler.py...) đều cần.
 """
+
 import asyncio
 import functools
 import logging
-import os
 from pathlib import Path
 
 from telegram import Update
@@ -16,6 +16,7 @@ from telegram.ext import ContextTypes
 import tg_format
 import tg_format_codeblock
 from core import config
+from core.fileutil import safe_delete
 from core.text_normalize import nfc
 
 logger = logging.getLogger(__name__)
@@ -59,13 +60,6 @@ def extract_arg(context: ContextTypes.DEFAULT_TYPE) -> str:
     # (bàn phím macOS, copy-paste PDF) - chuẩn hoá ngay tại đây, điểm dùng
     # chung cho mọi handler lệnh, để match/tìm kiếm phía sau luôn nhất quán.
     return nfc(" ".join(context.args).strip()) if context.args else ""
-
-
-async def safe_delete(path) -> None:
-    try:
-        await asyncio.to_thread(os.remove, path)
-    except OSError:
-        pass
 
 
 async def reply_long_text(message, text: str) -> None:

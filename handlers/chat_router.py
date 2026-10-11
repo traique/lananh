@@ -1,48 +1,24 @@
-"""Điểm vào cho mọi tin nhắn văn bản thường (không phải lệnh /)."""
+"""Điểm vào cho mọi tin nhắn văn bản thường (không phải lệnh /).
 
-import asyncio
+Phần riêng Telegram nằm ở đây (typing, danh mục bằng lời, nhánh cổ phiếu gửi
+bản số liệu trước qua handlers/stock_handler.py, gửi rich text); lượt chat AI
+dùng chung pipeline với Zalo/Zoom: services/channel_chat_service.run_chat_turn.
+"""
+
 import logging
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
 import messages
-from ai import orchestrator
-from core import database as db
 from core.text_normalize import nfc
 from handlers import common, stock_handler
-from services import memory_service, portfolio_service, tools, web_search
-from services.background_tasks import stop_tracked_tasks
+from services import channel_chat_service, portfolio_service
 from services.telemetry import telemetry
-from stock import analysis as stock_analysis
 
 logger = logging.getLogger(__name__)
-_background_tasks: set[asyncio.Task] = set()
 
-
-def _track_background_task(task: asyncio.Task) -> None:
-    _background_tasks.add(task)
-
-    def _done(completed: asyncio.Task) -> None:
-        _background_tasks.discard(completed)
-        if completed.cancelled():
-            return
-        try:
-            completed.result()
-        except Exception:
-            logger.exception("Tác vụ cập nhật trí nhớ chạy nền bị lỗi")
-
-    task.add_done_callback(_done)
-
-
-async def stop_background_tasks() -> None:
-    """Drain các lượt cập nhật memory trước khi database pool bị đóng."""
-    await stop_tracked_tasks(
-        _background_tasks,
-        timeout=15.0,
-        logger=logger,
-        label="Telegram memory",
-    )
+_CHAT_ERROR = "❌ Có lỗi khi trò chuyện với Gemini. Hãy thử lại sau giây lát."
 
 
 @common.restricted
@@ -63,41 +39,21 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if route.handled:
         return
 
-    prompt_id = await telemetry.start(user_id, "chat", text)
+    # Telegram chỉ phục vụ chủ bot (@common.restricted) -> kênh "telegram".
+    turn = await channel_chat_service.run_chat_turn(
+        user_id, text, grounding=route.grounding, channel="telegram"
+    )
+    if turn.failed:
+        await update.message.reply_text(turn.error_text or _CHAT_ERROR)
+        return
+    reply_out = turn.text
+    if reply_out and turn.used_fallback:
+        reply_out += "\n\n⚙️ API"
     try:
-        # 2 bước này độc lập nhau - chạy song song để không cộng dồn thời gian chờ.
-        tool_result, search_result = await asyncio.gather(
-            tools.maybe_run_tool(user_id, text),
-            web_search.maybe_search(text, user_id=user_id),
-        )
-        combined_grounding = "\n\n".join(
-            part for part in (route.grounding, tool_result, search_result) if part
-        )
-
-        memory_context = await memory_service.build_memory_context(user_id)
-        response = await orchestrator.chat(
-            user_id,
-            text,
-            grounding=combined_grounding,
-            memory_context=memory_context,
-            require_real_search=stock_analysis.wants_external_market_data(text),
-        )
-        reply_text = (response.text or "").strip()
-
-        await telemetry.success(prompt_id, "chat", reply_text or "(không có nội dung)")
-        if reply_text:
-            await db.add_chat_message(user_id, "user", text)
-            await db.add_chat_message(user_id, "model", reply_text)
-            _track_background_task(
-                asyncio.create_task(memory_service.update_memory(user_id, text, reply_text))
-            )
-        reply_out = reply_text
-        if reply_out and getattr(response, "used_fallback", False):
-            reply_out += "\n\n⚙️ API"
         await common.reply_long_text(update.message, reply_out or messages.CHAT_GENERIC_ERROR)
     except Exception as exc:
-        logger.exception("Lỗi chat tự nhiên")
-        await telemetry.failure(prompt_id, "chat", exc)
-        await update.message.reply_text(
-            "❌ Có lỗi khi trò chuyện với Gemini. Hãy thử lại sau giây lát."
-        )
+        # Gửi lỗi (Telegram từ chối/timeout): giữ hành vi cũ - ghi telemetry lỗi
+        # và báo 1 câu ngắn thay vì để error handler chung xử lý.
+        logger.exception("Lỗi gửi câu trả lời chat về Telegram")
+        await telemetry.failure(turn.prompt_id, "chat", exc)
+        await update.message.reply_text(_CHAT_ERROR)
