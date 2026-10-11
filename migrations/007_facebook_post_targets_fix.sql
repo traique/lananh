@@ -8,7 +8,8 @@
 -- named "005" was later swapped for one that creates facebook_post_targets,
 -- the migration runner saw "version 5 already applied" and silently skipped
 -- it, and facebook_post_targets was never created. Shipping the same
--- CREATE TABLE under a brand-new version number (006) guarantees it runs
+-- CREATE TABLE under a brand-new version number (007; 006 is intentionally
+-- skipped because an earlier draft may already have used it) guarantees it runs
 -- here regardless of that history. Every statement below is idempotent, so
 -- this is a harmless no-op on a database where 005 already created the table
 -- correctly.
