@@ -52,21 +52,103 @@ tôn trọng router9_enabled/router9_dead_since đã biết (cờ /router9 off, 
 router9 đã được đánh dấu chết ở nhánh chat chính) để không lãng phí 1 lượt
 gọi chắc chắn sẽ lỗi.
 
-Các tool tái dùng logic có sẵn: tim_web dùng services/web_search.py; tim_gia và
-xem_thong_ke tái dùng handlers/commands.py/core/database.py - KHÔNG viết lại
-logic tìm kiếm/giá/thống kê. Muốn thêm tool mới: viết 1 async function nhận **kwargs trả về str, rồi
+Các tool tái dùng logic có sẵn: tim_web dùng services/web_search.py; tim_gia dùng
+services/price_search.py, xem_thong_ke dùng services/usage_stats.py - KHÔNG viết
+lại logic tìm kiếm/giá/thống kê. Muốn thêm tool mới: viết 1 async function nhận **kwargs trả về str, rồi
 thêm vào _TOOLS bên dưới (schema + hàm thực thi) - vòng lặp _run_agent_loop
 tự động dùng được, không cần sửa gì khác.
 """
+
 import json
 import logging
-from typing import Optional
+import re
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from ai import official_client
 from ai.official_client import is_quota_exhausted_error
-from ai.timeouts import OFFICIAL_CHAT_TIMEOUT_SEC, with_timeout
+from ai.timeouts import (
+    OFFICIAL_CHAT_TIMEOUT_SEC,
+    TurnTimeoutError,
+    bounded,
+    turn_deadline,
+    with_timeout,
+)
+from core import config
+from core.text_utils import strip_json_fence
 
 logger = logging.getLogger(__name__)
+
+# ─── Chống prompt injection cho doc_link/xem_rss ─────────────────────────────
+# Nội dung web (kết quả tim_web, trang đọc qua doc_link) là dữ liệu KHÔNG tin
+# cậy nhưng vẫn quay lại vòng lặp agent có tool. Nếu doc_link được đọc URL tuỳ
+# ý, 1 trang độc có thể xúi model nhét dữ liệu nội bộ (vd kết quả xem_thong_ke)
+# vào query string của 1 URL lạ để rò rỉ ra ngoài. Vì vậy mỗi lượt /agent chỉ
+# cho đọc URL CÓ SẴN NGUYÊN VĂN trong câu hỏi của người dùng hoặc trong kết
+# quả của tool tìm kiếm - model không thể tự dựng URL mới chứa dữ liệu.
+_URL_RE = re.compile(r"https?://[^\s<>\"'`\]\[(){}]+", re.IGNORECASE)
+_URL_TRAILING_PUNCT = ".,;:!?…»”’"
+# Tool trả về URL nguồn đáng tin để doc_link được phép đọc tiếp.
+_URL_SOURCE_TOOLS = frozenset({"tim_web", "tim_gia"})
+# Trần số URL được phép trong 1 lượt (tránh phình bộ nhớ với kết quả dài).
+_MAX_ALLOWED_URLS = 200
+_allowed_urls: ContextVar[Optional[set[str]]] = ContextVar("agent_allowed_urls", default=None)
+
+
+def _normalize_url(url: str) -> str:
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return ""
+    if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+        return ""
+    path = parts.path.rstrip("/") or ""
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, parts.query, ""))
+
+
+def extract_urls(text: str) -> list[str]:
+    urls = []
+    for match in _URL_RE.finditer(text or ""):
+        url = match.group(0).rstrip(_URL_TRAILING_PUNCT)
+        normalized = _normalize_url(url)
+        if normalized:
+            urls.append(normalized)
+    return urls
+
+
+def _allow_urls_from(text: str) -> None:
+    allowed = _allowed_urls.get()
+    if allowed is None:
+        return
+    for url in extract_urls(text):
+        if len(allowed) >= _MAX_ALLOWED_URLS:
+            break
+        allowed.add(url)
+
+
+@contextmanager
+def agent_url_scope(question: str) -> Iterator[set[str]]:
+    """Phạm vi 1 lượt agent: URL trong câu hỏi được phép đọc ngay từ đầu."""
+    allowed: set[str] = set(extract_urls(question)[:_MAX_ALLOWED_URLS])
+    token = _allowed_urls.set(allowed)
+    try:
+        yield allowed
+    finally:
+        _allowed_urls.reset(token)
+
+
+def _url_permitted(url: str) -> bool:
+    allowed = _allowed_urls.get()
+    # Fail closed: ngoài 1 lượt agent (không có phạm vi) thì không đọc link nào.
+    return allowed is not None and _normalize_url(url) in allowed
+
+
+_URL_NOT_PERMITTED = (
+    "Không đọc được link: chỉ được đọc link có nguyên văn trong câu hỏi của người dùng "
+    "hoặc trong kết quả tim_web/tim_gia của lượt này."
+)
 
 MAX_AGENT_STEPS = 4
 # Tắt hẳn cả 2 nhánh router9 (native tools + JSON-router) của /agent, không
@@ -88,21 +170,20 @@ _SYSTEM_INSTRUCTION = (
 
 
 async def _tool_tim_gia(ten_san_pham: str) -> str:
-    # Import trễ (lazy) để tránh vòng import: handlers/commands.py cũng import
-    # nhiều module ai.* ở mức module-level.
-    from handlers import commands as telegram_commands
+    # Import trễ (lazy) như các tool khác: chỉ nạp module khi model thật sự gọi tool.
+    from services import price_search
 
     if not ten_san_pham or not ten_san_pham.strip():
         return "Lỗi: thiếu tên sản phẩm."
-    text, _used_fallback = await telegram_commands._search_price(ten_san_pham.strip())
+    text, _used_fallback = await price_search.search_price(ten_san_pham.strip())
     return text or "Không tìm được giá cho sản phẩm này."
 
 
 async def _tool_xem_thong_ke(so_gio: int = 168) -> str:
-    from handlers import commands as telegram_commands
+    from services import usage_stats
 
     so_gio = so_gio if isinstance(so_gio, int) and so_gio > 0 else 168
-    return await telegram_commands._build_thongke_text(so_gio, use_html=False)
+    return await usage_stats.build_thongke_text(so_gio, use_html=False)
 
 
 async def _tool_xem_gia_co_phieu(ma_co_phieu: str) -> str:
@@ -118,6 +199,8 @@ async def _tool_doc_link(url: str) -> str:
 
     if not url or not url.strip():
         return "Lỗi: thiếu URL."
+    if not _url_permitted(url):
+        return _URL_NOT_PERMITTED
     try:
         return await web_reader.read_url(url.strip())
     except web_reader.WebReaderError as exc:
@@ -129,6 +212,8 @@ async def _tool_xem_rss(url: str, so_muc: int = 0) -> str:
 
     if not url or not url.strip():
         return "Lỗi: thiếu URL feed."
+    if not _url_permitted(url):
+        return _URL_NOT_PERMITTED
     try:
         return await web_reader.read_rss(url.strip(), so_muc)
     except web_reader.WebReaderError as exc:
@@ -175,7 +260,10 @@ _TOOLS: dict[str, tuple[str, dict, callable]] = {
         {
             "type": "object",
             "properties": {
-                "ten_san_pham": {"type": "string", "description": "Tên sản phẩm cần tìm giá, vd 'iPhone 15 128GB'"},
+                "ten_san_pham": {
+                    "type": "string",
+                    "description": "Tên sản phẩm cần tìm giá, vd 'iPhone 15 128GB'",
+                },
             },
             "required": ["ten_san_pham"],
         },
@@ -186,7 +274,10 @@ _TOOLS: dict[str, tuple[str, dict, callable]] = {
         {
             "type": "object",
             "properties": {
-                "so_gio": {"type": "integer", "description": "Số giờ gần nhất muốn xem, mặc định 168 (7 ngày)"},
+                "so_gio": {
+                    "type": "integer",
+                    "description": "Số giờ gần nhất muốn xem, mặc định 168 (7 ngày)",
+                },
             },
         },
         _tool_xem_thong_ke,
@@ -207,7 +298,10 @@ _TOOLS: dict[str, tuple[str, dict, callable]] = {
         {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "URL đầy đủ (bắt đầu bằng http:// hoặc https://) cần đọc"},
+                "url": {
+                    "type": "string",
+                    "description": "URL đầy đủ (bắt đầu bằng http:// hoặc https://) cần đọc",
+                },
             },
             "required": ["url"],
         },
@@ -219,7 +313,10 @@ _TOOLS: dict[str, tuple[str, dict, callable]] = {
             "type": "object",
             "properties": {
                 "url": {"type": "string", "description": "URL feed RSS/Atom"},
-                "so_muc": {"type": "integer", "description": "Số mục mới nhất muốn xem, mặc định 8"},
+                "so_muc": {
+                    "type": "integer",
+                    "description": "Số mục mới nhất muốn xem, mặc định 8",
+                },
             },
             "required": ["url"],
         },
@@ -281,7 +378,8 @@ def _build_tool_list_text() -> str:
     for name, (desc, schema, _fn) in _TOOLS.items():
         props = (schema or {}).get("properties", {}) or {}
         args_desc = ", ".join(
-            f'"{key}": {prop.get("description") or prop.get("type", "any")}' for key, prop in props.items()
+            f'"{key}": {prop.get("description") or prop.get("type", "any")}'
+            for key, prop in props.items()
         )
         lines.append(f'- "{name}": {desc} args: {{{args_desc}}}')
     return "\n".join(lines)
@@ -293,7 +391,12 @@ async def _call_tool(name: str, args: dict) -> str:
         return f"Lỗi: không có tool tên '{name}'."
     _desc, _schema, fn = entry
     try:
-        return await fn(**(args or {}))
+        result = await bounded(lambda: fn(**(args or {})))
+        if name in _URL_SOURCE_TOOLS and isinstance(result, str):
+            _allow_urls_from(result)
+        return result
+    except TurnTimeoutError:
+        raise
     except Exception as exc:
         logger.warning("Tool '%s' lỗi với args=%r", name, args, exc_info=True)
         # Trả lỗi VÀO lại cho model (không raise) - để model tự quyết định thử
@@ -312,10 +415,14 @@ async def _run_one_provider(idx: int, question: str) -> str:
     gen_config = types.GenerateContentConfig(system_instruction=_SYSTEM_INSTRUCTION, tools=tools)
 
     for step in range(MAX_AGENT_STEPS):
-        response = await with_timeout(
-            client.aio.models.generate_content(model=model, contents=contents, config=gen_config),
-            OFFICIAL_CHAT_TIMEOUT_SEC,
-            f"agent api{idx} step {step + 1}",
+        response = await bounded(
+            lambda: with_timeout(
+                client.aio.models.generate_content(
+                    model=model, contents=contents, config=gen_config
+                ),
+                OFFICIAL_CHAT_TIMEOUT_SEC,
+                f"agent api{idx} step {step + 1}",
+            )
         )
         candidate = response.candidates[0] if response.candidates else None
         parts = candidate.content.parts if candidate and candidate.content else []
@@ -353,12 +460,17 @@ async def _run_router9(question: str) -> str:
     tools = _build_openai_tools()
 
     for step in range(MAX_AGENT_STEPS):
-        result = await router9_client.generate_with_tools(conversation, tools)
+        result = await bounded(
+            lambda: router9_client.generate_with_tools(conversation, tools),
+            config.ROUTER9_CALL_TIMEOUT_SEC,
+        )
 
         if not result.tool_calls:
             return result.text or "Xin lỗi, em chưa tìm được câu trả lời."
 
-        logger.info("Agent (router9) yêu cầu %d tool call(s) ở bước %d.", len(result.tool_calls), step + 1)
+        logger.info(
+            "Agent (router9) yêu cầu %d tool call(s) ở bước %d.", len(result.tool_calls), step + 1
+        )
         conversation.append(
             {
                 "role": "assistant",
@@ -367,16 +479,23 @@ async def _run_router9(question: str) -> str:
                     {
                         "id": call["id"],
                         "type": "function",
-                        "function": {"name": call["name"], "arguments": json.dumps(call["arguments"], ensure_ascii=False)},
+                        "function": {
+                            "name": call["name"],
+                            "arguments": json.dumps(call["arguments"], ensure_ascii=False),
+                        },
                     }
                     for call in result.tool_calls
                 ],
             }
         )
         for call in result.tool_calls:
-            logger.info("Agent (router9) gọi tool '%s' với args=%s", call["name"], call["arguments"])
+            logger.info(
+                "Agent (router9) gọi tool '%s' với args=%s", call["name"], call["arguments"]
+            )
             result_text = await _call_tool(call["name"], call["arguments"])
-            conversation.append({"role": "tool", "tool_call_id": call["id"], "content": result_text})
+            conversation.append(
+                {"role": "tool", "tool_call_id": call["id"], "content": result_text}
+            )
 
     return "Xin lỗi, câu hỏi này cần nhiều bước quá, em dừng lại để không lặp vô hạn - anh hỏi cụ thể/ngắn hơn giúp em nhé."
 
@@ -391,23 +510,30 @@ async def _run_router9_json_router(question: str) -> Optional[str]:
     là "nhánh này không giải quyết được", rơi tiếp xuống api1/api2."""
     from ai import router9_client
 
-    router_prompt = _JSON_ROUTER_INSTRUCTION_TEMPLATE.format(tool_list=_build_tool_list_text(), question=question)
+    router_prompt = _JSON_ROUTER_INSTRUCTION_TEMPLATE.format(
+        tool_list=_build_tool_list_text(), question=question
+    )
     try:
-        router_response = await router9_client.generate(router_prompt, temperature=0.1)
+        router_response = await bounded(
+            lambda: router9_client.generate(router_prompt, temperature=0.1),
+            config.ROUTER9_CALL_TIMEOUT_SEC,
+        )
+    except TurnTimeoutError:
+        raise
     except Exception:
-        logger.warning("Agent (router9 JSON-router): lỗi khi hỏi định tuyến, bỏ qua nhánh này.", exc_info=True)
+        logger.warning(
+            "Agent (router9 JSON-router): lỗi khi hỏi định tuyến, bỏ qua nhánh này.", exc_info=True
+        )
         return None
 
-    raw = (router_response.text or "").strip()
-    if raw.startswith("```"):
-        raw = raw.strip("`")
-        if raw.lower().startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
+    raw = strip_json_fence(router_response.text)
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning("Agent (router9 JSON-router): model không trả JSON hợp lệ, bỏ qua nhánh này. raw=%r", raw[:200])
+        logger.warning(
+            "Agent (router9 JSON-router): model không trả JSON hợp lệ, bỏ qua nhánh này. raw=%r",
+            raw[:200],
+        )
         return None
 
     tool_name = str(data.get("tool", "none")).strip()
@@ -416,10 +542,18 @@ async def _run_router9_json_router(question: str) -> Optional[str]:
         # Không cần tool - hỏi router9 trả lời trực tiếp bằng văn phong tự
         # nhiên (KHÔNG dùng lại text ép JSON ở trên).
         try:
-            reply = await router9_client.generate(question, system_instruction=_SYSTEM_INSTRUCTION)
+            reply = await bounded(
+                lambda: router9_client.generate(question, system_instruction=_SYSTEM_INSTRUCTION),
+                config.ROUTER9_CALL_TIMEOUT_SEC,
+            )
             return (reply.text or "").strip() or None
+        except TurnTimeoutError:
+            raise
         except Exception:
-            logger.warning("Agent (router9 JSON-router): lỗi khi trả lời trực tiếp, bỏ qua nhánh này.", exc_info=True)
+            logger.warning(
+                "Agent (router9 JSON-router): lỗi khi trả lời trực tiếp, bỏ qua nhánh này.",
+                exc_info=True,
+            )
             return None
 
     args = data.get("args") or {}
@@ -435,8 +569,13 @@ async def _run_router9_json_router(question: str) -> Optional[str]:
         "Không tự bịa thêm thông tin ngoài kết quả tool."
     )
     try:
-        final = await router9_client.generate(synth_prompt, system_instruction=_SYSTEM_INSTRUCTION)
+        final = await bounded(
+            lambda: router9_client.generate(synth_prompt, system_instruction=_SYSTEM_INSTRUCTION),
+            config.ROUTER9_CALL_TIMEOUT_SEC,
+        )
         return (final.text or "").strip() or tool_result
+    except TurnTimeoutError:
+        raise
     except Exception:
         logger.warning(
             "Agent (router9 JSON-router): lỗi khi tổng hợp câu trả lời cuối, trả thẳng kết quả tool thô.",
@@ -450,7 +589,16 @@ async def ask_agent(question: str) -> tuple[str, str]:
     dùng). Thử router9 theo thứ tự 2 nhánh (native tool-calling rồi
     JSON-router - xem docstring module), lỗi cả 2 thì rơi xuống api1/api2:
     api1 trước, hết quota (429) thì rớt xuống api2 - giống mọi nhánh
-    api1/api2 khác trong ai/official_client.py."""
+    api1/api2 khác trong ai/official_client.py.
+
+    Cả lượt chạy trong hạn chót CHAT_TURN_TIMEOUT_SEC (TurnTimeoutError khi
+    hết), api1/api2 tôn trọng công tắc bật/tắt của admin và cooldown hết quota,
+    doc_link/xem_rss chỉ đọc URL có sẵn trong câu hỏi/kết quả tìm kiếm."""
+    with turn_deadline(), agent_url_scope(question):
+        return await _ask_agent(question)
+
+
+async def _ask_agent(question: str) -> tuple[str, str]:
     if _ROUTER9_AGENT_ENABLED:
         from ai.provider_state import provider_state
 
@@ -461,29 +609,52 @@ async def ask_agent(question: str) -> tuple[str, str]:
                     text = await _run_router9(question)
                     await provider_state.mark_router9_alive()
                     return text, "router9"
+                except TurnTimeoutError:
+                    raise
                 except Exception as exc:
                     # Cố ý KHÔNG mark_router9_dead() - xem docstring module.
-                    logger.warning("Agent: router9 (native tools) lỗi (%s), thử JSON-router.", exc, exc_info=True)
+                    logger.warning(
+                        "Agent: router9 (native tools) lỗi (%s), thử JSON-router.",
+                        exc,
+                        exc_info=True,
+                    )
 
             try:
                 text = await _run_router9_json_router(question)
                 if text:
                     await provider_state.mark_router9_alive()
                     return text, "router9"
-                logger.warning("Agent: router9 (JSON-router) không xác định được tool/trả lời, chuyển sang api1/api2.")
+                logger.warning(
+                    "Agent: router9 (JSON-router) không xác định được tool/trả lời, chuyển sang api1/api2."
+                )
+            except TurnTimeoutError:
+                raise
             except Exception as exc:
-                logger.warning("Agent: router9 (JSON-router) lỗi ngoài dự kiến (%s), chuyển sang api1/api2.", exc, exc_info=True)
+                logger.warning(
+                    "Agent: router9 (JSON-router) lỗi ngoài dự kiến (%s), chuyển sang api1/api2.",
+                    exc,
+                    exc_info=True,
+                )
 
     last_exc: Exception | None = None
-    for idx, name in ((1, "api1"), (2, "api2")):
+    for idx in await official_client.usable_indices():
+        name = f"api{idx}"
         try:
             text = await _run_one_provider(idx, question)
             return text, name
+        except TurnTimeoutError:
+            raise
         except Exception as exc:
             last_exc = exc
             if is_quota_exhausted_error(exc):
+                await official_client.note_failure(idx, exc)
                 logger.warning("Agent: %s hết quota, thử provider kế tiếp.", name)
                 continue
             logger.exception("Agent: lỗi không phải quota ở %s.", name)
             continue
+    if last_exc is None:
+        raise RuntimeError(
+            "Cả router9, api1 và api2 đều lỗi cho agent: không có API dự phòng khả dụng "
+            "(chưa cấu hình, đang tắt hoặc đang cooldown hết quota)."
+        )
     raise RuntimeError(f"Cả router9, api1 và api2 đều lỗi cho agent: {last_exc}")

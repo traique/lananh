@@ -12,10 +12,36 @@ class FakePool:
     def __init__(self):
         self.rows: dict[str, dict] = {}
         self._next_uid = -1
+        self.data_deletes: list[tuple[str, tuple]] = []
+        self.in_transaction = False
+
+    def transaction(self):
+        pool = self
+
+        class _Tx:
+            async def __aenter__(self):
+                pool.in_transaction = True
+
+            async def __aexit__(self, *exc):
+                pool.in_transaction = False
+                return False
+
+        return _Tx()
+
+    async def fetchval(self, query, *args):
+        query_lower = query.lower()
+        if "delete from zalo_users" in query_lower and "returning internal_user_id" in query_lower:
+            assert self.in_transaction
+            row = self.rows.pop(args[0], None)
+            return row["internal_user_id"] if row else None
+        raise AssertionError(f"unexpected query: {query}")
 
     async def fetchrow(self, query, *args):
         query_lower = query.lower()
-        if "select external_id, internal_user_id, display_name, role, status from zalo_users where" in query_lower:
+        if (
+            "select external_id, internal_user_id, display_name, role, status from zalo_users where"
+            in query_lower
+        ):
             return self.rows.get(args[0])
         if "insert into zalo_users" in query_lower:
             external_id, display_name, role = args
@@ -50,17 +76,16 @@ class FakePool:
                 return "UPDATE 0"
             self.rows[external_id]["status"] = status
             return "UPDATE 1"
-        if "delete from zalo_users" in query_lower:
-            external_id = args[0]
-            if external_id not in self.rows:
-                return "DELETE 0"
-            del self.rows[external_id]
+        if query_lower.startswith("delete from"):
+            assert self.in_transaction
+            self.data_deletes.append((query_lower, args))
             return "DELETE 1"
         raise AssertionError(f"unexpected query: {query}")
 
     async def fetch(self, query, *args):
         return sorted(
-            self.rows.values(), key=lambda r: (r["role"] != "admin", r["display_name"], r["external_id"])
+            self.rows.values(),
+            key=lambda r: (r["role"] != "admin", r["display_name"], r["external_id"]),
         )
 
     def acquire(self):
@@ -143,11 +168,45 @@ async def test_set_status_invalid_raises():
 
 
 @pytest.mark.asyncio
-async def test_remove_user():
-    await zalo_users.pair("z6", "")
+async def test_remove_user(patched_db):
+    user = await zalo_users.pair("z6", "")
     assert await zalo_users.remove("z6") is True
     assert await zalo_users.resolve("z6") is None
     assert await zalo_users.remove("z6") is False
+    # Xoá pairing kéo theo xoá dữ liệu cá nhân, đúng internal_user_id, cùng transaction.
+    tables = {q.split()[2] for q, _ in patched_db.data_deletes}
+    assert {
+        "zalo_outbox",
+        "reminders",
+        "chat_messages",
+        "user_facts",
+        "user_memory_summary",
+        "user_memory_highlights",
+        "notes",
+        "prompts",
+        "stock_holdings",
+        "settings",
+    } <= tables
+    uid_args = [args for q, args in patched_db.data_deletes if "settings" not in q]
+    assert all(args == (user.internal_user_id,) for args in uid_args)
+    assert (
+        "delete from settings where key = $1",
+        (f"memory_enabled_{user.internal_user_id}",),
+    ) in [(q, a) for q, a in patched_db.data_deletes]
+
+
+@pytest.mark.asyncio
+async def test_delete_user_data_refuses_owner_ids(patched_db):
+    with pytest.raises(ValueError):
+        await zalo_users._delete_user_data(patched_db, 12345)
+    assert not patched_db.data_deletes
+
+
+def test_notified_unpaired_is_bounded(monkeypatch):
+    monkeypatch.setattr(zalo_users, "_NOTIFIED_UNPAIRED_MAX", 3)
+    for i in range(10):
+        zalo_users.notify_unpaired(f"id{i}")
+    assert list(zalo_users._notified_unpaired) == ["id7", "id8", "id9"]
 
 
 @pytest.mark.asyncio

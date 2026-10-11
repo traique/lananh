@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 
 from core import idempotency
@@ -64,6 +66,7 @@ async def test_zalo_cached_response_is_replayed(monkeypatch):
 
     assert value == {"messages": ["cached"], "provider": None}
 
+
 @pytest.mark.asyncio
 async def test_cleanup_expired_prunes_all_idempotency_tables(monkeypatch):
     queries = []
@@ -88,4 +91,6 @@ async def test_cleanup_expired_prunes_all_idempotency_tables(monkeypatch):
     assert "telegram_processed_updates" in sql
     assert "zoom_processed_events" in sql
     assert "zalo_direct_responses" in sql
-    assert all(args == (idempotency.RETENTION,) for _, args in queries)
+    dead = [args for query, args in queries if "status = 'DEAD'" in query]
+    assert dead == [(timedelta(days=idempotency.config.WEBHOOK_DEAD_RETENTION_DAYS),)]
+    assert all(args == (idempotency.RETENTION,) for query, args in queries if "'DEAD'" not in query)

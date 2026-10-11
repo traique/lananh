@@ -4,6 +4,7 @@ trong chat, server tự fetch hộ).
 
 Chạy: pytest test/test_web_reader.py -v
 """
+
 import sys
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from services import web_reader  # noqa: E402
 
 
 # ─── normalize_public_http_url (SSRF guard) ────────────────────────────────
+
 
 def test_chan_localhost_hostname():
     with pytest.raises(web_reader.WebReaderError):
@@ -65,6 +67,7 @@ def test_url_hop_le_duoc_giu_nguyen():
 
 
 # ─── read_url ───────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_read_url_tra_ve_text_sach(monkeypatch):
@@ -261,6 +264,7 @@ async def test_read_rss_tu_choi_url_noi_bo_truoc_khi_fetch(monkeypatch):
         await web_reader.read_rss("http://127.0.0.1/rss.xml")
     assert called is False
 
+
 @pytest.mark.parametrize(
     "body",
     [
@@ -297,7 +301,9 @@ async def test_read_url_falls_back_when_jina_returns_antibot_page(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "r.jina.ai":
             return httpx.Response(200, text=challenge)
-        return httpx.Response(200, text="<html><body><article>Nội dung thật.</article></body></html>")
+        return httpx.Response(
+            200, text="<html><body><article>Nội dung thật.</article></body></html>"
+        )
 
     monkeypatch.setattr(
         web_reader, "_get_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -305,6 +311,7 @@ async def test_read_url_falls_back_when_jina_returns_antibot_page(monkeypatch):
     text = await web_reader.read_url("https://example.com/protected")
     assert "Nội dung thật" in text
     assert "CAPTCHA" not in text
+
 
 @pytest.mark.asyncio
 async def test_redirect_to_private_ip_is_blocked(monkeypatch):
@@ -327,3 +334,122 @@ async def test_redirect_to_private_ip_is_blocked(monkeypatch):
         await web_reader._get_public("https://example.com/start")
 
     assert seen == ["https://example.com/start"]
+
+
+# ─── Trần byte / loại nội dung / DNS ngoài event loop ───────────────────────
+
+
+class _EndlessStream(httpx.AsyncByteStream):
+    """Body không có Content-Length, chảy mãi - phải dừng đúng ở trần byte."""
+
+    def __init__(self):
+        self.sent = 0
+        self.closed = False
+
+    async def __aiter__(self):
+        while True:
+            self.sent += 64 * 1024
+            if self.sent > 50 * 1024 * 1024:
+                raise AssertionError("đọc quá trần mà không dừng")
+            yield b"a" * (64 * 1024)
+
+    async def aclose(self):
+        self.closed = True
+
+
+def _public_dns(monkeypatch):
+    monkeypatch.setattr(
+        web_reader.socket,
+        "getaddrinfo",
+        lambda *a, **k: [(web_reader.socket.AF_INET, 0, 0, "", ("93.184.216.34", 0))],
+    )
+
+
+@pytest.mark.asyncio
+async def test_rss_body_over_byte_cap_is_rejected_without_full_download(monkeypatch):
+    _public_dns(monkeypatch)
+    stream = _EndlessStream()
+    monkeypatch.setattr(web_reader.config, "WEB_READER_MAX_BYTES", 256 * 1024)
+    monkeypatch.setattr(
+        web_reader,
+        "_get_client",
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda req: httpx.Response(200, stream=stream))
+        ),
+    )
+    with pytest.raises(web_reader.WebReaderError, match="quá lớn"):
+        await web_reader.read_rss("https://example.com/huge.xml")
+    assert stream.sent <= 256 * 1024 + 64 * 1024 and stream.closed
+
+
+@pytest.mark.asyncio
+async def test_html_over_byte_cap_is_truncated_not_loaded_whole(monkeypatch):
+    _public_dns(monkeypatch)
+    monkeypatch.setattr(web_reader.config, "WEB_READER_MAX_BYTES", 128 * 1024)
+    stream = _EndlessStream()
+
+    def handler(req):
+        if req.url.host == "r.jina.ai":
+            return httpx.Response(503)
+        return httpx.Response(200, headers={"content-type": "text/html"}, stream=stream)
+
+    monkeypatch.setattr(
+        web_reader, "_get_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    text = await web_reader.read_url("https://example.com/very-long")
+    assert text.startswith("a") and stream.sent <= 128 * 1024 + 64 * 1024
+
+
+@pytest.mark.asyncio
+async def test_pdf_is_refused_before_downloading_body(monkeypatch):
+    _public_dns(monkeypatch)
+    stream = _EndlessStream()
+
+    def handler(req):
+        if req.url.host == "r.jina.ai":
+            return httpx.Response(503)
+        return httpx.Response(200, headers={"content-type": "application/pdf"}, stream=stream)
+
+    monkeypatch.setattr(
+        web_reader, "_get_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    with pytest.raises(web_reader.WebReaderError, match="application/pdf"):
+        await web_reader.read_url("https://example.com/report.pdf")
+    assert stream.sent == 0
+
+
+@pytest.mark.asyncio
+async def test_gzip_headers_are_not_reapplied_to_decoded_body(monkeypatch):
+    import gzip
+
+    _public_dns(monkeypatch)
+    body = gzip.compress("Nội dung nén gzip.".encode())
+
+    def handler(req):
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/plain; charset=utf-8", "content-encoding": "gzip"},
+            content=body,
+        )
+
+    monkeypatch.setattr(
+        web_reader, "_get_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    response = await web_reader._get_public("https://example.com/gz", allowed_types=("text/",))
+    assert response.text == "Nội dung nén gzip."
+
+
+@pytest.mark.asyncio
+async def test_dns_resolution_runs_off_the_event_loop(monkeypatch):
+    import threading
+
+    loop_thread = threading.get_ident()
+    resolver_threads = []
+
+    def fake_getaddrinfo(*args, **kwargs):
+        resolver_threads.append(threading.get_ident())
+        return [(web_reader.socket.AF_INET, 0, 0, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(web_reader.socket, "getaddrinfo", fake_getaddrinfo)
+    assert await web_reader.normalize_public_http_url_async("https://example.com/x")
+    assert resolver_threads and loop_thread not in resolver_threads

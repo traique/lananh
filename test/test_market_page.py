@@ -1,4 +1,6 @@
 """Unit test cho services/market_page.py."""
+
+import asyncio
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -14,6 +16,7 @@ from channels import facebook_commands  # noqa: E402
 from core import config  # noqa: E402
 from core import database as db  # noqa: E402
 from services import facebook_page_service, market_page  # noqa: E402
+from stock import features  # noqa: E402
 
 VN = ZoneInfo("Asia/Ho_Chi_Minh")
 _REAL_SNAPSHOT = market_page._market_snapshot  # bản gốc, trước khi fixture tự động thay
@@ -109,8 +112,14 @@ def test_rsi_mixed_matches_hand_calculation():
 
 
 def test_ema_of_constant_series_is_that_constant():
-    assert market_page._ema([50.0] * 30, 12) == pytest.approx(50.0)
-    assert market_page._ema([50.0] * 5, 12) is None
+    # market_page dùng chung EMA của stock/features.py.
+    assert features.calc_ema([50.0] * 30, 12) == pytest.approx(50.0)
+    assert features.calc_ema([50.0] * 5, 12) is None
+
+
+def test_rsi_flat_series_stays_100_for_page_report():
+    # stock.features.calc_rsi trả None khi đi ngang; bài Page giữ 100 như cũ.
+    assert market_page._rsi([1000.0] * 20) == 100.0
 
 
 def test_indicators_flat_series():
@@ -225,7 +234,9 @@ def test_parse_entries_strips_html_from_summary():
 def test_clean_news_text_strips_lead_in_stars_and_soft_line_breaks():
     raw = "Dưới đây là bài viết:\n\n**TIÊU ĐỀ**\nDòng một\nvẫn cùng đoạn.\n\nĐoạn hai\n- ý nhỏ"
 
-    assert market_page._clean_news_text(raw) == "TIÊU ĐỀ Dòng một vẫn cùng đoạn.\n\nĐoạn hai\n- ý nhỏ"
+    assert (
+        market_page._clean_news_text(raw) == "TIÊU ĐỀ Dòng một vẫn cùng đoạn.\n\nĐoạn hai\n- ý nhỏ"
+    )
 
 
 def test_parse_article_skips_ad_image_and_returns_clean_text():
@@ -432,15 +443,13 @@ def _news_fakes(monkeypatch, *, comment_error=None):
             start=1,
         )
     )
-    feed = (
-        f"<rss version='2.0'><channel><title>x</title>{items}</channel></rss>"
-    ).encode()
+    feed = (f"<rss version='2.0'><channel><title>x</title>{items}</channel></rss>").encode()
     article = (
         '<div class="detail-content"><img src="https://cdn.x/p.jpg"><p>Thân bài chi tiết</p></div>'
     )
     calls = SimpleNamespace(publish=[], comments=[], prompts=[])
 
-    async def fake_get(url):
+    async def fake_get(url, **limits):
         if url.endswith(".rss"):
             return SimpleNamespace(content=feed, text="", headers={})
         if url.endswith(".jpg"):
@@ -476,7 +485,7 @@ async def test_news_posts_digest_with_article_image_then_comments_rewrite(monkey
 
     result = await market_page._post_news()
 
-    (content, media, page_key), = calls.publish
+    ((content, media, page_key),) = calls.publish
     assert result == content
     assert page_key == "MARKET"
     assert media == [("image/jpeg", b"jpg-bytes")]
@@ -537,7 +546,9 @@ def test_prompts_forbid_advice_and_demand_sources():
     assert "KHÔNG khuyến nghị mua/bán/nắm giữ" in stock and "PHIÊN 02/09/2026" in stock
     assert "tỷ lệ phân bổ" not in stock
     for prompt in (stock, digest, rewrite):
-        assert "PHONG CÁCH VIẾT" in prompt and "theo dữ liệu được cung cấp" in prompt  # nằm trong danh sách cấm
+        assert (
+            "PHONG CÁCH VIẾT" in prompt and "theo dữ liệu được cung cấp" in prompt
+        )  # nằm trong danh sách cấm
     assert "tóm lược" not in digest  # fake AI trong test phân biệt prompt comment bằng từ này
     assert "TUYỆT ĐỐI KHÔNG đưa ra khuyến nghị mua/bán/nắm giữ" in digest and "theo CafeF" in digest
     assert "bỏ phần đó" in rewrite
@@ -835,10 +846,12 @@ def test_market_descriptions_are_still_allowed(text):
 
 @pytest.mark.asyncio
 async def test_ai_gets_one_retry_when_text_contains_advice(monkeypatch):
-    answers = iter([
-        "📌 Phiên tăng\n" + "Nhà đầu tư nên mua thêm. " * 5,
-        "📌 Phiên tăng điểm\n" + "Chỉ số giữ trên MA20. " * 8,
-    ])
+    answers = iter(
+        [
+            "📌 Phiên tăng\n" + "Nhà đầu tư nên mua thêm. " * 5,
+            "📌 Phiên tăng điểm\n" + "Chỉ số giữ trên MA20. " * 8,
+        ]
+    )
     prompts = []
 
     async def ask(prompt):
@@ -889,7 +902,8 @@ async def test_holiday_or_stale_data_is_not_posted_and_will_be_retried(monkeypat
     _stock_fakes(monkeypatch, published)
     monkeypatch.setattr(market_page, "_today", lambda: date(2026, 9, 3))
     monkeypatch.setattr(
-        market_page, "_is_current_session",
+        market_page,
+        "_is_current_session",
         lambda report_date: report_date == market_page._today().isoformat(),
     )
 
@@ -950,7 +964,8 @@ async def test_news_skips_when_feed_has_no_fresh_items(monkeypatch):
     calls = _news_fakes(monkeypatch)
     old = datetime.now(timezone.utc) - timedelta(days=2)
     monkeypatch.setattr(
-        market_page, "_parse_entries",
+        market_page,
+        "_parse_entries",
         lambda feed: [_entry(f"Tin {i}", published=old) for i in range(5)],
     )
 
@@ -1005,7 +1020,9 @@ async def test_tick_retries_failed_slot_after_gap_until_max_attempts(store, monk
 
     monkeypatch.setitem(market_page._JOBS, "stock", flaky)
     monkeypatch.setattr(market_page, "_attempts", {})
-    monkeypatch.setattr(market_page, "_schedule", lambda: (("stock", market_page.time(15, 20), range(5)),))
+    monkeypatch.setattr(
+        market_page, "_schedule", lambda: (("stock", market_page.time(15, 20), range(5)),)
+    )
     base = datetime(2026, 10, 9, 15, 25, tzinfo=VN)
 
     await market_page._tick(base)
@@ -1026,7 +1043,9 @@ async def test_tick_runs_missed_slot_after_restart_and_stops_once_done(store, mo
 
     monkeypatch.setitem(market_page._JOBS, "stock", ok)
     monkeypatch.setattr(market_page, "_attempts", {})
-    monkeypatch.setattr(market_page, "_schedule", lambda: (("stock", market_page.time(15, 20), range(5)),))
+    monkeypatch.setattr(
+        market_page, "_schedule", lambda: (("stock", market_page.time(15, 20), range(5)),)
+    )
 
     await market_page._tick(datetime(2026, 10, 9, 15, 47, tzinfo=VN))  # vừa khởi động lại
     await market_page._tick(datetime(2026, 10, 9, 16, 30, tzinfo=VN))
@@ -1038,12 +1057,27 @@ async def test_tick_runs_missed_slot_after_restart_and_stops_once_done(store, mo
 _REAL_REPORT = {
     "report_date": "2026-10-09",
     "vnindex": {
-        "close": 1735.09, "change_pct": -0.22, "change_points": -3.88, "high": 1744.89,
-        "low": 1724.17, "streak": -3, "volume": 819_300_000.0, "vol_ratio": 1.25,
-        "close_position": 0.53, "ma20": 1779.01, "ma50": 1779.82, "rsi14": 37.2,
-        "macd": -14.5, "bb_upper": 1835.09, "bb_lower": 1722.93,
+        "close": 1735.09,
+        "change_pct": -0.22,
+        "change_points": -3.88,
+        "high": 1744.89,
+        "low": 1724.17,
+        "streak": -3,
+        "volume": 819_300_000.0,
+        "vol_ratio": 1.25,
+        "close_position": 0.53,
+        "ma20": 1779.01,
+        "ma50": 1779.82,
+        "rsi14": 37.2,
+        "macd": -14.5,
+        "bb_upper": 1835.09,
+        "bb_lower": 1722.93,
     },
-    "tracked": 17, "advancers": 8, "decliners": 7, "unchanged": 2, "pct_above_ma20": 11.8,
+    "tracked": 17,
+    "advancers": 8,
+    "decliners": 7,
+    "unchanged": 2,
+    "pct_above_ma20": 11.8,
     "gainers": [{"symbol": "TCB", "change_pct": 1.41, "vol_ratio": 1.1}],
     "losers": [{"symbol": "FPT", "change_pct": -3.02, "vol_ratio": 1.89}],
 }
@@ -1110,13 +1144,18 @@ async def test_stock_post_with_invented_numbers_is_retried_then_dropped(monkeypa
     assert published == [] and "512,4" in prompts[-1]
 
 
-
 # ─── Đợt chỉnh 2 từ bản xem thử ─────────────────────────────────────────────
 
 
 def test_parse_bars_keeps_open_and_indicators_expose_prev_close():
-    body = {"t": [1_700_000_000, 1_700_086_400], "o": [1730.0, 1739.5], "h": [1745.0, 1744.89],
-            "l": [1725.0, 1724.17], "c": [1738.97, 1735.09], "v": [1e8, 2e8]}
+    body = {
+        "t": [1_700_000_000, 1_700_086_400],
+        "o": [1730.0, 1739.5],
+        "h": [1745.0, 1744.89],
+        "l": [1725.0, 1724.17],
+        "c": [1738.97, 1735.09],
+        "v": [1e8, 2e8],
+    }
     out = market_page._indicators("VNINDEX", market_page._parse_bars("VNINDEX", body))
     assert out["open"] == 1739.5 and out["prev_close"] == 1738.97
     assert out["change_points"] == -3.88
@@ -1138,7 +1177,9 @@ def test_intraday_story_and_indicator_units_are_flagged():
     )
     assert any("diễn biến trong phiên" in i for i in issues)
     assert any("RSI/MACD" in i for i in issues)
-    ok = "Đóng cửa ở nửa trên biên độ phiên. RSI(14) ở 37,2, MACD ở -14,5. Đỉnh phiên 1.744,89 điểm."
+    ok = (
+        "Đóng cửa ở nửa trên biên độ phiên. RSI(14) ở 37,2, MACD ở -14,5. Đỉnh phiên 1.744,89 điểm."
+    )
     assert market_page.stock_issues(ok, _REAL_REPORT) == []
 
 
@@ -1146,10 +1187,12 @@ def test_intraday_story_and_indicator_units_are_flagged():
 async def test_stock_text_with_intraday_story_is_rewritten(monkeypatch):
     published, prompts = [], []
     _stock_fakes(monkeypatch, published)
-    answers = iter([
-        "📌 Phiên giảm\n" + "Lực bán tăng về cuối phiên. " * 6,
-        "📌 Phiên giảm\n" + "Chỉ số đóng cửa ở nửa trên biên độ. " * 6,
-    ])
+    answers = iter(
+        [
+            "📌 Phiên giảm\n" + "Lực bán tăng về cuối phiên. " * 6,
+            "📌 Phiên giảm\n" + "Chỉ số đóng cửa ở nửa trên biên độ. " * 6,
+        ]
+    )
 
     async def ask(prompt):
         prompts.append(prompt)
@@ -1204,3 +1247,108 @@ async def test_market_snapshot_line_is_vietnamese_formatted(monkeypatch):
         "Phiên 02/09/2026: VN-Index đóng cửa 1.735,09 điểm, giảm 3,88 điểm (0,22%), "
         "khối lượng khớp 819,3 triệu cổ phiếu."
     )
+
+
+# ─── Chống đăng trùng khi bị cắt giữa lúc đăng ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_inflight_marker_is_written_before_publishing(store, monkeypatch):
+    seen_marker = []
+
+    async def fake_publish(content, media, page_key="default", **_):
+        seen_marker.append(store.data.get("market_page:inflight:stock"))
+        return _published()
+
+    _stock_fakes(monkeypatch, [])
+    monkeypatch.setattr(market_page, "publish_page_post", fake_publish)
+    await market_page._post_stock_report()
+    assert seen_marker and seen_marker[0] and "market_page:stock:session:" in seen_marker[0]
+    assert store.data["market_page:inflight:stock"] == ""
+    assert any(
+        v == "1" for k, v in store.data.items() if k.startswith("market_page:stock:session:")
+    )
+
+
+@pytest.mark.asyncio
+async def test_restart_after_interrupted_publish_skips_and_alerts_owner(store, monkeypatch):
+    published, alerts_sent = [], []
+    _stock_fakes(monkeypatch, published)
+    monkeypatch.setattr(market_page.alerts, "send", lambda text: alerts_sent.append(text))
+
+    async def dies_mid_publish(content, media, page_key="default", **_):
+        raise asyncio.CancelledError()  # process bị kill/redeploy giữa lúc đăng
+
+    monkeypatch.setattr(market_page, "publish_page_post", dies_mid_publish)
+    with pytest.raises(asyncio.CancelledError):
+        await market_page._post_stock_report()
+    assert store.data["market_page:inflight:stock"]  # dấu "đang đăng" còn lại
+
+    _stock_fakes(monkeypatch, published)  # lần chạy sau (sau restart)
+    with pytest.raises(market_page.MarketSkip, match="chưa rõ"):
+        await market_page._post_stock_report()
+    assert published == [] and len(alerts_sent) == 1 and "KHÔNG tự đăng lại" in alerts_sent[0]
+    # Báo đúng 1 lần.
+    with pytest.raises(market_page.MarketSkip):
+        await market_page._post_stock_report()
+    assert len(alerts_sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_definite_facebook_rejection_clears_marker_for_retry(store, monkeypatch):
+    _stock_fakes(monkeypatch, [])
+
+    async def rejected(content, media, page_key="default", **_):
+        raise facebook_page_service.FacebookPublishError("token hết hạn")
+
+    monkeypatch.setattr(market_page, "publish_page_post", rejected)
+    with pytest.raises(facebook_page_service.FacebookPublishError):
+        await market_page._post_stock_report()
+    assert store.data["market_page:inflight:stock"] == ""
+    assert not any(v for k, v in store.data.items() if k.startswith("market_page:stock:session:"))
+
+
+@pytest.mark.asyncio
+async def test_stop_does_not_cancel_a_publish_in_progress(store, monkeypatch):
+    published = []
+    _stock_fakes(monkeypatch, published)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_publish(content, media, page_key="default", **_):
+        started.set()
+        await release.wait()
+        published.append(content)
+        return _published()
+
+    monkeypatch.setattr(market_page, "publish_page_post", slow_publish)
+    market_page._task = asyncio.create_task(market_page._post_stock_report())
+    await started.wait()
+    stopper = asyncio.create_task(market_page.stop())
+    await asyncio.sleep(0.01)
+    assert not stopper.done()  # stop() chờ lượt đăng thay vì huỷ ngang
+    release.set()
+    await asyncio.wait_for(stopper, 2)
+    assert len(published) == 1
+    assert store.data["market_page:inflight:stock"] == ""
+    assert any(
+        v == "1" for k, v in store.data.items() if k.startswith("market_page:stock:session:")
+    )
+
+
+@pytest.mark.asyncio
+async def test_interrupted_news_digest_is_not_reposted(store, monkeypatch):
+    calls = _news_fakes(monkeypatch)
+    alerts_sent = []
+    monkeypatch.setattr(market_page.alerts, "send", lambda text: alerts_sent.append(text))
+    original_publish = market_page.publish_page_post
+
+    async def dies(content, media, page_key="default", **_):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(market_page, "publish_page_post", dies)
+    with pytest.raises(asyncio.CancelledError):
+        await market_page._post_news()
+    monkeypatch.setattr(market_page, "publish_page_post", original_publish)
+    with pytest.raises(market_page.MarketSkip, match="không có đủ tin mới"):
+        await market_page._post_news()
+    assert calls.publish == [] and len(alerts_sent) == 1

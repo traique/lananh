@@ -23,6 +23,7 @@ làm sập pipeline: hàm gọi ở analysis.py nhận None cho bước đó và
 tục các bước sau / vẫn tổng hợp báo cáo cuối như khi thiếu hoàn toàn phần
 debate (xem stock_analysis_prompt.j2, các block đều bọc trong {% if %}).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -69,14 +70,16 @@ async def run_news_step(ctx: "StockContext") -> NewsAnalysis | None:
     """Bước 1: tóm tắt tác động tin tức thay vì nhét cả list tin thô vào prompt tổng hợp."""
     if not ctx.news:
         return None
-    ranked = sorted(ctx.news, key=lambda n: not rfmt.is_news_relevant(n.title, ctx.symbol, n.confirmed))[:5]
+    ranked = sorted(
+        ctx.news, key=lambda n: not rfmt.is_news_relevant(n.title, ctx.symbol, n.confirmed)
+    )[:5]
     news_lines = "\n".join(
         f"- {n.title} ({n.source}, {rfmt.fmt_news_date(n.pub_date)}) - "
         f"{'tin đúng mã đã xác nhận' if rfmt.is_news_relevant(n.title, ctx.symbol, n.confirmed) else 'CHỈ tin ngành/thị trường chung, chưa xác nhận đúng mã'}"
         for n in ranked
     )
     prompt = (
-        f"Bạn là chuyên viên phân tích tin tức chứng khoán Việt Nam. Đọc danh sách tin dưới đây về mã "
+        f"Bạn tóm tắt tin tức chứng khoán Việt Nam cho một báo cáo thông tin tham khảo. Đọc danh sách tin dưới đây về mã "
         f"{ctx.symbol} và tóm tắt tác động tới nhận định kỹ thuật đang có.\n\n"
         f"[TIN TỨC]\n{news_lines}\n\n"
         f"Chỉ coi là 'relevant' nếu có ít nhất 1 tin nhắc đúng tên mã (không phải tin ngành/thị trường chung). "
@@ -89,8 +92,8 @@ async def run_bull_step(ctx: "StockContext", news: NewsAnalysis | None) -> BullC
     """Bước 2: luận điểm tăng giá mạnh nhất có thể, chỉ dựa trên số liệu đã có."""
     news_block = f"\n[TÓM TẮT TIN TỨC]\n{news.model_dump_json(indent=2)}" if news else ""
     prompt = (
-        f"Bạn đang đóng vai nhà phân tích LẠC QUAN (bull) trong 1 buổi tranh luận nội bộ trước khi ra báo cáo "
-        f"cho khách hàng. Dựa trên dữ liệu dưới đây, hãy đưa ra luận điểm ủng hộ chiều TĂNG GIÁ mạnh nhất có "
+        f"Bạn đang đóng vai nhà phân tích LẠC QUAN (bull) trong 1 buổi tranh luận nội bộ trước khi tổng hợp báo cáo "
+        f"thông tin tham khảo. Dựa trên dữ liệu dưới đây, hãy đưa ra luận điểm ủng hộ chiều TĂNG GIÁ mạnh nhất có "
         f"thể bảo vệ được bằng chính số liệu này (không cần đồng ý với action hệ thống nếu action không phải "
         f"BUY - nếu action là SELL/NO_TRADE thì đây là 'kịch bản đảo chiều cần theo dõi', không phải khuyến nghị mua).\n\n"
         f"[DỮ LIỆU]\n{_decision_block(ctx)}{news_block}\n\n{_NO_INVENT_RULE}\n"
@@ -99,10 +102,16 @@ async def run_bull_step(ctx: "StockContext", news: NewsAnalysis | None) -> BullC
     return await ask_structured(BullCase, prompt, step_name="bull")
 
 
-async def run_bear_step(ctx: "StockContext", news: NewsAnalysis | None, bull: BullCase | None) -> BearCase | None:
+async def run_bear_step(
+    ctx: "StockContext", news: NewsAnalysis | None, bull: BullCase | None
+) -> BearCase | None:
     """Bước 3: luận điểm rủi ro, ĐƯỢC THẤY bull_case để phản biện trực tiếp (giống debate thật)."""
     news_block = f"\n[TÓM TẮT TIN TỨC]\n{news.model_dump_json(indent=2)}" if news else ""
-    bull_block = f"\n[LUẬN ĐIỂM PHE LẠC QUAN VỪA ĐƯA RA - hãy phản biện trực tiếp nếu có điểm yếu]\n{bull.model_dump_json(indent=2)}" if bull else ""
+    bull_block = (
+        f"\n[LUẬN ĐIỂM PHE LẠC QUAN VỪA ĐƯA RA - hãy phản biện trực tiếp nếu có điểm yếu]\n{bull.model_dump_json(indent=2)}"
+        if bull
+        else ""
+    )
     prompt = (
         f"Bạn đang đóng vai nhà phân tích THẬN TRỌNG (bear) trong cùng buổi tranh luận nội bộ đó. Nhiệm vụ: chỉ "
         f"ra rủi ro/điểm yếu lớn nhất của mã này, và nếu phe lạc quan vừa nêu luận điểm ở dưới thì phải phản "
@@ -114,7 +123,10 @@ async def run_bear_step(ctx: "StockContext", news: NewsAnalysis | None, bull: Bu
 
 
 async def run_manager_step(
-    ctx: "StockContext", news: NewsAnalysis | None, bull: BullCase | None, bear: BearCase | None,
+    ctx: "StockContext",
+    news: NewsAnalysis | None,
+    bull: BullCase | None,
+    bear: BearCase | None,
 ) -> FinalDecision | None:
     """Bước 4 (Manager) - phản biện định tính nhưng KHÔNG đổi action policy.
 
@@ -122,8 +134,16 @@ async def run_manager_step(
     mức thuyết phục/rủi ro quanh action đã qua gate định lượng.
     """
     news_block = f"\n[TÓM TẮT TIN TỨC]\n{news.model_dump_json(indent=2)}" if news else ""
-    bull_block = f"\n[PHE LẠC QUAN]\n{bull.model_dump_json(indent=2)}" if bull else "\n[PHE LẠC QUAN]: không có dữ liệu"
-    bear_block = f"\n[PHE THẬN TRỌNG]\n{bear.model_dump_json(indent=2)}" if bear else "\n[PHE THẬN TRỌNG]: không có dữ liệu"
+    bull_block = (
+        f"\n[PHE LẠC QUAN]\n{bull.model_dump_json(indent=2)}"
+        if bull
+        else "\n[PHE LẠC QUAN]: không có dữ liệu"
+    )
+    bear_block = (
+        f"\n[PHE THẬN TRỌNG]\n{bear.model_dump_json(indent=2)}"
+        if bear
+        else "\n[PHE THẬN TRỌNG]: không có dữ liệu"
+    )
     d = ctx.decision
     setup_backtest_line = backtest.format_setup_stats_line(d.setup_type)
     if setup_backtest_line:

@@ -11,6 +11,7 @@ import {
   fetchOutbox,
   loadController,
   loadSavedSession,
+  reportOutboxFailure,
   saveController,
   saveSession,
   storeFacebookGroupPost,
@@ -19,9 +20,16 @@ import {
 import { loadConfig } from "./config.js";
 import { startControlServer } from "./control-server.js";
 import { FacebookPostBuffer } from "./facebook-buffer.js";
-import { BoundedSerialQueue } from "./limits.js";
-import { downloadImage, imageCandidates } from "./media.js";
 import {
+  BoundedSerialQueue,
+  KeyedRateLimiter,
+  KeyedSerialQueue,
+  QueueFullError,
+} from "./limits.js";
+import { downloadImage, imageCandidates } from "./media.js";
+import { OutboxDelivery } from "./outbox.js";
+import {
+  KnownSenders,
   SeenIds,
   errorMessage,
   isConnectionRefused,
@@ -44,7 +52,17 @@ let pairing: { code: string; expires: number } | null = null;
 let outboxBusy = false;
 
 const seen = new SeenIds(5000);
-const directQueue = new BoundedSerialQueue(64);
+// Người gửi Python đã trả lời (đã pair): chỉ họ nhận câu báo bận/sự cố.
+const knownSenders = new KnownSenders(2000);
+// Tin riêng: tuần tự theo từng người gửi, song song giữa người gửi khác nhau
+// (tối đa directConcurrency lượt, khớp MAX_CONCURRENT_TURNS bên Python).
+const directQueue = new KeyedSerialQueue({
+  concurrency: config.directConcurrency,
+  perKeyCapacity: config.directPerSenderBacklog,
+  capacity: 64,
+});
+// Báo "đang bận" tối đa 1 lần/phút cho mỗi người khi hàng đợi đầy.
+const busyNotices = new KeyedRateLimiter(60000, 256);
 const groupQueue = new BoundedSerialQueue(128);
 const facebookBuffer = new FacebookPostBuffer({
   store: (post) => storeFacebookGroupPost(config, post),
@@ -53,6 +71,10 @@ const facebookBuffer = new FacebookPostBuffer({
 });
 
 const GROUP_ADMIN_COMMAND = /^\/(themnhom|xoanhom|fb_themnhom|fb_xoanhom)\b/i;
+const BUSY_REPLY =
+  "⏳ Bot đang trả lời nhiều tin cùng lúc nên chưa nhận được tin vừa rồi. Bạn gửi lại sau ít phút nhé.";
+const BRIDGE_ERROR_REPLY =
+  "⚠️ Bot đang gặp sự cố nên chưa trả lời được tin vừa rồi. Bạn thử gửi lại sau ít phút nhé.";
 
 // ─── Gửi tin ────────────────────────────────────────────────────────────────
 
@@ -119,12 +141,21 @@ async function refreshGroups(): Promise<void> {
   }
 }
 
+const outbox = new OutboxDelivery({
+  fetch: () => fetchOutbox(config),
+  sendChunk: async (recipientId, chunk) => {
+    const client = api;
+    if (!client) throw new Error("Zalo is not connected");
+    await client.sendMessage({ msg: chunk }, recipientId, ThreadType.User);
+  },
+  ack: (id) => ackOutbox(config, id),
+  fail: (id, error, chunksSent) => reportOutboxFailure(config, id, error, chunksSent),
+  connected: () => !!api,
+});
+
 async function deliverOutbox(): Promise<void> {
-  if (!api) return;
-  for (const item of await fetchOutbox(config)) {
-    await send(item.recipient_id, splitForZalo(item.content));
-    await ackOutbox(config, item.id);
-  }
+  const result = await outbox.runOnce();
+  if (result.failed) console.warn(`[zalo] outbox: ${result.sent} gửi xong, ${result.failed} lỗi`);
 }
 
 async function listGroups(threadId: string): Promise<void> {
@@ -203,7 +234,7 @@ function handlePairing(msg: ParsedMessage): boolean {
   }
   if (msg.text !== `/pair ${pairing.code}`) return false;
   directQueue
-    .add(async () => {
+    .add(msg.sender, async () => {
       config.controllerId = msg.sender;
       await saveController(config, msg.sender);
       pairing = null;
@@ -266,10 +297,15 @@ async function handleDirectMessage(msg: ParsedMessage): Promise<void> {
         image.bytes,
       );
       if (reply.messages.length) {
+        knownSenders.mark(msg.sender);
         await send(msg.threadId, ["🖼️ Đã nhận ảnh, đang viết prompt...", ...reply.messages]);
       }
     } catch (error) {
-      await send(msg.threadId, [`❌ Không xử lý được ảnh: ${errorMessage(error)}`]);
+      console.error(`[zalo] image bridge failed for message ${msg.id}`, error);
+      // Người lạ chưa pair: im lặng như phía Python.
+      if (knownSenders.has(msg.sender)) {
+        await send(msg.threadId, [`❌ Không xử lý được ảnh: ${errorMessage(error)}`]);
+      }
     }
     return;
   }
@@ -281,15 +317,44 @@ async function handleDirectMessage(msg: ParsedMessage): Promise<void> {
     await listGroups(msg.threadId);
     return;
   }
-  const reply = await callBridge(config, {
-    senderId: msg.sender,
-    senderName: msg.senderName,
-    conversationId: msg.threadId,
-    messageId: msg.id,
-    text: msg.text,
-  });
+  let reply: Awaited<ReturnType<typeof callBridge>>;
+  try {
+    reply = await callBridge(config, {
+      senderId: msg.sender,
+      senderName: msg.senderName,
+      conversationId: msg.threadId,
+      messageId: msg.id,
+      text: msg.text,
+    });
+  } catch (error) {
+    // Python lỗi/timeout: báo người gửi đã pair thay vì im lặng; người lạ
+    // chưa pair vẫn không nhận gì (không lộ ra đây là bot).
+    console.error(`[zalo] bridge failed for message ${msg.id}`, error);
+    if (knownSenders.has(msg.sender)) await send(msg.threadId, [BRIDGE_ERROR_REPLY]);
+    return;
+  }
+  if (reply.messages.length || reply.image_b64) knownSenders.mark(msg.sender);
   await send(msg.threadId, reply.messages, reply.image_b64);
   if (GROUP_ADMIN_COMMAND.test(msg.text)) await refreshGroups();
+}
+
+function enqueueDirect(msg: ParsedMessage): void {
+  directQueue
+    .add(msg.sender, () => handleDirectMessage(msg))
+    .catch((error) => {
+      if (!(error instanceof QueueFullError)) {
+        console.error(`[zalo] direct message ${msg.id} failed`, error);
+        return;
+      }
+      console.warn(
+        `[zalo] bỏ tin ${msg.id} của ${msg.sender}: ${error.message} ` +
+          `(đang chờ ${directQueue.pending}, đang chạy ${directQueue.running})`,
+      );
+      if (!knownSenders.has(msg.sender) || !busyNotices.allow(msg.sender)) return;
+      send(msg.threadId, [BUSY_REPLY]).catch((sendError) =>
+        console.error("[zalo] busy notice failed", sendError),
+      );
+    });
 }
 
 function onMessage(message: ZaloMessage): void {
@@ -302,7 +367,7 @@ function onMessage(message: ZaloMessage): void {
     return;
   }
   if (message.type !== ThreadType.User) return;
-  directQueue.add(() => handleDirectMessage(msg)).catch(console.error);
+  enqueueDirect(msg);
 }
 
 // ─── Đăng nhập / phiên ──────────────────────────────────────────────────────
@@ -314,17 +379,29 @@ async function attach(next: ZaloApi): Promise<void> {
   config.accountId = String(next.getOwnId() || config.accountId);
   await refreshGroups();
   const listener = next.listener;
-  listener.on("message", onMessage);
-  listener.on("disconnected", () => {
-    api = null;
-    state = "disconnected";
+  // Mọi sự kiện chỉ áp dụng cho phiên hiện tại: listener cũ (sau logout/đăng
+  // nhập lại) có báo muộn cũng không được xoá phiên mới.
+  listener.on("message", (message) => {
+    if (api === next) onMessage(message);
   });
-  listener.on("closed", () => {
+  listener.on("connected", () => {
+    if (api === next) state = "connected";
+    // Listener cũ tự kết nối lại sau logout: đóng ngay.
+    else listener.stop?.();
+  });
+  listener.on("disconnected", (code, reason) => {
+    // zca-js tự kết nối lại (retryOnClose) với mã đóng cho phép; API HTTP vẫn dùng được.
+    if (api === next) state = "reconnecting";
+    console.warn(`[zalo] listener disconnected code=${code ?? "?"} ${reason ?? ""}`);
+  });
+  listener.on("closed", (code, reason) => {
+    console.error(`[zalo] listener closed code=${code ?? "?"} ${reason ?? ""}; cần đăng nhập lại`);
+    if (api !== next) return;
     api = null;
     state = "closed";
   });
   listener.on("error", console.error);
-  listener.start();
+  listener.start({ retryOnClose: true });
   console.log(`[zalo] listener started account=${config.accountId}`);
 }
 
@@ -382,7 +459,18 @@ async function startQr(): Promise<string> {
 
 type SavedSession = { cookie?: unknown; imei?: string; userAgent?: string };
 
+const BOOTSTRAP_MAX_ATTEMPTS = 30;
+
+/** Lỗi tạm khi khôi phục phiên: Python chưa lên/đang khởi động, mạng tới Zalo chập chờn. */
+function retryableBootstrapError(error: unknown): boolean {
+  if (isConnectionRefused(error) || isTransientNetworkError(error)) return true;
+  const e = error as { status?: unknown; name?: unknown } | null;
+  return e?.name === "TimeoutError" || (typeof e?.status === "number" && e.status >= 500);
+}
+
 async function bootstrap(attempt = 0): Promise<void> {
+  // Đã đăng nhập bằng QR trong lúc chờ thử lại: không đăng nhập chồng phiên.
+  if (api || loginPromise) return;
   try {
     state = "waiting_backend";
     if (!config.controllerId) config.controllerId = await loadController(config);
@@ -402,10 +490,12 @@ async function bootstrap(attempt = 0): Promise<void> {
       state = "awaiting_login";
     }
   } catch (error) {
-    // Python (uvicorn) có thể khởi động chậm hơn Node trong cùng container.
-    if (isConnectionRefused(error) && attempt < 10) {
+    // Python (uvicorn) có thể khởi động chậm hơn Node trong cùng container (chạy
+    // migration, DB Supabase đang ngủ...): thử lại ~4 phút thay vì bắt quét QR lại.
+    if (retryableBootstrapError(error) && attempt < BOOTSTRAP_MAX_ATTEMPTS) {
       state = "waiting_backend";
-      const delay = Math.min(5000, 1000 * (attempt + 1));
+      const delay = Math.min(10000, 1000 * (attempt + 1));
+      console.warn(`[zalo] restore chưa được (lần ${attempt + 1}); thử lại sau ${delay}ms`);
       setTimeout(() => void bootstrap(attempt + 1), delay).unref();
       return;
     }

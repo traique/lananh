@@ -1,7 +1,11 @@
 import hashlib
 import hmac
+import json
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -11,14 +15,96 @@ from channels import zoom  # noqa: E402
 from core import config, database as db  # noqa: E402
 
 
+def _sign(ts: str, body: bytes, secret: bytes = b"secret123") -> str:
+    return "v0=" + hmac.new(secret, f"v0:{ts}:{body.decode()}".encode(), hashlib.sha256).hexdigest()
+
+
 def test_verify_webhook_signature_ok(monkeypatch):
     monkeypatch.setattr(config, "ZOOM_SECRET_TOKEN", "secret123")
     body = b'{"event":"chat_message"}'
-    ts = "1700000000"
-    expected = "v0=" + hmac.new(
-        b"secret123", f"v0:{ts}:{body.decode()}".encode(), hashlib.sha256
-    ).hexdigest()
-    assert zoom.verify_webhook_signature(expected, ts, body) is True
+    ts = str(int(time.time()))
+    assert zoom.verify_webhook_signature(_sign(ts, body), ts, body) is True
+
+
+def test_verify_webhook_signature_utf8_body(monkeypatch):
+    monkeypatch.setattr(config, "ZOOM_SECRET_TOKEN", "secret123")
+    body = '{"cmd":"chào em"}'.encode()
+    ts = str(int(time.time()))
+    assert zoom.verify_webhook_signature(_sign(ts, body), ts, body) is True
+    assert zoom.verify_webhook_signature(_sign(ts, body), ts, b"\xff\xfe") is False
+
+
+@pytest.mark.parametrize("offset", [-301, 301, -3600, 86400])
+def test_verify_webhook_signature_rejects_stale_or_future_timestamp(monkeypatch, offset):
+    # Chữ ký đúng nhưng timestamp lệch > 5 phút => replay, phải từ chối.
+    monkeypatch.setattr(config, "ZOOM_SECRET_TOKEN", "secret123")
+    body = b'{"event":"chat_message"}'
+    now = 1_800_000_000
+    ts = str(now + offset)
+    assert zoom.verify_webhook_signature(_sign(ts, body), ts, body, now=now) is False
+
+
+def test_verify_webhook_signature_accepts_small_skew_and_milliseconds(monkeypatch):
+    monkeypatch.setattr(config, "ZOOM_SECRET_TOKEN", "secret123")
+    body = b"{}"
+    now = 1_800_000_000
+    for ts in (str(now - 299), str(now + 299), str(now * 1000 + 1234)):
+        assert zoom.verify_webhook_signature(_sign(ts, body), ts, body, now=now) is True
+    stale_ms = str((now - 600) * 1000)
+    assert zoom.verify_webhook_signature(_sign(stale_ms, body), stale_ms, body, now=now) is False
+
+
+@pytest.mark.parametrize(
+    "ts", ["", "abc", "-1700000000", "1.7e9", " 1800000000", "9" * 5000, "١٢٣"]
+)
+def test_verify_webhook_signature_rejects_malformed_timestamp(monkeypatch, ts):
+    monkeypatch.setattr(config, "ZOOM_SECRET_TOKEN", "secret123")
+    body = b"{}"
+    signature = (
+        "v0="
+        + hmac.new(b"secret123", b"v0:" + ts.encode() + b":" + body, hashlib.sha256).hexdigest()
+    )
+    assert zoom.verify_webhook_signature(signature, ts, body, now=1_800_000_000) is False
+
+
+async def test_zoom_webhook_rejects_replayed_request_but_keeps_url_validation(monkeypatch):
+    import web
+
+    monkeypatch.setattr(web.config, "ZOOM_ENABLED", True)
+    monkeypatch.setattr(web.config, "ZOOM_SECRET_TOKEN", "secret123")
+    enqueue = AsyncMock()
+    monkeypatch.setattr(web.webhook_inbox, "enqueue", enqueue)
+
+    def request(payload: dict, headers: dict) -> SimpleNamespace:
+        raw = json.dumps(payload).encode()
+        return SimpleNamespace(
+            headers=headers, body=AsyncMock(return_value=raw), json=AsyncMock(return_value=payload)
+        )
+
+    payload = {
+        "event": "bot_notification",
+        "payload": {"messageId": "m1", "userJid": "u", "cmd": "hi"},
+    }
+    raw = json.dumps(payload).encode()
+    old_ts = str(int(time.time()) - 3600)
+    replay = request(
+        payload, {"x-zm-signature": _sign(old_ts, raw), "x-zm-request-timestamp": old_ts}
+    )
+    assert (await web.zoom_webhook(replay)).status_code == 403
+    enqueue.assert_not_awaited()
+
+    fresh_ts = str(int(time.time()))
+    fresh = request(
+        payload, {"x-zm-signature": _sign(fresh_ts, raw), "x-zm-request-timestamp": fresh_ts}
+    )
+    assert (await web.zoom_webhook(fresh)).status_code == 200
+    enqueue.assert_awaited_once()
+
+    # Bước Validate trên Marketplace không có chữ ký/timestamp - vẫn chạy như cũ.
+    validation = request({"event": "endpoint.url_validation", "payload": {"plainToken": "pt"}}, {})
+    result = await web.zoom_webhook(validation)
+    assert result["plainToken"] == "pt"
+    assert result["encryptedToken"] == hmac.new(b"secret123", b"pt", hashlib.sha256).hexdigest()
 
 
 def test_verify_webhook_signature_wrong(monkeypatch):

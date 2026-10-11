@@ -1,4 +1,5 @@
 """Official Google AI Studio providers used by the provider chain."""
+
 import asyncio
 import json
 import logging
@@ -9,23 +10,25 @@ from zoneinfo import ZoneInfo
 
 from ai.timeouts import (
     OFFICIAL_CHAT_TIMEOUT_SEC,
-    OFFICIAL_EMBED_TIMEOUT_SEC,
     OFFICIAL_STATUS_TIMEOUT_SEC,
     OFFICIAL_UTILITY_TIMEOUT_SEC,
     OFFICIAL_VISION_TIMEOUT_SEC,
     with_timeout,
 )
 from ai import provider_overrides
+from ai.provider_state import provider_state
 from core import config
+from core.text_utils import strip_json_fence
 
 logger = logging.getLogger(__name__)
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _VN_WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
-_official_clients: dict[tuple[int, str], object] = {}
+# idx (1|2) -> (api_key, genai.Client): tối đa 1 client cho mỗi slot api1/api2,
+# nên luân phiên api1/api2 không tạo client mới mỗi lượt; đổi key qua trang
+# admin thì client cũ của ĐÚNG slot đó được đóng (giải phóng connection pool).
+_official_clients: dict[int, tuple[str, object]] = {}
 _PERSONA_TEMPERATURE = 0.95
 _PERSONA_TOP_P = 0.95
-_EMBEDDING_MODEL = "gemini-embedding-001"
-_EMBEDDING_DIMENSIONS = 768  # khớp cột `vector(768)` (chat_embeddings) - đổi số này bắt buộc kèm migrate DB.
 
 
 async def api_key_for(idx: int) -> Optional[str]:
@@ -48,19 +51,66 @@ async def get_client_and_model(idx: int):
     return await _get_official_client(idx), await _model_for(idx)
 
 
+async def _close_client(client) -> None:
+    try:
+        await client.aio.aclose()
+    except Exception:
+        logger.debug("Đóng async client Google AI Studio cũ lỗi.", exc_info=True)
+    try:
+        client.close()
+    except Exception:
+        logger.debug("Đóng client Google AI Studio cũ lỗi.", exc_info=True)
+
+
 async def _get_official_client(idx: int):
     key = await api_key_for(idx)
     if not key:
         raise RuntimeError(f"Chưa cấu hình GOOGLE_AI_STUDIO_API_KEY_{idx}")
-    cache_key = (idx, key)
-    if cache_key not in _official_clients:
-        from google import genai
+    cached = _official_clients.get(idx)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    from google import genai
 
-        # Đổi API key qua trang admin -> cache_key đổi theo -> client cũ (key
-        # cũ) bị bỏ, không cần cơ chế invalidate riêng.
-        _official_clients.clear()
-        _official_clients[cache_key] = genai.Client(api_key=key)
-    return _official_clients[cache_key]
+    client = genai.Client(api_key=key)
+    _official_clients[idx] = (key, client)
+    if cached is not None:
+        await _close_client(cached[1])
+    return client
+
+
+async def close() -> None:
+    """Đóng mọi client Google AI Studio (gọi lúc tắt app)."""
+    clients = [client for _key, client in _official_clients.values()]
+    _official_clients.clear()
+    for client in clients:
+        await _close_client(client)
+
+
+async def usable_indices() -> list[int]:
+    """Các slot api1/api2 dùng được NGAY: có key, admin không tắt, không đang
+    cooldown hết quota - dùng cho mọi lượt gọi ngoài provider-chain (trí nhớ,
+    tool router, agent) để tôn trọng cùng công tắc/cooldown với chat chính."""
+    await provider_state.ensure_loaded()
+    usable = []
+    for idx in (1, 2):
+        name = f"api{idx}"
+        if not await api_key_for(idx):
+            continue
+        if not await provider_overrides.is_enabled(name):
+            continue
+        if provider_state.api_in_cooldown(name):
+            continue
+        usable.append(idx)
+    return usable
+
+
+async def note_failure(idx: int, exc: BaseException) -> None:
+    """Lỗi hết quota (429) -> đặt cooldown dùng chung với provider-chain."""
+    if is_quota_exhausted_error(exc):
+        try:
+            await provider_state.mark_api_exhausted(f"api{idx}")
+        except Exception:
+            logger.warning("Không ghi được cooldown api%s.", idx, exc_info=True)
 
 
 def now_vn_context() -> str:
@@ -111,7 +161,9 @@ async def generate(
             )
             for role, content in history
         ]
-        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=prompt_with_time)]))
+        contents.append(
+            types.Content(role="user", parts=[types.Part.from_text(text=prompt_with_time)])
+        )
     else:
         contents = prompt_with_time
 
@@ -161,9 +213,7 @@ async def generate_utility_json(prompt: str) -> Optional[dict]:
     from google.genai import types
 
     last_exc: Optional[BaseException] = None
-    for idx in (1, 2):
-        if not await api_key_for(idx):
-            continue
+    for idx in await usable_indices():
         try:
             client = await _get_official_client(idx)
             response = await with_timeout(
@@ -178,47 +228,13 @@ async def generate_utility_json(prompt: str) -> Optional[dict]:
                 OFFICIAL_UTILITY_TIMEOUT_SEC,
                 f"api{idx} utility JSON",
             )
-            raw = (response.text or "").strip()
-            if raw.startswith("```"):
-                raw = raw.strip("`")
-                if raw.lower().startswith("json"):
-                    raw = raw[4:]
-                raw = raw.strip()
-            return json.loads(raw)
+            return json.loads(strip_json_fence(response.text))
         except Exception as exc:
             last_exc = exc
+            await note_failure(idx, exc)
             logger.warning("generate_utility_json: api%s lỗi, thử key kế tiếp.", idx, exc_info=True)
     if last_exc is not None:
         logger.warning("generate_utility_json: hết key khả dụng, bỏ qua tác vụ.")
-    return None
-
-
-async def embed_text(text: str) -> Optional[list[float]]:
-    if not config.HAS_ANY_AI_STUDIO_KEY:
-        return None
-    for idx in (1, 2):
-        if not await api_key_for(idx):
-            continue
-        try:
-            from google.genai import types
-
-            client = await _get_official_client(idx)
-            result = await with_timeout(
-                client.aio.models.embed_content(
-                    model=_EMBEDDING_MODEL,
-                    contents=text,
-                    config=types.EmbedContentConfig(output_dimensionality=_EMBEDDING_DIMENSIONS),
-                ),
-                OFFICIAL_EMBED_TIMEOUT_SEC,
-                f"api{idx} embedding",
-            )
-            embeddings = getattr(result, "embeddings", None)
-            if not embeddings:
-                return None
-            values = getattr(embeddings[0], "values", None)
-            return list(values) if values else None
-        except Exception:
-            logger.warning("embed_text: api%s lỗi, thử key kế tiếp.", idx, exc_info=True)
     return None
 
 

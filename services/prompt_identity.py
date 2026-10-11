@@ -73,8 +73,7 @@ IDENTITY_LOCK_GIRL = (
 # instead of repeating the full facial blueprint a second time, which used to
 # generate the same ~70-word description twice in one prompt.
 PHOTO_SUBJECT_PHRASE_GIRL = (
-    "the same woman defined by the Identity Lock above, not the face visible in "
-    "the source photo,"
+    "the same woman defined by the Identity Lock above, not the face visible in the source photo,"
 )
 
 # Text mode (/prompt): nothing to override, so no need to restate the face here -
@@ -90,56 +89,56 @@ TEXT_SUBJECT_PHRASE_DESCRIBED = (
 )
 
 PHOTO_SUBJECT_RULE_DESCRIBED = (
-    '2. CRITICAL - this prompt will be pasted as PLAIN TEXT with NO image attached. '
-    'Therefore never point to a reference image. Instead describe the actual person '
-    'visible in the image as a complete written identity blueprint: approximate age, '
-    'ethnicity or facial character, face shape, eye geometry and eye colour when '
-    'visually supported, eyelid structure, eyebrow shape, nose geometry, lip geometry, '
-    'cheek structure, jawline, chin, skin tone and natural skin character, plus hair '
-    'colour, length, texture and parting. Only state details supported by the image; '
-    'when a detail is unclear, use a neutral description rather than inventing a precise '
-    'measurement or feature. If no person is visible, skip the face description entirely.'
+    "2. CRITICAL - this prompt will be pasted as PLAIN TEXT with NO image attached. "
+    "Therefore never point to a reference image. Instead describe the actual person "
+    "visible in the image as a complete written identity blueprint: approximate age, "
+    "ethnicity or facial character, face shape, eye geometry and eye colour when "
+    "visually supported, eyelid structure, eyebrow shape, nose geometry, lip geometry, "
+    "cheek structure, jawline, chin, skin tone and natural skin character, plus hair "
+    "colour, length, texture and parting. Only state details supported by the image; "
+    "when a detail is unclear, use a neutral description rather than inventing a precise "
+    "measurement or feature. If no person is visible, skip the face description entirely."
 )
 
 PHOTO_SUBJECT_RULE_GIRL = (
-    '2. CRITICAL - the face is FIXED by the Identity Lock text already placed at the '
-    'start of the prompt (rule 1) and has higher priority than every scene instruction. '
+    "2. CRITICAL - the face is FIXED by the Identity Lock text already placed at the "
+    "start of the prompt (rule 1) and has higher priority than every scene instruction. "
     'Name the subject only as "the same woman defined by the Identity Lock above" - do '
-    'NOT restate the facial blueprint again elsewhere in the prompt, that would just '
-    'duplicate the Identity Lock paragraph. Never describe or copy the face of the '
-    'person in the source image. Use the source image only for pose, framing, outfit, '
-    'accessories, setting, lighting, mood and photographic finish. Never let hairstyle, '
-    'clothing, expression, camera angle or scene details alter the locked face.'
+    "NOT restate the facial blueprint again elsewhere in the prompt, that would just "
+    "duplicate the Identity Lock paragraph. Never describe or copy the face of the "
+    "person in the source image. Use the source image only for pose, framing, outfit, "
+    "accessories, setting, lighting, mood and photographic finish. Never let hairstyle, "
+    "clothing, expression, camera angle or scene details alter the locked face."
 )
 
 PHOTO_SUBJECT_RULE_REFERENCE = (
-    '2. CRITICAL - the user will attach the reference photo together with this prompt, '
+    "2. CRITICAL - the user will attach the reference photo together with this prompt, "
     'so that attachment is the sole identity source. Refer to the person as "the subject '
     'from the attached reference image" and state that the generated face must match the '
-    'attached photo exactly. DO NOT invent concrete facial features such as eye colour, '
-    'face shape, nose or lip shape when they are supplied by the attachment. Describe pose, '
-    'expression, outfit, setting, lighting and camera only when they are not already '
-    'determined by the reference.'
+    "attached photo exactly. DO NOT invent concrete facial features such as eye colour, "
+    "face shape, nose or lip shape when they are supplied by the attachment. Describe pose, "
+    "expression, outfit, setting, lighting and camera only when they are not already "
+    "determined by the reference."
 )
 
 # Text-mode rules (used by /prompt: there is no source photo, so unlike the PHOTO_*
 # rules above there is nothing to override - restating the locked face in "girl"
 # mode would just duplicate the identity lock block that already sits right above it.
 TEXT_SUBJECT_RULE_DESCRIBED = (
-    '2. CRITICAL - this prompt will be pasted as plain text with no image attached. '
-    'Never point to a reference image. If the user\'s description involves a person, '
-    'fully specify that person in words inside the first sentence as a complete '
-    'written identity blueprint: approximate age, ethnicity or facial character, '
-    'face shape, eye shape and colour, eyebrow shape, nose shape, lip shape, jawline '
-    'and chin, skin tone and texture, and hair colour, length, texture and parting - '
-    'inventing plausible details that fit the description. If the description '
-    'contains no person, skip the face description entirely.'
+    "2. CRITICAL - this prompt will be pasted as plain text with no image attached. "
+    "Never point to a reference image. If the user's description involves a person, "
+    "fully specify that person in words inside the first sentence as a complete "
+    "written identity blueprint: approximate age, ethnicity or facial character, "
+    "face shape, eye shape and colour, eyebrow shape, nose shape, lip shape, jawline "
+    "and chin, skin tone and texture, and hair colour, length, texture and parting - "
+    "inventing plausible details that fit the description. If the description "
+    "contains no person, skip the face description entirely."
 )
 
 TEXT_SUBJECT_RULE_GIRL = (
     "2. CRITICAL - the face is fixed by the identity lock above and has higher "
     "priority than every scene instruction. Do NOT redescribe her facial features "
-    "again - refer to her only as \"the same woman described by the identity lock "
+    'again - refer to her only as "the same woman described by the identity lock '
     "above\" and take the pose, outfit, setting and mood entirely from the user's "
     "description. Never let scene details alter the locked face."
 )
@@ -158,7 +157,7 @@ IDENTITY_RULE_LOCK = (
 
 IDENTITY_RULE_NONE = (
     '1. DO NOT include an "[Identity Lock: ...]" line. Start the prompt directly with '
-    'the scene description and make the visible subject self-contained in written form.'
+    "the scene description and make the visible subject self-contained in written form."
 )
 
 
@@ -175,9 +174,10 @@ class PromptIdentityConfig:
 def render_instruction(template: str, identity: PromptIdentityConfig, **extra_fields: str) -> str:
     """Fill a prompt template with one resolved identity, in one place.
 
-    Centralizing this stops the 3 call sites (commands.py, media_handler.py,
-    channel_image_service.py) from hand-copying the same 4 .format() kwargs,
-    which is how a NameError shipped in media_handler.py unnoticed.
+    Centralizing this stops the call sites (services/prompt_templates.py, used by
+    /prompt, media_handler.py and channel_image_service.py) from hand-copying the
+    same 4 .format() kwargs, which is how a NameError shipped in media_handler.py
+    unnoticed.
     """
     identity_lock_block = f"{identity.identity_lock}\n\n" if identity.identity_lock else ""
     return template.format(
@@ -219,8 +219,9 @@ def resolve_prompt_identity(
     """Resolve which identity applies to `description`.
 
     `context` picks the matching subject_rule wording: "photo" (default) is for
-    call sites that analyze an attached image (media_handler.py,
-    channel_image_service.py); "text" is for /prompt, which has no source image
+    call sites that analyze an attached image (prompt_templates.build_image_instruction,
+    used by media_handler.py and channel_image_service.py); "text" is for /prompt
+    (prompt_templates.build_text_instruction), which has no source image
     and must not tell the model to look at or restate anything from one.
     """
     normalized_description = description.lower()
@@ -255,7 +256,9 @@ def resolve_prompt_identity(
     ]
     if matched_extras:
         mode_hint += f" (khóa thêm: {', '.join(name for name, _ in matched_extras)})"
-    identity_lock = "\n\n".join(lock for lock in (face_lock, *(l for _, l in matched_extras)) if lock)
+    identity_lock = "\n\n".join(
+        lock for lock in (face_lock, *(l for _, l in matched_extras)) if lock
+    )
 
     return PromptIdentityConfig(
         mode=mode,

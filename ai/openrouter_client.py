@@ -5,13 +5,18 @@ OPENROUTER_API_KEY), miễn phí (model mặc định có hậu tố ":free").
 Không có generate_realtime() như groq_client - model ":free" trên OpenRouter
 không đảm bảo có tool tìm kiếm web tích hợp, nên KHÔNG dùng cho
 require_real_search (xem ai/orchestrator.py:_search_only_providers)."""
+
 from typing import Optional
 
 from ai import openai_compatible, provider_overrides
 from ai.openai_compatible import Response
 from core import config
 
-_pool = openai_compatible.ClientPool(config.OPENROUTER_CALL_TIMEOUT_SEC, config.OPENROUTER_MAX_CONCURRENCY)
+_pool = openai_compatible.ClientPool(
+    config.OPENROUTER_CALL_TIMEOUT_SEC,
+    config.OPENROUTER_MAX_CONCURRENCY,
+    config.OPENROUTER_TOTAL_TIMEOUT_SEC,
+)
 
 
 async def _api_key() -> str:
@@ -39,18 +44,22 @@ async def generate(
     if not api_key:
         raise openai_compatible.OpenAICompatibleError("Chưa cấu hình OPENROUTER_API_KEY")
     messages = openai_compatible.build_messages(prompt, system_instruction, history)
-    async with _pool.get_semaphore():
-        text = await openai_compatible.post_chat_completion(
-            _pool.get_client(),
-            base_url=config.OPENROUTER_BASE_URL,
-            api_key=api_key,
-            messages=messages,
-            model=model or await _model(),
-            temperature=temperature,
-            max_tokens=max_tokens,
-            provider_label="OpenRouter",
-        )
-    return Response(text)
+    model_name = model or await _model()
+
+    async def _call() -> str:
+        async with _pool.get_semaphore():
+            return await openai_compatible.post_chat_completion(
+                _pool.get_client(),
+                base_url=config.OPENROUTER_BASE_URL,
+                api_key=api_key,
+                messages=messages,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider_label="OpenRouter",
+            )
+
+    return Response(await _pool.bounded("OpenRouter", _call))
 
 
 async def generate_image_prompt(instruction: str, image_path: str) -> Response:

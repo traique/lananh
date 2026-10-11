@@ -4,7 +4,9 @@ Dùng chung cho MỌI kênh (Zalo bridge, Zoom, Telegram) - không có logic ri�
 theo kênh gọi tới, chỉ cần (account_id, text). Nơi gọi tự chịu trách nhiệm suy
 ra account_id phù hợp: Zalo bridge có sẵn account_id trong payload
 (channels/router.py), các kênh khác dùng
-channels.zalo_repository.resolve_default_account_id() (xem web.py, handlers/commands.py)."""
+channels.zalo_repository.resolve_default_account_id() (xem web.py,
+handlers/zalo_bridge_commands.py)."""
+
 import asyncpg
 
 from channels import zalo_repository
@@ -19,9 +21,15 @@ async def maybe_handle_group_command(account_id: str, text: str) -> ChannelResul
     if command == "/nhom":
         groups = await zalo_repository.list_groups(account_id)
         if not groups:
-            return ChannelResult(["Chưa theo dõi nhóm nào. Dùng /nhomzalo để xem ID, sau đó /themnhom <group_id> <tên-gợi-nhớ>."])
+            return ChannelResult(
+                [
+                    "Chưa theo dõi nhóm nào. Dùng /nhomzalo để xem ID, sau đó /themnhom <group_id> <tên-gợi-nhớ>."
+                ]
+            )
         lines = ["📚 Các nhóm đang theo dõi:"]
-        lines.extend(f"{index}. {alias} — {group_id}" for index, (group_id, alias) in enumerate(groups, 1))
+        lines.extend(
+            f"{index}. {alias} — {group_id}" for index, (group_id, alias) in enumerate(groups, 1)
+        )
         return ChannelResult(["\n".join(lines)])
 
     if command == "/themnhom":
@@ -64,7 +72,9 @@ async def maybe_handle_group_command(account_id: str, text: str) -> ChannelResul
     if command == "/dangnoi":
         parts = raw.split(maxsplit=1)
         if len(parts) < 2:
-            return ChannelResult(["Cú pháp: /dangnoi <nhóm> — xem nguyên văn thảo luận trong ngày hôm nay"])
+            return ChannelResult(
+                ["Cú pháp: /dangnoi <nhóm> — xem nguyên văn thảo luận trong ngày hôm nay"]
+            )
         target = parts[1].strip()
         try:
             _, _, contents = await today_discussion(account_id, target)

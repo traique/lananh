@@ -6,13 +6,16 @@ có tool tìm kiếm web tích hợp sẵn) - dành riêng cho tác vụ require
 đứng trước api1/api2 (Gemini grounding) trong chuỗi search.
 Không dùng cho ask()/chat() thường vì compound-mini chậm hơn model chat thường.
 """
+
 from typing import Optional
 
 from ai import openai_compatible, provider_overrides
 from ai.openai_compatible import Response
 from core import config
 
-_pool = openai_compatible.ClientPool(config.GROQ_CALL_TIMEOUT_SEC, config.GROQ_MAX_CONCURRENCY)
+_pool = openai_compatible.ClientPool(
+    config.GROQ_CALL_TIMEOUT_SEC, config.GROQ_MAX_CONCURRENCY, config.GROQ_TOTAL_TIMEOUT_SEC
+)
 
 
 async def _api_key() -> str:
@@ -46,18 +49,22 @@ async def generate(
     if not api_key:
         raise openai_compatible.OpenAICompatibleError("Chưa cấu hình GROQ_API_KEY")
     messages = openai_compatible.build_messages(prompt, system_instruction, history)
-    async with _pool.get_semaphore():
-        text = await openai_compatible.post_chat_completion(
-            _pool.get_client(),
-            base_url=config.GROQ_BASE_URL,
-            api_key=api_key,
-            messages=messages,
-            model=model or await _model(),
-            temperature=temperature,
-            max_tokens=max_tokens,
-            provider_label="Groq",
-        )
-    return Response(text)
+    model_name = model or await _model()
+
+    async def _call() -> str:
+        async with _pool.get_semaphore():
+            return await openai_compatible.post_chat_completion(
+                _pool.get_client(),
+                base_url=config.GROQ_BASE_URL,
+                api_key=api_key,
+                messages=messages,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider_label="Groq",
+            )
+
+    return Response(await _pool.bounded("Groq", _call))
 
 
 async def generate_image_prompt(instruction: str, image_path: str) -> Response:
@@ -93,18 +100,22 @@ async def generate_realtime(
     if not api_key:
         raise openai_compatible.OpenAICompatibleError("Chưa cấu hình GROQ_API_KEY")
     messages = openai_compatible.build_messages(prompt)
-    async with _pool.get_semaphore():
-        text = await openai_compatible.post_chat_completion(
-            _pool.get_client(),
-            base_url=config.GROQ_BASE_URL,
-            api_key=api_key,
-            messages=messages,
-            model=config.GROQ_REALTIME_MODEL,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            provider_label="Groq realtime",
-            extra_payload={"search_settings": {"country": "vietnam"}},
-        )
+
+    async def _call() -> str:
+        async with _pool.get_semaphore():
+            return await openai_compatible.post_chat_completion(
+                _pool.get_client(),
+                base_url=config.GROQ_BASE_URL,
+                api_key=api_key,
+                messages=messages,
+                model=config.GROQ_REALTIME_MODEL,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider_label="Groq realtime",
+                extra_payload={"search_settings": {"country": "vietnam"}},
+            )
+
+    text = await _pool.bounded("Groq realtime", _call)
     if not _has_web_evidence(text):
         raise RealtimeNoEvidenceError("Groq realtime không có dấu hiệu đã tra web thật")
     return Response(text)

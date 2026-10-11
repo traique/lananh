@@ -10,13 +10,16 @@ Nếu chuỗi chưa điều chỉnh, ngày giao dịch không hưởng quyền t
 trong dữ liệu: SMA50, kênh Donchian 20 phiên, ATR14 và trend ~3 tháng đều bị méo
 trong khi báo cáo vẫn trình bày như thể số liệu sạch.
 
-Hệ thống không có nguồn dữ liệu corporate action, nên cách xác định duy nhất
-đáng tin là so gap với BIÊN ĐỘ giá tối đa một phiên của thị trường VN: HOSE ±7%,
-HNX ±10%, UPCOM ±15%, phiên chào sàn/giao dịch trở lại ±20%. Gap vượt xa các mức
-đó không thể là biến động giao dịch bình thường.
+Cách phát hiện không phụ thuộc nguồn corporate action: so gap với BIÊN ĐỘ giá
+tối đa một phiên của thị trường VN: HOSE ±7%, HNX ±10%, UPCOM ±15%, phiên chào
+sàn/giao dịch trở lại ±20%. Gap vượt xa các mức đó không thể là biến động giao
+dịch bình thường. stock/corporate_actions.py dùng kết quả này để điều chỉnh
+ngược khi có dữ liệu quyền khớp gap.
 
-Module này KHÔNG sửa bất kỳ con số nào của stock/policy.py: nó chỉ phát hiện gap
-và sinh cảnh báo cho tầng diễn giải.
+Module này KHÔNG sửa con số nào: nó phát hiện gap, sinh cảnh báo cho tầng diễn
+giải, và cho biết gap còn nằm trong cửa sổ chỉ báo của policy hay không
+(last_gap_in_window) - analysis/backtest dùng thông tin đó để hạ chất lượng dữ
+liệu và bật PolicyInputs.unadjusted_gap (policy không ra tín hiệu định hướng).
 """
 
 from dataclasses import dataclass
@@ -52,6 +55,7 @@ class PriceGap:
     move_pct: float
     level: str
     ratio_hint: str = ""
+    index: int = -1  # vị trí bar SAU gap trong chuỗi (-1 = không rõ)
 
 
 @dataclass
@@ -93,8 +97,25 @@ def detect_price_gaps(
             continue
         level = "certain" if magnitude >= certain_pct else "suspect"
         date = dates[index] if dates and index < len(dates) else ""
-        gaps.append(PriceGap(date, previous, current, move_pct, level, _ratio_hint(move_pct)))
+        gaps.append(
+            PriceGap(date, previous, current, move_pct, level, _ratio_hint(move_pct), index)
+        )
     return gaps
+
+
+# Cửa sổ chỉ báo dài nhất mà policy dùng làm gate: trend ~3 tháng/RS 65 phiên,
+# SMA50, key levels 60 phiên, Donchian 20, ATR14. Gap nằm ngoài cửa sổ này chỉ
+# còn ảnh hưởng SMA200/trend 1 năm (chỉ hiển thị, không phải gate).
+POLICY_LOOKBACK_BARS = 66
+
+
+def last_gap_in_window(
+    gaps: list[PriceGap], series_len: int, window: int = POLICY_LOOKBACK_BARS
+) -> PriceGap | None:
+    """Gap gần nhất còn nằm trong cửa sổ chỉ báo của policy, None nếu không có."""
+    start = series_len - window
+    in_window = [gap for gap in gaps if gap.index >= 0 and gap.index >= start]
+    return max(in_window, key=lambda gap: gap.index) if in_window else None
 
 
 def infer_is_adjusted(closes, dates=None) -> bool | None:

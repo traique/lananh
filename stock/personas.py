@@ -73,10 +73,22 @@ def persona_names(persona_ids: list[str]) -> list[str]:
 _PROMPT_CONSTRAINTS = """[RÀNG BUỘC BẮT BUỘC TỪ HỆ THỐNG]
 - Mọi con số trong [DỮ LIỆU HỆ THỐNG] là số liệu thật đã qua gate định lượng - chỉ được nhắc lại khi bình luận, KHÔNG được tự suy ra con số mới.
 - TUYỆT ĐỐI không đưa giá mua/giá mục tiêu/giá cắt lỗ, không khuyến nghị mua/bán kèm con số. Nhân vật chỉ nói quan sát định tính về doanh nghiệp và giá.
+- Đây là góc nhìn tham khảo mang tính giải trí, không phải lời khuyên đầu tư cá nhân hoá.
 - Mỗi nhân vật 3-6 câu, tiếng Việt, không tự giới thiệu, không chào hỏi, không nhắc rằng mình là AI hay đang đóng vai."""
 
+# Thêm cho thành viên chỉ được xem bản tham khảo: persona không được thành
+# đường vòng để lấy khuyến nghị/vùng giá mà báo cáo chính đã ẩn.
+_REFERENCE_ONLY_CONSTRAINTS = """- Đây là bản THÔNG TIN THAM KHẢO: TUYỆT ĐỐI không nói nhân vật sẽ mua/bán/giữ/đứng ngoài mã này, không nhãn tín hiệu (BUY/SELL/HOLD/WATCH), không "nên mua/nên bán", không vùng mua, stop, target, R:R hay tỷ trọng - chỉ bình luận định tính về doanh nghiệp, ngành và dữ liệu."""
 
-def build_persona_prompt(symbol: str, persona_ids: list[str], data_text: str, user_text: str = "") -> str:
+
+def build_persona_prompt(
+    symbol: str,
+    persona_ids: list[str],
+    data_text: str,
+    user_text: str = "",
+    *,
+    reference_only: bool = False,
+) -> str:
     blocks = "\n\n".join(
         f"[NHÂN VẬT: {_PERSONAS[pid]['name']}]\n"
         f"{_PERSONAS[pid]['identity']}\n"
@@ -84,11 +96,18 @@ def build_persona_prompt(symbol: str, persona_ids: list[str], data_text: str, us
         for pid in persona_ids
     )
     question = user_text.strip() or f"Các nhân vật trên sẽ nhìn mã {symbol} thế nào?"
+    constraints = _PROMPT_CONSTRAINTS + (
+        "\n" + _REFERENCE_ONLY_CONSTRAINTS if reference_only else ""
+    )
+    closing = "Hãy trả lời theo từng nhân vật, mỗi phần mở đầu bằng tên nhân vật in đậm. " + (
+        "Chỉ quan sát định tính, không kết luận hành động. KHÔNG tự viết câu disclaimer - hệ thống tự thêm."
+        if reference_only
+        else "Nếu nhân vật sẽ không đồng ý với tín hiệu hệ thống, nói thẳng vì sao - đây "
+        "là góc nhìn bổ sung, không phải thay thế. KHÔNG tự viết câu disclaimer - hệ thống tự thêm."
+    )
     return (
-        f"{_PROMPT_CONSTRAINTS}\n\n{blocks}\n\n"
+        f"{constraints}\n\n{blocks}\n\n"
         f"[DỮ LIỆU HỆ THỐNG CHO {symbol}]:\n{data_text}\n\n"
-        f"[CÂU HỎI TỪ NGƯỜI DÙNG]:\n\"{question}\"\n\n"
-        "Hãy trả lời theo từng nhân vật, mỗi phần mở đầu bằng tên nhân vật in đậm. "
-        "Nếu nhân vật sẽ không đồng ý với tín hiệu hệ thống, nói thẳng vì sao - đây "
-        "là góc nhìn bổ sung, không phải thay thế."
+        f'[CÂU HỎI TỪ NGƯỜI DÙNG]:\n"{question}"\n\n'
+        f"{closing}"
     )

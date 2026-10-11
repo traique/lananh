@@ -7,6 +7,8 @@ UPDATE reminders SET recipient_id = telegram_user_id::text WHERE recipient_id IS
 UPDATE reminders r SET channel = 'zalo', recipient_id = u.external_id
 FROM zalo_users u WHERE r.telegram_user_id = u.internal_user_id AND r.telegram_user_id < 0;
 ALTER TABLE reminders ALTER COLUMN recipient_id SET NOT NULL;
+-- DROP trước để file chạy lại được (idempotent) như mọi migration khác.
+ALTER TABLE reminders DROP CONSTRAINT IF EXISTS reminders_channel_check;
 ALTER TABLE reminders ADD CONSTRAINT reminders_channel_check CHECK (channel IN ('telegram', 'zalo', 'zoom'));
 ALTER TABLE reminders ADD COLUMN IF NOT EXISTS event_key TEXT UNIQUE;
 ALTER TABLE notes ADD COLUMN IF NOT EXISTS event_key TEXT UNIQUE;

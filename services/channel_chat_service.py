@@ -1,10 +1,20 @@
-"""Telegram-independent text, command and stock chat service."""
+"""Luồng chat văn bản dùng chung mọi kênh.
+
+- run_chat_turn(): pipeline lượt chat AI chung cho Telegram, Zalo và Zoom
+  (tool/web search/trí nhớ -> orchestrator.chat -> lưu lịch sử, cập nhật trí
+  nhớ chạy nền, telemetry). Telegram (handlers/chat_router.py) gọi thẳng hàm
+  này sau nhánh cổ phiếu riêng của nó.
+- handle_channel_text(): điểm vào đầy đủ cho Zalo/Zoom (lệnh, danh mục, cổ
+  phiếu rồi tới run_chat_turn), trả ChannelResult thay vì tự gửi tin.
+"""
 
 import asyncio
 import logging
+from dataclasses import dataclass
 
 import messages
 from ai import orchestrator
+from ai.timeouts import TurnTimeoutError, turn_deadline
 from core import database as db
 from services import memory_service, portfolio_service, tools, web_search
 from services.background_tasks import stop_tracked_tasks
@@ -29,19 +39,81 @@ def _track_background_task(task: asyncio.Task) -> None:
         try:
             completed.result()
         except Exception:
-            logger.exception("Channel background task failed")
+            logger.exception("Tác vụ cập nhật trí nhớ chạy nền bị lỗi")
 
     task.add_done_callback(_done)
 
 
 async def stop_background_tasks() -> None:
-    """Drain các lượt cập nhật memory của Zalo trước khi đóng database."""
+    """Drain các lượt cập nhật memory (mọi kênh) trước khi đóng database."""
     await stop_tracked_tasks(
         _background_tasks,
         timeout=15.0,
         logger=logger,
-        label="channel memory",
+        label="chat memory",
     )
+
+
+@dataclass(frozen=True)
+class ChatTurn:
+    """Kết quả 1 lượt chat AI; mỗi kênh tự định dạng câu trả lời/lỗi."""
+
+    text: str = ""  # rỗng khi model không trả nội dung
+    used_fallback: bool = False
+    failed: bool = False  # lỗi đã được log + ghi telemetry
+    prompt_id: int | None = None
+    # Thông báo lỗi cụ thể cho người dùng (vd hết hạn chót lượt); rỗng thì kênh
+    # dùng câu lỗi chung của mình.
+    error_text: str = ""
+
+
+async def run_chat_turn(
+    user_id: int, text: str, *, grounding: str = "", channel: str = "telegram"
+) -> ChatTurn:
+    """Pipeline chat chung: gom ngữ cảnh -> orchestrator.chat -> lưu lịch sử.
+
+    grounding: ngữ cảnh giá cổ phiếu từ nhánh cổ phiếu (nếu có). Không raise:
+    lỗi trả ChatTurn(failed=True) sau khi đã log và ghi telemetry."""
+    prompt_id = await telemetry.start(user_id, "chat", text, channel=channel)
+    try:
+        # Hạn chót CHAT_TURN_TIMEOUT_SEC áp cho CẢ lượt (web search có thể tự gọi
+        # AI 2-3 lần + orchestrator.chat), không phải từng lượt gọi AI riêng lẻ -
+        # nếu không, tổng thời gian vượt mức gateway Zalo chờ (240s). Task con của
+        # asyncio.gather thừa hưởng cùng hạn chót qua ContextVar.
+        with turn_deadline():
+            # 3 nguồn ngữ cảnh độc lập nhau - chạy song song thay vì tuần tự
+            # (trước đây Tavily + memory nối tiếp, thêm vài trăm ms - vài giây
+            # độ trễ cho mọi tin nhắn).
+            tool_result, search_result, memory = await asyncio.gather(
+                tools.maybe_run_tool(user_id, text),
+                web_search.maybe_search(text, user_id=user_id),
+                memory_service.build_memory_context(user_id),
+            )
+            combined = "\n\n".join(part for part in (grounding, tool_result, search_result) if part)
+            response = await orchestrator.chat(
+                user_id,
+                text,
+                grounding=combined,
+                memory_context=memory,
+                require_real_search=stock_analysis.wants_external_market_data(text),
+            )
+        reply = (response.text or "").strip()
+        await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
+        if reply:
+            await db.add_chat_message(user_id, "user", text)
+            await db.add_chat_message(user_id, "model", reply)
+            _track_background_task(
+                asyncio.create_task(memory_service.update_memory(user_id, text, reply))
+            )
+        return ChatTurn(reply, bool(getattr(response, "used_fallback", False)), prompt_id=prompt_id)
+    except TurnTimeoutError as exc:
+        logger.warning("Lượt chat hết hạn chót (kênh %s): %s", channel, exc)
+        await telemetry.failure(prompt_id, "chat", exc)
+        return ChatTurn(failed=True, prompt_id=prompt_id, error_text=f"⏱️ {exc}")
+    except Exception as exc:
+        logger.exception("Lỗi lượt chat (kênh %s)", channel)
+        await telemetry.failure(prompt_id, "chat", exc)
+        return ChatTurn(failed=True, prompt_id=prompt_id)
 
 
 def split_for_zalo(text: str, limit: int = 1800) -> list[str]:
@@ -66,7 +138,13 @@ def split_for_zalo(text: str, limit: int = 1800) -> list[str]:
     return chunks
 
 
-async def _handle_stock(user_id: int, text: str) -> tuple[ChannelResult | None, str]:
+async def _handle_stock(
+    user_id: int, text: str, is_admin: bool = True
+) -> tuple[ChannelResult | None, str]:
+    """Nhánh cổ phiếu cho Zalo/Zoom. is_admin=False (thành viên Zalo): chỉ bản
+    THAM KHẢO - không nhãn hành động, vùng mua, stop, target, R:R, tỷ trọng,
+    không giữ/cắt danh mục (stock.analysis full_access=False). Chủ bot (Zoom)
+    và admin Zalo giữ bản đầy đủ như Telegram."""
     symbols = await stock_analysis.find_valid_symbols(text)
     if not symbols:
         if stock_analysis.looks_like_price_question(text):
@@ -75,18 +153,47 @@ async def _handle_stock(user_id: int, text: str) -> tuple[ChannelResult | None, 
     if stock_analysis.wants_portfolio_analysis(text, symbols):
         try:
             return ChannelResult(
-                [await stock_analysis.analyze_portfolio(symbols, text, user_id=user_id)]
+                [
+                    await stock_analysis.analyze_portfolio(
+                        symbols, text, user_id=user_id, full_access=is_admin
+                    )
+                ]
             ), ""
         except Exception:
             logger.exception("Channel portfolio analysis failed")
             return ChannelResult(["❌ Có lỗi khi soi danh mục."]), ""
-    if stock_analysis.wants_full_analysis(text, symbols):
+    persona_ids = stock_analysis.stock_personas.detect_personas(text)
+    if persona_ids:
         outputs = []
         for symbol in symbols:
             try:
                 outputs.append(
-                    await stock_analysis.analyze_symbol(symbol, user_text=text, user_id=user_id)
+                    await stock_analysis.analyze_persona(
+                        symbol, persona_ids, text, user_id=user_id, full_access=is_admin
+                    )
                 )
+            except Exception:
+                logger.exception("Channel persona view failed for %s", symbol)
+                outputs.append(messages.STOCK_ANALYZE_FAILED.format(symbol=symbol))
+        return ChannelResult(outputs), ""
+    if stock_analysis.wants_full_analysis(text, symbols):
+        outputs: list[str] = []
+        for symbol in symbols:
+            # Giống Telegram: bản số liệu rule-based (nguồn số chuẩn) luôn là
+            # tin đầu tiên, bản diễn giải LLM (đã kiểm hợp đồng policy) theo sau.
+            async def collect_rule_report(report: str) -> None:
+                outputs.append(report)
+
+            try:
+                result = await stock_analysis.analyze_symbol(
+                    symbol,
+                    user_text=text,
+                    user_id=user_id,
+                    on_rule_report=collect_rule_report,
+                    full_access=is_admin,
+                )
+                if result:
+                    outputs.append(result)
             except Exception:
                 logger.exception("Channel stock analysis failed for %s", symbol)
                 outputs.append(messages.STOCK_ANALYZE_FAILED.format(symbol=symbol))
@@ -107,7 +214,9 @@ async def _handle_stock(user_id: int, text: str) -> tuple[ChannelResult | None, 
     return None, await stock_analysis.build_price_grounding(symbols)
 
 
-async def handle_channel_text(user_id: int, text: str, is_admin: bool = True, channel: str = "zalo") -> ChannelResult:
+async def handle_channel_text(
+    user_id: int, text: str, is_admin: bool = True, channel: str = "zalo"
+) -> ChannelResult:
     text = (text or "").strip()
     if not text:
         return ChannelResult([])
@@ -115,7 +224,9 @@ async def handle_channel_text(user_id: int, text: str, is_admin: bool = True, ch
     portfolio_command = await portfolio_service.handle_command(user_id, text)
     if portfolio_command is not None:
         return ChannelResult([portfolio_command])
-    command_result = await channel_command_service.maybe_handle_command(user_id, text, is_admin, channel)
+    command_result = await channel_command_service.maybe_handle_command(
+        user_id, text, is_admin, channel
+    )
     if command_result is not None:
         outputs, provider = command_result
         return ChannelResult(
@@ -128,42 +239,31 @@ async def handle_channel_text(user_id: int, text: str, is_admin: bool = True, ch
     if portfolio_result is not None:
         return ChannelResult([portfolio_result])
 
-    stock_result, grounding = await _handle_stock(user_id, text)
+    # Nhánh cổ phiếu (debate nhiều lượt gọi AI) cũng chung 1 hạn chót cho cả lượt
+    # để Zalo không bị gateway bỏ cuộc ở 240s trong khi Python vẫn chạy tiếp.
+    try:
+        with turn_deadline():
+            stock_result, grounding = await _handle_stock(user_id, text, is_admin)
+    except TurnTimeoutError as exc:
+        logger.warning("Nhánh cổ phiếu hết hạn chót lượt: %s", exc)
+        return ChannelResult([f"⏱️ {exc}"])
     if stock_result is not None:
         return stock_result
-    prompt_id = await telemetry.start(user_id, "chat", text, channel=channel)
-    try:
-        # 3 nguồn ngữ cảnh độc lập nhau - chạy song song thay vì tuần tự
-        # (trước đây Tavily + memory nối tiếp, thêm vài trăm ms - vài giây
-        # độ trễ cho mọi tin nhắn).
-        tool_result, search_result, memory = await asyncio.gather(
-            tools.maybe_run_tool(user_id, text),
-            web_search.maybe_search(text, user_id=user_id),
-            memory_service.build_memory_context(user_id),
-        )
-        combined = "\n\n".join(part for part in (grounding, tool_result, search_result) if part)
-        response = await orchestrator.chat(
-            user_id,
-            text,
-            grounding=combined,
-            memory_context=memory,
-            require_real_search=stock_analysis.wants_external_market_data(text),
-        )
-        reply = (response.text or "").strip()
-        await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
-        if not reply:
-            return ChannelResult([messages.CHAT_GENERIC_ERROR])
-        await db.add_chat_message(user_id, "user", text)
-        await db.add_chat_message(user_id, "model", reply)
-        _track_background_task(
-            asyncio.create_task(memory_service.update_memory(user_id, text, reply))
-        )
-        fallback = bool(getattr(response, "used_fallback", False))
+    turn = await run_chat_turn(user_id, text, grounding=grounding, channel=channel)
+    if turn.failed:
         return ChannelResult(
-            [reply + ("\n\n⚙️ _Câu trả lời do API dự phòng trả về, ngôn ngữ có thể khác thường ngày._" if fallback else "")],
-            "api" if fallback else None,
+            [turn.error_text or "❌ Có lỗi khi trò chuyện với Gemini. Hãy thử lại sau."]
         )
-    except Exception as exc:
-        logger.exception("Channel chat failed")
-        await telemetry.failure(prompt_id, "chat", exc)
-        return ChannelResult(["❌ Có lỗi khi trò chuyện với Gemini. Hãy thử lại sau."])
+    if not turn.text:
+        return ChannelResult([messages.CHAT_GENERIC_ERROR])
+    return ChannelResult(
+        [
+            turn.text
+            + (
+                "\n\n⚙️ _Câu trả lời do API dự phòng trả về, ngôn ngữ có thể khác thường ngày._"
+                if turn.used_fallback
+                else ""
+            )
+        ],
+        "api" if turn.used_fallback else None,
+    )

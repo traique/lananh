@@ -5,6 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from services import channel_command_service as service
+from services import usage_stats
 
 
 @pytest.mark.asyncio
@@ -72,12 +73,16 @@ async def test_thongke_denied_for_non_admin():
 async def test_thongke_admin_plain_text_no_html(monkeypatch):
     """Zalo/Zoom chỉ hiển thị plain text (channels/zalo_text.py) - kết quả
     /thongke qua kênh này KHÔNG được chứa thẻ HTML như <b>."""
-    tc = service.telegram_commands
 
     async def fake_usage_by_user(since_hours):
-        return [{
-            "channel": "zalo", "telegram_user_id": -1, "calls": 3, "last_call_at": None,
-        }]
+        return [
+            {
+                "channel": "zalo",
+                "telegram_user_id": -1,
+                "calls": 3,
+                "last_call_at": None,
+            }
+        ]
 
     async def fake_usage_by_model(since_hours):
         return [{"provider": "groq", "model": "llama", "calls": 5, "last_call_at": None}]
@@ -85,9 +90,9 @@ async def test_thongke_admin_plain_text_no_html(monkeypatch):
     async def fake_list_users():
         return []
 
-    monkeypatch.setattr(tc.db, "usage_by_user", fake_usage_by_user)
-    monkeypatch.setattr(tc.db, "usage_by_model", fake_usage_by_model)
-    monkeypatch.setattr(tc.zalo_users, "list_users", fake_list_users)
+    monkeypatch.setattr(usage_stats.db, "usage_by_user", fake_usage_by_user)
+    monkeypatch.setattr(usage_stats.db, "usage_by_model", fake_usage_by_model)
+    monkeypatch.setattr(usage_stats.zalo_users, "list_users", fake_list_users)
 
     result, provider = await service.maybe_handle_command(1, "/thongke", is_admin=True)
     text = result[0]
@@ -97,10 +102,10 @@ async def test_thongke_admin_plain_text_no_html(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_thongke_hours_parsing():
-    assert service.telegram_commands._parse_thongke_hours("") == 24 * 7
-    assert service.telegram_commands._parse_thongke_hours("3d") == 72
-    assert service.telegram_commands._parse_thongke_hours("48") == 48
-    assert service.telegram_commands._parse_thongke_hours("bậy bạ") == 24 * 7
+    assert usage_stats.parse_thongke_hours("") == 24 * 7
+    assert usage_stats.parse_thongke_hours("3d") == 72
+    assert usage_stats.parse_thongke_hours("48") == 48
+    assert usage_stats.parse_thongke_hours("bậy bạ") == 24 * 7
 
 
 @pytest.mark.asyncio
@@ -114,8 +119,10 @@ async def test_status_allowed_for_admin_by_default():
 async def test_normal_commands_still_allowed_for_non_admin(monkeypatch):
     """Thành viên thường (is_admin=False) vẫn dùng được tính năng bình thường -
     chỉ 4 lệnh cấu hình toàn cục (/status, /userouter9, /router9, /model) mới bị chặn."""
+
     async def fake_clear(user_id):
         return None
+
     monkeypatch.setattr(service.orchestrator, "reset_chat", lambda: _noop())
     monkeypatch.setattr(service.db, "clear_chat", fake_clear)
     result, _ = await service.maybe_handle_command(1, "/reset", is_admin=False)
@@ -129,8 +136,13 @@ async def _noop():
 @pytest.mark.asyncio
 async def test_reset_clears_both_sessions(monkeypatch):
     called = []
-    async def reset(): called.append("reset_chat")
-    async def clear(user_id): called.append(("db", user_id))
+
+    async def reset():
+        called.append("reset_chat")
+
+    async def clear(user_id):
+        called.append(("db", user_id))
+
     monkeypatch.setattr(service.orchestrator, "reset_chat", reset)
     monkeypatch.setattr(service.db, "clear_chat", clear)
     result, _ = await service.maybe_handle_command(7, "/reset")
@@ -150,6 +162,7 @@ async def test_dich_command_translates_via_translate_service(monkeypatch):
     async def fake_translate(text, direction=None):
         class FakeResponse:
             used_fallback = False
+
         return "hello", "ja_vi", FakeResponse()
 
     # telemetry.start -> db.save_prompt cần Postgres thật; test này chỉ kiểm
@@ -177,7 +190,9 @@ async def test_dich_command_translates_via_translate_service(monkeypatch):
 async def test_dich_tieng_anh_khong_doan_chieu_hoi_lai():
     # Text Latin thuần không dấu tiếng Việt -> KHÔNG dịch mò "Việt→Nhật",
     # trả lời hỏi lại chiều (trước đây bị dịch ngược từ nguyên văn tiếng Anh).
-    result, provider = await service.maybe_handle_command(1, "/dich Could you check the report tomorrow?")
+    result, provider = await service.maybe_handle_command(
+        1, "/dich Could you check the report tomorrow?"
+    )
     assert any("ja>vi" in r for r in result)
     assert provider is None
 
@@ -187,6 +202,7 @@ async def test_dich_tieng_anh_co_chi_dinh_chieu_van_dich(monkeypatch):
     async def fake_translate(text, direction=None):
         class FakeResponse:
             used_fallback = False
+
         return "report", direction, FakeResponse()
 
     async def fake_telemetry_start(user_id, action_type, prompt_text, channel="telegram"):
@@ -194,12 +210,15 @@ async def test_dich_tieng_anh_co_chi_dinh_chieu_van_dich(monkeypatch):
 
     monkeypatch.setattr(service.telemetry, "start", fake_telemetry_start)
     monkeypatch.setattr(service.translate_service, "translate", fake_translate)
-    result, provider = await service.maybe_handle_command(1, "/dich ja>vi Could you check the report?")
+    result, provider = await service.maybe_handle_command(
+        1, "/dich ja>vi Could you check the report?"
+    )
     assert any("report" in r for r in result)
     assert provider is None
 
 
 # ─── /anh (tạo ảnh, Agnes AI) ───────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_anh_command_khong_co_mo_ta_tra_ve_trang_thai(monkeypatch):
@@ -254,6 +273,7 @@ async def test_anh_command_tao_anh_thanh_cong_dua_qua_pending_image(monkeypatch)
     image_b64 = service.take_pending_image()
     assert image_b64 is not None
     import base64
+
     assert base64.b64decode(image_b64) == b"\x89PNG\r\n\x1a\nfakebytes"
     # Lấy 1 lần là hết - lần 2 phải None (tránh gửi lặp ảnh cũ cho request khác).
     assert service.take_pending_image() is None
@@ -309,6 +329,7 @@ async def test_channel_chat_service_gan_image_b64_vao_channel_result(monkeypatch
 
     assert result.image_b64 is not None
     import base64
+
     assert base64.b64decode(result.image_b64) == b"\x89PNG\r\n\x1a\nfakebytes"
     assert result.image_url is None
 

@@ -11,41 +11,96 @@ lượng tạm bằng phần dữ liệu còn sống, nên job này chỉ chạy
 5. ``lock_timeout`` 5 giây: không lấy được khoá thì bỏ lượt, không chặn bot.
 
 Kết quả (trước/sau) được báo cho admin qua Telegram/Zoom.
+
+Ngoài ra mỗi ngày 1 lần dọn dữ liệu cũ của các bảng chỉ-thêm-không-bớt (xem
+``prune_retention``): user_calls/provider_calls (thống kê), zalo_outbox đã gửi,
+reminders đã gửi. Xoá theo lô nhỏ để không khoá bảng lâu; số ngày giữ chỉnh qua
+biến môi trường, đặt 0 để tắt từng loại.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from core import database as db
+from core.envutil import env_int, env_on
 
 logger = logging.getLogger(__name__)
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 MIB = 1024 * 1024
 TABLE = "facebook_post_media"
 _SETTING_KEY = "maintenance:vacuum_full:last_week"
+_RETENTION_KEY = "maintenance:retention:last_day"
 _CHECK_INTERVAL_SEC = 1800
 _VACUUM_TIMEOUT_SEC = 600
+# Xoá theo lô: mỗi câu DELETE tối đa _RETENTION_BATCH dòng, mỗi bảng tối đa
+# _RETENTION_MAX_BATCHES lô / ngày - phần còn lại để ngày sau (giới hạn thời gian
+# giữ khoá và lượng WAL trên Supabase free tier).
+_RETENTION_BATCH = 5000
+_RETENTION_MAX_BATCHES = 20
+
+
+@dataclass(frozen=True)
+class RetentionRule:
+    label: str
+    env: str
+    default_days: int
+    # Câu DELETE theo lô: $1 = interval giữ lại, $2 = kích thước lô.
+    sql: str
+
+
+RETENTION_RULES = (
+    RetentionRule(
+        "user_calls",
+        "RETENTION_USER_CALLS_DAYS",
+        180,
+        "DELETE FROM user_calls WHERE id IN (SELECT id FROM user_calls "
+        "WHERE created_at < now() - $1::interval LIMIT $2)",
+    ),
+    RetentionRule(
+        "provider_calls",
+        "RETENTION_PROVIDER_CALLS_DAYS",
+        180,
+        "DELETE FROM provider_calls WHERE id IN (SELECT id FROM provider_calls "
+        "WHERE created_at < now() - $1::interval LIMIT $2)",
+    ),
+    RetentionRule(
+        "zalo_outbox",
+        "RETENTION_ZALO_OUTBOX_DAYS",
+        30,
+        # Chỉ dòng ĐÃ GỬI; tin chưa gửi được không bao giờ bị xoá ở đây.
+        "DELETE FROM zalo_outbox WHERE id IN (SELECT id FROM zalo_outbox "
+        "WHERE sent_at IS NOT NULL AND sent_at < now() - $1::interval LIMIT $2)",
+    ),
+    RetentionRule(
+        "zalo_outbox_failed",
+        "RETENTION_ZALO_OUTBOX_DAYS",
+        30,
+        # Tin đã bỏ cuộc sau ZALO_OUTBOX_MAX_ATTEMPTS lần (cột failed_at do
+        # migration 012 thêm) - giữ cùng số ngày với tin đã gửi để tra cứu.
+        "DELETE FROM zalo_outbox WHERE id IN (SELECT id FROM zalo_outbox "
+        "WHERE failed_at IS NOT NULL AND failed_at < now() - $1::interval LIMIT $2)",
+    ),
+    RetentionRule(
+        "reminders",
+        "RETENTION_REMINDERS_DAYS",
+        90,
+        "DELETE FROM reminders WHERE id IN (SELECT id FROM reminders "
+        "WHERE sent = true AND due_at < now() - $1::interval LIMIT $2)",
+    ),
+)
 
 _task: asyncio.Task | None = None
 _notify: Callable[[str], Awaitable[None]] | None = None
 
 
-def _env_int(name: str, default: int, low: int, high: int) -> int:
-    try:
-        return max(low, min(high, int(os.getenv(name, str(default)))))
-    except ValueError:
-        return default
-
-
 def enabled() -> bool:
-    return os.getenv("DB_AUTO_VACUUM_FULL", "1").strip() != "0"
+    return env_on("DB_AUTO_VACUUM_FULL")
 
 
 def set_notifier(callback: Callable[[str], Awaitable[None]] | None) -> None:
@@ -66,8 +121,8 @@ class TableUsage:
 
 
 def should_vacuum(usage: TableUsage) -> tuple[bool, str]:
-    min_waste = _env_int("DB_VACUUM_MIN_WASTE_MB", 50, 1, 10_000) * MIB
-    limit = _env_int("DB_SIZE_LIMIT_MB", 500, 50, 100_000) * MIB
+    min_waste = env_int("DB_VACUUM_MIN_WASTE_MB", 50, 1, 10_000) * MIB
+    limit = env_int("DB_SIZE_LIMIT_MB", 500, 50, 100_000) * MIB
     if usage.posting:
         return False, "đang có bài Facebook ở trạng thái POSTING"
     if usage.wasted_bytes < min_waste:
@@ -81,8 +136,8 @@ def should_vacuum(usage: TableUsage) -> tuple[bool, str]:
 
 
 def in_window(now: datetime) -> bool:
-    weekday = _env_int("DB_VACUUM_WEEKDAY", 6, 0, 6)  # 0 = Thứ 2 ... 6 = Chủ nhật
-    hour = _env_int("DB_VACUUM_HOUR", 3, 0, 23)
+    weekday = env_int("DB_VACUUM_WEEKDAY", 6, 0, 6)  # 0 = Thứ 2 ... 6 = Chủ nhật
+    hour = env_int("DB_VACUUM_HOUR", 3, 0, 23)
     return now.weekday() == weekday and now.hour == hour
 
 
@@ -172,8 +227,60 @@ async def run_if_due(now: datetime | None = None, *, force: bool = False) -> str
     return message
 
 
+def _parse_count(status: str) -> int:
+    try:
+        return int(status.rsplit(" ", 1)[-1])
+    except (ValueError, AttributeError, IndexError):
+        return 0
+
+
+async def prune_retention() -> dict[str, int]:
+    """Xoá dữ liệu quá hạn giữ của từng bảng (theo lô có trần); trả số dòng đã xoá."""
+    pool = await db.get_pool()
+    deleted: dict[str, int] = {}
+    for rule in RETENTION_RULES:
+        days = env_int(rule.env, rule.default_days, 0, 3650)
+        if days <= 0:
+            continue
+        total = 0
+        try:
+            for _ in range(_RETENTION_MAX_BATCHES):
+                count = _parse_count(
+                    await pool.execute(rule.sql, timedelta(days=days), _RETENTION_BATCH)
+                )
+                total += count
+                if count < _RETENTION_BATCH:
+                    break
+        except Exception:
+            # 1 bảng lỗi (vd chưa có index/khóa) không chặn các bảng còn lại.
+            logger.warning(
+                "Dọn dữ liệu cũ bảng %s lỗi; thử lại ngày sau.", rule.label, exc_info=True
+            )
+        deleted[rule.label] = total
+    if any(deleted.values()):
+        logger.info("Đã dọn dữ liệu cũ: %s", deleted)
+    return deleted
+
+
+async def run_retention_if_due(now: datetime | None = None) -> dict[str, int] | None:
+    """Tối đa 1 lần/ngày (theo giờ VN); None nếu hôm nay đã chạy."""
+    now = now or datetime.now(VN_TZ)
+    day = now.date().isoformat()
+    if await db.get_setting(_RETENTION_KEY) == day:
+        return None
+    result = await prune_retention()
+    await db.set_setting(_RETENTION_KEY, day)
+    return result
+
+
 async def _loop() -> None:
     while True:
+        try:
+            await run_retention_if_due()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Job dọn dữ liệu cũ lỗi; thử lại lượt sau.")
         try:
             await run_if_due()
         except asyncio.CancelledError:
@@ -184,10 +291,11 @@ async def _loop() -> None:
 
 
 def start() -> None:
+    """Luôn chạy vòng bảo trì (dọn dữ liệu cũ hằng ngày); VACUUM FULL vẫn tôn
+    trọng DB_AUTO_VACUUM_FULL=0 bên trong run_if_due()."""
     global _task
     if not enabled():
-        logger.info("DB_AUTO_VACUUM_FULL=0: tắt job tự VACUUM FULL.")
-        return
+        logger.info("DB_AUTO_VACUUM_FULL=0: tắt job tự VACUUM FULL (vẫn dọn dữ liệu cũ).")
     if _task is None or _task.done():
         _task = asyncio.create_task(_loop())
 

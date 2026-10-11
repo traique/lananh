@@ -55,7 +55,7 @@ async def sql_pool(monkeypatch):
 
 async def migrate(pool, *, include_recovery=True):
     for path in sorted(MIGRATIONS.glob("*.sql")):
-        if path.name.startswith("003") or (not include_recovery and path.name.startswith("008")):
+        if not include_recovery and path.name.startswith("008"):
             continue
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -320,7 +320,9 @@ async def test_pending_cap_deletes_oldest_pending_only(delivery_db):
     )
     pruned = await facebook.enforce_pending_cap("a", limit=3)
     assert pruned == ids[1:3]
-    remaining = [r["id"] for r in await pool.fetch("SELECT id FROM facebook_post_queue ORDER BY id")]
+    remaining = [
+        r["id"] for r in await pool.fetch("SELECT id FROM facebook_post_queue ORDER BY id")
+    ]
     assert remaining == [ids[0], *ids[3:]]
     # Dấu vân tay của bài bị xoá vẫn chặn bài đăng lại.
     with pytest.raises(facebook.DuplicatePostError):
@@ -331,7 +333,9 @@ async def test_pending_cap_deletes_oldest_pending_only(delivery_db):
 async def test_media_is_dropped_after_reject_and_history_is_pruned(delivery_db):
     pool = delivery_db
     await facebook.add_group("a", "g", "group")
-    post_id = await _queue("Bài có ảnh để bỏ qua nha mọi người", "m1", media=[("image/jpeg", b"x" * 10)])
+    post_id = await _queue(
+        "Bài có ảnh để bỏ qua nha mọi người", "m1", media=[("image/jpeg", b"x" * 10)]
+    )
     assert await pool.fetchval("SELECT count(*) FROM facebook_post_media") == 1
     assert await facebook.reject_post("a", post_id)
     assert await pool.fetchval("SELECT count(*) FROM facebook_post_media") == 0
@@ -339,7 +343,9 @@ async def test_media_is_dropped_after_reject_and_history_is_pruned(delivery_db):
         "UPDATE facebook_post_queue SET created_at = now() - interval '40 days' WHERE id = $1",
         post_id,
     )
-    await pool.execute("UPDATE facebook_post_fingerprints SET created_at = now() - interval '40 days'")
+    await pool.execute(
+        "UPDATE facebook_post_fingerprints SET created_at = now() - interval '40 days'"
+    )
     result = await facebook.prune_history(force=True)
     assert result["posts"] == 1 and result["fingerprints"] == 1
     assert await pool.fetchval("SELECT count(*) FROM facebook_post_queue") == 0
@@ -361,7 +367,8 @@ async def test_vacuum_full_reclaims_space_of_deleted_media(delivery_db):
 
     await facebook.add_group("a", "g", "group")
     post_id = await _queue(
-        "Bài nhiều ảnh để thử thu hồi dung lượng", "m1",
+        "Bài nhiều ảnh để thử thu hồi dung lượng",
+        "m1",
         media=[("image/jpeg", bytes(range(256)) * 4000) for _ in range(5)],
     )
     await facebook.reject_post("a", post_id)  # xoá ảnh
@@ -378,3 +385,144 @@ async def test_list_pending_for_refilter_returns_media_count(delivery_db):
     without = await _queue("Bài không có ảnh nha mọi người", "m2")
     rows = await facebook.list_pending_for_refilter("a")
     assert {(r["id"], int(r["media_count"])) for r in rows} == {(with_photo, 1), (without, 0)}
+
+
+# ─── Runtime reliability (migration 013, DEAD inbox, /zaloxoa, retention) ───
+
+
+@pytest.mark.asyncio
+async def test_inbox_exhausted_event_goes_dead_once_and_is_never_claimed(delivery_db, monkeypatch):
+    pool = delivery_db
+    sent = []
+    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text: sent.append(text) or True)
+    monkeypatch.setattr(webhook_inbox.config, "WEBHOOK_MAX_ATTEMPTS", 2)
+    await webhook_inbox.enqueue("telegram", "poison", {"update_id": 7})
+    first = await webhook_inbox.claim()
+    await webhook_inbox.retry(first, RuntimeError("bug"))
+    await pool.execute("UPDATE webhook_inbox SET available_at=now()-interval '1 second'")
+    second = await webhook_inbox.claim()
+    assert second["attempts"] == 2
+    await webhook_inbox.retry(second, RuntimeError("bug"))
+    row = await pool.fetchrow("SELECT status, payload, completed_at FROM webhook_inbox")
+    assert row["status"] == "DEAD" and row["payload"] is not None and row["completed_at"]
+    assert len(sent) == 1
+    await pool.execute("UPDATE webhook_inbox SET available_at=now()-interval '1 second'")
+    assert await webhook_inbox.claim() is None
+    assert await webhook_inbox.reap_exhausted() == 0 and len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_inbox_reaps_event_whose_last_attempt_crashed(delivery_db, monkeypatch):
+    pool = delivery_db
+    sent = []
+    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text: sent.append(text) or True)
+    monkeypatch.setattr(webhook_inbox.config, "WEBHOOK_MAX_ATTEMPTS", 1)
+    await webhook_inbox.enqueue("zoom", "crash", {"x": 1})
+    assert (await webhook_inbox.claim())["attempts"] == 1
+    # Process chết giữa chừng: không ai gọi retry(); lease hết hạn.
+    await pool.execute("UPDATE webhook_inbox SET lease_until=now()-interval '1 second'")
+    assert await webhook_inbox.claim() is None
+    assert await webhook_inbox.reap_exhausted() == 1
+    assert await pool.fetchval("SELECT status FROM webhook_inbox") == "DEAD" and len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_dead_rows_are_kept_then_pruned(delivery_db, monkeypatch):
+    pool = delivery_db
+    monkeypatch.setattr(idempotency, "ensure_schema", _no_migrations)
+    await pool.execute(
+        "INSERT INTO webhook_inbox (channel,event_id,status,completed_at) VALUES "
+        "('telegram','old','DEAD',now()-interval '30 days'),"
+        "('telegram','new','DEAD',now()-interval '3 days')"
+    )
+    await idempotency.cleanup_expired()
+    rows = await pool.fetch("SELECT event_id FROM webhook_inbox ORDER BY event_id")
+    assert [r["event_id"] for r in rows] == ["new"]
+
+
+@pytest.mark.asyncio
+async def test_zaloxoa_removes_member_data_but_not_owner_data(delivery_db):
+    from channels import zalo_users
+
+    pool = delivery_db
+    member = await zalo_users.pair("z-member", "Member")
+    uid = member.internal_user_id
+    for owner_or_member in (uid, 999):
+        await db.add_chat_message(owner_or_member, "user", "xin chào")
+        await db.upsert_fact(owner_or_member, "ten", "A")
+        await db.set_summary(owner_or_member, "tóm tắt")
+        await db.add_note(owner_or_member, "ghi chú")
+        await portfolio.set_holding(owner_or_member, "VCB", 10, 80000)
+    reminder = await db.add_reminder(
+        uid,
+        "nhắc",
+        datetime.now(timezone.utc),
+        channel="zalo",
+        recipient_id="z-member",
+        account_id="acc",
+        event_key="zalo:acc:r1",
+    )
+    reminder_id = await pool.fetchval("SELECT id FROM reminders WHERE telegram_user_id=$1", uid)
+    assert reminder is not None
+    await zalo_repository.enqueue_reminder(reminder_id, "acc", "z-member", "nhắc")
+    await db.set_setting(f"memory_enabled_{uid}", "0")
+
+    assert await zalo_users.remove("z-member") is True
+    for table in (
+        "chat_messages",
+        "user_facts",
+        "user_memory_summary",
+        "notes",
+        "stock_holdings",
+        "reminders",
+    ):
+        assert (
+            await pool.fetchval(f"SELECT count(*) FROM {table} WHERE telegram_user_id=$1", uid) == 0
+        )
+        assert await pool.fetchval(f"SELECT count(*) FROM {table} WHERE telegram_user_id=999") == (
+            0 if table == "reminders" else 1
+        )
+    assert await pool.fetchval("SELECT count(*) FROM zalo_outbox WHERE sent_at IS NULL") == 0
+    assert await db.get_setting(f"memory_enabled_{uid}") is None
+    assert await zalo_users.resolve("z-member") is None
+
+
+@pytest.mark.asyncio
+async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch):
+    from services import db_maintenance
+
+    pool = delivery_db
+    await pool.execute(
+        "INSERT INTO user_calls (channel,telegram_user_id,created_at) VALUES "
+        "('telegram',1,now()-interval '400 days'),('telegram',1,now())"
+    )
+    await pool.execute(
+        "INSERT INTO provider_calls (provider,model,created_at) VALUES "
+        "('groq','m',now()-interval '400 days'),('groq','m',now())"
+    )
+    await pool.execute(
+        "INSERT INTO zalo_outbox (account_id,recipient_id,content,created_at,sent_at) VALUES "
+        "('a','r','old sent',now()-interval '90 days',now()-interval '90 days'),"
+        "('a','r','old unsent',now()-interval '90 days',NULL),"
+        "('a','r','new sent',now(),now())"
+    )
+    await pool.execute(
+        "INSERT INTO reminders (telegram_user_id,message,due_at,sent,recipient_id) VALUES "
+        "(1,'old sent',now()-interval '200 days',true,'1'),"
+        "(1,'old unsent',now()-interval '200 days',false,'1')"
+    )
+    result = await db_maintenance.prune_retention()
+    assert result == {
+        "user_calls": 1,
+        "provider_calls": 1,
+        "zalo_outbox": 1,
+        "zalo_outbox_failed": 0,
+        "reminders": 1,
+    }
+    assert [
+        r["content"] for r in await pool.fetch("SELECT content FROM zalo_outbox ORDER BY id")
+    ] == [
+        "old unsent",
+        "new sent",
+    ]
+    assert await pool.fetchval("SELECT message FROM reminders") == "old unsent"

@@ -48,6 +48,36 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /** Bộ nhớ msgId đã xử lý, giới hạn kích thước để không phình RAM. */
+/**
+ * Người gửi đã được Python trả lời (đã pair) - LRU có trần. Chỉ những người này
+ * mới nhận câu "bot đang bận/gặp sự cố" từ gateway; người lạ chưa pair vẫn bị
+ * im lặng như phía Python (không lộ ra đây là bot). Sau khi gateway khởi động
+ * lại, danh sách trống cho tới khi Python trả lời lại người đó lần đầu.
+ */
+export class KnownSenders {
+  private readonly ids = new Set<string>();
+  constructor(private readonly capacity = 2000) {}
+
+  mark(id: string): void {
+    if (!id) return;
+    // Xoá rồi thêm lại để id vừa dùng nằm cuối (LRU theo thứ tự chèn của Set).
+    this.ids.delete(id);
+    this.ids.add(id);
+    if (this.ids.size > this.capacity) {
+      const oldest = this.ids.values().next().value;
+      if (oldest !== undefined) this.ids.delete(oldest);
+    }
+  }
+
+  has(id: string): boolean {
+    return this.ids.has(id);
+  }
+
+  get size(): number {
+    return this.ids.size;
+  }
+}
+
 export class SeenIds {
   private readonly ids = new Set<string>();
   constructor(private readonly capacity = 5000) {}

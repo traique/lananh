@@ -49,6 +49,7 @@ fundamentals.py từng giả định.
 Không gọi khi không có mạng: mọi exception được để nảy lên - caller
 (fundamentals/corporate_actions) tự catch và degrade (None/[]) như cũ.
 """
+
 from __future__ import annotations
 
 import logging
@@ -77,7 +78,17 @@ _REQUEST_TIMEOUT_SEC = 10
 # valuation và growth (chạy song song trong fetch_fundamentals) tái dùng
 # chung 1 lần fetch income statement thay vì bắn 2 request trùng nhau.
 _CACHE_TTL_SEC = 30 * 60
+_CACHE_MAX_ENTRIES = 128
+# _cache_lock CHỈ bảo vệ thao tác đọc/ghi dict (micro-giây), TUYỆT ĐỐI không
+# giữ trong lúc gọi mạng: trước đây 1 lock toàn cục bị giữ suốt request (timeout
+# 10s) nên mọi lệnh gọi VCI của MỌI mã/endpoint bị xếp hàng tuần tự, và thread
+# mồ côi sau asyncio.wait_for timeout vẫn giữ lock -> timeout dây chuyền.
 _cache_lock = threading.Lock()
+# Lock theo TỪNG khoá (endpoint, mã): 2 luồng cùng miss đúng 1 khoá chỉ fetch 1
+# lần, luồng của khoá khác không phải chờ. Dict có trần, chỉ dọn lock rảnh.
+_inflight_guard = threading.Lock()
+_inflight_locks: dict[tuple[int, str], threading.Lock] = {}
+_INFLIGHT_MAX = 256
 _ratio_cache: dict[str, tuple[float, list[dict]]] = {}
 _income_cache: dict[str, tuple[float, list[dict]]] = {}
 _details_cache: dict[str, tuple[float, dict]] = {}
@@ -97,26 +108,51 @@ def _get_json(path: str, params: dict | None = None) -> dict:
     return response.json()
 
 
-def _cached(cache: dict, symbol: str, fetch):
-    """Cache theo symbol với double-check lock: hit ngoài lock cho rẻ, miss
-    thì vào lock fetch (2 luồng cùng miss chỉ fetch 1 lần)."""
-    key = symbol.strip().upper()
-    now = time.monotonic()
-    hit = cache.get(key)
-    if hit and now - hit[0] < _CACHE_TTL_SEC:
-        return hit[1]
+def _key_lock(cache: dict, key: str) -> threading.Lock:
+    with _inflight_guard:
+        lock_key = (id(cache), key)
+        lock = _inflight_locks.get(lock_key)
+        if lock is None:
+            if len(_inflight_locks) >= _INFLIGHT_MAX:
+                for stale_key, stale_lock in list(_inflight_locks.items()):
+                    if not stale_lock.locked():
+                        _inflight_locks.pop(stale_key, None)
+            lock = _inflight_locks[lock_key] = threading.Lock()
+        return lock
+
+
+def _cache_lookup(cache: dict, key: str):
     with _cache_lock:
         hit = cache.get(key)
         if hit and time.monotonic() - hit[0] < _CACHE_TTL_SEC:
-            return hit[1]
-        rows = fetch()
-        expired = [symbol for symbol, (ts, _) in cache.items()
-                   if time.monotonic() - ts >= _CACHE_TTL_SEC]
-        for symbol in expired:
-            cache.pop(symbol, None)
-        if len(cache) >= 128 and key not in cache:
-            cache.pop(min(cache, key=lambda symbol: cache[symbol][0]), None)
-        cache[key] = (time.monotonic(), rows)
+            return True, hit[1]
+    return False, None
+
+
+def _cache_store(cache: dict, key: str, rows) -> None:
+    with _cache_lock:
+        now = time.monotonic()
+        for stale in [k for k, (ts, _) in cache.items() if now - ts >= _CACHE_TTL_SEC]:
+            cache.pop(stale, None)
+        if len(cache) >= _CACHE_MAX_ENTRIES and key not in cache:
+            cache.pop(min(cache, key=lambda k: cache[k][0]), None)
+        cache[key] = (now, rows)
+
+
+def _cached(cache: dict, symbol: str, fetch):
+    """Cache theo symbol: hit trả ngay; miss thì chỉ khoá RIÊNG khoá đó trong
+    lúc fetch (luồng khác cùng khoá chờ rồi dùng lại kết quả), không chặn
+    các mã/endpoint khác."""
+    key = symbol.strip().upper()
+    found, value = _cache_lookup(cache, key)
+    if found:
+        return value
+    with _key_lock(cache, key):
+        found, value = _cache_lookup(cache, key)
+        if found:
+            return value
+        rows = fetch()  # gọi mạng NGOÀI _cache_lock
+        _cache_store(cache, key, rows)
         return rows
 
 
@@ -140,6 +176,7 @@ def fetch_details(symbol: str) -> dict:
     khác 2 endpoint còn lại: details nằm ở /company/details với query param
     ?ticker= (KHÔNG phải /company/{symbol}/details - URL đó trả 404). Có thể
     raise (mạng/HTTP/JSON lỗi) - caller tự xử lý."""
+
     def _fetch() -> dict:
         data = _get_json("details", params={"ticker": symbol})
         return data.get("data") if isinstance(data, dict) else None
@@ -150,6 +187,7 @@ def fetch_details(symbol: str) -> dict:
 def fetch_statistical_ratios(symbol: str) -> list[dict]:
     """Toàn bộ quý ratio của {symbol}, sort MỚI->CŨ (quý mới nhất ở [0]).
     Có thể raise (mạng/HTTP/JSON lỗi) - caller tự xử lý."""
+
     def _fetch() -> dict:
         data = _get_json(f"{symbol}/statistics-financial")
         rows = data.get("data") if isinstance(data, dict) else None
@@ -162,6 +200,7 @@ def fetch_income_statement(symbol: str) -> list[dict]:
     """Các quý của báo cáo KQKD (INCOME_STATEMENT), sort MỚI->CŨ, trường ISA
     raw (isa3 = doanh thu thuần, isa20 = LN sau thuế, isa23 = EPS cơ bản).
     Có thể raise (mạng/HTTP/JSON lỗi) - caller tự xử lý."""
+
     def _fetch() -> list[dict]:
         data = _get_json(f"{symbol}/financial-statement", params={"section": "INCOME_STATEMENT"})
         payload = data.get("data") if isinstance(data, dict) else None

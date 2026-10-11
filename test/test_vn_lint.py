@@ -36,6 +36,11 @@ VN_CONTENT_FILES = [
     "templates/chat_skill_prompt.j2",
     "stock/templates/stock_analysis_prompt.j2",
     "handlers/commands.py",
+    "handlers/provider_commands.py",
+    "handlers/pairing_commands.py",
+    "handlers/zalo_bridge_commands.py",
+    "services/price_search.py",
+    "services/usage_stats.py",
     "services/morning_news.py",
     "services/translate_service.py",
     "services/portfolio_service.py",
@@ -51,9 +56,7 @@ def _run_validator(path: Path) -> dict:
         text=True,
         check=False,
     )
-    assert proc.returncode in (0, 1), (
-        f"validate_copy.py lỗi invocation trên {path}: {proc.stderr}"
-    )
+    assert proc.returncode in (0, 1), f"validate_copy.py lỗi invocation trên {path}: {proc.stderr}"
     return json.loads(proc.stdout)
 
 
@@ -63,7 +66,6 @@ def test_no_vietnamese_lint_errors(relpath):
     assert path.exists(), f"File không tồn tại: {relpath} (danh sách test đã lỗi thời?)"
     report = _run_validator(path)
     errors = [f for f in report["findings"] if f["severity"] == "error"]
-    assert not errors, (
-        f"{relpath} có {len(errors)} lỗi tiếng Việt: "
-        + "; ".join(f"{e['rule']} dòng {e['line']}: {e['message']}" for e in errors)
+    assert not errors, f"{relpath} có {len(errors)} lỗi tiếng Việt: " + "; ".join(
+        f"{e['rule']} dòng {e['line']}: {e['message']}" for e in errors
     )

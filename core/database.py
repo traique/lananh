@@ -1,4 +1,5 @@
 """Supabase Postgres - bền hơn SQLite vì ổ đĩa local trên Render free tier là ephemeral."""
+
 import asyncio
 import contextvars
 import functools
@@ -16,24 +17,6 @@ _pool: Optional[asyncpg.pool.Pool] = None
 _pool_lock = asyncio.Lock()
 
 _CONNECTION_ERRORS = (asyncpg.PostgresConnectionError, asyncpg.InterfaceError, OSError)
-
-# pgvector (Bước 7 - semantic recall, xem services/memory_service.py, ai/official_client.embed_text()).
-# Tự tắt êm nếu DB không bật được extension "vector" (vd thiếu quyền trên 1
-# số gói Postgres managed) - init_db() sẽ set lại giá trị thật lúc khởi động.
-VECTOR_ENABLED = False
-
-
-async def _init_connection(conn: asyncpg.Connection) -> None:
-    """Đăng ký codec kiểu `vector` cho MỖI connection mới trong pool - bắt
-    buộc để asyncpg hiểu cột `vector(768)` (xem chat_embeddings). Lỗi ở đây
-    (vd extension chưa bật) chỉ log, KHÔNG raise - để pool vẫn khởi tạo bình
-    thường cho các bảng khác không liên quan tới pgvector."""
-    try:
-        from pgvector.asyncpg import register_vector
-
-        await register_vector(conn)
-    except Exception:
-        logger.debug("Không đăng ký được codec pgvector cho connection (có thể chưa bật extension).")
 
 
 async def _reset_pool(failed_pool: Optional[asyncpg.pool.Pool]) -> None:
@@ -89,6 +72,11 @@ def _with_reconnect(func=None, *, idempotent: bool = True):
             try:
                 return await fn(*args, **kwargs)
             except _CONNECTION_ERRORS as exc:
+                # TimeoutError là lớp con của OSError (Python 3.11+): câu lệnh
+                # chạy quá command_timeout KHÔNG phải mất kết nối - đóng cả pool
+                # rồi chạy lại chỉ nhân đôi thời gian chờ.
+                if isinstance(exc, TimeoutError):
+                    raise
                 await _reset_pool(_pool_in_use.get())
                 if not _safe_to_retry(exc, idempotent):
                     raise
@@ -99,6 +87,11 @@ def _with_reconnect(func=None, *, idempotent: bool = True):
         return wrapper
 
     return decorate(func) if func is not None else decorate
+
+
+# Tên công khai cho các repository ngoài module này (idempotency, webhook inbox,
+# zalo_users...) dùng chung đúng cơ chế retry an toàn ở trên.
+with_reconnect = _with_reconnect
 
 
 # Chỉ giữ tối đa N prompt gần nhất / user - results liên quan tự xoá theo
@@ -131,67 +124,21 @@ async def _get_or_create_pool() -> asyncpg.pool.Pool:
                 ssl="require",
                 # PgBouncer/Supavisor transaction mode không giữ prepared statement
                 statement_cache_size=0,
-                init=_init_connection,
             )
     return _pool
 
 
-async def _ensure_vector_extension() -> bool:
-    """Bật extension `vector` (pgvector) bằng 1 connection ĐỘC LẬP, KHÔNG qua
-    pool, và PHẢI chạy trước get_pool() lần đầu. Lý do: pool mở sẵn
-    min_size=1 connection ngay khi tạo, mỗi connection tự chạy
-    _init_connection() (register_vector) ĐÚNG 1 LẦN lúc được tạo - nếu extension
-    chưa tồn tại lúc đó, connection này "kẹt" không có codec vector suốt vòng
-    đời của nó, dù CREATE EXTENSION chạy thành công ngay sau bằng 1 connection
-    khác trong cùng pool. Tạo extension trước, ngoài pool, tránh hẳn race này.
-
-    Trả về True nếu extension đã sẵn sàng (hoặc đã có sẵn), False nếu không
-    bật được (thiếu quyền...) - KHÔNG raise, để không kéo sập init_db()."""
-    try:
-        conn = await asyncpg.connect(config.DATABASE_URL, ssl="require")
-        try:
-            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        finally:
-            await conn.close()
-        return True
-    except Exception:
-        logger.warning(
-            "Không bật được extension 'vector' (pgvector) trên DB này - "
-            "semantic recall (Bước 7) sẽ tự tắt. Bật thủ công qua Supabase "
-            "Dashboard > Database > Extensions > vector rồi khởi động lại bot "
-            "nếu muốn dùng tính năng này.",
-            exc_info=True,
-        )
-        return False
-
-
 @_with_reconnect
-async def ensure_migrations(*, include_vector: bool = False) -> None:
+async def ensure_migrations() -> None:
     """Apply all pending versioned schema migrations."""
     from core import migrations
 
-    await migrations.run(await get_pool(), include_vector=include_vector)
+    await migrations.run(await get_pool())
 
 
 @_with_reconnect
 async def init_db() -> None:
-    # pgvector extension must exist before the pool's vector codec is registered.
-    global VECTOR_ENABLED
-    VECTOR_ENABLED = await _ensure_vector_extension()
-
-    try:
-        await ensure_migrations(include_vector=VECTOR_ENABLED)
-        if VECTOR_ENABLED:
-            logger.info("pgvector đã sẵn sàng - semantic recall khả dụng.")
-    except Exception:
-        if VECTOR_ENABLED:
-            # If only the vector migration fails, retry the mandatory schema
-            # without it so the rest of the bot can still start.
-            VECTOR_ENABLED = False
-            logger.warning("Tạo schema pgvector lỗi; tiếp tục với semantic recall tắt.", exc_info=True)
-            await ensure_migrations(include_vector=False)
-        else:
-            raise
+    await ensure_migrations()
 
     # Data retention is operational cleanup, not schema migration.
     await (await get_pool()).execute(
@@ -212,7 +159,9 @@ async def init_db() -> None:
 
 
 @_with_reconnect(idempotent=False)
-async def save_prompt(telegram_user_id: int, command_type: str, prompt: str, channel: str = "telegram") -> int:
+async def save_prompt(
+    telegram_user_id: int, command_type: str, prompt: str, channel: str = "telegram"
+) -> int:
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -608,8 +557,14 @@ async def get_notes(telegram_user_id: int, limit: int = 10) -> list[tuple[str, d
 
 @_with_reconnect(idempotent=False)
 async def add_reminder(
-    telegram_user_id: int, message: str, due_at, *, channel: str = "telegram",
-    recipient_id: str | None = None, account_id: str = "", user_jid: str = "",
+    telegram_user_id: int,
+    message: str,
+    due_at,
+    *,
+    channel: str = "telegram",
+    recipient_id: str | None = None,
+    account_id: str = "",
+    user_jid: str = "",
     event_key: str | None = None,
 ):
     if channel not in {"telegram", "zalo", "zoom"}:
@@ -627,7 +582,10 @@ async def add_reminder(
         telegram_user_id,
         message,
         due_at,
-        channel, recipient_id, account_id, user_jid,
+        channel,
+        recipient_id,
+        account_id,
+        user_jid,
         event_key,
     )
 
@@ -636,83 +594,6 @@ async def add_reminder(
 async def mark_reminder_sent(reminder_id: int) -> None:
     pool = await get_pool()
     await pool.execute("UPDATE reminders SET sent = true WHERE id = $1", reminder_id)
-
-
-# ─── pgvector semantic recall (Bước 7, xem services/memory_service.py) ─────
-
-
-# Giữ tối đa N embedding gần nhất / user - bảng này trước đó insert thẳng
-# không trim, phình vô hạn theo thời gian (mỗi lượt chat 1 dòng, chạy 24/7).
-CHAT_EMBEDDINGS_RETENTION_LIMIT = 500
-
-# Ngưỡng cosine distance (`<=>` của pgvector, 0 = giống hệt) để loại kết quả
-# không đủ liên quan thay vì luôn trả đủ top_k dù đoạn gần nhất cũng không
-# thật sự gần nghĩa - top_k chỉ đảm bảo THỨ TỰ, không đảm bảo CHẤT LƯỢNG.
-SEMANTIC_SEARCH_MAX_DISTANCE = 0.5
-
-
-@_with_reconnect(idempotent=False)
-async def add_chat_embedding(telegram_user_id: int, content: str, embedding: list[float]) -> None:
-    if not VECTOR_ENABLED:
-        return
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                "INSERT INTO chat_embeddings (telegram_user_id, content, embedding) VALUES ($1, $2, $3)",
-                telegram_user_id,
-                content,
-                embedding,
-            )
-            await conn.execute(
-                """
-                DELETE FROM chat_embeddings
-                WHERE telegram_user_id = $1
-                  AND id NOT IN (
-                      SELECT id FROM chat_embeddings
-                      WHERE telegram_user_id = $1
-                      ORDER BY id DESC
-                      LIMIT $2
-                  )
-                """,
-                telegram_user_id,
-                CHAT_EMBEDDINGS_RETENTION_LIMIT,
-            )
-
-
-@_with_reconnect
-async def clear_chat_embeddings(telegram_user_id: int) -> None:
-    pool = await get_pool()
-    await pool.execute("DELETE FROM chat_embeddings WHERE telegram_user_id = $1", telegram_user_id)
-
-
-@_with_reconnect
-async def semantic_search(
-    telegram_user_id: int,
-    query_embedding: list[float],
-    top_k: int = 3,
-    max_distance: float = SEMANTIC_SEARCH_MAX_DISTANCE,
-) -> list[str]:
-    """Trả về nội dung các lượt chat cũ GẦN NGHĨA NHẤT với query_embedding,
-    đã lọc bớt kết quả có distance >= max_distance (không đủ liên quan) -
-    mới -> cũ không quan trọng thứ tự ở đây vì đã sắp theo độ tương đồng."""
-    if not VECTOR_ENABLED:
-        return []
-    pool = await get_pool()
-    rows = await pool.fetch(
-        """
-        SELECT content FROM chat_embeddings
-        WHERE telegram_user_id = $1
-          AND embedding <=> $2 < $4
-        ORDER BY embedding <=> $2
-        LIMIT $3
-        """,
-        telegram_user_id,
-        query_embedding,
-        top_k,
-        max_distance,
-    )
-    return [r["content"] for r in rows]
 
 
 @_with_reconnect

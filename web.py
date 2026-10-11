@@ -4,7 +4,7 @@ import asyncio
 import hmac
 import io
 import logging
-from contextlib import asynccontextmanager, nullcontext, redirect_stdout
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -16,7 +16,15 @@ import bot_app
 import web_admin
 import logging_setup
 import messages
-from channels import facebook_commands, facebook_repository, group_commands, zalo_repository, zalo_scheduler, zalo_session, zoom
+from channels import (
+    facebook_commands,
+    facebook_repository,
+    group_commands,
+    zalo_repository,
+    zalo_scheduler,
+    zalo_session,
+    zoom,
+)
 from channels.router import router as zalo_router
 from core import config, database as db, idempotency, webhook_inbox
 from diagnose_router9 import main as diagnose_main
@@ -40,7 +48,10 @@ _DATA_DELETION_PATH = Path(__file__).resolve().parent / "templates" / "data_dele
 
 def _diagnose_token_valid(request: Request) -> bool:
     token = request.headers.get("X-Diagnose-Token", "")
-    return bool(config.DIAGNOSE_SECRET) and hmac.compare_digest(token, config.DIAGNOSE_SECRET)
+    # So sánh bytes: header chứa ký tự non-ASCII không làm compare_digest TypeError (500).
+    return bool(config.DIAGNOSE_SECRET) and hmac.compare_digest(
+        token.encode(), config.DIAGNOSE_SECRET.encode()
+    )
 
 
 async def _stop_webhook_tasks() -> None:
@@ -66,10 +77,13 @@ async def _process_update(update: Update) -> None:
         raise RuntimeError("Telegram application is not ready")
     token = update_error.set(None)
     try:
-        with notification_target(NotificationTarget(
-            "telegram", str(update.effective_chat.id if update.effective_chat else config.ALLOWED_USER_ID),
-            event_key=f"telegram:{update.update_id}",
-        )):
+        with notification_target(
+            NotificationTarget(
+                "telegram",
+                str(update.effective_chat.id if update.effective_chat else config.ALLOWED_USER_ID),
+                event_key=f"telegram:{update.update_id}",
+            )
+        ):
             message = getattr(update, "effective_message", None)
             command = (getattr(message, "text", None) or "").strip().lower().split(maxsplit=1)
             boundary = (
@@ -188,12 +202,13 @@ async def diagnose(request: Request) -> Response:
     if not _diagnose_token_valid(request):
         return Response(status_code=403)
     async with _diagnose_lock:
+        # Ghi vào buffer riêng của request (không redirect_stdout: thao tác đó đổi
+        # sys.stdout của CẢ process trong lúc await mạng, nuốt log của request khác).
         buf = io.StringIO()
         try:
-            with redirect_stdout(buf):
-                await diagnose_main()
+            await diagnose_main(buf)
         except Exception as exc:
-            print(f"Lỗi ngoài dự kiến: {type(exc).__name__}: {exc}")
+            print(f"Lỗi ngoài dự kiến: {type(exc).__name__}: {exc}", file=buf)
         return Response(content=buf.getvalue(), media_type="text/plain; charset=utf-8")
 
 
@@ -227,10 +242,15 @@ def _zoom_chunks(outputs: list[str]) -> list[str]:
 
 
 async def _process_zoom_event(event: "zoom.ZoomEvent") -> None:
-    with notification_target(NotificationTarget(
-        "zoom", event.reply_jid, event.account_id, event.sender_jid,
-        event_key=f"zoom:{event.account_id}:{event.event_id}",
-    )):
+    with notification_target(
+        NotificationTarget(
+            "zoom",
+            event.reply_jid,
+            event.account_id,
+            event.sender_jid,
+            event_key=f"zoom:{event.account_id}:{event.event_id}",
+        )
+    ):
         await _deliver_zoom_event(event)
 
 
@@ -238,7 +258,9 @@ async def _deliver_zoom_event(event: "zoom.ZoomEvent") -> None:
     try:
         pairing = await db.zoom_get_pairing()
         if pairing is None or pairing[0] != event.sender_jid:
-            logger.info("Zoom: tin nhắn từ jid chưa pair (%s), bỏ qua + báo owner.", event.sender_jid)
+            logger.info(
+                "Zoom: tin nhắn từ jid chưa pair (%s), bỏ qua + báo owner.", event.sender_jid
+            )
             if application is not None:
                 try:
                     await application.bot.send_message(

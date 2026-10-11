@@ -1,7 +1,6 @@
-"""Test cho 3 dạng ảnh -> prompt trong handlers/media_handler.py.
+"""Test cho 3 dạng ảnh -> prompt (services/prompt_templates.py, dùng ở handlers/media_handler.py).
 
-Đọc IMAGE_ANALYZE_INSTRUCTION_BASE bằng ast thay vì `import handlers.media_handler`,
-vì module đó import python-telegram-bot - không có trong môi trường test này.
+Đọc IMAGE_ANALYZE_INSTRUCTION_BASE bằng ast thay vì import module (xem _prompt_render.py).
 Cách này cũng buộc test đi qua đúng resolve_prompt_identity + render_instruction
 (con đường code thật dùng) thay vì tự .format() tay với field tự chọn.
 
@@ -15,6 +14,7 @@ Ngoài khuôn mặt, cả 3 dạng đều phải bắt buộc tả khung hình, 
 chất ảnh và ống kính theo ảnh gốc - thiếu chúng thì ảnh tạo ra sai dù mặt
 đúng.
 """
+
 import sys
 from pathlib import Path
 
@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _prompt_render import ROOT, read_string_constant  # noqa: E402
-from handlers.prompt_identity import (  # noqa: E402
+from services.prompt_identity import (  # noqa: E402
     GIRL_KEYWORDS,
     IDENTITY_LOCK_GIRL,
     IDENTITY_LOCK_REFERENCE,
@@ -31,7 +31,9 @@ from handlers.prompt_identity import (  # noqa: E402
     resolve_prompt_identity,
 )
 
-IMAGE_ANALYZE_INSTRUCTION_BASE = read_string_constant("handlers/media_handler.py", "IMAGE_ANALYZE_INSTRUCTION_BASE")
+IMAGE_ANALYZE_INSTRUCTION_BASE = read_string_constant(
+    "services/prompt_templates.py", "IMAGE_ANALYZE_INSTRUCTION_BASE"
+)
 
 CAPTION_DESCRIBED = ""
 CAPTION_GIRL = "cô gái 20"
@@ -65,11 +67,14 @@ def test_photo_msg_khong_dung_bien_chua_gan_gia_tri():
     chung nuốt và hiện nhầm thành lỗi Gemini - tính năng ảnh->prompt trên
     Telegram chết hoàn toàn mà test cũ không phát hiện được vì nó tự dựng
     field bằng tay thay vì gọi qua render_instruction()."""
-    source = (ROOT / "handlers/media_handler.py").read_text()
-    assert "subject_phrase=subject_phrase" not in source
-    assert "identity_rule=identity_rule" not in source
-    assert "subject_rule=subject_rule" not in source
-    assert "render_instruction(IMAGE_ANALYZE_INSTRUCTION_BASE, identity)" in source
+    handler = (ROOT / "handlers/media_handler.py").read_text()
+    templates = (ROOT / "services/prompt_templates.py").read_text()
+    for source in (handler, templates):
+        assert "subject_phrase=subject_phrase" not in source
+        assert "identity_rule=identity_rule" not in source
+        assert "subject_rule=subject_rule" not in source
+    assert "build_image_instruction(caption, identity)" in handler
+    assert "render_instruction(IMAGE_ANALYZE_INSTRUCTION_BASE, identity)" in templates
 
 
 # ─── Template chung ─────────────────────────────────
@@ -184,8 +189,15 @@ def test_dang_1_khong_tro_toi_anh_trong_vi_du():
 def test_dang_1_bat_buoc_ta_du_dac_diem_khuon_mat():
     rule = resolve_prompt_identity(CAPTION_DESCRIBED).subject_rule.lower()
     for feature in (
-        "age", "face shape", "eye geometry", "eyebrow", "nose", "lip",
-        "jawline", "skin tone", "hair colour",
+        "age",
+        "face shape",
+        "eye geometry",
+        "eyebrow",
+        "nose",
+        "lip",
+        "jawline",
+        "skin tone",
+        "hair colour",
     ):
         assert feature in rule, f"rule thiếu yêu cầu tả {feature}"
 
@@ -208,7 +220,13 @@ def test_dang_2_khong_ta_lai_khuon_mat_da_khoa_thanh_chu():
     identity = resolve_prompt_identity(CAPTION_GIRL)
     phrase = identity.subject_phrase.lower()
     assert "identity lock" in phrase
-    for feature in ("oval face", "medium-large eyes", "double eyelid crease", "nasal bridge", "rounded chin"):
+    for feature in (
+        "oval face",
+        "medium-large eyes",
+        "double eyelid crease",
+        "nasal bridge",
+        "rounded chin",
+    ):
         assert feature not in phrase, f"câu tả chủ thể lặp lại {feature}"
     assert "not restate" in identity.subject_rule.lower()
 
@@ -232,7 +250,10 @@ def test_dang_3_giu_lock_reference():
 
 def test_dang_3_noi_ro_la_anh_dinh_kem():
     assert "the subject from the attached reference image" in _render_reference()
-    assert "must match the attached photo exactly" in resolve_prompt_identity(CAPTION_REFERENCE).subject_rule
+    assert (
+        "must match the attached photo exactly"
+        in resolve_prompt_identity(CAPTION_REFERENCE).subject_rule
+    )
 
 
 def test_dang_3_cam_bia_dac_diem_khuon_mat():

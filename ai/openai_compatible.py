@@ -5,6 +5,7 @@ không xin), gọi ảnh, check_status - chuẩn hoá lỗi thành OpenAICompati
 router9_client/groq_client/openrouter_client chỉ còn giữ phần đặc thù riêng
 (model mặc định, generate_realtime của Groq, catalog model của 9Router...).
 """
+
 import asyncio
 import base64
 import json
@@ -44,13 +45,34 @@ class ToolCallResponse:
 
 class ClientPool:
     """1 httpx.AsyncClient + 1 Semaphore dùng chung cho 1 nhánh provider,
-    khởi tạo lười ở lần gọi đầu (event loop chưa chạy lúc import module)."""
+    khởi tạo lười ở lần gọi đầu (event loop chưa chạy lúc import module).
 
-    def __init__(self, timeout_sec: float, max_concurrency: int) -> None:
+    ``timeout_sec`` là timeout từng pha của httpx (connect, đọc từng chunk) -
+    response stream nhỏ giọt không bao giờ chạm tới nó. ``total_timeout_sec``
+    chặn TỔNG thời gian 1 lượt gọi (kể cả chờ semaphore) qua ``bounded()``."""
+
+    def __init__(
+        self,
+        timeout_sec: float,
+        max_concurrency: int,
+        total_timeout_sec: Optional[float] = None,
+    ) -> None:
         self._timeout_sec = timeout_sec
         self._max_concurrency = max_concurrency
+        self._total_timeout_sec = total_timeout_sec
         self._client: Optional[httpx.AsyncClient] = None
         self._semaphore: Optional[asyncio.Semaphore] = None
+
+    async def bounded(self, label: str, call: Callable[[], Awaitable[Any]]) -> Any:
+        """Chạy ``call()`` trong total_timeout_sec; quá hạn -> TimeoutError (lớp
+        provider-chain coi như provider chậm, chuyển provider kế tiếp)."""
+        timeout = self._total_timeout_sec
+        if not timeout or timeout <= 0:
+            return await call()
+        try:
+            return await asyncio.wait_for(call(), timeout=timeout)
+        except TimeoutError as exc:
+            raise TimeoutError(f"{label}: quá {timeout:g}s (timeout tổng của lượt gọi)") from exc
 
     def get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -79,7 +101,9 @@ def build_messages(
         messages.append({"role": "system", "content": system_instruction})
     if history:
         for role, content in history:
-            messages.append({"role": "assistant" if role == "model" else "user", "content": content})
+            messages.append(
+                {"role": "assistant" if role == "model" else "user", "content": content}
+            )
     messages.append({"role": "user", "content": prompt})
     return messages
 
@@ -104,7 +128,7 @@ def _parse_sse_stream(raw: str) -> tuple[str, list[dict[str, Any]]]:
         line = line.strip()
         if not line.startswith("data:"):
             continue
-        payload = line[len("data:"):].strip()
+        payload = line[len("data:") :].strip()
         if not payload or payload == "[DONE]":
             continue
         try:
@@ -113,7 +137,9 @@ def _parse_sse_stream(raw: str) -> tuple[str, list[dict[str, Any]]]:
             continue
         if isinstance(chunk, dict) and chunk.get("error"):
             error = chunk["error"]
-            error_msg = str(error.get("message") or error) if isinstance(error, dict) else str(error)
+            error_msg = (
+                str(error.get("message") or error) if isinstance(error, dict) else str(error)
+            )
             continue
         for choice in chunk.get("choices", []):
             delta = choice.get("delta") or {}
@@ -133,13 +159,19 @@ def _parse_sse_stream(raw: str) -> tuple[str, list[dict[str, Any]]]:
                     call["name"] = str(fn["name"])
                 if fn.get("arguments"):
                     call["arguments"] += str(fn["arguments"])
-    tool_calls = _parse_tool_calls([
-        {
-            "id": call["id"] or f"call_{position}",
-            "function": {"name": call["name"], "arguments": call["arguments"]},
-        }
-        for position, call in sorted(calls_by_index.items())
-    ]) if calls_by_index else []
+    tool_calls = (
+        _parse_tool_calls(
+            [
+                {
+                    "id": call["id"] or f"call_{position}",
+                    "function": {"name": call["name"], "arguments": call["arguments"]},
+                }
+                for position, call in sorted(calls_by_index.items())
+            ]
+        )
+        if calls_by_index
+        else []
+    )
     text = "".join(pieces)
     if not text and error_msg:
         # Ném ở đây thay vì để caller nhận text rỗng: giữ nguyên thông điệp
@@ -194,10 +226,14 @@ async def post_chat_completion(
             text = parse_sse_content(response.text)
         else:
             completion_payload = response.json()
-            text = ((completion_payload.get("choices") or [{}])[0].get("message") or {}).get("content", "")
+            text = ((completion_payload.get("choices") or [{}])[0].get("message") or {}).get(
+                "content", ""
+            )
     except httpx.HTTPStatusError as exc:
         body = exc.response.text[:500]
-        raise OpenAICompatibleError(f"{provider_label} HTTP {exc.response.status_code}: {body}") from exc
+        raise OpenAICompatibleError(
+            f"{provider_label} HTTP {exc.response.status_code}: {body}"
+        ) from exc
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
         raise OpenAICompatibleError(f"{provider_label}: {type(exc).__name__}: {exc}") from exc
     if not text:
@@ -224,7 +260,9 @@ def _parse_tool_calls(raw_tool_calls: Optional[list[dict[str, Any]]]) -> list[di
             args = json.loads(raw_args) if isinstance(raw_args, str) and raw_args else {}
         except json.JSONDecodeError:
             args = {}
-        parsed.append({"id": call.get("id") or f"call_{len(parsed)}", "name": name, "arguments": args})
+        parsed.append(
+            {"id": call.get("id") or f"call_{len(parsed)}", "name": name, "arguments": args}
+        )
     return parsed
 
 
@@ -294,11 +332,15 @@ async def post_chat_completion_with_tools(
             tool_calls = _parse_tool_calls(message.get("tool_calls"))
     except httpx.HTTPStatusError as exc:
         body = exc.response.text[:500]
-        raise OpenAICompatibleError(f"{provider_label} HTTP {exc.response.status_code}: {body}") from exc
+        raise OpenAICompatibleError(
+            f"{provider_label} HTTP {exc.response.status_code}: {body}"
+        ) from exc
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
         raise OpenAICompatibleError(f"{provider_label}: {type(exc).__name__}: {exc}") from exc
     if not text and not tool_calls:
-        raise OpenAICompatibleError(f"{provider_label} trả kết quả rỗng (không text, không tool_calls)")
+        raise OpenAICompatibleError(
+            f"{provider_label} trả kết quả rỗng (không text, không tool_calls)"
+        )
     return ToolCallResponse(text, tool_calls)
 
 
@@ -341,18 +383,21 @@ async def generate_image_prompt(
             ],
         }
     ]
-    async with pool.get_semaphore():
-        text = await post_chat_completion(
-            pool.get_client(),
-            base_url=base_url,
-            api_key=api_key,
-            messages=messages,
-            model=vision_model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            provider_label=provider_label,
-        )
-    return Response(text)
+
+    async def _call() -> str:
+        async with pool.get_semaphore():
+            return await post_chat_completion(
+                pool.get_client(),
+                base_url=base_url,
+                api_key=api_key,
+                messages=messages,
+                model=vision_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider_label=provider_label,
+            )
+
+    return Response(await pool.bounded(provider_label, _call))
 
 
 async def check_status(

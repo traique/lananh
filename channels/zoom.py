@@ -4,6 +4,7 @@ Port gần như nguyên vẹn từ vietassist/channels/zoom.py, chỉ khác ở 
 core.config (module phẳng, os.getenv) thay vì core.config.settings (Pydantic
 object) - xem core/config.py::ZOOM_* của repo này.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -65,25 +66,54 @@ def verify_webhook_token(authorization_header: str) -> bool:
     return hmac.compare_digest(authorization_header, config.ZOOM_VERIFICATION_TOKEN)
 
 
+# Chống replay: chữ ký hợp lệ nhưng timestamp lệch quá 5 phút so với giờ server
+# thì từ chối (kẻ nghe lén được 1 request cũ không gửi lại được về sau).
+_WEBHOOK_MAX_SKEW_SEC = 300
+# Timestamp lớn hơn ngưỡng này coi là mili giây (giây hiện tại ~1.7e9, ms ~1.7e12).
+_MILLIS_THRESHOLD = 10**11
+
+
+def _timestamp_is_fresh(timestamp_header: str, now: float | None = None) -> bool:
+    """Zoom gửi x-zm-request-timestamp theo giây; vẫn chấp nhận mili giây phòng
+    khi Zoom đổi định dạng. Không phải số nguyên => coi như không hợp lệ."""
+    # Giới hạn độ dài: int() với chuỗi số rất dài sẽ ValueError (giới hạn 4300 chữ số).
+    if (
+        len(timestamp_header) > 16
+        or not timestamp_header.isascii()
+        or not timestamp_header.isdigit()
+    ):
+        return False
+    ts = int(timestamp_header)
+    ts_sec = ts / 1000 if ts > _MILLIS_THRESHOLD else float(ts)
+    current = time.time() if now is None else now
+    return abs(current - ts_sec) <= _WEBHOOK_MAX_SKEW_SEC
+
+
 def verify_webhook_signature(
-    signature_header: str, timestamp_header: str, raw_body: bytes
+    signature_header: str, timestamp_header: str, raw_body: bytes, *, now: float | None = None
 ) -> bool:
     """Xác thực webhook Zoom bằng chữ ký HMAC-SHA256 (cơ chế Secret Token + Event
     Subscriptions hiện hành trên Marketplace). Zoom ký message dạng
     "v0:{timestamp}:{raw_body}" bằng Secret Token, gửi kèm header:
       - x-zm-request-timestamp: timestamp dùng để ký
       - x-zm-signature: "v0=" + hex digest
+    Timestamp lệch quá _WEBHOOK_MAX_SKEW_SEC so với giờ server bị từ chối (replay).
     Xem: https://developers.zoom.us/docs/api/webhooks/#verify-webhook-events"""
     if not config.ZOOM_SECRET_TOKEN or not signature_header or not timestamp_header:
         return False
-    message = f"v0:{timestamp_header}:{raw_body.decode('utf-8')}"
+    if not _timestamp_is_fresh(timestamp_header, now):
+        return False
+    # Ký trên bytes gốc (timestamp đã chắc là chữ số ASCII): body không phải UTF-8
+    # hợp lệ chỉ ra chữ ký sai, không ném UnicodeDecodeError thành lỗi 500.
+    message = b"v0:" + timestamp_header.encode("ascii") + b":" + raw_body
     computed_hash = hmac.new(
         config.ZOOM_SECRET_TOKEN.encode("utf-8"),
-        message.encode("utf-8"),
+        message,
         hashlib.sha256,
     ).hexdigest()
     expected_signature = f"v0={computed_hash}"
-    return hmac.compare_digest(signature_header, expected_signature)
+    # So sánh bytes: header lạ chứa ký tự non-ASCII không làm compare_digest TypeError.
+    return hmac.compare_digest(signature_header.encode(), expected_signature.encode())
 
 
 def build_url_validation_response(plain_token: str) -> dict:
@@ -111,7 +141,9 @@ async def _fetch_access_token() -> tuple[str, int]:
         # Log rõ lý do Zoom từ chối (invalid_client, invalid_request...) thay vì chỉ
         # raise HTTPStatusError chung chung — giúp chẩn đoán nhanh sai client_id/secret/
         # scope hay app chưa activate.
-        logger.error("Zoom OAuth token request failed (%s): %s", response.status_code, response.text)
+        logger.error(
+            "Zoom OAuth token request failed (%s): %s", response.status_code, response.text
+        )
     response.raise_for_status()
     payload = response.json()
     return payload["access_token"], int(payload.get("expires_in", 3600))
@@ -375,15 +407,14 @@ def parse_event(payload: dict[str, object]) -> ZoomEvent | None:
     # nfc(): boundary nhận tin nhắn Zoom - xem core/text_normalize.py.
     text = nfc(
         str(
-            event_payload.get("cmd") or event_payload.get("message") or event_payload.get("content") or ""
+            event_payload.get("cmd")
+            or event_payload.get("message")
+            or event_payload.get("content")
+            or ""
         ).strip()
     )
-    sender_jid = str(
-        event_payload.get("userJid") or event_payload.get("user_jid") or ""
-    ).strip()
-    to_jid = str(
-        event_payload.get("toJid") or event_payload.get("to_jid") or sender_jid
-    ).strip()
+    sender_jid = str(event_payload.get("userJid") or event_payload.get("user_jid") or "").strip()
+    to_jid = str(event_payload.get("toJid") or event_payload.get("to_jid") or sender_jid).strip()
     channel_name = str(
         event_payload.get("channelName") or event_payload.get("channel_name") or ""
     ).strip()

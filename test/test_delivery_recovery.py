@@ -13,8 +13,7 @@ import web
 from channels import router, facebook_commands
 from channels.contracts import ZaloMessageRequest
 from core import database as db, idempotency, webhook_inbox
-from handlers import commands
-from services import concurrency, facebook_page_service as facebook
+from services import concurrency, facebook_page_service as facebook, price_search
 from services.channel_chat_service import ChannelResult
 from services.reminder_delivery import current_target, NotificationTarget, notification_target
 from services.request_limits import RequestLimitsMiddleware, MIB
@@ -235,7 +234,7 @@ async def test_link_checks_never_request_private_redirect(monkeypatch, redirect)
         return httpx.Response(302, headers={"location": redirect})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
-        assert await commands._check_url(client, "https://example.com/start") is None
+        assert await price_search._check_url(client, "https://example.com/start") is None
     assert requested == ["https://example.com/start"]
 
 
@@ -334,12 +333,17 @@ async def test_chunked_body_is_rejected_before_downstream_allocation():
 
 @pytest.mark.asyncio
 async def test_concurrent_large_media_receives_retryable_backpressure():
-    started, finish = asyncio.Event(), asyncio.Event()
+    """Chỉ 1 body lớn được GOM vào RAM cùng lúc: request lớn thứ 2 tới khi body
+    thứ nhất còn đang đọc dở -> 503 có Retry-After."""
+    body_gate = asyncio.Event()
+    reading = asyncio.Event()
 
-    async def app(*args):
-        started.set()
-        await finish.wait()
+    async def slow_receive():
+        reading.set()
+        await body_gate.wait()
+        return {"type": "http.request", "body": b"{}", "more_body": False}
 
+    app = AsyncMock()
     middleware = RequestLimitsMiddleware(app)
     scope = {
         "type": "http",
@@ -347,19 +351,103 @@ async def test_concurrent_large_media_receives_retryable_backpressure():
         "path": "/internal/zalo/facebook-group-post",
         "headers": [],
     }
-    receive = AsyncMock(return_value={"type": "http.request", "body": b"{}", "more_body": False})
-    first = asyncio.create_task(middleware(scope, receive, AsyncMock()))
-    await started.wait()
+    first = asyncio.create_task(middleware(scope, slow_receive, AsyncMock()))
+    await reading.wait()
     sent = []
 
     async def send(msg):
         sent.append(msg)
 
+    receive = AsyncMock(return_value={"type": "http.request", "body": b"{}", "more_body": False})
     await middleware(scope, receive, send)
     assert sent[0]["status"] == 503 and (b"retry-after", b"5") in sent[0]["headers"]
-    finish.set()
+    body_gate.set()
     await first
     assert not middleware.heavy_active
+
+
+@pytest.mark.asyncio
+async def test_heavy_flag_is_released_before_app_processing():
+    """Xử lý chậm (gọi AI) của 1 request media KHÔNG được chặn request media
+    khác hay đăng nhập admin."""
+    started, finish = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def app(scope, receive, send):
+        calls.append(scope["path"])
+        if len(calls) == 1:
+            started.set()
+            await finish.wait()
+
+    middleware = RequestLimitsMiddleware(app)
+    receive = AsyncMock(return_value={"type": "http.request", "body": b"{}", "more_body": False})
+    media = {"type": "http", "method": "POST", "path": "/internal/zalo/image-prompt", "headers": []}
+    first = asyncio.create_task(middleware(media, receive, AsyncMock()))
+    await started.wait()
+    assert not middleware.heavy_active
+    await middleware(dict(media, path="/internal/zalo/facebook-group-post"), receive, AsyncMock())
+    login = {
+        "type": "http",
+        "method": "POST",
+        "path": "/admin/login",
+        "headers": [(b"content-length", b"40")],
+    }
+    middleware.heavy_active = True  # dù đang có body lớn khác đọc dở
+    await middleware(login, receive, AsyncMock())
+    middleware.heavy_active = False
+    assert calls == [
+        "/internal/zalo/image-prompt",
+        "/internal/zalo/facebook-group-post",
+        "/admin/login",
+    ]
+    finish.set()
+    await first
+
+
+@pytest.mark.asyncio
+async def test_heavy_bodies_in_processing_are_capped_by_byte_budget(monkeypatch):
+    """Body lớn đã đọc xong nhưng app còn xử lý vẫn chiếm ngân sách
+    REQUEST_HEAVY_BUDGET_MB: vượt thì 503, xử lý xong thì nhả đúng số byte."""
+    monkeypatch.setenv("REQUEST_HEAVY_BUDGET_MB", "22")
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def app(scope, receive, send):
+        await receive()
+        started.set()
+        await finish.wait()
+
+    middleware = RequestLimitsMiddleware(app)
+    big = b"x" * (20 * 1024 * 1024)
+    receive_big = AsyncMock(return_value={"type": "http.request", "body": big, "more_body": False})
+    post = {
+        "type": "http",
+        "method": "POST",
+        "path": "/internal/zalo/facebook-group-post",
+        "headers": [(b"content-length", str(len(big)).encode())],
+    }
+    first = asyncio.create_task(middleware(post, receive_big, AsyncMock()))
+    await started.wait()
+    assert middleware.heavy_inflight == len(big)
+
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    image = {
+        "type": "http",
+        "method": "POST",
+        "path": "/internal/zalo/image-prompt",
+        "headers": [(b"content-length", str(3 * 1024 * 1024).encode())],
+    }
+    receive_small = AsyncMock(
+        return_value={"type": "http.request", "body": b"y" * 10, "more_body": False}
+    )
+    await middleware(image, receive_small, send)
+    assert sent[0]["status"] == 503  # 20 MB + 3 MB > 22 MB
+    finish.set()
+    await first
+    assert middleware.heavy_inflight == 0
 
 
 def test_long_lived_caches_are_bounded_and_expired_entries_are_pruned(monkeypatch):
@@ -378,10 +466,10 @@ def test_long_lived_caches_are_bounded_and_expired_entries_are_pruned(monkeypatc
     local = {str(i): (time.monotonic(), None) for i in range(128)}
     vci_direct._cached(local, "VCB", lambda: [1])
     assert len(local) == 128 and local["VCB"][1] == [1]
-    monkeypatch.setattr(commands, "_PRICE_CACHE", {})
+    monkeypatch.setattr(price_search, "_PRICE_CACHE", {})
     for i in range(200):
-        commands._set_cached_price(str(i), "quote")
-    assert len(commands._PRICE_CACHE) == 128
+        price_search.set_cached_price(str(i), "quote")
+    assert len(price_search._PRICE_CACHE) == 128
 
 
 @pytest.mark.asyncio

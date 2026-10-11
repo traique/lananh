@@ -16,16 +16,22 @@ tự core.config.PROVIDER_ORDER (mặc định router9 -> groq -> openrouter -> 
 - groq/openrouter/api1/api2 hết quota (429) -> cooldown API_QUOTA_COOLDOWN_SEC
   rồi tự thử lại; trong lúc đó dùng provider kế tiếp trong order.
 """
+
 import asyncio
 import logging
 import re
-from typing import Awaitable, Callable, Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Awaitable, Callable, Iterator, Optional
 
 from core import config, database as db
 from ai import openai_compatible, router9_client, groq_client, openrouter_client, official_client
 from ai import provider_overrides
 from ai import provider_state as provider_state_module
 from ai.provider_state import ProviderStateSnapshot, provider_state
+from ai.timeouts import TurnTimeoutError, bounded, remaining_turn_seconds, turn_deadline
+
+__all__ = ["TurnTimeoutError", "remaining_turn_seconds", "turn_deadline"]
 
 logger = logging.getLogger(__name__)
 call_lock = asyncio.Lock()
@@ -40,21 +46,82 @@ class OutputContaminatedError(RuntimeError):
 
 
 # Phạm vi Unicode của chữ Hán, Kana (Nhật) và Hangul (Hàn). Văn bản tiếng
-# Việt hợp lệ không bao giờ chứa các ký tự này, nên chỉ cần xuất hiện 1 ký tự
-# cũng đủ là dấu hiệu output bị lẫn ngôn ngữ - không cần ngưỡng phức tạp.
+# Việt bình thường không chứa các ký tự này.
 _CJK_RANGES = (
-    (0x4E00, 0x9FFF),   # CJK Unified Ideographs (Hán)
-    (0x3040, 0x30FF),   # Hiragana + Katakana (Nhật)
-    (0xAC00, 0xD7A3),   # Hangul syllables (Hàn)
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs (Hán)
+    (0x3040, 0x30FA),  # Hiragana + Katakana (Nhật), trừ dấu "・" "ー" hay bị dùng làm gạch đầu dòng
+    (0xAC00, 0xD7A3),  # Hangul syllables (Hàn)
 )
+# Ngưỡng ký tự CJK để coi là output lẫn ngôn ngữ: 1-3 chữ Hán chú thích kiểu
+# "chữ Nhẫn (忍)" trong câu trả lời tiếng Việt là hợp lệ, không được tính là lỗi.
+_CJK_CONTAMINATION_MIN_CHARS = 4
+# Đầu vào có các dấu hiệu này -> output CJK là CÓ CHỦ ĐÍCH (dịch sang tiếng
+# Nhật/Trung/Hàn, hỏi về chữ Hán...), không kiểm tra. Không dùng "nhật" trơn vì
+# trùng "cập nhật".
+_CJK_TARGET_HINTS = (
+    "tiếng nhật",
+    "nhật bản",
+    "tiếng trung",
+    "trung quốc",
+    "tiếng hoa",
+    "tiếng hàn",
+    "hàn quốc",
+    "chữ hán",
+    "hán tự",
+    "kanji",
+    "hiragana",
+    "katakana",
+    "furigana",
+    "japanese",
+    "chinese",
+    "korean",
+    "日本語",
+    "中文",
+    "한국어",
+)
+# Caller có thể chủ động cho phép output CJK (vd luồng dịch) qua allow_cjk_output().
+_cjk_allowed: ContextVar[bool] = ContextVar("cjk_output_allowed", default=False)
+
+
+def _count_cjk(text: str) -> int:
+    return sum(1 for ch in text if any(lo <= ord(ch) <= hi for lo, hi in _CJK_RANGES))
 
 
 def _contains_cjk(text: str) -> bool:
-    return any(any(lo <= ord(ch) <= hi for lo, hi in _CJK_RANGES) for ch in text)
+    return _count_cjk(text) > 0
 
 
-def _assert_output_clean(result, provider: str):
-    if isinstance(result, str) and _contains_cjk(result):
+def cjk_output_expected(*inputs: Optional[str]) -> bool:
+    """True nếu đầu vào cho thấy output CJK là hợp lệ: bản thân đầu vào có chữ
+    CJK (người dùng viết/dán tiếng Nhật, tài liệu tham chiếu dịch...) hoặc nhắc
+    tới ngôn ngữ/chữ viết CJK làm đích."""
+    for text in inputs:
+        if not text:
+            continue
+        if _contains_cjk(text):
+            return True
+        lowered = text.lower()
+        if any(hint in lowered for hint in _CJK_TARGET_HINTS):
+            return True
+    return False
+
+
+@contextmanager
+def allow_cjk_output() -> Iterator[None]:
+    """Tắt bộ lọc CJK cho các lượt gọi trong khối (luồng dịch sang ja/zh/ko)."""
+    token = _cjk_allowed.set(True)
+    try:
+        yield
+    finally:
+        _cjk_allowed.reset(token)
+
+
+def _assert_output_clean(result, provider: str, *, allow_cjk: bool = False):
+    if allow_cjk or _cjk_allowed.get():
+        return result
+    # Mọi client trả object có .text (Response/FallbackResponse); test cũ trả str.
+    text = result if isinstance(result, str) else getattr(result, "text", None)
+    if isinstance(text, str) and _count_cjk(text) >= _CJK_CONTAMINATION_MIN_CHARS:
         logger.warning(
             "%s trả output lẫn ký tự CJK (Trung/Nhật/Hàn) - coi như lỗi, chuyển provider kế tiếp.",
             provider,
@@ -80,7 +147,8 @@ def _call_timeout_sec() -> float:
 
 
 async def _run_with_call_timeout(call_fn):
-    return await asyncio.wait_for(call_fn(), timeout=_call_timeout_sec())
+    # Trần riêng của 9Router, đồng thời không vượt phần còn lại của hạn chót lượt.
+    return await bounded(call_fn, _call_timeout_sec())
 
 
 async def init_provider_state() -> None:
@@ -141,7 +209,7 @@ _FORCED_SEARCH_DIRECTIVE = (
     "Kèm theo thời điểm của số liệu và tên nguồn.\n"
     "3. Nếu tra không ra dữ liệu: nói thẳng là chưa tra được và DỪNG LẠI. "
     "TUYỆT ĐỐI KHÔNG đưa ra bất kỳ con số hay sự kiện nào từ trí nhớ, không ước "
-    "lượng, không suy diễn. Trả lời \"em chưa tra được\" là ĐÚNG; đoán một con "
+    'lượng, không suy diễn. Trả lời "em chưa tra được" là ĐÚNG; đoán một con '
     "số nghe hợp lý là SAI nghiêm trọng."
 )
 
@@ -189,6 +257,7 @@ async def _run_provider_chain(
     groq_call: Optional[Callable[[], Awaitable]] = None,
     openrouter_call: Optional[Callable[[], Awaitable]] = None,
     providers_override: Optional[list[str]] = None,
+    allow_cjk: bool = False,
 ):
     """Run providers in configured order with persisted health state.
 
@@ -196,7 +265,31 @@ async def _run_provider_chain(
     api1/api2/groq/openrouter đều single-try + cooldown-on-quota giống nhau,
     chỉ khác api_call() nhận idx (int) còn groq_call/openrouter_call() không
     nhận tham số - do api_call() đã có contract cũ (test_provider_chain.py).
+
+    Cả chuỗi chạy trong hạn chót CHAT_TURN_TIMEOUT_SEC (hoặc hạn sớm hơn do
+    caller đặt qua turn_deadline()); hết hạn -> TurnTimeoutError, không thử
+    provider kế tiếp nữa.
     """
+    with turn_deadline():
+        return await _run_provider_chain_within_deadline(
+            router9_call=router9_call,
+            api_call=api_call,
+            groq_call=groq_call,
+            openrouter_call=openrouter_call,
+            providers_override=providers_override,
+            allow_cjk=allow_cjk,
+        )
+
+
+async def _run_provider_chain_within_deadline(
+    *,
+    router9_call,
+    api_call,
+    groq_call: Optional[Callable[[], Awaitable]],
+    openrouter_call: Optional[Callable[[], Awaitable]],
+    providers_override: Optional[list[str]],
+    allow_cjk: bool,
+):
     await provider_state.ensure_loaded()
     order = providers_override if providers_override is not None else config.PROVIDER_ORDER
     generic_calls: dict[str, Optional[Callable[[], Awaitable]]] = {
@@ -206,23 +299,23 @@ async def _run_provider_chain(
 
     async def _attempt_router9():
         result = await _run_with_call_timeout(router9_call)
-        _assert_output_clean(result, "router9")
+        _assert_output_clean(result, "router9", allow_cjk=allow_cjk)
         await provider_state.mark_router9_alive()
         await provider_state.set_active_provider("router9")
         await _record_provider_call("router9")
         return result
 
     async def _attempt_api(idx: int):
-        result = await api_call(idx)
+        result = await bounded(lambda: api_call(idx))
         provider_name = f"api{idx}"
-        _assert_output_clean(result, provider_name)
+        _assert_output_clean(result, provider_name, allow_cjk=allow_cjk)
         await provider_state.set_active_provider(provider_name)
         await _record_provider_call(provider_name)
         return result
 
     async def _attempt_generic(name: str):
-        result = await generic_calls[name]()
-        _assert_output_clean(result, name)
+        result = await bounded(generic_calls[name])
+        _assert_output_clean(result, name, allow_cjk=allow_cjk)
         await provider_state.set_active_provider(name)
         await _record_provider_call(name)
         return result
@@ -248,13 +341,17 @@ async def _run_provider_chain(
             has_fallback = await _has_any_fallback_configured()
             try:
                 return await _attempt_router9()
+            except TurnTimeoutError:
+                raise
             except asyncio.TimeoutError as exc:
                 # Timeout nghĩa là router9 đã treo đủ lâu - retry cùng ngân
                 # sách chỉ nhân đôi thời gian chờ trước khi fallback.
                 last_exc = exc
                 if not has_fallback:
                     raise
-                logger.warning("9Router timeout sau %ss; chuyển provider luôn.", _call_timeout_sec())
+                logger.warning(
+                    "9Router timeout sau %ss; chuyển provider luôn.", _call_timeout_sec()
+                )
                 await provider_state.mark_router9_dead()
             except Exception as exc:
                 last_exc = exc
@@ -264,6 +361,8 @@ async def _run_provider_chain(
                 )
                 try:
                     return await _attempt_router9()
+                except TurnTimeoutError:
+                    raise
                 except Exception as retry_exc:
                     last_exc = retry_exc
                     if not has_fallback:
@@ -284,6 +383,8 @@ async def _run_provider_chain(
                 continue
             try:
                 return await _attempt_api(idx)
+            except TurnTimeoutError:
+                raise
             except Exception as exc:
                 if official_client.is_quota_exhausted_error(exc):
                     await provider_state.mark_api_exhausted(provider)
@@ -303,6 +404,8 @@ async def _run_provider_chain(
                 continue
             try:
                 return await _attempt_generic(provider)
+            except TurnTimeoutError:
+                raise
             except Exception as exc:
                 if openai_compatible.is_rate_limited(exc):
                     await provider_state.mark_api_exhausted(provider)
@@ -319,14 +422,15 @@ async def _run_provider_chain(
                 return await _attempt_api(1 if provider == "api1" else 2)
             if generic_calls.get(provider) is not None:
                 return await _attempt_generic(provider)
+        except TurnTimeoutError:
+            raise
         except Exception as exc:
             last_exc = exc
 
     if last_exc is not None:
         raise last_exc
     raise RuntimeError(
-        "Không có provider nào khả dụng (tất cả lỗi, chưa cấu hình, "
-        "hoặc đang cooldown quota)."
+        "Không có provider nào khả dụng (tất cả lỗi, chưa cấu hình, hoặc đang cooldown quota)."
     )
 
 
@@ -350,9 +454,8 @@ async def ask(
     """
     if require_real_search and providers_override is None:
         providers_override = await _search_only_providers()
-    effective_prompt = (
-        f"{_FORCED_SEARCH_DIRECTIVE}\n\n{prompt}" if require_real_search else prompt
-    )
+    allow_cjk = cjk_output_expected(prompt)
+    effective_prompt = f"{_FORCED_SEARCH_DIRECTIVE}\n\n{prompt}" if require_real_search else prompt
     model_name = model or await router9_client.get_preferred_model_name()
 
     async def _router9_call():
@@ -388,6 +491,7 @@ async def ask(
         groq_call=_groq_call,
         openrouter_call=_openrouter_call,
         providers_override=providers_override,
+        allow_cjk=allow_cjk,
     )
 
 
@@ -399,6 +503,9 @@ async def chat(
     require_real_search: bool = False,
 ):
     """Chat with shared history/memory through the provider chain."""
+    # Hồ sơ chủ bot trong persona (user_profile) chỉ dành cho chủ bot; Zalo
+    # member (id âm) nhận persona không có mục đó.
+    persona = config.load_chat_skill(include_owner_profile=config.is_owner_user_id(user_id))
     full_prompt = prompt
     if grounding:
         full_prompt = f"{grounding}\n\n{full_prompt}"
@@ -418,7 +525,7 @@ async def chat(
         preferred_model = await router9_client.get_preferred_model_name()
         return await router9_client.generate(
             prompt_with_time,
-            system_instruction=config.load_chat_skill(),
+            system_instruction=persona,
             history=history,
             model=preferred_model,
             temperature=0.95,
@@ -433,7 +540,7 @@ async def chat(
         prompt_with_time = f"{official_client.now_vn_context()}\n{full_prompt}"
         return await groq_client.generate(
             prompt_with_time,
-            system_instruction=config.load_chat_skill(),
+            system_instruction=persona,
             history=history,
             temperature=0.95,
         )
@@ -445,7 +552,7 @@ async def chat(
         prompt_with_time = f"{official_client.now_vn_context()}\n{full_prompt}"
         return await openrouter_client.generate(
             prompt_with_time,
-            system_instruction=config.load_chat_skill(),
+            system_instruction=persona,
             history=history,
             temperature=0.95,
         )
@@ -461,20 +568,23 @@ async def chat(
         return await official_client.generate(
             idx,
             full_prompt,
-            system_instruction=config.load_chat_skill(),
+            system_instruction=persona,
             history=history,
             persona_generation_config=True,
             enable_search=True,
         )
 
     providers_override = await _search_only_providers() if require_real_search else None
-    return _strip_citations(await _run_provider_chain(
-        router9_call=_router9_call,
-        api_call=_api_call,
-        groq_call=_groq_call,
-        openrouter_call=_openrouter_call,
-        providers_override=providers_override,
-    ))
+    return _strip_citations(
+        await _run_provider_chain(
+            router9_call=_router9_call,
+            api_call=_api_call,
+            groq_call=_groq_call,
+            openrouter_call=_openrouter_call,
+            providers_override=providers_override,
+            allow_cjk=cjk_output_expected(prompt, grounding),
+        )
+    )
 
 
 async def reset_chat() -> None:
@@ -504,6 +614,7 @@ async def analyze_image(instruction: str, image_path: str):
         api_call=_api_call,
         groq_call=_groq_call,
         openrouter_call=_openrouter_call,
+        allow_cjk=cjk_output_expected(instruction),
     )
 
 

@@ -6,13 +6,14 @@ active_provider chỉ mang tính tham khảo/hiển thị (/status) - quyết đ
 sự ở mỗi request dựa trên router9_dead_since/api_exhausted_until (xem
 ai/orchestrator.py: _run_provider_chain).
 """
+
 import asyncio
 import logging
 import time
 from typing import Awaitable, Callable, Optional, TypedDict
 
 import messages
-from core import config
+from core import alerts, config
 from core import database as db
 
 logger = logging.getLogger(__name__)
@@ -39,25 +40,18 @@ class ProviderStateSnapshot(TypedDict):
 # ─── Cảnh báo Telegram khi 9Router chết/sống lại ─────────────────────────────
 # Module này không có sẵn bot/chat_id (tránh vòng import với handlers/bot_app)
 # - tầng khởi tạo bot đăng ký 1 callback async nhận text, gọi
-# set_alert_callback(fn) đúng 1 lần lúc bot_app.build_application().
-_alert_callback: Optional[Callable[[str], Awaitable[None]]] = None
-_background_tasks: set[asyncio.Task] = set()
+# set_alert_callback(fn) đúng 1 lần lúc bot_app.build_application(). Callback
+# được chuyển sang core.alerts để webhook inbox/migrations (tầng core) dùng
+# chung, không cần bot_app đăng ký thêm chỗ nào.
+_background_tasks: set[asyncio.Task] = alerts.tasks
 
 
 def set_alert_callback(fn: Callable[[str], Awaitable[None]]) -> None:
-    global _alert_callback
-    _alert_callback = fn
+    alerts.set_callback(fn)
 
 
 def send_alert(text: str) -> None:
-    if _alert_callback is None:
-        return
-    try:
-        task = asyncio.create_task(_alert_callback(text))
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
-    except Exception:
-        logger.warning("Không gửi được cảnh báo qua Telegram.", exc_info=True)
+    alerts.send(text)
 
 
 class ProviderChainState:
@@ -108,7 +102,10 @@ class ProviderChainState:
             self._loaded = True
             logger.info(
                 "Provider-chain state đã nạp: active=%s, router9_dead_since=%s, router9_enabled=%s, api_exhausted=%s",
-                self.active_provider, self.router9_dead_since, self.router9_enabled, self.api_exhausted_until,
+                self.active_provider,
+                self.router9_dead_since,
+                self.router9_enabled,
+                self.api_exhausted_until,
             )
 
     async def set_active_provider(self, name: str) -> None:

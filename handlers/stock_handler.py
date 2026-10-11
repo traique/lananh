@@ -45,11 +45,16 @@ async def maybe_handle(update, user_id: int, text: str) -> StockRouteResult:
     return StockRouteResult(handled=False, grounding=grounding)
 
 
-async def _handle_portfolio_analysis(update, user_id: int, symbols: list[str], user_text: str) -> None:
+async def _handle_portfolio_analysis(
+    update, user_id: int, symbols: list[str], user_text: str
+) -> None:
     prompt_id = await telemetry.start(user_id, "portfolio_analysis", ",".join(symbols))
     status = await update.message.reply_text("🔍 Đang soi danh mục cho anh, đợi em xíu nha...")
     try:
-        result_text = await stock_analysis.analyze_portfolio(symbols, user_text, user_id=user_id)
+        # Telegram chỉ phục vụ chủ bot (@common.restricted) -> bản đầy đủ.
+        result_text = await stock_analysis.analyze_portfolio(
+            symbols, user_text, user_id=user_id, full_access=True
+        )
         await telemetry.success(prompt_id, "portfolio_analysis", result_text)
         await common.reply_long_text(update.message, result_text)
     except Exception as exc:
@@ -68,11 +73,16 @@ async def _handle_full_analysis(update, user_id: int, symbols: list[str], user_t
         prompt_id = await telemetry.start(user_id, "stock_analysis", symbol)
         status = await update.message.reply_text(f"🔍 Đang phân tích {symbol}...")
         try:
+
             async def send_rule_report(text: str) -> None:
                 await common.reply_long_text(update.message, text)
 
             result_text = await stock_analysis.analyze_symbol(
-                symbol, user_text=user_text, user_id=user_id, on_rule_report=send_rule_report,
+                symbol,
+                user_text=user_text,
+                user_id=user_id,
+                on_rule_report=send_rule_report,
+                full_access=True,
             )
             if result_text:
                 await telemetry.success(prompt_id, "stock_analysis", result_text)
@@ -92,11 +102,15 @@ async def _handle_full_analysis(update, user_id: int, symbols: list[str], user_t
                 logger.debug("Không xóa được status phân tích %s", symbol, exc_info=True)
 
 
-async def _handle_persona_view(update, user_id: int, symbols: list[str], persona_ids: list[str], user_text: str) -> None:
+async def _handle_persona_view(
+    update, user_id: int, symbols: list[str], persona_ids: list[str], user_text: str
+) -> None:
     prompt_id = await telemetry.start(user_id, "persona_view", ",".join(symbols))
     try:
         results = [
-            await stock_analysis.analyze_persona(symbol, persona_ids, user_text, user_id=user_id)
+            await stock_analysis.analyze_persona(
+                symbol, persona_ids, user_text, user_id=user_id, full_access=True
+            )
             for symbol in symbols
         ]
         text = "\n\n".join(r for r in results if r)
@@ -105,11 +119,15 @@ async def _handle_persona_view(update, user_id: int, symbols: list[str], persona
             await common.reply_long_text(update.message, text)
         else:
             await telemetry.failure(prompt_id, "persona_view", RuntimeError("empty persona view"))
-            await update.message.reply_text(messages.STOCK_ANALYZE_FAILED.format(symbol=", ".join(symbols)))
+            await update.message.reply_text(
+                messages.STOCK_ANALYZE_FAILED.format(symbol=", ".join(symbols))
+            )
     except Exception as exc:
         logger.exception("Lỗi góc nhìn persona %s", ", ".join(symbols))
         await telemetry.failure(prompt_id, "persona_view", exc)
-        await update.message.reply_text(messages.STOCK_ANALYZE_FAILED.format(symbol=", ".join(symbols)))
+        await update.message.reply_text(
+            messages.STOCK_ANALYZE_FAILED.format(symbol=", ".join(symbols))
+        )
 
 
 async def _handle_price_quote(update, user_id: int, symbols: list[str]) -> None:

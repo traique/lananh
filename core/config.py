@@ -110,6 +110,11 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
 GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b").strip()
 GROQ_REALTIME_MODEL = os.getenv("GROQ_REALTIME_MODEL", "groq/compound-mini").strip()
 GROQ_CALL_TIMEOUT_SEC = _env_int("GROQ_CALL_TIMEOUT_SEC", 30)
+# GROQ_CALL_TIMEOUT_SEC chỉ là timeout từng pha của httpx (connect/đọc từng
+# chunk) - với response stream nhỏ giọt nó không bao giờ hết hạn. Biến dưới
+# chặn TỔNG thời gian 1 lượt gọi (kể cả chờ semaphore) để provider-chain
+# chắc chắn chuyển tiếp được.
+GROQ_TOTAL_TIMEOUT_SEC = _env_int("GROQ_TOTAL_TIMEOUT_SEC", 90)
 GROQ_MAX_CONCURRENCY = _env_int("GROQ_MAX_CONCURRENCY", 4)
 
 # OpenRouter — gateway OpenAI-compatible miễn phí, provider thứ 3 của
@@ -123,8 +128,12 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a
 # OpenRouter (không khớp bất kỳ slug nào trong openrouter.ai/collections/free-models
 # - mọi request sẽ trả 400 "model not found"). google/gemma-4-26b-a4b-it:free
 # là model Gemma 4 free hiện có, hỗ trợ vision (ảnh + video) trên OpenRouter.
-OPENROUTER_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", "google/gemma-4-26b-a4b-it:free").strip()
+OPENROUTER_VISION_MODEL = os.getenv(
+    "OPENROUTER_VISION_MODEL", "google/gemma-4-26b-a4b-it:free"
+).strip()
 OPENROUTER_CALL_TIMEOUT_SEC = _env_int("OPENROUTER_CALL_TIMEOUT_SEC", 30)
+# Chặn tổng thời gian 1 lượt gọi OpenRouter - xem chú thích GROQ_TOTAL_TIMEOUT_SEC.
+OPENROUTER_TOTAL_TIMEOUT_SEC = _env_int("OPENROUTER_TOTAL_TIMEOUT_SEC", 90)
 OPENROUTER_MAX_CONCURRENCY = _env_int("OPENROUTER_MAX_CONCURRENCY", 4)
 
 # Tavily — web search dùng làm grounding cho chat, bật/tắt qua lệnh
@@ -161,6 +170,9 @@ TAVILY_MAX_RESULTS = _env_int("TAVILY_MAX_RESULTS", 5)
 WEB_READER_TIMEOUT_SEC = _env_int("WEB_READER_TIMEOUT_SEC", 20)
 WEB_READER_MAX_CHARS = _env_int("WEB_READER_MAX_CHARS", 6000)
 RSS_READER_MAX_ITEMS = _env_int("RSS_READER_MAX_ITEMS", 8)
+# Trần số byte tải về cho 1 trang/feed (đọc dạng stream, dừng ngay khi vượt) -
+# 1 link PDF/video vài chục MB không được phép nạp trọn vào RAM 512 MB.
+WEB_READER_MAX_BYTES = max(64 * 1024, _env_int("WEB_READER_MAX_BYTES", 2 * 1024 * 1024))
 
 
 # ─── Provider-chain (router9 -> groq -> openrouter -> api1 -> api2) + trí nhớ
@@ -175,6 +187,17 @@ ROUTER9_PROBE_INTERVAL_SEC = _env_int(
     "ROUTER9_PROBE_INTERVAL_SEC", _env_int("COOKIE_PROBE_INTERVAL_SEC", 900)
 )  # 15 phút
 API_QUOTA_COOLDOWN_SEC = _env_int("API_QUOTA_COOLDOWN_SEC", 3600)  # 60 phút
+# Hạn chót TỔNG cho 1 lượt trả lời qua provider-chain (mọi provider + lượt thử
+# lại cộng dồn). Phải nhỏ hơn 240s - thời gian zalo-gateway chờ /message trước
+# khi bỏ cuộc - để người dùng nhận được thông báo lỗi rõ ràng thay vì im lặng
+# và slot MAX_CONCURRENT_TURNS được trả lại.
+CHAT_TURN_TIMEOUT_SEC = max(30, min(230, _env_int("CHAT_TURN_TIMEOUT_SEC", 200)))
+
+# Webhook inbox (core/webhook_inbox.py): số lần thử tối đa cho 1 sự kiện
+# Telegram/Zoom trước khi chuyển DEAD (ngừng thử, báo chủ bot 1 lần), và số
+# ngày giữ dòng DEAD để tra cứu trước khi xoá.
+WEBHOOK_MAX_ATTEMPTS = max(1, _env_int("WEBHOOK_MAX_ATTEMPTS", 8))
+WEBHOOK_DEAD_RETENTION_DAYS = max(1, _env_int("WEBHOOK_DEAD_RETENTION_DAYS", 14))
 
 # services/monitor_service.py::_monitor_loop() - chu kỳ kiểm tra "TOÀN BỘ
 # provider trong PROVIDER_ORDER cùng lúc không dùng được" (router9 chết/tắt
@@ -237,7 +260,9 @@ _MORNING_NEWS_RSS_FEEDS_RAW = os.getenv(
     "https://tuoitre.vn/home.rss,"
     "https://genk.vn/rss/home.rss",
 )
-MORNING_NEWS_RSS_FEEDS = [url.strip() for url in _MORNING_NEWS_RSS_FEEDS_RAW.split(",") if url.strip()]
+MORNING_NEWS_RSS_FEEDS = [
+    url.strip() for url in _MORNING_NEWS_RSS_FEEDS_RAW.split(",") if url.strip()
+]
 
 # Giờ đăng (giờ VN, dạng HH:MM, nhiều mốc cách nhau bằng dấu phẩy) của Page chứng
 # khoán riêng - xem services/market_page.py. Giá trị sai định dạng thì dùng mặc định.
@@ -251,7 +276,9 @@ TRANSLATE_REFERENCE_PATH = os.getenv("TRANSLATE_REFERENCE_PATH", "translate_refe
 # Giới hạn độ dài nội dung /dich (ký tự): đoạn quá dài dễ vượt timeout 9Router
 # và chết giữa chừng - chặn trước với thông báo thân thiện thay vì lỗi mờ nhạt.
 TRANSLATE_MAX_CHARS = _env_int("TRANSLATE_MAX_CHARS", 4000)
-_CHAT_SKILL_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "chat_skill_prompt.j2"
+_CHAT_SKILL_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent.parent / "templates" / "chat_skill_prompt.j2"
+)
 
 # Jinja Environment dựng 1 lần ở module level (thay vì mỗi lần render), giống
 # cách stock_analysis.py compile template của nó. Environment tự cache template
@@ -262,10 +289,11 @@ _CHAT_SKILL_ENV = jinja2.Environment(
     lstrip_blocks=True,
 )
 
-_chat_skill_cache: str | None = None
+# Cache theo biến thể: True = có hồ sơ chủ bot (user_profile), False = không.
+_chat_skill_cache: dict[bool, str] = {}
 
 
-def _render_chat_skill() -> str:
+def _render_chat_skill(include_owner_profile: bool = True) -> str:
     """Đọc + render persona từ đĩa. Không cache — xem load_chat_skill()."""
     try:
         raw = CHAT_SKILL_PATH.read_text(encoding="utf-8")
@@ -283,13 +311,14 @@ def _render_chat_skill() -> str:
             tv=data["tone_of_voice"],
             rules=data["rules"],
             cm=data["content_modes"],
+            include_owner_profile=include_owner_profile,
         ).strip()
     except Exception:
         logger.exception("Lỗi parse/render chat_skill.yaml, dùng nội dung thô làm dự phòng.")
         return raw.strip()
 
 
-def load_chat_skill(force_reload: bool = False) -> str:
+def load_chat_skill(force_reload: bool = False, *, include_owner_profile: bool = True) -> str:
     """Nạp persona/rules cho chat tự nhiên. Định dạng mặc định là YAML có
     cấu trúc (chat_skill.yaml), render qua templates/chat_skill_prompt.j2
     thành system_instruction gửi cho Gemini. Nếu CHAT_SKILL_PATH trỏ tới
@@ -302,11 +331,24 @@ def load_chat_skill(force_reload: bool = False) -> str:
     tĩnh, chỉ đổi khi deploy lại.
 
     Truyền force_reload=True để bỏ cache và đọc lại từ đĩa.
+
+    ``include_owner_profile=False`` bỏ mục user_profile (hồ sơ CHỦ BOT) khỏi
+    persona - bắt buộc cho mọi người dùng không phải chủ bot (Zalo member),
+    nếu không thông tin chủ bot tự điền sẽ lộ sang họ.
     """
-    global _chat_skill_cache
-    if _chat_skill_cache is None or force_reload:
-        _chat_skill_cache = _render_chat_skill()
-    return _chat_skill_cache
+    if force_reload:
+        _chat_skill_cache.clear()
+    cached = _chat_skill_cache.get(include_owner_profile)
+    if cached is None:
+        cached = _render_chat_skill(include_owner_profile)
+        _chat_skill_cache[include_owner_profile] = cached
+    return cached
+
+
+def is_owner_user_id(user_id: int) -> bool:
+    """Chủ bot = ALLOWED_USER_ID (Telegram và Zoom dùng chung). Zalo user mang
+    internal_user_id ÂM nên không bao giờ khớp."""
+    return bool(ALLOWED_USER_ID) and user_id == ALLOWED_USER_ID
 
 
 # ─── Zoom Team Chat (webhook, chữ ký, gửi tin, pairing) ─────────────────────
@@ -344,8 +386,7 @@ WEBHOOK_PATH = "/webhook"
 DIAGNOSE_PATH = "/diagnose"
 
 WEBHOOK_BASE_URL = (
-    os.getenv("WEBHOOK_BASE_URL", "").strip()
-    or os.getenv("RENDER_EXTERNAL_URL", "").strip()
+    os.getenv("WEBHOOK_BASE_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()
 )
 
 # Khoá mã hoá đối xứng (Fernet) dùng để mã hoá các giá trị nhạy cảm (vd
@@ -409,6 +450,6 @@ def validate(require_webhook: bool = False) -> None:
     except Exception as exc:
         raise RuntimeError(
             "SETTINGS_ENC_KEY không hợp lệ; cần Fernet key URL-safe base64 44 ký tự. "
-            "Tạo bằng: python -c \"from cryptography.fernet import Fernet; "
-            "print(Fernet.generate_key().decode())\""
+            'Tạo bằng: python -c "from cryptography.fernet import Fernet; '
+            'print(Fernet.generate_key().decode())"'
         ) from exc

@@ -2,6 +2,7 @@
 singleton, và logic ranh giới phiên chat (get_session_messages) - dùng fake
 pool thay vì Postgres thật, vì đây là logic Python thuần (không phải test
 câu SQL)."""
+
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,6 +16,7 @@ from core import database as db  # noqa: E402
 
 
 # ─── _with_reconnect ─────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_with_reconnect_thu_lai_1_lan_khi_loi_ket_noi_roi_thanh_cong(monkeypatch):
@@ -120,6 +122,7 @@ async def test_with_reconnect_van_retry_insert_khi_chua_gui_lenh(monkeypatch):
 
 # ─── get_pool: singleton ─────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_get_pool_chi_tao_pool_1_lan(monkeypatch):
     monkeypatch.setattr(db, "_pool", None)
@@ -140,6 +143,7 @@ async def test_get_pool_chi_tao_pool_1_lan(monkeypatch):
 
 
 # ─── get_session_messages: ranh giới phiên theo session_timeout_sec ─────────
+
 
 class _FakePool:
     def __init__(self, rows):
@@ -200,10 +204,7 @@ async def test_get_session_messages_tin_gan_nhat_da_qua_han_tra_rong(monkeypatch
 async def test_get_session_messages_gioi_han_dung_k(monkeypatch):
     now = datetime.now(timezone.utc)
     # 5 tin cùng phiên (cách nhau 10s, không vượt session_timeout_sec), giới hạn k=2.
-    rows = [
-        _row("model", f"tin {i}", now - timedelta(seconds=10 * i))
-        for i in range(5)
-    ]
+    rows = [_row("model", f"tin {i}", now - timedelta(seconds=10 * i)) for i in range(5)]
     monkeypatch.setattr(db, "get_pool", _fake_get_pool_factory(rows))
 
     result = await db.get_session_messages(telegram_user_id=1, k=2, session_timeout_sec=3600)
@@ -218,136 +219,3 @@ def _fake_get_pool_factory(rows):
         return pool
 
     return fake_get_pool
-
-
-# ─── add_chat_embedding: insert + trim cùng 1 transaction (#3) ──────────────
-
-class _FakeConn:
-    def __init__(self, log: list[tuple]):
-        self._log = log
-
-    async def execute(self, query, *args):
-        self._log.append((" ".join(query.split()), args))
-
-    def transaction(self):
-        return _NullAsyncCtx()
-
-
-class _NullAsyncCtx:
-    async def __aenter__(self):
-        return None
-
-    async def __aexit__(self, *exc):
-        return False
-
-
-class _FakeAcquirePool:
-    def __init__(self, log: list[tuple]):
-        self._log = log
-
-    def acquire(self):
-        return _AcquireCtx(self._log)
-
-
-class _AcquireCtx:
-    def __init__(self, log: list[tuple]):
-        self._log = log
-
-    async def __aenter__(self):
-        return _FakeConn(self._log)
-
-    async def __aexit__(self, *exc):
-        return False
-
-
-@pytest.mark.asyncio
-async def test_add_chat_embedding_insert_va_trim_cung_transaction(monkeypatch):
-    log: list[tuple] = []
-    monkeypatch.setattr(db, "VECTOR_ENABLED", True)
-
-    async def fake_get_pool():
-        return _FakeAcquirePool(log)
-
-    monkeypatch.setattr(db, "get_pool", fake_get_pool)
-
-    await db.add_chat_embedding(1, "noi dung", [0.1, 0.2])
-
-    assert len(log) == 2
-    assert log[0][0].startswith("INSERT INTO chat_embeddings")
-    assert log[1][0].startswith("DELETE FROM chat_embeddings")
-    assert log[1][1][-1] == db.CHAT_EMBEDDINGS_RETENTION_LIMIT
-
-
-@pytest.mark.asyncio
-async def test_add_chat_embedding_tat_khi_vector_disabled(monkeypatch):
-    log: list[tuple] = []
-    monkeypatch.setattr(db, "VECTOR_ENABLED", False)
-
-    async def fail_get_pool():
-        pytest.fail("get_pool() không được gọi khi VECTOR_ENABLED=False")
-
-    monkeypatch.setattr(db, "get_pool", fail_get_pool)
-
-    await db.add_chat_embedding(1, "noi dung", [0.1, 0.2])
-    assert log == []
-
-
-# ─── semantic_search: lọc theo max_distance (#9) ─────────────────────────────
-
-class _FakeFetchPool:
-    def __init__(self, captured: dict):
-        self._captured = captured
-
-    async def fetch(self, query, *args):
-        self._captured["query"] = " ".join(query.split())
-        self._captured["args"] = args
-        return [{"content": "doan cu"}]
-
-
-@pytest.mark.asyncio
-async def test_semantic_search_truyen_dung_nguong_max_distance(monkeypatch):
-    captured: dict = {}
-    monkeypatch.setattr(db, "VECTOR_ENABLED", True)
-
-    async def fake_get_pool():
-        return _FakeFetchPool(captured)
-
-    monkeypatch.setattr(db, "get_pool", fake_get_pool)
-
-    result = await db.semantic_search(1, [0.1, 0.2], top_k=3, max_distance=0.4)
-
-    assert result == ["doan cu"]
-    assert "embedding <=> $2 < $4" in captured["query"]
-    assert captured["args"] == (1, [0.1, 0.2], 3, 0.4)
-
-
-@pytest.mark.asyncio
-async def test_semantic_search_tat_khi_vector_disabled(monkeypatch):
-    async def fail_get_pool():
-        pytest.fail("get_pool() không được gọi khi VECTOR_ENABLED=False")
-
-    monkeypatch.setattr(db, "VECTOR_ENABLED", False)
-    monkeypatch.setattr(db, "get_pool", fail_get_pool)
-
-    assert await db.semantic_search(1, [0.1, 0.2]) == []
-
-
-# ─── clear_chat_embeddings (#4 - dọn theo /forget) ──────────────────────────
-
-@pytest.mark.asyncio
-async def test_clear_chat_embeddings_xoa_dung_user(monkeypatch):
-    calls = []
-
-    class _P:
-        async def execute(self, query, *args):
-            calls.append((query, args))
-
-    async def fake_get_pool():
-        return _P()
-
-    monkeypatch.setattr(db, "get_pool", fake_get_pool)
-
-    await db.clear_chat_embeddings(42)
-
-    assert calls[0][1] == (42,)
-    assert "DELETE FROM chat_embeddings" in calls[0][0]

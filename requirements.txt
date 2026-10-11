@@ -6,7 +6,6 @@ fastapi==0.110.0
 python-multipart==0.0.9
 uvicorn[standard]==0.29.0
 asyncpg==0.29.0
-pgvector==0.3.0
 tzdata==2024.1
 # vnstock >=4: GraphQL cũ (trading.vietcap.com.vn/data-mt/graphql) bị VCI tắt
 # -> vnstock 3.5.1 chết KeyError 'data' cho mọi mã; các method Finance công khai

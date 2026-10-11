@@ -1,4 +1,4 @@
-"""Test cho 3 trường hợp của /prompt trong handlers/commands.py.
+"""Test cho 3 trường hợp của /prompt (services/prompt_templates.py).
 
 Đi qua đúng con đường code thật đi (resolve_prompt_identity + render_instruction)
 thay vì tự dựng field bằng tay, để không lặp lại bug NameError từng lọt qua test
@@ -10,12 +10,13 @@ chủ động đính kèm ảnh của mình trên app Gemini (trường hợp "m
 Cả 3 trường hợp đều phải bắt buộc tả khung hình, dáng người, chất ảnh và
 ống kính - thiếu chúng thì Gemini đẻ ra ảnh ngang, chủ thể bé tí ở giữa khung.
 """
+
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from handlers.prompt_identity import (  # noqa: E402
+from services.prompt_identity import (  # noqa: E402
     GIRL_KEYWORDS,
     IDENTITY_LOCK_GIRL,
     IDENTITY_LOCK_REFERENCE,
@@ -26,7 +27,9 @@ from handlers.prompt_identity import (  # noqa: E402
 
 from _prompt_render import read_string_constant  # noqa: E402
 
-TEXT_PROMPT_INSTRUCTION_BASE = read_string_constant("handlers/commands.py", "TEXT_PROMPT_INSTRUCTION_BASE")
+TEXT_PROMPT_INSTRUCTION_BASE = read_string_constant(
+    "services/prompt_templates.py", "TEXT_PROMPT_INSTRUCTION_BASE"
+)
 
 DESC_DESCRIBED = "cô gái đứng trước nhà"
 DESC_GIRL = "cô gái 20 đứng trước nhà"
@@ -170,8 +173,15 @@ def test_th1_cam_tro_toi_anh_vi_khong_he_co_anh():
 def test_th1_bat_ta_du_dac_diem_khuon_mat():
     rule = resolve_prompt_identity(DESC_DESCRIBED).subject_rule.lower()
     for feature in (
-        "age", "face shape", "eye geometry", "eyebrow", "nose", "lip",
-        "jawline", "skin tone", "hair colour",
+        "age",
+        "face shape",
+        "eye geometry",
+        "eyebrow",
+        "nose",
+        "lip",
+        "jawline",
+        "skin tone",
+        "hair colour",
     ):
         assert feature in rule, f"rule thiếu yêu cầu tả {feature}"
 
@@ -191,13 +201,22 @@ def test_th2_khong_ta_lai_khuon_mat_da_khoa_thanh_chu():
     identity = resolve_prompt_identity(DESC_GIRL, context="text")
     phrase = identity.subject_phrase.lower()
     assert "identity lock" in phrase
-    for feature in ("oval face", "medium-large eyes", "double eyelid crease", "nasal bridge", "rounded chin"):
+    for feature in (
+        "oval face",
+        "medium-large eyes",
+        "double eyelid crease",
+        "nasal bridge",
+        "rounded chin",
+    ):
         assert feature not in phrase, f"câu tả chủ thể lặp lại {feature}"
     assert "not" in identity.subject_rule.lower() and "redescribe" in identity.subject_rule.lower()
 
 
 def test_th2_khong_cho_mo_ta_user_ghi_de_khuon_mat():
-    assert "Never let hairstyle, clothing, expression" in resolve_prompt_identity(DESC_GIRL).subject_rule
+    assert (
+        "Never let hairstyle, clothing, expression"
+        in resolve_prompt_identity(DESC_GIRL).subject_rule
+    )
 
 
 def test_th3_giu_lock_reference():
@@ -206,7 +225,10 @@ def test_th3_giu_lock_reference():
 
 def test_th3_noi_ro_la_anh_dinh_kem():
     assert "the subject from the attached reference image" in _render_reference()
-    assert "must match the attached photo exactly" in resolve_prompt_identity(DESC_REFERENCE).subject_rule
+    assert (
+        "must match the attached photo exactly"
+        in resolve_prompt_identity(DESC_REFERENCE).subject_rule
+    )
 
 
 def test_th3_cam_bia_dac_diem_khuon_mat():

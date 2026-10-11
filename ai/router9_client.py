@@ -8,6 +8,7 @@ persona (chat_skill.yaml) phải được nhét vào messages ở MỖI lượt 
 hệt cách nhánh api1/api2 (ai/official_client.py) đã làm. Vì vậy router9_client
 không có khái niệm ChatSession/Gem như cookie_client cũ.
 """
+
 import logging
 from typing import Optional
 from urllib.parse import urlsplit
@@ -21,7 +22,11 @@ logger = logging.getLogger(__name__)
 _SETTING_PREFERRED_MODEL = "preferred_model_name"
 _SETTING_BASE_URL = "router9_base_url"
 
-_pool = openai_compatible.ClientPool(config.ROUTER9_CALL_TIMEOUT_SEC, config.ROUTER9_MAX_CONCURRENCY)
+# total_timeout = ROUTER9_CALL_TIMEOUT_SEC: lượt gọi NGOÀI orchestrator (agent,
+# probe nền) cũng có trần tổng, không chỉ trông vào timeout từng pha của httpx.
+_pool = openai_compatible.ClientPool(
+    config.ROUTER9_CALL_TIMEOUT_SEC, config.ROUTER9_MAX_CONCURRENCY, config.ROUTER9_CALL_TIMEOUT_SEC
+)
 
 
 class Router9Error(RuntimeError):
@@ -68,7 +73,9 @@ async def get_base_url_override() -> Optional[str]:
         return None
     normalized = normalize_base_url(raw)
     if normalized is None:
-        logger.warning("Base URL override của 9Router không hợp lệ; fallback về ROUTER9_BASE_URL env.")
+        logger.warning(
+            "Base URL override của 9Router không hợp lệ; fallback về ROUTER9_BASE_URL env."
+        )
     return normalized
 
 
@@ -111,21 +118,24 @@ async def generate(
         raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
     messages = openai_compatible.build_messages(prompt, system_instruction, history)
     base_url = await get_base_url()
-    async with _pool.get_semaphore():
-        try:
-            text = await openai_compatible.post_chat_completion(
-                _pool.get_client(),
-                base_url=base_url,
-                api_key=api_key,
-                messages=messages,
-                model=model or config.ROUTER9_MODEL,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                provider_label="9Router",
-            )
-        except openai_compatible.OpenAICompatibleError as exc:
-            raise Router9Error(str(exc)) from exc
-    return Response(text)
+
+    async def _call() -> str:
+        async with _pool.get_semaphore():
+            try:
+                return await openai_compatible.post_chat_completion(
+                    _pool.get_client(),
+                    base_url=base_url,
+                    api_key=api_key,
+                    messages=messages,
+                    model=model or config.ROUTER9_MODEL,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    provider_label="9Router",
+                )
+            except openai_compatible.OpenAICompatibleError as exc:
+                raise Router9Error(str(exc)) from exc
+
+    return Response(await _pool.bounded("9Router", _call))
 
 
 async def generate_with_tools(
@@ -149,21 +159,25 @@ async def generate_with_tools(
     if not api_key:
         raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
     base_url = await get_base_url()
-    async with _pool.get_semaphore():
-        try:
-            return await openai_compatible.post_chat_completion_with_tools(
-                _pool.get_client(),
-                base_url=base_url,
-                api_key=api_key,
-                messages=messages,
-                tools=tools,
-                model=model or config.ROUTER9_MODEL,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                provider_label="9Router",
-            )
-        except openai_compatible.OpenAICompatibleError as exc:
-            raise Router9Error(str(exc)) from exc
+
+    async def _call():
+        async with _pool.get_semaphore():
+            try:
+                return await openai_compatible.post_chat_completion_with_tools(
+                    _pool.get_client(),
+                    base_url=base_url,
+                    api_key=api_key,
+                    messages=messages,
+                    tools=tools,
+                    model=model or config.ROUTER9_MODEL,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    provider_label="9Router",
+                )
+            except openai_compatible.OpenAICompatibleError as exc:
+                raise Router9Error(str(exc)) from exc
+
+    return await _pool.bounded("9Router", _call)
 
 
 async def generate_image_prompt(instruction: str, image_path: str) -> Response:
@@ -198,11 +212,9 @@ async def list_models() -> list[str]:
         response = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
         response.raise_for_status()
         model_list_payload = response.json()
-        return sorted({
-            entry.get("id", "")
-            for entry in model_list_payload.get("data", [])
-            if entry.get("id")
-        })
+        return sorted(
+            {entry.get("id", "") for entry in model_list_payload.get("data", []) if entry.get("id")}
+        )
     except Exception:
         logger.warning("Không lấy được danh sách model từ 9Router.", exc_info=True)
         return []

@@ -9,7 +9,11 @@ Node adapter dùng `zca-js` cho tài khoản B, chạy cùng container với Fas
 - Private text dùng chung Gemini/stock/memory/tools với Telegram.
 - Private image được tải có cookie phiên, giới hạn 8 MB rồi gửi binary sang Python.
 - Group text chỉ được forward khi group ID nằm trong allowlist Supabase.
-- Summary outbox được gửi riêng từ B sang A.
+- Summary outbox được gửi riêng từ B sang A. Tin gửi lỗi được báo về Python
+  (`POST /internal/zalo/outbox/{id}/failed`), thử lại theo backoff và bỏ cuộc sau
+  `ZALO_OUTBOX_MAX_ATTEMPTS` lần (báo chủ bot) - không chặn các tin phía sau.
+- Tin riêng xử lý tuần tự theo từng người gửi, song song tối đa
+  `ZALO_DIRECT_CONCURRENCY` người; hàng đợi đầy thì báo "đang bận" cho người gửi.
 
 ## Cấu hình
 
@@ -24,6 +28,12 @@ ZALO_OUTBOX_POLL_MS=15000
 ZALO_GROUP_RETENTION_DAYS=30
 ZALO_DAILY_SUMMARY_HOUR=9
 ZALO_IMAGE_MAX_BYTES=8388608
+ZALO_DIRECT_CONCURRENCY=2
+ZALO_DIRECT_SENDER_BACKLOG=8
+ZALO_OUTBOX_MAX_ATTEMPTS=5
+# Chỉ đổi khi gateway KHÔNG gọi Python qua loopback (vd chạy container riêng):
+ZALO_BRIDGE_ALLOWED_HOSTS=127.0.0.1,::1
+ZALO_BRIDGE_ALLOW_FORWARDED=0
 ```
 
 `ZALO_COOKIE_JSON`, `ZALO_IMEI` và `ZALO_USER_AGENT` là fallback; có thể để trống khi dùng `/zalo`.
@@ -41,6 +51,9 @@ ZALO_IMAGE_MAX_BYTES=8388608
 ## Bảo mật
 
 - Không public control port.
+- `/internal/zalo/*` chỉ nhận request từ `ZALO_BRIDGE_ALLOWED_HOSTS` (mặc định
+  loopback) và từ chối request đi qua proxy (`X-Forwarded-For`...) trừ khi
+  `ZALO_BRIDGE_ALLOW_FORWARDED=1`; vẫn bắt buộc `ZALO_BRIDGE_SECRET`.
 - Không log cookie, IMEI hoặc URL media đầy đủ.
 - Chỉ tải media từ allowlist CDN Zalo và kiểm tra lại domain sau redirect.
 - Session/controller phải được mã hóa bằng `SETTINGS_ENC_KEY`.
