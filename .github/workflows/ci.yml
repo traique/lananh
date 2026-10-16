@@ -154,7 +154,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       # Chỉ kiểm tra image build được (multi-stage Node 22 + Python 3.12), không push.
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           push: false
