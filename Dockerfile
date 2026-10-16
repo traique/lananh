@@ -21,8 +21,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends supervisor ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin app
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=gateway /usr/local/bin/node /usr/local/bin/node
 
@@ -35,9 +34,9 @@ COPY . .
 COPY --from=gateway /gw/dist ./zalo-gateway/dist
 COPY --from=gateway /gw/node_modules ./zalo-gateway/node_modules
 RUN chmod +x /app/scripts/run-zalo-gateway.sh \
-    && mkdir -p /app/media \
-    && chown -R app:app /app
+    && mkdir -p /app/media
 
-# supervisord chạy root để đổi user cho từng program (user=app trong supervisord.conf).
+# Chạy root: xem ghi chú đầu supervisord.conf (Render không hỗ trợ đổi user trong
+# supervisord - HOME không đổi, root không được kill tiến trình khác uid).
 EXPOSE 10000
 CMD ["/usr/bin/supervisord", "-c", "/app/supervisord.conf"]
