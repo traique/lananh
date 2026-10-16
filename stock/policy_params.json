@@ -14,7 +14,7 @@
   "atr_stop_mult": 1.5,
   "stop_min_pct": 1.0,
   "stop_max_pct": 10.0,
-  "measured_move_enabled": true,
+  "measured_move_enabled": false,
   "measured_move_width_mult": 1.0,
   "measured_move_size_mult": 0.6,
   "volume_confirm_ratio_pct": 120.0,

@@ -473,20 +473,21 @@ def test_breakout_dinh_moi_dung_measured_move_thay_vi_watch():
     assert enhanced.donchian.state == "breakout_up"
     stats = feat.calc_signal_stats(closes, [600_000.0] * len(closes), closes[-1])
     sr = feat.calc_support_resistance(highs, lows, closes[-1], 30)
-    stop, target, rr, basis = pol._compute_stop_target(
+    # Mặc định TẮT (backtest cho kỳ vọng âm) -> projected như cũ, không mở BUY.
+    _, _, _, basis_off = pol._compute_stop_target(
         closes[-1], enhanced, stats, 0.0, "buy", sr, "HOSE", None
     )
-    assert "+measured_move" in basis
-    assert target is not None and target >= enhanced.donchian.upper + 9_000
-    assert rr is not None and rr > 0
-    # Tắt qua params -> rơi về projected như cũ.
+    assert "+projected" in basis_off
+    # Bật qua params -> target measured-move.
     original = pol.PARAMS
     try:
-        pol.apply_params(pol.PolicyParams(measured_move_enabled=False))
-        _, _, _, basis_off = pol._compute_stop_target(
+        pol.apply_params(pol.PolicyParams(measured_move_enabled=True))
+        stop, target, rr, basis = pol._compute_stop_target(
             closes[-1], enhanced, stats, 0.0, "buy", sr, "HOSE", None
         )
-        assert "+projected" in basis_off
+        assert "+measured_move" in basis
+        assert target is not None and target >= enhanced.donchian.upper + 9_000
+        assert rr is not None and rr > 0
     finally:
         pol.apply_params(original)
 

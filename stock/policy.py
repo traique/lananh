@@ -62,7 +62,10 @@ class PolicyParams:
     stop_max_pct: float = 10.0
     # Breakout Donchian lên đỉnh mới không có cản thật phía trên: target
     # measured-move = đỉnh kênh + bề rộng kênh x hệ số; tỷ trọng nhân hệ số giảm.
-    measured_move_enabled: bool = True
+    # MẶC ĐỊNH TẮT: backtest offline 10/2026 (183 mã, 5 năm, toàn chuỗi) cho
+    # 875 lệnh breakout đỉnh mới với win rate 36,3%, avg R -0,15 sau phí/thuế/
+    # slippage - kỳ vọng âm. Bật khi đã hiệu chuẩn lại (xem docs/upgrade-2026-10.md).
+    measured_move_enabled: bool = False
     measured_move_width_mult: float = 1.0
     measured_move_size_mult: float = 0.6
     # Gate C/Gate B ngưỡng kỹ thuật
