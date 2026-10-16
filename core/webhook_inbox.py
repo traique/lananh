@@ -212,6 +212,31 @@ async def _renew(row, owner: asyncio.Task) -> None:
         delay = _RENEW_INTERVAL_SEC
 
 
+async def release(row) -> None:
+    """Trả sự kiện về PENDING ngay (available_at=now) khi lượt xử lý bị huỷ do
+    shutdown: trước đây lease 5 phút được giữ nguyên nên sau redeploy sự kiện
+    chờ hết lease mới chạy lại. Chỉ khớp khi lease_token còn là của ta."""
+    try:
+        await asyncio.wait_for(
+            (await db.get_pool()).execute(
+                """UPDATE webhook_inbox SET status = 'PENDING', available_at = now(),
+                lease_token = NULL, lease_until = NULL
+                WHERE channel = $1 AND event_id = $2 AND lease_token = $3""",
+                row["channel"],
+                row["event_id"],
+                row["lease_token"],
+            ),
+            timeout=5.0,
+        )
+    except Exception:
+        logger.info(
+            "Không trả được lease webhook %s/%s khi shutdown (sẽ tự hết lease).",
+            row["channel"],
+            row["event_id"],
+            exc_info=True,
+        )
+
+
 async def deliver(row, processor: Callable[[str, dict], Awaitable[None]]) -> None:
     async def process():
         _current_attempt.set(int(row["attempts"] or 1))
@@ -225,8 +250,11 @@ async def deliver(row, processor: Callable[[str, dict], Awaitable[None]]) -> Non
         await delivery
         await finish(row)
     except asyncio.CancelledError:
-        # Keep the lease/payload for recovery after shutdown or lost ownership.
+        # Giữ payload để chạy lại; nếu là shutdown (task này bị cancel) thì trả
+        # lease ngay cho instance mới. Mất quyền sở hữu (heartbeat cancel) thì
+        # không đụng lease - nó đã thuộc về người khác.
         if asyncio.current_task().cancelling():
+            await asyncio.shield(release(row))
             raise
     except Exception as exc:
         logger.warning(

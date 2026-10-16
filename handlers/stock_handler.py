@@ -137,7 +137,7 @@ async def _handle_price_quote(update, user_id: int, symbols: list[str]) -> None:
         return_exceptions=True,
     )
     ok_results: list[str] = []
-    for symbol, prompt_id, result in zip(symbols, prompt_ids, results):
+    for symbol, prompt_id, result in zip(symbols, prompt_ids, results, strict=False):
         if isinstance(result, BaseException):
             logger.error("Lỗi lấy giá cổ phiếu %s", symbol, exc_info=result)
             await telemetry.failure(prompt_id, "stock_price", result)

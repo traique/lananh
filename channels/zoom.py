@@ -32,6 +32,26 @@ _token_lock = asyncio.Lock()
 _cached_token: str | None = None
 _cached_token_expiry: float = 0.0
 
+# Cảnh báo "jid chưa pair vừa nhắn" chỉ gửi 1 lần/jid (reset khi restart) và đi
+# qua core.alerts (có trần số tin đang chờ) - trước đây mỗi tin của người lạ
+# là 1 tin Telegram thẳng tới chủ bot, ai nhắn được bot là spam được chủ bot.
+_NOTIFIED_UNPAIRED_MAX = 1000
+_notified_unpaired: dict[str, None] = {}
+
+
+def notify_unpaired(jid: str) -> bool:
+    """Báo chủ bot 1 lần cho mỗi jid Zoom chưa pair. Trả True nếu có gửi."""
+    from core import alerts
+    import messages
+
+    jid = (jid or "").strip()
+    if not jid or jid in _notified_unpaired:
+        return False
+    _notified_unpaired[jid] = None
+    while len(_notified_unpaired) > _NOTIFIED_UNPAIRED_MAX:
+        _notified_unpaired.pop(next(iter(_notified_unpaired)))
+    return alerts.send(messages.ZOOM_UNPAIRED_ALERT.format(jid=jid))
+
 
 @dataclass(frozen=True)
 class ZoomEvent:

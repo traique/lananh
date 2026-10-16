@@ -5,9 +5,12 @@ tự core.config.PROVIDER_ORDER (mặc định router9 -> groq -> openrouter -> 
 -> api2 - toàn bộ đều miễn phí, Gemini official đứng cuối làm lưới an toàn).
 
 - 9Router chết -> chuyển hẳn sang provider kế tiếp, KHÔNG thử lại router9 mọi
-  tin nhắn nữa. Chỉ 3 cách quay lại router9: probe nền định kỳ, đổi
+  tin nhắn nữa. 3 cách quay lại router9: probe nền định kỳ, đổi
   ROUTER9_API_KEY, lệnh /userouter9 (xem
-  init_provider_state()/start_background_tasks()/try_router9_now()).
+  init_provider_state()/start_background_tasks()/try_router9_now()). Ngoại lệ
+  duy nhất: khi MỌI provider khác đều lỗi trong lượt, router9 (chết vì
+  timeout/lỗi tạm) được thử lại 1 lần làm cứu cánh cuối. Provider đang
+  cooldown vì 429 thì KHÔNG được gọi lại trong cooldown (gọi chỉ thêm 1 lỗi 429).
 - Ngoài dead/alive tự động còn có cờ bật/tắt thủ công (router9_enabled, mặc
   định bật) qua lệnh /router9 on|off (set_router9_enabled()) - tắt thì
   router9 bị loại khỏi provider-chain hoàn toàn cho tới khi bật lại, kể cả
@@ -26,7 +29,7 @@ from typing import Awaitable, Callable, Iterator, Optional
 
 from core import config, database as db
 from ai import openai_compatible, router9_client, groq_client, openrouter_client, official_client
-from ai import provider_overrides
+from ai import prompt_budget, provider_overrides
 from ai import provider_state as provider_state_module
 from ai.provider_state import ProviderStateSnapshot, provider_state
 from ai.timeouts import TurnTimeoutError, bounded, remaining_turn_seconds, turn_deadline
@@ -239,15 +242,84 @@ async def _effective_model(provider: str) -> str:
     return provider
 
 
-async def _record_provider_call(provider: str) -> None:
-    """Ghi 1 lượt gọi thành công vào bảng provider_calls (thống kê "lượt gọi
-    theo model" ở trang admin). Lỗi DB ở đây KHÔNG được làm hỏng câu trả lời
-    thật cho người dùng - chỉ log cảnh báo rồi bỏ qua."""
+# Giai đoạn của lượt gọi (chat/ask/utility/search...) - caller đặt qua
+# ``call_stage()`` để provider_calls phân biệt lượt nào đốt thời gian.
+_call_stage: ContextVar[str | None] = ContextVar("provider_call_stage", default=None)
+
+
+@contextmanager
+def call_stage(stage: str) -> Iterator[None]:
+    token = _call_stage.set(stage)
+    try:
+        yield
+    finally:
+        _call_stage.reset(token)
+
+
+def _classify_outcome(exc: BaseException) -> str:
+    if isinstance(exc, OutputContaminatedError):
+        return "contaminated"
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return "timeout"
+    try:
+        if openai_compatible.is_rate_limited(exc) or official_client.is_quota_exhausted_error(exc):
+            return "rate_limited"
+    except Exception:
+        pass
+    return "error"
+
+
+async def _record_provider_call(
+    provider: str,
+    *,
+    outcome: str = "ok",
+    latency_ms: int | None = None,
+) -> None:
+    """Ghi 1 lượt gọi (thành công lẫn lỗi/timeout/429) vào provider_calls kèm độ
+    trễ và giai đoạn. Lỗi DB ở đây KHÔNG được làm hỏng câu trả lời thật cho
+    người dùng - chỉ log cảnh báo rồi bỏ qua."""
     try:
         model = await _effective_model(provider)
-        await db.record_provider_call(provider, model)
+        await db.record_provider_call(
+            provider,
+            model,
+            outcome=outcome,
+            latency_ms=latency_ms,
+            stage=_call_stage.get(),
+        )
     except Exception:
         logger.warning("Không ghi được lượt gọi provider=%s vào DB.", provider, exc_info=True)
+
+
+async def _assert_clean_recorded(result, provider: str, allow_cjk: bool, latency_ms: int):
+    try:
+        _assert_output_clean(result, provider, allow_cjk=allow_cjk)
+    except OutputContaminatedError:
+        await _record_provider_call(provider, outcome="contaminated", latency_ms=latency_ms)
+        raise
+
+
+async def _timed(provider: str, call: Callable[[], Awaitable]):
+    """Chạy ``call()``, đo độ trễ và ghi provider_calls cho CẢ lượt lỗi (outcome
+    phân loại theo exception). Lượt thành công do caller ghi sau khi kiểm output."""
+    import time
+
+    started = time.monotonic()
+    try:
+        result = await call()
+    except TurnTimeoutError:
+        await _record_provider_call(
+            provider, outcome="turn_timeout", latency_ms=int((time.monotonic() - started) * 1000)
+        )
+        raise
+    except Exception as exc:
+        await _record_provider_call(
+            provider,
+            outcome=_classify_outcome(exc),
+            latency_ms=int((time.monotonic() - started) * 1000),
+        )
+        raise
+    return result, int((time.monotonic() - started) * 1000)
 
 
 async def _run_provider_chain(
@@ -298,26 +370,26 @@ async def _run_provider_chain_within_deadline(
     }
 
     async def _attempt_router9():
-        result = await _run_with_call_timeout(router9_call)
-        _assert_output_clean(result, "router9", allow_cjk=allow_cjk)
+        result, latency_ms = await _timed("router9", lambda: _run_with_call_timeout(router9_call))
+        await _assert_clean_recorded(result, "router9", allow_cjk, latency_ms)
         await provider_state.mark_router9_alive()
         await provider_state.set_active_provider("router9")
-        await _record_provider_call("router9")
+        await _record_provider_call("router9", latency_ms=latency_ms)
         return result
 
     async def _attempt_api(idx: int):
-        result = await bounded(lambda: api_call(idx))
         provider_name = f"api{idx}"
-        _assert_output_clean(result, provider_name, allow_cjk=allow_cjk)
+        result, latency_ms = await _timed(provider_name, lambda: bounded(lambda: api_call(idx)))
+        await _assert_clean_recorded(result, provider_name, allow_cjk, latency_ms)
         await provider_state.set_active_provider(provider_name)
-        await _record_provider_call(provider_name)
+        await _record_provider_call(provider_name, latency_ms=latency_ms)
         return result
 
     async def _attempt_generic(name: str):
-        result = await bounded(generic_calls[name])
-        _assert_output_clean(result, name, allow_cjk=allow_cjk)
+        result, latency_ms = await _timed(name, lambda: bounded(generic_calls[name]))
+        await _assert_clean_recorded(result, name, allow_cjk, latency_ms)
         await provider_state.set_active_provider(name)
-        await _record_provider_call(name)
+        await _record_provider_call(name, latency_ms=latency_ms)
         return result
 
     async def _has_any_fallback_configured() -> bool:
@@ -414,18 +486,18 @@ async def _run_provider_chain_within_deadline(
                 logger.exception("%s lỗi (không phải hết quota).", provider)
                 last_exc = exc
 
-    for provider in known_bad_skipped:
+    # Cứu cánh cuối: chỉ router9 (chết vì timeout/lỗi tạm, không phải quota).
+    # Provider đang cooldown 429 bị bỏ qua thật sự - gọi lại chỉ tốn thời gian
+    # của lượt và thêm 1 lỗi 429 vào quota đang cạn.
+    if "router9" in known_bad_skipped:
         try:
-            if provider == "router9":
-                return await _attempt_router9()
-            if provider in ("api1", "api2"):
-                return await _attempt_api(1 if provider == "api1" else 2)
-            if generic_calls.get(provider) is not None:
-                return await _attempt_generic(provider)
+            return await _attempt_router9()
         except TurnTimeoutError:
             raise
         except Exception as exc:
             last_exc = exc
+    if last_exc is None and known_bad_skipped:
+        last_exc = RuntimeError("Mọi provider đang cooldown/chết: " + ", ".join(known_bad_skipped))
 
     if last_exc is not None:
         raise last_exc
@@ -501,11 +573,29 @@ async def chat(
     grounding: str = "",
     memory_context: str = "",
     require_real_search: bool = False,
+    web_grounded: bool = False,
 ):
-    """Chat with shared history/memory through the provider chain."""
+    """Chat with shared history/memory through the provider chain.
+
+    ``web_grounded``: grounding đã có kết quả tra web (Tavily) - nhánh Gemini
+    official không bật thêm Google Search grounding chồng lên nữa.
+    """
     # Hồ sơ chủ bot trong persona (user_profile) chỉ dành cho chủ bot; Zalo
     # member (id âm) nhận persona không có mục đó.
     persona = config.load_chat_skill(include_owner_profile=config.is_owner_user_id(user_id))
+    # Lịch sử đọc DB ĐÚNG 1 LẦN cho mọi provider trong lượt (trước đây mỗi
+    # closure provider tự query -> 3-4 query giống nhau khi fallback), rồi cắt
+    # cùng grounding/trí nhớ cho vừa ngân sách prompt.
+    raw_history = await db.get_session_messages(
+        user_id, config.CHAT_HISTORY_TURNS, config.CHAT_SESSION_TIMEOUT_SEC
+    )
+    history, memory_context, grounding = prompt_budget.fit_chat_prompt(
+        persona=persona,
+        history=raw_history,
+        memory_context=memory_context,
+        grounding=grounding,
+        prompt=prompt,
+    )
     full_prompt = prompt
     if grounding:
         full_prompt = f"{grounding}\n\n{full_prompt}"
@@ -513,15 +603,12 @@ async def chat(
         full_prompt = f"{memory_context}\n\n{full_prompt}"
     if require_real_search:
         full_prompt = f"{_FORCED_SEARCH_DIRECTIVE}\n\n{full_prompt}"
+    prompt_with_time = f"{official_client.now_vn_context()}\n{full_prompt}"
 
     async def _router9_call():
         # 9Router không giữ session/persona phía server như cookie cũ - phải
         # tự nhét system_instruction (persona) + lịch sử hội thoại từ DB vào
         # mỗi lượt gọi, giống hệt cách nhánh api1/api2 đã làm.
-        history = await db.get_session_messages(
-            user_id, config.CHAT_HISTORY_TURNS, config.CHAT_SESSION_TIMEOUT_SEC
-        )
-        prompt_with_time = f"{official_client.now_vn_context()}\n{full_prompt}"
         preferred_model = await router9_client.get_preferred_model_name()
         return await router9_client.generate(
             prompt_with_time,
@@ -534,10 +621,6 @@ async def chat(
     async def _groq_call():
         if require_real_search:
             return await groq_client.generate_realtime(full_prompt)
-        history = await db.get_session_messages(
-            user_id, config.CHAT_HISTORY_TURNS, config.CHAT_SESSION_TIMEOUT_SEC
-        )
-        prompt_with_time = f"{official_client.now_vn_context()}\n{full_prompt}"
         return await groq_client.generate(
             prompt_with_time,
             system_instruction=persona,
@@ -546,10 +629,6 @@ async def chat(
         )
 
     async def _openrouter_call():
-        history = await db.get_session_messages(
-            user_id, config.CHAT_HISTORY_TURNS, config.CHAT_SESSION_TIMEOUT_SEC
-        )
-        prompt_with_time = f"{official_client.now_vn_context()}\n{full_prompt}"
         return await openrouter_client.generate(
             prompt_with_time,
             system_instruction=persona,
@@ -558,9 +637,6 @@ async def chat(
         )
 
     async def _api_call(idx: int):
-        history = await db.get_session_messages(
-            user_id, config.CHAT_HISTORY_TURNS, config.CHAT_SESSION_TIMEOUT_SEC
-        )
         # Không truyền preferred_model (tên model catalog 9Router) sang
         # official_client - xem chú thích tương tự trong ask()._api_call.
         # official_client.generate() tự dùng config.GOOGLE_AI_STUDIO_MODEL
@@ -571,20 +647,46 @@ async def chat(
             system_instruction=persona,
             history=history,
             persona_generation_config=True,
-            enable_search=True,
+            enable_search=require_real_search or not web_grounded,
         )
 
     providers_override = await _search_only_providers() if require_real_search else None
-    return _strip_citations(
-        await _run_provider_chain(
-            router9_call=_router9_call,
-            api_call=_api_call,
-            groq_call=_groq_call,
-            openrouter_call=_openrouter_call,
-            providers_override=providers_override,
-            allow_cjk=cjk_output_expected(prompt, grounding),
+    with call_stage("search" if require_real_search else "chat"):
+        return _strip_citations(
+            await _run_provider_chain(
+                router9_call=_router9_call,
+                api_call=_api_call,
+                groq_call=_groq_call,
+                openrouter_call=_openrouter_call,
+                providers_override=providers_override,
+                allow_cjk=cjk_output_expected(prompt, grounding),
+            )
         )
-    )
+
+
+async def utility_json(prompt: str) -> Optional[dict]:
+    """Lượt phụ trả JSON (trích trí nhớ, router tool): Groq (json_object, nhanh,
+    free, không đụng quota Gemini) trước, Gemini utility làm dự phòng. Không
+    raise - trả None khi mọi đường đều lỗi (caller coi là "bỏ qua lượt này")."""
+    if (
+        _GENERIC_PROVIDER_CONFIGURED["groq"]()
+        and await provider_overrides.is_enabled("groq")
+        and not provider_state.api_in_cooldown("groq")
+    ):
+        try:
+            with call_stage("utility"):
+                data, latency_ms = await _timed("groq", lambda: groq_client.generate_json(prompt))
+            if isinstance(data, dict):
+                await _record_provider_call("groq", latency_ms=latency_ms)
+                return data
+        except TurnTimeoutError:
+            raise
+        except Exception as exc:
+            if openai_compatible.is_rate_limited(exc):
+                await provider_state.mark_api_exhausted("groq")
+            logger.info("utility_json: Groq lỗi, dùng Gemini utility: %r", exc)
+    with call_stage("utility"):
+        return await official_client.generate_utility_json(prompt)
 
 
 async def reset_chat() -> None:

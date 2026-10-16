@@ -30,6 +30,7 @@ from handlers import (
     zalo_login,
 )
 from services import channel_chat_service
+from services import portfolio_alerts, rag_clean_service
 from services import monitor_service
 from services import db_maintenance
 from services import http_client
@@ -115,6 +116,7 @@ async def _post_init(app):
     orchestrator.start_background_tasks()
     monitor_service.start()
     scheduler.start(config.ALLOWED_USER_ID)
+    portfolio_alerts.start(config.ALLOWED_USER_ID)
 
 
 async def _post_shutdown(app):
@@ -125,9 +127,11 @@ async def _post_shutdown(app):
             logger.exception("Shutdown step lỗi: %s", label)
 
     await run_step("Telegram scheduler", scheduler.stop())
+    await run_step("portfolio alerts", portfolio_alerts.stop())
     await run_step("idempotency cleanup task", idempotency.stop_cleanup_task())
     await run_step("provider monitor task", monitor_service.stop())
     await run_step("chat memory tasks", channel_chat_service.stop_background_tasks())
+    await run_step("ragxuly tasks", rag_clean_service.stop_background_tasks())
 
     probe_task = orchestrator._probe_task
     orchestrator._probe_task = None
@@ -277,4 +281,5 @@ def build_application():
             raise
 
     scheduler.set_notify_callback(notify)
+    portfolio_alerts.set_notify_callback(notify)
     return app

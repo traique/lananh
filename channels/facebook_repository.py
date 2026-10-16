@@ -40,6 +40,61 @@ def max_pending() -> int:
     return _env_int("FACEBOOK_MAX_PENDING", 150)
 
 
+def max_media_mb() -> int:
+    """Trần TỔNG dung lượng ảnh đang lưu trong facebook_post_media cho 1 tài khoản
+    (MB). Supabase free 500 MB: 150 bài x vài ảnh 0,5 MB có thể vượt nếu chỉ chốt
+    theo SỐ bài; vượt trần thì xoá bài chờ cũ nhất trước, nếu vẫn không vừa thì
+    lưu bài mới KHÔNG kèm ảnh (text vẫn vào hàng chờ)."""
+    return _env_int("FACEBOOK_MAX_MEDIA_MB", 150)
+
+
+async def _fit_media_budget(conn, account_id: str, new_bytes: int) -> bool:
+    """Giải phóng chỗ cho ``new_bytes`` ảnh mới bằng cách xoá bài chờ cũ nhất.
+    Trả False nếu sau khi dọn vẫn không đủ chỗ (ảnh bài mới bị bỏ)."""
+    budget = max_media_mb() * 1024 * 1024
+    if new_bytes <= 0:
+        return True
+    if new_bytes > budget:
+        return False
+    for _ in range(50):
+        used = int(
+            await conn.fetchval(
+                """
+                SELECT COALESCE(SUM(octet_length(m.content)), 0)
+                FROM facebook_post_media m JOIN facebook_post_queue q ON q.id = m.post_id
+                WHERE q.account_id = $1
+                """,
+                account_id,
+            )
+            or 0
+        )
+        if used + new_bytes <= budget:
+            return True
+        victim = await conn.fetchval(
+            """
+            SELECT q.id FROM facebook_post_queue q
+            WHERE q.account_id = $1 AND q.status = 'PENDING_APPROVAL'
+              AND EXISTS (SELECT 1 FROM facebook_post_media m WHERE m.post_id = q.id)
+              AND NOT EXISTS (
+                  SELECT 1 FROM facebook_post_targets t
+                  WHERE t.post_id = q.id AND t.facebook_post_id IS NOT NULL
+              )
+            ORDER BY q.created_at ASC, q.id ASC
+            LIMIT 1
+            """,
+            account_id,
+        )
+        if victim is None:
+            return False
+        await conn.execute("DELETE FROM facebook_post_queue WHERE id = $1", victim)
+        logger.warning(
+            "Facebook media vượt trần %s MB: đã xoá bài chờ cũ nhất #%s để lấy chỗ.",
+            max_media_mb(),
+            victim,
+        )
+    return False
+
+
 def history_days() -> int:
     """Bài đã đăng/đã bỏ qua giữ lại bao nhiêu ngày (ảnh của chúng bị xoá ngay)."""
     return _env_int("FACEBOOK_HISTORY_DAYS", 30)
@@ -121,12 +176,16 @@ async def create_post(
             )
             if not allowed:
                 return None
-            event_key = hashlib.sha256(json.dumps(
-                [account_id, group_id, sorted(set(source_message_ids))],
-                ensure_ascii=False, separators=(",", ":"),
-            ).encode()).hexdigest()
+            event_key = hashlib.sha256(
+                json.dumps(
+                    [account_id, group_id, sorted(set(source_message_ids))],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
             existing = await conn.fetchval(
-                "SELECT id FROM facebook_post_queue WHERE source_event_key = $1", event_key,
+                "SELECT id FROM facebook_post_queue WHERE source_event_key = $1",
+                event_key,
             )
             if existing is not None:
                 return int(existing)
@@ -169,8 +228,19 @@ async def create_post(
             )
             if post_id is None:
                 return await conn.fetchval(
-                    "SELECT id FROM facebook_post_queue WHERE source_event_key = $1", event_key,
+                    "SELECT id FROM facebook_post_queue WHERE source_event_key = $1",
+                    event_key,
                 )
+            if media and not await _fit_media_budget(
+                conn, account_id, sum(len(body) for _, body in media)
+            ):
+                logger.warning(
+                    "Bài Facebook #%s lưu KHÔNG kèm %d ảnh: tổng ảnh đang lưu vượt trần %s MB.",
+                    post_id,
+                    len(media),
+                    max_media_mb(),
+                )
+                media = []
             if media:
                 await conn.executemany(
                     """
@@ -233,10 +303,13 @@ async def enforce_pending_cap(account_id: str, limit: int | None = None) -> list
 
 async def count_pending(account_id: str) -> int:
     await ensure_schema()
-    return int(await (await db.get_pool()).fetchval(
-        "SELECT count(*) FROM facebook_post_queue WHERE account_id = $1 AND status = 'PENDING_APPROVAL'",
-        account_id,
-    ) or 0)
+    return int(
+        await (await db.get_pool()).fetchval(
+            "SELECT count(*) FROM facebook_post_queue WHERE account_id = $1 AND status = 'PENDING_APPROVAL'",
+            account_id,
+        )
+        or 0
+    )
 
 
 async def list_pending_for_refilter(account_id: str):
@@ -261,7 +334,8 @@ async def list_pending_for_refilter(account_id: str):
 async def delete_media(post_id: int) -> None:
     """Ảnh chỉ cần cho lúc đăng; bài đã đăng xong/bỏ qua thì xoá để nhẹ DB."""
     await (await db.get_pool()).execute(
-        "DELETE FROM facebook_post_media WHERE post_id = $1", post_id,
+        "DELETE FROM facebook_post_media WHERE post_id = $1",
+        post_id,
     )
 
 
@@ -400,8 +474,12 @@ async def list_targets(post_id: int):
 
 
 async def record_target_posted(
-    post_id: int, page_key: str, facebook_post_id: str, permalink_url: str | None,
-    *, claim_token: str | None = None,
+    post_id: int,
+    page_key: str,
+    facebook_post_id: str,
+    permalink_url: str | None,
+    *,
+    claim_token: str | None = None,
 ) -> None:
     await ensure_schema()
     result = await (await db.get_pool()).execute(
@@ -425,7 +503,10 @@ async def record_target_posted(
 
 
 async def record_target_comment(
-    post_id: int, page_key: str, comment_id: str, claim_token: str,
+    post_id: int,
+    page_key: str,
+    comment_id: str,
+    claim_token: str,
 ) -> None:
     await ensure_schema()
     result = await (await db.get_pool()).execute(
@@ -444,7 +525,11 @@ async def record_target_comment(
 
 
 async def record_target_error(
-    post_id: int, page_key: str, message: str, *, claim_token: str | None = None,
+    post_id: int,
+    page_key: str,
+    message: str,
+    *,
+    claim_token: str | None = None,
 ) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
@@ -472,18 +557,25 @@ async def mark_target_creating(post_id: int, page_key: str, claim_token: str) ->
           AND facebook_post_id IS NULL AND EXISTS (
               SELECT 1 FROM facebook_post_queue WHERE id = $1 AND claim_token = $3
           )""",
-        post_id, page_key, claim_token,
+        post_id,
+        page_key,
+        claim_token,
     )
     if result != "UPDATE 1":
         raise RuntimeError("Facebook publish claim no longer belongs to this worker")
 
 
-async def record_target_unknown(post_id: int, page_key: str, message: str, claim_token: str) -> None:
+async def record_target_unknown(
+    post_id: int, page_key: str, message: str, claim_token: str
+) -> None:
     await (await db.get_pool()).execute(
         """UPDATE facebook_post_targets SET status = 'UNKNOWN', error_message = $3, updated_at = now()
         WHERE post_id = $1 AND page_key = $2 AND facebook_post_id IS NULL
           AND EXISTS (SELECT 1 FROM facebook_post_queue WHERE id = $1 AND claim_token = $4)""",
-        post_id, page_key, message[:1000], claim_token,
+        post_id,
+        page_key,
+        message[:1000],
+        claim_token,
     )
 
 
@@ -493,7 +585,11 @@ def _error_summary(posted: int, total: int, errored: int, uncommented: int) -> s
 
 
 async def finalize_post_status(
-    account_id: str, post_id: int, *, claim_token: str | None = None, needs_comment: bool = False,
+    account_id: str,
+    post_id: int,
+    *,
+    claim_token: str | None = None,
+    needs_comment: bool = False,
 ) -> str:
     """Recompute facebook_post_queue.status from facebook_post_targets: POSTED
     only once every target page succeeded (and, when ``needs_comment``, got its
@@ -544,7 +640,8 @@ async def finalize_post_status(
         account_id,
         post_id,
         _error_summary(posted, total, errored, summary["uncommented"] if needs_comment else 0)
-        if total else "Chưa có Facebook Page nào được cấu hình.",
+        if total
+        else "Chưa có Facebook Page nào được cấu hình.",
         claim_token,
     )
     if result != "UPDATE 1":
@@ -565,7 +662,10 @@ async def claim_post(account_id: str, post_id: int):
                     status IN ('PENDING_APPROVAL', 'ERROR') OR
                     (status = 'POSTING' AND (lease_until IS NULL OR lease_until <= now()))
                 ) RETURNING *""",
-                account_id, post_id, secrets.token_hex(16), timedelta(minutes=5),
+                account_id,
+                post_id,
+                secrets.token_hex(16),
+                timedelta(minutes=5),
             )
             if row is not None:
                 await conn.execute(
@@ -584,7 +684,10 @@ async def release_post_claim(account_id: str, post_id: int, claim_token: str, me
         """UPDATE facebook_post_queue SET status = 'ERROR', error_message = $4,
         claim_token = NULL, lease_until = NULL
         WHERE account_id = $1 AND id = $2 AND claim_token = $3""",
-        account_id, post_id, claim_token, message[:1000],
+        account_id,
+        post_id,
+        claim_token,
+        message[:1000],
     )
 
 
@@ -594,7 +697,9 @@ async def _renew_post(post_id: int, token: str, owner: asyncio.Task) -> None:
         try:
             result = await (await db.get_pool()).execute(
                 """UPDATE facebook_post_queue SET lease_until = now() + interval '5 minutes'
-                WHERE id = $1 AND claim_token = $2""", post_id, token,
+                WHERE id = $1 AND claim_token = $2""",
+                post_id,
+                token,
             )
             if result != "UPDATE 1":
                 owner.cancel()
@@ -629,7 +734,8 @@ async def reset_posts(account_id: str) -> tuple[int, bool]:
                 account_id,
             )
             await conn.execute(
-                "DELETE FROM facebook_post_fingerprints WHERE account_id = $1", account_id,
+                "DELETE FROM facebook_post_fingerprints WHERE account_id = $1",
+                account_id,
             )
             remaining = await conn.fetchval("SELECT COUNT(*) FROM facebook_post_queue")
             sequence_reset = int(remaining or 0) == 0
@@ -671,29 +777,3 @@ async def get_affiliate_links(account_id: str, source_urls: list[str]) -> dict[s
         source_urls,
     )
     return {row["source_url"]: row["affiliate_url"] for row in rows}
-
-
-async def create_short_link(target_url: str) -> str:
-    await ensure_schema()
-    pool = await db.get_pool()
-    for _ in range(5):
-        token = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8]
-        result = await pool.execute(
-            """
-            INSERT INTO affiliate_short_links (token, target_url)
-            VALUES ($1, $2) ON CONFLICT DO NOTHING
-            """,
-            token,
-            target_url,
-        )
-        if result == "INSERT 0 1":
-            return token
-    raise RuntimeError("Không tạo được short-link token")
-
-
-async def resolve_short_link(token: str) -> str | None:
-    await ensure_schema()
-    return await (await db.get_pool()).fetchval(
-        "SELECT target_url FROM affiliate_short_links WHERE token = $1",
-        token,
-    )

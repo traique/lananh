@@ -256,6 +256,38 @@ export async function ackOutbox(c: GatewayConfig, id: number) {
     "Ack",
   );
 }
+/**
+ * Trạng thái gateway báo về Python (để báo chủ bot qua Telegram):
+ * - connected: đã đăng nhập lại sau khi mất kết nối;
+ * - reconnecting: đang thử đăng nhập lại từ phiên đã lưu;
+ * - closed: listener Zalo đóng, gateway sắp thử đăng nhập lại;
+ * - login_required: hết lượt thử / phiên hỏng, cần quét QR lại (/zalo);
+ * - send_failed: gửi trả lời cho 1 tin riêng thất bại sau khi đã thử lại.
+ */
+export type GatewayState =
+  | "connected"
+  | "reconnecting"
+  | "closed"
+  | "login_required"
+  | "send_failed";
+export type GatewayStateReport = { account_id: string; state: GatewayState; detail?: string };
+const MAX_STATE_DETAIL_CHARS = 300;
+/** POST /internal/zalo/gateway-state: {account_id, state, detail?}. Nơi gọi tự log lỗi, không chờ. */
+export async function reportGatewayState(c: GatewayConfig, report: GatewayStateReport) {
+  await ok(
+    await fetch(`${c.bridgeBaseUrl}/gateway-state`, {
+      method: "POST",
+      headers: h(c),
+      body: JSON.stringify({
+        account_id: report.account_id,
+        state: report.state,
+        detail: report.detail?.slice(0, MAX_STATE_DETAIL_CHARS),
+      }),
+      signal: AbortSignal.timeout(SHORT_TIMEOUT_MS),
+    }),
+    "Gateway state report",
+  );
+}
 /** Báo Python 1 tin outbox gửi lỗi: Python tăng số lần thử, hẹn giờ thử lại hoặc bỏ cuộc. */
 export async function reportOutboxFailure(
   c: GatewayConfig,

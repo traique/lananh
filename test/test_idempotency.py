@@ -6,48 +6,6 @@ from core import idempotency
 
 
 @pytest.mark.asyncio
-async def test_telegram_update_claim_is_atomic(monkeypatch):
-    results = iter(["INSERT 0 1", "INSERT 0 0"])
-
-    class FakePool:
-        async def execute(self, query, *args):
-            return next(results)
-
-    async def fake_get_pool():
-        return FakePool()
-
-    async def fake_ensure_schema():
-        return None
-
-    monkeypatch.setattr(idempotency.db, "get_pool", fake_get_pool)
-    monkeypatch.setattr(idempotency, "ensure_schema", fake_ensure_schema)
-
-    assert await idempotency.claim_telegram_update(123) is True
-    assert await idempotency.claim_telegram_update(123) is False
-
-
-@pytest.mark.asyncio
-async def test_zoom_event_claim_is_atomic(monkeypatch):
-    results = iter(["INSERT 0 1", "INSERT 0 0"])
-
-    class FakePool:
-        async def execute(self, query, *args):
-            return next(results)
-
-    async def fake_get_pool():
-        return FakePool()
-
-    async def fake_ensure_schema():
-        return None
-
-    monkeypatch.setattr(idempotency.db, "get_pool", fake_get_pool)
-    monkeypatch.setattr(idempotency, "ensure_schema", fake_ensure_schema)
-
-    assert await idempotency.claim_zoom_event("evt-1") is True
-    assert await idempotency.claim_zoom_event("evt-1") is False
-
-
-@pytest.mark.asyncio
 async def test_zalo_cached_response_is_replayed(monkeypatch):
     class FakePool:
         async def fetchval(self, query, *args):
@@ -88,8 +46,10 @@ async def test_cleanup_expired_prunes_all_idempotency_tables(monkeypatch):
     await idempotency.cleanup_expired()
 
     sql = "\n".join(query for query, _ in queries)
-    assert "telegram_processed_updates" in sql
-    assert "zoom_processed_events" in sql
+    # Bảng claim theo update/event đã bỏ (webhook_inbox thay thế) - không còn dọn.
+    assert "telegram_processed_updates" not in sql
+    assert "zoom_processed_events" not in sql
+    assert "zalo_direct_responses" in sql and "webhook_inbox" in sql
     assert "zalo_direct_responses" in sql
     dead = [args for query, args in queries if "status = 'DEAD'" in query]
     assert dead == [(timedelta(days=idempotency.config.WEBHOOK_DEAD_RETENTION_DAYS),)]

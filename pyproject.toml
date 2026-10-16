@@ -10,11 +10,24 @@ force-exclude = true
 [tool.ruff.lint]
 # E9/F63/F7/F82: lỗi cú pháp/undefined name. F401/F811/F841: import thừa,
 # định nghĩa trùng (đã từng che mất 1 test bị dán đè), biến không dùng.
-select = ["E9", "F63", "F7", "F82", "F401", "F811", "F841"]
+# B (bugbear): closure trong vòng lặp không bind biến, zip() thiếu strict,
+# raise trong except thiếu from. ASYNC: thao tác chặn trong hàm async.
+select = ["E9", "F63", "F7", "F82", "F401", "F811", "F841", "B", "ASYNC"]
 
 [tool.ruff.lint.per-file-ignores]
 # Smoke test import module để bắt lỗi import, không dùng tên.
 "test/test_stock_import_smoke.py" = ["F401"]
+# ASYNC109: tham số `timeout` của helper bọc asyncio.wait_for là API công khai
+# có chủ đích. ASYNC240: exists()/write_bytes 1 file ảnh nhỏ trên đĩa local
+# (không đáng tạo thread).
+"services/background_tasks.py" = ["ASYNC109"]
+"services/http_client.py" = ["ASYNC109"]
+"services/public_http.py" = ["ASYNC109"]
+"test/sql_support/pglite_pool.py" = ["ASYNC109"]
+"handlers/common.py" = ["ASYNC240"]
+"services/channel_image_service.py" = ["ASYNC240"]
+"test/test_delivery_sql.py" = ["ASYNC240"]
+"test/test_migrations.py" = ["ASYNC240"]
 
 [tool.ruff.format]
 # Hai file dưới đây là code lõi phân tích chứng khoán, viết trước khi repo áp

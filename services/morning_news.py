@@ -9,9 +9,9 @@ RSS được tổng hợp bằng AI nhưng danh sách link cuối bài KHÔNG đ
 mỗi item được gắn ID nội bộ, model chỉ chọn ID đáng chú ý, còn code lấy lại đúng
 tiêu đề + URL gốc từ RSS để người dùng bấm trực tiếp.
 """
+
 import asyncio
 import logging
-import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -129,7 +129,14 @@ def _parse_feed_items(feed_text: str, feed_index: int, source: str) -> list[_New
             continue
         ordinal = int(header.group(1))
         title = _PUBLISHED_SUFFIX_RE.sub("", header.group(2).strip()).strip()
-        url = next((line for line in reversed(block_lines[1:]) if line.startswith(("https://", "http://"))), "")
+        url = next(
+            (
+                line
+                for line in reversed(block_lines[1:])
+                if line.startswith(("https://", "http://"))
+            ),
+            "",
+        )
         if not url:
             continue
         items.append(
@@ -171,7 +178,9 @@ def _extract_important_ids(body: str) -> tuple[str, list[str]]:
     return cleaned, ids
 
 
-def _select_important_items(all_items: list[_NewsItem], requested_ids: list[str]) -> list[_NewsItem]:
+def _select_important_items(
+    all_items: list[_NewsItem], requested_ids: list[str]
+) -> list[_NewsItem]:
     by_id = {item.item_id.upper(): item for item in all_items}
     selected: list[_NewsItem] = []
     seen_urls: set[str] = set()
@@ -266,7 +275,9 @@ async def build_digest(mode: str = "morning") -> str | None:
     if len(body) < _MIN_VALID_DIGEST_CHARS:
         logger.warning(
             "morning_news: model trả lời bất thường (%d ký tự: %r) dù có %d feed đọc được - bỏ, không gửi.",
-            len(body), body, len(feed_texts),
+            len(body),
+            body,
+            len(feed_texts),
         )
         return None
 
@@ -285,7 +296,7 @@ async def build_digest(mode: str = "morning") -> str | None:
 async def _send_to_zalo(content: str) -> bool:
     from channels import zalo_repository, zalo_session
 
-    account_id = os.getenv("ZALO_BOT_ACCOUNT_ID", "zalo-bot").strip() or "zalo-bot"
+    account_id = await zalo_repository.resolve_active_account_id()
     recipient_id = await zalo_session.load_controller()
     if not recipient_id:
         logger.info("morning_news: chưa có Zalo controller, bỏ qua gửi Zalo.")
@@ -339,7 +350,9 @@ async def run_once(force: bool = False) -> RunResult:
     if sent_zalo or sent_zoom:
         await _mark_sent(now)
     else:
-        logger.info("morning_news: có nội dung nhưng chưa pair Zalo lẫn Zoom, chưa gửi được đâu cả.")
+        logger.info(
+            "morning_news: có nội dung nhưng chưa pair Zalo lẫn Zoom, chưa gửi được đâu cả."
+        )
     return RunResult(content=content, sent_zalo=sent_zalo, sent_zoom=sent_zoom)
 
 
@@ -351,15 +364,28 @@ def _seconds_until_next_hour(hour: int) -> float:
     return (target - now).total_seconds()
 
 
+# Lỡ giờ (Render ngủ/redeploy đúng 8h) thì gửi bù trong khung này; sau khung
+# thì thôi (bản tin sáng gửi lúc 14h không còn là bản tin sáng).
+CATCHUP_HOURS = 3
+_POLL_SEC = 15 * 60
+
+
+def is_due(now: datetime) -> bool:
+    start = now.replace(hour=config.MORNING_NEWS_HOUR_VN, minute=0, second=0, microsecond=0)
+    return start <= now < start + timedelta(hours=CATCHUP_HOURS)
+
+
 async def _loop() -> None:
     while True:
-        await asyncio.sleep(_seconds_until_next_hour(config.MORNING_NEWS_HOUR_VN))
         try:
-            await run_once()
+            # run_once tự bỏ qua nếu hôm nay đã gửi (guard _LAST_SENT_KEY trong DB).
+            if is_due(datetime.now(_VN_TZ)):
+                await run_once()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("morning_news: lỗi khi tạo/gửi bản tin sáng.")
+        await asyncio.sleep(_POLL_SEC)
 
 
 def start() -> None:

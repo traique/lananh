@@ -16,6 +16,10 @@ from services import (
 from services.telemetry import telemetry
 
 HELP = """📖 Lệnh trên Zalo/Zoom
+💬 Nhắn bình thường để trò chuyện. Nhắc tới 1 mã cổ phiếu là có giá realtime; nói "phân tích FPT" để xem báo cáo
+(thành viên nhận bản tham khảo, admin nhận bản đầy đủ). Nói "đã mua FPT 100 giá 120" để ghi danh mục.
+
+Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
 /anh <mô tả> — tạo ảnh thật (Agnes AI)
 /gia <sản phẩm> — tìm và so sánh giá
@@ -25,26 +29,37 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /memory [on|off] — xem, bật hoặc tắt trí nhớ dài hạn
 /forget — xoá trí nhớ dài hạn
 /notes — xem ghi chú
-/model [tên|auto] — xem hoặc đổi model (chỉ admin)
-/status — xem trạng thái provider (chỉ admin)
-/thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày (chỉ admin)
-/userouter9 — thử lại 9Router (chỉ admin)
-/router9 on|off — bật/tắt 9Router thủ công (chỉ admin)
-/tavily on|off — bật/tắt tra web Tavily trước khi trả lời (chỉ admin)
-/anh on|off — bật/tắt tạo ảnh Agnes AI (chỉ admin)
-/agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm, chỉ admin)
-/rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/ (chỉ admin)
-/ragxuly <file> — dọn file md OCR trong rag/ (chỉ admin)
-/bangtinsang — gửi ngay Bản tin sáng tới cả Zalo + Zoom (chỉ admin; bình thường tự gửi lúc 8h)
-/tintuc — đọc Điểm tin mới ngay tại đúng kênh đang gọi lệnh (chỉ admin)
-/nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo
-  (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom, chỉ admin)
+
+Danh mục cổ phiếu (riêng từng người)
+/danhmuc — xem danh mục, lãi/lỗ, cảnh báo stop/target
+/themcp <MÃ> <SỐ_LƯỢNG> <GIÁ_VỐN> [STOP] [TARGET] — thêm giao dịch mua (giá dưới 1.000 hiểu là nghìn đồng)
+/capnhatcp <MÃ> <SỐ_LƯỢNG> <GIÁ_VỐN> [STOP] [TARGET] — ghi đè vị thế
+/bancp <MÃ> [SỐ_LƯỢNG|hết] — bán bớt hoặc bán hết
+/xoacp <MÃ> — xoá mã khỏi danh mục
+
+Chỉ admin
+/model [tên|auto] — xem hoặc đổi model
+/status — xem trạng thái provider
+/thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày
+/userouter9 — thử lại 9Router
+/router9 on|off — bật/tắt 9Router thủ công
+/tavily on|off — bật/tắt tra web Tavily trước khi trả lời
+/anh on|off — bật/tắt tạo ảnh Agnes AI
+/agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm)
+/rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/
+/ragxuly <file> — dọn file md OCR trong rag/ ở nền, kết quả báo về Telegram chủ bot
+/bangtinsang (hoặc /bantinsang) — gửi ngay Bản tin sáng tới cả Zalo + Zoom (bình thường tự gửi lúc 8h)
+/tintuc — đọc Điểm tin mới ngay tại đúng kênh đang gọi lệnh
+/nhom, /themnhom <group_id> <tên>, /xoanhom <group_id|tên> — nhóm Zalo đang theo dõi
+/tongket <tên> [24h|7d|homnay|homqua] — tổng kết nhóm bằng AI; /dangnoi <tên> — xem nguyên văn hôm nay
+  (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom)
+
 📣 Zalo → Facebook Page (tách riêng khỏi /tongket, chỉ admin):
 /fb_nhom — xem nhóm nguồn Facebook
 /fb_themnhom <group_id> <tên> — thêm nhóm Zalo làm nguồn đăng Facebook
+/fb_xoanhom <group_id|tên> — bỏ nhóm khỏi luồng Facebook
 /fb_pages — xem các Facebook Page đã cấu hình (fb_ok sẽ đăng lên tất cả)
 /fb_market <stock|news> [dang] — xem thử bài Page chứng khoán/tin CafeF; thêm 'dang' để đăng thật
-/fb_xoanhom <group_id|tên> — bỏ nhóm khỏi luồng Facebook
 /fb_xem <post_id> — xem bài đang chờ duyệt
 /fb_sua <post_id> <nội dung> — sửa nội dung bài chờ
 /fb_link <post_id> <affiliate_url> — nhập short-link affiliate khi bài chỉ có 1 link Shopee
@@ -53,11 +68,14 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 /fb_ok <post_id> — duyệt và đăng lên TẤT CẢ Facebook Page đang cấu hình; page nào lỗi sẽ báo riêng,
   chạy lại /fb_ok để chỉ thử lại page lỗi, page đã đăng OK không bị đụng tới
 /fb_check <post_id> — kiểm tra từng page đã published/công khai chưa, lấy permalink
+/fb_reconcile — đối soát lượt đăng bị gián đoạn (bài kẹt POSTING/UNKNOWN)
 /fb_boqua <post_id> — bỏ bài chờ
 /fb_reset — xóa toàn bộ bài Facebook đã lưu của tài khoản, reset ID về #1 khi có thể
-/fb_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt (bài cũ trước khi bộ lọc cải thiện)
+/fb_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt
 /fb_boloc [reset] — thống kê bộ lọc: bao nhiêu bài vào hàng chờ, bị bỏ/trùng vì sao, số bài đang chờ
-(hàng chờ giữ tối đa 150 bài, bài trùng trong 7 ngày không được đưa vào)"""
+(hàng chờ giữ tối đa 150 bài, bài trùng trong 7 ngày không được đưa vào)
+
+/help — hiển thị hướng dẫn này"""
 
 # Ảnh do lệnh /anh tạo ra được "gửi kèm" bằng ContextVar thay vì đổi kiểu trả
 # về của maybe_handle_command() (đang là tuple[list[str], str|None] và có
@@ -222,12 +240,24 @@ async def _ragxuly(user_id: int, name: str) -> tuple[list[str], str | None]:
             "Em dọn file md OCR (gộp dòng ngắt, bỏ số trang, thêm heading), "
             "backup bản gốc vào rag/_goc/ rồi ghi đè file chính."
         ], None
+    from core import alerts
     from services import rag_clean_service
 
-    # Giữ orchestrator/provider_state/asyncpg trên cùng event loop của web app.
-    # Mỗi part AI được await tuần tự nên event loop vẫn phục vụ request khác.
-    text = await rag_clean_service.clean_file(name)
-    return [text], None
+    async def _run() -> None:
+        # Chạy nền ngoài khoá lượt (file dài = hàng chục lượt AI, Zalo gateway
+        # chỉ chờ 240s). Kết quả gửi về Telegram chủ bot qua kênh cảnh báo.
+        try:
+            text = await rag_clean_service.clean_file(name)
+        except Exception as exc:
+            text = f"❌ /ragxuly {name} lỗi: {exc}"
+        alerts.send(f"/ragxuly {name}:\n{text}")
+
+    if not rag_clean_service.start_background(name, _run()):
+        return ["⏳ Đang có một lượt /ragxuly khác chạy. Chờ xong rồi gọi lại nhé."], None
+    return [
+        f"⏳ Đang dọn {name} ở nền (trần {rag_clean_service.total_timeout_sec() // 60} phút). "
+        "Xong em báo về Telegram chủ bot."
+    ], None
 
 
 async def _morning_news_now() -> list[str]:

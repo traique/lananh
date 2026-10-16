@@ -1,4 +1,5 @@
 """Unit test cho services/morning_news.py."""
+
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,6 +36,7 @@ def reset_state(monkeypatch):
 
 # ─── build_digest ───────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_build_digest_tra_ve_none_khi_chua_cau_hinh_feed(monkeypatch):
     monkeypatch.setattr(config, "MORNING_NEWS_RSS_FEEDS", [])
@@ -63,7 +65,9 @@ async def test_build_digest_goi_ai_tong_hop_tu_rss(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_build_digest_bo_qua_feed_loi_van_tong_hop_feed_con_lai(monkeypatch):
-    monkeypatch.setattr(config, "MORNING_NEWS_RSS_FEEDS", ["https://a.example/rss", "https://b.example/rss"])
+    monkeypatch.setattr(
+        config, "MORNING_NEWS_RSS_FEEDS", ["https://a.example/rss", "https://b.example/rss"]
+    )
 
     async def fake_read_rss(url: str) -> str:
         if url == "https://a.example/rss":
@@ -71,7 +75,9 @@ async def test_build_digest_bo_qua_feed_loi_van_tong_hop_feed_con_lai(monkeypatc
         return "[Feed: B]\n1. Tin B"
 
     async def fake_ask(prompt: str):
-        return SimpleNamespace(text="Bản tin sáng nay chỉ có 1 tin từ nguồn B: cập nhật tình hình kinh doanh mới nhất.")
+        return SimpleNamespace(
+            text="Bản tin sáng nay chỉ có 1 tin từ nguồn B: cập nhật tình hình kinh doanh mới nhất."
+        )
 
     monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
     monkeypatch.setattr(orchestrator, "ask", fake_ask)
@@ -110,10 +116,14 @@ async def test_build_digest_bo_qua_khi_model_tra_loi_qua_ngan(monkeypatch):
 
 # ─── run_once: gửi Zalo + Zoom, guard idempotent ───────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_run_once_gui_ca_zalo_va_zoom(monkeypatch):
     monkeypatch.setattr(morning_news, "build_digest", lambda: _async_return("nội dung bản tin"))
     monkeypatch.setattr(zalo_session, "load_controller", lambda: _async_return("controller-1"))
+    monkeypatch.setattr(
+        zalo_repository, "resolve_active_account_id", lambda: _async_return("zalo-bot")
+    )
 
     enqueued = {}
 
@@ -181,6 +191,9 @@ async def test_run_once_khong_gui_lai_trong_ngay_neu_da_gui_roi(monkeypatch):
 
     monkeypatch.setattr(morning_news, "build_digest", fake_build_digest)
     monkeypatch.setattr(zalo_session, "load_controller", lambda: _async_return("controller-1"))
+    monkeypatch.setattr(
+        zalo_repository, "resolve_active_account_id", lambda: _async_return("zalo-bot")
+    )
     monkeypatch.setattr(zalo_repository, "enqueue_outbox", lambda *a, **k: _async_return(None))
     monkeypatch.setattr(db, "zoom_get_pairing", lambda: _async_return(None))
 
@@ -195,3 +208,16 @@ async def test_run_once_khong_gui_lai_trong_ngay_neu_da_gui_roi(monkeypatch):
 
 async def _async_return(value):
     return value
+
+
+def test_is_due_khung_gui_bu(monkeypatch):
+    from datetime import datetime
+
+    from core import config as cfg
+
+    monkeypatch.setattr(cfg, "MORNING_NEWS_HOUR_VN", 8)
+    tz = morning_news._VN_TZ
+    assert morning_news.is_due(datetime(2026, 5, 4, 7, 59, tzinfo=tz)) is False
+    assert morning_news.is_due(datetime(2026, 5, 4, 8, 0, tzinfo=tz)) is True
+    assert morning_news.is_due(datetime(2026, 5, 4, 10, 59, tzinfo=tz)) is True
+    assert morning_news.is_due(datetime(2026, 5, 4, 11, 0, tzinfo=tz)) is False

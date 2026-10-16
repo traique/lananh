@@ -395,6 +395,16 @@ _PLAN_LANGUAGE_RE = re.compile(
     re.IGNORECASE,
 )
 _PRICE_NUMBER_RE = re.compile(r"(?<![\d.,])(\d{1,3}(?:\.\d{3})+|\d{5,7})(?:,\d+)?(?![\d.])")
+# Giá viết tắt theo nghìn đồng: "25,5", "25.5", "25.5k", "25,5 nghìn" (10 <= x < 1000
+# có phần thập phân, hoặc kèm hậu tố k/nghìn/ngàn). Quy ước này chính
+# portfolio_service.parse_price chấp nhận nên checker số lạ cũng phải hiểu.
+_INDICATOR_CONTEXT_RE = re.compile(
+    r"(rsi|adx|atr|macd|p/e|p/b|eps|roe|roa|beta|%\s*b|pct_b|điểm|hệ số|tỷ lệ|tỉ lệ)\W*$"
+)
+_SHORT_PRICE_RE = re.compile(
+    r"(?<![\d.,])(\d{1,3})[.,](\d{1,2})(?:\s?(?:k|K|nghìn|ngàn))?(?![\d.,%])"
+    r"|(?<![\d.,])(\d{1,3})\s?(?:k|K|nghìn|ngàn)(?![\w])"
+)
 
 
 def _negated(text: str, start: int) -> bool:
@@ -448,12 +458,28 @@ def _normalize_price_token(token: str) -> int | None:
 
 
 def price_numbers(text: str) -> set[int]:
-    """Mọi số dạng giá/khối lượng (>= 1.000 viết kiểu VN, hoặc 5-7 chữ số liền)."""
+    """Mọi số dạng giá/khối lượng (>= 1.000 viết kiểu VN, 5-7 chữ số liền, hoặc
+    viết tắt nghìn đồng "25,5"/"25.5k" -> 25500)."""
     out: set[int] = set()
-    for match in _PRICE_NUMBER_RE.finditer(text or ""):
+    text = text or ""
+    for match in _PRICE_NUMBER_RE.finditer(text):
         value = _normalize_price_token(match.group(1))
         if value is not None and value >= 1000:
             out.add(value)
+    for match in _SHORT_PRICE_RE.finditer(text):
+        context = text[max(0, match.start() - 12) : match.start()].lower()
+        if _INDICATOR_CONTEXT_RE.search(context):
+            continue  # "RSI 55,5", "ADX 28,3", "P/E 12,5" là chỉ báo, không phải giá
+        if match.group(1) is not None:
+            whole, frac = int(match.group(1)), match.group(2)
+            if whole < 10:
+                continue  # "2,5" quá nhỏ để là giá cổ phiếu theo nghìn
+            value = whole * 1000 + int(frac.ljust(3, "0")[:3])
+        else:
+            value = int(match.group(3)) * 1000
+            if value < 1000:
+                continue
+        out.add(value)
     return out
 
 

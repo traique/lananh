@@ -13,8 +13,11 @@ const MAX_MESSAGES_PER_POST = 50;
 const MAX_MEDIA_PER_POST = 10;
 const MAX_TEXT_CHARS = 20000;
 const MAX_BUFFERS = 64;
-/** Tổng media giữ trong RAM cho TẤT CẢ bài đang gom (container 512 MB). */
-const MAX_BUFFERED_MEDIA_BYTES = 16 * 1024 * 1024;
+/**
+ * Tổng media giữ trong RAM cho TẤT CẢ bài đang gom. Heap Node bị chặn ~96 MB và
+ * khi gửi sang Python, base64 + JSON.stringify nhân đôi dung lượng nên để 6 MiB.
+ */
+export const MAX_BUFFERED_MEDIA_BYTES = 6 * 1024 * 1024;
 
 type PendingPost = {
   groupId: string;
@@ -40,6 +43,8 @@ export type FacebookBufferDeps = {
   retryMs?: number;
   maxRetryDelayMs?: number;
   maxAttempts?: number;
+  /** Trần tổng media trong RAM (test). */
+  maxBufferedMediaBytes?: number;
 };
 
 const mediaSize = (items: { bytes: Uint8Array }[]) =>
@@ -96,6 +101,7 @@ export class FacebookPostBuffer {
   private readonly retryMs: number;
   private readonly maxRetryDelayMs: number;
   private readonly maxAttempts: number;
+  private readonly maxMediaBytes: number;
   private sequence = 0;
 
   constructor(private readonly deps: FacebookBufferDeps) {
@@ -103,6 +109,7 @@ export class FacebookPostBuffer {
     this.retryMs = deps.retryMs ?? RETRY_MS;
     this.maxRetryDelayMs = deps.maxRetryDelayMs ?? MAX_RETRY_DELAY_MS;
     this.maxAttempts = Math.max(1, deps.maxAttempts ?? MAX_TRANSIENT_ATTEMPTS);
+    this.maxMediaBytes = Math.max(1, deps.maxBufferedMediaBytes ?? MAX_BUFFERED_MEDIA_BYTES);
   }
 
   get size(): number {
@@ -198,13 +205,23 @@ export class FacebookPostBuffer {
     media: MediaItem[],
   ): Promise<void> {
     const key = `${groupId}:${senderId}`;
+    // Ảnh một mình đã vượt trần RAM (ảnh tải về có thể tới 8 MB): bỏ ảnh, giữ
+    // chữ; không bao giờ giữ bài vượt trần dù có đẩy hết bài khác đi.
+    if (media.length && mediaSize(media) > this.maxMediaBytes) {
+      console.error(
+        `[zalo] Bỏ ${media.length} ảnh của tin ${messageId} (nhóm=${groupId} người gửi=${senderId}): ` +
+          `${mediaSize(media)} byte vượt trần ${this.maxMediaBytes} byte media trong RAM`,
+      );
+      media = [];
+      if (!text.trim()) return;
+    }
     const current = this.buffers.get(key);
     if (
       current &&
       (startsNewPost(current, text, media.length > 0) ||
         current.messageIds.length >= MAX_MESSAGES_PER_POST ||
         current.media.length + media.length > MAX_MEDIA_PER_POST ||
-        mediaSize(current.media) + mediaSize(media) > MAX_BUFFERED_MEDIA_BYTES ||
+        mediaSize(current.media) + mediaSize(media) > this.maxMediaBytes ||
         current.texts.join("\n").length + text.length + 1 > MAX_TEXT_CHARS)
     ) {
       // Tách bài cũ sang khoá riêng rồi mới gửi: nếu gửi lỗi, bài cũ vẫn được
@@ -218,10 +235,15 @@ export class FacebookPostBuffer {
     // thì bỏ luôn bài cũ đó (đã log) - tin mới không bao giờ bị mất vì bài cũ.
     while (
       this.buffers.size >= MAX_BUFFERS ||
-      this.totalBufferedBytes() + mediaSize(media) > MAX_BUFFERED_MEDIA_BYTES
+      this.totalBufferedBytes() + mediaSize(media) > this.maxMediaBytes
     ) {
       const oldest = this.buffers.keys().next().value;
       if (oldest === undefined) break;
+      const evicted = this.buffers.get(oldest);
+      console.warn(
+        `[zalo] Bộ đệm Facebook đầy (${this.buffers.size} bài, ${this.totalBufferedBytes()} byte media): ` +
+          `đẩy sớm bài nhóm=${evicted?.groupId ?? "?"} người gửi=${evicted?.senderId ?? "?"} sang Python`,
+      );
       await this.flush(oldest, true);
     }
     const existing = this.buffers.get(key);

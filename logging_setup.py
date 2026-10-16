@@ -3,27 +3,64 @@
 Gồm 1 logging.Filter để che các secret (API key 9Router, webhook secret,
 diagnose secret) nếu chúng vô tình lọt vào message log.
 """
+
 import logging
 from typing import Optional
 
 from core import config
 
 
+def _db_password() -> str:
+    """Mật khẩu trong DATABASE_URL (postgresql://user:PASS@host/...) - phần hay
+    lọt vào log nhất khi asyncpg/httpx in URL kết nối lỗi."""
+    from urllib.parse import unquote, urlsplit
+
+    try:
+        parsed = urlsplit(config.DATABASE_URL)
+    except ValueError:
+        return ""
+    return unquote(parsed.password or "")
+
+
+def _collect_secrets() -> list[str]:
+    """Mọi secret cấu hình tĩnh; secret phát sinh lúc chạy (session Zalo, token
+    Facebook theo page) đăng ký thêm qua add_redacted_secret()."""
+    import os
+
+    values = [
+        config.TELEGRAM_TOKEN,
+        config.ROUTER9_API_KEY,
+        config.WEBHOOK_SECRET,
+        config.DIAGNOSE_SECRET,
+        config.ZOOM_CLIENT_SECRET,
+        config.ZOOM_SECRET_TOKEN,
+        config.ZOOM_VERIFICATION_TOKEN,
+        config.GOOGLE_AI_STUDIO_API_KEY_1,
+        config.GOOGLE_AI_STUDIO_API_KEY_2,
+        config.GROQ_API_KEY,
+        config.OPENROUTER_API_KEY,
+        config.TAVILY_API_KEY,
+        config.AGNES_API_KEY,
+        config.VNSTOCK_API_KEY,
+        config.ADMIN_PASS,
+        config.SETTINGS_ENC_KEY,
+        config.SETTINGS_ENC_KEY_OLD,
+        _db_password(),
+        os.getenv("ZALO_BRIDGE_SECRET", "").strip(),
+        os.getenv("GITHUB_RAG_TOKEN", "").strip(),
+    ]
+    # Mọi FACEBOOK_PAGE_ACCESS_TOKEN* (page mặc định, _2, _MARKET...).
+    values.extend(
+        v.strip() for k, v in os.environ.items() if k.startswith("FACEBOOK_PAGE_ACCESS_TOKEN")
+    )
+    # Secret quá ngắn (<8 ký tự) che sẽ phá log bình thường ("1", "true"...).
+    return [v for v in values if v and len(v) >= 8]
+
+
 class _RedactFilter(logging.Filter):
     def __init__(self) -> None:
         super().__init__()
-        self._secrets = [
-            s
-            for s in (
-                config.ROUTER9_API_KEY,
-                config.WEBHOOK_SECRET,
-                config.DIAGNOSE_SECRET,
-                config.ZOOM_CLIENT_SECRET,
-                config.ZOOM_SECRET_TOKEN,
-                config.ZOOM_VERIFICATION_TOKEN,
-            )
-            if s
-        ]
+        self._secrets = [s for s in _collect_secrets() if s]
 
     def add_secret(self, value: str) -> None:
         """Đăng ký thêm 1 secret phát sinh lúc runtime để các log về sau cũng

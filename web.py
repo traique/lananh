@@ -7,18 +7,16 @@ import logging
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import HTMLResponse
 from telegram import Update
 from telegram.ext import Application
 
 import bot_app
 import web_admin
 import logging_setup
-import messages
 from channels import (
     facebook_commands,
-    facebook_repository,
     group_commands,
     zalo_repository,
     zalo_scheduler,
@@ -29,7 +27,7 @@ from channels.router import router as zalo_router
 from core import config, database as db, idempotency, webhook_inbox
 from diagnose_router9 import main as diagnose_main
 from services import db_maintenance, market_page, morning_news
-from services.background_tasks import stop_tracked_tasks
+from services import channel_dispatch
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.concurrency import OWNER_TURN_KEY, assistant_turn
 from services.reminder_delivery import NotificationTarget, notification_target
@@ -39,7 +37,6 @@ from services.request_limits import RequestLimitsMiddleware
 logging_setup.configure_logging()
 logger = logging.getLogger(__name__)
 application: Application | None = None
-_background_tasks: set[asyncio.Task] = set()
 _diagnose_lock = asyncio.Lock()
 _PRIVACY_PATH = Path(__file__).resolve().parent / "templates" / "privacy.html"
 _TERMS_PATH = Path(__file__).resolve().parent / "templates" / "terms.html"
@@ -51,16 +48,6 @@ def _diagnose_token_valid(request: Request) -> bool:
     # So sánh bytes: header chứa ký tự non-ASCII không làm compare_digest TypeError (500).
     return bool(config.DIAGNOSE_SECRET) and hmac.compare_digest(
         token.encode(), config.DIAGNOSE_SECRET.encode()
-    )
-
-
-async def _stop_webhook_tasks() -> None:
-    """Drain request handlers, rồi huỷ lượt treo trước khi đóng app/DB."""
-    await stop_tracked_tasks(
-        _background_tasks,
-        timeout=30.0,
-        logger=logger,
-        label="Telegram webhook",
     )
 
 
@@ -149,7 +136,6 @@ async def lifespan(_: FastAPI):
         await _safe_shutdown("Market page scheduler", market_page.stop())
         await _safe_shutdown("DB maintenance", db_maintenance.stop())
         await _safe_shutdown("webhook inbox", webhook_inbox.stop())
-        await _safe_shutdown("webhook tasks", _stop_webhook_tasks())
         if app_started:
             await _safe_shutdown("Telegram application stop", application.stop())
         if app_resources_started:
@@ -167,14 +153,6 @@ api.add_middleware(RequestLimitsMiddleware)
 api.include_router(zalo_router)
 api.include_router(web_admin.router)
 api.include_router(web_admin.api_router)
-
-
-@api.get("/r/{token}", include_in_schema=False)
-async def affiliate_redirect(token: str):
-    target = await facebook_repository.resolve_short_link(token)
-    if not target:
-        raise HTTPException(status_code=404, detail="Short link not found")
-    return RedirectResponse(target, status_code=302)
 
 
 @api.api_route("/", methods=["GET", "HEAD"])
@@ -212,10 +190,31 @@ async def diagnose(request: Request) -> Response:
         return Response(content=buf.getvalue(), media_type="text/plain; charset=utf-8")
 
 
+@api.get("/healthz")
+async def healthz() -> Response:
+    """Health sâu: kiểm tra DB (SELECT 1, trần 3s). Render vẫn dùng GET / (nhẹ,
+    không chạm DB) để không restart service chỉ vì Supabase chập chờn; endpoint
+    này để UptimeRobot/chủ bot soi trạng thái thật."""
+    try:
+        pool = await asyncio.wait_for(db.get_pool(), timeout=3.0)
+        await asyncio.wait_for(pool.fetchval("SELECT 1"), timeout=3.0)
+    except Exception as exc:
+        logger.warning("healthz: DB không phản hồi: %r", exc)
+        return Response(
+            content='{"status":"degraded","db":"down"}',
+            media_type="application/json",
+            status_code=503,
+        )
+    return Response(content='{"status":"ok","db":"ok"}', media_type="application/json")
+
+
 @api.post(config.WEBHOOK_PATH)
 async def telegram_webhook(request: Request) -> Response:
     secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    if not config.WEBHOOK_SECRET or not hmac.compare_digest(secret, config.WEBHOOK_SECRET):
+    # So sánh bytes: header non-ASCII không làm compare_digest TypeError (500 thay vì 403).
+    if not config.WEBHOOK_SECRET or not hmac.compare_digest(
+        secret.encode(), config.WEBHOOK_SECRET.encode()
+    ):
         return Response(status_code=403)
     if application is None:
         return Response(status_code=503)
@@ -261,86 +260,42 @@ async def _deliver_zoom_event(event: "zoom.ZoomEvent") -> None:
             logger.info(
                 "Zoom: tin nhắn từ jid chưa pair (%s), bỏ qua + báo owner.", event.sender_jid
             )
-            if application is not None:
-                try:
-                    await application.bot.send_message(
-                        chat_id=config.ALLOWED_USER_ID,
-                        text=messages.ZOOM_UNPAIRED_ALERT.format(jid=event.sender_jid),
-                    )
-                except Exception:
-                    logger.warning("Không gửi được cảnh báo Zoom chưa pair.", exc_info=True)
+            zoom.notify_unpaired(event.sender_jid)
             return
 
-        cached = await idempotency.get_zalo_response(
-            event.account_id or "zoom-bot", event.event_id, "zoom-text"
+        # Zoom admin dùng chung lệnh quản lý nhóm Zalo và /fb_* với Zalo admin.
+        # Request Zoom không có account_id Zalo nên ưu tiên lấy từ session đang
+        # đăng nhập; fallback resolver cũ để tương thích session cũ.
+        zalo_account_id = (
+            await zalo_session.load_account_id()
+            or await zalo_repository.resolve_default_account_id()
         )
-        if cached is not None:
-            reply_texts = cached.get("messages", [])
-            image_url = cached.get("image_url")
-        else:
-            # Zoom admin dùng chung lệnh quản lý nhóm Zalo và /fb_* với Zalo admin.
-            # Request Zoom không có account_id Zalo nên ưu tiên lấy từ session đang
-            # đăng nhập; fallback resolver cũ để tương thích session cũ.
-            zalo_account_id = (
-                await zalo_session.load_account_id()
-                or await zalo_repository.resolve_default_account_id()
-            )
-            # /fb_* chạy NGOÀI assistant_turn() cố ý: /fb_ok gọi Facebook Graph API
-            # có thể chậm, và nó đã có atomic riêng (claim_post). Giữ lock lượt
-            # của owner suốt thời gian đó sẽ chặn chat của chính owner và chiếm
-            # 1 slot MAX_CONCURRENT_TURNS.
-            facebook_result = (
-                await facebook_commands.maybe_handle_facebook_command(
-                    zalo_account_id, event.text.strip()
-                )
-                if zalo_account_id
-                else None
-            )
-            if facebook_result is not None:
-                reply_texts = _zoom_chunks(facebook_result.messages)
-                provider = None
-                image_url = None
-                await idempotency.save_zalo_response(
-                    event.account_id or "zoom-bot",
-                    event.event_id,
-                    "zoom-text",
-                    {"messages": reply_texts, "provider": provider, "image_url": image_url},
-                )
-            else:
-                async with assistant_turn(OWNER_TURN_KEY):
-                    # Re-check: một lượt gửi trùng của cùng event có thể đã
-                    # được xử lý xong trong lúc ta chờ lock ở trên.
-                    cached = await idempotency.get_zalo_response(
-                        event.account_id or "zoom-bot", event.event_id, "zoom-text"
-                    )
-                    if cached is not None:
-                        reply_texts = cached.get("messages", [])
-                        image_url = cached.get("image_url")
-                    else:
-                        group_result = (
-                            await group_commands.maybe_handle_group_command(
-                                zalo_account_id, event.text.strip()
-                            )
-                            if zalo_account_id
-                            else None
-                        )
-                        if group_result is not None:
-                            reply_texts = _zoom_chunks(group_result.messages)
-                            provider = None
-                            image_url = None
-                        else:
-                            result = await handle_channel_text(
-                                config.ALLOWED_USER_ID, event.text.strip(), channel="zoom"
-                            )
-                            reply_texts = _zoom_chunks(result.messages)
-                            provider = result.provider
-                            image_url = result.image_url
-                        await idempotency.save_zalo_response(
-                            event.account_id or "zoom-bot",
-                            event.event_id,
-                            "zoom-text",
-                            {"messages": reply_texts, "provider": provider, "image_url": image_url},
-                        )
+        payload = await channel_dispatch.dispatch(
+            channel_dispatch.DispatchRequest(
+                account_id=event.account_id or "zoom-bot",
+                event_id=event.event_id,
+                cache_kind="zoom-text",
+                user_id=config.ALLOWED_USER_ID,
+                is_admin=True,
+                channel="zoom",
+                text=event.text,
+                turn_key=OWNER_TURN_KEY,
+                command_account_id=zalo_account_id or None,
+            ),
+            channel_dispatch.DispatchHandlers(
+                chat=lambda user_id, text, is_admin: handle_channel_text(
+                    user_id, text, channel="zoom"
+                ),
+                get_cached=idempotency.get_zalo_response,
+                save_cached=idempotency.save_zalo_response,
+                facebook=facebook_commands.maybe_handle_facebook_command,
+                group=group_commands.maybe_handle_group_command,
+                chunk=_zoom_chunks,
+                turn=assistant_turn,
+            ),
+        )
+        reply_texts = payload.get("messages", [])
+        image_url = payload.get("image_url")
 
         for chunk in reply_texts:
             await zoom.send_message(
@@ -374,6 +329,8 @@ async def zoom_webhook(request: Request) -> Response:
     try:
         payload = await request.json()
     except Exception:
+        return Response(status_code=400)
+    if not isinstance(payload, dict):
         return Response(status_code=400)
 
     event_type = payload.get("event", "")

@@ -14,6 +14,12 @@ Node adapter dùng `zca-js` cho tài khoản B, chạy cùng container với Fas
   `ZALO_OUTBOX_MAX_ATTEMPTS` lần (báo chủ bot) - không chặn các tin phía sau.
 - Tin riêng xử lý tuần tự theo từng người gửi, song song tối đa
   `ZALO_DIRECT_CONCURRENCY` người; hàng đợi đầy thì báo "đang bận" cho người gửi.
+- Gửi trả lời lỗi thì thử lại 3 lần (1s/3s/8s); lưu tin nhóm lỗi thử lại 2 lần.
+- Listener Zalo đóng hẳn: gateway tự đăng nhập lại từ phiên đã lưu với backoff
+  5s/15s/60s/5 phút (tối đa 10 lần) rồi chuyển sang `login_required` (quét QR lại).
+- Trạng thái gateway được báo về Python qua `POST /internal/zalo/gateway-state`
+  với body `{account_id, state, detail?}`; `state` là một trong `connected`,
+  `reconnecting`, `closed`, `login_required`, `send_failed` để chủ bot được báo.
 
 ## Cấu hình
 

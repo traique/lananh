@@ -192,6 +192,12 @@ API_QUOTA_COOLDOWN_SEC = _env_int("API_QUOTA_COOLDOWN_SEC", 3600)  # 60 phút
 # khi bỏ cuộc - để người dùng nhận được thông báo lỗi rõ ràng thay vì im lặng
 # và slot MAX_CONCURRENT_TURNS được trả lại.
 CHAT_TURN_TIMEOUT_SEC = max(30, min(230, _env_int("CHAT_TURN_TIMEOUT_SEC", 200)))
+# Cập nhật trí nhớ dài hạn chạy NỀN sau mỗi lượt chat (ngoài hạn chót lượt):
+# vẫn phải có trần riêng để 1 lượt gọi Gemini treo không giữ task mãi.
+MEMORY_UPDATE_TIMEOUT_SEC = max(15, min(180, _env_int("MEMORY_UPDATE_TIMEOUT_SEC", 90)))
+# /ragxuly dọn file dài theo từng phần, chạy nền ngoài khoá lượt chat; trần
+# TỔNG cho cả file (trước đây chỉ có 180s/phần, file 50 phần = 2,5 giờ).
+RAG_CLEAN_TOTAL_TIMEOUT_SEC = max(120, min(3600, _env_int("RAG_CLEAN_TOTAL_TIMEOUT_SEC", 900)))
 
 # Webhook inbox (core/webhook_inbox.py): số lần thử tối đa cho 1 sự kiện
 # Telegram/Zoom trước khi chuyển DEAD (ngừng thử, báo chủ bot 1 lần), và số
@@ -240,6 +246,8 @@ PROVIDER_ORDER = _parse_provider_order(_PROVIDER_ORDER_RAW)
 # ─── Scheduler: reminder + daily digest danh mục (Bước 6) ──────────────────
 REMINDER_CHECK_INTERVAL_SEC = _env_int("REMINDER_CHECK_INTERVAL_SEC", 30)
 ENABLE_DAILY_DIGEST = _env_bool("ENABLE_DAILY_DIGEST", True)
+# Cảnh báo danh mục cuối phiên (chạm stop/target, breakout Donchian) - services/portfolio_alerts.py.
+ENABLE_PORTFOLIO_ALERTS = _env_bool("ENABLE_PORTFOLIO_ALERTS", True)
 DAILY_DIGEST_HOUR_VN = _env_int("DAILY_DIGEST_HOUR_VN", 8)
 
 # Bản tin buổi sáng tổng hợp từ RSS, gửi qua Zalo + Zoom cho chủ bot lúc
@@ -396,6 +404,15 @@ WEBHOOK_BASE_URL = (
 # (session Zalo, v.v.) không được phép hạ cấp về plaintext khi thiếu hoặc cấu
 # hình sai khoá.
 SETTINGS_ENC_KEY = os.getenv("SETTINGS_ENC_KEY", "").strip() or None
+# Khoá cũ khi xoay khoá (nhiều khoá cách nhau dấu phẩy) - xem core/crypto.py.
+SETTINGS_ENC_KEY_OLD = os.getenv("SETTINGS_ENC_KEY_OLD", "").strip() or None
+# Từ chối giá trị settings chưa mã hoá (bật sau khi mọi secret đã có prefix enc:).
+SETTINGS_REJECT_PLAINTEXT = _env_bool("SETTINGS_REJECT_PLAINTEXT", False)
+# SSL tới Postgres: "require" (mặc định, mã hoá nhưng KHÔNG xác thực chứng chỉ
+# server - hành vi cũ) hoặc "verify-full" (xác thực chứng chỉ + hostname; cần
+# DATABASE_SSL_CA trỏ tới file CA của Supabase nếu CA đó không có trong hệ thống).
+DATABASE_SSL_MODE = os.getenv("DATABASE_SSL_MODE", "require").strip().lower() or "require"
+DATABASE_SSL_CA = os.getenv("DATABASE_SSL_CA", "").strip() or None
 
 # Secret riêng cho endpoint /diagnose (KHÔNG dùng chung với WEBHOOK_SECRET), truyền
 # qua header X-Diagnose-Token thay vì query string để tránh lộ qua access log.

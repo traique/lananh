@@ -6,6 +6,7 @@ State provider-chain sống trong ai.provider_state.provider_state (1 singleton
 ProviderChainState) - các test dưới đây tự reset qua fixture `reset_state`
 trước mỗi test để không bị rò rỉ giữa các case.
 """
+
 import asyncio
 import sys
 import time
@@ -46,7 +47,10 @@ async def test_ask_does_not_leak_router9_model_name_to_official_api_fallback(mon
 
     monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "api1", "api2"])
     monkeypatch.setattr(orchestrator.router9_client, "generate", fake_router9_call)
-    monkeypatch.setattr(orchestrator.router9_client, "get_preferred_model_name", fake_get_preferred_model_name)
+    monkeypatch.setattr(
+        orchestrator.router9_client, "get_preferred_model_name", fake_get_preferred_model_name
+    )
+
     async def fake_api_key_for(idx):
         return "k" if idx == 1 else None
 
@@ -57,7 +61,9 @@ async def test_ask_does_not_leak_router9_model_name_to_official_api_fallback(mon
 
     assert response.text == "trả lời từ API dự phòng"
     assert captured_model["model"] != "notion/GPT-5.6 Luna"
-    assert captured_model["model"] is None  # official_client tự dùng GOOGLE_AI_STUDIO_MODEL mặc định
+    assert (
+        captured_model["model"] is None
+    )  # official_client tự dùng GOOGLE_AI_STUDIO_MODEL mặc định
 
 
 class FakeSettingsStore:
@@ -270,7 +276,7 @@ async def test_moi_provider_deu_that_bai_thi_raise_loi_cuoi(fake_store):
     async def api_call(idx):
         raise RuntimeError(f"api{idx} vẫn lỗi ở lượt cứu cánh")
 
-    with pytest.raises(Exception):
+    with pytest.raises((RuntimeError, TimeoutError)):
         await orchestrator._run_provider_chain(
             router9_call=_failing_router9_call(), api_call=api_call
         )
@@ -516,3 +522,72 @@ async def test_reset_api_cooldown_xoa_cooldown_va_cho_goi_lai(fake_store):
 
     assert result == "api1-response"
     assert called_idx == [1], "cooldown đã reset -> api1 phải được thử lại"
+
+
+@pytest.mark.asyncio
+async def test_provider_dang_cooldown_429_khong_duoc_goi_lai_o_luot_cuu_canh(fake_store):
+    """Cooldown là cooldown thật: khi mọi provider khác lỗi, chỉ router9 (chết
+    vì timeout/lỗi tạm) được thử lại; api đang cooldown 429 KHÔNG được gọi
+    (gọi chỉ thêm 1 lỗi 429 vào quota đang cạn)."""
+    provider_state.router9_dead_since = time.time() - 100
+    provider_state.api_exhausted_until["api1"] = time.time() + 999
+    provider_state.api_exhausted_until["api2"] = time.time() + 999
+    provider_state._loaded = True
+    api_calls = []
+    router9_calls = []
+
+    async def api_call(idx):
+        api_calls.append(idx)
+        raise RuntimeError("không được gọi")
+
+    async def router9_call():
+        router9_calls.append(1)
+        return "router9 cứu cánh"
+
+    result = await orchestrator._run_provider_chain(router9_call=router9_call, api_call=api_call)
+    assert result == "router9 cứu cánh"
+    assert api_calls == []
+    assert router9_calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_utility_json_uu_tien_groq_roi_fallback_gemini(fake_store, monkeypatch):
+    provider_state._loaded = True
+    monkeypatch.setattr(config, "GROQ_API_KEY", "k")
+    recorded = []
+
+    async def fake_groq_json(prompt, **kwargs):
+        return {"tool": "none"}
+
+    async def fake_gemini(prompt):
+        raise AssertionError("Groq đã trả JSON thì không gọi Gemini")
+
+    async def fake_record(provider, **kwargs):
+        recorded.append((provider, kwargs.get("outcome", "ok")))
+
+    monkeypatch.setattr(orchestrator.groq_client, "generate_json", fake_groq_json)
+    monkeypatch.setattr(orchestrator.official_client, "generate_utility_json", fake_gemini)
+    monkeypatch.setattr(orchestrator, "_record_provider_call", fake_record)
+    assert await orchestrator.utility_json("trả JSON") == {"tool": "none"}
+    assert recorded == [("groq", "ok")]
+
+    async def fake_groq_fail(prompt, **kwargs):
+        raise RuntimeError("groq lỗi")
+
+    async def fake_gemini_ok(prompt):
+        return {"from": "gemini"}
+
+    monkeypatch.setattr(orchestrator.groq_client, "generate_json", fake_groq_fail)
+    monkeypatch.setattr(orchestrator.official_client, "generate_utility_json", fake_gemini_ok)
+    assert await orchestrator.utility_json("trả JSON") == {"from": "gemini"}
+    # Lượt lỗi cũng được ghi lại (observability) với outcome phân loại.
+    assert recorded[-1] == ("groq", "error")
+
+    # Groq đang cooldown -> không gọi Groq.
+    provider_state.api_exhausted_until["groq"] = time.time() + 999
+
+    async def fake_groq_forbidden(prompt, **kwargs):
+        raise AssertionError("groq đang cooldown")
+
+    monkeypatch.setattr(orchestrator.groq_client, "generate_json", fake_groq_forbidden)
+    assert await orchestrator.utility_json("trả JSON") == {"from": "gemini"}

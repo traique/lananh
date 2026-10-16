@@ -7,11 +7,16 @@ có tool tìm kiếm web tích hợp sẵn) - dành riêng cho tác vụ require
 Không dùng cho ask()/chat() thường vì compound-mini chậm hơn model chat thường.
 """
 
+import json
+import logging
 from typing import Optional
 
 from ai import openai_compatible, provider_overrides
 from ai.openai_compatible import Response
 from core import config
+from core.text_utils import strip_json_fence
+
+logger = logging.getLogger(__name__)
 
 _pool = openai_compatible.ClientPool(
     config.GROQ_CALL_TIMEOUT_SEC, config.GROQ_MAX_CONCURRENCY, config.GROQ_TOTAL_TIMEOUT_SEC
@@ -65,6 +70,45 @@ async def generate(
             )
 
     return Response(await _pool.bounded("Groq", _call))
+
+
+async def generate_json(prompt: str, *, max_tokens: int = 1024) -> Optional[dict]:
+    """Lượt phụ trả JSON (structured output qua response_format=json_object).
+
+    Groq yêu cầu prompt có nhắc tới "JSON" khi dùng json_object - các prompt
+    utility trong repo đều có; thêm 1 dòng chốt cho chắc. Trả None nếu model
+    trả về không parse được."""
+    api_key = await _api_key()
+    if not api_key:
+        raise openai_compatible.OpenAICompatibleError("Chưa cấu hình GROQ_API_KEY")
+    messages = openai_compatible.build_messages(
+        prompt + "\n\nChỉ trả về đúng 1 object JSON hợp lệ, không thêm chữ nào khác.",
+        None,
+        None,
+    )
+    model_name = await _model()
+
+    async def _call() -> str:
+        async with _pool.get_semaphore():
+            return await openai_compatible.post_chat_completion(
+                _pool.get_client(),
+                base_url=config.GROQ_BASE_URL,
+                api_key=api_key,
+                messages=messages,
+                model=model_name,
+                temperature=0.1,
+                max_tokens=max_tokens,
+                provider_label="Groq JSON",
+                extra_payload={"response_format": {"type": "json_object"}},
+            )
+
+    raw = await _pool.bounded("Groq JSON", _call)
+    try:
+        data = json.loads(strip_json_fence(raw))
+    except (TypeError, ValueError):
+        logger.warning("Groq JSON: không parse được output (%d ký tự).", len(raw or ""))
+        return None
+    return data if isinstance(data, dict) else None
 
 
 async def generate_image_prompt(instruction: str, image_path: str) -> Response:

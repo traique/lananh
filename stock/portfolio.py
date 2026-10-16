@@ -198,7 +198,8 @@ async def sell(user_id: int, symbol: str, quantity: float | None = None) -> Hold
                     """INSERT INTO stock_closed_positions (telegram_user_id, symbol)
                     VALUES ($1, $2) ON CONFLICT (telegram_user_id, symbol)
                     DO UPDATE SET closed_at = now()""",
-                    user_id, symbol,
+                    user_id,
+                    symbol,
                 )
                 await conn.execute(
                     "DELETE FROM stock_holdings WHERE telegram_user_id = $1 AND symbol = $2",
@@ -240,10 +241,13 @@ async def delete_holding(user_id: int, symbol: str) -> bool:
 
 async def was_closed(user_id: int, symbol: str) -> bool:
     await ensure_schema()
-    return bool(await (await db.get_pool()).fetchval(
-        "SELECT 1 FROM stock_closed_positions WHERE telegram_user_id = $1 AND symbol = $2",
-        user_id, symbol.strip().upper(),
-    ))
+    return bool(
+        await (await db.get_pool()).fetchval(
+            "SELECT 1 FROM stock_closed_positions WHERE telegram_user_id = $1 AND symbol = $2",
+            user_id,
+            symbol.strip().upper(),
+        )
+    )
 
 
 def _fmt_number(value: float, digits: int = 0) -> str:
@@ -262,7 +266,7 @@ async def build_report(user_id: int, *, digest: bool = False) -> str:
         return_exceptions=True,
     )
     priced = []
-    for holding, quote in zip(holdings, quotes):
+    for holding, quote in zip(holdings, quotes, strict=False):
         valid_quote = None if isinstance(quote, BaseException) else quote
         market_value = holding.quantity * valid_quote.price if valid_quote else 0.0
         priced.append((holding, valid_quote, market_value))

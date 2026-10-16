@@ -228,7 +228,7 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
             )
         job, publish = parts[1], parts[2:] == ["dang"]
         try:
-            text = await market_page.run_manual(job, publish=publish)
+            market_text = await market_page.run_manual(job, publish=publish)
         except market_page.MarketPageError as exc:
             return ChannelResult([f"❌ {exc}"])
         except FacebookPublicationUncertain:
@@ -240,12 +240,12 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         except Exception as exc:
             logger.warning("/fb_market %s lỗi (%s).", job, type(exc).__name__, exc_info=True)
             return ChannelResult([f"❌ Chạy {job} thất bại: {type(exc).__name__}: {exc}"])
-        if not text:
+        if not market_text:
             return ChannelResult([f"Không có nội dung để đăng cho {job} (xem log để biết lý do)."])
         if publish:
-            return ChannelResult([f"✅ Đã đăng {job} lên Page chứng khoán:\n\n{text}"])
+            return ChannelResult([f"✅ Đã đăng {job} lên Page chứng khoán:\n\n{market_text}"])
         return ChannelResult(
-            [f"👀 XEM THỬ {job} (chưa đăng):\n\n{text}\n\nĐăng thật: /fb_market {job} dang"]
+            [f"👀 XEM THỬ {job} (chưa đăng):\n\n{market_text}\n\nĐăng thật: /fb_market {job} dang"]
         )
 
     if command == "/fb_themnhom":
@@ -269,8 +269,8 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         if len(parts) < 2:
             return ChannelResult(["Cú pháp: /fb_xoanhom <group_id hoặc tên-gợi-nhớ>"])
         target = parts[1].strip()
-        removed = await facebook_repository.remove_group(account_id, target)
-        if not removed:
+        group_removed = await facebook_repository.remove_group(account_id, target)
+        if not group_removed:
             return ChannelResult([f"Không tìm thấy nhóm Facebook “{target}”."])
         return ChannelResult(
             [f"✅ Đã xóa nhóm Facebook {target}. Danh sách /tongket không thay đổi."]
@@ -551,10 +551,10 @@ async def _publish_claimed(account_id, post_id, claimed, page_keys, token, comme
 
     for page_key in to_attempt:
 
-        async def before_create():
+        async def before_create(page_key=page_key):
             await facebook_repository.mark_target_creating(post_id, page_key, token)
 
-        async def on_created(facebook_post_id):
+        async def on_created(facebook_post_id, page_key=page_key):
             await facebook_repository.record_target_posted(
                 post_id,
                 page_key,

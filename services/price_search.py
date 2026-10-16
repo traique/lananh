@@ -93,7 +93,7 @@ async def verify_links(text: str) -> str:
 
     out: list[str] = []
     last_end = 0
-    for match, is_alive in zip(matches, results):
+    for match, is_alive in zip(matches, results, strict=False):
         out.append(text[last_end : match.start()])
         label, url = match.group(1), match.group(2)
         if is_alive is False:

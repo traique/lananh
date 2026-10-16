@@ -596,7 +596,10 @@ def run_out_of_sample_on_series(
 
 
 async def run_backtest(
-    symbols: list[str] | None = None, days: int = DEFAULT_BACKTEST_DAYS
+    symbols: list[str] | None = None,
+    days: int = DEFAULT_BACKTEST_DAYS,
+    *,
+    full_sample: bool = False,
 ) -> list[BacktestResult]:
     """Run offline research only. Render is denied by default to protect the web service.
 
@@ -618,6 +621,23 @@ async def run_backtest(
             series = await providers.fetch_ohlcv(sym, days=days)
         if len(series.closes) < MIN_BARS_TO_START + 5:
             return None
+        if full_sample:
+            # Policy không fit tham số trên phần "train" nên toàn chuỗi đều là
+            # out-of-sample theo nghĩa thống kê; dùng khi cần đủ lệnh cho
+            # thống kê per-setup (>= MIN_TRADES_FOR_STATS).
+            return run_backtest_on_series(
+                sym,
+                series.closes,
+                series.highs,
+                series.lows,
+                series.volumes,
+                series.dates,
+                vnindex_series.closes,
+                vnindex_series.highs,
+                vnindex_series.lows,
+                vnindex_series.volumes,
+                vnindex_dates=vnindex_series.dates,
+            )
         return run_out_of_sample_on_series(
             sym,
             series.closes,

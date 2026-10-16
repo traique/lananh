@@ -41,6 +41,7 @@ async def _process_due_reminders(due: list[tuple[int, int, str]]) -> None:
             text = f"⏰ Nhắc việc: {reminder.message}"
             if reminder.channel == "zalo":
                 from channels import zalo_repository, zalo_session
+
                 account_id = reminder.account_id
                 if not account_id:
                     account_id = await zalo_session.load_account_id()
@@ -53,11 +54,17 @@ async def _process_due_reminders(due: list[tuple[int, int, str]]) -> None:
                 continue
             if reminder.channel == "zoom":
                 from channels import zoom
+
                 await zoom.send_message(
-                    reminder.recipient_id, text, user_jid=reminder.user_jid or None,
+                    reminder.recipient_id,
+                    text,
+                    user_jid=reminder.user_jid or None,
                     account_id=reminder.account_id or None,
                 )
-            elif reminder.channel != "telegram" or int(reminder.recipient_id or reminder.user_id) <= 0:
+            elif (
+                reminder.channel != "telegram"
+                or int(reminder.recipient_id or reminder.user_id) <= 0
+            ):
                 raise ValueError("Reminder has no valid channel recipient")
             elif not await _notify(int(reminder.recipient_id or reminder.user_id), text):
                 await idempotency.release_reminder_claim(reminder.id)
@@ -119,15 +126,47 @@ async def _build_portfolio_digest(user_id: int) -> Optional[str]:
     return "\n".join(lines)
 
 
+_DIGEST_LAST_SENT_KEY = "digest:last_sent_date"
+# Lỡ giờ (Render free ngủ, redeploy đúng giờ) thì gửi bù trong khung này.
+DIGEST_CATCHUP_HOURS = 3
+_DIGEST_POLL_SEC = 15 * 60
+
+
+def digest_due(now: datetime, last_sent_date: str | None) -> bool:
+    """Tới giờ (hoặc trong khung gửi bù) và hôm nay chưa gửi."""
+    if last_sent_date == now.date().isoformat():
+        return False
+    start = now.replace(hour=config.DAILY_DIGEST_HOUR_VN, minute=0, second=0, microsecond=0)
+    return start <= now < start + timedelta(hours=DIGEST_CATCHUP_HOURS)
+
+
+async def run_daily_digest_once(user_id: int, *, force: bool = False) -> bool:
+    """Gửi digest nếu tới hạn và chưa gửi hôm nay (guard lưu DB nên sống qua
+    restart). Trả True nếu đã gửi."""
+    now = datetime.now(_VN_TZ)
+    last_sent = await db.get_setting(_DIGEST_LAST_SENT_KEY)
+    if not force and not digest_due(now, last_sent):
+        return False
+    digest = await _build_portfolio_digest(user_id)
+    if not digest:
+        # Không có danh mục: vẫn đánh dấu để không thử lại mỗi 15 phút cả buổi sáng.
+        await db.set_setting(_DIGEST_LAST_SENT_KEY, now.date().isoformat())
+        return False
+    if await _notify(user_id, digest):
+        await db.set_setting(_DIGEST_LAST_SENT_KEY, now.date().isoformat())
+        return True
+    return False
+
+
 async def _daily_digest_loop(user_id: int) -> None:
     while True:
-        await asyncio.sleep(_seconds_until_next_hour(config.DAILY_DIGEST_HOUR_VN))
         try:
-            digest = await _build_portfolio_digest(user_id)
-            if digest:
-                await _notify(user_id, digest)
+            await run_daily_digest_once(user_id)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.warning("scheduler: lỗi khi tạo/gửi daily digest.", exc_info=True)
+        await asyncio.sleep(_DIGEST_POLL_SEC)
 
 
 def start(allowed_user_id: int) -> None:

@@ -1,0 +1,34 @@
+# Dependabot: PR cập nhật dependency theo tuần, gom nhóm để không ngập PR.
+# Bản vá bảo mật luôn được mở PR riêng ngay khi có.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Asia/Ho_Chi_Minh
+    open-pull-requests-limit: 5
+    groups:
+      python-minor:
+        update-types: [minor, patch]
+    # vnstock/vnai lấy từ kho riêng (vnstocks.com), Dependabot không resolve được.
+    ignore:
+      - dependency-name: vnstock
+      - dependency-name: vnai
+  - package-ecosystem: npm
+    directory: /zalo-gateway
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Asia/Ho_Chi_Minh
+    open-pull-requests-limit: 3
+    groups:
+      npm-minor:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

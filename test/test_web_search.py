@@ -71,6 +71,7 @@ async def test_weak_tavily_result_uses_grounded_fallback(monkeypatch):
     assert captured["require_real_search"] is True
     assert "https://b.vn" in result.text
 
+
 @pytest.mark.asyncio
 async def test_maybe_search_respects_toggle_and_intent_gate(monkeypatch):
     calls = {"search": 0}
@@ -151,9 +152,7 @@ def test_merge_tavily_responses_dedupes_by_url_and_merges_content():
     resp_a = tavily_client.TavilySearchResponse(
         query="q1",
         answer="",
-        results=(
-            tavily_client.TavilyResult(title="R0", url="https://a.vn/p0", content="phần 1"),
-        ),
+        results=(tavily_client.TavilyResult(title="R0", url="https://a.vn/p0", content="phần 1"),),
     )
     resp_b = tavily_client.TavilySearchResponse(
         query="q2",
@@ -236,7 +235,9 @@ async def test_maybe_search_passes_user_id_into_rewrite(monkeypatch):
         captured["history_text"] = history_text
         return ["giá cổ phiếu VNM hôm nay", "giá VNM mới nhất"]
 
-    async def fake_search_web(primary, *, extra_queries=None, deep_read=False, topic="general", time_range=None):
+    async def fake_search_web(
+        primary, *, extra_queries=None, deep_read=False, topic="general", time_range=None
+    ):
         captured["primary"] = primary
         captured["topic"] = topic
         captured["time_range"] = time_range
@@ -254,3 +255,21 @@ async def test_maybe_search_passes_user_id_into_rewrite(monkeypatch):
     assert captured["user_id"] == 42
     assert captured["primary"] == "giá cổ phiếu VNM hôm nay"
     assert captured["extra_queries"] == ["giá VNM mới nhất"]
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("em tin anh mà", False),  # "tin" trong "tin anh" không phải tin tức
+        ("anh khoẻ không?", False),  # "?" nhưng câu chào hỏi ngắn
+        ("ok anh nhé?", False),
+        ("giá như hôm qua anh đi sớm hơn", False),  # "giá như" không phải giá cả
+        ("giá vàng SJC hôm nay bao nhiêu", True),
+        ("check giá iphone 17 giúp em", True),
+        ("tin tức về lãi suất tuần này", True),
+        ("Việt Nam có bao nhiêu tỉnh sau sáp nhập?", True),
+        ("làm sao để cấu hình nginx reverse proxy cho fastapi?", True),
+    ],
+)
+def test_search_intent_gate_khong_bat_nham_cau_tam_su(text, expected):
+    assert web_search.looks_like_search_question(text) is expected

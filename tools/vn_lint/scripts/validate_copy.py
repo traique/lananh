@@ -39,6 +39,7 @@ Suppression:
     <!-- vlc-disable-line NUM001 -->       that line only
     <!-- proof: Khảo sát Nielsen 2026 -->  suppresses LAW001 on that line or the next
 """
+
 from __future__ import annotations
 
 import argparse
@@ -57,25 +58,60 @@ WARN = "warning"
 # project's node_modules or .git can hold hundreds of thousands of files; walking into
 # them turns a lint of one src/messages/ directory into a multi-minute traversal for a
 # handful of matching files. Pruned during the walk, not filtered after it.
-EXCLUDED_DIRS = frozenset({
-    ".git", ".hg", ".svn", "node_modules", ".next", ".nuxt", "dist", "build", "out",
-    "target", "vendor", ".venv", "venv", "__pycache__", ".cache", ".turbo", ".yarn",
-    "coverage", ".pytest_cache", ".mypy_cache", ".tox",
-})
+EXCLUDED_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        ".next",
+        ".nuxt",
+        "dist",
+        "build",
+        "out",
+        "target",
+        "vendor",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".cache",
+        ".turbo",
+        ".yarn",
+        "coverage",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".tox",
+    }
+)
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 REF_DIR = SCRIPT_DIR.parent / "references"
 
-DEFAULT_EXTENSIONS = (".md", ".mdx", ".markdown", ".txt", ".json", ".html", ".htm",
-                      ".yaml", ".yml", ".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte")
+DEFAULT_EXTENSIONS = (
+    ".md",
+    ".mdx",
+    ".markdown",
+    ".txt",
+    ".json",
+    ".html",
+    ".htm",
+    ".yaml",
+    ".yml",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".vue",
+    ".svelte",
+)
 
 # Registers and the pronouns each one expects / forbids. This is the fallback used
 # when references/register-matrix.md is missing; normally the matrix is the source.
 DEFAULT_REGISTERS = {
-    "re":      {"expects": "quý khách", "forbids": ("bạn",)},
-    "formal":  {"expects": "quý vị",    "forbids": ("bạn",)},
-    "consult": {"expects": "anh/chị",   "forbids": ("bạn", "quý vị")},
-    "saas":    {"expects": "bạn",       "forbids": ("quý khách", "quý vị")},
+    "re": {"expects": "quý khách", "forbids": ("bạn",)},
+    "formal": {"expects": "quý vị", "forbids": ("bạn",)},
+    "consult": {"expects": "anh/chị", "forbids": ("bạn", "quý vị")},
+    "saas": {"expects": "bạn", "forbids": ("quý khách", "quý vị")},
 }
 
 FORMAL_PRONOUNS = ("quý khách", "quý vị")
@@ -99,9 +135,16 @@ class Finding:
         self.hint = hint
 
     def as_dict(self) -> dict:
-        return {"rule": self.rule, "severity": self.severity, "file": str(self.path),
-                "line": self.line, "column": self.col, "text": self.text,
-                "message": self.message, "hint": self.hint}
+        return {
+            "rule": self.rule,
+            "severity": self.severity,
+            "file": str(self.path),
+            "line": self.line,
+            "column": self.col,
+            "text": self.text,
+            "message": self.message,
+            "hint": self.hint,
+        }
 
     def render(self) -> str:
         tag = "error" if self.severity == ERROR else "warn "
@@ -125,18 +168,17 @@ def _table_with_header(text: str, marker: str) -> tuple:
         return [], []
     rows: List[List[str]] = []
     started = False
-    for raw in text[idx + len(marker):].splitlines():
+    for raw in text[idx + len(marker) :].splitlines():
         line = raw.strip()
         if not line.startswith("|"):
             if started:
                 break
             continue
         started = True
-        if set(line) <= set("|-: "):          # the header underline
+        if set(line) <= set("|-: "):  # the header underline
             continue
         # split on unescaped pipes, then unescape
-        cells = [c.replace(r"\|", "|").strip()
-                 for c in re.split(r"(?<!\\)\|", line)[1:-1]]
+        cells = [c.replace(r"\|", "|").strip() for c in re.split(r"(?<!\\)\|", line)[1:-1]]
         if cells:
             rows.append(cells)
     if not rows:
@@ -178,8 +220,8 @@ class Blocklists:
     """Calque phrases and superlative patterns, loaded from the reference Markdown."""
 
     def __init__(self, ref_dir: pathlib.Path = REF_DIR):
-        self.calques: List[tuple] = []        # (phrase, suggestion, source, severity|None)
-        self.superlatives: List[tuple] = []   # (compiled regex, note)
+        self.calques: List[tuple] = []  # (phrase, suggestion, source, severity|None)
+        self.superlatives: List[tuple] = []  # (compiled regex, note)
         self.registers: dict = dict(DEFAULT_REGISTERS)
         self.missing: List[str] = []
         self._load_glossary(ref_dir / "glossary.md")
@@ -206,7 +248,7 @@ class Blocklists:
             alternatives = _split_alternatives(good)
             if not bad or bad == "—":
                 continue
-            if bad in alternatives:            # row contradicts itself; skip it
+            if bad in alternatives:  # row contradicts itself; skip it
                 continue
             severity = _parse_severity(row[sev_col]) if 0 <= sev_col < len(row) else None
             self.calques.append((bad, " / ".join(alternatives), "glossary.md", severity))
@@ -232,8 +274,10 @@ class Blocklists:
             try:
                 self.superlatives.append((re.compile(pattern, re.IGNORECASE), note))
             except re.error as exc:
-                print(f"warning: bad superlative regex {pattern!r} in banned-phrases.md: {exc}",
-                      file=sys.stderr)
+                print(
+                    f"warning: bad superlative regex {pattern!r} in banned-phrases.md: {exc}",
+                    file=sys.stderr,
+                )
 
     def _load_registers(self, path: pathlib.Path) -> None:
         """Register profiles live in Markdown too — adding one is adding a row."""
@@ -247,8 +291,11 @@ class Blocklists:
             name = _unwrap(row[0])
             if not name:
                 continue
-            forbids = tuple(_unwrap(part) for part in row[2].split(",")
-                            if _unwrap(part) and _unwrap(part) != "—")
+            forbids = tuple(
+                _unwrap(part)
+                for part in row[2].split(",")
+                if _unwrap(part) and _unwrap(part) != "—"
+            )
             loaded[name] = {"expects": _unwrap(row[1]), "forbids": forbids}
         if loaded:
             self.registers = loaded
@@ -256,8 +303,13 @@ class Blocklists:
     def compiled_calques(self):
         for phrase, suggestion, source, severity in self.calques:
             body = r"\s+".join(re.escape(w) for w in phrase.split())
-            yield (re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE),
-                   phrase, suggestion, source, severity)
+            yield (
+                re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE),
+                phrase,
+                suggestion,
+                source,
+                severity,
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -322,16 +374,49 @@ def line_disabled_rules(line: str) -> set:
 # Static rule patterns
 # --------------------------------------------------------------------------- #
 DIACRITIC_PHRASES = (
-    "dang ky", "dang nhap", "tim hieu", "tim hieu them", "lien he", "can ho", "du an",
-    "tien ich", "chinh sach", "khach hang", "quy khach", "thong tin", "bat dong san",
-    "mat bang", "phap ly", "chu dau tu", "tong quan", "uu dai", "bao gia", "xem chi tiet",
-    "dat lich", "tu van", "nha mau", "tien do", "thiet ke", "vi tri", "mien phi",
-    "gio hang", "thanh toan", "ho va ten", "so dien thoai", "cam on", "gioi thieu",
-    "san pham", "dich vu", "lien ket vung", "nhan bao gia", "so luong co han",
+    "dang ky",
+    "dang nhap",
+    "tim hieu",
+    "tim hieu them",
+    "lien he",
+    "can ho",
+    "du an",
+    "tien ich",
+    "chinh sach",
+    "khach hang",
+    "quy khach",
+    "thong tin",
+    "bat dong san",
+    "mat bang",
+    "phap ly",
+    "chu dau tu",
+    "tong quan",
+    "uu dai",
+    "bao gia",
+    "xem chi tiet",
+    "dat lich",
+    "tu van",
+    "nha mau",
+    "tien do",
+    "thiet ke",
+    "vi tri",
+    "mien phi",
+    "gio hang",
+    "thanh toan",
+    "ho va ten",
+    "so dien thoai",
+    "cam on",
+    "gioi thieu",
+    "san pham",
+    "dich vu",
+    "lien ket vung",
+    "nhan bao gia",
+    "so luong co han",
 )
 DIACRITIC_RE = re.compile(
     r"(?<![\w-])(" + "|".join(re.escape(p) for p in DIACRITIC_PHRASES) + r")(?![\w-])",
-    re.IGNORECASE)
+    re.IGNORECASE,
+)
 
 # Open-syllable oa/oe/uy: the only place the two tone-mark conventions differ.
 VN_LETTER = r"a-zA-ZÀ-ỹ"
@@ -414,9 +499,9 @@ def load_domain_rules(directory: Optional[pathlib.Path] = None) -> List:
         module = importlib.util.module_from_spec(spec)
         try:
             spec.loader.exec_module(module)
-        except Exception as exc:                       # a broken rule file must not
+        except Exception as exc:  # a broken rule file must not
             print(f"warning: cannot load {path.name}: {exc}", file=sys.stderr)
-            continue                                   # take the whole linter down
+            continue  # take the whole linter down
         RULE_DOCS.update(getattr(module, "RULE_DOCS", {}))
         DOCTYPES.update(getattr(module, "DOCTYPES", {}))
         modules.append(module)
@@ -431,8 +516,9 @@ load_domain_rules()
 # The checker
 # --------------------------------------------------------------------------- #
 class Validator:
-    def __init__(self, blocklists: Blocklists, register: Optional[str] = None,
-                 doctype: Optional[str] = None):
+    def __init__(
+        self, blocklists: Blocklists, register: Optional[str] = None, doctype: Optional[str] = None
+    ):
         self.bl = blocklists
         self.calques = list(blocklists.compiled_calques())
         self.register = register
@@ -479,9 +565,15 @@ class Validator:
                 if unicodedata.combining(ch):
                     col = max(1, j)
                     break
-            emit("NFC001", ERROR, i, col, line.strip()[:60],
-                 "text is not NFC-normalized (decomposed diacritics)",
-                 "run with --fix, or text.normalize('NFC') at the source")
+            emit(
+                "NFC001",
+                ERROR,
+                i,
+                col,
+                line.strip()[:60],
+                "text is not NFC-normalized (decomposed diacritics)",
+                "run with --fix, or text.normalize('NFC') at the source",
+            )
 
     def _check_text_rules(self, lines, masked, path, emit) -> None:
         for i, line in enumerate(masked, 1):
@@ -489,13 +581,18 @@ class Validator:
 
             # Blocklist entries overlap by design ("ký lên" sits inside "đăng ký lên").
             # Report only the longest match covering a given span, or the output is noise.
-            hits = [(m.start(), m.end(), phrase, suggestion, source, declared)
-                    for regex, phrase, suggestion, source, declared in self.calques
-                    for m in regex.finditer(line)]
+            hits = [
+                (m.start(), m.end(), phrase, suggestion, source, declared)
+                for regex, phrase, suggestion, source, declared in self.calques
+                for m in regex.finditer(line)
+            ]
             for start, end, phrase, suggestion, source, declared in hits:
-                if any(other_start <= start and end <= other_end and
-                       (other_end - other_start) > (end - start)
-                       for other_start, other_end, *_ in hits):
+                if any(
+                    other_start <= start
+                    and end <= other_end
+                    and (other_end - other_start) > (end - start)
+                    for other_start, other_end, *_ in hits
+                ):
                     continue
                 matched = line[start:end]
                 # A table row may declare its own severity; otherwise fall back to the
@@ -504,62 +601,118 @@ class Validator:
                 hint = f"use “{suggestion}”" if suggestion else ""
                 if source == "glossary.md":
                     hint += " (glossary.md)" if hint else "see glossary.md"
-                emit("CAL001", severity, i, start + 1, matched,
-                     f"calque “{matched}”", hint)
+                emit("CAL001", severity, i, start + 1, matched, f"calque “{matched}”", hint)
 
             proof_here = bool(PROOF_RE.search(raw))
             proof_above = i > 1 and bool(PROOF_RE.search(lines[i - 2]))
             if not (proof_here or proof_above):
-                for regex, note in self.bl.superlatives:
+                for regex, _note in self.bl.superlatives:
                     for m in regex.finditer(line):
-                        emit("LAW001", WARN, i, m.start() + 1, m.group(0),
-                             f"regulated superlative “{m.group(0)}”",
-                             "needs a licensed market survey or award certificate; annotate "
-                             "with <!-- proof: ... --> or rewrite as a countable fact")
+                        emit(
+                            "LAW001",
+                            WARN,
+                            i,
+                            m.start() + 1,
+                            m.group(0),
+                            f"regulated superlative “{m.group(0)}”",
+                            "needs a licensed market survey or award certificate; annotate "
+                            "with <!-- proof: ... --> or rewrite as a countable fact",
+                        )
 
             for m in DIACRITIC_RE.finditer(line):
-                emit("DIA001", WARN, i, m.start() + 1, m.group(0),
-                     f"Vietnamese written without diacritics: “{m.group(0)}”",
-                     "restore the tone marks; unaccented forms belong in slugs and meta only")
+                emit(
+                    "DIA001",
+                    WARN,
+                    i,
+                    m.start() + 1,
+                    m.group(0),
+                    f"Vietnamese written without diacritics: “{m.group(0)}”",
+                    "restore the tone marks; unaccented forms belong in slugs and meta only",
+                )
 
             for m in NUM_COMMA_GROUP_RE.finditer(line):
                 fixed = m.group(0).replace(",", ".")
-                emit("NUM001", ERROR, i, m.start() + 1, m.group(0),
-                     f"comma-grouped number “{m.group(0)}”", f"write “{fixed}”")
+                emit(
+                    "NUM001",
+                    ERROR,
+                    i,
+                    m.start() + 1,
+                    m.group(0),
+                    f"comma-grouped number “{m.group(0)}”",
+                    f"write “{fixed}”",
+                )
 
             for m in NUM_UNGROUPED_RE.finditer(line):
-                emit("NUM002", WARN, i, m.start() + 1, m.group(0),
-                     f"ungrouped currency amount “{m.group(0)}”",
-                     "group with periods, or use the tỷ/triệu scale in marketing copy")
+                emit(
+                    "NUM002",
+                    WARN,
+                    i,
+                    m.start() + 1,
+                    m.group(0),
+                    f"ungrouped currency amount “{m.group(0)}”",
+                    "group with periods, or use the tỷ/triệu scale in marketing copy",
+                )
 
             for m in NUM_DOT_DECIMAL_RE.finditer(line):
                 fixed = m.group(0).replace(".", ",", 1)
-                emit("NUM003", ERROR, i, m.start() + 1, m.group(0),
-                     f"period used as a decimal separator in “{m.group(0)}”",
-                     f"write “{fixed}”")
+                emit(
+                    "NUM003",
+                    ERROR,
+                    i,
+                    m.start() + 1,
+                    m.group(0),
+                    f"period used as a decimal separator in “{m.group(0)}”",
+                    f"write “{fixed}”",
+                )
 
             for m in SQM_RE.finditer(line):
-                emit("NUM004", WARN, i, m.start() + 1, m.group(0),
-                     "ASCII “m2”", "use the superscript “m²”")
+                emit(
+                    "NUM004",
+                    WARN,
+                    i,
+                    m.start() + 1,
+                    m.group(0),
+                    "ASCII “m2”",
+                    "use the superscript “m²”",
+                )
 
             for m in DATE_RE.finditer(line):
                 first, second = int(m.group(1)), int(m.group(2))
                 if second > 12 and first <= 12:
-                    emit("DATE001", ERROR, i, m.start() + 1, m.group(0),
-                         f"date “{m.group(0)}” looks like MM/dd/yyyy",
-                         f"write “{m.group(2)}/{m.group(1)}/{m.group(3)}” (dd/MM/yyyy)")
+                    emit(
+                        "DATE001",
+                        ERROR,
+                        i,
+                        m.start() + 1,
+                        m.group(0),
+                        f"date “{m.group(0)}” looks like MM/dd/yyyy",
+                        f"write “{m.group(2)}/{m.group(1)}/{m.group(3)}” (dd/MM/yyyy)",
+                    )
 
             for m in PHONE_RE.finditer(line):
-                emit("PHONE001", ERROR, i, m.start() + 1, m.group(0),
-                     "trunk zero kept after +84", "drop the leading 0: +84 912 345 678")
+                emit(
+                    "PHONE001",
+                    ERROR,
+                    i,
+                    m.start() + 1,
+                    m.group(0),
+                    "trunk zero kept after +84",
+                    "drop the leading 0: +84 912 345 678",
+                )
 
             if ICU_PLURAL_LINE_RE.search(raw):
                 for m in ICU_NON_OTHER_RE.finditer(raw):
                     category = m.group(1)
-                    emit("ICU001", ERROR, i, m.start() + 1, m.group(0),
-                         f"ICU plural has a “{category}” branch",
-                         "Vietnamese has only the 'other' category — delete the "
-                         f"'{category}' branch")
+                    emit(
+                        "ICU001",
+                        ERROR,
+                        i,
+                        m.start() + 1,
+                        m.group(0),
+                        f"ICU plural has a “{category}” branch",
+                        "Vietnamese has only the 'other' category — delete the "
+                        f"'{category}' branch",
+                    )
 
     def _check_tone_consistency(self, masked, path, emit) -> None:
         old_hit = new_hit = None
@@ -577,9 +730,15 @@ class Validator:
         if old_hit and new_hit:
             later = max(old_hit, new_hit, key=lambda h: (h[0], h[1]))
             other = old_hit if later is new_hit else new_hit
-            emit("TONE001", WARN, later[0], later[1], later[2],
-                 f"mixed tone-mark conventions: “{other[2]}” and “{later[2]}”",
-                 "pick kiểu mới (hoà) or kiểu cũ (hòa) and use it throughout — neither is wrong")
+            emit(
+                "TONE001",
+                WARN,
+                later[0],
+                later[1],
+                later[2],
+                f"mixed tone-mark conventions: “{other[2]}” and “{later[2]}”",
+                "pick kiểu mới (hoà) or kiểu cũ (hòa) and use it throughout — neither is wrong",
+            )
 
     def _check_pronouns(self, masked, path, emit) -> None:
         def find_first(term):
@@ -597,9 +756,15 @@ class Validator:
         if formal and casual:
             later = max(formal, casual, key=lambda h: (h[0], h[1]))
             other = formal if later is casual else casual
-            emit("PRO001", WARN, later[0], later[1], later[2],
-                 f"mixed register: “{other[2]}” and “{later[2]}” in one document",
-                 "one register per document — see references/register-matrix.md")
+            emit(
+                "PRO001",
+                WARN,
+                later[0],
+                later[1],
+                later[2],
+                f"mixed register: “{other[2]}” and “{later[2]}” in one document",
+                "one register per document — see references/register-matrix.md",
+            )
 
         if self.register:
             profile = self.bl.registers.get(self.register)
@@ -608,11 +773,19 @@ class Validator:
             for forbidden in profile["forbids"]:
                 hit = find_first(forbidden)
                 if hit:
-                    emit("PRO002", WARN, hit[0], hit[1], hit[2],
-                         f"“{hit[2]}” does not fit the {self.register} register",
-                         (f"this register addresses the reader as “{profile['expects']}”"
-                          if profile["expects"]
-                          else "this register uses no direct address at all"))
+                    emit(
+                        "PRO002",
+                        WARN,
+                        hit[0],
+                        hit[1],
+                        hit[2],
+                        f"“{hit[2]}” does not fit the {self.register} register",
+                        (
+                            f"this register addresses the reader as “{profile['expects']}”"
+                            if profile["expects"]
+                            else "this register uses no direct address at all"
+                        ),
+                    )
 
     def _check_domain_rules(self, lines, masked, text, path, is_markdown, emit) -> None:
         if not DOMAIN_MODULES:
@@ -695,27 +868,40 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("paths", nargs="*", help="files or directories to check")
     # Not `choices=`: the register list lives in references/register-matrix.md, which
     # is not loaded until --refs has been parsed. Validated by hand below instead.
-    ap.add_argument("--register",
-                    help="enable the register-consistency check (PRO002); "
-                         "values come from references/register-matrix.md")
-    ap.add_argument("--doctype", choices=sorted(DOCTYPES) or None,
-                    help="declare the artifact type, enabling the rules that only "
-                         "apply to it" + (
-                             "; one of: " + ", ".join(sorted(DOCTYPES)) if DOCTYPES
-                             else " (this skill defines none)"))
-    ap.add_argument("--json", action="store_true", dest="as_json",
-                    help="emit findings as JSON")
-    ap.add_argument("--strict", action="store_true",
-                    help="exit non-zero on warnings as well as errors")
-    ap.add_argument("--fix", action="store_true",
-                    help="rewrite NFC violations in place, then re-check")
-    ap.add_argument("--ext", default=",".join(DEFAULT_EXTENSIONS),
-                    help="comma-separated file extensions to scan in directories")
-    ap.add_argument("--refs", default=str(REF_DIR),
-                    help="directory holding glossary.md, banned-phrases.md and "
-                         "register-matrix.md")
-    ap.add_argument("--list-rules", action="store_true",
-                    help="print every rule this skill can emit, then exit")
+    ap.add_argument(
+        "--register",
+        help="enable the register-consistency check (PRO002); "
+        "values come from references/register-matrix.md",
+    )
+    ap.add_argument(
+        "--doctype",
+        choices=sorted(DOCTYPES) or None,
+        help="declare the artifact type, enabling the rules that only "
+        "apply to it"
+        + (
+            "; one of: " + ", ".join(sorted(DOCTYPES)) if DOCTYPES else " (this skill defines none)"
+        ),
+    )
+    ap.add_argument("--json", action="store_true", dest="as_json", help="emit findings as JSON")
+    ap.add_argument(
+        "--strict", action="store_true", help="exit non-zero on warnings as well as errors"
+    )
+    ap.add_argument(
+        "--fix", action="store_true", help="rewrite NFC violations in place, then re-check"
+    )
+    ap.add_argument(
+        "--ext",
+        default=",".join(DEFAULT_EXTENSIONS),
+        help="comma-separated file extensions to scan in directories",
+    )
+    ap.add_argument(
+        "--refs",
+        default=str(REF_DIR),
+        help="directory holding glossary.md, banned-phrases.md and register-matrix.md",
+    )
+    ap.add_argument(
+        "--list-rules", action="store_true", help="print every rule this skill can emit, then exit"
+    )
     args = ap.parse_args(argv)
 
     if args.list_rules:
@@ -728,8 +914,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("validate_copy.py: error: no paths given", file=sys.stderr)
         return 2
 
-    extensions = tuple(e if e.startswith(".") else "." + e
-                       for e in (x.strip() for x in args.ext.split(",")) if e)
+    extensions = tuple(
+        e if e.startswith(".") else "." + e for e in (x.strip() for x in args.ext.split(",")) if e
+    )
     files = collect(args.paths, extensions)
     if not files:
         print("no files to check", file=sys.stderr)
@@ -737,12 +924,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     blocklists = Blocklists(pathlib.Path(args.refs))
     for missing in blocklists.missing:
-        print(f"warning: reference file not found, some rules disabled: {missing}",
-              file=sys.stderr)
+        print(f"warning: reference file not found, some rules disabled: {missing}", file=sys.stderr)
 
     if args.register and args.register not in blocklists.registers:
-        print(f"unknown register {args.register!r}; this skill defines: "
-              + ", ".join(sorted(blocklists.registers)), file=sys.stderr)
+        print(
+            f"unknown register {args.register!r}; this skill defines: "
+            + ", ".join(sorted(blocklists.registers)),
+            file=sys.stderr,
+        )
         return 2
 
     if args.fix:
@@ -759,12 +948,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     warnings = len(findings) - errors
 
     if args.as_json:
-        print(json.dumps({
-            "files_checked": len(files),
-            "errors": errors,
-            "warnings": warnings,
-            "findings": [f.as_dict() for f in findings],
-        }, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "files_checked": len(files),
+                    "errors": errors,
+                    "warnings": warnings,
+                    "findings": [f.as_dict() for f in findings],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     else:
         for f in findings:
             print(f.render())

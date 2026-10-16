@@ -170,7 +170,7 @@ def calc_macd(closes: list[float]) -> MACDResult:
         return MACDResult()
     ema12 = _ema_series(closes, 12)
     ema26 = _ema_series(closes, 26)
-    macd_series = [a - b for a, b in zip(ema12, ema26)]
+    macd_series = [a - b for a, b in zip(ema12, ema26, strict=False)]
     valid_macd = macd_series[26:]
     signal_series = _ema_series(valid_macd, 9)
 
@@ -303,11 +303,18 @@ def calc_cross_signal(closes: list[float]) -> CrossSignal:
         s50p = calc_sma(closes[: i + 1], 50)
         s20c = calc_sma(closes[: i + 2], 20)
         s50c = calc_sma(closes[: i + 2], 50)
+        if s20p is None or s50p is None or s20c is None or s50c is None:
+            continue
         if s20p <= s50p and s20c > s50c:
             golden = True
         if s20p >= s50p and s20c < s50c:
             death = True
-    return CrossSignal(golden, death, price > sma20, price > sma50)
+    return CrossSignal(
+        golden,
+        death,
+        sma20 is not None and price > sma20,
+        sma50 is not None and price > sma50,
+    )
 
 
 # ─── ADX(14) ──────────────────────────────────────────────────────────────────
@@ -346,7 +353,7 @@ def _has_real_hl(closes: list[float], highs: list[float] | None, lows: list[floa
     chắc chắn là H/L giả toàn chuỗi."""
     if not highs or not lows or len(highs) != len(closes) or len(lows) != len(closes):
         return False
-    bars_with_real_range = sum(1 for h, l in zip(highs, lows) if h > l)
+    bars_with_real_range = sum(1 for h, l in zip(highs, lows, strict=False) if h > l)
     return bars_with_real_range >= len(closes) * 0.5
 
 
@@ -646,6 +653,8 @@ def calc_ma_alignment(closes: list[float]) -> MAAlignment:
     if len(closes) < 20:
         return MAAlignment(0, 0, 0, "unknown", None)
     ma5, ma10, ma20 = calc_sma(closes, 5), calc_sma(closes, 10), calc_sma(closes, 20)
+    if ma5 is None or ma10 is None or ma20 is None:
+        return MAAlignment(0, 0, 0, "unknown", None)
     if ma5 > ma10 > ma20:
         alignment, is_bullish = "bullish", True
     elif ma5 < ma10 < ma20:

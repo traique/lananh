@@ -160,3 +160,56 @@ async def test_outbox_failure_rejects_negative_chunks(bridge):
     )
     assert response.status_code == 422
     assert bridge["failed"] == []
+
+
+# ─── /gateway-state: gateway báo mất kết nối/kết nối lại ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_gateway_state_alerts_owner_once_per_state_change(bridge, monkeypatch):
+    sent = []
+    monkeypatch.setattr(zalo_router.alerts, "send", lambda text: sent.append(text) or True)
+    zalo_router._last_reported_gateway_state.clear()
+
+    async def post(state, detail=""):
+        return await _call(
+            "POST",
+            "/internal/zalo/gateway-state",
+            json={"account_id": "acc", "state": state, "detail": detail},
+        )
+
+    # connected lúc khởi động bình thường: không báo.
+    assert (await post("connected", "khởi động")).status_code == 204
+    assert sent == []
+    # closed -> báo 1 lần dù gateway gửi lặp.
+    assert (await post("closed", "code=1006")).status_code == 204
+    assert (await post("closed", "code=1006")).status_code == 204
+    assert len(sent) == 1 and "mất kết nối" in sent[0]
+    # reconnecting không bao giờ báo.
+    assert (await post("reconnecting")).status_code == 204
+    assert len(sent) == 1
+    # kết nối lại sau khi đã báo mất -> báo "đã kết nối lại".
+    assert (await post("connected", "sau 2 lần thử")).status_code == 204
+    assert len(sent) == 2 and "kết nối lại" in sent[1]
+    # send_failed báo mỗi lần (mỗi tin khác nhau).
+    assert (await post("send_failed", "tin 1")).status_code == 204
+    assert (await post("send_failed", "tin 2")).status_code == 204
+    assert len(sent) == 4
+    # login_required -> hướng dẫn /zalo.
+    assert (await post("login_required", "hết 10 lần")).status_code == 204
+    assert "/zalo" in sent[-1]
+
+
+@pytest.mark.asyncio
+async def test_gateway_state_rejects_unknown_state_and_bad_secret(bridge):
+    response = await _call(
+        "POST", "/internal/zalo/gateway-state", json={"account_id": "acc", "state": "boom"}
+    )
+    assert response.status_code == 422
+    response = await _call(
+        "POST",
+        "/internal/zalo/gateway-state",
+        headers={"x-zalo-bridge-secret": "sai"},
+        json={"account_id": "acc", "state": "closed"},
+    )
+    assert response.status_code == 403

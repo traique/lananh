@@ -23,8 +23,19 @@ Repository được thiết kế cho **một chủ sở hữu**:
 - Mỗi người dùng có hàng đợi riêng; tổng lượt AI song song bị chặn bởi
   `MAX_CONCURRENT_TURNS` (mặc định 2) để vừa RAM 512 MB.
 - Mỗi lượt trả lời có hạn chót tổng `CHAT_TURN_TIMEOUT_SEC` (mặc định 200s, luôn
-  dưới 240s gateway Zalo chờ); sự kiện webhook lỗi thử lại tối đa
+  dưới 240s gateway Zalo chờ) - MỘT hạn chót cho cả nhánh cổ phiếu lẫn chat, mọi
+  lời gọi AI (kể cả cập nhật trí nhớ nền, tạo ảnh, /ragxuly) đi qua
+  `ai.timeouts.bounded()`; sự kiện webhook lỗi thử lại tối đa
   `WEBHOOK_MAX_ATTEMPTS` lần rồi chuyển DEAD và báo chủ bot 1 lần.
+- Prompt gửi provider có ngân sách (`PROMPT_BUDGET_CHARS`, mặc định 40k ký tự):
+  cắt lịch sử cũ → grounding → trí nhớ, không bao giờ cắt câu hỏi/persona
+  (`ai/prompt_budget.py`).
+- Zalo và Zoom đi chung 1 dispatcher (`services/channel_dispatch.py`): cache
+  idempotency → `/fb_*` ngoài khoá lượt → khoá lượt → lệnh nhóm → chat.
+- Gateway Zalo tự kết nối lại khi listener đóng (backoff 5s → 5 phút, tối đa 10
+  lần), thử gửi lại tin 3 lần, và báo trạng thái về Python
+  (`POST /internal/zalo/gateway-state`) để chủ bot nhận cảnh báo khi mất kết nối,
+  kết nối lại hoặc cần đăng nhập lại.
 
 Đây không phải hệ thống multi-tenant, nền tảng tư vấn tài chính được cấp phép hoặc broker đặt lệnh.
 
@@ -44,6 +55,17 @@ Repository được thiết kế cho **một chủ sở hữu**:
   xem `services/web_search.py`.
 - Phân tích ảnh và tạo prompt.
 - Thống kê lượt gọi AI theo user/kênh và theo model (`/thongke` trên chat, hoặc trang `/admin`).
+  Bảng `provider_calls` ghi cả lượt lỗi/timeout/429 kèm độ trễ và giai đoạn
+  (chat/search/utility) - `core.database.provider_outcomes()`.
+- Lượt phụ trả JSON (trích trí nhớ, router tool) đi Groq `response_format=json_object`
+  trước, Gemini utility làm dự phòng (`ai.orchestrator.utility_json`) - không đốt
+  quota Gemini cho việc phụ. Provider đang cooldown 429 KHÔNG được gọi lại trong
+  cooldown; chỉ 9Router (chết vì timeout) được thử lại làm cứu cánh cuối.
+- Trí nhớ dài hạn: tin đầu phiên chèn toàn bộ; GIỮA phiên chèn fact/highlight
+  liên quan câu hỏi (token trùng bỏ dấu, ≤ 800 ký tự) thay vì im lặng.
+- Gate tra web (`looks_like_search_question`) khớp theo từ ("tin tức", "giá
+  vàng", "check giá") thay vì chuỗi con ("tin anh", "giá như" không còn tốn
+  5-6 lượt AI).
 
 ### Telegram
 
@@ -93,16 +115,19 @@ Năng lực hiện tại:
 - Strict contract cho độ dài mảng, số hữu hạn, quan hệ OHLC và ngày giao dịch.
 - RSI, MACD, MA/EMA, Bollinger, ADX, ATR, Donchian, thanh khoản, distribution days và key levels.
 - Chuỗi giá 260 phiên: SMA200 + trend 1 năm vào bối cảnh dài hạn.
-- Điều chỉnh cổ tức tiền mặt VÀ sự kiện cổ phiếu (thưởng, cổ tức bằng cổ phiếu, tách) từ dữ liệu corporate actions (VCI) — chỉ áp dụng khi ngày GDKHQ VÀ độ lớn gap khớp nhau (`stock/corporate_actions.py`). Gap chưa giải thích được trong 66 phiên gần nhất làm dữ liệu "degraded": policy không ra BUY/SELL/breakdown và hỗ trợ/kháng cự chỉ lấy sau gap.
+- Điều chỉnh cổ tức tiền mặt VÀ sự kiện cổ phiếu (thưởng, cổ tức bằng cổ phiếu, tách) từ dữ liệu corporate actions (VCI) — lịch quyền được lấy cho MỌI chuỗi đủ dài (cache 24h/mã), chỉ áp sự kiện khi ngày GDKHQ (chấp nhận rơi vào cuối tuần/lễ, nguồn ghi ngày chốt quyền) VÀ độ lớn gap khớp nhau (`stock/corporate_actions.py`). Cổ tức tiền 3-6% (phổ biến nhất) giờ cũng được điều chỉnh; trước đây chỉ fetch khi có gap ≥ 12%. Gap chưa giải thích được trong 66 phiên gần nhất làm dữ liệu "degraded": policy không ra BUY/SELL/breakdown và hỗ trợ/kháng cự chỉ lấy sau gap.
+- Lịch giao dịch HOSE (`stock/calendar.py`: cuối tuần, lễ dương lịch + nghỉ bù, Tết/Giỗ Tổ theo bảng từng năm, `STOCK_EXTRA_HOLIDAYS`): dữ liệu chỉ bị coi là "cũ" khi THIẾU hơn 5 phiên đã kết thúc - kỳ nghỉ Tết không còn chặn BUY toàn thị trường; "trong giờ giao dịch" không tính ngày lễ.
 - Trong giờ giao dịch, nến hôm nay (chưa đóng) bị bỏ khỏi chuỗi cổ phiếu và VNINDEX để chỉ báo khối lượng không chạy trên khối lượng dở dang.
 - Gate theo market regime, data quality, setup và risk/reward. Dữ liệu cũ (stale) chặn hẳn BUY.
 - `BUY`, `HOLD`, `WATCH`, `SELL`, `NO_TRADE` do code quyết định; LLM chỉ diễn giải. Bước "Manager" cuối pipeline debate có thể phản biện trong phần lập luận nhưng KHÔNG đổi được action (code ép lại action của policy); mọi số entry/stop/target/tỷ trọng chỉ do code chốt.
-- Vùng mua (−1% … +0.5% quanh giá, đáy vùng luôn trên stop ít nhất 1 bước giá), stop, target, R:R, position sizing và kịch bản bull/base/bear. R:R và tỷ trọng tính ở giá khớp XẤU nhất (đỉnh vùng mua) tới kháng cự THẬT gần nhất; không có kháng cự dùng được thì chỉ WATCH/HOLD, không tự chiếu target để "đạt" R:R.
+- Vùng mua (−1% … +0.5% quanh giá, đáy vùng luôn trên stop ít nhất 1 bước giá), stop, target, R:R, position sizing và kịch bản bull/base/bear. R:R và tỷ trọng tính ở giá khớp XẤU nhất (đỉnh vùng mua) tới kháng cự THẬT gần nhất. Breakout Donchian lên ĐỈNH MỚI (không có cản lịch sử phía trên) dùng target measured-move = đỉnh kênh + bề rộng kênh, tỷ trọng giảm còn 60% (`measured_move_*` trong `stock/policy_params.json`); các trường hợp khác không có kháng cự thì chỉ WATCH/HOLD, không tự chiếu target để "đạt" R:R.
+- Mọi ngưỡng số của policy nằm trong `stock/policy_params.json` (`PolicyParams`): đổi sau khi backtest offline xác nhận, không sửa code; `STOCK_POLICY_PARAMS_PATH` trỏ file khác để thử.
+- Cảnh báo danh mục cuối phiên (`services/portfolio_alerts.py`, sau 15h05 ngày giao dịch, `ENABLE_PORTFOLIO_ALERTS`): chạm/thủng stop, đạt target, breakout/breakdown Donchian, lỗ ≥ 8% - báo ngay thay vì chờ digest sáng hôm sau.
 - Câu trả lời cuối của LLM được code kiểm tra: nêu action khác policy thì bị thay bằng báo cáo rule-based; giá không có trong dữ liệu thì bị gắn cảnh báo. Zalo/Zoom cũng nhận khối số liệu rule-based trước như Telegram.
 - **Thành viên Zalo (`role=user`) chỉ nhận bản THAM KHẢO**: số liệu thị trường, chỉ báo, bối cảnh — không nhãn hành động, vùng mua, stop, target, R:R, tỷ trọng hay giữ/cắt danh mục. Chủ bot (Telegram/Zoom) và admin Zalo nhận bản đầy đủ.
 - Danh mục qua chat: chỉ câu KHẲNG ĐỊNH đã giao dịch ("đã bán FPT 100", "vừa mua…") mới ghi nhận; câu hỏi ("có nên bán FPT không?") không bao giờ sửa danh mục; bán không kèm số lượng/"hết" sẽ hỏi xác nhận. Giá dưới 1.000 không kèm đơn vị hiểu theo nghìn đồng ("25.5" = 25.500đ).
 - Fundamental theo ngành: ưu tiên P/B cho ngân hàng, chứng khoán, bảo hiểm và bất động sản; P/E ở nhóm phù hợp.
-- Backtest có phí, thuế bán, slippage, T+, và 30% out-of-sample; mỗi cửa sổ lịch sử được kiểm tra độ tươi dữ liệu theo đúng ngày của nó, VNINDEX ghép theo NGÀY. Thống kê backtest chỉ hiển thị khi có ≥30 lệnh, kèm khoảng tin cậy Wilson 95% cho win rate.
+- Backtest có phí, thuế bán, slippage, T+, và 30% out-of-sample (hoặc toàn chuỗi với `full_sample=True` - policy không fit tham số nên toàn chuỗi vẫn là out-of-sample); mỗi cửa sổ lịch sử được kiểm tra độ tươi dữ liệu theo đúng ngày của nó, VNINDEX ghép theo NGÀY. Thống kê backtest chỉ hiển thị khi có ≥30 lệnh, kèm khoảng tin cậy Wilson 95% cho win rate. `stock/data/backtest_stats.json` được sinh OFFLINE (xem `docs/upgrade-2026-10.md`), Render chỉ đọc.
 - Model thống kê (gradient boosting) dự đoán **xác suất tăng sau 5 phiên** trên 30 features kỹ thuật + bối cảnh VNINDEX: train/test split theo NGÀY với embargo, hyperparameter cố định, thống kê out-of-sample lưu `stock/data/trend_model_stats.json`. Runtime chỉ ĐỌC model (nếu file + scikit-learn có sẵn) và đưa vào prompt ở mức "CHỈ THAM KHẢO" — KHÔNG phải gate định lượng. Model chỉ được dùng khi file stats vượt cổng tối thiểu: accuracy cao hơn baseline "luôn đoán lớp đa số" ≥1 điểm, AUC ≥ 0,55, ≥30 mã, ≥2.000 dòng test và stats sinh từ code split hiện tại — stats đang commit KHÔNG đạt nên model đang tắt. Train offline: `python scripts/train_trend_model.py --symbols auto --days 750` (chọn mã ngẫu nhiên có seed + lọc thanh khoản, `--seed`, `--min-value`, mặc định 80 mã). Đánh giá là 1 lần chia train/test theo ngày (`single_split_eval`), không phải walk-forward nhiều cửa sổ.
 - Góc nhìn "nhà đầu tư huyền thoại" theo yêu cầu trong chat (Buffett / Đoàn Vĩnh Bình / Mark Minervini, hoặc "3 huyền thoại" cho cả ba): persona chỉ diễn giải ĐỊNH TÍNH trên số liệu đã qua gate của hệ thống, prompt cấm sinh entry/stop/target mới — tầng chat giải trí, không nằm trong pipeline policy (`stock/personas.py`).
 
@@ -162,6 +187,13 @@ bền/bảo mật (đều có mặc định an toàn, chỉ đặt khi cần đ�
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
 | `CHAT_TURN_TIMEOUT_SEC` | 200 | Hạn chót tổng cho 1 lượt trả lời (30-230) |
+| `MEMORY_UPDATE_TIMEOUT_SEC` / `RAG_CLEAN_TOTAL_TIMEOUT_SEC` | 90 / 900 | Trần cập nhật trí nhớ nền sau mỗi lượt; trần TỔNG 1 lượt `/ragxuly` (chạy nền ngoài khoá chat) |
+| `PROMPT_BUDGET_CHARS` / `HISTORY_MESSAGE_MAX_CHARS` / `GROUNDING_MAX_CHARS` / `MEMORY_MAX_CHARS` | 40000 / 1500 / 9000 / 3000 | Ngân sách ký tự prompt gửi provider và trần từng khối |
+| `DATABASE_SSL_MODE` / `DATABASE_SSL_CA` | `require` / (trống) | `verify-full` xác thực chứng chỉ + hostname Postgres (cần CA Supabase); `disable` chỉ cho DB local |
+| `SETTINGS_ENC_KEY_OLD` / `SETTINGS_REJECT_PLAINTEXT` | (trống) / 0 | Khoá Fernet cũ khi xoay khoá (MultiFernet); từ chối giá trị settings chưa mã hoá |
+| `ENABLE_PORTFOLIO_ALERTS` | true | Cảnh báo danh mục cuối phiên (chạm stop/target, breakout) |
+| `FACEBOOK_MAX_MEDIA_MB` | 150 | Trần TỔNG ảnh Facebook đang lưu/tài khoản (xoá bài chờ cũ nhất, rồi lưu bài không ảnh) |
+| `STOCK_EXTRA_HOLIDAYS` / `STOCK_POLICY_PARAMS_PATH` | (trống) | Ngày nghỉ giao dịch bổ sung; file tham số policy thay `stock/policy_params.json` |
 | `GROQ_TOTAL_TIMEOUT_SEC` / `OPENROUTER_TOTAL_TIMEOUT_SEC` | 90 | Trần tổng 1 lượt gọi provider (kể cả stream nhỏ giọt) |
 | `WEB_READER_MAX_BYTES` | 2097152 | Trần byte tải về cho 1 trang/feed |
 | `WEBHOOK_MAX_ATTEMPTS` / `WEBHOOK_DEAD_RETENTION_DAYS` | 8 / 14 | Số lần thử sự kiện webhook trước khi DEAD; số ngày giữ dòng DEAD |
@@ -459,9 +491,16 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 
 | Lệnh | Chức năng |
 |---|---|
-| `/help` | Hướng dẫn |
+| `/help` | Hướng dẫn đầy đủ (Telegram: `handlers/commands.py`; Zalo/Zoom: `services/channel_command_service.py`) |
 | `/zalo` | Đăng nhập hoặc xem trạng thái Zalo |
 | `/zalologout` | Xóa Zalo session |
+| `/danhmuc` | Xem danh mục, lãi/lỗ, cảnh báo stop/target (riêng từng người dùng) |
+| `/themcp <MÃ> <SL> <GIÁ_VỐN> [STOP] [TARGET]` | Thêm giao dịch mua (giá < 1.000 hiểu là nghìn đồng); `/capnhatcp` ghi đè vị thế |
+| `/bancp <MÃ> [SL\|hết]` | Bán bớt hoặc bán hết |
+| `/xoacp <MÃ>` | Xoá mã khỏi danh mục |
+| `/anh <mô tả>` / `/anh on\|off` | Tạo ảnh thật (Agnes AI) / bật tắt |
+| `/tintuc` | Điểm tin mới ngay tại kênh đang gọi (không broadcast) |
+| `/router9 on\|off`, `/tavily on\|off` | Bật/tắt 9Router thủ công; bật/tắt tra web Tavily |
 | `/prompt` | Tạo prompt hình ảnh |
 | `/gia` | Tìm giá sản phẩm |
 | `/dich [ja>vi\|vi>ja] <nội dung>` | Dịch chat công việc Nhật-Việt |
@@ -495,6 +534,8 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/fb_link <post_id> <affiliate_url>` | Nhập short-link affiliate `s.shopee.vn` cho link Shopee của bài chờ (bài nhiều link: thêm `<source_url>`) |
 | `/fb_ok <post_id>` | Duyệt và đăng lên **tất cả** Facebook Page đã cấu hình; page lỗi được báo riêng, page đã đăng OK không bị đăng lại khi chạy lại lệnh |
 | `/fb_check <post_id>` | Kiểm tra từng page: `is_published`, trạng thái ẩn/Timeline, `published_posts` và permalink |
+| `/fb_market <stock\|news> [dang]` | Xem thử bài Page chứng khoán/tin CafeF; thêm `dang` để đăng thật |
+| `/fb_reconcile` | Đối soát lượt đăng bị gián đoạn (bài kẹt POSTING/UNKNOWN) |
 | `/fb_boqua <post_id>` | Bỏ bài Facebook đang chờ |
 | `/fb_reset` | Xóa toàn bộ bài Facebook đã lưu của tài khoản; reset ID về `#1` khi hàng đợi chung trống |
 | `/fb_loclai` | Chạy lại bộ lọc hiện tại cho các bài đang chờ; bài không đạt chuyển sang bỏ qua (xoá ảnh) |
@@ -580,8 +621,13 @@ hiển thị trên trang đều được escape HTML. Trang cho phép:
 - Đổi model và **API key** override theo từng provider (bao gồm 9Router); riêng
   9Router còn có ô đổi **Base URL** (để trống = dùng `ROUTER9_BASE_URL` từ env).
 - Xem thống kê **lượt gọi theo user/kênh** và **theo model** (`/admin/api/usage`,
-  `/admin/api/usage/models`) — cùng số liệu với lệnh `/thongke` ở trên, chỉ
-  khác là xem trên web thay vì chat.
+  `/admin/api/usage/models`, biểu đồ theo ngày/giờ `/admin/api/usage/daily`) — cùng
+  số liệu với lệnh `/thongke` ở trên, chỉ khác là xem trên web thay vì chat.
+
+Giao diện: dashboard responsive (sidebar/topbar, 360px không cuộn ngang), sáng/tối
+tự động + nút đổi, KPI tile (provider, lượt gọi, RAM, DB, Zalo), biểu đồ SVG
+inline không thư viện ngoài, bảng gập thành thẻ trên điện thoại, tự làm mới theo
+khoảng chọn. Không script/CDN ngoài; mọi giá trị server vẫn escape.
 
 ## Giữ Render Free không bị ngủ (UptimeRobot)
 
@@ -614,10 +660,12 @@ GitHub Actions keep-alive workflow riêng, có thể tắt hẳn vì UptimeRobot
 
 ```bash
 pip install --extra-index-url https://vnstocks.com/api/simple -r requirements-dev.txt
-ruff check .
+ruff check .                         # gồm bugbear (B) và ASYNC
 ruff format --check <file đã sửa>   # repo cũ chưa format toàn bộ
+pyright                              # pyrightconfig.json, mức basic (CI fail khi có error)
+pip-audit -r requirements.txt        # CI bỏ 2 dòng vnstock/vnai (kho riêng)
 python -m compileall -q .
-pytest -q
+pytest -q                            # test/conftest.py chặn mạng thật; @pytest.mark.network để mở
 
 # Test SQL chạy trên Postgres nhúng (PGlite, cần Node 18+):
 (cd test/sql_support && npm ci)
@@ -631,8 +679,13 @@ npm test
 ```
 
 CI (`.github/workflows/ci.yml`) chạy trên push và pull request: `ruff check .`,
-`ruff format --check` cho file `.py` đã đổi, `pytest -q`, test SQL trên PGlite và
-kiểm tra/format/test của `zalo-gateway`.
+`ruff format --check` cho file `.py` đã đổi, `pytest -q`, `pyright`, `pip-audit` +
+`npm audit`, build thử Docker image, test SQL trên PGlite (đủ 3 file) và
+kiểm tra/format/test của `zalo-gateway`. Dependabot (`.github/dependabot.yml`) mở
+PR cập nhật pip/npm/actions hằng tuần.
+
+Phiên Claude Code cloud: `.claude/hooks/session-start.sh` (SessionStart hook) tự
+tạo `.venv`, cài `requirements-dev.txt` và `npm install` cho gateway + PGlite.
 
 ## Cấu trúc repository
 
@@ -717,7 +770,16 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
 - Không public port `9901`. `/internal/zalo/*` chỉ nhận request loopback.
 - Webhook Zoom có timestamp lệch quá 5 phút bị từ chối (chống replay).
 - Dùng secret riêng cho webhook, diagnostics và Zalo bridge.
-- Giữ `SETTINGS_ENC_KEY` ổn định và backup an toàn.
+- Giữ `SETTINGS_ENC_KEY` ổn định và backup an toàn. Xoay khoá: đặt khoá mới vào
+  `SETTINGS_ENC_KEY`, khoá cũ vào `SETTINGS_ENC_KEY_OLD` (đọc được cả hai, ghi
+  bằng khoá mới), sau khi mọi giá trị đã ghi lại thì bỏ biến cũ. Bật
+  `SETTINGS_REJECT_PLAINTEXT=1` khi DB không còn giá trị chưa mã hoá.
+- Log che mọi secret cấu hình (token Telegram, mọi API key, mật khẩu trong
+  `DATABASE_URL`, token Facebook, `ADMIN_PASS`...), không chỉ 6 giá trị như trước.
+- `DATABASE_SSL_MODE=verify-full` + `DATABASE_SSL_CA` để xác thực chứng chỉ
+  Supabase (mặc định `require` chỉ mã hoá, không xác thực).
+- Container chạy 2 tiến trình dưới user `app` (không root); `/healthz` kiểm tra
+  DB thật (`SELECT 1`), `/` vẫn nhẹ cho Render health check.
 - Chỉ chạy một Zalo listener cho tài khoản bot.
 - Rotate session ngay nếu nghi ngờ bị lộ.
 
@@ -735,6 +797,7 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
 
 ## Tài liệu bổ sung
 
+- `docs/upgrade-2026-10.md` — đợt nâng cấp toàn diện 10/2026 (lỗi đã sửa, migration 015, biến mới, kết quả backtest offline, việc cần làm khi deploy)
 - `docs/review-2026-10.md` — đợt sửa lỗi/bảo mật/tái cấu trúc tháng 10/2026 và việc cần làm khi deploy
 
 - `docs/zalo-render.md`

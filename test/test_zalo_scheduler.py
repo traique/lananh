@@ -45,7 +45,13 @@ def test_scheduler_can_start_without_controller_env(monkeypatch):
 @pytest.mark.asyncio
 async def test_digest_saves_summary_and_outbox_atomically(monkeypatch):
     monkeypatch.delenv("ZALO_CONTROLLER_ID", raising=False)
-    monkeypatch.setenv("ZALO_BOT_ACCOUNT_ID", "zalo-bot")
+
+    async def fake_account_id():
+        return "zalo-bot"
+
+    monkeypatch.setattr(
+        zalo_scheduler.zalo_repository, "resolve_active_account_id", fake_account_id
+    )
 
     async def fake_controller_id():
         return "controller-from-db"

@@ -810,7 +810,7 @@ def test_rsi_uses_wilder_smoothing_after_the_first_window():
     for step in [2, -1] * 7 + [-3, -3]:
         values.append(values[-1] + step)
     gain, loss = 14 / 14, 7 / 14
-    for delta in (-3, -3):
+    for _delta in (-3, -3):
         gain, loss = gain * 13 / 14, (loss * 13 + 3) / 14
     assert market_page._rsi(values) == pytest.approx(100 - 100 / (1 + gain / loss))
 

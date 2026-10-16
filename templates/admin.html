@@ -1,257 +1,558 @@
 <!doctype html>
-<html>
+<html lang="vi">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Lan Anh Bot Admin</title>
+<script>
+  // Áp giao diện đã lưu TRƯỚC khi vẽ để không nháy màu. localStorage có thể bị
+  // chặn (chế độ riêng tư) nên luôn bọc try/catch; không có thì theo hệ điều hành.
+  (function () {
+    try {
+      var saved = localStorage.getItem('admin.theme');
+      if (saved === 'dark' || saved === 'light') document.documentElement.dataset.theme = saved;
+    } catch (e) {}
+  })();
+</script>
 <style>
   :root{
-    --text:#1c1c1e;
-    --muted:#6e6e73;
-    --glass-bg:rgba(255,255,255,.46);
-    --glass-border:rgba(255,255,255,.55);
-    --glass-shadow:0 8px 30px rgba(31,38,90,.14), 0 1px 1px rgba(31,38,90,.06);
-    --accent-a:#0a84ff;
-    --accent-b:#5e5ce6;
-    --ok-fg:#0d7a3d;
-    --ok-bg:rgba(52,199,89,.16);
-    --bad-fg:#b3261e;
-    --bad-bg:rgba(255,69,58,.16);
-    --radius-lg:28px;
-    --radius-md:18px;
-    --radius-sm:12px;
+    color-scheme:light;
+    --bg:#f3f4f7;
+    --surface:#ffffff;
+    --surface-2:#eef0f4;
+    --border:rgba(15,23,42,.10);
+    --border-strong:rgba(15,23,42,.20);
+    --text:#0f172a;
+    --text-2:#475569;
+    --muted:#64748b;
+    --accent:#2a78d6;
+    --accent-hover:#1c5cab;
+    --accent-soft:rgba(42,120,214,.12);
+    --on-accent:#ffffff;
+    --ok-fg:#0a6b2f;  --ok-bg:rgba(12,163,12,.14);
+    --bad-fg:#b3261e; --bad-bg:rgba(208,59,59,.14);
+    --warn-fg:#7a4f00;--warn-bg:rgba(250,178,25,.20);
+    --series-1:#2a78d6;
+    --series-1-strong:#1c5cab;
+    --grid:#e1e0d9;
+    --axis:#c3c2b7;
+    --shadow:0 1px 2px rgba(15,23,42,.05),0 10px 28px -16px rgba(15,23,42,.22);
+    --radius:14px;
+    --radius-sm:9px;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sidebar-w:236px;
+    --topbar-h:58px;
   }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      color-scheme:dark;
+      --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
+      --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+      --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
+      --accent:#5598e7; --accent-hover:#6da7ec; --accent-soft:rgba(85,152,231,.16); --on-accent:#0b1220;
+      --ok-fg:#63d47d; --ok-bg:rgba(12,163,12,.20);
+      --bad-fg:#f29088; --bad-bg:rgba(230,103,103,.20);
+      --warn-fg:#f4c85e; --warn-bg:rgba(250,178,25,.16);
+      --series-1:#3987e5; --series-1-strong:#6da7ec; --grid:#2c2c2a; --axis:#383835;
+      --shadow:0 1px 2px rgba(0,0,0,.45),0 10px 28px -16px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
+    --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+    --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
+    --accent:#5598e7; --accent-hover:#6da7ec; --accent-soft:rgba(85,152,231,.16); --on-accent:#0b1220;
+    --ok-fg:#63d47d; --ok-bg:rgba(12,163,12,.20);
+    --bad-fg:#f29088; --bad-bg:rgba(230,103,103,.20);
+    --warn-fg:#f4c85e; --warn-bg:rgba(250,178,25,.16);
+    --series-1:#3987e5; --series-1-strong:#6da7ec; --grid:#2c2c2a; --axis:#383835;
+    --shadow:0 1px 2px rgba(0,0,0,.45),0 10px 28px -16px rgba(0,0,0,.7);
+  }
+
   *{box-sizing:border-box}
-  html{background:#dfe6f5}
+  html{-webkit-text-size-adjust:100%}
   body{
-    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;
-    color:var(--text);
-    margin:0;
-    padding:36px 20px 90px;
-    min-height:100vh;
-    position:relative;
-    overflow-x:hidden;
+    margin:0;min-height:100vh;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    font-size:14px;line-height:1.5;overflow-x:hidden;
   }
-  body::before{
-    content:"";
-    position:fixed;
-    inset:-10%;
-    z-index:-1;
-    background:
-      radial-gradient(38% 34% at 12% 8%, #7bd7ff 0%, transparent 70%),
-      radial-gradient(42% 38% at 88% 12%, #c9a8ff 0%, transparent 70%),
-      radial-gradient(46% 42% at 20% 92%, #ffb4d0 0%, transparent 70%),
-      radial-gradient(50% 46% at 90% 88%, #9fe6c8 0%, transparent 70%),
-      linear-gradient(160deg, #eef2fb, #dfe6f5 60%, #e8e4fb);
-    animation:drift 26s ease-in-out infinite alternate;
-  }
-  @keyframes drift{
-    0%{transform:scale(1) translate(0,0)}
-    100%{transform:scale(1.06) translate(-1.5%, 1.5%)}
-  }
-  @media (prefers-reduced-motion:reduce){ body::before{animation:none} }
+  a{color:var(--accent)}
+  button,input,select{font:inherit;color:inherit}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
 
-  .page{max-width:880px;margin:0 auto}
-
-  header.hero{
-    display:flex;align-items:center;justify-content:space-between;gap:16px;
-    padding:22px 28px;margin-bottom:22px;
+  /* ---------- Khung trang ---------- */
+  .app{display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr);min-height:100vh}
+  .sidebar{
+    position:sticky;top:0;height:100vh;display:flex;flex-direction:column;
+    background:var(--surface);border-right:1px solid var(--border);padding:18px 14px;
   }
-  h1{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:0}
-  .subtitle{color:var(--muted);font-size:13.5px;margin:3px 0 0}
-  #msg{font-size:13px;font-weight:600;min-height:18px;text-align:right}
-  .logout{color:var(--muted);font-size:12.5px;text-decoration:none;margin-left:14px}
-  .logout:hover{color:var(--text)}
-
-  .glass{
-    position:relative;
-    background:var(--glass-bg);
-    -webkit-backdrop-filter:blur(28px) saturate(180%);
-    backdrop-filter:blur(28px) saturate(180%);
-    border:1px solid var(--glass-border);
-    border-radius:var(--radius-lg);
-    box-shadow:var(--glass-shadow);
+  .brand{display:flex;align-items:center;gap:10px;padding:4px 8px 18px}
+  .brand .logo{
+    width:34px;height:34px;border-radius:10px;flex:none;display:grid;place-items:center;
+    background:var(--accent);color:var(--on-accent);font-weight:800;font-size:15px;letter-spacing:-.02em;
   }
-  .glass::before{
-    content:"";
-    position:absolute;inset:0;
-    border-radius:inherit;
-    padding:1px;
-    background:linear-gradient(160deg, rgba(255,255,255,.9), rgba(255,255,255,0) 40%, rgba(255,255,255,0) 70%, rgba(255,255,255,.35));
-    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite:xor;
-    mask-composite:exclude;
-    pointer-events:none;
+  .brand b{display:block;font-size:14.5px;letter-spacing:-.01em}
+  .brand small{display:block;color:var(--muted);font-size:11.5px;margin-top:1px}
+  .nav{display:flex;flex-direction:column;gap:2px;flex:1}
+  .nav a{
+    display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius-sm);
+    color:var(--text-2);text-decoration:none;font-weight:500;font-size:13.5px;
   }
+  .nav a svg{width:17px;height:17px;flex:none;opacity:.8}
+  .nav a:hover{background:var(--surface-2);color:var(--text)}
+  .nav a.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+  .nav a.active svg{opacity:1}
+  .sidebar-foot{border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--muted)}
 
-  .stack{display:flex;flex-direction:column;gap:18px}
-  .tile{padding:22px 24px}
-
-  h2.tile-title{
-    font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
-    color:var(--muted);margin:0 0 14px;display:flex;align-items:center;gap:8px
+  .main{min-width:0;display:flex;flex-direction:column}
+  .topbar{
+    position:sticky;top:0;z-index:20;height:var(--topbar-h);display:flex;align-items:center;gap:10px;
+    padding:0 20px;background:color-mix(in srgb,var(--bg) 85%,transparent);
+    -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);
   }
-  h2.tile-title .dot{width:7px;height:7px;border-radius:50%;background:linear-gradient(135deg,var(--accent-a),var(--accent-b))}
+  .topbar .mobile-brand{display:none;align-items:center;gap:8px;font-weight:700}
+  .topbar .mobile-brand .logo{width:28px;height:28px;font-size:12px;border-radius:8px}
+  .topbar-title{font-weight:600;font-size:15px;margin-right:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .updated{color:var(--muted);font-size:12px;white-space:nowrap}
+  .controls{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
 
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  td,th{text-align:left;padding:9px 8px;border-bottom:1px solid rgba(60,60,67,.1);vertical-align:middle}
-  tr:last-child td{border-bottom:none}
-  th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700}
+  .mobile-nav{display:none}
 
-  button{
-    padding:8px 18px;border-radius:999px;border:1px solid transparent;
-    font-size:13px;font-weight:600;cursor:pointer;color:#fff;
-    background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
-    box-shadow:0 4px 14px rgba(94,92,230,.35);
-    transition:transform .12s,box-shadow .12s;
+  main{padding:20px 20px 72px;display:flex;flex-direction:column;gap:30px;max-width:1240px;width:100%;margin:0 auto}
+  section{scroll-margin-top:calc(var(--topbar-h) + 14px)}
+  .section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 12px;flex-wrap:wrap}
+  .section-head h2{margin:0;font-size:18px;font-weight:700;letter-spacing:-.015em}
+  .section-head p{margin:0;color:var(--muted);font-size:12.5px}
+
+  /* ---------- Thẻ, lưới ---------- */
+  .grid{display:grid;gap:14px}
+  .grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .kpis{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:14px}
+  .card{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:18px 18px 16px;min-width:0;position:relative;
   }
-  button:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(94,92,230,.45)}
-  button.secondary{
-    background:rgba(255,255,255,.55);color:var(--text);
-    border:1px solid rgba(60,60,67,.16);box-shadow:none;
-  }
-  button.secondary:hover{background:rgba(255,255,255,.85);box-shadow:none}
-  button.small{padding:5px 12px;font-size:11.5px}
-  button:disabled{opacity:.5;cursor:default;transform:none}
+  .card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+  .card-head h3{margin:0;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-2)}
+  .card-head .hint{color:var(--muted);font-size:12px}
+  .card p.note{color:var(--muted);font-size:12.5px;margin:0 0 12px}
+  .card.span-2{grid-column:span 2}
 
-  .actions{display:flex;align-items:center;gap:10px;margin-top:20px;flex-wrap:wrap}
-  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700}
-  .ok{background:var(--ok-bg);color:var(--ok-fg)}
-  .bad{background:var(--bad-bg);color:var(--bad-fg)}
-  .muted{color:var(--muted);font-size:12.5px}
+  .kpi{padding:14px 16px 13px}
+  .kpi .label{font-size:12px;color:var(--muted);margin-bottom:6px}
+  .kpi .value{font-size:22px;font-weight:650;letter-spacing:-.02em;line-height:1.15;word-break:break-word}
+  .kpi .value.mono{font-family:var(--mono);font-size:16px;font-weight:600;letter-spacing:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kpi .sub{font-size:12px;color:var(--text-2);margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .kpi .meter{margin-top:10px}
 
-  .provider-card{border-bottom:1px solid rgba(60,60,67,.1);padding:14px 0}
-  .provider-card:last-child{border-bottom:none}
-  .provider-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
-  .provider-name{font-weight:700;font-size:14px;text-transform:capitalize}
-  .field-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
-  .field-row input{
-    flex:1;min-width:160px;padding:8px 10px;border:1px solid rgba(60,60,67,.16);
-    border-radius:var(--radius-sm);font-family:var(--mono);font-size:12.5px;
-    background:rgba(255,255,255,.55);
+  .meter{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+  .meter > i{display:block;height:100%;border-radius:inherit;background:var(--series-1);transition:width .35s ease}
+  .meter.warn > i{background:#fab219}
+  .meter.danger > i{background:#d03b3b}
+
+  /* ---------- Bảng ---------- */
+  .tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+  .tbl th,.tbl td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+  .tbl th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;white-space:nowrap}
+  .tbl tbody tr:last-child td{border-bottom:none}
+  .tbl tbody tr:hover td{background:color-mix(in srgb,var(--surface-2) 60%,transparent)}
+  .tbl td.num,.tbl th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .tbl td.act{text-align:right;white-space:nowrap}
+  .tbl .mono{font-family:var(--mono);font-size:12px}
+  .tbl .share{display:inline-block;width:56px;height:5px;border-radius:999px;background:var(--surface-2);vertical-align:middle;margin-right:8px;overflow:hidden}
+  .tbl .share > i{display:block;height:100%;background:var(--series-1);border-radius:inherit}
+  .kv th{width:38%;color:var(--muted);font-weight:600;text-transform:none;letter-spacing:0;font-size:12.5px}
+  .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+  /* ---------- Trạng thái ---------- */
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap;line-height:1.6}
+  .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+  .pill.ok{background:var(--ok-bg);color:var(--ok-fg)}
+  .pill.bad{background:var(--bad-bg);color:var(--bad-fg)}
+  .pill.warn{background:var(--warn-bg);color:var(--warn-fg)}
+  .pill.neutral{background:var(--surface-2);color:var(--text-2)}
+  .muted{color:var(--muted)}
+  .small{font-size:12px}
+  .mono{font-family:var(--mono)}
+  .empty,.error,.loading{color:var(--muted);font-size:13px;padding:14px 4px;text-align:center}
+  .error{color:var(--bad-fg)}
+  .skeleton{display:flex;flex-direction:column;gap:10px;padding:4px 0}
+  .skeleton i{display:block;height:12px;border-radius:6px;background:linear-gradient(90deg,var(--surface-2) 25%,color-mix(in srgb,var(--surface-2) 40%,var(--surface)) 50%,var(--surface-2) 75%);background-size:200% 100%;animation:shimmer 1.3s infinite}
+  .skeleton i:nth-child(2){width:80%}.skeleton i:nth-child(3){width:60%}
+  @keyframes shimmer{to{background-position:-200% 0}}
+  @media (prefers-reduced-motion:reduce){.skeleton i{animation:none}}
+
+  /* ---------- Nút, form ---------- */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:7px 14px;border-radius:var(--radius-sm);
+    border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-size:13px;font-weight:600;cursor:pointer;
+    transition:background .12s,border-color .12s,transform .06s;min-height:34px;
   }
-  .field-row input:focus{outline:2px solid var(--accent-a);outline-offset:-1px;background:rgba(255,255,255,.85)}
-  .field-label{font-size:11px;color:var(--muted);width:100%;margin-top:6px}
+  .btn:hover{background:var(--surface-2)}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+  .btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+  .btn.danger{color:var(--bad-fg)}
+  .btn.sm{padding:4px 10px;font-size:12px;min-height:28px}
+  .btn.icon{padding:6px;width:34px}
+  .btn svg{width:16px;height:16px}
+  .btn:disabled{opacity:.5;cursor:default;transform:none}
+  .btn[aria-busy="true"] svg{animation:spin .9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .select{
+    padding:6px 28px 6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border-strong);background:var(--surface);
+    font-size:13px;min-height:34px;appearance:none;-webkit-appearance:none;cursor:pointer;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+    background-repeat:no-repeat;background-position:right 9px center;
+  }
+  .input{
+    width:100%;padding:8px 10px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);
+    background:var(--surface);font-size:13px;min-height:34px;
+  }
+  .input.mono{font-family:var(--mono);font-size:12.5px}
+  .input::placeholder{color:var(--muted)}
+  .field{margin-top:10px}
+  .field-row{display:flex;gap:8px;flex-wrap:wrap}
+  .field-row .input{flex:1;min-width:150px}
+  .field-label{font-size:11.5px;color:var(--muted);margin-top:5px}
+  .actions{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
+
+  .provider-card{border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;background:var(--surface)}
+  .provider-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .provider-name{font-weight:700;font-size:14px}
+  .provider-head .right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .providers-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
 
   .output{
-    white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.5;
-    background:rgba(255,255,255,.55);border:1px solid rgba(60,60,67,.16);
-    border-radius:var(--radius-sm);padding:12px;margin:12px 0 0;max-height:420px;overflow:auto;
+    white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.55;font-family:inherit;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);
+    padding:12px;margin:12px 0 0;max-height:420px;overflow:auto;
   }
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{display:inline-block;padding:3px 9px;border-radius:999px;background:var(--surface-2);font-size:12px;color:var(--text-2)}
+  .chip b{color:var(--text);font-family:var(--mono);font-weight:600}
 
-  select{
-    padding:6px 10px;border-radius:var(--radius-sm);border:1px solid rgba(60,60,67,.16);
-    background:rgba(255,255,255,.6);font-size:12.5px;
+  /* ---------- Biểu đồ ---------- */
+  .chart{position:relative;width:100%;height:220px}
+  .chart svg{display:block;width:100%;height:100%;overflow:visible}
+  .chart .grid-line{stroke:var(--grid);stroke-width:1}
+  .chart .baseline{stroke:var(--axis);stroke-width:1}
+  .chart .bar{fill:var(--series-1);transition:fill .12s}
+  .chart .bar.hot{fill:var(--series-1-strong)}
+  .chart .hit{fill:transparent;cursor:crosshair}
+  .chart text{fill:var(--muted);font-size:11px;font-family:inherit;font-variant-numeric:tabular-nums}
+  .tip{
+    position:absolute;z-index:5;pointer-events:none;padding:6px 9px;border-radius:8px;font-size:12px;line-height:1.35;
+    background:var(--text);color:var(--bg);box-shadow:var(--shadow);white-space:nowrap;transform:translate(-50%,calc(-100% - 10px));
+  }
+  .tip b{display:block;font-size:13px}
+  details.fallback{margin-top:10px}
+  details.fallback summary{cursor:pointer;color:var(--muted);font-size:12.5px;user-select:none}
+  details.fallback .tbl-wrap{max-height:260px;overflow:auto;margin-top:8px}
+
+  /* ---------- Toast ---------- */
+  .toast{
+    position:fixed;left:50%;bottom:22px;transform:translate(-50%,16px);z-index:50;opacity:0;pointer-events:none;
+    max-width:min(92vw,520px);padding:10px 16px;border-radius:12px;font-size:13px;font-weight:600;
+    background:var(--text);color:var(--bg);box-shadow:var(--shadow);transition:opacity .18s,transform .18s;
+  }
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .toast.ok{border-left:4px solid #0ca30c}
+  .toast.bad{border-left:4px solid #d03b3b}
+
+  /* ---------- Responsive ---------- */
+  @media (max-width:980px){
+    .app{grid-template-columns:1fr}
+    .sidebar{display:none}
+    .topbar .mobile-brand{display:flex}
+    .topbar-title{display:none}
+    .mobile-nav{
+      display:flex;gap:6px;overflow-x:auto;padding:10px 16px;position:sticky;top:var(--topbar-h);z-index:19;
+      background:var(--bg);border-bottom:1px solid var(--border);scrollbar-width:none;-webkit-overflow-scrolling:touch;
+    }
+    .mobile-nav::-webkit-scrollbar{display:none}
+    .mobile-nav a{
+      flex:none;padding:6px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface);
+      color:var(--text-2);text-decoration:none;font-size:12.5px;font-weight:600;white-space:nowrap;
+    }
+    .mobile-nav a.active{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+    section{scroll-margin-top:calc(var(--topbar-h) + 58px)}
+    main{padding:16px 16px 72px}
+    .grid.cols-2,.grid.cols-3{grid-template-columns:1fr}
+    .card.span-2{grid-column:auto}
+  }
+  @media (max-width:640px){
+    .topbar{height:auto;flex-wrap:wrap;padding:8px 16px;gap:8px;row-gap:8px}
+    .topbar .mobile-brand{flex:1;min-width:0}
+    .topbar .mobile-brand span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .updated{font-size:11.5px}
+    .controls{width:100%;gap:6px}
+    .controls .select{flex:1;min-width:0;padding-right:24px;font-size:12.5px}
+    .controls .btn.icon{flex:none}
+    .mobile-nav{position:static;top:auto;padding:10px 16px 6px}
+    section{scroll-margin-top:108px}
+    .tbl.responsive thead{display:none}
+    .tbl.responsive tbody tr{display:block;border-bottom:1px solid var(--border);padding:8px 0}
+    .tbl.responsive tbody tr:last-child{border-bottom:none}
+    .tbl.responsive td{display:flex;justify-content:space-between;align-items:center;gap:12px;border:none;padding:4px 2px;text-align:left}
+    .tbl.responsive td.num{text-align:right}
+    .tbl.responsive td::before{content:attr(data-label);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:700;flex:none}
+    .tbl.responsive td.act{justify-content:flex-end}
+    .tbl.responsive td.act:empty{display:none}
+    .tbl.responsive td.act::before{display:none}
+    .tbl .share{width:48px}
+    .kpi .value{font-size:21px}
+    .card{padding:16px 14px 14px}
   }
 </style>
 </head>
 <body>
-<div class="page">
+<div class="app">
+  <aside class="sidebar" aria-label="Điều hướng">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">LA</div>
+      <div><b>Lan Anh Bot</b><small>Bảng điều khiển</small></div>
+    </div>
+    <nav class="nav" id="side-nav">
+      <a href="#overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Tổng quan</a>
+      <a href="#ai"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 4 3 5-7"/></svg>Thống kê AI</a>
+      <a href="#providers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg>Provider</a>
+      <a href="#users"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4a3.5 3.5 0 0 1 0 7M18 13.5a6.5 6.5 0 0 1 3.5 6.5"/></svg>Người dùng &amp; Zalo</a>
+      <a href="#market"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"/><path d="M4 15l5-6 4 3 7-8"/></svg>Page chứng khoán</a>
+      <a href="#system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="8" ry="2.5"/><path d="M4 5.5v13c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-13"/><path d="M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></svg>Hệ thống</a>
+    </nav>
+    <div class="sidebar-foot">
+      <button class="btn sm theme-toggle" type="button" aria-label="Đổi giao diện sáng/tối">
+        <svg class="ic-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13.5A8.5 8.5 0 1 1 10.5 3a7 7 0 0 0 10.5 10.5z"/></svg>
+        <span class="theme-label">Giao diện</span>
+      </button>
+      <button class="btn sm logout-btn" type="button">Đăng xuất</button>
+      <span>Render free · 1 worker</span>
+    </div>
+  </aside>
 
-<header class="hero glass">
-  <div>
-    <h1>Lan Anh Bot Admin</h1>
-    <div class="subtitle">Trợ lý cá nhân đa lĩnh vực.</div>
+  <div class="main">
+    <header class="topbar">
+      <div class="mobile-brand"><div class="logo brand-logo" aria-hidden="true">LA</div><span>Lan Anh Bot</span></div>
+      <div class="topbar-title" id="topbar-title">Tổng quan</div>
+      <span class="updated" id="updated-at">Đang tải…</span>
+      <div class="controls">
+        <label class="sr-only" for="range">Khoảng thời gian thống kê</label>
+        <select id="range" class="select range" title="Khoảng thời gian thống kê">
+          <option value="24">24 giờ</option>
+          <option value="168" selected>7 ngày</option>
+          <option value="720">30 ngày</option>
+        </select>
+        <label class="sr-only" for="auto-refresh">Tự làm mới</label>
+        <select id="auto-refresh" class="select auto" title="Tự làm mới">
+          <option value="0">Không tự làm mới</option>
+          <option value="10000">Tự làm mới 10s</option>
+          <option value="30000" selected>Tự làm mới 30s</option>
+          <option value="60000">Tự làm mới 60s</option>
+        </select>
+        <button class="btn icon" id="refresh-btn" type="button" aria-label="Làm mới" title="Làm mới">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        </button>
+        <button class="btn icon theme-toggle mobile-only" type="button" aria-label="Đổi giao diện sáng/tối">
+          <svg class="ic-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <svg class="ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13.5A8.5 8.5 0 1 1 10.5 3a7 7 0 0 0 10.5 10.5z"/></svg>
+        </button>
+        <button class="btn icon logout-btn mobile-only" type="button" aria-label="Đăng xuất" title="Đăng xuất">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
+        </button>
+      </div>
+    </header>
+    <nav class="mobile-nav" id="mobile-nav" aria-label="Mục">
+      <a href="#overview">Tổng quan</a><a href="#ai">Thống kê AI</a><a href="#providers">Provider</a>
+      <a href="#users">Người dùng &amp; Zalo</a><a href="#market">Page CK</a><a href="#system">Hệ thống</a>
+    </nav>
+
+    <main>
+      <!-- ========== TỔNG QUAN ========== -->
+      <section id="overview" data-title="Tổng quan">
+        <div class="section-head"><h2>Tổng quan</h2><p>Trạng thái bot và lượt gọi AI trong <span class="range-label">7 ngày qua</span>.</p></div>
+        <div class="kpis">
+          <div class="card kpi"><div class="label">Provider đang trả lời</div><div class="value mono" id="kpi-provider">—</div><div class="sub" id="kpi-provider-sub"></div></div>
+          <div class="card kpi"><div class="label">Lượt gọi AI</div><div class="value" id="kpi-calls">—</div><div class="sub" id="kpi-calls-sub"></div></div>
+          <div class="card kpi"><div class="label">Model nhiều nhất</div><div class="value mono" id="kpi-model">—</div><div class="sub" id="kpi-model-sub"></div></div>
+          <div class="card kpi"><div class="label">RAM container</div><div class="value" id="kpi-ram">—</div><div class="meter" id="kpi-ram-meter"><i style="width:0"></i></div><div class="sub" id="kpi-ram-sub"></div></div>
+          <div class="card kpi"><div class="label">Dung lượng DB</div><div class="value" id="kpi-db">—</div><div class="sub" id="kpi-db-sub"></div></div>
+          <div class="card kpi"><div class="label">Người dùng Zalo</div><div class="value" id="kpi-users">—</div><div class="sub" id="kpi-users-sub"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Lượt gọi AI theo <span id="chart-bucket">ngày</span></h3><span class="hint">Giờ Việt Nam · <span id="chart-total" class="muted">—</span></span></div>
+          <div class="chart" id="chart"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          <details class="fallback" id="chart-fallback" hidden><summary>Xem dạng bảng</summary><div class="tbl-wrap"><table class="tbl" id="chart-table"></table></div></details>
+        </div>
+      </section>
+
+      <!-- ========== THỐNG KÊ AI ========== -->
+      <section id="ai" data-title="Thống kê AI">
+        <div class="section-head"><h2>Thống kê AI</h2><p>Lượt gọi theo người dùng và theo model trong <span class="range-label">7 ngày qua</span>.</p></div>
+        <div class="grid cols-2">
+          <div class="card">
+            <div class="card-head"><h3>Theo người dùng</h3><span class="hint">bảng user_calls</span></div>
+            <div id="usage-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Theo model</h3><span class="hint">lượt trả lời thành công</span></div>
+            <div id="usage-models-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== PROVIDER ========== -->
+      <section id="providers" data-title="Provider">
+        <div class="section-head"><h2>Provider</h2><p>Chuỗi provider: 9Router → Groq → OpenRouter → Google AI Studio (api1/api2).</p></div>
+        <div class="grid cols-2">
+          <div class="card">
+            <div class="card-head"><h3>9Router</h3></div>
+            <table class="tbl kv">
+              <tr><th>Provider đang dùng</th><td id="active-provider" class="mono">—</td></tr>
+              <tr><th>Trạng thái 9Router</th><td id="router9-status">—</td></tr>
+            </table>
+            <div class="actions">
+              <button id="router9-toggle" class="btn" type="button" disabled>—</button>
+              <button id="router9-retry" class="btn primary" type="button" disabled>Thử lại 9Router ngay</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Cooldown</h3><span class="hint">provider hết quota tạm nghỉ</span></div>
+            <div id="cooldown-table"><div class="skeleton"><i></i><i></i></div></div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-head"><h3>Model &amp; API key</h3><span class="hint">để trống = dùng mặc định từ biến môi trường</span></div>
+          <div id="providers-list" class="providers-grid"><div class="skeleton"><i></i><i></i><i></i></div></div>
+        </div>
+        <div class="grid cols-2" style="margin-top:14px">
+          <div class="card">
+            <div class="card-head"><h3>Tavily web search</h3></div>
+            <div id="tavily-box"><div class="skeleton"><i></i><i></i></div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Agnes AI</h3><span class="hint">lệnh /anh – tạo ảnh</span></div>
+            <div id="agnes-box"><div class="skeleton"><i></i><i></i></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== NGƯỜI DÙNG & ZALO ========== -->
+      <section id="users" data-title="Người dùng &amp; Zalo">
+        <div class="section-head"><h2>Người dùng &amp; Zalo</h2><p>Tài khoản đã ghép và trí nhớ dài hạn theo từng người.</p></div>
+        <div class="grid cols-2">
+          <div class="card">
+            <div class="card-head"><h3>Zalo đã ghép</h3><span class="hint">lượt gọi trong <span class="range-label">7 ngày qua</span></span></div>
+            <div id="zalo-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Trí nhớ dài hạn</h3></div>
+            <p class="note">Mỗi tin nhắn khi trí nhớ đang bật tốn thêm 2–3 lượt gọi Google AI Studio (trích xuất fact, tóm tắt, lưu/nhớ lại). Tắt cho người không cần cá nhân hoá để giảm lượt gọi.</p>
+            <div id="memory-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== PAGE CHỨNG KHOÁN ========== -->
+      <section id="market" data-title="Page chứng khoán">
+        <div class="section-head"><h2>Page chứng khoán &amp; tin CafeF</h2><p>Đăng tự động theo lịch; có thể xem thử hoặc đăng ngay tại đây.</p></div>
+        <div class="card">
+          <div id="market-box"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          <div class="actions">
+            <button class="btn sm market-run" type="button" data-job="stock" data-publish="0">Xem thử chứng khoán</button>
+            <button class="btn sm market-run" type="button" data-job="news" data-publish="0">Xem thử tin CafeF</button>
+            <button class="btn sm primary market-run" type="button" data-job="stock" data-publish="1">Đăng chứng khoán ngay</button>
+            <button class="btn sm primary market-run" type="button" data-job="news" data-publish="1">Đăng tin CafeF ngay</button>
+          </div>
+          <div class="field-label">Xem thử chỉ tạo nội dung bằng AI, không đăng lên Page. Giờ đăng đổi bằng biến MARKET_STOCK_TIMES_VN / MARKET_NEWS_TIMES_VN.</div>
+          <pre id="market-output" class="output" hidden></pre>
+        </div>
+      </section>
+
+      <!-- ========== HỆ THỐNG ========== -->
+      <section id="system" data-title="Hệ thống">
+        <div class="section-head"><h2>Hệ thống</h2><p>RAM container (giới hạn Render free 512 MB) và dung lượng cơ sở dữ liệu.</p></div>
+        <div class="grid cols-2">
+          <div class="card">
+            <div class="card-head"><h3>Bộ nhớ RAM</h3><span class="hint" id="ram-uptime"></span></div>
+            <div id="ram-box"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Cơ sở dữ liệu</h3><span class="hint">bảng ảnh Facebook &amp; VACUUM FULL</span></div>
+            <div id="db-box"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          </div>
+        </div>
+      </section>
+    </main>
   </div>
-  <div>
-    <span id="msg"></span>
-    <a class="logout" href="#" id="logout-link">Đăng xuất</a>
-  </div>
-</header>
-
-<div class="stack">
-
-  <section class="tile glass">
-    <h2 class="tile-title"><span class="dot"></span>9Router</h2>
-    <table>
-      <tr><th>Active provider</th><td id="active-provider">-</td></tr>
-      <tr><th>9Router</th><td id="router9-status">-</td></tr>
-    </table>
-    <div class="actions">
-      <button id="router9-toggle" class="secondary" disabled>-</button>
-      <button id="router9-retry" disabled>Retry 9Router now</button>
-    </div>
-  </section>
-
-  <section class="tile glass">
-    <h2 class="tile-title"><span class="dot"></span>Cooldowns</h2>
-    <table id="cooldown-table"></table>
-  </section>
-
-  <section class="tile glass">
-    <h2 class="tile-title"><span class="dot"></span>Providers - model &amp; API key</h2>
-    <div id="providers-list" class="muted">Đang tải...</div>
-  </section>
-
-  <section class="tile glass">
-    <h2 class="tile-title"><span class="dot"></span>Tavily web search</h2>
-    <div id="tavily-box" class="muted">Đang tải...</div>
-  </section>
-
-  <section class="tile glass">
-    <h2 class="tile-title"><span class="dot"></span>Agnes AI (lệnh /anh - tạo ảnh)</h2>
-    <div id="agnes-box" class="muted">Đang tải...</div>
-  </section>
-
-  <section class="tile glass">
-    <h2 class="tile-title"><span class="dot"></span>Page chứng khoán &amp; tin CafeF (tự động)</h2>
-    <div id="market-box" class="muted">Đang tải...</div>
-    <div class="actions">
-      <button class="secondary small market-run" data-job="stock" data-publish="0">Xem thử chứng khoán</button>
-      <button class="secondary small market-run" data-job="news" data-publish="0">Xem thử tin CafeF</button>
-      <button class="small market-run" data-job="stock" data-publish="1">Đăng chứng khoán ngay</button>
-      <button class="small market-run" data-job="news" data-publish="1">Đăng tin CafeF ngay</button>
-    </div>
-    <div class="field-label">Xem thử chỉ tạo nội dung bằng AI, không đăng lên Page. Giờ đăng đổi bằng biến MARKET_STOCK_TIMES_VN / MARKET_NEWS_TIMES_VN.</div>
-    <pre id="market-output" class="output" hidden></pre>
-  </section>
-
-  <section class="tile glass">
-    <h2 class="tile-title"><span class="dot"></span>Trí nhớ dài hạn theo user</h2>
-    <div class="muted" style="margin-bottom:12px">
-      Mỗi tin nhắn khi trí nhớ đang bật sẽ tốn thêm 2-3 lượt gọi Google AI Studio
-      (trích xuất fact + tóm tắt + lưu/nhớ lại theo ngữ nghĩa). Tắt cho user nào
-      không cần cá nhân hoá sẽ giảm hẳn số lượt gọi đó.
-    </div>
-    <table id="memory-table"></table>
-  </section>
-
-  <section class="tile glass">
-    <h2 class="tile-title"><span class="dot"></span>Lượt gọi AI theo user</h2>
-    <div class="actions" style="margin-top:0;margin-bottom:14px">
-      <select id="usage-range">
-        <option value="24">24 giờ qua</option>
-        <option value="168" selected>7 ngày qua</option>
-        <option value="720">30 ngày qua</option>
-      </select>
-    </div>
-    <table id="usage-table"></table>
-  </section>
-
-  <section class="tile glass">
-    <h2 class="tile-title"><span class="dot"></span>Lượt gọi theo model</h2>
-    <div class="actions" style="margin-top:0;margin-bottom:14px">
-      <select id="usage-models-range">
-        <option value="24">24 giờ qua</option>
-        <option value="168" selected>7 ngày qua</option>
-        <option value="720">30 ngày qua</option>
-      </select>
-    </div>
-    <table id="usage-models-table"></table>
-  </section>
-
 </div>
-</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
+'use strict';
 const COOLDOWN_PROVIDERS = ['groq', 'openrouter', 'api1', 'api2'];
-let current = null;
+const RANGE_LABEL = { 24: '24 giờ qua', 168: '7 ngày qua', 720: '30 ngày qua' };
+const MARKET_JOB_LABEL = { stock: 'Báo cáo chứng khoán', news: 'Tin CafeF' };
+const $ = id => document.getElementById(id);
 
+let current = null;            // snapshot provider-chain mới nhất
+let lastUpdated = null;        // Date lần tải thành công gần nhất
+let autoTimer = null;
+let chartData = null;          // dữ liệu biểu đồ để vẽ lại khi đổi kích thước
+const cache = { usage: null, models: null, memory: null };
+
+/* ---------- Lưu tuỳ chọn (localStorage có thể bị chặn) ---------- */
+function loadPref(key, fallback) {
+  try { const v = localStorage.getItem(key); return v === null ? fallback : v; } catch (e) { return fallback; }
+}
+function savePref(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* bỏ qua: chế độ riêng tư */ }
+}
+
+/* ---------- Giao diện sáng/tối ---------- */
+function effectiveTheme() {
+  const forced = document.documentElement.dataset.theme;
+  if (forced === 'dark' || forced === 'light') return forced;
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+function applyThemeLabel() {
+  const dark = effectiveTheme() === 'dark';
+  document.querySelectorAll('.theme-toggle').forEach(btn => {
+    btn.querySelector('.ic-sun').style.display = dark ? '' : 'none';
+    btn.querySelector('.ic-moon').style.display = dark ? 'none' : '';
+    const label = btn.querySelector('.theme-label');
+    if (label) label.textContent = dark ? 'Giao diện sáng' : 'Giao diện tối';
+    btn.title = dark ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối';
+  });
+}
+document.querySelectorAll('.theme-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const next = effectiveTheme() === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    savePref('admin.theme', next);
+    applyThemeLabel();
+    if (chartData) renderChart(chartData);
+  });
+});
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyThemeLabel);
+}
+applyThemeLabel();
+
+/* ---------- Thông báo ---------- */
+let toastTimer = null;
 function msg(text, isError) {
-  const el = document.getElementById('msg');
+  const el = $('toast');
   el.textContent = text;
-  el.style.color = isError ? 'var(--bad-fg)' : 'var(--ok-fg)';
+  el.className = 'toast show ' + (isError ? 'bad' : 'ok');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = 'toast'; }, isError ? 6000 : 3500);
 }
 
 // Mọi giá trị từ server (tên user Zalo, model, URL...) đều phải qua esc() trước
@@ -275,193 +576,239 @@ async function api(path, opts = {}) {
   }
   return res.json();
 }
+function post(path, body) {
+  return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
 
+/* ---------- Định dạng ---------- */
+function fmtNum(n) {
+  return Number(n ?? 0).toLocaleString('vi-VN');
+}
+function fmtMib(v) {
+  return v == null ? '—' : `${fmtNum(Math.round(v))} MB`;
+}
+function fmtAbs(d) {
+  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+function relText(d, now = Date.now()) {
+  const sec = Math.round((now - d.getTime()) / 1000);
+  const abs = Math.abs(sec);
+  const future = sec < 0;
+  let text;
+  if (abs < 45) text = future ? 'sắp tới' : 'vừa xong';
+  else if (abs < 3600) text = `${Math.round(abs / 60)} phút`;
+  else if (abs < 86400) text = `${Math.round(abs / 3600)} giờ`;
+  else if (abs < 86400 * 30) text = `${Math.round(abs / 86400)} ngày`;
+  else return fmtAbs(d);
+  if (abs < 45) return text;
+  return future ? `trong ${text}` : `${text} trước`;
+}
+// <time> có data-ts để tick 30 giây một lần cập nhật chữ "x phút trước".
+function fmtRel(iso) {
+  if (!iso) return '<span class="muted">—</span>';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return esc(iso);
+  return `<time class="rel" datetime="${esc(d.toISOString())}" title="${esc(fmtAbs(d))}">${esc(relText(d))}</time>`;
+}
+function tickRelative() {
+  const now = Date.now();
+  document.querySelectorAll('time.rel').forEach(el => {
+    const d = new Date(el.getAttribute('datetime'));
+    if (!Number.isNaN(d.getTime())) el.textContent = relText(d, now);
+  });
+  const up = $('updated-at');
+  if (lastUpdated) up.textContent = `Cập nhật ${relText(lastUpdated, now)}`;
+}
+setInterval(tickRelative, 30000);
+
+function rangeHours() { return parseInt($('range').value, 10) || 168; }
+function updateRangeLabels() {
+  const label = RANGE_LABEL[rangeHours()] || `${rangeHours()} giờ qua`;
+  document.querySelectorAll('.range-label').forEach(el => { el.textContent = label; });
+}
+
+/* ---------- Trạng thái panel ---------- */
+function setState(el, kind, text) {
+  el.innerHTML = `<div class="${kind}">${esc(text)}</div>`;
+}
+function skeleton(el) {
+  if (!el.querySelector('.skeleton') && !el.children.length) el.innerHTML = '<div class="skeleton"><i></i><i></i><i></i></div>';
+}
+// Bảng responsive: mỗi ô mang data-label để trên điện thoại gập thành thẻ.
+function renderTable(el, columns, rows, emptyText) {
+  if (!rows.length) { setState(el, 'empty', emptyText); return; }
+  const head = columns.map(c => `<th class="${c.cls || ''}">${esc(c.label)}</th>`).join('');
+  const body = rows.map(row =>
+    `<tr>${columns.map(c => `<td class="${c.cls || ''}" data-label="${esc(c.label)}">${c.cell(row)}</td>`).join('')}</tr>`
+  ).join('');
+  el.innerHTML = `<table class="tbl responsive"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+function pill(ok, labelOk, labelBad, cls) {
+  return `<span class="pill ${ok ? 'ok' : (cls || 'bad')}">${esc(ok ? labelOk : labelBad)}</span>`;
+}
+
+/* ---------- 9Router & cooldown ---------- */
 function fmtCooldown(untilEpochSec) {
   const remaining = untilEpochSec - Date.now() / 1000;
-  if (remaining <= 0) return { label: 'ready', ok: true };
-  return { label: `cooldown ${Math.ceil(remaining)}s`, ok: false };
+  if (remaining <= 0) return { label: 'sẵn sàng', ok: true };
+  const s = Math.ceil(remaining);
+  return { label: s >= 120 ? `nghỉ ${Math.ceil(s / 60)} phút` : `nghỉ ${s}s`, ok: false };
 }
 
 function renderState(s) {
   current = s;
-  document.getElementById('active-provider').textContent = s.active_provider;
+  $('active-provider').textContent = s.active_provider || '—';
+  $('kpi-provider').textContent = s.active_provider || '—';
   const routerOk = !s.router9_dead_since;
-  document.getElementById('router9-status').innerHTML =
-    `<span class="pill ${s.router9_enabled ? 'ok' : 'bad'}">${s.router9_enabled ? 'enabled' : 'disabled'}</span> ` +
-    `<span class="pill ${routerOk ? 'ok' : 'bad'}">${routerOk ? 'alive' : 'dead'}</span>`;
+  const statusHtml = pill(Boolean(s.router9_enabled), 'đang bật', 'đã tắt', 'neutral') + ' ' + pill(routerOk, 'hoạt động', 'không phản hồi');
+  $('router9-status').innerHTML = statusHtml;
+  $('kpi-provider-sub').innerHTML = '9Router: ' + statusHtml;
 
-  const toggleBtn = document.getElementById('router9-toggle');
-  toggleBtn.textContent = s.router9_enabled ? 'Turn off' : 'Turn on';
+  const toggleBtn = $('router9-toggle');
+  toggleBtn.textContent = s.router9_enabled ? 'Tắt 9Router' : 'Bật 9Router';
   toggleBtn.disabled = false;
-  document.getElementById('router9-retry').disabled = false;
+  $('router9-retry').disabled = false;
 
-  const table = document.getElementById('cooldown-table');
-  table.innerHTML = '<tr><th>Provider</th><th>Status</th><th></th></tr>' +
-    COOLDOWN_PROVIDERS.map(name => {
-      const { label, ok } = fmtCooldown(s[`${name}_exhausted_until`] || 0);
-      const resetBtn = ok ? '' : `<button class="secondary small cooldown-reset" data-provider="${esc(name)}">Reset</button>`;
-      return `<tr><td>${esc(name)}</td><td><span class="pill ${ok ? 'ok' : 'bad'}">${esc(label)}</span></td><td>${resetBtn}</td></tr>`;
-    }).join('');
-  table.querySelectorAll('.cooldown-reset').forEach(btn => {
-    btn.onclick = () => resetCooldown(btn.dataset.provider);
+  renderTable($('cooldown-table'), [
+    { label: 'Provider', cell: row => `<span class="mono">${esc(row.name)}</span>` },
+    { label: 'Trạng thái', cell: row => `<span class="pill ${row.ok ? 'ok' : 'warn'}">${esc(row.label)}</span>` },
+    { label: '', cls: 'act', cell: row => row.ok ? '' : `<button class="btn sm cooldown-reset" type="button" data-provider="${esc(row.name)}">Bỏ cooldown</button>` },
+  ], COOLDOWN_PROVIDERS.map(name => ({ name, ...fmtCooldown(s[`${name}_exhausted_until`] || 0) })), '');
+  $('cooldown-table').querySelectorAll('.cooldown-reset').forEach(btn => {
+    btn.addEventListener('click', () => resetCooldown(btn.dataset.provider));
   });
 }
 
-async function loadState() {
-  renderState(await api('/admin/api/state'));
-}
+async function loadState() { renderState(await api('/admin/api/state')); }
 
 async function resetCooldown(provider) {
   try {
-    renderState(await api('/admin/api/cooldown/reset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider }),
-    }));
-    msg(`${provider}: cooldown reset.`);
-  } catch (e) { msg('Reset failed: ' + e.message, true); }
+    renderState(await post('/admin/api/cooldown/reset', { provider }));
+    msg(`${provider}: đã bỏ cooldown.`);
+  } catch (e) { msg('Bỏ cooldown thất bại: ' + e.message, true); }
 }
 
-document.getElementById('router9-toggle').onclick = async () => {
+$('router9-toggle').addEventListener('click', async () => {
   try {
-    renderState(await api('/admin/api/router9', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: current.router9_enabled ? 'off' : 'on' }),
-    }));
-    msg('9Router ' + (current.router9_enabled ? 'enabled' : 'disabled') + '.');
-  } catch (e) { msg('Failed: ' + e.message, true); }
-};
+    renderState(await post('/admin/api/router9', { action: current.router9_enabled ? 'off' : 'on' }));
+    msg('9Router ' + (current.router9_enabled ? 'đã bật' : 'đã tắt') + '.');
+  } catch (e) { msg('Thao tác thất bại: ' + e.message, true); }
+});
 
-document.getElementById('router9-retry').onclick = async () => {
+$('router9-retry').addEventListener('click', async () => {
   try {
-    const result = await api('/admin/api/router9', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'retry' }),
-    });
+    const result = await post('/admin/api/router9', { action: 'retry' });
     renderState(result);
     msg(result.ok ? '9Router sống, đã chuyển về dùng.' : `9Router vẫn lỗi: ${result.detail}`, !result.ok);
-  } catch (e) { msg('Failed: ' + e.message, true); }
-};
+  } catch (e) { msg('Thao tác thất bại: ' + e.message, true); }
+});
 
+/* ---------- Provider: model & API key ---------- */
 function providerCard(p) {
   const enableControl = p.enabled_editable
-    ? `<button class="secondary small provider-toggle" data-provider="${esc(p.provider)}">${p.enabled ? 'Tắt' : 'Bật'}</button>`
-    : `<span class="pill ${p.enabled ? 'ok' : 'bad'}">${p.enabled ? 'bật' : 'tắt'}</span>`;
+    ? `<button class="btn sm provider-toggle" type="button" data-provider="${esc(p.provider)}">${p.enabled ? 'Tắt' : 'Bật'}</button>`
+    : pill(Boolean(p.enabled), 'đang bật', 'đã tắt', 'neutral');
   const baseUrlControl = p.provider === 'router9' ? `
-      <div class="field-row">
-        <input class="base-url-input" type="url" placeholder="Base URL (để trống = dùng biến Render)" value="${esc(p.base_url_override || '')}">
-        <button class="secondary small save-base-url" data-provider="router9">Lưu Base URL</button>
-      </div>
-      <div class="field-label">Base URL hiện dùng: ${esc(p.base_url)}${p.base_url_overridden ? ' (đã override)' : ' (ROUTER9_BASE_URL trên Render)'}</div>` : '';
+      <div class="field">
+        <div class="field-row">
+          <input class="input mono base-url-input" type="url" placeholder="Base URL (để trống = dùng biến Render)" value="${esc(p.base_url_override || '')}">
+          <button class="btn sm save-base-url" type="button" data-provider="router9">Lưu Base URL</button>
+        </div>
+        <div class="field-label">Base URL hiện dùng: <span class="mono">${esc(p.base_url)}</span>${p.base_url_overridden ? ' (đã override)' : ' (ROUTER9_BASE_URL trên Render)'}</div>
+      </div>` : '';
   return `
     <div class="provider-card" data-provider="${esc(p.provider)}">
       <div class="provider-head">
         <span class="provider-name">${esc(p.provider)}</span>
-        <span>
-          <span class="pill ${p.api_key_configured ? 'ok' : 'bad'}">${p.api_key_configured ? 'key OK' : 'chưa có key'}</span>
+        <span class="right">
+          ${pill(Boolean(p.api_key_configured), 'key OK', 'chưa có key')}
           ${enableControl}
         </span>
       </div>
-      <div class="field-row">
-        <input class="model-input" placeholder="model (để trống = mặc định)" value="${esc(p.model_overridden ? p.model : '')}">
-        <button class="secondary small save-model" data-provider="${esc(p.provider)}">Lưu model</button>
+      <div class="field">
+        <div class="field-row">
+          <input class="input mono model-input" placeholder="model (để trống = mặc định)" value="${esc(p.model_overridden ? p.model : '')}">
+          <button class="btn sm save-model" type="button" data-provider="${esc(p.provider)}">Lưu model</button>
+        </div>
+        <div class="field-label">Model hiện dùng: <span class="mono">${esc(p.model)}</span>${p.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
       </div>
-      <div class="field-label">Model hiện dùng: ${esc(p.model)}${p.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
-      <div class="field-row">
-        <input class="key-input" type="password" placeholder="${esc(p.api_key_masked || 'API key (để trống = giữ nguyên)')}" data-provider="${esc(p.provider)}">
-        <button class="secondary small save-key" data-provider="${esc(p.provider)}">Lưu key</button>
+      <div class="field">
+        <div class="field-row">
+          <input class="input mono key-input" type="password" autocomplete="off" placeholder="${esc(p.api_key_masked || 'API key (để trống = giữ nguyên)')}" data-provider="${esc(p.provider)}">
+          <button class="btn sm save-key" type="button" data-provider="${esc(p.provider)}">Lưu key</button>
+        </div>
+        <div class="field-label">${p.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
       </div>
-      <div class="field-label">${p.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
       ${baseUrlControl}
     </div>`;
 }
 
 async function loadProviders() {
   const providers = await api('/admin/api/providers');
-  document.getElementById('providers-list').innerHTML = providers.map(providerCard).join('');
+  const list = $('providers-list');
+  list.innerHTML = providers.map(providerCard).join('') || '<div class="empty">Chưa cấu hình provider nào.</div>';
 
-  document.querySelectorAll('.save-model').forEach(btn => {
-    btn.onclick = async () => {
-      const card = btn.closest('.provider-card');
-      const input = card.querySelector('.model-input');
+  list.querySelectorAll('.save-model').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const input = btn.closest('.provider-card').querySelector('.model-input');
       try {
-        await api('/admin/api/providers/update', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: btn.dataset.provider, model: input.value.trim() }),
-        });
+        await post('/admin/api/providers/update', { provider: btn.dataset.provider, model: input.value.trim() });
         msg(`${btn.dataset.provider}: đã lưu model.`);
         loadProviders();
       } catch (e) { msg('Lưu model thất bại: ' + e.message, true); }
-    };
+    });
   });
-  document.querySelectorAll('.save-key').forEach(btn => {
-    btn.onclick = async () => {
-      const card = btn.closest('.provider-card');
-      const input = card.querySelector('.key-input');
+  list.querySelectorAll('.save-key').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const input = btn.closest('.provider-card').querySelector('.key-input');
       if (!input.value.trim()) { msg('Nhập API key trước khi lưu.', true); return; }
       try {
-        await api('/admin/api/providers/update', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: btn.dataset.provider, api_key: input.value.trim() }),
-        });
+        await post('/admin/api/providers/update', { provider: btn.dataset.provider, api_key: input.value.trim() });
         msg(`${btn.dataset.provider}: đã lưu API key.`);
         loadProviders();
       } catch (e) { msg('Lưu API key thất bại: ' + e.message, true); }
-    };
+    });
   });
-  document.querySelectorAll('.save-base-url').forEach(btn => {
-    btn.onclick = async () => {
-      const card = btn.closest('.provider-card');
-      const input = card.querySelector('.base-url-input');
+  list.querySelectorAll('.save-base-url').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const input = btn.closest('.provider-card').querySelector('.base-url-input');
       try {
-        const result = await api('/admin/api/providers/update', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: 'router9', base_url: input.value.trim() }),
-        });
+        const result = await post('/admin/api/providers/update', { provider: 'router9', base_url: input.value.trim() });
         msg(result.warning || (result.base_url_overridden
           ? 'router9: đã lưu Base URL.'
           : 'router9: đã dùng lại ROUTER9_BASE_URL từ Render.'), Boolean(result.warning));
         loadProviders();
       } catch (e) { msg('Lưu Base URL thất bại: ' + e.message, true); }
-    };
+    });
   });
-  document.querySelectorAll('.provider-toggle').forEach(btn => {
-    btn.onclick = async () => {
+  list.querySelectorAll('.provider-toggle').forEach(btn => {
+    btn.addEventListener('click', async () => {
       const provider = btn.dataset.provider;
       const p = providers.find(x => x.provider === provider);
       try {
-        await api('/admin/api/providers/update', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider, enabled: !p.enabled }),
-        });
+        await post('/admin/api/providers/update', { provider, enabled: !p.enabled });
         msg(`${provider}: ${p.enabled ? 'đã tắt' : 'đã bật'}.`);
         loadProviders();
       } catch (e) { msg('Thao tác thất bại: ' + e.message, true); }
-    };
+    });
   });
 }
 
-function fmtDate(iso) {
-  if (!iso) return '-';
-  const d = new Date(iso);
-  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
-
+/* ---------- Tavily ---------- */
 function tavilyBox(t) {
   return `
-    <div class="provider-card" style="border-bottom:none;padding-top:0">
-      <div class="provider-head">
-        <span class="provider-name">tavily</span>
-        <span>
-          <span class="pill ${t.api_key_configured ? 'ok' : 'bad'}">${t.api_key_configured ? 'key OK' : 'chưa có key'}</span>
-          <button class="secondary small" id="tavily-toggle">${t.enabled ? 'Tắt' : 'Bật'}</button>
-        </span>
-      </div>
+    <div class="provider-head">
+      <span class="provider-name">tavily</span>
+      <span class="right">
+        ${pill(Boolean(t.api_key_configured), 'key OK', 'chưa có key')}
+        ${pill(Boolean(t.enabled), 'đang bật', 'đã tắt', 'neutral')}
+        <button class="btn sm" type="button" id="tavily-toggle">${t.enabled ? 'Tắt' : 'Bật'}</button>
+      </span>
+    </div>
+    <div class="field">
       <div class="field-row">
-        <input type="password" id="tavily-key-input" placeholder="${esc(t.api_key_masked || 'API key (để trống = giữ nguyên)')}">
-        <button class="secondary small" id="tavily-save-key">Lưu key</button>
+        <input class="input mono" type="password" autocomplete="off" id="tavily-key-input" placeholder="${esc(t.api_key_masked || 'API key (để trống = giữ nguyên)')}">
+        <button class="btn sm" type="button" id="tavily-save-key">Lưu key</button>
       </div>
       <div class="field-label">${t.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
     </div>`;
@@ -469,48 +816,94 @@ function tavilyBox(t) {
 
 async function loadTavily() {
   const t = await api('/admin/api/tavily');
-  document.getElementById('tavily-box').innerHTML = tavilyBox(t);
-  document.getElementById('tavily-toggle').onclick = async () => {
+  $('tavily-box').innerHTML = tavilyBox(t);
+  $('tavily-toggle').addEventListener('click', async () => {
     try {
-      await api('/admin/api/tavily/update', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !t.enabled }),
-      });
+      await post('/admin/api/tavily/update', { enabled: !t.enabled });
       msg(`Tavily: ${t.enabled ? 'đã tắt' : 'đã bật'}.`);
       loadTavily();
     } catch (e) { msg('Thao tác thất bại: ' + e.message, true); }
-  };
-  document.getElementById('tavily-save-key').onclick = async () => {
-    const input = document.getElementById('tavily-key-input');
+  });
+  $('tavily-save-key').addEventListener('click', async () => {
+    const input = $('tavily-key-input');
     if (!input.value.trim()) { msg('Nhập API key trước khi lưu.', true); return; }
     try {
-      await api('/admin/api/tavily/update', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: input.value.trim() }),
-      });
+      await post('/admin/api/tavily/update', { api_key: input.value.trim() });
       msg('Tavily: đã lưu API key.');
       loadTavily();
     } catch (e) { msg('Lưu API key thất bại: ' + e.message, true); }
-  };
+  });
 }
 
-const MARKET_JOB_LABEL = { stock: 'Báo cáo chứng khoán', news: 'Tin CafeF' };
-
-function marketJobLabel(job) {
-  return esc(MARKET_JOB_LABEL[job] || job);
+/* ---------- Agnes ---------- */
+function agnesBox(a) {
+  return `
+    <div class="provider-head">
+      <span class="provider-name">agnes (/anh)</span>
+      <span class="right">
+        ${pill(Boolean(a.api_key_configured), 'key OK', 'chưa có key')}
+        ${pill(Boolean(a.enabled), 'đang bật', 'đã tắt', 'neutral')}
+        <button class="btn sm" type="button" id="agnes-toggle">${a.enabled ? 'Tắt' : 'Bật'}</button>
+      </span>
+    </div>
+    <div class="field">
+      <div class="field-row">
+        <input class="input mono" id="agnes-model-input" placeholder="model (để trống = mặc định)" value="${esc(a.model_overridden ? a.model : '')}">
+        <button class="btn sm" type="button" id="agnes-save-model">Lưu model</button>
+      </div>
+      <div class="field-label">Model hiện dùng: <span class="mono">${esc(a.model)}</span>${a.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
+    </div>
+    <div class="field">
+      <div class="field-row">
+        <input class="input mono" type="password" autocomplete="off" id="agnes-key-input" placeholder="${esc(a.api_key_masked || 'API key (để trống = giữ nguyên)')}">
+        <button class="btn sm" type="button" id="agnes-save-key">Lưu key</button>
+      </div>
+      <div class="field-label">${a.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
+    </div>`;
 }
+
+async function loadAgnes() {
+  const a = await api('/admin/api/agnes');
+  $('agnes-box').innerHTML = agnesBox(a);
+  $('agnes-toggle').addEventListener('click', async () => {
+    try {
+      await post('/admin/api/agnes/update', { enabled: !a.enabled });
+      msg(`Agnes AI: ${a.enabled ? 'đã tắt' : 'đã bật'}.`);
+      loadAgnes();
+    } catch (e) { msg('Thao tác thất bại: ' + e.message, true); }
+  });
+  $('agnes-save-model').addEventListener('click', async () => {
+    try {
+      await post('/admin/api/agnes/update', { model: $('agnes-model-input').value.trim() });
+      msg('Agnes AI: đã lưu model.');
+      loadAgnes();
+    } catch (e) { msg('Lưu model thất bại: ' + e.message, true); }
+  });
+  $('agnes-save-key').addEventListener('click', async () => {
+    const input = $('agnes-key-input');
+    if (!input.value.trim()) { msg('Nhập API key trước khi lưu.', true); return; }
+    try {
+      await post('/admin/api/agnes/update', { api_key: input.value.trim() });
+      msg('Agnes AI: đã lưu API key.');
+      loadAgnes();
+    } catch (e) { msg('Lưu API key thất bại: ' + e.message, true); }
+  });
+}
+
+/* ---------- Page chứng khoán ---------- */
+function marketJobLabel(job) { return esc(MARKET_JOB_LABEL[job] || job); }
 
 function marketBox(m) {
-  const schedule = m.schedule
-    .map(s => `${esc(s.time)} ${marketJobLabel(s.job)} (${esc(s.days)})`)
-    .join('<br>');
-  const lastRun = job => esc(m.last[job] || 'chưa chạy');
+  const schedule = (m.schedule || [])
+    .map(s => `<span class="chip"><b>${esc(s.time)}</b> ${marketJobLabel(s.job)} · ${esc(s.days)}</span>`)
+    .join(' ') || '<span class="muted">chưa có lịch</span>';
+  const lastRun = job => esc((m.last || {})[job] || 'chưa chạy');
   return `
-    <table>
-      <tr><th>Page</th><td><span class="pill ${m.configured ? 'ok' : 'bad'}">${m.configured ? 'đã cấu hình' : 'chưa có FACEBOOK_PAGE_ID_MARKET / TOKEN'}</span>
-        ${m.busy ? '<span class="pill ok">đang chạy</span>' : ''}</td></tr>
-      <tr><th>Lịch đăng (giờ VN)</th><td>${schedule}</td></tr>
-      <tr><th>Lượt kế tiếp</th><td>${esc(fmtDate(m.next.at))} - ${marketJobLabel(m.next.job)}</td></tr>
+    <table class="tbl kv">
+      <tr><th>Page</th><td>${pill(Boolean(m.configured), 'đã cấu hình', 'chưa có FACEBOOK_PAGE_ID_MARKET / TOKEN')}
+        ${m.busy ? ' <span class="pill warn">đang chạy</span>' : ''}</td></tr>
+      <tr><th>Lịch đăng (giờ VN)</th><td><div class="chips">${schedule}</div></td></tr>
+      <tr><th>Lượt kế tiếp</th><td>${marketJobLabel(m.next.job)} · ${fmtRel(m.next.at)}</td></tr>
       <tr><th>Lần gần nhất</th><td>Chứng khoán: ${lastRun('stock')}<br>Tin CafeF: ${lastRun('news')}</td></tr>
     </table>`;
 }
@@ -523,24 +916,21 @@ function setMarketButtons(m) {
 
 async function loadMarket() {
   const m = await api('/admin/api/market_page');
-  document.getElementById('market-box').innerHTML = marketBox(m);
+  $('market-box').innerHTML = marketBox(m);
   setMarketButtons(m);
 }
 
 document.querySelectorAll('.market-run').forEach(btn => {
-  btn.onclick = async () => {
+  btn.addEventListener('click', async () => {
     const job = btn.dataset.job;
     const publish = btn.dataset.publish === '1';
     if (publish && !confirm(`Đăng "${MARKET_JOB_LABEL[job]}" lên Page chứng khoán ngay bây giờ?`)) return;
-    const out = document.getElementById('market-output');
+    const out = $('market-output');
     document.querySelectorAll('.market-run').forEach(b => { b.disabled = true; });
     out.hidden = false;
     out.textContent = 'Đang chạy, có thể mất 1-2 phút...';
     try {
-      const r = await api('/admin/api/market_page/run', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job, publish }),
-      });
+      const r = await post('/admin/api/market_page/run', { job, publish });
       out.textContent = r.text || 'Không có nội dung để đăng (xem log server để biết lý do).';
       msg(r.published ? `${MARKET_JOB_LABEL[job]}: đã đăng lên Page.` : `${MARKET_JOB_LABEL[job]}: xem thử xong, chưa đăng.`);
     } catch (e) {
@@ -549,147 +939,362 @@ document.querySelectorAll('.market-run').forEach(btn => {
     } finally {
       loadMarket().catch(() => {});
     }
-  };
+  });
 });
 
-function agnesBox(a) {
-  return `
-    <div class="provider-card" style="border-bottom:none;padding-top:0">
-      <div class="provider-head">
-        <span class="provider-name">agnes (/anh)</span>
-        <span>
-          <span class="pill ${a.api_key_configured ? 'ok' : 'bad'}">${a.api_key_configured ? 'key OK' : 'chưa có key'}</span>
-          <button class="secondary small" id="agnes-toggle">${a.enabled ? 'Tắt' : 'Bật'}</button>
-        </span>
-      </div>
-      <div class="field-row">
-        <input id="agnes-model-input" placeholder="model (để trống = mặc định)" value="${esc(a.model_overridden ? a.model : '')}">
-        <button class="secondary small" id="agnes-save-model">Lưu model</button>
-      </div>
-      <div class="field-label">Model hiện dùng: ${esc(a.model)}${a.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
-      <div class="field-row">
-        <input type="password" id="agnes-key-input" placeholder="${esc(a.api_key_masked || 'API key (để trống = giữ nguyên)')}">
-        <button class="secondary small" id="agnes-save-key">Lưu key</button>
-      </div>
-      <div class="field-label">${a.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
-    </div>`;
-}
-
-async function loadAgnes() {
-  const a = await api('/admin/api/agnes');
-  document.getElementById('agnes-box').innerHTML = agnesBox(a);
-  document.getElementById('agnes-toggle').onclick = async () => {
-    try {
-      await api('/admin/api/agnes/update', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !a.enabled }),
-      });
-      msg(`Agnes AI: ${a.enabled ? 'đã tắt' : 'đã bật'}.`);
-      loadAgnes();
-    } catch (e) { msg('Thao tác thất bại: ' + e.message, true); }
-  };
-  document.getElementById('agnes-save-model').onclick = async () => {
-    const input = document.getElementById('agnes-model-input');
-    try {
-      await api('/admin/api/agnes/update', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: input.value.trim() }),
-      });
-      msg('Agnes AI: đã lưu model.');
-      loadAgnes();
-    } catch (e) { msg('Lưu model thất bại: ' + e.message, true); }
-  };
-  document.getElementById('agnes-save-key').onclick = async () => {
-    const input = document.getElementById('agnes-key-input');
-    if (!input.value.trim()) { msg('Nhập API key trước khi lưu.', true); return; }
-    try {
-      await api('/admin/api/agnes/update', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: input.value.trim() }),
-      });
-      msg('Agnes AI: đã lưu API key.');
-      loadAgnes();
-    } catch (e) { msg('Lưu API key thất bại: ' + e.message, true); }
-  };
-}
-
-
+/* ---------- Trí nhớ & Zalo ---------- */
 async function loadMemory() {
   const users = await api('/admin/api/memory');
-  const table = document.getElementById('memory-table');
-  if (!users.length) {
-    table.innerHTML = '<tr><td class="muted">Chưa có user nào.</td></tr>';
-    return;
-  }
-  table.innerHTML = '<tr><th>User</th><th>Trạng thái</th><th></th></tr>' +
-    users.map(u => `
-      <tr>
-        <td>${esc(u.label)}</td>
-        <td><span class="pill ${u.enabled ? 'ok' : 'bad'}">${u.enabled ? 'bật' : 'tắt'}</span></td>
-        <td><button class="secondary small memory-toggle" data-user="${esc(u.user_id)}" data-enabled="${u.enabled ? 'true' : 'false'}">${u.enabled ? 'Tắt' : 'Bật'}</button></td>
-      </tr>`).join('');
-  table.querySelectorAll('.memory-toggle').forEach(btn => {
-    btn.onclick = async () => {
+  cache.memory = users;
+  renderTable($('memory-table'), [
+    { label: 'User', cell: u => `${esc(u.label)}<div class="muted small mono">${esc(u.user_id)}</div>` },
+    { label: 'Trí nhớ', cell: u => pill(Boolean(u.enabled), 'đang bật', 'đã tắt', 'neutral') },
+    { label: '', cls: 'act', cell: u => `<button class="btn sm memory-toggle" type="button" data-user="${esc(u.user_id)}" data-enabled="${u.enabled ? 'true' : 'false'}">${u.enabled ? 'Tắt' : 'Bật'}</button>` },
+  ], users, 'Chưa có user nào.');
+  $('memory-table').querySelectorAll('.memory-toggle').forEach(btn => {
+    btn.addEventListener('click', async () => {
       const userId = parseInt(btn.dataset.user, 10);
       const enabled = btn.dataset.enabled === 'true';
       try {
-        await api('/admin/api/memory/update', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: userId, enabled: !enabled }),
-        });
+        await post('/admin/api/memory/update', { user_id: userId, enabled: !enabled });
         msg(`User ${userId}: trí nhớ ${enabled ? 'đã tắt' : 'đã bật'}.`);
         loadMemory();
       } catch (e) { msg('Thao tác thất bại: ' + e.message, true); }
-    };
+    });
   });
+  renderZalo();
 }
 
-async function loadUsage() {
-  const hours = document.getElementById('usage-range').value;
-  const rows = await api(`/admin/api/usage?hours=${hours}`);
-  const table = document.getElementById('usage-table');
-  if (!rows.length) {
-    table.innerHTML = '<tr><td class="muted">Chưa có lượt gọi nào trong khoảng thời gian này.</td></tr>';
-    return;
-  }
-  table.innerHTML = '<tr><th>Kênh</th><th>User</th><th>Lượt gọi</th><th>Gần nhất</th></tr>' +
-    rows.map(r => `<tr><td>${esc(r.channel_label)}</td><td>${esc(r.label)}</td><td>${esc(r.calls)}</td><td>${esc(fmtDate(r.last_call_at))}</td></tr>`).join('');
+// Zalo: user_id âm = tài khoản Zalo đã ghép (xem channels/zalo_users.py);
+// ghép danh sách /memory với lượt gọi kênh zalo trong /usage.
+function renderZalo() {
+  if (!cache.memory) return;
+  const zaloUsers = cache.memory.filter(u => typeof u.user_id === 'number' && u.user_id < 0);
+  const usage = (cache.usage || []).filter(r => r.channel === 'zalo');
+  const byId = new Map(usage.map(r => [r.user_id, r]));
+  const rows = zaloUsers.map(u => ({ ...u, usage: byId.get(u.user_id) }));
+  rows.sort((x, y) => ((y.usage && y.usage.calls) || 0) - ((x.usage && x.usage.calls) || 0));
+  renderTable($('zalo-table'), [
+    { label: 'Tên hiển thị', cell: u => `${esc(u.label)}<div class="muted small mono">${esc(u.user_id)}</div>` },
+    { label: 'Lượt gọi', cls: 'num', cell: u => esc(fmtNum(u.usage ? u.usage.calls : 0)) },
+    { label: 'Gần nhất', cell: u => fmtRel(u.usage ? u.usage.last_call_at : null) },
+    { label: 'Trí nhớ', cell: u => pill(Boolean(u.enabled), 'bật', 'tắt', 'neutral') },
+  ], rows, 'Chưa có tài khoản Zalo nào ghép với bot.');
+  $('kpi-users').textContent = fmtNum(zaloUsers.length);
+  const memOn = zaloUsers.filter(u => u.enabled).length;
+  $('kpi-users-sub').textContent = zaloUsers.length ? `trí nhớ bật: ${fmtNum(memOn)}/${fmtNum(zaloUsers.length)}` : 'chưa ghép tài khoản nào';
 }
-document.getElementById('usage-range').onchange = () => loadUsage().catch(e => msg(e.message, true));
+
+/* ---------- Thống kê AI ---------- */
+async function loadUsage() {
+  const rows = await api(`/admin/api/usage?hours=${rangeHours()}`);
+  cache.usage = rows;
+  const total = rows.reduce((sum, r) => sum + (Number(r.calls) || 0), 0);
+  renderTable($('usage-table'), [
+    { label: 'Kênh', cell: r => `<span class="pill neutral">${esc(r.channel_label)}</span>` },
+    { label: 'User', cell: r => esc(r.label) },
+    { label: 'Lượt gọi', cls: 'num', cell: r => `<span class="share" aria-hidden="true"><i style="width:${total ? Math.round(r.calls * 100 / total) : 0}%"></i></span>${esc(fmtNum(r.calls))}` },
+    { label: 'Gần nhất', cell: r => fmtRel(r.last_call_at) },
+  ], rows, 'Chưa có lượt gọi nào trong khoảng thời gian này.');
+  $('kpi-calls').textContent = fmtNum(total);
+  $('kpi-calls-sub').textContent = rows.length
+    ? `${fmtNum(rows.length)} người dùng · ${RANGE_LABEL[rangeHours()] || ''}`
+    : `không có lượt nào · ${RANGE_LABEL[rangeHours()] || ''}`;
+  renderZalo();
+}
 
 async function loadUsageModels() {
-  const hours = document.getElementById('usage-models-range').value;
-  const rows = await api(`/admin/api/usage/models?hours=${hours}`);
-  const table = document.getElementById('usage-models-table');
-  if (!rows.length) {
-    table.innerHTML = '<tr><td class="muted">Chưa có lượt gọi nào trong khoảng thời gian này.</td></tr>';
-    return;
-  }
-  table.innerHTML = '<tr><th>Provider</th><th>Model</th><th>Lượt gọi</th><th>Gần nhất</th></tr>' +
-    rows.map(r => `<tr><td>${esc(r.provider)}</td><td class="muted" style="font-family:var(--mono)">${esc(r.model)}</td><td>${esc(r.calls)}</td><td>${esc(fmtDate(r.last_call_at))}</td></tr>`).join('');
+  const rows = await api(`/admin/api/usage/models?hours=${rangeHours()}`);
+  cache.models = rows;
+  const total = rows.reduce((sum, r) => sum + (Number(r.calls) || 0), 0);
+  renderTable($('usage-models-table'), [
+    { label: 'Provider', cell: r => `<span class="mono">${esc(r.provider)}</span>` },
+    { label: 'Model', cell: r => `<span class="mono muted">${esc(r.model)}</span>` },
+    { label: 'Lượt gọi', cls: 'num', cell: r => `<span class="share" aria-hidden="true"><i style="width:${total ? Math.round(r.calls * 100 / total) : 0}%"></i></span>${esc(fmtNum(r.calls))}` },
+    { label: 'Gần nhất', cell: r => fmtRel(r.last_call_at) },
+  ], rows, 'Chưa có lượt gọi nào trong khoảng thời gian này.');
+  const top = rows[0];
+  $('kpi-model').textContent = top ? top.model : '—';
+  $('kpi-model').title = top ? top.model : '';
+  $('kpi-model-sub').textContent = top ? `${top.provider} · ${fmtNum(top.calls)} lượt (${total ? Math.round(top.calls * 100 / total) : 0}%)` : 'chưa có lượt trả lời';
 }
-document.getElementById('usage-models-range').onchange = () => loadUsageModels().catch(e => msg(e.message, true));
 
-document.getElementById('logout-link').onclick = async (e) => {
-  e.preventDefault();
-  await fetch('/admin/logout', { method: 'POST' });
-  window.location.reload();
-};
+/* ---------- Biểu đồ cột (SVG, không thư viện) ---------- */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+function niceMax(v) {
+  if (v <= 5) return 5;
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / pow;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return step * pow;
+}
+function bucketLabel(at, bucket) {
+  // "YYYY-MM-DDTHH:MM" theo giờ VN từ server - không đổi múi giờ trên trình duyệt.
+  const [date, time] = String(at).split('T');
+  const [, mm, dd] = date.split('-');
+  return bucket === 'hour' ? `${time} ${dd}/${mm}` : `${dd}/${mm}`;
+}
+function roundedBarPath(x, y, w, h, r) {
+  if (h <= 0) return '';
+  const rr = Math.min(r, w / 2, h);
+  return `M${x},${y + h} V${y + rr} Q${x},${y} ${x + rr},${y} H${x + w - rr} Q${x + w},${y} ${x + w},${y + rr} V${y + h} Z`;
+}
 
-loadState().catch(e => msg(e.message, true));
-loadProviders().catch(e => msg(e.message, true));
-loadTavily().catch(e => msg(e.message, true));
-loadAgnes().catch(e => msg(e.message, true));
-loadMarket().catch(e => msg(e.message, true));
-loadMemory().catch(e => msg(e.message, true));
-loadUsage().catch(e => msg(e.message, true));
-loadUsageModels().catch(e => msg(e.message, true));
-setInterval(() => {
-  loadState().catch(() => {});
-  loadMarket().catch(() => {});
-  loadUsage().catch(() => {});
-  loadUsageModels().catch(() => {});
-}, 10000);
+function renderChart(data) {
+  chartData = data;
+  const host = $('chart');
+  const points = data.points || [];
+  const total = points.reduce((s, p) => s + (Number(p.calls) || 0), 0);
+  $('chart-bucket').textContent = data.bucket === 'hour' ? 'giờ' : 'ngày';
+  $('chart-total').textContent = `${fmtNum(total)} lượt`;
+
+  // Bảng dự phòng (đọc được bằng trình đọc màn hình, in ấn).
+  const fb = $('chart-fallback');
+  fb.hidden = !points.length;
+  $('chart-table').innerHTML = `<thead><tr><th>${data.bucket === 'hour' ? 'Giờ' : 'Ngày'}</th><th class="num">Lượt gọi</th></tr></thead><tbody>` +
+    points.map(p => `<tr><td>${esc(bucketLabel(p.at, data.bucket))}</td><td class="num">${esc(fmtNum(p.calls))}</td></tr>`).join('') + '</tbody>';
+
+  host.innerHTML = '';
+  if (!points.length) { setState(host, 'empty', 'Chưa có lượt gọi nào trong khoảng thời gian này.'); return; }
+
+  const w = Math.max(280, host.clientWidth || 600);
+  const h = host.clientHeight || 220;
+  const padL = 36, padR = 8, padT = 10, padB = 24;
+  const pw = w - padL - padR, ph = h - padT - padB;
+  const maxVal = niceMax(Math.max(1, ...points.map(p => Number(p.calls) || 0)));
+  const n = points.length;
+  const slot = pw / n;
+  const barW = Math.max(2, Math.min(24, slot - 2));
+  const y = v => padT + ph - (v / maxVal) * ph;
+
+  const svg = svgEl('svg', { viewBox: `0 0 ${w} ${h}`, role: 'img', 'aria-label': `Biểu đồ cột lượt gọi AI theo ${data.bucket === 'hour' ? 'giờ' : 'ngày'}, tổng ${fmtNum(total)} lượt` });
+
+  // Lưới mỏng + nhãn trục Y (0, giữa, max).
+  [0, maxVal / 2, maxVal].forEach(v => {
+    const yy = y(v);
+    svg.appendChild(svgEl('line', { x1: padL, x2: w - padR, y1: yy, y2: yy, class: v === 0 ? 'baseline' : 'grid-line' }));
+    const t = svgEl('text', { x: padL - 6, y: yy + 4, 'text-anchor': 'end' });
+    t.textContent = v >= 1000 ? `${Math.round(v / 100) / 10}K` : String(Math.round(v));
+    svg.appendChild(t);
+  });
+
+  const tip = document.createElement('div');
+  tip.className = 'tip';
+  tip.hidden = true;
+  const tipLabel = document.createElement('b');
+  const tipValue = document.createElement('span');
+  tip.append(tipLabel, tipValue);
+
+  const labelEvery = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(pw / 64))));
+  points.forEach((p, i) => {
+    const v = Number(p.calls) || 0;
+    const x = padL + i * slot + (slot - barW) / 2;
+    const top = y(v);
+    const bar = svgEl('path', { d: roundedBarPath(x, top, barW, padT + ph - top, 4), class: 'bar' });
+    if (v === 0) bar.setAttribute('d', `M${x},${padT + ph - 1} h${barW} v1 h-${barW} Z`);
+    svg.appendChild(bar);
+
+    if (i === n - 1 || (i % labelEvery === 0 && n - 1 - i >= labelEvery)) {
+      const t = svgEl('text', { x: x + barW / 2, y: h - 6, 'text-anchor': i === n - 1 ? 'end' : (i === 0 ? 'start' : 'middle') });
+      t.textContent = bucketLabel(p.at, data.bucket);
+      svg.appendChild(t);
+    }
+
+    const hit = svgEl('rect', { x: padL + i * slot, y: padT, width: slot, height: ph, class: 'hit' });
+    const show = () => {
+      bar.classList.add('hot');
+      tipLabel.textContent = `${fmtNum(v)} lượt`;
+      tipValue.textContent = bucketLabel(p.at, data.bucket);
+      tip.hidden = false;
+      const scale = host.clientWidth / w;
+      tip.style.left = `${(x + barW / 2) * scale}px`;
+      tip.style.top = `${Math.max(top, padT) * (host.clientHeight / h)}px`;
+    };
+    const hide = () => { bar.classList.remove('hot'); tip.hidden = true; };
+    hit.addEventListener('pointerenter', show);
+    hit.addEventListener('pointermove', show);
+    hit.addEventListener('pointerleave', hide);
+    hit.addEventListener('pointercancel', hide);
+    svg.appendChild(hit);
+  });
+
+  host.append(svg, tip);
+}
+
+async function loadDaily() {
+  renderChart(await api(`/admin/api/usage/daily?hours=${rangeHours()}`));
+}
+
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (chartData) renderChart(chartData); }, 150);
+});
+
+/* ---------- Hệ thống: RAM & DB ---------- */
+function meterClass(percent) {
+  return percent == null ? '' : percent >= 90 ? 'danger' : percent >= 75 ? 'warn' : '';
+}
+
+async function loadMemoryUsage() {
+  const s = await api('/admin/api/memory-usage');
+  const c = s.container || {}, py = s.python || {};
+  const pct = c.used_percent;
+  $('kpi-ram').textContent = c.used_mib == null ? (py.rss_mib == null ? '—' : fmtMib(py.rss_mib)) : fmtMib(c.used_mib);
+  const meter = $('kpi-ram-meter');
+  meter.className = 'meter ' + meterClass(pct);
+  meter.firstElementChild.style.width = `${Math.min(100, pct || 0)}%`;
+  $('kpi-ram-sub').textContent = pct == null
+    ? `Python RSS ${fmtMib(py.rss_mib)} (không đọc được cgroup)`
+    : `${pct}% của ${fmtMib(c.limit_mib)} · đỉnh ${fmtMib(c.peak_mib)}`;
+  $('ram-uptime').textContent = py.uptime_min == null ? '' : `uptime ${py.uptime_min >= 120 ? `${Math.round(py.uptime_min / 60)} giờ` : `${Math.round(py.uptime_min)} phút`}`;
+
+  const heavy = Object.entries(s.heavy_modules_loaded || {});
+  const procs = s.processes || [];
+  $('ram-box').innerHTML = `
+    <table class="tbl kv">
+      <tr><th>Container (cgroup)</th><td>${c.used_mib == null ? '<span class="muted">không đọc được</span>' : `${esc(fmtMib(c.used_mib))} / ${esc(c.limit_mib == null ? 'không giới hạn' : fmtMib(c.limit_mib))}${pct == null ? '' : ` <span class="pill ${pct >= 90 ? 'bad' : pct >= 75 ? 'warn' : 'ok'}">${esc(pct)}%</span>`}`}</td></tr>
+      <tr><th>Đỉnh container</th><td>${esc(fmtMib(c.peak_mib))}</td></tr>
+      <tr><th>Python RSS / đỉnh</th><td>${esc(fmtMib(py.rss_mib))} / ${esc(fmtMib(py.peak_rss_mib))}</td></tr>
+      <tr><th>Thread · GC chờ</th><td>${esc(py.threads ?? '—')} · <span class="mono">${esc((py.gc_pending || []).join('/'))}</span></td></tr>
+    </table>
+    <div class="card-head" style="margin:14px 0 6px"><h3>Tiến trình</h3></div>
+    <div id="proc-table"></div>
+    <div class="card-head" style="margin:14px 0 6px"><h3>Thư viện nặng đã nạp</h3></div>
+    <div class="chips">${heavy.length
+      ? heavy.map(([name, purpose]) => `<span class="chip" title="${esc(purpose)}"><b>${esc(name)}</b> ${esc(purpose)}</span>`).join('')
+      : '<span class="muted small">chưa nạp thư viện nặng nào</span>'}</div>`;
+  renderTable($('proc-table'), [
+    { label: 'Tiến trình', cell: pr => `${esc(pr.name)} <span class="muted small mono">pid ${esc(pr.pid)}</span>` },
+    { label: 'RSS', cls: 'num', cell: pr => esc(fmtMib(pr.rss_mib)) },
+  ], procs, 'Không đọc được /proc.');
+}
+
+async function loadDbUsage() {
+  const d = await api('/admin/api/db-usage');
+  $('kpi-db').textContent = fmtMib(d.database_mib);
+  $('kpi-db-sub').textContent = `ảnh Facebook ${fmtMib(d.media_table_mib)} · lãng phí ${fmtMib(d.media_wasted_mib)}`;
+  const wastedPct = d.media_table_mib ? Math.round(d.media_wasted_mib * 100 / d.media_table_mib) : 0;
+  $('db-box').innerHTML = `
+    <table class="tbl kv">
+      <tr><th>Toàn bộ database</th><td><b>${esc(fmtMib(d.database_mib))}</b></td></tr>
+      <tr><th>Bảng ảnh Facebook</th><td>${esc(fmtMib(d.media_table_mib))} <span class="muted small">(dữ liệu sống ${esc(fmtMib(d.media_live_mib))})</span></td></tr>
+      <tr><th>Phần lãng phí</th><td>${esc(fmtMib(d.media_wasted_mib))} <span class="muted small">(${esc(wastedPct)}% bảng)</span>
+        <div class="meter ${wastedPct >= 50 ? 'warn' : ''}" style="margin-top:6px;max-width:220px"><i style="width:${Math.min(100, wastedPct)}%"></i></div></td></tr>
+      <tr><th>VACUUM FULL tự động</th><td>${pill(Boolean(d.auto_vacuum_enabled), 'đang bật', 'đã tắt', 'neutral')} ${pill(Boolean(d.vacuum_would_run), 'tuần tới sẽ chạy', 'tuần tới không chạy', 'neutral')}</td></tr>
+      <tr><th>Lý do</th><td class="muted">${esc(d.reason)}</td></tr>
+    </table>`;
+}
+
+/* ---------- Làm mới & tự làm mới ---------- */
+const LIVE_LOADERS = [
+  ['state', loadState, 'cooldown-table'],
+  ['market', loadMarket, 'market-box'],
+  ['usage', loadUsage, 'usage-table'],
+  ['models', loadUsageModels, 'usage-models-table'],
+  ['daily', loadDaily, 'chart'],
+  ['ram', loadMemoryUsage, 'ram-box'],
+  ['db', loadDbUsage, 'db-box'],
+];
+const CONFIG_LOADERS = [
+  ['providers', loadProviders, 'providers-list'],
+  ['tavily', loadTavily, 'tavily-box'],
+  ['agnes', loadAgnes, 'agnes-box'],
+  ['memory', loadMemory, 'memory-table'],
+];
+let refreshing = false;
+
+async function runLoaders(loaders) {
+  const results = await Promise.allSettled(loaders.map(([, fn]) => fn()));
+  let failed = 0;
+  results.forEach((res, i) => {
+    if (res.status === 'rejected') {
+      failed += 1;
+      const target = $(loaders[i][2]);
+      if (target && !target.querySelector('table, .provider-card, svg')) setState(target, 'error', `Không tải được: ${res.reason && res.reason.message || res.reason}`);
+    }
+  });
+  if (failed < results.length) { lastUpdated = new Date(); tickRelative(); }
+  return failed;
+}
+
+async function refreshAll(includeConfig) {
+  if (refreshing) return;
+  refreshing = true;
+  const btn = $('refresh-btn');
+  btn.setAttribute('aria-busy', 'true');
+  updateRangeLabels();
+  try {
+    const failed = await runLoaders(includeConfig ? [...LIVE_LOADERS, ...CONFIG_LOADERS] : LIVE_LOADERS);
+    if (failed && includeConfig) msg(`${failed} mục không tải được.`, true);
+  } finally {
+    btn.removeAttribute('aria-busy');
+    refreshing = false;
+  }
+}
+
+function applyAutoRefresh() {
+  clearInterval(autoTimer);
+  const ms = parseInt($('auto-refresh').value, 10) || 0;
+  savePref('admin.autoRefresh', String(ms));
+  if (ms > 0) autoTimer = setInterval(() => { if (!document.hidden) refreshAll(false); }, ms);
+}
+
+$('refresh-btn').addEventListener('click', () => refreshAll(true));
+$('auto-refresh').addEventListener('change', applyAutoRefresh);
+$('range').addEventListener('change', () => {
+  savePref('admin.hours', $('range').value);
+  updateRangeLabels();
+  ['usage-table', 'usage-models-table', 'chart'].forEach(id => { $(id).innerHTML = '<div class="skeleton"><i></i><i></i><i></i></div>'; });
+  runLoaders([['usage', loadUsage, 'usage-table'], ['models', loadUsageModels, 'usage-models-table'], ['daily', loadDaily, 'chart']]);
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden && parseInt($('auto-refresh').value, 10) > 0) refreshAll(false); });
+
+document.querySelectorAll('.logout-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    await fetch('/admin/logout', { method: 'POST' });
+    window.location.reload();
+  });
+});
+
+/* ---------- Điều hướng: đánh dấu mục đang xem ---------- */
+const sections = Array.from(document.querySelectorAll('main > section'));
+const navLinks = Array.from(document.querySelectorAll('#side-nav a, #mobile-nav a'));
+function setActive(id) {
+  navLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === `#${id}`));
+  const sec = sections.find(x => x.id === id);
+  if (sec) $('topbar-title').textContent = sec.querySelector('h2').textContent;
+  const chip = document.querySelector(`#mobile-nav a[href="#${id}"]`);
+  if (chip && chip.scrollIntoView) chip.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+}
+if ('IntersectionObserver' in window) {
+  const visible = new Map();
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(en => visible.set(en.target.id, en.isIntersecting ? en.intersectionRatio : 0));
+    let best = null, bestRatio = 0;
+    sections.forEach(sec => { const r = visible.get(sec.id) || 0; if (r > bestRatio) { best = sec.id; bestRatio = r; } });
+    if (best) setActive(best);
+  }, { rootMargin: '-45% 0px -45% 0px', threshold: [0, 0.01, 0.25, 0.5, 1] });
+  sections.forEach(sec => io.observe(sec));
+}
+navLinks.forEach(a => a.addEventListener('click', () => setActive(a.getAttribute('href').slice(1))));
+setActive((location.hash || '#overview').slice(1));
+
+/* ---------- Khởi động ---------- */
+(function init() {
+  const hours = loadPref('admin.hours', '168');
+  if (Array.from($('range').options).some(o => o.value === hours)) $('range').value = hours;
+  const auto = loadPref('admin.autoRefresh', '30000');
+  if (Array.from($('auto-refresh').options).some(o => o.value === auto)) $('auto-refresh').value = auto;
+  updateRangeLabels();
+  applyAutoRefresh();
+  refreshAll(true);
+})();
 </script>
 </body>
 </html>

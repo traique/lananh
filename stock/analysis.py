@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import jinja2
 
 from stock import backtest
+from stock import calendar as trading_calendar
 from stock import corporate_actions
 from stock import features as feat
 from stock import fundamentals
@@ -165,7 +166,7 @@ async def find_valid_symbols(text: str, limit: int = 3) -> list[str]:
     if len(result) < limit and unverified:
         to_check = [s for s in unverified if s not in result][:_MAX_UNVERIFIED_PER_MSG]
         checks = await asyncio.gather(*[providers.verify_symbol_exists(s) for s in to_check], return_exceptions=True)
-        for sym, ok in zip(to_check, checks):
+        for sym, ok in zip(to_check, checks, strict=False):
             if ok is True and sym not in result:
                 result.append(sym)
                 if len(result) >= limit: break
@@ -300,20 +301,11 @@ def wants_external_market_data(text: str) -> bool:
     return bool(_EXTERNAL_MARKET_RE.search(text))
 
 
-# Giờ giao dịch HOSE/HNX/UPCOM: T2-T6, 9h00-15h00 (gộp cả nghỉ trưa cho đơn
-# giản - mục đích duy nhất ở đây là gắn nhãn hiển thị, không phải khớp lệnh).
-# Không xử lý ngày lễ: hôm lễ sẽ không có tick nào của "hôm nay" nên
-# providers.fetch_quote() trả is_realtime=False sẵn.
-_MARKET_OPEN_MINUTE = 9 * 60
-_MARKET_CLOSE_MINUTE = 15 * 60
-
-
+# Giờ giao dịch HOSE/HNX/UPCOM (T2-T6 không phải ngày lễ, 9h00-15h00) - xem
+# stock/calendar.py. Giữ tên hàm ở đây vì nhiều nơi (và test) monkeypatch
+# stock.analysis.is_market_hours.
 def is_market_hours(now: datetime | None = None) -> bool:
-    now = now or datetime.now(_VN_TZ)
-    if now.weekday() >= 5:
-        return False
-    minutes = now.hour * 60 + now.minute
-    return _MARKET_OPEN_MINUTE <= minutes <= _MARKET_CLOSE_MINUTE
+    return trading_calendar.is_market_hours(now)
 
 
 def _quote_time_note(q: providers.Quote, *, verbose: bool) -> str:
@@ -345,6 +337,12 @@ def format_quote_message(q: providers.Quote) -> str:
     # ngược nhau trong cùng một dòng, rất dễ đọc sai độ lớn.
     return f"📊 **{q.symbol}**: **{_fmt_price(q.price)} VND** ({time_note})\n{arrow} {sign}{_fmt_price(q.change)} ({sign}{rfmt.fmt_number(q.change_pct)}%) so với phiên trước ({_fmt_price(q.prev_close)} VND)"
 
+_PERSONA_UNKNOWN_PRICE_NOTE = (
+    "\n\n⚠️ Các mức giá {prices} trong phần diễn giải KHÔNG có trong dữ liệu hệ thống - "
+    "chỉ là ước lượng định tính của persona, không dùng làm entry/stop/target."
+)
+
+
 async def quick_quote(symbol: str) -> str:
     q = await providers.fetch_quote(symbol.strip().upper())
     if q is None:
@@ -356,7 +354,7 @@ async def build_price_grounding(symbols: list[str]) -> str:
     subset = symbols[:_GROUNDING_MAX_SYMBOLS]
     results = await asyncio.gather(*[providers.fetch_quote(s) for s in subset], return_exceptions=True)
     lines = []
-    for sym, res in zip(subset, results):
+    for sym, res in zip(subset, results, strict=False):
         if isinstance(res, BaseException) or res is None: continue
         time_note = _quote_time_note(res, verbose=False)
         sign = "+" if res.change > 0 else ""
@@ -506,8 +504,9 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
     symbol_series, vnindex_series, quote, news, sector_prompt, fundamentals_prompt, company_news, exchange = results
     # Tin công ty CHÍNH CHỦ từ VCI (đã confirmed=True) + tin cào Google News,
     # loại trùng theo tiêu đề (không phân biệt hoa/thường).
+    news = list(news or [])
     seen_titles = {n.title.strip().lower() for n in news}
-    news = news + [n for n in company_news if n.title.strip().lower() not in seen_titles]
+    news = news + [n for n in (company_news or []) if n.title.strip().lower() not in seen_titles]
     if not symbol_series.closes: return None
 
     # Nến hôm nay chưa đóng cửa -> loại khỏi CẢ chuỗi mã lẫn VNINDEX (cùng mốc
@@ -525,7 +524,9 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
         logger.warning("Chuỗi giá %s (nguồn %s) có %d gap nghi điều chỉnh giá", symbol, symbol_series.source, len(audit.gaps))
     adjustment_note = audit.note
     events_applied = 0
-    if audit.gaps:
+    # Điều chỉnh cổ tức tiền/sự kiện cổ phiếu cho MỌI chuỗi (không chỉ khi có
+    # gap >= 12%): cổ tức 3-6% là trường hợp phổ biến nhất và trước đây bị bỏ qua.
+    if symbol_series.closes:
         outcome = await corporate_actions.adjust_with_corporate_actions(
             symbol, symbol_series.closes, symbol_series.highs, symbol_series.lows, symbol_series.dates,
             symbol_series.volumes,
@@ -1031,10 +1032,10 @@ async def analyze_portfolio(symbols: list[str], user_text: str, *, user_id: int 
     # is_holding=True cho mọi mã - tránh 2 đường (phân tích đơn lẻ vs danh
     # mục) cho action khác nhau với cùng 1 mã khi user hỏi cả 2 kiểu.
     holdings = await asyncio.gather(*[_is_holding_symbol(user_id, sym) for sym in symbols])
-    tasks = [build_context(sym, user_id=user_id, is_holding=holding) for sym, holding in zip(symbols, holdings)]
+    tasks = [build_context(sym, user_id=user_id, is_holding=holding) for sym, holding in zip(symbols, holdings, strict=False)]
     contexts = await asyncio.gather(*tasks, return_exceptions=True)
     valid_contexts = [ctx for ctx in contexts if not isinstance(ctx, BaseException) and ctx is not None]
-    failed_symbols = [sym for sym, ctx in zip(symbols, contexts) if isinstance(ctx, BaseException) or ctx is None]
+    failed_symbols = [sym for sym, ctx in zip(symbols, contexts, strict=False) if isinstance(ctx, BaseException) or ctx is None]
     if failed_symbols:
         # Không âm thầm bỏ mã lỗi: user hỏi cơ cấu 5 mã mà báo cáo chỉ còn 3
         # mã mà không một chữ nào giải thích là thiếu dữ liệu sai lệch nhận định.
@@ -1183,8 +1184,8 @@ async def analyze_symbol(
         text = rfmt.clean_analysis_output((response.text or "").strip())
         text = _enforce_policy_contract(text, ctx, prompt, full_access=full_access, rule_report_sent=rule_report_sent)
         result = text or None
-        if text and getattr(response, "used_fallback", False):
-            result += "\n\n⚙️ _Báo cáo do API dự phòng trả về, ngôn ngữ có thể thô hơn bình thường._"
+        if result and getattr(response, "used_fallback", False):
+            result = result + "\n\n⚙️ _Báo cáo do API dự phòng trả về, ngôn ngữ có thể thô hơn bình thường._"
     except Exception:
         logger.exception("Gemini lỗi khi phân tích %s", symbol)
         result = None
@@ -1241,4 +1242,13 @@ async def analyze_persona(
         if conflicts or rfmt.find_unknown_prices(text, prompt):
             logger.warning("Persona cho thành viên vi phạm phạm vi tham khảo (%s): %s", symbol, conflicts[:5])
             text = f"{_reference_text(ctx)}\n\n{_REFERENCE_DROPPED_NOTE}"
+    else:
+        # Chủ bot cũng không được nhận số giá bịa: persona chỉ diễn giải định
+        # tính, mọi mức giá phải có trong dữ liệu đã cấp (giống _enforce_policy_contract).
+        unknown = rfmt.find_unknown_prices(text, prompt)
+        if unknown:
+            logger.warning("Persona (%s) nêu mức giá không có trong dữ liệu: %s", symbol, unknown[:5])
+            text += _PERSONA_UNKNOWN_PRICE_NOTE.format(
+                prices=", ".join(f"{p:,.0f}".replace(",", ".") for p in unknown[:5])
+            )
     return rfmt.ensure_disclaimer(text)

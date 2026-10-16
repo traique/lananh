@@ -112,3 +112,54 @@ async def test_reminder_nhieu_reminder_doc_lap_nhau(monkeypatch):
 
     assert mark_calls == [1, 3]
     assert release_calls == [2]
+
+
+# ─── Daily digest: guard "đã gửi hôm nay" + gửi bù khi lỡ giờ ───────────────
+
+
+def test_digest_due_theo_khung_gio_va_guard_ngay(monkeypatch):
+    from datetime import datetime
+
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Asia/Ho_Chi_Minh")
+    monkeypatch.setattr(scheduler.config, "DAILY_DIGEST_HOUR_VN", 8)
+    assert scheduler.digest_due(datetime(2026, 5, 4, 7, 59, tzinfo=tz), None) is False
+    assert scheduler.digest_due(datetime(2026, 5, 4, 8, 0, tzinfo=tz), None) is True
+    # Lỡ giờ (Render ngủ) -> gửi bù trong 3 giờ.
+    assert scheduler.digest_due(datetime(2026, 5, 4, 10, 30, tzinfo=tz), None) is True
+    assert scheduler.digest_due(datetime(2026, 5, 4, 11, 1, tzinfo=tz), None) is False
+    # Hôm nay đã gửi -> không gửi lại dù restart.
+    assert scheduler.digest_due(datetime(2026, 5, 4, 8, 30, tzinfo=tz), "2026-05-04") is False
+    assert scheduler.digest_due(datetime(2026, 5, 4, 8, 30, tzinfo=tz), "2026-05-03") is True
+
+
+@pytest.mark.asyncio
+async def test_run_daily_digest_once_danh_dau_sau_khi_gui(monkeypatch):
+    saved = {}
+
+    async def fake_get_setting(key):
+        return saved.get(key)
+
+    async def fake_set_setting(key, value):
+        saved[key] = value
+
+    async def fake_build(user_id):
+        return "digest"
+
+    sent = []
+
+    async def notify(user_id, text):
+        sent.append(text)
+
+    monkeypatch.setattr(db, "get_setting", fake_get_setting)
+    monkeypatch.setattr(db, "set_setting", fake_set_setting)
+    monkeypatch.setattr(scheduler, "_build_portfolio_digest", fake_build)
+    monkeypatch.setattr(scheduler, "digest_due", lambda now, last: last is None)
+    scheduler.set_notify_callback(notify)
+
+    assert await scheduler.run_daily_digest_once(1) is True
+    assert sent == ["digest"] and scheduler._DIGEST_LAST_SENT_KEY in saved
+    # Lượt kế trong cùng ngày: guard trong DB chặn.
+    assert await scheduler.run_daily_digest_once(1) is False
+    assert sent == ["digest"]
