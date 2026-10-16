@@ -1269,8 +1269,20 @@ function setActive(id) {
   navLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === `#${id}`));
   const sec = sections.find(x => x.id === id);
   if (sec) $('topbar-title').textContent = sec.querySelector('h2').textContent;
-  const chip = document.querySelector(`#mobile-nav a[href="#${id}"]`);
-  if (chip && chip.scrollIntoView) chip.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  revealChip(id);
+}
+// Cuộn NGANG thanh chip tới mục đang xem bằng scrollLeft của chính thanh nav.
+// KHÔNG dùng chip.scrollIntoView(): thanh nav là position:sticky nên trình duyệt
+// sẽ cuộn cả TRANG về vị trí gốc của thanh nav - trên điện thoại trang bị kéo
+// ngược về đầu mỗi lần scroll-spy đổi mục (không kéo được, bấm tab không nhảy).
+function revealChip(id) {
+  const nav = $('mobile-nav');
+  const chip = nav && nav.querySelector(`a[href="#${id}"]`);
+  if (!chip || nav.scrollWidth <= nav.clientWidth) return;
+  const left = chip.offsetLeft - (nav.clientWidth - chip.offsetWidth) / 2;
+  const target = Math.max(0, Math.min(left, nav.scrollWidth - nav.clientWidth));
+  if (Math.abs(nav.scrollLeft - target) < 2) return;
+  try { nav.scrollTo({ left: target, behavior: 'smooth' }); } catch (e) { nav.scrollLeft = target; }
 }
 if ('IntersectionObserver' in window) {
   const visible = new Map();
