@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "generated": "2026-10-16",
+    "method": "stock.backtest.run_backtest(full_sample=True): walk-forward toàn chuỗi, phí 0,15%/0,15%, thuế bán 0,1%, slippage 0,1%, T+2.5, VNINDEX ghép theo ngày",
+    "universe": "183 mã trong stock/sector.py (universe hiện tại - có survivorship bias), 5 năm DNSE, 2022-02 → 2026-08",
+    "policy": "stock/policy_params.json mặc định (measured_move_enabled=false)",
+    "trades": 110,
+    "note": "Kỳ vọng ÂM cho cả 2 setup sau chi phí: dòng thống kê này được đưa vào prompt để LLM khiêm tốn, không phải bằng chứng policy có lãi."
+  },
+  "breakout": {
+    "win_rate": 17.6,
+    "wins": 12,
+    "avg_r": -0.73,
+    "n": 68,
+    "win_rate_ci95": [
+      10.4,
+      28.4
+    ]
+  },
+  "pullback": {
+    "win_rate": 38.1,
+    "wins": 16,
+    "avg_r": -0.23,
+    "n": 42,
+    "win_rate_ci95": [
+      25.0,
+      53.2
+    ]
+  }
+}

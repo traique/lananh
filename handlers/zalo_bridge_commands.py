@@ -63,101 +63,41 @@ async def _facebook_command(
         await common.reply_long_text(update.message, message_text)
 
 
-@common.restricted
-async def nhom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _group_command(update, context, "/nhom")
+# Bảng lệnh -> handler dùng chung; tạo module attribute ``<tên>_cmd`` để
+# bot_app đăng ký như trước (thay cho 20 wrapper giống hệt nhau).
+_GROUP_COMMANDS = ("nhom", "themnhom", "xoanhom", "tongket", "dangnoi")
+_FACEBOOK_COMMANDS = (
+    "fb_nhom",
+    "fb_pages",
+    "fb_market",
+    "fb_themnhom",
+    "fb_xoanhom",
+    "fb_xem",
+    "fb_sua",
+    "fb_link",
+    "fb_ok",
+    "fb_boqua",
+    "fb_check",
+    "fb_reconcile",
+    "fb_reset",
+    "fb_boloc",
+    "fb_loclai",
+)
 
 
-@common.restricted
-async def themnhom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _group_command(update, context, "/themnhom")
+def _make_handler(command: str, runner):
+    @common.restricted
+    async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await runner(update, context, f"/{command}")
+
+    handler.__name__ = f"{command}_cmd"
+    handler.__qualname__ = handler.__name__
+    handler.__doc__ = f"Telegram {command} -> chuyển tiếp dispatcher dùng chung với Zalo/Zoom."
+    return handler
 
 
-@common.restricted
-async def xoanhom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _group_command(update, context, "/xoanhom")
-
-
-@common.restricted
-async def tongket_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _group_command(update, context, "/tongket")
-
-
-@common.restricted
-async def dangnoi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _group_command(update, context, "/dangnoi")
-
-
-@common.restricted
-async def fb_nhom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_nhom")
-
-
-@common.restricted
-async def fb_pages_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_pages")
-
-
-@common.restricted
-async def fb_market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_market")
-
-
-@common.restricted
-async def fb_themnhom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_themnhom")
-
-
-@common.restricted
-async def fb_xoanhom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_xoanhom")
-
-
-@common.restricted
-async def fb_xem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_xem")
-
-
-@common.restricted
-async def fb_sua_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_sua")
-
-
-@common.restricted
-async def fb_link_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_link")
-
-
-@common.restricted
-async def fb_ok_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_ok")
-
-
-@common.restricted
-async def fb_boqua_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_boqua")
-
-
-@common.restricted
-async def fb_check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_check")
-
-
-@common.restricted
-async def fb_reconcile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_reconcile")
-
-
-@common.restricted
-async def fb_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_reset")
-
-
-@common.restricted
-async def fb_boloc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_boloc")
-
-
-@common.restricted
-async def fb_loclai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await _facebook_command(update, context, "/fb_loclai")
+COMMAND_HANDLERS = {
+    **{name: _make_handler(name, _group_command) for name in _GROUP_COMMANDS},
+    **{name: _make_handler(name, _facebook_command) for name in _FACEBOOK_COMMANDS},
+}
+globals().update({f"{name}_cmd": fn for name, fn in COMMAND_HANDLERS.items()})

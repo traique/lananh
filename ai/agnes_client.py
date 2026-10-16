@@ -7,6 +7,7 @@ người dùng tự dán sang app Gemini), module này gọi thẳng
 POST /v1/images/generations và trả về ẢNH THẬT (bytes) để bot gửi lại ngay
 trong Telegram/Zalo/Zoom - không cần bước copy-paste thủ công nào.
 """
+
 import logging
 import json
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from typing import Optional
 import httpx
 
 from ai import provider_overrides
+from ai.timeouts import bounded
 from core import config, database as db
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,7 @@ class GeneratedImage:
     url: URL gốc trên CDN của Agnes AI (None nếu response_format=b64_json) -
     dùng cho Zoom, vì Chatbot API của Zoom (channels/zoom.py::send_image_message)
     nhận thẳng img_url để TỰ Zoom tải về, không cần bot upload/host lại."""
+
     data: bytes
     url: Optional[str] = None
 
@@ -103,18 +106,25 @@ async def generate_image(prompt: str, *, size: str = "1024x1024") -> GeneratedIm
     if not api_key:
         raise AgnesError("Chưa cấu hình AGNES_API_KEY")
 
-    response_body = await _request_bytes(
-        "POST",
-        f"{config.AGNES_BASE_URL}/images/generations",
-        _MAX_GENERATION_JSON_BYTES,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": await _model(),
-            "prompt": prompt,
-            "size": size,
-            "extra_body": {"response_format": "url"},
-        },
-    )
+    model_name = await _model()
+
+    def _call():
+        return _request_bytes(
+            "POST",
+            f"{config.AGNES_BASE_URL}/images/generations",
+            _MAX_GENERATION_JSON_BYTES,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model_name,
+                "prompt": prompt,
+                "size": size,
+                "extra_body": {"response_format": "url"},
+            },
+        )
+
+    # bounded(): không vượt phần thời gian còn lại của lượt (AGENTS.md: mọi
+    # lời gọi AI mới phải đi qua ai.timeouts.bounded()).
+    response_body = await bounded(_call, float(config.AGNES_CALL_TIMEOUT_SEC))
     data = json.loads(response_body)
     items = data.get("data") or []
     if not items:

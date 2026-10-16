@@ -11,7 +11,9 @@ import time
 from pathlib import Path
 
 # crypto.py fail closed khi thiếu SETTINGS_ENC_KEY -> sinh key tạm chỉ cho benchmark
-os.environ.setdefault("SETTINGS_ENC_KEY", __import__("base64").urlsafe_b64encode(b"0" * 32).decode())
+os.environ.setdefault(
+    "SETTINGS_ENC_KEY", __import__("base64").urlsafe_b64encode(b"0" * 32).decode()
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -54,7 +56,9 @@ def main():
         price = closes[-1]
         bench(
             f"build_enhanced_indicators + summary ({n} bars)",
-            lambda: f.build_indicator_summary(f.build_enhanced_indicators(closes, price, highs, lows), "VNM"),
+            lambda closes=closes, price=price, highs=highs, lows=lows: f.build_indicator_summary(
+                f.build_enhanced_indicators(closes, price, highs, lows), "VNM"
+            ),
         )
     closes, highs, lows = make_ohlcv(500)
     bench("calc_rsi (500 bars)", lambda: f.calc_rsi(closes))
@@ -80,11 +84,15 @@ def main():
     secret = '{"api_key": "sk-test-1234567890", "token": "' + "x" * 200 + '"}'
     enc = crypto.encrypt(secret)
     assert crypto.decrypt(enc) == secret
-    bench(f"Fernet encrypt+decrypt ({len(secret)} bytes)", lambda: crypto.decrypt(crypto.encrypt(secret)), repeat=20)
+    bench(
+        f"Fernet encrypt+decrypt ({len(secret)} bytes)",
+        lambda: crypto.decrypt(crypto.encrypt(secret)),
+        repeat=20,
+    )
 
     print()
     print("== core.text_normalize ==")
-    nfd_text = ("Xin chào thê giới, phân tích cổ phiếu VNM hôm nay. " * 50)
+    nfd_text = "Xin chào thê giới, phân tích cổ phiếu VNM hôm nay. " * 50
     assert text_normalize.nfc(nfd_text) != nfd_text or True
     bench(f"nfc ({len(nfd_text)} chars NFD)", lambda: text_normalize.nfc(nfd_text), repeat=20)
 

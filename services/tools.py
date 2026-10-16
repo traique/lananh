@@ -29,6 +29,7 @@ deterministic (không phụ thuộc 1 lượt gọi LLM có thể lỗi/trả JS
 dạng) - đổi sang function-calling sẽ đánh đổi độ tin cậy của 1 tính năng đã
 chạy tốt để lấy sự "gọn" không thật sự cần thiết ở đây.
 """
+
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
@@ -36,7 +37,6 @@ from zoneinfo import ZoneInfo
 
 from stock import analysis as stock_analysis
 from core import database as db
-from ai import official_client
 from services.reminder_delivery import current_target
 
 logger = logging.getLogger(__name__)
@@ -105,8 +105,14 @@ async def _tool_set_reminder(user_id: int, message: str = "", minutes_from_now: 
     due_at = datetime.now(_VN_TZ) + timedelta(minutes=minutes)
     target = current_target(user_id)
     stored_due_at = await db.add_reminder(
-        user_id, message, due_at, channel=target.channel, recipient_id=target.recipient_id,
-        account_id=target.account_id, user_jid=target.user_jid, event_key=target.event_key,
+        user_id,
+        message,
+        due_at,
+        channel=target.channel,
+        recipient_id=target.recipient_id,
+        account_id=target.account_id,
+        user_jid=target.user_jid,
+        event_key=target.event_key,
     )
     due_at = (stored_due_at or due_at).astimezone(_VN_TZ)
     return f"Đã đặt nhắc việc lúc {due_at:%H:%M %d/%m} (giờ VN): {message}"
@@ -116,9 +122,7 @@ async def _tool_get_portfolio(user_id: int) -> str:
     facts = await db.get_facts(user_id)
     # Tiêu chí "fact nào thuộc danh mục" lấy từ stock_analysis để chỉ có 1
     # nguồn duy nhất, thay vì copy cứng tuple từ khoá như trước đây.
-    portfolio_facts = [
-        f"{k}: {v}" for k, v in facts if stock_analysis.is_portfolio_fact(k)
-    ]
+    portfolio_facts = [f"{k}: {v}" for k, v in facts if stock_analysis.is_portfolio_fact(k)]
     if not portfolio_facts:
         return "Chưa ghi nhận danh mục đầu tư nào trong trí nhớ dài hạn."
     return "Danh mục đầu tư đã ghi nhận trong trí nhớ:\n" + "\n".join(portfolio_facts)
@@ -148,9 +152,27 @@ def _build_router_prompt(user_text: str) -> str:
 # phần lớn tin chat phiếm. Đánh đổi: bỏ lỡ câu lệnh diễn đạt lạ hoàn toàn
 # không chứa từ khóa nào ở dưới.
 _TOOL_INTENT_KEYWORDS = (
-    "ghi chú", "ghi chu", "ghi lại", "ghi lai", "note", "nhắc", "nhac", "nhớ", "nho",
-    "lưu lại", "luu lai", "danh mục", "danh muc", "đang giữ", "portfolio",
-    "đặt lịch", "dat lich", "hẹn giờ", "hen gio", "remind", "todo",
+    "ghi chú",
+    "ghi chu",
+    "ghi lại",
+    "ghi lai",
+    "note",
+    "nhắc",
+    "nhac",
+    "nhớ",
+    "nho",
+    "lưu lại",
+    "luu lai",
+    "danh mục",
+    "danh muc",
+    "đang giữ",
+    "portfolio",
+    "đặt lịch",
+    "dat lich",
+    "hẹn giờ",
+    "hen gio",
+    "remind",
+    "todo",
 )
 
 
@@ -174,7 +196,9 @@ async def maybe_run_tool(user_id: int, user_text: str) -> Optional[str]:
     tool_name = "?"
     args: dict = {}
     try:
-        data = await official_client.generate_utility_json(_build_router_prompt(user_text))
+        from ai import orchestrator
+
+        data = await orchestrator.utility_json(_build_router_prompt(user_text))
         if not data:
             return None
 

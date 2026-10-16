@@ -174,26 +174,42 @@ def _date_key(date_str: str):
         return None
 
 
+# Ngày GDKHQ ghi ở nguồn rơi vào cuối tuần/ngày lễ (hoặc nguồn ghi ngày chốt
+# quyền = phiên kế tiếp): chấp nhận phiên đầu tiên SAU ngày đó trong vòng
+# chừng này ngày lịch (thứ Sáu -> thứ Hai = 3, thêm 1 ngày lễ = 4).
+_EX_DATE_FORWARD_TOLERANCE_DAYS = 4
+
+
 def _find_ex_index(dates: list[str], ex_date: str) -> int | None:
-    """Tìm index của ngày GDKHQ trong chuỗi ngày (cho phép lệch ±1 ngày lịch
-    vì nguồn có thể ghi ngày chốt quyền thay vì ngày GDKHQ)."""
+    """Tìm index của ngày GDKHQ trong chuỗi ngày.
+
+    Khớp đúng ngày -> lấy luôn. Không có phiên đúng ngày (GDKHQ rơi vào ngày
+    không giao dịch, hoặc nguồn ghi ngày chốt quyền): lấy phiên đầu tiên sau đó
+    trong _EX_DATE_FORWARD_TOLERANCE_DAYS ngày lịch, hoặc phiên liền trước nếu
+    chỉ lệch 1 ngày. Trước đây chỉ cho ±1 ngày LỊCH: GDKHQ thứ Hai nhưng nguồn
+    ghi thứ Sáu (3 ngày) là bỏ sự kiện -> cổ tức không bao giờ được điều chỉnh."""
     if not ex_date or not dates:
         return None
     target = _date_key(ex_date)
     if target is None:
         return None
-    best = None
-    best_dist = None
-    for i, d in enumerate(dates):
-        parsed = _date_key(d)
-        if parsed is None:
-            continue
-        dist = abs((parsed - target).days)
-        if best_dist is None or dist < best_dist:
-            best, best_dist = i, dist
-    # ±1 ngày là đủ: GDKHQ lệch 1 ngày so với ghi nhận của nguồn vẫn cho phép;
-    # lệch xa hơn nghĩa là không phải cùng sự kiện.
-    return best if best_dist is not None and best_dist <= 1 else None
+    parsed_dates = [(i, _date_key(d)) for i, d in enumerate(dates)]
+    for i, parsed in parsed_dates:
+        if parsed == target:
+            return i
+    after = [
+        (i, parsed)
+        for i, parsed in parsed_dates
+        if parsed is not None and 0 < (parsed - target).days <= _EX_DATE_FORWARD_TOLERANCE_DAYS
+    ]
+    if after:
+        return min(after, key=lambda item: item[1])[0]
+    before = [
+        (i, parsed)
+        for i, parsed in parsed_dates
+        if parsed is not None and (target - parsed).days == 1
+    ]
+    return before[0][0] if before else None
 
 
 def _parse_events_frame(df) -> tuple[list[DividendEvent], list[StockEvent]]:
@@ -411,19 +427,53 @@ def apply_dividend_adjustment(
     return apply_corporate_adjustment(closes, highs, lows, dates, events)
 
 
+# Cache lịch sự kiện quyền theo mã (TTL 24h, trần số mã) - lịch quyền đổi theo
+# ngày, không theo phút; mỗi lượt phân tích không tốn thêm request VCI.
+_EVENTS_CACHE_TTL_SEC = 24 * 3600
+_EVENTS_CACHE_MAX = 512
+_events_cache: dict[str, tuple[float, tuple[list[DividendEvent], list[StockEvent]]]] = {}
+# Chỉ fetch lịch quyền cho chuỗi đủ dài để điều chỉnh có ý nghĩa (chuỗi 5-20
+# bar cho báo giá nhanh không cần).
+MIN_BARS_FOR_EVENT_LOOKUP = 60
+
+
+async def fetch_corporate_events_cached(
+    symbol: str,
+) -> tuple[list[DividendEvent], list[StockEvent]]:
+    import time
+
+    key = symbol.strip().upper()
+    now = time.monotonic()
+    hit = _events_cache.get(key)
+    if hit is not None and now - hit[0] < _EVENTS_CACHE_TTL_SEC:
+        return hit[1]
+    result = await fetch_corporate_events(key)
+    # Không cache kết quả rỗng do lỗi? fetch_corporate_events không phân biệt
+    # được "không có sự kiện" với "lỗi nguồn" - cache ngắn hơn (1h) cho rỗng.
+    ttl_offset = 0.0 if (result[0] or result[1]) else _EVENTS_CACHE_TTL_SEC - 3600
+    _events_cache[key] = (now - ttl_offset, result)
+    while len(_events_cache) > _EVENTS_CACHE_MAX:
+        _events_cache.pop(next(iter(_events_cache)))
+    return result
+
+
 async def adjust_with_corporate_actions(
     symbol: str, closes, highs, lows, dates, volumes=None
 ) -> AdjustmentOutcome:
-    """Fetch sự kiện quyền rồi điều chỉnh nếu khớp. Chuỗi không gap thì không
-    tốn request nào (điều chỉnh chỉ có ý nghĩa khi có dấu hiệu chưa điều chỉnh)."""
-    from stock import price_adjust
+    """Fetch lịch sự kiện quyền (cache 24h) rồi điều chỉnh những sự kiện được
+    gap giá xác nhận.
 
+    Trước đây chỉ fetch khi price_adjust thấy gap >= 12%: cổ tức tiền 3-6%
+    (phổ biến nhất) không bao giờ tạo gap đó nên không bao giờ được điều
+    chỉnh, SMA50/ATR/trend 3 tháng méo âm thầm. Giờ fetch cho mọi chuỗi đủ
+    dài; apply_corporate_adjustment vẫn chỉ áp sự kiện khi gap thực tế khớp
+    độ lớn lý thuyết (an toàn với dữ liệu quyền sai)."""
     unchanged = AdjustmentOutcome(
         closes=list(closes), highs=list(highs), lows=list(lows), volumes=list(volumes or [])
     )
-    if not closes or not price_adjust.detect_price_gaps(closes, dates):
+    if not closes or len(closes) < MIN_BARS_FOR_EVENT_LOOKUP:
         return unchanged
-    dividends, stock_events = await fetch_corporate_events(symbol)
+    dividends, stock_events = await fetch_corporate_events_cached(symbol)
     if not dividends and not stock_events:
         return unchanged
     return apply_corporate_adjustment(closes, highs, lows, dates, dividends, stock_events, volumes)

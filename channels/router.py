@@ -29,6 +29,7 @@ from channels.group_commands import maybe_handle_group_command
 from channels.zalo_text import to_plain_text
 from core import alerts, idempotency
 from core.envutil import env_on
+from services import channel_dispatch
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.channel_image_service import MAX_ZALO_IMAGE_BYTES, handle_channel_image
 from services import facebook_dedup, facebook_intake_stats
@@ -130,6 +131,41 @@ class OutboxFailurePayload(BaseModel):
     chunks_sent: int = Field(default=0, ge=0)
 
 
+class GatewayStatePayload(BaseModel):
+    account_id: str = ""
+    state: str = Field(pattern=r"^(connected|reconnecting|closed|login_required|send_failed)$")
+    detail: str = Field(default="", max_length=300)
+
+
+# Trạng thái gateway lần cuối đã báo chủ bot - chỉ báo khi ĐỔI trạng thái (hoặc
+# send_failed mới) để một đợt mất kết nối dài không thành hàng loạt tin.
+_last_reported_gateway_state: dict[str, str] = {}
+_GATEWAY_STATE_TEXT = {
+    "closed": "⚠️ Zalo gateway mất kết nối ({detail}). Đang tự kết nối lại từ session đã lưu.",
+    "connected": "✅ Zalo gateway đã kết nối lại ({detail}).",
+    "login_required": "🚨 Zalo gateway không kết nối lại được ({detail}). Dùng /zalo để đăng nhập lại.",
+    "send_failed": "⚠️ Zalo gateway không gửi được trả lời ({detail}).",
+}
+
+
+def gateway_state_alert_text(account_id: str, state: str, detail: str) -> str | None:
+    """Text cảnh báo cho chủ bot, hoặc None nếu không cần báo (trạng thái lặp,
+    reconnecting, hoặc 'connected' khi trước đó chưa từng báo mất kết nối)."""
+    previous = _last_reported_gateway_state.get(account_id)
+    if state == "reconnecting":
+        return None
+    if state == "connected" and previous not in ("closed", "login_required"):
+        _last_reported_gateway_state[account_id] = state
+        return None
+    if state == previous and state != "send_failed":
+        return None
+    _last_reported_gateway_state[account_id] = state
+    template = _GATEWAY_STATE_TEXT.get(state)
+    if template is None:
+        return None
+    return template.format(detail=detail or "không rõ")
+
+
 def _secret():
     return os.getenv("ZALO_BRIDGE_SECRET", "").strip()
 
@@ -138,7 +174,8 @@ def _auth(value):
     expected = _secret()
     if not expected:
         raise HTTPException(503, "Zalo bridge is not configured")
-    if not value or not hmac.compare_digest(value, expected):
+    # So sánh bytes: header non-ASCII không làm compare_digest TypeError (500 thay vì 403).
+    if not value or not hmac.compare_digest(str(value).encode(), expected.encode()):
         raise HTTPException(403, "Forbidden")
 
 
@@ -162,6 +199,27 @@ async def _auth_sender(secret, sender):
 def _zalo_chunks(outputs: list[str]) -> list[str]:
     """Zalo không render markdown, lọc sạch trước khi cắt tin."""
     return [chunk for message in outputs for chunk in split_for_zalo(to_plain_text(message))]
+
+
+@router.post("/gateway-state", status_code=204)
+async def gateway_state(
+    payload: GatewayStatePayload,
+    x_zalo_bridge_secret: str | None = Header(default=None),
+):
+    """Gateway Node báo mất kết nối/kết nối lại/không gửi được tin - trước đây
+    listener đóng chỉ set api=null, outbox/reminder/digest ứ đọng im lặng tới
+    khi chủ bot gõ /zalo."""
+    _auth(x_zalo_bridge_secret)
+    logger.info(
+        "Zalo gateway state=%s account=%s detail=%s",
+        payload.state,
+        payload.account_id,
+        payload.detail,
+    )
+    text = gateway_state_alert_text(payload.account_id, payload.state, payload.detail)
+    if text:
+        alerts.send(text)
+    return Response(status_code=204)
 
 
 @router.get("/session")
@@ -237,69 +295,48 @@ async def receive(
 
 
 async def _receive_text(payload: ZaloMessageRequest):
-    cached = await idempotency.get_zalo_response(
-        payload.account_id,
-        payload.message_id,
-        "text",
-    )
-    if cached is not None:
-        return ZaloMessageResponse.model_validate(cached)
-
     zalo_user = await zalo_users.resolve(payload.sender_id)
     if zalo_user is None:
         # Người lạ CHƯA pair: im lặng với sender (không lộ ra là bot chưa
         # cấu hình xong), chỉ âm thầm báo owner Telegram. KHÔNG cache
         # response rỗng - nếu owner pair xong rồi người này nhắn lại
         # (message_id mới) vẫn xử lý bình thường như mọi tin nhắn khác.
+        cached = await idempotency.get_zalo_response(payload.account_id, payload.message_id, "text")
+        if cached is not None:
+            return ZaloMessageResponse.model_validate(cached)
         zalo_users.notify_unpaired(payload.sender_id, payload.sender_name)
         return ZaloMessageResponse(messages=[], provider=None)
     if not zalo_user.is_active:
         return ZaloMessageResponse(messages=[messages_module.ZALO_LOCKED_REPLY], provider=None)
 
-    # Facebook post-queue commands (/fb_*) are handled OUTSIDE assistant_turn()
-    # on purpose. /fb_ok waits on the Facebook Graph API and already has its own
-    # atomicity (claim_post's guarded UPDATE). Running it under assistant_turn()
-    # would block this user's chat and hold a MAX_CONCURRENT_TURNS slot for the
-    # whole publish.
-    result = None
-    if zalo_user.is_admin:
-        result = await maybe_handle_facebook_command(payload.account_id, payload.text)
-
-    if result is None:
-        async with assistant_turn(f"zalo:{zalo_user.internal_user_id}"):
-            # Re-check: a duplicate delivery of the same message could have
-            # been processed by another request while we were waiting for the
-            # lock above.
-            cached = await idempotency.get_zalo_response(
-                payload.account_id,
-                payload.message_id,
-                "text",
-            )
-            if cached is not None:
-                return ZaloMessageResponse.model_validate(cached)
-            if zalo_user.is_admin:
-                result = await maybe_handle_group_command(payload.account_id, payload.text)
-            if result is None:
-                # user_id RIÊNG cho từng external_id (zalo_user.internal_user_id) -
-                # KHÔNG dùng _shared_user_id()/config.ALLOWED_USER_ID nữa, để cách
-                # ly hoàn toàn ngữ cảnh chat/trí nhớ giữa từng người nhắn Zalo và
-                # giữa họ với chủ bot Telegram. Xem docstring channels/zalo_users.py.
-                result = await handle_channel_text(
-                    zalo_user.internal_user_id, payload.text.strip(), zalo_user.is_admin
-                )
-
-    response = ZaloMessageResponse(
-        messages=_zalo_chunks(result.messages),
-        provider=result.provider,
-        image_b64=result.image_b64,
+    # user_id RIÊNG cho từng external_id (zalo_user.internal_user_id) - KHÔNG
+    # dùng config.ALLOWED_USER_ID, để cách ly hoàn toàn ngữ cảnh chat/trí nhớ
+    # giữa từng người nhắn Zalo và giữa họ với chủ bot Telegram. Xem docstring
+    # channels/zalo_users.py. Chuỗi cache -> /fb_* -> khoá lượt -> lệnh nhóm ->
+    # chat dùng chung với Zoom (services/channel_dispatch.py).
+    payload_dict = await channel_dispatch.dispatch(
+        channel_dispatch.DispatchRequest(
+            account_id=payload.account_id,
+            event_id=payload.message_id,
+            cache_kind="text",
+            user_id=zalo_user.internal_user_id,
+            is_admin=zalo_user.is_admin,
+            channel="zalo",
+            text=payload.text,
+            turn_key=f"zalo:{zalo_user.internal_user_id}",
+            command_account_id=payload.account_id,
+        ),
+        channel_dispatch.DispatchHandlers(
+            chat=handle_channel_text,
+            get_cached=idempotency.get_zalo_response,
+            save_cached=idempotency.save_zalo_response,
+            facebook=maybe_handle_facebook_command,
+            group=maybe_handle_group_command,
+            chunk=_zalo_chunks,
+            turn=assistant_turn,
+        ),
     )
-    await idempotency.save_zalo_response(
-        payload.account_id,
-        payload.message_id,
-        "text",
-        response.model_dump(),
-    )
-    return response
+    return ZaloMessageResponse.model_validate(payload_dict)
 
 
 @router.post("/image-prompt", response_model=ZaloMessageResponse)
@@ -314,8 +351,8 @@ async def image_prompt(
     await _auth_sender(x_zalo_bridge_secret, x_zalo_sender_id)
     try:
         size = int(request.headers.get("content-length", "0") or 0)
-    except ValueError:
-        raise HTTPException(400, "Invalid Content-Length")
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid Content-Length") from exc
     if size > MAX_ZALO_IMAGE_BYTES:
         raise HTTPException(413, "Image too large")
     body = await request.body()
@@ -414,8 +451,8 @@ async def facebook_group_post(
     for item in payload.media:
         try:
             body = base64.b64decode(item.data_b64, validate=True)
-        except (ValueError, binascii.Error):
-            raise HTTPException(400, "Invalid image base64")
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(400, "Invalid image base64") from exc
         if not body or len(body) > max_image_bytes:
             raise HTTPException(413, "Image too large")
         total_bytes += len(body)

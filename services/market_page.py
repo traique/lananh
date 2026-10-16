@@ -362,7 +362,7 @@ def _rsi(values: list[float], n: int = 14) -> float | None:
 def _streak(closes: list[float]) -> int:
     """Số phiên tăng (+) hoặc giảm (-) liên tiếp tính tới phiên mới nhất."""
     streak = 0
-    for prev, cur in zip(reversed(closes[:-1]), reversed(closes)):
+    for prev, cur in zip(reversed(closes[:-1]), reversed(closes), strict=False):
         step = (cur > prev) - (cur < prev)
         if step == 0 or (streak and (streak > 0) != (step > 0)):
             break
@@ -603,7 +603,7 @@ async def _fetch_all_bars() -> dict[str, list[dict]]:
         results = await asyncio.gather(
             *(_fetch_bars(client, gate, symbol, now) for symbol in _REPORT_SYMBOLS)
         )
-    return dict(zip(_REPORT_SYMBOLS, results))
+    return dict(zip(_REPORT_SYMBOLS, results, strict=False))
 
 
 async def _market_snapshot() -> str | None:

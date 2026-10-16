@@ -13,6 +13,8 @@ from ai.timeouts import (
     OFFICIAL_STATUS_TIMEOUT_SEC,
     OFFICIAL_UTILITY_TIMEOUT_SEC,
     OFFICIAL_VISION_TIMEOUT_SEC,
+    TurnTimeoutError,
+    bounded,
     with_timeout,
 )
 from ai import provider_overrides
@@ -216,19 +218,24 @@ async def generate_utility_json(prompt: str) -> Optional[dict]:
     for idx in await usable_indices():
         try:
             client = await _get_official_client(idx)
-            response = await with_timeout(
-                client.aio.models.generate_content(
-                    model=await _model_for(idx),
+            model_name = await _model_for(idx)
+
+            def _call(client=client, model_name=model_name):
+                return client.aio.models.generate_content(
+                    model=model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.1,
                         response_mime_type="application/json",
                     ),
-                ),
-                OFFICIAL_UTILITY_TIMEOUT_SEC,
-                f"api{idx} utility JSON",
-            )
+                )
+
+            # bounded(): tôn trọng hạn chót còn lại của lượt (hoặc của task nền
+            # đặt riêng) thay vì 45s cố định ngoài mọi ngân sách thời gian.
+            response = await bounded(_call, OFFICIAL_UTILITY_TIMEOUT_SEC)
             return json.loads(strip_json_fence(response.text))
+        except TurnTimeoutError:
+            raise
         except Exception as exc:
             last_exc = exc
             await note_failure(idx, exc)

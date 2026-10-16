@@ -14,3 +14,12 @@ zalo-gateway/dist
 zalo-gateway/zalo-session.json
 zalo-gateway/zalo-qr.png
 shopee-storage-state*.json
+test
+docs
+tools
+scripts/benchmark_perf.py
+scripts/train_trend_model.py
+.claude
+*.md
+!README.md
+!rag/**/*.md

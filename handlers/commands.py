@@ -36,51 +36,72 @@ HISTORY_LIMIT = 10
 
 HELP_TEXT = (
     "📖 *Các lệnh hỗ trợ:*\n\n"
-    "💬 Gõ tin nhắn bình thường để trò chuyện với em - Lan Anh - như trợ lý cá nhân.\n\n"
-    "📊 Khi anh nhắc tới 1 *mã cổ phiếu Việt Nam*, mặc định em lấy giá khớp lệnh REALTIME.\n"
-    'Cần phân tích sâu thì cứ nói rõ (vd "phân tích giúp anh mã FPT").\n\n'
+    "💬 Gõ tin nhắn bình thường để trò chuyện với em - Lan Anh - như trợ lý cá nhân. "
+    'Em tự nhớ ghi chú, nhắc việc, danh mục khi anh nói ("nhắc anh 8h mai họp", "đã mua FPT 100 giá 120").\n\n'
+    '📊 *Cổ phiếu Việt Nam*: nhắc tới 1 mã là em báo giá realtime; nói rõ "phân tích FPT" để có báo cáo đầy đủ '
+    '(action do hệ thống quyết, AI chỉ diễn giải). "Soi danh mục" để xem cả rổ. Thêm "theo Buffett/Minervini/'
+    'Đoàn Vĩnh Bình" (hoặc "3 huyền thoại") để nghe góc nhìn định tính.\n\n'
     "🖼️ *Gửi 1 ảnh chân dung* để Gemini viết lại prompt giữ nguyên khuôn mặt.\n\n"
-    "/prompt — viết prompt tạo ảnh từ mô tả cơ bản\n"
-    "/gia — Tìm và so sánh giá sản phẩm\n"
+    "*Chat và tiện ích*\n"
+    "/prompt <mô tả> — viết prompt tạo ảnh từ mô tả cơ bản\n"
+    "/anh <mô tả> — tạo ảnh thật (Agnes AI); /anh on|off — bật/tắt\n"
+    "/gia <sản phẩm> — tìm và so sánh giá sản phẩm\n"
     "/dich [ja>vi|vi>ja] <nội dung> — dịch chat công việc Nhật-Việt\n"
     "/reset — xoá ngữ cảnh chat\n"
     "/history — xem 10 lượt gần nhất\n"
     "/memory [on|off] — xem, bật hoặc tắt trí nhớ dài hạn\n"
     "/forget — xoá trí nhớ dài hạn\n"
     "/notes — xem ghi chú đã lưu\n"
-    "/model — xem/đổi model chat\n"
-    "/status — xem trạng thái provider\n"
-    "/thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày\n"
     "/agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm)\n"
     "/rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/\n"
-    "/ragxuly <file> — dọn file md OCR trong rag/ (AI thêm heading, backup bản gốc)\n"
-    "/bangtinsang — gửi ngay Bản tin sáng tới Zalo + Zoom (bình thường tự gửi lúc 8h)\n"
+    "/ragxuly <file> — dọn file md OCR trong rag/ ở nền (AI thêm heading, backup bản gốc)\n\n"
+    "*Danh mục cổ phiếu*\n"
+    "/danhmuc — xem danh mục, lãi/lỗ, cảnh báo stop/target\n"
+    "/themcp <MÃ> <SỐ\\_LƯỢNG> <GIÁ\\_VỐN> [STOP] [TARGET] — thêm giao dịch mua (giá dưới 1.000 hiểu là nghìn đồng)\n"
+    "/capnhatcp <MÃ> <SỐ\\_LƯỢNG> <GIÁ\\_VỐN> [STOP] [TARGET] — ghi đè vị thế\n"
+    "/bancp <MÃ> [SỐ\\_LƯỢNG|hết] — bán bớt hoặc bán hết\n"
+    "/xoacp <MÃ> — xoá mã khỏi danh mục\n"
+    "Cuối phiên (sau 15h) em tự báo nếu mã nào chạm stop/target hoặc breakout; 8h sáng gửi digest danh mục.\n\n"
+    "*Bản tin và thống kê*\n"
+    "/bangtinsang (hoặc /bantinsang) — gửi ngay Bản tin sáng tới Zalo + Zoom (bình thường tự gửi lúc 8h)\n"
     "/tintuc — đọc Điểm tin mới ngay trong Telegram, không broadcast sang Zalo/Zoom\n"
+    "/thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày\n\n"
+    "*Provider AI*\n"
+    "/model [tên|auto] — xem/đổi model chat (chỉ áp dụng cho 9Router)\n"
+    "/status — xem trạng thái provider chain\n"
     "/userouter9 — ép thử lại 9Router ngay\n"
     "/router9 on|off — bật/tắt 9Router thủ công\n"
-    "/tavily on|off — bật/tắt tra web Tavily trước khi trả lời\n"
-    "/anh <mô tả> — tạo ảnh thật (Agnes AI); /anh on|off — bật/tắt\n"
-    "/zoompair, /zoomxoa, /zoomstatus — quản lý pairing Zoom\n"
-    "/nhom, /themnhom, /xoanhom, /tongket, /dangnoi — quản lý và xem lại nhóm Zalo\n"
+    "/tavily on|off — bật/tắt tra web Tavily trước khi trả lời\n\n"
+    "*Zalo bot B*\n"
+    "/zalo — đăng nhập bằng QR hoặc xem trạng thái Zalo B; /zalologout — đăng xuất\n"
+    "/zalopair <id> [tên] — cấp quyền thành viên; /zaloadmin <id> [tên] — cấp quyền admin\n"
+    "/zalohaquyen <id> — hạ admin về thành viên; /zalokhoa, /zalomokhoa <id> — khoá/mở khoá\n"
+    "/zaloxoa <id> — xoá pairing kèm toàn bộ dữ liệu cá nhân; /zalodanhsach — xem danh sách\n"
+    "/nhom, /themnhom <group\\_id> <tên>, /xoanhom <group\\_id|tên> — nhóm Zalo đang theo dõi\n"
+    "/tongket <tên> [24h|7d|homnay|homqua] — tổng kết nhóm bằng AI; /dangnoi <tên> — xem nguyên văn hôm nay\n\n"
+    "*Zoom*\n"
+    "/zoompair <jid> [tên], /zoomxoa, /zoomstatus — quản lý pairing Zoom\n\n"
     "📣 *Zalo → Facebook Page (tách riêng khỏi /tongket):*\n"
     "/fb\\_nhom — xem các nhóm nguồn Facebook\n"
     "/fb\\_themnhom <group\\_id> <tên> — thêm nhóm Zalo làm nguồn đăng Facebook\n"
-    "/fb\\_pages — xem các Facebook Page đã cấu hình (fb\\_ok sẽ đăng lên tất cả)\n"
     "/fb\\_xoanhom <group\\_id|tên> — bỏ nhóm khỏi luồng Facebook\n"
+    "/fb\\_pages — xem các Facebook Page đã cấu hình (fb\\_ok sẽ đăng lên tất cả)\n"
+    "/fb\\_market <stock|news> [dang] — xem thử bài Page chứng khoán/tin CafeF; thêm 'dang' để đăng thật\n"
     "/fb\\_xem <post\\_id> — xem lại bài đang chờ duyệt\n"
     "/fb\\_sua <post\\_id> <nội dung> — sửa nội dung bài chờ\n"
     "/fb\\_link <post\\_id> <affiliate\\_url> — nhập short-link affiliate khi bài chỉ có 1 link Shopee\n"
     "/fb\\_link <post\\_id> <source\\_url> <affiliate\\_url> — nhập từng link khi bài có nhiều link\n"
     "(đủ link thì AI tự viết lại bài, link affiliate được thả ở bình luận đầu tiên)\n"
     "/fb\\_ok <post\\_id> — duyệt và đăng lên TẤT CẢ Facebook Page đang cấu hình; "
-    "page nào lỗi sẽ báo riêng, chạy lại /fb\\_ok để chỉ thử lại page lỗi, page đã đăng OK không bị đụng tới\n"
+    "page nào lỗi sẽ báo riêng, chạy lại /fb\\_ok để chỉ thử lại page lỗi\n"
     "/fb\\_check <post\\_id> — kiểm tra từng page đã published/công khai chưa, lấy permalink\n"
+    "/fb\\_reconcile — đối soát lượt đăng bị gián đoạn (bài kẹt POSTING/UNKNOWN)\n"
     "/fb\\_boqua <post\\_id> — bỏ bài chờ\n"
     "/fb\\_reset — xóa bài Facebook đã lưu, reset ID về #1 khi có thể\n"
-    "/fb\\_boloc \\[reset] — thống kê bộ lọc Zalo→Facebook (bài giữ/bỏ/trùng, số bài chờ)\n"
-    "/fb\\_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt\n"
-    "/zalopair, /zaloadmin, /zalohaquyen, /zalokhoa, /zalomokhoa, /zaloxoa, /zalodanhsach — quản lý user Zalo\n"
-    "/help — hiển thị hướng dẫn này"
+    "/fb\\_boloc [reset] — thống kê bộ lọc Zalo→Facebook (bài giữ/bỏ/trùng, số bài chờ)\n"
+    "/fb\\_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt\n\n"
+    "/start — lời chào; /help — hiển thị hướng dẫn này\n"
+    "Trang quản trị: /admin trên URL dịch vụ (thống kê, provider, RAM, DB)."
 )
 
 
@@ -383,21 +404,36 @@ async def ragxuly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    bot = context.bot
     prompt_id = await telemetry.start(user_id, "ragxuly", name)
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    try:
-        # /ragxuly phải chạy orchestrator trên event loop chính vì provider_state
-        # và asyncpg pool được khởi tạo ở loop này. Các lượt AI đều await nên
-        # không chặn những request khác trong lúc chờ network.
-        text = await rag_clean_service.clean_file(name)
-        await telemetry.success(prompt_id, "ragxuly", text)
-    except Exception as exc:
-        logger.exception("Lỗi /ragxuly với file: %r", name)
-        await telemetry.failure(prompt_id, "ragxuly", exc)
-        await update.message.reply_text("❌ Có lỗi khi dọn file. Thử lại sau nhé.")
-        return
 
-    await update.message.reply_text(text)
+    async def _run() -> None:
+        # Chạy orchestrator trên event loop chính (provider_state + asyncpg pool
+        # thuộc loop này), nhưng NGOÀI assistant_turn(OWNER): file dài = hàng
+        # chục lượt AI, giữ khoá lượt sẽ chặn chat của chính chủ bot hàng chục
+        # phút. Kết quả gửi về sau khi xong.
+        try:
+            text = await rag_clean_service.clean_file(name)
+            await telemetry.success(prompt_id, "ragxuly", text)
+        except Exception as exc:
+            logger.exception("Lỗi /ragxuly với file: %r", name)
+            await telemetry.failure(prompt_id, "ragxuly", exc)
+            text = "❌ Có lỗi khi dọn file. Thử lại sau nhé."
+        try:
+            await bot.send_message(chat_id=chat_id, text=text)
+        except Exception:
+            logger.warning("Không gửi được kết quả /ragxuly.", exc_info=True)
+
+    if not rag_clean_service.start_background(name, _run()):
+        await update.message.reply_text(
+            "⏳ Đang có một lượt /ragxuly khác chạy. Chờ xong rồi gọi lại nhé."
+        )
+        return
+    await update.message.reply_text(
+        f"⏳ Đang dọn {name} ở nền (trần {rag_clean_service.total_timeout_sec() // 60} phút). "
+        "Anh cứ chat tiếp, xong em báo."
+    )
 
 
 @common.restricted

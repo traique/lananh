@@ -54,6 +54,27 @@ async def stop_background_tasks() -> None:
     )
 
 
+# Tối đa 2 lượt cập nhật trí nhớ chạy nền cùng lúc: mỗi lượt là 1 lời gọi
+# Gemini utility ngoài semaphore MAX_CONCURRENT_TURNS (RAM 512 MB).
+_memory_update_slots = asyncio.Semaphore(2)
+
+
+async def _update_memory_bounded(user_id: int, text: str, reply: str) -> None:
+    """Cập nhật trí nhớ nền với hạn chót riêng (MEMORY_UPDATE_TIMEOUT_SEC).
+
+    Task được tạo SAU khi ``turn_deadline()`` của lượt đã thoát nên không thừa
+    hưởng hạn chót nào - đặt lại ở đây để official_client.generate_utility_json
+    (đi qua ai.timeouts.bounded) không treo vô hạn."""
+    from core import config
+
+    async with _memory_update_slots:
+        with turn_deadline(config.MEMORY_UPDATE_TIMEOUT_SEC):
+            try:
+                await memory_service.update_memory(user_id, text, reply)
+            except TurnTimeoutError as exc:
+                logger.warning("Cập nhật trí nhớ nền hết hạn chót: %s", exc)
+
+
 @dataclass(frozen=True)
 class ChatTurn:
     """Kết quả 1 lượt chat AI; mỗi kênh tự định dạng câu trả lời/lỗi."""
@@ -87,7 +108,7 @@ async def run_chat_turn(
             tool_result, search_result, memory = await asyncio.gather(
                 tools.maybe_run_tool(user_id, text),
                 web_search.maybe_search(text, user_id=user_id),
-                memory_service.build_memory_context(user_id),
+                memory_service.build_memory_context(user_id, text),
             )
             combined = "\n\n".join(part for part in (grounding, tool_result, search_result) if part)
             response = await orchestrator.chat(
@@ -96,6 +117,7 @@ async def run_chat_turn(
                 grounding=combined,
                 memory_context=memory,
                 require_real_search=stock_analysis.wants_external_market_data(text),
+                web_grounded=bool(search_result),
             )
         reply = (response.text or "").strip()
         await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
@@ -103,7 +125,7 @@ async def run_chat_turn(
             await db.add_chat_message(user_id, "user", text)
             await db.add_chat_message(user_id, "model", reply)
             _track_background_task(
-                asyncio.create_task(memory_service.update_memory(user_id, text, reply))
+                asyncio.create_task(_update_memory_bounded(user_id, text, reply))
             )
         return ChatTurn(reply, bool(getattr(response, "used_fallback", False)), prompt_id=prompt_id)
     except TurnTimeoutError as exc:
@@ -208,7 +230,7 @@ async def _handle_stock(
                 messages.STOCK_QUOTE_FAILED.format(symbol=symbol)
                 if isinstance(result, BaseException)
                 else result
-                for symbol, result in zip(symbols, results)
+                for symbol, result in zip(symbols, results, strict=False)
             ]
         ), ""
     return None, await stock_analysis.build_price_grounding(symbols)
@@ -239,17 +261,19 @@ async def handle_channel_text(
     if portfolio_result is not None:
         return ChannelResult([portfolio_result])
 
-    # Nhánh cổ phiếu (debate nhiều lượt gọi AI) cũng chung 1 hạn chót cho cả lượt
-    # để Zalo không bị gateway bỏ cuộc ở 240s trong khi Python vẫn chạy tiếp.
-    try:
-        with turn_deadline():
+    # MỘT hạn chót cho cả nhánh cổ phiếu (debate nhiều lượt gọi AI) LẪN lượt chat
+    # theo sau: turn_deadline lồng nhau giữ hạn SỚM hơn, nên run_chat_turn không
+    # được cộng thêm 200s nữa (trước đây tổng có thể tới 400s > 240s gateway
+    # Zalo chờ, người dùng nhận im lặng).
+    with turn_deadline():
+        try:
             stock_result, grounding = await _handle_stock(user_id, text, is_admin)
-    except TurnTimeoutError as exc:
-        logger.warning("Nhánh cổ phiếu hết hạn chót lượt: %s", exc)
-        return ChannelResult([f"⏱️ {exc}"])
-    if stock_result is not None:
-        return stock_result
-    turn = await run_chat_turn(user_id, text, grounding=grounding, channel=channel)
+        except TurnTimeoutError as exc:
+            logger.warning("Nhánh cổ phiếu hết hạn chót lượt: %s", exc)
+            return ChannelResult([f"⏱️ {exc}"])
+        if stock_result is not None:
+            return stock_result
+        turn = await run_chat_turn(user_id, text, grounding=grounding, channel=channel)
     if turn.failed:
         return ChannelResult(
             [turn.error_text or "❌ Có lỗi khi trò chuyện với Gemini. Hãy thử lại sau."]

@@ -242,3 +242,80 @@ def test_admin_template_escapes_server_values():
     assert raw == []
     for field in ("u.label", "r.label", "r.model", "p.model", "p.base_url", "a.model"):
         assert f"esc({field})" in html
+
+
+async def test_usage_daily_buckets_by_hour_or_day_and_zero_fills(client, monkeypatch):
+    from datetime import datetime, timedelta
+
+    class FakePool:
+        def __init__(self):
+            self.queries: list[tuple[str, tuple]] = []
+
+        async def fetch(self, sql, *args):
+            self.queries.append((sql, args))
+            now_vn = datetime.now(web_admin._VN_TZ).replace(tzinfo=None)
+            bucket = "hour" if "date_trunc('hour'" in sql else "day"
+            point = now_vn.replace(minute=0, second=0, microsecond=0)
+            if bucket == "day":
+                point = point.replace(hour=0) - timedelta(days=2)
+            return [{"bucket": point, "calls": 7}]
+
+    pool = FakePool()
+
+    async def get_pool():
+        return pool
+
+    monkeypatch.setattr(web_admin.db, "get_pool", get_pool)
+    assert (await client.get("/admin/api/usage/daily")).status_code == 403
+    await _login(client)
+
+    body = (await client.get("/admin/api/usage/daily?hours=24")).json()
+    assert body["bucket"] == "hour" and body["timezone"] == "Asia/Ho_Chi_Minh"
+    assert len(body["points"]) == 25  # 24 giờ trước ... giờ hiện tại, điền 0 cho mốc trống
+    assert [p["calls"] for p in body["points"]][-1] == 7
+    assert all(p["calls"] == 0 for p in body["points"][:-1])
+    assert pool.queries[-1][1] == ("24",)
+
+    body = (await client.get("/admin/api/usage/daily?hours=168")).json()
+    assert body["bucket"] == "day" and len(body["points"]) == 8
+    assert body["points"][-3]["calls"] == 7 and sum(p["calls"] for p in body["points"]) == 7
+    assert all(p["at"].endswith("T00:00") for p in body["points"])
+    # Khoảng 1 năm vẫn có trần số điểm (theo ngày), không phình RAM.
+    body = (await client.get("/admin/api/usage/daily?hours=99999")).json()
+    assert body["bucket"] == "day" and len(body["points"]) <= 367
+
+    r = await client.get("/admin/api/usage/daily?hours=abc")
+    assert r.status_code == 400
+
+
+def _templates():
+    return {p.name: p.read_text(encoding="utf-8") for p in (ROOT / "templates").glob("*.html")}
+
+
+def test_templates_have_theme_tokens_and_no_inline_handlers():
+    for name, html in _templates().items():
+        assert ":root{" in html.replace(" ", "") or ":root {" in html, name
+        assert "prefers-color-scheme" in html and ':root[data-theme="dark"]' in html, name
+        assert ':root:not([data-theme="light"])' in html, name
+        # Không có handler inline (onclick="...") - mọi sự kiện gắn bằng addEventListener.
+        assert re.search(r"<[^>]+\son\w+\s*=", html) is None, name
+        # Không nạp script ngoài (trang phải chạy được không cần CDN, hợp CSP).
+        assert re.search(r"<script[^>]+src=", html) is None, name
+        assert 'lang="vi"' in html, name
+
+
+def test_admin_template_sections_and_controls():
+    html = (ROOT / "templates" / "admin.html").read_text(encoding="utf-8")
+    for section in ("overview", "ai", "providers", "users", "market", "system"):
+        assert f'<section id="{section}"' in html
+    for control in ("refresh-btn", "auto-refresh", "range", "chart", "chart-table"):
+        assert f'id="{control}"' in html
+    assert "/admin/api/usage/daily" in html and "localStorage" in html
+    # Truy cập localStorage luôn trong try/catch.
+    assert "try { localStorage" in html or "try {\n      var saved = localStorage" in html
+
+
+def test_login_page_renders_error_block(client):
+    html = web_admin._login_page("Sai tài khoản hoặc mật khẩu.", 401).body.decode()
+    assert '<div class="err">Sai tài khoản hoặc mật khẩu.</div>' in html
+    assert "<!--ERROR-->" not in html

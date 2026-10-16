@@ -3,6 +3,9 @@ import asyncio
 import time
 from dataclasses import dataclass
 
+from datetime import datetime
+
+from stock import calendar as trading_calendar
 from stock import providers
 
 # SECTOR_MAP có HAI vai trò, đừng chỉ nghĩ nó là bản đồ ngành:
@@ -88,16 +91,32 @@ def _trend_pct(closes: list[float], lookback: int) -> float | None:
 _SECTOR_SAMPLE_SIZE = 8
 
 
+def _without_unfinished_bar(series, now: datetime) -> list[float]:
+    """Trong giờ giao dịch, nến hôm nay chưa đóng cửa -> bỏ khỏi chuỗi để trend
+    ngành cùng hệ quy chiếu với mã chính (stock/analysis._drop_unfinished_bar)."""
+    closes = series.closes
+    if (
+        len(closes) >= 2
+        and series.dates
+        and trading_calendar.is_market_hours(now)
+        and series.dates[-1] == now.strftime("%Y-%m-%d")
+    ):
+        return closes[:-1]
+    return closes
+
+
 async def _analyze_sector(key: str, meta: dict, vnindex_1m: float | None) -> SectorPerformance | None:
     sample = meta["symbols"][:_SECTOR_SAMPLE_SIZE]
     results = await asyncio.gather(*[providers.fetch_ohlcv(sym, days=90) for sym in sample], return_exceptions=True)
 
     valid = []
-    for sym, series in zip(sample, results):
+    now_vn = datetime.now(trading_calendar.VN_TZ)
+    for sym, series in zip(sample, results, strict=False):
         if isinstance(series, Exception) or not series.closes:
             continue
-        t1m = _trend_pct(series.closes, 22)
-        t3m = _trend_pct(series.closes, 65)
+        closes = _without_unfinished_bar(series, now_vn)
+        t1m = _trend_pct(closes, 22)
+        t3m = _trend_pct(closes, 65)
         if t1m is not None:
             valid.append((sym, t1m, t3m if t3m is not None else 0.0))
 

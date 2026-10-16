@@ -31,7 +31,7 @@ Luồng dùng (xem services/channel_chat_service.py::run_chat_turn, chung mọi 
    NGẦM (asyncio.create_task, không await trực tiếp trong luồng trả lời) để
    không làm chậm phản hồi cho người dùng.
 
-Việc trích xuất fact/tóm tắt/highlight gọi official_client.generate_utility_json()
+Việc trích xuất fact/tóm tắt/highlight gọi ai.orchestrator.utility_json() (Groq json_object trước, Gemini utility dự phòng)
 - đi THẲNG qua Google AI Studio API (không qua router9), nên nếu chưa cấu
 hình API key chính thức nào, toàn bộ tính năng trí nhớ dài hạn tự tắt êm
 (không lỗi, không ảnh hưởng chat chính vẫn chạy qua router9 như trước).
@@ -41,11 +41,18 @@ import asyncio
 import logging
 
 from core import config, database as db
-from ai import official_client
 
 logger = logging.getLogger(__name__)
 
 _SETTING_ENABLED_PREFIX = "memory_enabled_"
+
+
+async def _utility_json(prompt: str):
+    """Groq json_object trước, Gemini utility dự phòng (ai.orchestrator.utility_json).
+    Import lười để tránh vòng import ai.orchestrator -> services."""
+    from ai import orchestrator
+
+    return await orchestrator.utility_json(prompt)
 
 
 async def is_enabled(user_id: int) -> bool:
@@ -195,7 +202,7 @@ async def _update_memory_locked(user_id: int, user_text: str, model_text: str) -
         old_summary = await db.get_summary(user_id)
 
         prompt = _build_extraction_prompt(existing_facts, old_summary, user_text, model_text)
-        data = await official_client.generate_utility_json(prompt)
+        data = await _utility_json(prompt)
         if not data:
             return  # Chưa cấu hình API key chính thức, hoặc lỗi tạm thời -> bỏ qua lượt này.
 
@@ -242,15 +249,80 @@ async def _is_new_session(user_id: int) -> bool:
     return not latest
 
 
-async def build_memory_context(user_id: int) -> str:
+# Giữa phiên: chỉ chèn những fact/highlight LIÊN QUAN câu hỏi hiện tại (tối đa
+# chừng này ký tự) thay vì im lặng hoàn toàn như trước (hỏi lại 1 fact ở tin
+# thứ 2 của phiên thì model không thấy gì).
+MID_SESSION_MEMORY_MAX_CHARS = 800
+_MID_SESSION_MIN_OVERLAP = 1
+
+
+def select_relevant_memory(
+    query: str,
+    facts: list[tuple[str, str]],
+    highlights: list[str],
+    *,
+    max_chars: int = MID_SESSION_MEMORY_MAX_CHARS,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Chọn fact/highlight có token trùng với câu hỏi (bỏ dấu, bỏ stopword),
+    xếp theo số token trùng giảm dần, cắt theo ngân sách ký tự. Không cần
+    embedding/pgvector - đủ cho "nhớ N dòng, hỏi lại 1 dòng"."""
+    from services.rag_service import tokenize
+
+    query_tokens = tokenize(query)
+    if not query_tokens:
+        return [], []
+    scored_facts = []
+    for key, value in facts:
+        overlap = len(query_tokens & tokenize(f"{key.replace('_', ' ')} {value}"))
+        if overlap >= _MID_SESSION_MIN_OVERLAP:
+            scored_facts.append((overlap, key, value))
+    scored_highlights = []
+    for item in highlights:
+        overlap = len(query_tokens & tokenize(item))
+        if overlap >= _MID_SESSION_MIN_OVERLAP:
+            scored_highlights.append((overlap, item))
+    scored_facts.sort(key=lambda t: -t[0])
+    scored_highlights.sort(key=lambda t: -t[0])
+    budget = max_chars
+    chosen_facts: list[tuple[str, str]] = []
+    for _, key, value in scored_facts:
+        cost = len(key) + len(value) + 3
+        if cost > budget:
+            break
+        chosen_facts.append((key, value))
+        budget -= cost
+    chosen_highlights: list[str] = []
+    for _, item in scored_highlights:
+        if len(item) + 4 > budget:
+            break
+        chosen_highlights.append(item)
+        budget -= len(item) + 4
+    return chosen_facts, chosen_highlights
+
+
+async def build_memory_context(user_id: int, query: str = "") -> str:
     """Build khối text trí nhớ dài hạn để chèn vào prompt gửi Gemini (xem
     ai.orchestrator.chat(..., memory_context=...)). Trả về "" nếu chưa có gì
-    ĐỂ NHỚ, hoặc nếu đang ở giữa 1 phiên chat đã có tin nhắn trước đó (chỉ
-    chèn ở tin đầu phiên - xem _is_new_session)."""
+    ĐỂ NHỚ. Tin ĐẦU phiên: toàn bộ trí nhớ (summary + facts + highlights).
+    Giữa phiên: chỉ fact/highlight liên quan ``query`` (select_relevant_memory)."""
     if not await is_enabled(user_id):
         return ""
     if not await _is_new_session(user_id):
-        return ""
+        if not query:
+            return ""
+        facts, highlights = select_relevant_memory(
+            query,
+            await db.get_facts(user_id),
+            await db.get_highlights(user_id, MAX_HIGHLIGHTS_PER_USER),
+        )
+        if not facts and not highlights:
+            return ""
+        lines = ["[TRÍ NHỚ LIÊN QUAN CÂU HỎI - dùng khi cần, không đọc lại nguyên văn.]"]
+        if facts:
+            lines.append("- " + "; ".join(f"{k}={v}" for k, v in facts))
+        for item in highlights:
+            lines.append(f"- {item}")
+        return "\n".join(lines)
 
     facts = await db.get_facts(user_id)
     summary = await db.get_summary(user_id)

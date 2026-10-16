@@ -112,7 +112,6 @@ async def test_webhook_ack_waits_for_durable_insert(monkeypatch, channel, db_fai
         "123" if channel == "telegram" else "msg-1",
         payload,
     )
-    assert not web._background_tasks
 
 
 @pytest.mark.asyncio

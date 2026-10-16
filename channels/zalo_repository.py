@@ -1,9 +1,14 @@
 """Supabase persistence for dynamically managed Zalo groups and summaries."""
 
+import logging
 import os
 from datetime import datetime
 
 from core import database as db
+
+logger = logging.getLogger(__name__)
+# account_id giữ chỗ khi gateway chưa đăng nhập lần nào (khớp .env.example).
+DEFAULT_ACCOUNT_ID = "zalo-bot"
 
 
 def _retention_days() -> int:
@@ -391,6 +396,38 @@ async def cleanup_old_messages(account_id: str) -> None:
         account_id,
         _retention_days(),
     )
+
+
+async def resolve_active_account_id() -> str:
+    """account_id của bot Zalo B đang hoạt động, dùng cho job nền (tổng kết nhóm,
+    bản tin sáng, dọn tin cũ).
+
+    Thứ tự: accountId trong session đã đăng nhập (gateway lưu
+    ``api.getOwnId()`` sau khi login - đây là id numeric thật mà gateway dùng
+    để fetch outbox/nhóm) -> ``ZALO_BOT_ACCOUNT_ID`` nếu chủ bot đặt tường
+    minh khác mặc định -> tài khoản có nhiều nhóm theo dõi nhất -> "zalo-bot".
+
+    Trước đây job nền chỉ đọc env mặc định "zalo-bot" trong khi gateway dùng id
+    numeric: tổng kết không thấy nhóm nào, tin cũ không được dọn và bản tin
+    sáng enqueue vào account không ai fetch."""
+    from channels import zalo_session
+
+    try:
+        session_id = await zalo_session.load_account_id()
+    except Exception:
+        logger.warning("Không đọc được accountId từ session Zalo.", exc_info=True)
+        session_id = ""
+    if session_id:
+        return session_id
+    env_id = os.getenv("ZALO_BOT_ACCOUNT_ID", "").strip()
+    if env_id and env_id != DEFAULT_ACCOUNT_ID:
+        return env_id
+    try:
+        resolved = await resolve_default_account_id()
+    except Exception:
+        logger.warning("Không suy ra được account_id Zalo từ zalo_groups.", exc_info=True)
+        resolved = None
+    return resolved or env_id or DEFAULT_ACCOUNT_ID
 
 
 async def resolve_default_account_id() -> str | None:

@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { allowedMediaHost, downloadImage, imageCandidates, sniffImage } from "./dist/media.js";
 import { KnownSenders, SeenIds, isTransientNetworkError, splitForZalo } from "./dist/text.js";
-import { FacebookPostBuffer, isPermanentPostError } from "./dist/facebook-buffer.js";
+import {
+  FacebookPostBuffer,
+  MAX_BUFFERED_MEDIA_BYTES,
+  isPermanentPostError,
+} from "./dist/facebook-buffer.js";
 import { BridgeHttpError } from "./dist/bridge.js";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
@@ -248,6 +252,36 @@ test("bộ đệm đầy và bài cũ nhất gửi lỗi: bỏ bài cũ, tin m�
   // Bài mới nằm trong bộ đệm, gửi được khi flush.
   assert.equal(await buffer.flush("g:u64"), true);
   assert.deepEqual(stored, ["u64"]);
+});
+
+test("trần media trong RAM là 6 MiB (heap Node ~96 MB, base64+JSON nhân đôi)", () => {
+  assert.equal(MAX_BUFFERED_MEDIA_BYTES, 6 * 1024 * 1024);
+});
+
+test("ảnh một mình vượt trần media: bỏ ảnh (có log), giữ chữ; tin chỉ có ảnh thì bỏ hẳn", async () => {
+  const stored = [];
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => logged.push(args.join(" "));
+  try {
+    const buffer = new FacebookPostBuffer({
+      store: async (post) => void stored.push(post),
+      enqueue: (work) => work().then(() => undefined),
+      windowMs: 10,
+      maxBufferedMediaBytes: 10,
+    });
+    const big = { mime: "image/png", bytes: new Uint8Array(11) };
+    await buffer.add("g", "u", "An", "m1", "", [big]);
+    assert.equal(buffer.size, 0, "tin chỉ có ảnh quá lớn không được giữ");
+    await buffer.add("g", "u", "An", "m2", "caption", [big]);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(stored.length, 1);
+    assert.deepEqual(stored[0].messageIds, ["m2"]);
+    assert.equal(stored[0].media.length, 0);
+    assert.equal(logged.filter((line) => line.includes("vượt trần")).length, 2);
+  } finally {
+    console.error = originalError;
+  }
 });
 
 test("KnownSenders chỉ nhớ người đã được trả lời, LRU có trần", () => {

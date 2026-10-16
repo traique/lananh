@@ -20,7 +20,9 @@ import os
 import secrets
 import time
 from collections import deque
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -215,8 +217,8 @@ def _client_ip(request: Request) -> str:
 def _hours_param(request: Request, default: int = 168) -> int:
     try:
         hours = int(request.query_params.get("hours", str(default)))
-    except ValueError:
-        raise HTTPException(status_code=400, detail="hours phải là số nguyên")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="hours phải là số nguyên") from exc
     return min(max(hours, 1), 24 * 365)
 
 
@@ -651,6 +653,48 @@ async def admin_usage_models(request: Request) -> Response:
             for row in rows
         ]
     )
+
+
+_VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+# Dưới ngưỡng này gom theo giờ (tối đa 48 cột), trên thì theo ngày (tối đa 366 cột)
+# - kết quả luôn có trần nên không phình RAM dù chọn khoảng 1 năm.
+_HOURLY_BUCKET_MAX_HOURS = 48
+
+
+async def _usage_timeline(since_hours: int) -> dict:
+    """Lượt gọi AI (bảng user_calls) theo giờ/ngày (giờ VN), điền 0 cho mốc
+    trống để trang admin vẽ biểu đồ không cần tự tính múi giờ."""
+    bucket = "hour" if since_hours <= _HOURLY_BUCKET_MAX_HOURS else "day"
+    step = timedelta(hours=1) if bucket == "hour" else timedelta(days=1)
+    pool = await db.get_pool()
+    rows = await pool.fetch(
+        f"""
+        SELECT date_trunc('{bucket}', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS bucket,
+               COUNT(*) AS calls
+        FROM user_calls
+        WHERE created_at >= now() - ($1 || ' hours')::interval
+        GROUP BY 1
+        ORDER BY 1
+        """,
+        str(since_hours),
+    )
+    counts = {row["bucket"].replace(tzinfo=None): row["calls"] for row in rows}
+    now_vn = datetime.now(_VN_TZ).replace(tzinfo=None, minute=0, second=0, microsecond=0)
+    start = now_vn - timedelta(hours=since_hours)
+    if bucket == "day":
+        now_vn, start = now_vn.replace(hour=0), start.replace(hour=0)
+    points = []
+    cursor = start
+    while cursor <= now_vn:
+        points.append({"at": cursor.strftime("%Y-%m-%dT%H:%M"), "calls": counts.get(cursor, 0)})
+        cursor += step
+    return {"bucket": bucket, "timezone": "Asia/Ho_Chi_Minh", "points": points}
+
+
+@api_router.get("/usage/daily")
+async def admin_usage_daily(request: Request) -> Response:
+    """Chuỗi thời gian lượt gọi AI cho biểu đồ trang admin (xem _usage_timeline)."""
+    return JSONResponse(await db.with_reconnect(_usage_timeline)(_hours_param(request)))
 
 
 @api_router.get("/memory-usage")

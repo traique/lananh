@@ -54,10 +54,10 @@ def chat_fakes(monkeypatch):
     async def fake_search(text, user_id=None):
         return ""
 
-    async def fake_memory(user_id):
+    async def fake_memory(user_id, query=""):
         return "MEM"
 
-    async def fake_chat(user_id, text, *, grounding, memory_context, require_real_search):
+    async def fake_chat(user_id, text, *, grounding, memory_context, require_real_search, **kw):
         calls["chat"] = (grounding, memory_context)
         return calls.get("response", _FakeResponse("trả lời", used_fallback=True))
 
@@ -245,7 +245,7 @@ async def test_run_chat_turn_shares_one_deadline_across_search_and_chat(monkeypa
     async def no_tool(user_id, text):
         return ""
 
-    async def no_memory(user_id):
+    async def no_memory(user_id, query=""):
         return ""
 
     async def slow_chat(user_id, text, **kwargs):

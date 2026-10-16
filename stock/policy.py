@@ -18,31 +18,129 @@ sẵn. Đây là nơi DUY NHẤT quyết định action; Gemini ở stock_analys
            khảo, tự nó KHÔNG đủ điều kiện BUY.
 """
 
-from dataclasses import dataclass, field
+import json
+import logging
+import os
+from dataclasses import dataclass, field, fields
+from pathlib import Path
 
 from stock import features as feat
 from stock.validation import DataQuality
 
-CONFIDENCE_BUY_MIN = 0.75
-CONFIDENCE_WATCH_MIN = 0.55
-MIN_RR_RATIO = 1.5
-DISTRIBUTION_DAY_THRESHOLD = 4  # >= 4 ngày phân phối / 25 phiên -> ép risk_off (chuẩn O'Neil)
-# Ước lượng "sát trần" cho HOSE (trần 7%) - với HNX/UPCoM (trần 10%) ngưỡng
-# này sẽ phạt sớm một chút; chấp nhận được vì đây chỉ là cảnh báo T+2.5, không
-# phải gate chặn cứng.
-_NEAR_CEILING_PCT = 5.5
-_NEAR_CEILING_STRENGTH_PENALTY = 0.15
+logger = logging.getLogger(__name__)
 
-# B2: sizing theo % NAV
-RISK_PER_TRADE_PCT = 1.0  # rủi ro tối đa mỗi lệnh = 1% NAV
-MAX_POSITION_PCT = 20.0  # trần tỷ trọng 1 mã
-MIN_POSITION_PCT = 2.0
+# ─── Tham số policy (config-driven) ──────────────────────────────────────────
+# Mọi ngưỡng số của policy nằm trong PolicyParams, nạp từ
+# stock/policy_params.json (hoặc file ở env STOCK_POLICY_PARAMS_PATH) để
+# backtest offline chạy grid/hiệu chuẩn mà không sửa code; runtime chỉ ĐỌC.
+# Các tên module-level bên dưới (CONFIDENCE_BUY_MIN...) giữ nguyên cho code/test
+# cũ và được rebind qua apply_params().
 
-# Vùng mua quanh giá tham chiếu: -1% .. +0,5%. R:R và tỷ trọng LUÔN tính tại
-# cận TRÊN (giá khớp xấu nhất) - trước đây vùng ±1% nhưng R:R/tỷ trọng tính
-# tại giá giữa, mua ở cận trên thì R:R 1,5 hiển thị thực chất chỉ còn ~0,85.
-ENTRY_ZONE_DOWN_PCT = 1.0
-ENTRY_ZONE_UP_PCT = 0.5
+
+@dataclass(frozen=True)
+class PolicyParams:
+    confidence_buy_min: float = 0.75
+    confidence_watch_min: float = 0.55
+    min_rr_ratio: float = 1.5
+    # >= N ngày phân phối / 25 phiên -> ép risk_off (chuẩn O'Neil)
+    distribution_day_threshold: int = 4
+    # Ước lượng "sát trần" cho HOSE (trần 7%) - với HNX/UPCoM (trần 10%) ngưỡng
+    # này phạt sớm một chút; chấp nhận được vì chỉ là cảnh báo T+2.5.
+    near_ceiling_pct: float = 5.5
+    near_ceiling_strength_penalty: float = 0.15
+    # B2: sizing theo % NAV
+    risk_per_trade_pct: float = 1.0
+    max_position_pct: float = 20.0
+    min_position_pct: float = 2.0
+    # Vùng mua quanh giá tham chiếu: -1% .. +0,5%. R:R và tỷ trọng LUÔN tính tại
+    # cận TRÊN (giá khớp xấu nhất).
+    entry_zone_down_pct: float = 1.0
+    entry_zone_up_pct: float = 0.5
+    # Stop theo ATR: ATR14 x hệ số, kẹp trong [min%, max%] giá.
+    atr_stop_mult: float = 1.5
+    stop_min_pct: float = 1.0
+    stop_max_pct: float = 10.0
+    # Breakout Donchian lên đỉnh mới không có cản thật phía trên: target
+    # measured-move = đỉnh kênh + bề rộng kênh x hệ số; tỷ trọng nhân hệ số giảm.
+    # MẶC ĐỊNH TẮT: backtest offline 10/2026 (183 mã, 5 năm, toàn chuỗi) cho
+    # 875 lệnh breakout đỉnh mới với win rate 36,3%, avg R -0,15 sau phí/thuế/
+    # slippage - kỳ vọng âm. Bật khi đã hiệu chuẩn lại (xem docs/upgrade-2026-10.md).
+    measured_move_enabled: bool = False
+    measured_move_width_mult: float = 1.0
+    measured_move_size_mult: float = 0.6
+    # Gate C/Gate B ngưỡng kỹ thuật
+    volume_confirm_ratio_pct: float = 120.0
+    pullback_rsi_max: float = 68.0
+    mean_reversion_pct_b_max: float = 10.0
+    mean_reversion_rsi_max: float = 30.0
+
+
+def _default_params_path() -> Path:
+    env = os.getenv("STOCK_POLICY_PARAMS_PATH", "").strip()
+    return Path(env) if env else Path(__file__).resolve().parent / "policy_params.json"
+
+
+def load_params(path: Path | None = None) -> PolicyParams:
+    """Đọc tham số từ JSON (thiếu key -> mặc định; key lạ -> bỏ qua có log).
+    File hỏng/không tồn tại -> mặc định, không bao giờ raise ở runtime."""
+    path = path or _default_params_path()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return PolicyParams()
+    except (OSError, ValueError) as exc:
+        logger.warning("Không đọc được %s (%s) - dùng tham số policy mặc định.", path, exc)
+        return PolicyParams()
+    if not isinstance(raw, dict):
+        return PolicyParams()
+    known = {f.name for f in fields(PolicyParams)}
+    # Key bắt đầu bằng "_" (vd "_doc") là chú thích trong file, không phải tham số.
+    unknown = sorted(k for k in set(raw) - known if not str(k).startswith("_"))
+    if unknown:
+        logger.warning("policy_params.json có key không dùng: %s", ", ".join(unknown))
+    kwargs = {k: v for k, v in raw.items() if k in known and not k.startswith("_")}
+    try:
+        return PolicyParams(**kwargs)
+    except TypeError as exc:
+        logger.warning("policy_params.json sai kiểu (%s) - dùng mặc định.", exc)
+        return PolicyParams()
+
+
+PARAMS = load_params()
+
+
+def apply_params(params: PolicyParams) -> None:
+    """Rebind các ngưỡng module-level theo ``params`` (backtest grid offline;
+    runtime không gọi). Pure về mặt dữ liệu: evaluate_policy đọc global lúc gọi."""
+    global PARAMS, CONFIDENCE_BUY_MIN, CONFIDENCE_WATCH_MIN, MIN_RR_RATIO
+    global DISTRIBUTION_DAY_THRESHOLD, _NEAR_CEILING_PCT, _NEAR_CEILING_STRENGTH_PENALTY
+    global RISK_PER_TRADE_PCT, MAX_POSITION_PCT, MIN_POSITION_PCT
+    global ENTRY_ZONE_DOWN_PCT, ENTRY_ZONE_UP_PCT
+    PARAMS = params
+    CONFIDENCE_BUY_MIN = params.confidence_buy_min
+    CONFIDENCE_WATCH_MIN = params.confidence_watch_min
+    MIN_RR_RATIO = params.min_rr_ratio
+    DISTRIBUTION_DAY_THRESHOLD = params.distribution_day_threshold
+    _NEAR_CEILING_PCT = params.near_ceiling_pct
+    _NEAR_CEILING_STRENGTH_PENALTY = params.near_ceiling_strength_penalty
+    RISK_PER_TRADE_PCT = params.risk_per_trade_pct
+    MAX_POSITION_PCT = params.max_position_pct
+    MIN_POSITION_PCT = params.min_position_pct
+    ENTRY_ZONE_DOWN_PCT = params.entry_zone_down_pct
+    ENTRY_ZONE_UP_PCT = params.entry_zone_up_pct
+
+
+CONFIDENCE_BUY_MIN = PARAMS.confidence_buy_min
+CONFIDENCE_WATCH_MIN = PARAMS.confidence_watch_min
+MIN_RR_RATIO = PARAMS.min_rr_ratio
+DISTRIBUTION_DAY_THRESHOLD = PARAMS.distribution_day_threshold
+_NEAR_CEILING_PCT = PARAMS.near_ceiling_pct
+_NEAR_CEILING_STRENGTH_PENALTY = PARAMS.near_ceiling_strength_penalty
+RISK_PER_TRADE_PCT = PARAMS.risk_per_trade_pct
+MAX_POSITION_PCT = PARAMS.max_position_pct
+MIN_POSITION_PCT = PARAMS.min_position_pct
+ENTRY_ZONE_DOWN_PCT = PARAMS.entry_zone_down_pct
+ENTRY_ZONE_UP_PCT = PARAMS.entry_zone_up_pct
 
 
 def entry_zone(
@@ -83,6 +181,7 @@ def build_trade_plan(
     key_levels: feat.KeyLevels | None,
     liquidity: feat.Liquidity | None,
     exchange: str | None = None,
+    size_mult: float = 1.0,
 ) -> TradePlan | None:
     """B2 - suy ngược tỷ trọng vị thế từ khoảng cách rủi ro (không bịa số
     NAV thật - đây là % NAV ĐỀ XUẤT dựa trên nguyên tắc rủi ro cố định mỗi
@@ -112,6 +211,7 @@ def build_trade_plan(
     size *= 0.6 + 0.4 * feat.clamp((confidence - CONFIDENCE_BUY_MIN) / 0.25, 0, 1)
     if liquidity and liquidity.is_thin:
         size *= 0.5
+    size *= size_mult
     size = round(feat.clamp(size, MIN_POSITION_PCT, MAX_POSITION_PCT), 1)
 
     resistances = key_levels.resistances if key_levels else []
@@ -360,7 +460,9 @@ def _detect_setup(
     if enh is None or ma is None:
         return "none", 0.3, ["chưa đủ dữ liệu để xác định setup rõ ràng"]
 
-    volume_confirm = bool(inputs.liquidity and inputs.liquidity.liquidity_ratio_pct >= 120)
+    volume_confirm = bool(
+        inputs.liquidity and inputs.liquidity.liquidity_ratio_pct >= PARAMS.volume_confirm_ratio_pct
+    )
 
     if enh.donchian.state == "breakout_up" and not session_flags.hard_no_buy:
         strength = 0.6
@@ -386,7 +488,7 @@ def _detect_setup(
         ma.alignment in ("bullish",)
         and bias.direction != "bearish"
         and rsi is not None
-        and rsi < 68
+        and rsi < PARAMS.pullback_rsi_max
         and inputs.stats.trend_3m > 0
     ):
         strength = 0.55
@@ -397,7 +499,10 @@ def _detect_setup(
             reasons.append("MA alignment bullish, chưa rõ outperform VNINDEX")
         return "pullback", min(strength, 1.0), reasons
 
-    if enh.bollinger.available and (enh.bollinger.pct_b < 10 or (rsi is not None and rsi < 30)):
+    if enh.bollinger.available and (
+        enh.bollinger.pct_b < PARAMS.mean_reversion_pct_b_max
+        or (rsi is not None and rsi < PARAMS.mean_reversion_rsi_max)
+    ):
         if inputs.relative_strength > -10 and not session_flags.is_near_floor_like:
             reasons.append(
                 "giá về sát dải Bollinger dưới / RSI vùng quá bán - mean reversion có kiểm soát"
@@ -474,6 +579,23 @@ def _nearest_resistance(
     return min(candidates) if candidates else None
 
 
+def _measured_move_target(
+    price: float, enhanced: feat.EnhancedIndicators | None, exchange: str | None
+) -> float | None:
+    """Target measured-move cho breakout_up: upper + (upper - lower) x hệ số.
+    None nếu không phải breakout hoặc tắt trong PolicyParams."""
+    if not PARAMS.measured_move_enabled or enhanced is None:
+        return None
+    donchian = enhanced.donchian
+    if donchian.state != "breakout_up" or donchian.upper is None or donchian.lower is None:
+        return None
+    width = donchian.upper - donchian.lower
+    if width <= 0:
+        return None
+    target = donchian.upper + width * PARAMS.measured_move_width_mult
+    return feat.round_order_price(target, exchange) if target > price else None
+
+
 def _nearest_support(
     price: float,
     support_resistance: feat.SupportResistance | None,
@@ -521,7 +643,11 @@ def _compute_stop_target(
 
     atr = enhanced.atr14 if enhanced is not None else None
     if atr is not None and atr > 0:
-        risk_amount = feat.clamp(atr * 1.5, price * 0.01, price * 0.10)
+        risk_amount = feat.clamp(
+            atr * PARAMS.atr_stop_mult,
+            price * PARAMS.stop_min_pct / 100,
+            price * PARAMS.stop_max_pct / 100,
+        )
         basis = "atr"
     else:
         risk_pct = feat.clamp(stats.volatility, 3, 8)
@@ -558,9 +684,18 @@ def _compute_stop_target(
             return None, None, None, basis
 
         resistance = _nearest_resistance(price, support_resistance, key_levels)
+        measured = _measured_move_target(price, enhanced, exchange)
         if resistance is not None:
             target = feat.round_order_price(resistance, exchange)
             basis = f"{basis}+resistance"
+        elif measured is not None and measured > entry_high:
+            # Breakout Donchian lên đỉnh mới: không có cản THẬT phía trên (đó là
+            # bản chất của breakout). Target measured-move = đỉnh kênh + bề rộng
+            # kênh - mục tiêu kỹ thuật chuẩn, KHÔNG phải reward_mult vòng tròn.
+            # Trước đây mọi breakout đỉnh mới bị hạ xuống WATCH vì thiếu kháng cự,
+            # BUY chỉ xảy ra ở breakout "yếu" còn đỉnh cũ phía trên.
+            target = measured
+            basis = f"{basis}+measured_move"
         else:
             target = feat.round_order_price(entry_high + risk * reward_mult, exchange)
             basis = f"{basis}+projected"
@@ -808,7 +943,7 @@ def evaluate_policy(inputs: PolicyInputs) -> Decision:
             action = "HOLD" if holding else "WATCH"
             reasons.append("không tính được stop/target hợp lệ - không đề xuất vùng giá")
             invalidation_reason = None
-        elif "+resistance" not in basis:
+        elif "+resistance" not in basis and "+measured_move" not in basis:
             # Target suy ra từ reward_mult: R:R chỉ là chính hệ số đó (vòng
             # tròn) - không được tự nó mở BUY. Chỉ báo cáo là chưa đo được R:R.
             action = "HOLD" if holding else "WATCH"
@@ -829,6 +964,12 @@ def evaluate_policy(inputs: PolicyInputs) -> Decision:
         else:
             action = "HOLD" if holding else "BUY"
             buy_qualified = True
+            if "+measured_move" in basis:
+                reasons.append(
+                    "breakout lên đỉnh mới, không có kháng cự lịch sử phía trên: target là "
+                    "measured-move (đỉnh kênh + bề rộng kênh Donchian), tỷ trọng giảm "
+                    f"còn {int(PARAMS.measured_move_size_mult * 100)}% mức chuẩn"
+                )
             invalidation_reason = (
                 f"nếu giá đóng cửa dưới {stop_price:,.0f} nên cân nhắc cắt lỗ phần đang giữ"
                 if holding
@@ -881,6 +1022,7 @@ def evaluate_policy(inputs: PolicyInputs) -> Decision:
             inputs.key_levels,
             inputs.liquidity,
             inputs.exchange,
+            size_mult=PARAMS.measured_move_size_mult if "+measured_move" in basis else 1.0,
         )
         if trade_plan is not None:
             scenarios = _build_scenarios(trade_plan)

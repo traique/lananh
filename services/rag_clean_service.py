@@ -45,6 +45,8 @@ CLEAN_CHUNK_MAX_CHARS = 12000
 # Vẫn giữ một safety ceiling cho file bất thường để tránh vô tình tạo hàng
 # trăm request AI. 500k ký tự tương đương khoảng 40-50 lượt ở target hiện tại.
 MAX_FILE_CHARS = 500000
+# Trần mỗi phần khi gọi AI dọn (giây); trần tổng cả file: config.RAG_CLEAN_TOTAL_TIMEOUT_SEC.
+PART_TIMEOUT_SEC = 180
 
 # Alias cũ để code ngoài repo (nếu có) không vỡ import. Đây KHÔNG còn là trần
 # của cả file mà chỉ là mức tương thích lịch sử.
@@ -259,20 +261,14 @@ def _github_sync_config() -> tuple[str, str, str] | None:
     là override hữu ích khi chạy local hoặc muốn đẩy sang repo/branch khác.
     """
     token = os.getenv("GITHUB_RAG_TOKEN", "").strip()
-    repo = (
-        os.getenv("RAG_GITHUB_REPO", "").strip()
-        or os.getenv("RENDER_GIT_REPO_SLUG", "").strip()
-    )
+    repo = os.getenv("RAG_GITHUB_REPO", "").strip() or os.getenv("RENDER_GIT_REPO_SLUG", "").strip()
     branch = (
-        os.getenv("RAG_GITHUB_BRANCH", "").strip()
-        or os.getenv("RENDER_GIT_BRANCH", "").strip()
+        os.getenv("RAG_GITHUB_BRANCH", "").strip() or os.getenv("RENDER_GIT_BRANCH", "").strip()
     )
     if not token:
         return None
     if not repo or "/" not in repo or not branch:
-        logger.warning(
-            "Có GITHUB_RAG_TOKEN nhưng thiếu repo/branch để sync RAG lên GitHub"
-        )
+        logger.warning("Có GITHUB_RAG_TOKEN nhưng thiếu repo/branch để sync RAG lên GitHub")
         return None
     return token, repo, branch
 
@@ -362,49 +358,59 @@ async def _clean_parts(precleaned: str) -> tuple[str | None, str | None, int]:
     """Dọn tuần tự tất cả phần trên event loop chính.
 
     Mỗi lượt AI được ``await`` nên không chặn các request Zalo/Telegram khác.
-    ``asyncio.wait_for`` đặt timeout riêng cho từng part mà không tạo thread /
-    event loop phụ, vì vậy asyncpg pool luôn được dùng đúng loop sở hữu nó.
+    ``bounded()`` đặt timeout riêng cho từng part (và tôn trọng trần tổng của
+    ``turn_deadline``) mà không tạo thread / event loop phụ, vì vậy asyncpg
+    pool luôn được dùng đúng loop sở hữu nó.
     """
-    import asyncio
+    from ai.timeouts import TurnTimeoutError, bounded, turn_deadline
+    from core import config
 
     parts = _split_for_cleaning(precleaned)
     if not parts:
         return None, "Bản preclean rỗng.", 0
 
     cleaned_parts: list[str] = []
-    for index, part in enumerate(parts, 1):
-        try:
-            cleaned = await asyncio.wait_for(_clean_via_ai(part), timeout=180)
-        except asyncio.TimeoutError:
-            return (
-                None,
-                f"AI dọn phần {index}/{len(parts)} quá 3 phút không xong.",
-                len(parts),
-            )
-        except Exception as exc:
-            logger.warning(
-                "AI dọn /ragxuly lỗi ở phần %s/%s: %s",
-                index,
-                len(parts),
-                exc,
-            )
-            return (
-                None,
-                f"AI lỗi ở phần {index}/{len(parts)} ({exc}).",
-                len(parts),
-            )
+    # Trần TỔNG cho cả file (RAG_CLEAN_TOTAL_TIMEOUT_SEC) + trần 180s mỗi phần;
+    # orchestrator.ask bên trong đi qua bounded() nên tôn trọng cả hai.
+    with turn_deadline(config.RAG_CLEAN_TOTAL_TIMEOUT_SEC):
+        for index, part in enumerate(parts, 1):
+            try:
+                cleaned = await bounded(lambda part=part: _clean_via_ai(part), PART_TIMEOUT_SEC)
+            except TurnTimeoutError:
+                return (
+                    None,
+                    f"Dọn tới phần {index}/{len(parts)} thì hết trần thời gian tổng "
+                    f"({config.RAG_CLEAN_TOTAL_TIMEOUT_SEC}s).",
+                    len(parts),
+                )
+            except TimeoutError:
+                return (
+                    None,
+                    f"AI dọn phần {index}/{len(parts)} quá 3 phút không xong.",
+                    len(parts),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "AI dọn /ragxuly lỗi ở phần %s/%s: %s",
+                    index,
+                    len(parts),
+                    exc,
+                )
+                return (
+                    None,
+                    f"AI lỗi ở phần {index}/{len(parts)} ({exc}).",
+                    len(parts),
+                )
 
-        reason = _validate_cleaned(part, cleaned)
-        if reason is not None:
-            logger.warning(
-                "Từ chối bản dọn phần %s/%s: %s", index, len(parts), reason
-            )
-            return (
-                None,
-                f"Phần {index}/{len(parts)} không đạt kiểm định ({reason}).",
-                len(parts),
-            )
-        cleaned_parts.append(cleaned.strip())
+            reason = _validate_cleaned(part, cleaned)
+            if reason is not None:
+                logger.warning("Từ chối bản dọn phần %s/%s: %s", index, len(parts), reason)
+                return (
+                    None,
+                    f"Phần {index}/{len(parts)} không đạt kiểm định ({reason}).",
+                    len(parts),
+                )
+            cleaned_parts.append(cleaned.strip())
 
     merged = "\n\n".join(cleaned_parts).strip()
     whole_reason = _validate_cleaned(precleaned, merged)
@@ -412,6 +418,43 @@ async def _clean_parts(precleaned: str) -> tuple[str | None, str | None, int]:
         logger.warning("Từ chối bản dọn sau khi ghép: %s", whole_reason)
         return None, f"Bản ghép cuối không đạt kiểm định ({whole_reason}).", len(parts)
     return merged, None, len(parts)
+
+
+# Chỉ 1 lượt /ragxuly chạy nền tại 1 thời điểm (mỗi lượt là hàng chục lời gọi
+# AI); task được drain lúc shutdown qua stop_background_tasks().
+_background_tasks: set = set()
+
+
+def total_timeout_sec() -> int:
+    from core import config
+
+    return int(config.RAG_CLEAN_TOTAL_TIMEOUT_SEC)
+
+
+def start_background(name: str, coro) -> bool:
+    """Chạy ``coro`` (lượt dọn + gửi kết quả) ở nền. Trả False (và đóng coro)
+    nếu đang có lượt khác chạy."""
+    import asyncio
+
+    if any(not t.done() for t in _background_tasks):
+        coro.close()
+        return False
+    task = asyncio.create_task(coro, name=f"ragxuly:{name}")
+    _background_tasks.add(task)
+
+    def _done(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            logger.warning("Task /ragxuly nền lỗi: %r", t.exception())
+
+    task.add_done_callback(_done)
+    return True
+
+
+async def stop_background_tasks() -> None:
+    from services.background_tasks import stop_tracked_tasks
+
+    await stop_tracked_tasks(_background_tasks, timeout=10.0, logger=logger, label="ragxuly")
 
 
 async def clean_file(name: str) -> str:

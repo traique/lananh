@@ -100,6 +100,28 @@ with_reconnect = _with_reconnect
 HISTORY_RETENTION_LIMIT = 20
 
 
+def _ssl_setting():
+    """Giá trị ``ssl=`` cho asyncpg theo DATABASE_SSL_MODE.
+
+    "require": như libpq - mã hoá đường truyền, không xác thực chứng chỉ (dễ
+    cấu hình, chống nghe lén thụ động nhưng không chống MITM có chứng chỉ giả).
+    "verify-full": SSLContext xác thực chứng chỉ server + hostname, dùng CA hệ
+    thống hoặc DATABASE_SSL_CA. "disable": không SSL (chỉ cho DB local/test)."""
+    mode = config.DATABASE_SSL_MODE
+    if mode == "disable":
+        return False
+    if mode in ("verify-full", "verify-ca"):
+        import ssl
+
+        ctx = ssl.create_default_context(cafile=config.DATABASE_SSL_CA)
+        ctx.check_hostname = mode == "verify-full"
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        return ctx
+    if mode != "require":
+        logger.warning("DATABASE_SSL_MODE=%r không hợp lệ, dùng 'require'.", mode)
+    return "require"
+
+
 async def get_pool() -> asyncpg.pool.Pool:
     pool = await _get_or_create_pool()
     _pool_in_use.set(pool)
@@ -121,7 +143,7 @@ async def _get_or_create_pool() -> asyncpg.pool.Pool:
                 # lượt kế tiếp (và tốn RAM vô ích).
                 max_inactive_connection_lifetime=60,
                 command_timeout=30,
-                ssl="require",
+                ssl=_ssl_setting(),
                 # PgBouncer/Supavisor transaction mode không giữ prepared statement
                 statement_cache_size=0,
             )
@@ -227,18 +249,51 @@ async def usage_by_user(since_hours: int = 24 * 7) -> list[dict]:
 
 
 @_with_reconnect(idempotent=False)
-async def record_provider_call(provider: str, model: str) -> None:
-    """Ghi 1 lượt gọi thành công của provider/model (bảng provider_calls) -
-    gọi từ ai/orchestrator.py::_run_provider_chain ngay sau mỗi lần 1
-    provider trả lời thành công. Lỗi DB ở đây KHÔNG được để văng lên caller
-    (chỉ là số liệu thống kê cho trang admin, không phải luồng chính) -
-    caller (orchestrator) tự bọc try/except khi gọi hàm này."""
+async def record_provider_call(
+    provider: str,
+    model: str,
+    *,
+    outcome: str = "ok",
+    latency_ms: Optional[int] = None,
+    stage: Optional[str] = None,
+    prompt_chars: Optional[int] = None,
+) -> None:
+    """Ghi 1 lượt gọi provider/model (bảng provider_calls). ``outcome``: ok |
+    error | timeout | rate_limited | contaminated. Lỗi DB ở đây KHÔNG được để
+    văng lên caller (chỉ là số liệu thống kê, không phải luồng chính) - caller
+    (orchestrator) tự bọc try/except khi gọi hàm này."""
     pool = await get_pool()
     await pool.execute(
-        "INSERT INTO provider_calls (provider, model) VALUES ($1, $2)",
+        """INSERT INTO provider_calls (provider, model, outcome, latency_ms, stage, prompt_chars)
+        VALUES ($1, $2, $3, $4, $5, $6)""",
         provider,
         model,
+        outcome,
+        latency_ms,
+        stage,
+        prompt_chars,
     )
+
+
+@_with_reconnect
+async def provider_outcomes(since_hours: int = 24 * 7) -> list[dict]:
+    """Số lượt theo (provider, outcome) + độ trễ trung vị/p95 - trang admin dùng
+    để thấy provider nào chậm/lỗi/hết quota thay vì chỉ đếm lượt thành công."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT provider, outcome, COUNT(*) AS calls,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) AS p50_ms,
+               percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95_ms,
+               MAX(created_at) AS last_at
+        FROM provider_calls
+        WHERE created_at >= now() - ($1 || ' hours')::interval
+        GROUP BY provider, outcome
+        ORDER BY provider, calls DESC
+        """,
+        str(since_hours),
+    )
+    return [dict(row) for row in rows]
 
 
 @_with_reconnect
@@ -252,6 +307,7 @@ async def usage_by_model(since_hours: int = 24 * 7) -> list[dict]:
         SELECT provider, model, COUNT(*) AS calls, MAX(created_at) AS last_call_at
         FROM provider_calls
         WHERE created_at >= now() - ($1 || ' hours')::interval
+          AND outcome = 'ok'
         GROUP BY provider, model
         ORDER BY calls DESC
         """,

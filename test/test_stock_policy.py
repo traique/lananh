@@ -3,6 +3,7 @@
 risk-off, tín hiệu mâu thuẫn, R:R kém, thanh khoản thấp...) để kiểm tra
 Decision cuối cùng có hợp lý không, thay vì chỉ test từng hàm biệt lập.
 """
+
 import sys
 from pathlib import Path
 
@@ -38,8 +39,16 @@ def _closes_flat(n=90, price=30_000.0):
 
 
 def _make_inputs(
-    closes, *, quality=None, vnindex_bullish=True, session=None, liquidity=None,
-    highs=None, lows=None, relative_strength=5.0, news_impact=0.0,
+    closes,
+    *,
+    quality=None,
+    vnindex_bullish=True,
+    session=None,
+    liquidity=None,
+    highs=None,
+    lows=None,
+    relative_strength=5.0,
+    news_impact=0.0,
 ):
     price = closes[-1]
     highs = highs or [c * 1.01 for c in closes]
@@ -48,28 +57,43 @@ def _make_inputs(
     quality = quality or _ok_quality(len(closes))
 
     stats = feat.calc_signal_stats(closes, volumes, price)
-    enhanced = feat.build_enhanced_indicators(closes, price, highs, lows) if len(closes) >= 20 else None
+    enhanced = (
+        feat.build_enhanced_indicators(closes, price, highs, lows) if len(closes) >= 20 else None
+    )
     ma_alignment = feat.calc_ma_alignment(closes) if len(closes) >= 20 else None
     support_resistance = feat.calc_support_resistance(highs, lows, price, 30)
     liquidity = liquidity if liquidity is not None else feat.calc_liquidity(volumes)
     trend_score = (
         feat.calc_trend_score(ma_alignment, stats.rsi14, enhanced.macd.histogram)
-        if ma_alignment and enhanced else None
+        if ma_alignment and enhanced
+        else None
     )
 
     vnindex_closes = _closes_uptrend(90) if vnindex_bullish else _closes_downtrend(90)
     vnindex_multi_tf = feat.calc_multi_timeframe(vnindex_closes)
-    vnindex_adx = feat.calc_adx(vnindex_closes, [c * 1.01 for c in vnindex_closes], [c * 0.99 for c in vnindex_closes])
+    vnindex_adx = feat.calc_adx(
+        vnindex_closes, [c * 1.01 for c in vnindex_closes], [c * 0.99 for c in vnindex_closes]
+    )
 
     return pol.PolicyInputs(
-        price=price, stats=stats, enhanced=enhanced, ma_alignment=ma_alignment,
-        support_resistance=support_resistance, liquidity=liquidity, session=session,
-        relative_strength=relative_strength, trend_score=trend_score, news_impact=news_impact,
-        quality=quality, vnindex_multi_tf=vnindex_multi_tf, vnindex_adx=vnindex_adx,
+        price=price,
+        stats=stats,
+        enhanced=enhanced,
+        ma_alignment=ma_alignment,
+        support_resistance=support_resistance,
+        liquidity=liquidity,
+        session=session,
+        relative_strength=relative_strength,
+        trend_score=trend_score,
+        news_impact=news_impact,
+        quality=quality,
+        vnindex_multi_tf=vnindex_multi_tf,
+        vnindex_adx=vnindex_adx,
     )
 
 
 # ─── Gate B: data quality ────────────────────────────────────────────────────
+
 
 def test_du_lieu_bad_luon_no_trade():
     inputs = _make_inputs(_closes_uptrend(15), quality=_bad_quality())
@@ -88,6 +112,7 @@ def test_gia_khong_hop_le_no_trade():
 
 # ─── Uptrend rõ ràng, thị trường risk-on -> nên nghiêng về BUY/WATCH ────────
 
+
 def test_uptrend_manh_risk_on_khong_ra_sell():
     closes = _closes_uptrend(90)
     inputs = _make_inputs(closes, vnindex_bullish=True, relative_strength=8.0)
@@ -102,6 +127,7 @@ def test_uptrend_manh_risk_on_khong_ra_sell():
 
 # ─── Downtrend mạnh -> không được ra BUY ────────────────────────────────────
 
+
 def test_downtrend_manh_khong_bao_gio_buy():
     closes = _closes_downtrend(90)
     inputs = _make_inputs(closes, vnindex_bullish=False, relative_strength=-8.0)
@@ -111,6 +137,7 @@ def test_downtrend_manh_khong_bao_gio_buy():
 
 
 # ─── Giá đi ngang, không tín hiệu -> HOLD hoặc NO_TRADE, không BUY/SELL ─────
+
 
 def test_gia_di_ngang_khong_buy_khong_sell():
     closes = _closes_flat(90)
@@ -122,6 +149,7 @@ def test_gia_di_ngang_khong_buy_khong_sell():
 
 # ─── Gate A: risk-off chặn BUY mới dù setup mã riêng đẹp ────────────────────
 
+
 def test_risk_off_chan_buy_du_ma_rieng_uptrend():
     closes = _closes_uptrend(90)
     inputs = _make_inputs(closes, vnindex_bullish=False, relative_strength=10.0)
@@ -132,9 +160,12 @@ def test_risk_off_chan_buy_du_ma_rieng_uptrend():
 
 # ─── Gate C: phiên phân phối mạnh (giảm sâu + volume lớn) chặn BUY ──────────
 
+
 def test_phien_phan_phoi_chan_buy():
     closes = _closes_uptrend(90)
-    session = feat.SessionMetrics(daily_change_pct=-5.0, close_position_pct=10.0, volume_ratio_pct=200.0)
+    session = feat.SessionMetrics(
+        daily_change_pct=-5.0, close_position_pct=10.0, volume_ratio_pct=200.0
+    )
     inputs = _make_inputs(closes, vnindex_bullish=True, session=session, relative_strength=8.0)
     d = pol.evaluate_policy(inputs)
     assert d.action != "BUY"
@@ -142,6 +173,7 @@ def test_phien_phan_phoi_chan_buy():
 
 
 # ─── Gate D: R:R kém -> hạ xuống WATCH dù setup được công nhận ──────────────
+
 
 def test_rr_ratio_luon_dat_toi_thieu_khi_buy():
     # Chạy nhiều biến thể uptrend, bất kỳ khi nào action=BUY thì rr phải đạt ngưỡng.
@@ -155,24 +187,36 @@ def test_rr_ratio_luon_dat_toi_thieu_khi_buy():
 
 # ─── Thanh khoản quá thấp -> giảm confidence, không được BUY tự tin tuyệt đối ─
 
+
 def test_thanh_khoan_thap_giam_confidence():
     closes = _closes_uptrend(90)
     thin_liquidity = feat.Liquidity(
-        avg_volume_20=5_000, current_volume=4_000, liquidity_ratio_pct=80.0,
-        volume_percentile=20.0, is_thin=True,
+        avg_volume_20=5_000,
+        current_volume=4_000,
+        liquidity_ratio_pct=80.0,
+        volume_percentile=20.0,
+        is_thin=True,
     )
     normal_liquidity = feat.Liquidity(
-        avg_volume_20=500_000, current_volume=500_000, liquidity_ratio_pct=100.0,
-        volume_percentile=50.0, is_thin=False,
+        avg_volume_20=500_000,
+        current_volume=500_000,
+        liquidity_ratio_pct=100.0,
+        volume_percentile=50.0,
+        is_thin=False,
     )
-    inputs_thin = _make_inputs(closes, vnindex_bullish=True, liquidity=thin_liquidity, relative_strength=8.0)
-    inputs_normal = _make_inputs(closes, vnindex_bullish=True, liquidity=normal_liquidity, relative_strength=8.0)
+    inputs_thin = _make_inputs(
+        closes, vnindex_bullish=True, liquidity=thin_liquidity, relative_strength=8.0
+    )
+    inputs_normal = _make_inputs(
+        closes, vnindex_bullish=True, liquidity=normal_liquidity, relative_strength=8.0
+    )
     d_thin = pol.evaluate_policy(inputs_thin)
     d_normal = pol.evaluate_policy(inputs_normal)
     assert d_thin.confidence <= d_normal.confidence
 
 
 # ─── NO_TRADE luôn không có stop/target/rr (không được để lộ số "vô nghĩa") ──
+
 
 def test_no_trade_khong_co_stop_target():
     inputs = _make_inputs(_closes_uptrend(15), quality=_bad_quality())
@@ -184,6 +228,7 @@ def test_no_trade_khong_co_stop_target():
 
 
 # ─── Mọi Decision phải có confidence trong [0,1] và action hợp lệ ───────────
+
 
 def test_moi_scenario_confidence_hop_le():
     scenarios = [
@@ -201,24 +246,71 @@ def test_moi_scenario_confidence_hop_le():
 
 # ─── B2: build_trade_plan ────────────────────────────────────────────────────
 
+
 def test_build_trade_plan_sizing_clamp_trong_khoang():
-    liquidity = feat.Liquidity(avg_volume_20=1_000_000, current_volume=1_000_000, liquidity_ratio_pct=100.0, volume_percentile=50.0, is_thin=False)
-    plan = pol.build_trade_plan(price=50_000, stop=49_000, target_price=52_000, confidence=0.9, key_levels=None, liquidity=liquidity)
+    liquidity = feat.Liquidity(
+        avg_volume_20=1_000_000,
+        current_volume=1_000_000,
+        liquidity_ratio_pct=100.0,
+        volume_percentile=50.0,
+        is_thin=False,
+    )
+    plan = pol.build_trade_plan(
+        price=50_000,
+        stop=49_000,
+        target_price=52_000,
+        confidence=0.9,
+        key_levels=None,
+        liquidity=liquidity,
+    )
     assert plan is not None
     assert pol.MIN_POSITION_PCT <= plan.position_size_pct <= pol.MAX_POSITION_PCT
 
 
 def test_build_trade_plan_thanh_khoan_mong_giam_size():
-    thin = feat.Liquidity(avg_volume_20=50_000, current_volume=50_000, liquidity_ratio_pct=100.0, volume_percentile=50.0, is_thin=True)
-    normal = feat.Liquidity(avg_volume_20=1_000_000, current_volume=1_000_000, liquidity_ratio_pct=100.0, volume_percentile=50.0, is_thin=False)
-    plan_thin = pol.build_trade_plan(price=50_000, stop=49_000, target_price=52_000, confidence=0.9, key_levels=None, liquidity=thin)
-    plan_normal = pol.build_trade_plan(price=50_000, stop=49_000, target_price=52_000, confidence=0.9, key_levels=None, liquidity=normal)
+    thin = feat.Liquidity(
+        avg_volume_20=50_000,
+        current_volume=50_000,
+        liquidity_ratio_pct=100.0,
+        volume_percentile=50.0,
+        is_thin=True,
+    )
+    normal = feat.Liquidity(
+        avg_volume_20=1_000_000,
+        current_volume=1_000_000,
+        liquidity_ratio_pct=100.0,
+        volume_percentile=50.0,
+        is_thin=False,
+    )
+    plan_thin = pol.build_trade_plan(
+        price=50_000,
+        stop=49_000,
+        target_price=52_000,
+        confidence=0.9,
+        key_levels=None,
+        liquidity=thin,
+    )
+    plan_normal = pol.build_trade_plan(
+        price=50_000,
+        stop=49_000,
+        target_price=52_000,
+        confidence=0.9,
+        key_levels=None,
+        liquidity=normal,
+    )
     assert plan_thin is not None and plan_normal is not None
     assert plan_thin.position_size_pct <= plan_normal.position_size_pct
 
 
 def test_build_trade_plan_thieu_resistance_fallback_target_price():
-    plan = pol.build_trade_plan(price=50_000, stop=49_000, target_price=52_000, confidence=0.9, key_levels=feat.KeyLevels([], []), liquidity=None)
+    plan = pol.build_trade_plan(
+        price=50_000,
+        stop=49_000,
+        target_price=52_000,
+        confidence=0.9,
+        key_levels=feat.KeyLevels([], []),
+        liquidity=None,
+    )
     assert plan is not None
     assert plan.target1 == 52_000
     assert plan.target2 is None
@@ -234,18 +326,46 @@ def test_build_trade_plan_co_resistance_dung_key_levels():
             feat.PriceLevel(price=55_000, touches=2, kind="resistance", strength=0.5),
         ],
     )
-    plan = pol.build_trade_plan(price=50_000, stop=49_000, target_price=51_000, confidence=0.9, key_levels=levels, liquidity=None)
+    plan = pol.build_trade_plan(
+        price=50_000,
+        stop=49_000,
+        target_price=51_000,
+        confidence=0.9,
+        key_levels=levels,
+        liquidity=None,
+    )
     assert plan is not None
     assert plan.target1 == 51_000
     assert plan.target2 == 52_000
 
 
 def test_build_trade_plan_stop_khong_hop_le_tra_none():
-    assert pol.build_trade_plan(price=50_000, stop=50_000, target_price=52_000, confidence=0.9, key_levels=None, liquidity=None) is None
-    assert pol.build_trade_plan(price=50_000, stop=None, target_price=52_000, confidence=0.9, key_levels=None, liquidity=None) is None
+    assert (
+        pol.build_trade_plan(
+            price=50_000,
+            stop=50_000,
+            target_price=52_000,
+            confidence=0.9,
+            key_levels=None,
+            liquidity=None,
+        )
+        is None
+    )
+    assert (
+        pol.build_trade_plan(
+            price=50_000,
+            stop=None,
+            target_price=52_000,
+            confidence=0.9,
+            key_levels=None,
+            liquidity=None,
+        )
+        is None
+    )
 
 
 # ─── B1: find_key_levels ─────────────────────────────────────────────────────
+
 
 def test_find_key_levels_khong_du_du_lieu_tra_rong():
     levels = feat.find_key_levels([100.0] * 5, [90.0] * 5, [95.0] * 5, pivot_window=3)
@@ -268,7 +388,9 @@ def test_find_key_levels_clustering_gom_pivot_gan_nhau():
     highs += [95.0, 95.5, 96.0, 100.5, 101.0, 102.0, 102.5, 101.5, 100.5, 99.0]
     highs += [98.0] * 20
     closes = [92.0] * len(highs)
-    levels = feat.find_key_levels(highs, lows, closes, lookback=len(highs), pivot_window=3, cluster_pct=1.5)
+    levels = feat.find_key_levels(
+        highs, lows, closes, lookback=len(highs), pivot_window=3, cluster_pct=1.5
+    )
     assert isinstance(levels, feat.KeyLevels)
     for lv in levels.resistances:
         assert lv.touches >= 1
@@ -284,17 +406,96 @@ def test_sell_target_positive_news_khong_duoc_bearish_hon():
         closes, price, [c * 1.01 for c in closes], [c * 0.99 for c in closes]
     )
     # Không truyền S/R để test trực tiếp fallback reward multiplier.
-    _, target_negative, _, _ = pol._compute_stop_target(price, enhanced, stats, -1.0, "exit", None, "HOSE")
-    _, target_neutral, _, _ = pol._compute_stop_target(price, enhanced, stats, 0.0, "exit", None, "HOSE")
-    _, target_positive, _, _ = pol._compute_stop_target(price, enhanced, stats, 1.0, "exit", None, "HOSE")
+    _, target_negative, _, _ = pol._compute_stop_target(
+        price, enhanced, stats, -1.0, "exit", None, "HOSE"
+    )
+    _, target_neutral, _, _ = pol._compute_stop_target(
+        price, enhanced, stats, 0.0, "exit", None, "HOSE"
+    )
+    _, target_positive, _, _ = pol._compute_stop_target(
+        price, enhanced, stats, 1.0, "exit", None, "HOSE"
+    )
     assert target_negative < target_neutral < target_positive < price
 
 
 def test_trade_plan_entry_price_luon_dung_tick_hose():
     plan = pol.build_trade_plan(
-        price=20_030, stop=19_000, target_price=22_000, confidence=0.9,
-        key_levels=None, liquidity=None, exchange="HOSE",
+        price=20_030,
+        stop=19_000,
+        target_price=22_000,
+        confidence=0.9,
+        key_levels=None,
+        liquidity=None,
+        exchange="HOSE",
     )
     assert plan is not None
     assert plan.entry_low % 50 == 0
     assert plan.entry_high % 50 == 0
+
+
+# ─── PolicyParams config-driven + measured-move cho breakout đỉnh mới ────────
+
+
+def test_policy_params_load_tu_json_va_apply(tmp_path):
+    import json
+
+    path = tmp_path / "p.json"
+    path.write_text(json.dumps({"min_rr_ratio": 2.0, "la_key": 1}), encoding="utf-8")
+    params = pol.load_params(path)
+    assert params.min_rr_ratio == 2.0
+    assert params.confidence_buy_min == pol.PolicyParams().confidence_buy_min
+    original = pol.PARAMS
+    try:
+        pol.apply_params(params)
+        assert pol.MIN_RR_RATIO == 2.0
+    finally:
+        pol.apply_params(original)
+    assert pol.MIN_RR_RATIO == original.min_rr_ratio
+    # File hỏng -> mặc định, không raise.
+    path.write_text("{rác", encoding="utf-8")
+    assert pol.load_params(path) == pol.PolicyParams()
+    assert pol.load_params(tmp_path / "khong-co.json") == pol.PolicyParams()
+
+
+def test_policy_params_json_trong_repo_khop_mac_dinh():
+    """stock/policy_params.json commit trong repo phải là bộ mặc định đang chạy."""
+    assert pol.load_params() == pol.PolicyParams()
+
+
+def test_breakout_dinh_moi_dung_measured_move_thay_vi_watch():
+    # Kênh Donchian 20 phiên trước: 100.000-110.000 (rộng 10.000); phiên cuối
+    # breakout lên 112.000, không có đỉnh lịch sử nào cao hơn -> trước đây
+    # không có kháng cự thật => WATCH. Nay target measured-move 120.000.
+    closes = [100_000.0 + (i % 5) * 2_500.0 for i in range(60)] + [112_000.0]
+    highs = [c + 500 for c in closes[:-1]] + [112_500.0]
+    lows = [c - 500 for c in closes]
+    enhanced = feat.build_enhanced_indicators(closes, closes[-1], highs, lows)
+    assert enhanced.donchian.state == "breakout_up"
+    stats = feat.calc_signal_stats(closes, [600_000.0] * len(closes), closes[-1])
+    sr = feat.calc_support_resistance(highs, lows, closes[-1], 30)
+    # Mặc định TẮT (backtest cho kỳ vọng âm) -> projected như cũ, không mở BUY.
+    _, _, _, basis_off = pol._compute_stop_target(
+        closes[-1], enhanced, stats, 0.0, "buy", sr, "HOSE", None
+    )
+    assert "+projected" in basis_off
+    # Bật qua params -> target measured-move.
+    original = pol.PARAMS
+    try:
+        pol.apply_params(pol.PolicyParams(measured_move_enabled=True))
+        stop, target, rr, basis = pol._compute_stop_target(
+            closes[-1], enhanced, stats, 0.0, "buy", sr, "HOSE", None
+        )
+        assert "+measured_move" in basis
+        assert target is not None and target >= enhanced.donchian.upper + 9_000
+        assert rr is not None and rr > 0
+    finally:
+        pol.apply_params(original)
+
+
+def test_build_trade_plan_size_mult_giam_ty_trong():
+    full = pol.build_trade_plan(100_000.0, 95_000.0, 115_000.0, 0.9, None, None, "HOSE")
+    reduced = pol.build_trade_plan(
+        100_000.0, 95_000.0, 115_000.0, 0.9, None, None, "HOSE", size_mult=0.6
+    )
+    assert full is not None and reduced is not None
+    assert reduced.position_size_pct < full.position_size_pct

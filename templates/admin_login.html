@@ -1,70 +1,107 @@
 <!doctype html>
-<html>
+<html lang="vi">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Đăng nhập Admin</title>
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem('admin.theme');
+      if (saved === 'dark' || saved === 'light') document.documentElement.dataset.theme = saved;
+    } catch (e) {}
+  })();
+</script>
 <style>
   :root{
-    --text:#1c1c1e; --muted:#6e6e73;
-    --glass-bg:rgba(255,255,255,.5); --glass-border:rgba(255,255,255,.55);
-    --glass-shadow:0 8px 30px rgba(31,38,90,.14), 0 1px 1px rgba(31,38,90,.06);
-    --accent-a:#0a84ff; --accent-b:#5e5ce6; --bad-fg:#b3261e; --bad-bg:rgba(255,69,58,.14);
-    --radius-lg:28px; --radius-sm:12px;
+    color-scheme:light;
+    --bg:#f3f4f7; --surface:#ffffff; --surface-2:#eef0f4;
+    --border:rgba(15,23,42,.10); --border-strong:rgba(15,23,42,.20);
+    --text:#0f172a; --text-2:#475569; --muted:#64748b;
+    --accent:#2a78d6; --accent-hover:#1c5cab; --on-accent:#ffffff;
+    --bad-fg:#b3261e; --bad-bg:rgba(208,59,59,.14);
+    --shadow:0 1px 2px rgba(15,23,42,.05),0 18px 40px -20px rgba(15,23,42,.28);
+    --radius:16px; --radius-sm:9px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      color-scheme:dark;
+      --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
+      --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+      --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
+      --accent:#5598e7; --accent-hover:#6da7ec; --on-accent:#0b1220;
+      --bad-fg:#f29088; --bad-bg:rgba(230,103,103,.20);
+      --shadow:0 1px 2px rgba(0,0,0,.45),0 18px 40px -20px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
+    --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
+    --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
+    --accent:#5598e7; --accent-hover:#6da7ec; --on-accent:#0b1220;
+    --bad-fg:#f29088; --bad-bg:rgba(230,103,103,.20);
+    --shadow:0 1px 2px rgba(0,0,0,.45),0 18px 40px -20px rgba(0,0,0,.8);
   }
   *{box-sizing:border-box}
-  html{background:#dfe6f5}
   body{
-    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;
-    color:var(--text); margin:0; min-height:100vh;
-    display:flex; align-items:center; justify-content:center; padding:20px;
-    position:relative; overflow:hidden;
+    margin:0;min-height:100vh;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:14px;line-height:1.5;
+    display:flex;align-items:center;justify-content:center;padding:24px 16px;
   }
-  body::before{
-    content:""; position:fixed; inset:-10%; z-index:-1;
-    background:
-      radial-gradient(38% 34% at 12% 8%, #7bd7ff 0%, transparent 70%),
-      radial-gradient(42% 38% at 88% 12%, #c9a8ff 0%, transparent 70%),
-      radial-gradient(46% 42% at 20% 92%, #ffb4d0 0%, transparent 70%),
-      radial-gradient(50% 46% at 90% 88%, #9fe6c8 0%, transparent 70%),
-      linear-gradient(160deg, #eef2fb, #dfe6f5 60%, #e8e4fb);
-  }
+  button,input{font:inherit;color:inherit}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .card{
-    width:100%; max-width:340px; padding:32px 28px;
-    background:var(--glass-bg); -webkit-backdrop-filter:blur(28px) saturate(180%);
-    backdrop-filter:blur(28px) saturate(180%);
-    border:1px solid var(--glass-border); border-radius:var(--radius-lg);
-    box-shadow:var(--glass-shadow);
+    width:100%;max-width:380px;padding:30px 28px 26px;background:var(--surface);
+    border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);
   }
-  h1{font-size:20px; margin:0 0 4px; letter-spacing:-.02em}
-  p.sub{color:var(--muted); font-size:13px; margin:0 0 22px}
-  label{display:block; font-size:12px; font-weight:600; color:var(--muted); margin:14px 0 6px}
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+  .logo{
+    width:40px;height:40px;border-radius:12px;display:grid;place-items:center;flex:none;
+    background:var(--accent);color:var(--on-accent);font-weight:800;font-size:16px;letter-spacing:-.02em;
+  }
+  h1{font-size:18px;margin:0;letter-spacing:-.015em}
+  p.sub{color:var(--muted);font-size:13px;margin:2px 0 0}
+  label{display:block;font-size:12.5px;font-weight:600;color:var(--text-2);margin:14px 0 6px}
   input{
-    width:100%; padding:10px 12px; border:1px solid rgba(60,60,67,.16);
-    border-radius:var(--radius-sm); font-size:14px; background:rgba(255,255,255,.6);
+    width:100%;padding:10px 12px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);
+    font-size:15px;background:var(--surface);min-height:42px;
   }
-  input:focus{outline:2px solid var(--accent-a); outline-offset:-1px; background:rgba(255,255,255,.9)}
+  input::placeholder{color:var(--muted)}
   button{
-    width:100%; margin-top:22px; padding:11px; border:none; border-radius:999px;
-    font-size:14px; font-weight:600; color:#fff; cursor:pointer;
-    background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
-    box-shadow:0 4px 14px rgba(94,92,230,.35);
+    width:100%;margin-top:22px;padding:11px;border:1px solid var(--accent);border-radius:var(--radius-sm);
+    font-size:14.5px;font-weight:600;color:var(--on-accent);cursor:pointer;background:var(--accent);min-height:44px;
+    transition:background .12s;
   }
-  .err{background:var(--bad-bg); color:var(--bad-fg); font-size:13px; padding:8px 12px; border-radius:var(--radius-sm); margin-top:16px}
+  button:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+  .err{
+    display:flex;align-items:flex-start;gap:8px;background:var(--bad-bg);color:var(--bad-fg);
+    font-size:13px;font-weight:600;padding:10px 12px;border-radius:var(--radius-sm);margin-top:16px;
+  }
+  .foot{margin-top:18px;text-align:center;color:var(--muted);font-size:12px}
+  .foot a{color:var(--muted)}
+  @media (max-width:400px){.card{padding:24px 18px 20px}}
 </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Lan Anh Bot Admin</h1>
-    <p class="sub">Đăng nhập để quản lý provider và xem thống kê sử dụng.</p>
+  <main class="card">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">LA</div>
+      <div>
+        <h1>Lan Anh Bot Admin</h1>
+        <p class="sub">Đăng nhập để quản lý provider và xem thống kê.</p>
+      </div>
+    </div>
     <form method="post" action="/admin/login">
       <label for="username">Tài khoản</label>
-      <input id="username" name="username" autocomplete="username" required autofocus>
+      <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
       <label for="password">Mật khẩu</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required>
       <button type="submit">Đăng nhập</button>
     </form>
     <!--ERROR-->
-  </div>
+    <div class="foot">Phiên đăng nhập hết hạn sau một thời gian; đăng xuất sẽ thu hồi mọi phiên đang mở.</div>
+  </main>
 </body>
 </html>

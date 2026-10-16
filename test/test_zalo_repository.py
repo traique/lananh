@@ -124,3 +124,45 @@ async def test_mark_outbox_failed_binds_limits(recording_pool, monkeypatch):
 def test_outbox_max_attempts_is_clamped(monkeypatch, raw, expected):
     monkeypatch.setenv("ZALO_OUTBOX_MAX_ATTEMPTS", raw)
     assert zalo_repository.outbox_max_attempts() == expected
+
+
+@pytest.mark.asyncio
+async def test_resolve_active_account_id_uu_tien_session(monkeypatch):
+    # Gateway lưu accountId numeric sau khi đăng nhập - job nền phải dùng đúng id
+    # này (trước đây đọc env mặc định "zalo-bot" nên không thấy nhóm/outbox nào).
+    from channels import zalo_session
+
+    async def fake_load_account_id():
+        return "123456789"
+
+    monkeypatch.setattr(zalo_session, "load_account_id", fake_load_account_id)
+    monkeypatch.setenv("ZALO_BOT_ACCOUNT_ID", "zalo-bot")
+
+    assert await zalo_repository.resolve_active_account_id() == "123456789"
+
+
+@pytest.mark.asyncio
+async def test_resolve_active_account_id_fallback_env_roi_groups(monkeypatch):
+    from channels import zalo_session
+
+    async def fake_load_account_id():
+        return ""
+
+    async def fake_default():
+        return "from-groups"
+
+    monkeypatch.setattr(zalo_session, "load_account_id", fake_load_account_id)
+    monkeypatch.setattr(zalo_repository, "resolve_default_account_id", fake_default)
+
+    monkeypatch.setenv("ZALO_BOT_ACCOUNT_ID", "custom-id")
+    assert await zalo_repository.resolve_active_account_id() == "custom-id"
+
+    monkeypatch.setenv("ZALO_BOT_ACCOUNT_ID", "zalo-bot")
+    assert await zalo_repository.resolve_active_account_id() == "from-groups"
+
+    async def fake_default_none():
+        return None
+
+    monkeypatch.setattr(zalo_repository, "resolve_default_account_id", fake_default_none)
+    monkeypatch.delenv("ZALO_BOT_ACCOUNT_ID", raising=False)
+    assert await zalo_repository.resolve_active_account_id() == "zalo-bot"

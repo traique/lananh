@@ -179,6 +179,27 @@ async def fetch_ohlcv(symbol: str, days: int = 90) -> OhlcvSeries:
     return series
 
 
+def _merge_same_day_bars(bars: list[tuple]) -> list[tuple]:
+    """Gộp các bar DNSE rơi cùng 1 ngày giao dịch (giờ VN) thành 1 bar.
+
+    DNSE thỉnh thoảng trả 2 bar cho cùng 1 phiên (vd 27/12/2022: 1 bar 07:00
+    chỉ có vài phút khớp lệnh + 1 bar 09:00 đủ phiên). Trước đây chuỗi bị
+    validate_ohlcv từ chối ("ngày trùng lặp") -> rơi sang vnstock/VCI cho hầu
+    hết mã khi lấy chuỗi dài, backtest không có dữ liệu. Gộp: high=max,
+    low=min, close=bar muộn nhất, volume=tổng. ``bars`` phải đã sort theo ts."""
+    merged: list[tuple] = []
+    last_day = None
+    for ts, high, low, close, vol in bars:
+        day = datetime.fromtimestamp(ts, tz=_VN_TZ).date()
+        if merged and day == last_day:
+            _, p_high, p_low, _, p_vol = merged[-1]
+            merged[-1] = (ts, max(p_high, high), min(p_low, low), close, p_vol + vol)
+            continue
+        merged.append((ts, high, low, close, vol))
+        last_day = day
+    return merged
+
+
 async def _fetch_ohlcv_dnse(symbol: str, days: int = 90) -> OhlcvSeries:
     sym = symbol.strip().upper()
     is_index = is_index_symbol(sym)
@@ -239,6 +260,7 @@ async def _fetch_ohlcv_dnse(symbol: str, days: int = 90) -> OhlcvSeries:
         bars.append((ts, high, low, close, vol))
 
     bars.sort(key=lambda b: b[0])
+    bars = _merge_same_day_bars(bars)
     bars = bars[-days:]
 
     closes = [round(b[3] * scale) for b in bars]
@@ -383,7 +405,7 @@ def _fetch_exchange_map_sync() -> dict[str, str]:
         if symbol_col is None or exchange_col is None:
             return {}
         result = {}
-        for sym, ex in zip(df[symbol_col], df[exchange_col]):
+        for sym, ex in zip(df[symbol_col], df[exchange_col], strict=False):
             symbol = str(sym).strip().upper()
             exchange = str(ex).strip().upper()
             if not _SYMBOL_RE.fullmatch(symbol):

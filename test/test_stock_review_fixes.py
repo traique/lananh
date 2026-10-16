@@ -795,3 +795,14 @@ def test_target_uoc_luong_khong_lot_ra_decision(monkeypatch):
     assert (
         decision.target_price is None and decision.rr_ratio is None and decision.trade_plan is None
     )
+
+
+def test_price_numbers_hieu_gia_viet_tat_nghin_dong():
+    import stock.report_format as rf
+
+    assert rf.price_numbers("mua quanh 25,5 chốt 27.5k") == {25500, 27500}
+    assert rf.price_numbers("target 30k") == {30000}
+    # Không nhầm phần trăm/số nhỏ/khối lượng
+    assert rf.price_numbers("tăng 2,5% và 7.3% - RSI 55,5") == set()
+    assert rf.find_unknown_prices("vùng mua 25,5", "giá hiện tại 25.500") == []
+    assert rf.find_unknown_prices("vùng mua 26,2", "giá hiện tại 25.500") == [26200]

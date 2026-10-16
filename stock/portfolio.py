@@ -198,7 +198,8 @@ async def sell(user_id: int, symbol: str, quantity: float | None = None) -> Hold
                     """INSERT INTO stock_closed_positions (telegram_user_id, symbol)
                     VALUES ($1, $2) ON CONFLICT (telegram_user_id, symbol)
                     DO UPDATE SET closed_at = now()""",
-                    user_id, symbol,
+                    user_id,
+                    symbol,
                 )
                 await conn.execute(
                     "DELETE FROM stock_holdings WHERE telegram_user_id = $1 AND symbol = $2",
@@ -240,16 +241,34 @@ async def delete_holding(user_id: int, symbol: str) -> bool:
 
 async def was_closed(user_id: int, symbol: str) -> bool:
     await ensure_schema()
-    return bool(await (await db.get_pool()).fetchval(
-        "SELECT 1 FROM stock_closed_positions WHERE telegram_user_id = $1 AND symbol = $2",
-        user_id, symbol.strip().upper(),
-    ))
+    return bool(
+        await (await db.get_pool()).fetchval(
+            "SELECT 1 FROM stock_closed_positions WHERE telegram_user_id = $1 AND symbol = $2",
+            user_id,
+            symbol.strip().upper(),
+        )
+    )
 
 
 def _fmt_number(value: float, digits: int = 0) -> str:
     if digits:
         return f"{value:,.{digits}f}".replace(",", "_").replace(".", ",").replace("_", ".")
     return f"{value:,.0f}".replace(",", ".")
+
+
+def _fmt_signed(value: float) -> str:
+    return ("+" if value > 0 else "") + _fmt_number(value)
+
+
+def _day_change_note(quote, quantity: float) -> str:
+    """ " ▲ +1.25% (+250.000đ)" cho thay đổi trong ngày của 1 mã; rỗng nếu thiếu
+    giá đóng cửa phiên trước."""
+    if not quote.prev_close or quote.prev_close <= 0:
+        return ""
+    change = quote.price - quote.prev_close
+    pct = change / quote.prev_close * 100
+    arrow = "▲" if change > 0 else ("▼" if change < 0 else "▬")
+    return f" {arrow} {pct:+.2f}% ({_fmt_signed(change * quantity)}đ)"
 
 
 async def build_report(user_id: int, *, digest: bool = False) -> str:
@@ -262,7 +281,7 @@ async def build_report(user_id: int, *, digest: bool = False) -> str:
         return_exceptions=True,
     )
     priced = []
-    for holding, quote in zip(holdings, quotes):
+    for holding, quote in zip(holdings, quotes, strict=False):
         valid_quote = None if isinstance(quote, BaseException) else quote
         market_value = holding.quantity * valid_quote.price if valid_quote else 0.0
         priced.append((holding, valid_quote, market_value))
@@ -274,6 +293,19 @@ async def build_report(user_id: int, *, digest: bool = False) -> str:
     )
     total_pnl = total_market_value - total_cost if total_market_value else 0.0
     total_pnl_pct = total_pnl / total_cost * 100 if total_cost and total_market_value else 0.0
+    # Lãi/lỗ TRONG NGÀY: (giá - giá đóng cửa phiên trước) x số lượng, chỉ tính mã
+    # có prev_close hợp lệ; % so với giá trị danh mục theo giá phiên trước.
+    day_pnl = sum(
+        (quote.price - quote.prev_close) * holding.quantity
+        for holding, quote, _ in priced
+        if quote is not None and quote.prev_close and quote.prev_close > 0
+    )
+    prev_value = sum(
+        quote.prev_close * holding.quantity
+        for holding, quote, _ in priced
+        if quote is not None and quote.prev_close and quote.prev_close > 0
+    )
+    day_pnl_pct = day_pnl / prev_value * 100 if prev_value else 0.0
 
     title = "📊 *Digest danh mục đang nắm giữ:*" if digest else "📊 *Danh mục đang nắm giữ:*"
     lines = [title]
@@ -290,9 +322,10 @@ async def build_report(user_id: int, *, digest: bool = False) -> str:
         pnl_pct = (quote.price / holding.average_price - 1) * 100
         allocation = market_value / total_market_value * 100 if total_market_value else 0.0
         icon = "🟢" if pnl >= 0 else "🔴"
+        day_note = _day_change_note(quote, holding.quantity)
         lines.append(
             f"\n• *{holding.symbol}* — {quantity} cp | Giá vốn {average}đ"
-            f"\n  Giá {_fmt_number(quote.price)}đ | {icon} {_fmt_number(pnl)}đ "
+            f"\n  Giá {_fmt_number(quote.price)}đ{day_note} | {icon} {_fmt_number(pnl)}đ "
             f"({pnl_pct:+.2f}%) | Tỷ trọng {allocation:.1f}%"
         )
         alerts = []
@@ -318,5 +351,10 @@ async def build_report(user_id: int, *, digest: bool = False) -> str:
                 f"*{_fmt_number(total_pnl)}đ ({total_pnl_pct:+.2f}%)*",
             ]
         )
+        if prev_value:
+            day_icon = "🟢" if day_pnl >= 0 else "🔴"
+            lines.append(
+                f"{day_icon} Hôm nay: *{_fmt_signed(day_pnl)}đ ({day_pnl_pct:+.2f}%)* so với phiên trước"
+            )
     lines.append("\n⚠️ Số liệu chỉ để theo dõi, không phải khuyến nghị mua bán.")
     return "\n".join(lines)

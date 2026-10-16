@@ -1,5 +1,6 @@
 """Unit test cho services/memory_service.py (trí nhớ dài hạn: user_facts +
 rolling summary + highlights - xem docstring đầu services/memory_service.py)."""
+
 import asyncio
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ def _memory_defaults(monkeypatch):
     """Mặc định cho mọi test trong file này: trí nhớ dài hạn đang BẬT, và
     đang ở ĐẦU 1 phiên chat mới (session rỗng) - override riêng ở từng test
     khi cần kiểm tra ngược lại."""
+
     async def fake_get_setting(key):
         return None  # is_enabled() coi None là "bật" (mặc định)
 
@@ -80,7 +82,11 @@ async def test_update_memory_upsert_delete_trim_va_highlight(monkeypatch):
     assert ("delete", "nghe_nghiep") in calls
     assert ("trim", memory_service.MAX_FACTS_PER_USER) in calls
     assert ("summary", "Tom tat moi hop nhat") in calls
-    assert ("highlight", "Ngay 15/8 ban chot loi HPG quanh gia 28", memory_service.MAX_HIGHLIGHTS_PER_USER) in calls
+    assert (
+        "highlight",
+        "Ngay 15/8 ban chot loi HPG quanh gia 28",
+        memory_service.MAX_HIGHLIGHTS_PER_USER,
+    ) in calls
 
 
 @pytest.mark.asyncio
@@ -207,6 +213,7 @@ async def test_build_memory_context_rong_khi_giua_phien_chat(monkeypatch):
     """Đang ở giữa 1 phiên chat (session đã có tin nhắn trước đó) -> KHÔNG
     được chèn lại trí nhớ dài hạn, kể cả khi đã có facts/summary/highlights -
     tránh nhồi lại mỗi tin nhắn làm lệch ý đang hỏi (xem docstring module)."""
+
     async def fake_get_session_messages(uid, k, timeout_sec):
         return [("user", "câu trước đó trong cùng phiên")]
 
@@ -222,6 +229,7 @@ async def test_build_memory_context_rong_khi_giua_phien_chat(monkeypatch):
 
 
 # ─── clear_memory: phải xoá cả highlights, không chỉ facts/summary ─────────
+
 
 @pytest.mark.asyncio
 async def test_clear_memory_xoa_ca_highlights(monkeypatch):
@@ -248,6 +256,7 @@ async def test_clear_memory_xoa_ca_highlights(monkeypatch):
 
 
 # ─── update_memory: khoá theo user_id, 2 lượt cùng user không chồng nhau ───
+
 
 @pytest.mark.asyncio
 async def test_update_memory_khoa_theo_user_khong_chay_chong_nhau(monkeypatch):
@@ -362,3 +371,43 @@ async def test_build_memory_context_rong_khi_user_da_tat(monkeypatch):
     monkeypatch.setattr(db, "get_highlights", fail_if_called)
 
     assert await memory_service.build_memory_context(1) == ""
+
+
+def test_select_relevant_memory_chon_theo_token_trung_va_ngan_sach():
+    facts = [
+        ("ten_con", "Bé Bin 5 tuổi"),
+        ("so_thich", "chạy bộ buổi sáng"),
+        ("cong_ty", "Nắng Decor"),
+    ]
+    highlights = ["Anh đang tập chạy half marathon tháng 11", "Anh thích cà phê muối"]
+    chosen_facts, chosen_hl = memory_service.select_relevant_memory(
+        "lịch chạy bộ tuần này nên thế nào", facts, highlights
+    )
+    assert chosen_facts == [("so_thich", "chạy bộ buổi sáng")]
+    assert chosen_hl == ["Anh đang tập chạy half marathon tháng 11"]
+    # Không trùng gì -> rỗng; câu quá ngắn -> rỗng.
+    assert memory_service.select_relevant_memory("thời tiết Hà Nội", facts, highlights) == ([], [])
+    assert memory_service.select_relevant_memory("ừ", facts, highlights) == ([], [])
+    # Ngân sách ký tự chặn bớt.
+    many = [(f"k{i}", "chạy bộ " * 20) for i in range(10)]
+    chosen, _ = memory_service.select_relevant_memory("chạy bộ", many, [], max_chars=400)
+    assert 0 < len(chosen) < 10
+
+
+async def _async_return(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_build_memory_context_giua_phien_chen_fact_lien_quan(monkeypatch):
+    monkeypatch.setattr(memory_service, "is_enabled", lambda user_id: _async_return(True))
+    monkeypatch.setattr(memory_service, "_is_new_session", lambda user_id: _async_return(False))
+    monkeypatch.setattr(
+        db,
+        "get_facts",
+        lambda uid: _async_return([("mon_an_thich", "phở bò"), ("xe", "Vinfast VF8")]),
+    )
+    monkeypatch.setattr(db, "get_highlights", lambda uid, limit: _async_return(["Anh ghét ăn cay"]))
+    ctx = await memory_service.build_memory_context(1, "tối nay ăn phở không anh")
+    assert "mon_an_thich=phở bò" in ctx and "Vinfast" not in ctx and "LIÊN QUAN" in ctx
+    assert await memory_service.build_memory_context(1, "") == ""

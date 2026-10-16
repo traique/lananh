@@ -25,14 +25,6 @@ async def cleanup_expired(retention: timedelta = RETENTION) -> None:
     """Delete idempotency/cache rows older than the retention window."""
     await ensure_schema()
     pool = await db.get_pool()
-    await pool.execute(
-        "DELETE FROM telegram_processed_updates WHERE claimed_at < now() - $1::interval",
-        retention,
-    )
-    await pool.execute(
-        "DELETE FROM zoom_processed_events WHERE claimed_at < now() - $1::interval",
-        retention,
-    )
     # response_json may contain large base64 images, so this table is especially
     # important to prune on schedule.
     await pool.execute(
@@ -77,21 +69,6 @@ async def stop_cleanup_task() -> None:
         await task
     except asyncio.CancelledError:
         pass
-
-
-@db.with_reconnect(idempotent=False)
-async def claim_telegram_update(update_id: int) -> bool:
-    """Atomically claim a Telegram update across restarts and instances."""
-    await ensure_schema()
-    result = await (await db.get_pool()).execute(
-        """
-        INSERT INTO telegram_processed_updates (update_id)
-        VALUES ($1)
-        ON CONFLICT (update_id) DO NOTHING
-        """,
-        update_id,
-    )
-    return result == "INSERT 0 1"
 
 
 class DueReminder(NamedTuple):
@@ -156,21 +133,6 @@ async def release_reminder_claim(reminder_id: int) -> None:
         "UPDATE reminders SET claimed_at = NULL WHERE id = $1 AND sent = false",
         reminder_id,
     )
-
-
-@db.with_reconnect(idempotent=False)
-async def claim_zoom_event(event_id: str) -> bool:
-    """Atomically claim a Zoom webhook event (Zoom retries on non-200/slow response)."""
-    await ensure_schema()
-    result = await (await db.get_pool()).execute(
-        """
-        INSERT INTO zoom_processed_events (event_id)
-        VALUES ($1)
-        ON CONFLICT (event_id) DO NOTHING
-        """,
-        event_id,
-    )
-    return result == "INSERT 0 1"
 
 
 @db.with_reconnect

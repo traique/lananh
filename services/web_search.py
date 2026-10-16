@@ -19,6 +19,7 @@ tier (không thêm embedding model, không thêm HTTP dependency mới):
    ``should_deep_read``/``_deep_read_top_results`` - vì snippet Tavily
    thường quá ngắn để có số liệu cụ thể.
 """
+
 import asyncio
 import dataclasses
 import logging
@@ -57,10 +58,16 @@ def looks_like_search_question(text: str) -> bool:
     lower = (text or "").lower()
     if _CLOCK_QUESTION_RE.search(lower):
         return False
-    if len(lower.split()) <= 3 and "?" not in lower:
+    words = len(lower.split())
+    if words <= 3 and "?" not in lower:
         return False
+    # Dấu "?" một mình chỉ đủ khi câu đủ dài để là câu hỏi thật sự ("ok?",
+    # "anh khoẻ không?" không cần tra web).
+    if "?" in lower and words >= 5 and not _SMALL_TALK_RE.search(lower):
+        return True
+    if _WORD_MARKER_RE.search(lower):
+        return True
     markers = (
-        "?",
         "bao nhiêu",
         "bao giờ",
         "thế nào",
@@ -70,22 +77,30 @@ def looks_like_search_question(text: str) -> bool:
         "khi nào",
         "vì sao",
         "tại sao",
-        "giá",
         "tỷ giá",
         "giá vàng",
         "bitcoin",
         "crypto",
-        "tin",
         "mới nhất",
         "hiện tại",
-        "hôm nay",
         "tuần này",
-        "check",
         "tra giúp",
         "tìm giúp",
         "search",
     )
     return any(marker in lower for marker in markers)
+
+
+# Marker phải khớp theo TỪ: "tin" trần khớp cả "tin nhắn"/"tin tưởng", "giá"
+# trần khớp "giá như"/"đánh giá", "check" khớp "checkin" - trước đây 1 câu tâm
+# sự có chữ "tin" là tốn tới 6 lượt LLM + 5 HTTP cho tra web vô ích.
+_WORD_MARKER_RE = re.compile(
+    r"(?<![\w])(tin tức|tin mới|điểm tin|giá (?!như\b|mà\b|trị\b|đỡ\b)(?:của |cái |con |chiếc |1 |một )?[\w]+|"
+    r"check (?:giá|tin|giúp|lại|xem)|hôm nay (?:có|giá|tin|thị trường|thời tiết))(?![\w])"
+)
+_SMALL_TALK_RE = re.compile(
+    r"^(?:(?:anh|em|chị|bạn|ông|bà|mình|cậu|tớ)\s)?(?:khoẻ|khỏe|ngủ|ăn|rảnh|bận|nhớ|yêu|ổn|vui|buồn|mệt)"
+)
 
 
 # Subset các marker của looks_like_search_question mà kết quả THƯỜNG cần số
@@ -188,9 +203,7 @@ async def _rewrite_and_expand_query(query: str, history_text: str) -> list[str]:
             _QUERY_REWRITE_PROMPT.format(history=history_text, query=query)
         )
         lines = [
-            line.strip(" -•\t\"")
-            for line in (response.text or "").splitlines()
-            if line.strip()
+            line.strip(' -•\t"') for line in (response.text or "").splitlines() if line.strip()
         ]
         # dict.fromkeys giữ thứ tự xuất hiện, khử trùng lặp
         queries = [q for q in dict.fromkeys(lines) if q][:3]
@@ -239,9 +252,9 @@ async def _deep_read_top_results(
     - chỉ lấy top theo Tavily score sẵn có để đỡ tốn thêm 1 lượt gọi LLM."""
     from services import web_reader
 
-    picks = sorted(
-        (r for r in results if r.url), key=lambda r: (r.score or 0), reverse=True
-    )[:_DEEP_READ_MAX_PAGES]
+    picks = sorted((r for r in results if r.url), key=lambda r: r.score or 0, reverse=True)[
+        :_DEEP_READ_MAX_PAGES
+    ]
 
     sections: list[str] = []
     for item in picks:
@@ -316,9 +329,7 @@ async def _fetch_tavily(
     ok_responses = [r for r in responses if isinstance(r, tavily_client.TavilySearchResponse)]
     if not ok_responses:
         first_error = next((r for r in responses if isinstance(r, BaseException)), None)
-        raise tavily_client.TavilyError(
-            f"Tất cả {len(queries)} query đều lỗi: {first_error}"
-        )
+        raise tavily_client.TavilyError(f"Tất cả {len(queries)} query đều lỗi: {first_error}")
     return _merge_tavily_responses(query, ok_responses)
 
 

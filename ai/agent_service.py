@@ -416,7 +416,7 @@ async def _run_one_provider(idx: int, question: str) -> str:
 
     for step in range(MAX_AGENT_STEPS):
         response = await bounded(
-            lambda: with_timeout(
+            lambda step=step: with_timeout(
                 client.aio.models.generate_content(
                     model=model, contents=contents, config=gen_config
                 ),

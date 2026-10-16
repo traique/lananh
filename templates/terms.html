@@ -4,13 +4,74 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Terms of Service / Điều khoản dịch vụ</title>
+  <meta name="color-scheme" content="light dark">
   <style>
-    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:860px;margin:0 auto;padding:32px 20px;line-height:1.65;color:#1f2937;background:#fff}
-    h1,h2{color:#111827} h1{font-size:2rem;margin-bottom:.25rem} h2{margin-top:2rem;font-size:1.25rem}
-    .muted{color:#6b7280}.box{background:#f3f4f6;border-radius:12px;padding:16px 18px}.lang{border-top:1px solid #e5e7eb;margin-top:32px;padding-top:24px} a{color:#2563eb}
+    :root{
+      color-scheme:light;
+      --bg:#f3f4f7; --surface:#ffffff; --surface-2:#eef0f4;
+      --border:rgba(15,23,42,.10);
+      --text:#0f172a; --text-2:#475569; --muted:#64748b;
+      --accent:#2a78d6; --accent-hover:#1c5cab;
+      --shadow:0 1px 2px rgba(15,23,42,.05),0 10px 28px -16px rgba(15,23,42,.22);
+      --radius:14px; --radius-sm:8px;
+    }
+    @media (prefers-color-scheme:dark){
+      :root:not([data-theme="light"]){
+        color-scheme:dark;
+        --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
+        --border:rgba(255,255,255,.09);
+        --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
+        --accent:#5598e7; --accent-hover:#6da7ec;
+        --shadow:0 1px 2px rgba(0,0,0,.45),0 10px 28px -16px rgba(0,0,0,.7);
+      }
+    }
+    :root[data-theme="dark"]{
+      color-scheme:dark;
+      --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
+      --border:rgba(255,255,255,.09);
+      --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
+      --accent:#5598e7; --accent-hover:#6da7ec;
+      --shadow:0 1px 2px rgba(0,0,0,.45),0 10px 28px -16px rgba(0,0,0,.7);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;background:var(--bg);color:var(--text);
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+      font-size:15px;line-height:1.65;padding:28px 16px 64px;
+    }
+    .page{max-width:820px;margin:0 auto}
+    .top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+    .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text);font-weight:700}
+    .logo{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--accent);color:#fff;font-weight:800;font-size:13px}
+    nav.links{display:flex;gap:4px;flex-wrap:wrap}
+    nav.links a{color:var(--text-2);text-decoration:none;font-size:13px;font-weight:600;padding:6px 10px;border-radius:999px}
+    nav.links a:hover{background:var(--surface-2);color:var(--text)}
+    nav.links a[aria-current]{background:var(--surface);border:1px solid var(--border);color:var(--text)}
+    article{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:28px 30px}
+    h1{font-size:1.65rem;margin:0 0 .25rem;letter-spacing:-.02em;line-height:1.25}
+    h2{margin-top:1.8rem;font-size:1.1rem;letter-spacing:-.01em}
+    p{margin:.6rem 0}
+    .muted{color:var(--muted);font-size:13px}
+    .box{background:var(--surface-2);border-radius:var(--radius-sm);padding:12px 16px;margin:14px 0 4px;font-size:14px;color:var(--text-2)}
+    .lang{border-top:1px solid var(--border);margin-top:36px;padding-top:28px}
+    a{color:var(--accent)} a:hover{color:var(--accent-hover)}
+    code{background:var(--surface-2);padding:.1rem .35rem;border-radius:4px;font-size:.9em}
+    ol,ul{padding-left:1.3rem} li{margin:.35rem 0}
+    footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12.5px}
+    @media (max-width:640px){article{padding:20px 16px} h1{font-size:1.4rem}}
   </style>
 </head>
 <body>
+  <div class="page">
+    <div class="top">
+      <a class="brand" href="/privacy"><span class="logo" aria-hidden="true">LA</span>Lan Anh Bot</a>
+      <nav class="links" aria-label="Trang pháp lý">
+        <a href="/privacy">Quyền riêng tư</a>
+        <a href="/terms" aria-current="page">Điều khoản</a>
+        <a href="/data-deletion">Xóa dữ liệu</a>
+      </nav>
+    </div>
+    <article>
   <h1>Điều khoản dịch vụ</h1>
   <p class="muted">Cập nhật lần cuối: 22/09/2026</p>
   <div class="box">Ứng dụng này là công cụ quản lý nội dung Facebook Page dành cho chủ ứng dụng và các tài khoản được ủy quyền.</div>
@@ -44,6 +105,9 @@
     <p>Do not share access tokens, passwords, sessions, or other credentials with unauthorized parties. Access may be revoked when necessary.</p>
     <h2>Privacy and deletion</h2>
     <p>Data handling is described in the <a href="/privacy">Privacy Policy</a>. Data deletion instructions are available at <a href="/data-deletion">/data-deletion</a>.</p>
+  </div>
+    </article>
+    <footer>Lan Anh Bot · Trang này không thu thập dữ liệu người xem.</footer>
   </div>
 </body>
 </html>

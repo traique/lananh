@@ -195,7 +195,7 @@ class Dataset:
 
 def avg_traded_value(closes: list[float], volumes: list[float], bars: int = 60) -> float:
     """Giá trị giao dịch bình quân (VND/phiên) của `bars` phiên gần nhất."""
-    pairs = list(zip(closes, volumes))[-bars:]
+    pairs = list(zip(closes, volumes, strict=False))[-bars:]
     if not pairs:
         return 0.0
     return sum(c * v for c, v in pairs) / len(pairs)
@@ -304,7 +304,7 @@ def single_split_eval(
 
     # Top-decile theo prob: nếu model có thông tin thật thì mean fwd return
     # của decile này phải rõ ràng hơn baseline (mua ngẫu nhiên/toàn bộ).
-    ranked = sorted(zip(prob, fwd_test), key=lambda t: -t[0])
+    ranked = sorted(zip(prob, fwd_test, strict=False), key=lambda t: -t[0])
     top_n = max(1, len(ranked) // 10)
     top_mean = sum(f for _, f in ranked[:top_n]) / top_n * 100
     baseline_mean = sum(fwd_test) / len(fwd_test) * 100

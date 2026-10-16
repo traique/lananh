@@ -41,7 +41,7 @@ async def _run_due_digest() -> None:
     if now < end:
         return
     start = end - timedelta(days=1)
-    account_id = os.getenv("ZALO_BOT_ACCOUNT_ID", "zalo-bot").strip() or "zalo-bot"
+    account_id = await zalo_repository.resolve_active_account_id()
     recipient_id = await _controller_id()
     if not recipient_id:
         logger.info("Chưa có Zalo controller; bỏ qua lượt tổng kết này.")

@@ -4,6 +4,9 @@ Dữ liệu tổng hợp tính tay được: mã giá 50.000, ngày GDKHQ cổ t
 (1.000 VND/cp) -> gap giảm 2% (dưới ngưỡng suspect của price_adjust nên phải
 test riêng logic khớp), và các case gap KHÔNG khớp cổ tức phải bị bỏ qua.
 """
+
+import pytest
+
 import sys
 from pathlib import Path
 
@@ -21,9 +24,9 @@ def _dates(n, start=(2025, 3, 1)):
 
 
 def test_normalize_dps_cac_quy_uoc():
-    assert ca.normalize_dps(0.10) == 1000.0      # 10% mệnh giá dạng thập phân
-    assert ca.normalize_dps(10) == 1000.0        # 10% mệnh giá dạng phần trăm
-    assert ca.normalize_dps(1500) == 1500.0      # VND/cp thật
+    assert ca.normalize_dps(0.10) == 1000.0  # 10% mệnh giá dạng thập phân
+    assert ca.normalize_dps(10) == 1000.0  # 10% mệnh giá dạng phần trăm
+    assert ca.normalize_dps(1500) == 1500.0  # VND/cp thật
     assert ca.normalize_dps(0) is None
     assert ca.normalize_dps(None) is None
     assert ca.normalize_dps(-5) is None
@@ -70,7 +73,9 @@ def test_adjust_sai_ngay_khong_dieu_chinh():
     dates = _dates(len(closes))
     # ex_date cách xa mọi phiên trong chuỗi -> không tìm thấy index ±1 ngày.
     events = [ca.DividendEvent(ex_date="2026-01-01", cash_value=1000)]
-    outcome = ca.apply_dividend_adjustment(closes, [c + 500 for c in closes], [c - 500 for c in closes], dates, events)
+    outcome = ca.apply_dividend_adjustment(
+        closes, [c + 500 for c in closes], [c - 500 for c in closes], dates, events
+    )
     assert outcome.events_applied == 0
 
 
@@ -78,5 +83,55 @@ def test_adjust_gap_tang_khong_dung_lam_cotuc():
     closes = [50_000.0] * 20 + [56_000.0] + [56_000.0] * 5
     dates = _dates(len(closes))
     events = [ca.DividendEvent(ex_date=dates[20], cash_value=1000)]
-    outcome = ca.apply_dividend_adjustment(closes, [c + 500 for c in closes], [c - 500 for c in closes], dates, events)
+    outcome = ca.apply_dividend_adjustment(
+        closes, [c + 500 for c in closes], [c - 500 for c in closes], dates, events
+    )
+    assert outcome.events_applied == 0
+
+
+def test_find_ex_index_chap_nhan_gdkhq_roi_vao_ngay_khong_giao_dich():
+    # Chuỗi chỉ có phiên T2-T6: 2025-03-07 (T6) rồi 2025-03-10 (T2).
+    dates = ["2025-03-05", "2025-03-06", "2025-03-07", "2025-03-10", "2025-03-11"]
+    assert ca._find_ex_index(dates, "2025-03-10") == 3  # khớp đúng ngày
+    assert ca._find_ex_index(dates, "2025-03-08") == 3  # thứ Bảy -> phiên kế tiếp
+    assert ca._find_ex_index(dates, "2025-03-09") == 3  # Chủ nhật -> phiên kế tiếp
+    assert ca._find_ex_index(dates, "2025-03-12") == 4  # nguồn ghi ngày chốt quyền (T+1)
+    assert ca._find_ex_index(dates, "2025-03-20") is None  # quá xa
+    assert ca._find_ex_index(dates, "2025-02-20") is None
+
+
+@pytest.mark.asyncio
+async def test_adjust_with_corporate_actions_fetch_ca_khi_khong_co_gap_lon(monkeypatch):
+    # Cổ tức 1.000 VND trên giá 50.000 (2%) không tạo gap >= 12% nhưng vẫn
+    # phải được điều chỉnh - đây là trường hợp phổ biến nhất ngoài đời.
+    closes = [50_000.0] * 70 + [49_000.0] * 10
+    dates = _dates(len(closes))
+    calls = []
+
+    async def fake_fetch(symbol):
+        calls.append(symbol)
+        return [ca.DividendEvent(ex_date=dates[70], cash_value=1000)], []
+
+    monkeypatch.setattr(ca, "fetch_corporate_events", fake_fetch)
+    ca._events_cache.clear()
+    outcome = await ca.adjust_with_corporate_actions(
+        "fpt", closes, [c + 500 for c in closes], [c - 500 for c in closes], dates
+    )
+    assert outcome.events_applied == 1
+    assert outcome.closes[69] == 49_000.0
+    # Lượt 2 dùng cache, không gọi nguồn lại.
+    await ca.adjust_with_corporate_actions(
+        "FPT", closes, [c + 500 for c in closes], [c - 500 for c in closes], dates
+    )
+    assert calls == ["FPT"]
+
+
+@pytest.mark.asyncio
+async def test_adjust_with_corporate_actions_bo_qua_chuoi_ngan(monkeypatch):
+    async def fake_fetch(symbol):
+        raise AssertionError("không được fetch cho chuỗi ngắn")
+
+    monkeypatch.setattr(ca, "fetch_corporate_events", fake_fetch)
+    closes = [10_000.0] * 20
+    outcome = await ca.adjust_with_corporate_actions("ABC", closes, closes, closes, _dates(20))
     assert outcome.events_applied == 0
