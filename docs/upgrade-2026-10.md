@@ -10,7 +10,7 @@ check/format/test 45/45; `pip-audit` sạch sau khi nâng `fastapi`/`lxml`;
 1. **Migration 015** tự chạy ở lần dùng DB đầu tiên: thêm cột `outcome`,
    `latency_ms`, `stage`, `prompt_chars` vào `provider_calls`; đổi `id` của
    `provider_calls`/`user_calls` sang BIGINT; xoá 3 bảng không còn dùng
-   (`affiliate_short_links`, `telegram_processed_updates`, `zoom_processed_events`).
+   (`affiliate_short_links`; 2 bảng claim cũ chỉ dọn dòng, giữ bảng để 008 chạy lại được).
    Không cần thao tác tay.
 2. **Dockerfile mới** (multi-stage): gateway build bằng Node 22 (khớp CI), runtime
    copy binary `node` + `dist/` + `node_modules`; hai tiến trình chạy dưới user

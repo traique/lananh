@@ -14,8 +14,10 @@ ALTER SEQUENCE provider_calls_id_seq AS BIGINT;
 ALTER TABLE user_calls ALTER COLUMN id TYPE BIGINT;
 ALTER SEQUENCE user_calls_id_seq AS BIGINT;
 
--- Bảng không còn code nào dùng: short-link affiliate (endpoint /r/{token} đã gỡ),
--- claim theo update/event (webhook_inbox + zalo_direct_responses thay thế).
+-- Bảng không còn code nào dùng: short-link affiliate (endpoint /r/{token} đã gỡ).
 DROP TABLE IF EXISTS affiliate_short_links;
-DROP TABLE IF EXISTS telegram_processed_updates;
-DROP TABLE IF EXISTS zoom_processed_events;
+-- Hai bảng claim theo update/event cũng không còn được ghi (webhook_inbox thay
+-- thế từ 008, dữ liệu dedup đã được 008 chép sang). CHỈ dọn dòng, KHÔNG drop:
+-- 008 đọc 2 bảng này và phải chạy lại được (test idempotent) sau khi 015 đã áp.
+DELETE FROM telegram_processed_updates;
+DELETE FROM zoom_processed_events;
