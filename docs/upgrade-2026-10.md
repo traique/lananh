@@ -80,7 +80,28 @@ File stats trước đây **không tồn tại** (dòng "thống kê setup" tron
 rỗng). Lần này chạy offline bằng DNSE trực tiếp trên 183 mã trong
 `stock/sector.py` (5 năm, concurrency 3, không cần vnstock):
 
-BACKTEST_RESULTS_PLACEHOLDER
+| Lần chạy | Mẫu | Lệnh | Breakout | Pullback |
+|---|---|---|---|---|
+| Baseline (code cũ sau khi sửa gộp bar DNSE) | 30% OOS | 39 | n=18, thắng 11,1%, avg R −0,84 | n=21, thắng 38,1%, avg R −0,07 |
+| Measured-move BẬT | 30% OOS | 284 | n=271, thắng 39,1%, avg R −0,08 | n=13, thắng 30,8%, avg R −0,23 |
+| Measured-move BẬT | toàn chuỗi | 903 | n=875, thắng 36,3%, avg R −0,15 | n=28, thắng 35,7%, avg R −0,25 |
+| **Chính sách ship** (measured-move TẮT) | toàn chuỗi | 110 | n=68, thắng 17,6% (CI95 10-28%), avg R −0,73 | n=42, thắng 38,1% (CI95 25-53%), avg R −0,23 |
+
+Kết luận thẳng thắn:
+
+- Cả hai setup đều có **kỳ vọng âm sau phí/thuế/slippage** trên 5 năm vừa qua
+  (74/110 lệnh chạm stop). Dòng "Backtest lịch sử cho setup..." trong prompt giờ có
+  số thật (n ≥ 30) để Manager/LLM khiêm tốn, KHÔNG phải bằng chứng policy có lãi.
+- Measured-move cải thiện breakout (avg R −0,84 → −0,15) nhưng vẫn âm và nhân số
+  lệnh BUY lên ~13 lần, nên để TẮT mặc định; bật lại chỉ sau khi hiệu chuẩn tham số
+  (`stock/policy_params.json` + `apply_params()` cho grid offline).
+- Trước đó file stats không tồn tại và OOS 30% chỉ cho 39 lệnh (< 30/setup) nên
+  dòng thống kê chưa từng hiển thị. Hạn chế: universe hiện tại (survivorship),
+  target khớp đúng giá target khi high chạm (lạc quan), không mô phỏng không
+  khớp được ở giá sàn.
+- Việc nên làm tiếp (offline, không phải Render): grid tham số `confidence_buy_min`,
+  `min_rr_ratio`, `atr_stop_mult`, bộ lọc regime; bootstrap CI cho expectancy;
+  so sánh với "mua và giữ VNINDEX" cùng kỳ.
 
 Cách chạy lại (máy có mạng tới DNSE, KHÔNG phải Render):
 
