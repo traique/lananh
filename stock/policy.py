@@ -91,7 +91,8 @@ def load_params(path: Path | None = None) -> PolicyParams:
     if not isinstance(raw, dict):
         return PolicyParams()
     known = {f.name for f in fields(PolicyParams)}
-    unknown = sorted(set(raw) - known)
+    # Key bắt đầu bằng "_" (vd "_doc") là chú thích trong file, không phải tham số.
+    unknown = sorted(k for k in set(raw) - known if not str(k).startswith("_"))
     if unknown:
         logger.warning("policy_params.json có key không dùng: %s", ", ".join(unknown))
     kwargs = {k: v for k, v in raw.items() if k in known and not k.startswith("_")}
