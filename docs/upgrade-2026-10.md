@@ -13,9 +13,11 @@ check/format/test 45/45; `pip-audit` sạch sau khi nâng `fastapi`/`lxml`;
    (`affiliate_short_links`; 2 bảng claim cũ chỉ dọn dòng, giữ bảng để 008 chạy lại được).
    Không cần thao tác tay.
 2. **Dockerfile mới** (multi-stage): gateway build bằng Node 22 (khớp CI), runtime
-   copy binary `node` + `dist/` + `node_modules`; hai tiến trình chạy dưới user
-   `app` (không root). `supervisord` chờ 40s khi tắt (trước 10s, SIGKILL giữa lúc
-   drain webhook). Render build lại tự động.
+   copy binary `node` + `dist/` + `node_modules`. `supervisord` chờ 40s khi tắt
+   (trước 10s, SIGKILL giữa lúc drain webhook). Render build lại tự động. Vẫn chạy
+   root: thử `user=app` trong supervisord làm deploy `a0c1aa2` thất bại - Render
+   không đổi `HOME` khi supervisord đổi user (asyncpg tìm `~/.postgresql/root.crt`
+   trong `/root` → PermissionError) và không cho root kill tiến trình khác uid.
 3. **Biến môi trường mới đều có mặc định** (xem bảng README "Cấu hình"):
    `MEMORY_UPDATE_TIMEOUT_SEC`, `RAG_CLEAN_TOTAL_TIMEOUT_SEC`,
    `PROMPT_BUDGET_CHARS` + 3 trần khối, `DATABASE_SSL_MODE`/`DATABASE_SSL_CA`,

@@ -778,8 +778,9 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
   `DATABASE_URL`, token Facebook, `ADMIN_PASS`...), không chỉ 6 giá trị như trước.
 - `DATABASE_SSL_MODE=verify-full` + `DATABASE_SSL_CA` để xác thực chứng chỉ
   Supabase (mặc định `require` chỉ mã hoá, không xác thực).
-- Container chạy 2 tiến trình dưới user `app` (không root); `/healthz` kiểm tra
-  DB thật (`SELECT 1`), `/` vẫn nhẹ cho Render health check.
+- `/healthz` kiểm tra DB thật (`SELECT 1`), `/` vẫn nhẹ cho Render health check.
+  Container vẫn chạy root: Render không hỗ trợ supervisord đổi user (xem ghi chú
+  trong `supervisord.conf`).
 - Chỉ chạy một Zalo listener cho tài khoản bot.
 - Rotate session ngay nếu nghi ngờ bị lộ.
 
