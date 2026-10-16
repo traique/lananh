@@ -494,7 +494,7 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/help` | Hướng dẫn đầy đủ (Telegram: `handlers/commands.py`; Zalo/Zoom: `services/channel_command_service.py`) |
 | `/zalo` | Đăng nhập hoặc xem trạng thái Zalo |
 | `/zalologout` | Xóa Zalo session |
-| `/danhmuc` | Xem danh mục, lãi/lỗ, cảnh báo stop/target (riêng từng người dùng) |
+| `/danhmuc` | Xem danh mục: giá, % thay đổi trong ngày từng mã, lãi/lỗ so với giá vốn, tỷ trọng, cảnh báo stop/target, và lãi/lỗ TRONG NGÀY của cả danh mục (riêng từng người dùng) |
 | `/themcp <MÃ> <SL> <GIÁ_VỐN> [STOP] [TARGET]` | Thêm giao dịch mua (giá < 1.000 hiểu là nghìn đồng); `/capnhatcp` ghi đè vị thế |
 | `/bancp <MÃ> [SL\|hết]` | Bán bớt hoặc bán hết |
 | `/xoacp <MÃ>` | Xoá mã khỏi danh mục |
