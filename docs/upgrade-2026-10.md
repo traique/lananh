@@ -27,9 +27,10 @@ check/format/test 45/45; `pip-audit` sạch sau khi nâng `fastapi`/`lxml`;
 5. Nên đặt `DATABASE_SSL_MODE=verify-full` kèm `DATABASE_SSL_CA` trỏ tới file CA
    Supabase (tải ở Project Settings → Database) khi có thời gian kiểm thử; mặc
    định vẫn là `require` như cũ nên không bắt buộc.
-6. Nâng dependency: `fastapi 0.110 → 0.143.2` (starlette 1.8, vá nhiều CVE),
-   `lxml 6.0.2 → 6.1.3`, `cryptography 42.0.0 → 42.0.8`, `python-multipart
-   0.0.9 → 0.0.20`. Toàn bộ test web/admin pass trên bộ mới.
+6. Nâng dependency theo `pip-audit` (DB advisory mới nhất trên CI): `fastapi 0.110
+   → 0.143.2` (starlette 1.8), `lxml 6.0.2 → 6.1.3`, `cryptography 42.0.0 →
+   50.0.2`, `python-multipart 0.0.9 → 0.0.32`, `pillow 12.1.1 → 12.3.0`, `jinja2
+   3.1.4 → 3.1.6`, `python-dotenv 1.0.1 → 1.2.4`. Toàn bộ test pass trên bộ mới.
 
 ## Lỗi đã sửa (đã xác nhận trong code trước khi sửa)
 

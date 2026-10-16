@@ -1,9 +1,9 @@
 python-telegram-bot==22.4
 google-genai==2.11.0
 httpx==0.28.1
-python-dotenv==1.0.1
+python-dotenv==1.2.4
 fastapi==0.143.2
-python-multipart==0.0.20
+python-multipart==0.0.32
 uvicorn[standard]==0.29.0
 asyncpg==0.29.0
 tzdata==2024.1
@@ -16,9 +16,9 @@ tzdata==2024.1
 vnstock==4.0.9
 vnai==2.6.2
 pandas==2.2.3
-cryptography==42.0.8
-pillow==12.1.1
-jinja2==3.1.4
+cryptography==50.0.2
+pillow==12.3.0
+jinja2==3.1.6
 pyyaml==6.0.2
 feedparser==6.0.11
 beautifulsoup4==4.14.3
