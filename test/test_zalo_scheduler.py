@@ -58,7 +58,7 @@ async def test_digest_saves_summary_and_outbox_atomically(monkeypatch):
 
     async def fake_list_groups(account_id):
         assert account_id == "zalo-bot"
-        return [("group-1", "nhom-1")]
+        return [("group-1", "nhom-1", True), ("group-2", "nhom-2", False)]
 
     async def fake_summary_exists(*args):
         return False
@@ -82,7 +82,7 @@ async def test_digest_saves_summary_and_outbox_atomically(monkeypatch):
 
     monkeypatch.setattr(zalo_scheduler, "datetime", FakeDateTime)
     monkeypatch.setattr(zalo_scheduler, "_controller_id", fake_controller_id)
-    monkeypatch.setattr(zalo_scheduler.zalo_repository, "list_groups", fake_list_groups)
+    monkeypatch.setattr(zalo_scheduler.zalo_repository, "list_groups_with_daily", fake_list_groups)
     monkeypatch.setattr(zalo_scheduler.zalo_repository, "summary_exists", fake_summary_exists)
     monkeypatch.setattr(zalo_scheduler, "summarize_group", fake_summarize)
     monkeypatch.setattr(

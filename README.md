@@ -96,7 +96,8 @@ Repository được thiết kế cho **một chủ sở hữu**:
 - Endpoint nội bộ `/internal/zalo/*` chỉ nhận request từ loopback
   (`ZALO_BRIDGE_ALLOWED_HOSTS`, mặc định `127.0.0.1,::1`) kèm `ZALO_BRIDGE_SECRET`;
   request đi qua proxy (có `X-Forwarded-For`) bị từ chối.
-- Tổng kết hằng ngày theo `Asia/Ho_Chi_Minh`.
+- Tổng kết hằng ngày theo `Asia/Ho_Chi_Minh`; bật/tắt từng nhóm bằng
+  `/tongket on|off [nhóm]` (mặc định bật, tắt vẫn lưu tin để `/tongket` thủ công).
 
 ### Phân tích cổ phiếu Việt Nam
 
@@ -311,7 +312,8 @@ nhân ở trên, nên không bị ảnh hưởng bởi việc cách ly bộ nh�
 /themnhom <group_id> <alias>
 /nhom
 /xoanhom <group_id-or-alias>
-/tongket <alias|all> <24h|7d|homnay|homqua>
+/tongket <alias> <24h|7d|homnay|homqua>
+/tongket on|off [alias] — bật/tắt tổng kết tự động hằng ngày (bỏ trống = mọi nhóm)
 /dangnoi <alias> — xem nguyên văn thảo luận trong ngày hôm nay (không qua AI)
 ```
 
@@ -524,6 +526,7 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/themnhom <group_id> <alias>` | Thêm nhóm Zalo vào allowlist |
 | `/xoanhom <group_id\|alias>` | Ngừng theo dõi 1 nhóm Zalo |
 | `/tongket <alias> [24h\|7d\|homnay\|homqua]` | Tổng kết nhóm Zalo (AI) |
+| `/tongket on\|off [alias]` | Bật/tắt tổng kết tự động hằng ngày (bỏ trống = mọi nhóm; `/nhom` hiện 🔔/🔕) |
 | `/dangnoi <alias>` | Xem nguyên văn thảo luận nhóm Zalo hôm nay |
 | `/fb_nhom` | Xem danh sách nhóm Zalo làm nguồn đăng Facebook |
 | `/fb_pages` | Xem các Facebook Page đã cấu hình (`/fb_ok` đăng lên tất cả) |

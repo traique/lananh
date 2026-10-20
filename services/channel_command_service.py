@@ -52,6 +52,7 @@ Chỉ admin
 /tintuc — đọc Điểm tin mới ngay tại đúng kênh đang gọi lệnh
 /nhom, /themnhom <group_id> <tên>, /xoanhom <group_id|tên> — nhóm Zalo đang theo dõi
 /tongket <tên> [24h|7d|homnay|homqua] — tổng kết nhóm bằng AI; /dangnoi <tên> — xem nguyên văn hôm nay
+/tongket on|off [tên] — bật/tắt tổng kết tự động hằng ngày (bỏ trống tên = mọi nhóm)
   (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom)
 
 📣 Zalo → Facebook Page (tách riêng khỏi /tongket, chỉ admin):
