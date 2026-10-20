@@ -526,3 +526,28 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "new sent",
     ]
     assert await pool.fetchval("SELECT message FROM reminders") == "old unsent"
+
+
+@pytest.mark.asyncio
+async def test_daily_summary_toggle_per_group_and_all(delivery_db):
+    await zalo_repository.add_group("a", "g1", "sale")
+    await zalo_repository.add_group("a", "g2", "vip")
+    await zalo_repository.add_group("b", "g9", "khac")
+    assert await zalo_repository.list_groups_with_daily("a") == [
+        ("g1", "sale", True),
+        ("g2", "vip", True),
+    ]
+
+    assert await zalo_repository.set_daily_summary("a", "SALE", False) == 1
+    assert await zalo_repository.set_daily_summary("a", "khong-co", False) == 0
+    assert await zalo_repository.list_groups_with_daily("a") == [
+        ("g1", "sale", False),
+        ("g2", "vip", True),
+    ]
+
+    assert await zalo_repository.set_daily_summary("a", None, False) == 2
+    assert [daily for *_, daily in await zalo_repository.list_groups_with_daily("a")] == [
+        False,
+        False,
+    ]
+    assert await zalo_repository.list_groups_with_daily("b") == [("g9", "khac", True)]

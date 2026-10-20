@@ -48,7 +48,9 @@ async def _run_due_digest() -> None:
         await zalo_repository.cleanup_old_messages(account_id)
         return
 
-    for group_id, alias in await zalo_repository.list_groups(account_id):
+    for group_id, alias, daily in await zalo_repository.list_groups_with_daily(account_id):
+        if not daily:
+            continue
         if await zalo_repository.summary_exists(account_id, group_id, "daily", start, end):
             continue
         try:

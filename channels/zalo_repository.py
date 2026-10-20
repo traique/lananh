@@ -51,6 +51,49 @@ async def list_groups(account_id: str) -> list[tuple[str, str]]:
     return [(row["group_id"], row["alias"]) for row in rows]
 
 
+async def list_groups_with_daily(account_id: str) -> list[tuple[str, str, bool]]:
+    """Như list_groups nhưng kèm cờ tổng kết tự động hằng ngày (/tongket on|off)."""
+    await ensure_schema()
+    rows = await (await db.get_pool()).fetch(
+        """
+        SELECT group_id, alias, daily_summary
+        FROM zalo_groups
+        WHERE account_id = $1
+        ORDER BY alias
+        """,
+        account_id,
+    )
+    return [(row["group_id"], row["alias"], row["daily_summary"]) for row in rows]
+
+
+async def set_daily_summary(account_id: str, target: str | None, enabled: bool) -> int:
+    """Bật/tắt tổng kết hằng ngày cho 1 nhóm (group_id hoặc alias), hoặc mọi nhóm
+    khi target là None. Trả về số nhóm khớp."""
+    await ensure_schema()
+    pool = await db.get_pool()
+    if target is None:
+        result = await pool.execute(
+            """
+            UPDATE zalo_groups SET daily_summary = $2, updated_at = now()
+            WHERE account_id = $1
+            """,
+            account_id,
+            enabled,
+        )
+    else:
+        result = await pool.execute(
+            """
+            UPDATE zalo_groups SET daily_summary = $4, updated_at = now()
+            WHERE account_id = $1 AND (group_id = $2 OR alias = $3)
+            """,
+            account_id,
+            target,
+            target.lower(),
+            enabled,
+        )
+    return int(result.split()[-1]) if result else 0
+
+
 async def resolve_group(account_id: str, target: str) -> tuple[str, str] | None:
     await ensure_schema()
     row = await (await db.get_pool()).fetchrow(
