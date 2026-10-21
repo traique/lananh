@@ -150,6 +150,28 @@ async def test_link_bao_tra_nguyen_bai_khong_qua_chat(chat_fakes, monkeypatch):
     assert chat_fakes["chat"] is None  # không gọi AI
 
 
+@pytest.mark.asyncio
+async def test_cau_hoi_am_lich_tra_loi_thang_khong_goi_ai(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+
+    async def no_command(*args, **kwargs):
+        return None
+
+    async def router_must_not_run(user_id, text):
+        raise AssertionError("không được gọi router AI cho câu âm lịch")
+
+    monkeypatch.setattr(ccs.portfolio_service, "handle_command", no_command)
+    monkeypatch.setattr(ccs.portfolio_service, "maybe_handle_natural_language", no_command)
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", router_must_not_run)
+
+    result = await ccs.handle_channel_text(1, "còn mấy ngày nữa tết", channel="zalo")
+
+    assert result.messages[0].startswith("Còn ")
+    assert "Tết Nguyên đán" in result.messages[0]
+    assert chat_fakes["chat"] is None  # không gọi AI chat
+    assert chat_fakes["telemetry"] == []  # không ghi lượt chat AI
+
+
 # ─── Telegram chat_msg dùng lại run_chat_turn ───────────────────────────────
 
 

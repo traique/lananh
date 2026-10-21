@@ -224,6 +224,22 @@ async def test_read_rss_liet_ke_muc_moi_nhat(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_read_rss_gui_user_agent_trinh_duyet(monkeypatch):
+    """VnExpress trả 404 cho UA mặc định python-httpx -> phải gửi UA trình duyệt."""
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("user-agent", ""))
+        return httpx.Response(200, content=_SAMPLE_RSS.encode("utf-8"))
+
+    monkeypatch.setattr(
+        web_reader, "_get_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    await web_reader.read_rss("https://example.com/rss.xml")
+    assert seen and seen[0].startswith("Mozilla/5.0")
+
+
+@pytest.mark.asyncio
 async def test_read_rss_gioi_han_so_muc(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=_SAMPLE_RSS.encode("utf-8"))
