@@ -17,7 +17,7 @@ vnstock==4.0.9
 vnai==2.6.2
 pandas==2.2.3
 cryptography==50.0.2
-pillow==12.3.0
+pillow==13.0.0
 jinja2==3.1.6
 pyyaml==6.0.2
 feedparser==6.0.11
