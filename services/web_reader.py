@@ -302,7 +302,11 @@ async def read_rss(raw_url: str, limit: int = 0) -> str:
     url = await normalize_public_http_url_async(raw_url)
     limit = limit if limit and limit > 0 else config.RSS_READER_MAX_ITEMS
 
-    response = await _get_public(url, allowed_types=FEED_TYPES)
+    # User-Agent trình duyệt: VnExpress trả 404 cho UA mặc định "python-httpx"
+    # (log 21/10/2026: kinh-doanh.rss, tin-moi-nhat.rss đều 404).
+    response = await _get_public(
+        url, headers={"User-Agent": _FALLBACK_USER_AGENT}, allowed_types=FEED_TYPES
+    )
     if response.status_code != 200:
         raise WebReaderError(f"Không đọc được feed (HTTP {response.status_code}).")
 

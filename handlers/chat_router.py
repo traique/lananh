@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 import messages
 from core.text_normalize import nfc
 from handlers import common, stock_handler
-from services import article_reader, channel_chat_service, portfolio_service
+from services import article_reader, channel_chat_service, lunar_chat, portfolio_service
 from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,12 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     article = await article_reader.maybe_handle(text)
     if article is not None:
         await common.reply_long_text(update.message, article)
+        return
+
+    # Âm lịch tính offline: trả lời thẳng, không tốn lượt AI nào.
+    lunar_reply = await lunar_chat.maybe_handle(text)
+    if lunar_reply is not None:
+        await common.reply_long_text(update.message, lunar_reply)
         return
 
     route = await stock_handler.maybe_handle(update, user_id, text)

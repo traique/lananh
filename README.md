@@ -56,6 +56,10 @@ Repository được thiết kế cho **một chủ sở hữu**:
     Tavily nữa - số liệu chỉ lấy từ tool.
   - `services/lunar.py`: âm lịch Hồ Ngọc Đức chạy offline - đổi âm ↔ dương,
     tháng nhuận, can chi, tiết khí, giờ hoàng đạo, số ngày tới Tết.
+  - `services/lunar_chat.py`: câu hỏi âm lịch hay gặp ("rằm tháng 8 là ngày
+    nào", "hôm nay âm lịch ngày mấy", "còn mấy ngày nữa Tết", "mai giờ hoàng
+    đạo"...) trả lời thẳng bằng code, KHÔNG tốn lượt AI nào. Câu không rõ âm hay
+    dương mới đi router tool `lunar_calendar` + chat AI như cũ.
   - Chuyển từ gói vn-info (MIT); HTTP API aiohttp của gói đó không đưa vào.
 - Đọc nguyên bài báo ngay trong chat (`services/article_reader.py`, mọi kênh):
   gửi link bài trên báo Việt Nam (VnExpress, Tuổi Trẻ, CafeF, Vietstock, GenK,
