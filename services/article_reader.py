@@ -62,7 +62,9 @@ NEWS_HOSTS = (
     "ndh.vn",
 )
 
-_URL_RE = re.compile(r"https?://[^\s<>\"'()]+", re.IGNORECASE)
+# Bỏ cả <>, (), | để bắt đúng link khi kênh bọc link dạng <url>, [chữ](url)
+# hoặc <url|chữ> (Zoom/Slack).
+_URL_RE = re.compile(r"https?://[^\s<>\"'()|]+", re.IGNORECASE)
 _READ_NUMBER_RE = re.compile(
     r"^(?:đọc|doc|xem|mở|mo)\s+(?:bài|bai|tin)\s*(?:số|so)?\s*(\d{1,2})\s*[.!]?$",
     re.IGNORECASE,

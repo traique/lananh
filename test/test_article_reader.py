@@ -39,6 +39,10 @@ _VNEXPRESS_HTML = """<html><head>
         ),
         ("đọc bài này https://e.vnexpress.net/a.html.", ("url", "https://e.vnexpress.net/a.html")),
         ("Giá vàng tăng mạnh https://cafef.vn/x.chn", ("url", "https://cafef.vn/x.chn")),
+        # Link bị kênh chat (Zoom...) bọc lại.
+        ("<https://vnexpress.net/a.html>", ("url", "https://vnexpress.net/a.html")),
+        ("[Giá vàng](https://vnexpress.net/a.html)", ("url", "https://vnexpress.net/a.html")),
+        ("<https://vnexpress.net/a.html|Giá vàng>", ("url", "https://vnexpress.net/a.html")),
         ("đọc bài 2", ("number", 2)),
         ("Xem tin số 10", ("number", 10)),
         ("tóm tắt giúp anh https://vnexpress.net/a.html", None),
