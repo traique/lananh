@@ -7,6 +7,7 @@ from ai import agnes_client, orchestrator, router9_client, tavily_client
 from core import config, database as db
 from core.text_utils import parse_on_off
 from services import (
+    divination_commands,
     memory_service,
     price_search,
     prompt_templates,
@@ -18,6 +19,15 @@ from services.telemetry import telemetry
 HELP = """📖 Lệnh trên Zalo/Zoom
 💬 Nhắn bình thường để trò chuyện. Nhắc tới 1 mã cổ phiếu là có giá realtime; nói "phân tích FPT" để xem báo cáo
 (thành viên nhận bản tham khảo, admin nhận bản đầy đủ). Nói "đã mua FPT 100 giá 120" để ghi danh mục.
+
+Lịch, thần số học, tử vi
+/lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8,
+  /lich tháng này, /lich trung thu, /lich ngày tốt tháng này, /lich tuổi 15/3/1990,
+  /lich sao hạn 1990 nam năm 2027 (gõ /lich help để xem thêm ví dụ)
+/tsh <ngày sinh> [họ tên] — thần số học: con số chủ đạo, biểu đồ ngày sinh (không tốn AI)
+/tsh_chitiet <như trên> — AI diễn giải chi tiết
+/tuvi <ngày sinh> <giờ> <nam|nữ> — an lá số tử vi (không tốn AI), vd /tuvi 15/3/1990 9h30 nam
+/tuvi_chitiet <như trên> — AI luận giải lá số
 
 Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
@@ -350,6 +360,10 @@ async def maybe_handle_command(
 
     if command in {"/start", "/help"}:
         return [HELP], None
+    # /lich, /tsh, /tuvi: tính bằng code (không AI); *_chitiet mới gọi AI.
+    divination = await divination_commands.handle(command, argument, user_id, channel)
+    if divination is not None:
+        return divination, None
     if command == "/prompt":
         return await _prompt(user_id, argument, channel)
     if command == "/gia":

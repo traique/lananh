@@ -1,0 +1,23 @@
+# Ý nghĩa ngắn soạn sẵn cho /tuvi (services/tuvi.py): sao chính tinh thủ cung
+# Mệnh. Sửa thoải mái, không cần đổi code. /tuvi_chitiet mới dùng AI luận giải.
+
+chinh_tinh:
+  Tử Vi: Đế tinh - tự trọng, có tố chất lãnh đạo, thích được tôn trọng; hợp vị trí quản lý.
+  Thiên Cơ: Mưu trí, nhanh nhạy, khéo léo tính toán; hợp công việc cần suy nghĩ, kỹ thuật, tư vấn.
+  Thái Dương: Rộng rãi, nhiệt tình, thích giúp người; hợp việc công, giao tiếp, giáo dục.
+  Vũ Khúc: Tài tinh - cương quyết, thực tế, giỏi tài chính; hợp kinh doanh, ngân hàng.
+  Thiên Đồng: Phúc tinh - ôn hoà, dễ chịu, thích an nhàn; hợp môi trường ổn định, dịch vụ.
+  Liêm Trinh: Cá tính mạnh, nguyên tắc, nhiều tham vọng; hợp quân đội, pháp luật, chính trị.
+  Thiên Phủ: Tài khố - điềm tĩnh, cẩn trọng, giỏi giữ của; hợp quản lý tài sản, hành chính.
+  Thái Âm: Dịu dàng, tinh tế, giàu cảm xúc, khéo tích luỹ; hợp nghệ thuật, bất động sản.
+  Tham Lang: Đa tài, giao thiệp rộng, nhiều ham muốn; hợp kinh doanh, giải trí, ngoại giao.
+  Cự Môn: Giỏi ăn nói, lý luận sắc bén nhưng dễ thị phi; hợp luật, giảng dạy, truyền thông.
+  Thiên Tướng: Ấn tinh - trọng nghĩa, thích giúp đỡ, chỉn chu; hợp hành chính, phục vụ.
+  Thiên Lương: Ấm tinh - nhân hậu, thích che chở, có phúc; hợp y tế, giáo dục, tư vấn.
+  Thất Sát: Tướng tinh - gan dạ, quyết liệt, dám mạo hiểm; hợp việc cần bản lĩnh, khai phá.
+  Phá Quân: Hao tinh - thích đổi mới, phá cách, dám làm lại từ đầu; hợp việc sáng tạo, cải cách.
+
+vo_chinh_dieu: >-
+  Cung Mệnh không có chính tinh, tính cách chịu ảnh hưởng nhiều từ các sao chiếu
+  sang (cung Thiên Di đối diện, Tài Bạch, Quan Lộc) và phụ tinh trong cung; người
+  linh hoạt, dễ thích nghi với hoàn cảnh.

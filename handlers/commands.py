@@ -19,6 +19,7 @@ from core import database as db, webhook_inbox
 from core.text_utils import parse_on_off
 from handlers import common
 from services import (
+    divination_commands,
     memory_service,
     price_search,
     prompt_templates,
@@ -42,6 +43,14 @@ HELP_TEXT = (
     '(action do hệ thống quyết, AI chỉ diễn giải). "Soi danh mục" để xem cả rổ. Thêm "theo Buffett/Minervini/'
     'Đoàn Vĩnh Bình" (hoặc "3 huyền thoại") để nghe góc nhìn định tính.\n\n'
     "🖼️ *Gửi 1 ảnh chân dung* để Gemini viết lại prompt giữ nguyên khuôn mặt.\n\n"
+    "*Lịch, thần số học, tử vi*\n"
+    "/lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8, "
+    "/lich tháng này, /lich trung thu, /lich ngày tốt tháng này, /lich tuổi 15/3/1990, "
+    "/lich sao hạn 1990 nam năm 2027 (/lich help xem thêm ví dụ)\n"
+    "/tsh <ngày sinh> [họ tên] — thần số học: con số chủ đạo, biểu đồ ngày sinh (không tốn AI)\n"
+    "/tsh\\_chitiet <như trên> — AI diễn giải chi tiết\n"
+    "/tuvi <ngày sinh> <giờ> <nam|nữ> — an lá số tử vi (không tốn AI), vd /tuvi 15/3/1990 9h30 nam\n"
+    "/tuvi\\_chitiet <như trên> — AI luận giải lá số\n\n"
     "*Chat và tiện ích*\n"
     "/prompt <mô tả> — viết prompt tạo ảnh từ mô tả cơ bản\n"
     "/anh <mô tả> — tạo ảnh thật (Agnes AI); /anh on|off — bật/tắt\n"
@@ -114,9 +123,23 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+def help_chunks(text: str = HELP_TEXT, limit: int = 3500) -> list[str]:
+    """Cắt HELP_TEXT thành nhiều tin <= limit ký tự, chỉ cắt ở ranh giới mục
+    ("\n\n") để mỗi tin vẫn cân dấu Markdown. Telegram giới hạn 4096 ký tự/tin;
+    HELP_TEXT đã vượt mức này (gửi 1 tin sẽ lỗi "Message is too long")."""
+    chunks: list[str] = []
+    for section in text.split("\n\n"):
+        if chunks and len(chunks[-1]) + 2 + len(section) <= limit:
+            chunks[-1] += "\n\n" + section
+        else:
+            chunks.append(section)
+    return chunks
+
+
 @common.restricted
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
+    for chunk in help_chunks():
+        await update.message.reply_text(chunk, parse_mode="Markdown")
 
 
 @common.restricted
@@ -362,6 +385,50 @@ async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # reply_long_text nhận markdown-lite (xem tg_format.py), KHÔNG phải HTML -
     # dùng cú pháp _italic_ chứ không phải thẻ <i>.
     await common.reply_long_text(update.message, f"{text}\n\n_⚙️ {provider}_")
+
+
+@common.restricted
+async def lich_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/lich <câu hỏi> - tra lịch bằng code, không gọi AI."""
+    await common.reply_long_text(
+        update.message, divination_commands.lich(common.extract_arg(context))
+    )
+
+
+@common.restricted
+async def tsh_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/tsh <ngày sinh> [họ tên] - thần số học, ý nghĩa soạn sẵn (không AI)."""
+    await common.reply_long_text(
+        update.message, divination_commands.tsh(common.extract_arg(context))
+    )
+
+
+@common.restricted
+async def tuvi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/tuvi <ngày sinh> <giờ> <nam|nữ> - an lá số tử vi (không AI)."""
+    await common.reply_long_text(
+        update.message, divination_commands.tuvi_chart(common.extract_arg(context))
+    )
+
+
+async def _reply_chitiet(update: Update, context: ContextTypes.DEFAULT_TYPE, kind: str) -> None:
+    argument = common.extract_arg(context)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    handler = divination_commands.tsh_chitiet if kind == "tsh" else divination_commands.tuvi_chitiet
+    for part in await handler(update.effective_user.id, argument, "telegram"):
+        await common.reply_long_text(update.message, part)
+
+
+@common.restricted
+async def tsh_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/tsh_chitiet - thần số học kèm AI diễn giải (1 lượt AI)."""
+    await _reply_chitiet(update, context, "tsh")
+
+
+@common.restricted
+async def tuvi_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/tuvi_chitiet - lá số tử vi kèm AI luận giải (1 lượt AI)."""
+    await _reply_chitiet(update, context, "tuvi")
 
 
 @common.restricted

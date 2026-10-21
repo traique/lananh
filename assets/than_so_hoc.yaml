@@ -1,0 +1,104 @@
+# Ý nghĩa soạn sẵn cho lệnh /tsh (services/numerology.py). Sửa thoải mái,
+# không cần đổi code. /tsh_chitiet mới dùng AI để diễn giải dài hơn.
+#
+# chu_dao: con số chủ đạo (đường đời) - phần chính.
+# so: nghĩa ngắn dùng chung cho số ngày sinh, thái độ, linh hồn, nhân cách,
+#     sứ mệnh, năm/tháng cá nhân.
+# nam_ca_nhan: chủ đề của năm cá nhân 1-9.
+# mui_ten / mui_ten_trong: các mũi tên trên biểu đồ ngày sinh.
+
+chu_dao:
+  2: >-
+    Người kết nối, nhạy cảm và tinh tế. Mạnh ở hợp tác, lắng nghe, hoà giải;
+    làm tốt vai trò hỗ trợ và giữ cân bằng cho tập thể. Cần học cách tin vào
+    trực giác của mình và bớt phụ thuộc vào sự công nhận của người khác.
+  3: >-
+    Người sáng tạo, giàu cảm xúc và có khiếu diễn đạt. Hợp với công việc cần
+    trí tưởng tượng, giao tiếp, nghệ thuật. Bài học: tập trung, kỷ luật và
+    biến ý tưởng thành việc làm đến cùng.
+  4: >-
+    Người thực tế, ngăn nắp, đáng tin cậy. Mạnh về tổ chức, kỹ thuật, xây nền
+    móng vững chắc. Bài học: linh hoạt hơn trước thay đổi và cho phép bản thân
+    nghỉ ngơi.
+  5: >-
+    Người yêu tự do, thích trải nghiệm và thay đổi. Nhanh nhạy, giao tiếp tốt,
+    hợp với công việc di chuyển, kinh doanh, truyền thông. Bài học: chọn lọc
+    trải nghiệm và giữ cam kết.
+  6: >-
+    Người của gia đình và trách nhiệm, giàu tình yêu thương, thích chăm sóc,
+    phục vụ cộng đồng. Có khiếu thẩm mỹ. Bài học: không ôm đồm việc của người
+    khác và bớt cầu toàn.
+  7: >-
+    Người tư duy sâu, thích tìm hiểu và chiêm nghiệm. Mạnh về phân tích,
+    nghiên cứu, học hỏi qua trải nghiệm thực tế. Bài học: mở lòng chia sẻ và
+    tin tưởng người khác.
+  8: >-
+    Người độc lập, có năng lực quản lý và tư duy tài chính. Hợp với kinh doanh,
+    lãnh đạo, những việc cần quyết đoán. Bài học: cân bằng vật chất với tinh
+    thần, mềm mỏng hơn trong cảm xúc.
+  9: >-
+    Người lý tưởng, nhân ái, có trách nhiệm với cộng đồng. Có tầm nhìn rộng và
+    khả năng truyền cảm hứng. Bài học: sống thực tế, biết buông bỏ và chăm lo
+    cho chính mình.
+  10: >-
+    Người linh hoạt, thích nghi nhanh, có sức hút và tinh thần tự lập. Dễ thành
+    công khi dám bắt đầu việc mới. Bài học: kiên định với mục tiêu, tránh bỏ
+    dở giữa chừng.
+  11: >-
+    Số bậc thầy về trực giác và tinh thần. Nhạy bén, giàu cảm hứng, có khả năng
+    truyền động lực cho người khác. Bài học: giữ cân bằng cảm xúc, biến trực
+    giác thành hành động thực tế.
+  22: >-
+    Số bậc thầy về kiến tạo. Có tầm nhìn lớn đi cùng năng lực thực thi, hợp với
+    những công trình, tổ chức lâu dài. Bài học: chịu được áp lực kỳ vọng và
+    biết chia việc.
+  33: >-
+    Số bậc thầy về yêu thương và cống hiến. Giàu lòng trắc ẩn, có khả năng
+    chữa lành, dẫn dắt bằng sự tử tế. Bài học: đặt giới hạn để không kiệt sức
+    vì người khác.
+
+so:
+  1: độc lập, chủ động, tiên phong
+  2: hợp tác, nhạy cảm, hoà giải
+  3: sáng tạo, vui vẻ, giỏi diễn đạt
+  4: thực tế, kỷ luật, ổn định
+  5: tự do, linh hoạt, thích trải nghiệm
+  6: trách nhiệm, yêu thương, chăm sóc
+  7: phân tích, chiêm nghiệm, độc lập trong suy nghĩ
+  8: quản lý, tài chính, quyết đoán
+  9: nhân ái, lý tưởng, bao dung
+  10: thích nghi nhanh, tự lập, có sức hút
+  11: trực giác mạnh, truyền cảm hứng
+  22: tầm nhìn lớn, giỏi kiến tạo
+  33: cống hiến, chữa lành, yêu thương vô điều kiện
+
+nam_ca_nhan:
+  1: Năm khởi đầu chu kỳ mới - hợp gieo hạt, bắt đầu dự án, đặt mục tiêu.
+  2: Năm kiên nhẫn và hợp tác - vun đắp quan hệ, chờ hạt nảy mầm.
+  3: Năm sáng tạo và giao tiếp - mở rộng quan hệ, thể hiện bản thân.
+  4: Năm xây nền móng - làm việc chăm chỉ, sắp xếp lại tài chính, sức khoẻ.
+  5: Năm thay đổi và tự do - đón cơ hội mới, di chuyển, thử nghiệm.
+  6: Năm gia đình và trách nhiệm - chăm lo nhà cửa, các mối quan hệ thân thiết.
+  7: Năm chiêm nghiệm - học hỏi, nghỉ ngơi, nhìn lại bản thân.
+  8: Năm thu hoạch - sự nghiệp, tài chính, quyền hạn có bước tiến.
+  9: Năm khép lại chu kỳ - buông bỏ điều không còn phù hợp, chuẩn bị cho chu kỳ mới.
+
+mui_ten:
+  "1-2-3": Mũi tên Kế hoạch - giỏi sắp xếp, lên kế hoạch có trình tự.
+  "4-5-6": Mũi tên Ý chí - quyết tâm cao, theo đuổi mục tiêu đến cùng.
+  "7-8-9": Mũi tên Hành động - năng động, học bằng cách làm.
+  "1-4-7": Mũi tên Thực tế - khéo tay, vững vàng, thực tế.
+  "2-5-8": Mũi tên Cân bằng cảm xúc - điềm tĩnh, cảm xúc ổn định.
+  "3-6-9": Mũi tên Trí tuệ - trí nhớ tốt, tư duy sắc bén.
+  "1-5-9": Mũi tên Quyết tâm - kiên trì, khó bị lay chuyển.
+  "3-5-7": Mũi tên Tâm linh - nhạy bén, trực giác tốt.
+
+mui_ten_trong:
+  "4-5-6": Mũi tên Uất giận (trống 4-5-6) - dễ dồn nén cảm xúc, cần học cách chia sẻ.
+  "7-8-9": Mũi tên Thụ động (trống 7-8-9) - dễ chần chừ, cần chủ động hành động.
+  "1-4-7": Mũi tên Thiếu trật tự (trống 1-4-7) - cần rèn tính ngăn nắp, thực tế.
+  "2-5-8": Mũi tên Nhạy cảm (trống 2-5-8) - dễ tổn thương, cần tự tin hơn.
+  "3-6-9": Mũi tên Trí nhớ ngắn hạn (trống 3-6-9) - nên ghi chép, ôn luyện.
+  "1-5-9": Mũi tên Trì hoãn (trống 1-5-9) - cần đặt mục tiêu rõ và hạn chót.
+  "3-5-7": Mũi tên Hoài nghi (trống 3-5-7) - cần mở lòng với điều mới.
+  "1-2-3": Mũi tên Thiếu kế hoạch (trống 1-2-3) - nên tập lập kế hoạch trước khi làm.

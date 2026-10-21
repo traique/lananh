@@ -522,6 +522,10 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/xoacp <MÃ>` | Xoá mã khỏi danh mục |
 | `/anh <mô tả>` / `/anh on\|off` | Tạo ảnh thật (Agnes AI) / bật tắt |
 | `/tintuc` | Điểm tin mới ngay tại kênh đang gọi (không broadcast) |
+| `/lich <câu hỏi>` | Tra lịch tự do bằng code, KHÔNG tốn AI (`services/calendar_query.py`): âm ↔ dương, bảng tháng, ngày lễ, đếm ngày, ngày hoàng đạo/Tam nương, tuổi - mệnh - hợp xung, sao hạn/Tam tai/Kim lâu/Hoang ốc (`services/can_chi.py`); không hiểu thì gợi ý cách hỏi |
+| `/tsh <ngày sinh> [họ tên]` | Thần số học (`services/numerology.py`): số chủ đạo, ngày sinh, thái độ, năm/tháng cá nhân, biểu đồ + mũi tên, số linh hồn/nhân cách/sứ mệnh; ý nghĩa soạn sẵn ở `assets/than_so_hoc.yaml` |
+| `/tuvi <ngày sinh> <giờ> <nam\|nữ>` | An lá số Tử Vi Đẩu Số (`services/tuvi.py`): 12 cung, 14 chính tinh, phụ tinh phổ biến, Tứ hóa, Tuần/Triệt, Tràng sinh, đại hạn; ý nghĩa sao thủ Mệnh ở `assets/tu_vi.yaml`. Chưa an độ sáng miếu/hãm |
+| `/tsh_chitiet`, `/tuvi_chitiet` | Như trên + AI diễn giải (1 lượt AI; AI chỉ diễn giải số/lá số đã tính, không tính lại). Ngày sinh, họ tên không lưu DB |
 | `/router9 on\|off`, `/tavily on\|off` | Bật/tắt 9Router thủ công; bật/tắt tra web Tavily |
 | `/prompt` | Tạo prompt hình ảnh |
 | `/gia` | Tìm giá sản phẩm |
