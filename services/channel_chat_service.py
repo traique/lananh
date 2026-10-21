@@ -16,7 +16,7 @@ import messages
 from ai import orchestrator
 from ai.timeouts import TurnTimeoutError, turn_deadline
 from core import database as db
-from services import memory_service, portfolio_service, tools, web_search
+from services import article_reader, memory_service, portfolio_service, tools, web_search
 from services.background_tasks import stop_tracked_tasks
 from services import channel_command_service
 from services.channel_result import ChannelResult
@@ -260,6 +260,9 @@ async def handle_channel_text(
     portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
     if portfolio_result is not None:
         return ChannelResult([portfolio_result])
+    article = await article_reader.maybe_handle(text)
+    if article is not None:
+        return ChannelResult([article])
 
     # MỘT hạn chót cho cả nhánh cổ phiếu (debate nhiều lượt gọi AI) LẪN lượt chat
     # theo sau: turn_deadline lồng nhau giữ hạn SỚM hơn, nên run_chat_turn không

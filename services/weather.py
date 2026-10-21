@@ -100,6 +100,23 @@ def fold(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower()).strip()
 
 
+# Câu hỏi thời tiết: tool get_weather (services/tools.py) lấy số liệu thật,
+# web_search bỏ qua để khỏi tốn Tavily và lẫn số liệu cũ từ web. "bão" không
+# nằm đây: tin bão (đường đi, thiệt hại) vẫn cần tra web. Chỉ khớp cụm rõ nghĩa
+# thời tiết: "mưa"/"nắng" trần dính "kem chống nắng"... - câu đó vẫn tra web.
+_WEATHER_QUESTION_RE = re.compile(
+    r"thời tiết|thoi tiet|dự báo mưa|nắng nóng|độ ẩm (?:không khí|hôm nay|ngày mai|ở|tại)|"
+    r"nhiệt độ (?:hôm nay|ngày mai|bây giờ|hiện tại|ngoài trời|ở|tại)|"
+    r"trời (?:có |sẽ |đang )?(?:mưa|nắng|nóng|lạnh|râm)|"
+    r"(?:có|sẽ|còn|bị|đang) mưa|mưa (?:không|ko|hông|chưa|to|lớn|nhiều)",
+    re.IGNORECASE,
+)
+
+
+def looks_like_weather_question(text: str) -> bool:
+    return bool(_WEATHER_QUESTION_RE.search(text or ""))
+
+
 def _clean_location(location: str) -> str:
     return _PREFIX_RE.sub("", (location or "").strip(" .,?!")).strip()
 

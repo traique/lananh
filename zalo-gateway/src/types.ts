@@ -21,6 +21,7 @@ export type ZaloMessage = {
     cliMsgId?: string | number;
     dName?: string;
     ts?: string | number;
+    msgType?: string;
   };
 };
 

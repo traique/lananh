@@ -52,10 +52,18 @@ Repository được thiết kế cho **một chủ sở hữu**:
   - `services/weather.py`: Open-Meteo (không cần API key), dự phòng wttr.in;
     không nói địa điểm (hoặc nói Sài Gòn/HCM) thì mặc định TP. Hồ Chí Minh, nói
     tỉnh/thành cụ thể thì tra toạ độ nơi đó. Cache toạ độ/dự báo có trần.
+    Câu hỏi thời tiết (`weather.looks_like_weather_question`) không tra web
+    Tavily nữa - số liệu chỉ lấy từ tool.
   - `services/lunar.py`: âm lịch Hồ Ngọc Đức chạy offline - đổi âm ↔ dương,
     tháng nhuận, can chi, tiết khí, giờ hoàng đạo, số ngày tới Tết.
-  - Chuyển từ gói vn-info (MIT); phần tin VnExpress và HTTP API của gói đó
-    không đưa vào (đã có bản tin sáng RSS + tra web).
+  - Chuyển từ gói vn-info (MIT); HTTP API aiohttp của gói đó không đưa vào.
+- Đọc nguyên bài báo ngay trong chat (`services/article_reader.py`, mọi kênh):
+  gửi link bài trên báo Việt Nam (VnExpress, Tuổi Trẻ, CafeF, Vietstock, GenK,
+  Dân trí...) hoặc nhắn "đọc bài 2" theo số trong mục "TIN ĐÁNG CHÚ Ý" của bản
+  tin gần nhất. Trả đúng chữ của bài (tiêu đề, sapo, các đoạn - không qua AI),
+  cắt ở 12.000 ký tự; link kèm yêu cầu khác ("tóm tắt", "phân tích"...) vẫn đi
+  chat AI. Gateway Zalo gửi kèm URL của tin "chia sẻ link" và không coi ảnh
+  xem trước của link là tin ảnh.
 - Tìm giá sản phẩm bằng grounded search chính thức.
 - Web search (Tavily) viết lại câu hỏi thành truy vấn độc lập + biến thể
   (multi-query song song, dùng lịch sử hội thoại) và đọc sâu 1-2 nguồn điểm
@@ -608,6 +616,8 @@ kênh bạn yêu cầu).
 - Có guard idempotent qua `core.database.get_setting/set_setting` (key
   `morning_news:last_sent_date`) - tránh gửi trùng nếu Render restart đúng
   lúc quanh giờ chạy (free tier có thể spin down/redeploy).
+- Mục "🔗 TIN ĐÁNG CHÚ Ý" đánh số bài; danh sách link lưu ở setting
+  `morning_news:last_links` để người dùng nhắn "đọc bài N" đọc nguyên bài.
 - `/bantinsang` (chỉ admin, Zalo/Zoom) gửi thử ngay lập tức, bỏ qua guard
   "đã gửi hôm nay" - dùng để test mà không cần đợi tới 8h sáng hôm sau.
 - Tắt hẳn tính năng: set `MORNING_NEWS_ENABLED=false`.

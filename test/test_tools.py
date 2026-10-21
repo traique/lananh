@@ -166,3 +166,8 @@ async def test_lunar_calendar_ngay_30_thang_thieu_va_nhuan_khong_ton_tai():
     )
     assert "không có tháng 3 nhuận" in result
     assert "không hợp lệ" in await tools._tool_lunar_calendar(1, date="31/02/2026")
+
+
+def test_cau_hoi_thoi_tiet_luon_qua_router():
+    # web_search bỏ qua câu hỏi thời tiết -> router phải chạy dù không trúng từ khoá.
+    assert tools._looks_like_tool_intent("trời nóng quá, mai Đà Lạt trời có lạnh không")

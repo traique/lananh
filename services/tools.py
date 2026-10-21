@@ -315,7 +315,11 @@ _TOOL_INTENT_KEYWORDS = (
 
 def _looks_like_tool_intent(user_text: str) -> bool:
     lower = user_text.lower()
-    return any(kw in lower for kw in _TOOL_INTENT_KEYWORDS)
+    # Câu web_search đã bỏ qua vì là hỏi thời tiết thì router PHẢI chạy, nếu
+    # không lượt chat chẳng có số liệu nào.
+    return any(kw in lower for kw in _TOOL_INTENT_KEYWORDS) or (
+        weather.looks_like_weather_question(lower)
+    )
 
 
 async def maybe_run_tool(user_id: int, user_text: str) -> Optional[str]:
