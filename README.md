@@ -48,6 +48,14 @@ Repository được thiết kế cho **một chủ sở hữu**:
 - Tác vụ cần Google Search thật (`require_real_search`) dùng riêng 1 chuỗi: Groq `compound-mini` (tool search tích hợp, miễn phí) → Gemini grounding (API key 1/2) → OpenRouter (lưới an toàn cuối, không đảm bảo có tool search thật) - bỏ qua 9Router.
 - Lịch sử theo phiên và trí nhớ dài hạn trên Supabase Postgres.
 - Ghi chú, reminder và facts danh mục qua ngôn ngữ tự nhiên.
+- Thời tiết và âm lịch qua ngôn ngữ tự nhiên (router tool `services/tools.py`):
+  - `services/weather.py`: Open-Meteo (không cần API key), dự phòng wttr.in;
+    không nói địa điểm (hoặc nói Sài Gòn/HCM) thì mặc định TP. Hồ Chí Minh, nói
+    tỉnh/thành cụ thể thì tra toạ độ nơi đó. Cache toạ độ/dự báo có trần.
+  - `services/lunar.py`: âm lịch Hồ Ngọc Đức chạy offline - đổi âm ↔ dương,
+    tháng nhuận, can chi, tiết khí, giờ hoàng đạo, số ngày tới Tết.
+  - Chuyển từ gói vn-info (MIT); phần tin VnExpress và HTTP API của gói đó
+    không đưa vào (đã có bản tin sáng RSS + tra web).
 - Tìm giá sản phẩm bằng grounded search chính thức.
 - Web search (Tavily) viết lại câu hỏi thành truy vấn độc lập + biến thể
   (multi-query song song, dùng lịch sử hội thoại) và đọc sâu 1-2 nguồn điểm
