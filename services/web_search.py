@@ -28,6 +28,7 @@ from dataclasses import dataclass
 
 from ai import orchestrator, tavily_client
 from core import config, database as db
+from services import weather
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,8 @@ def looks_like_search_question(text: str) -> bool:
     """Gate search chủ động để chat ngắn/chuyện phiếm không đốt quota."""
     lower = (text or "").lower()
     if _CLOCK_QUESTION_RE.search(lower):
+        return False
+    if weather.looks_like_weather_question(lower):
         return False
     words = len(lower.split())
     if words <= 3 and "?" not in lower:

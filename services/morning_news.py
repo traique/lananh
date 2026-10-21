@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 from ai import orchestrator
 from core import config
 from core import database as db
-from services import web_reader
+from services import article_reader, web_reader
 
 logger = logging.getLogger(__name__)
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -225,8 +225,9 @@ def _format_important_links(items: list[_NewsItem]) -> str:
     if not items:
         return ""
     lines = ["🔗 TIN ĐÁNG CHÚ Ý"]
-    for item in items:
-        lines.append(f"• {item.title}\n  {item.url}")
+    for number, item in enumerate(items, 1):
+        lines.append(f"{number}. {item.title}\n   {item.url}")
+    lines.append('💬 Nhắn "đọc bài 1" (hoặc gửi link) để đọc nguyên bài ngay trong chat.')
     return "\n".join(lines)
 
 
@@ -282,6 +283,8 @@ async def build_digest(mode: str = "morning") -> str | None:
         return None
 
     important_items = _select_important_items(all_items, important_ids)
+    if important_items:
+        await article_reader.save_digest_links([(i.title, i.url) for i in important_items])
     now = datetime.now(_VN_TZ)
     parts = [_header(mode, now), body]
     sources = _format_sources(successful_sources)

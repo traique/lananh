@@ -130,6 +130,26 @@ async def test_zalo_chat_giu_nguyen_nhan_api_du_phong(chat_fakes, monkeypatch):
     ]
 
 
+@pytest.mark.asyncio
+async def test_link_bao_tra_nguyen_bai_khong_qua_chat(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+
+    async def no_command(*args, **kwargs):
+        return None
+
+    async def fake_article(text):
+        return "📰 NGUYÊN BÀI" if "vnexpress.net" in text else None
+
+    monkeypatch.setattr(ccs.portfolio_service, "handle_command", no_command)
+    monkeypatch.setattr(ccs.portfolio_service, "maybe_handle_natural_language", no_command)
+    monkeypatch.setattr(ccs.article_reader, "maybe_handle", fake_article)
+
+    result = await ccs.handle_channel_text(1, "https://vnexpress.net/a.html", channel="zalo")
+
+    assert result.messages == ["📰 NGUYÊN BÀI"]
+    assert chat_fakes["chat"] is None  # không gọi AI
+
+
 # ─── Telegram chat_msg dùng lại run_chat_turn ───────────────────────────────
 
 

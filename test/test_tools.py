@@ -1,4 +1,5 @@
 """Unit test cho services/tools.py (function calling: router JSON + thực thi tool)."""
+
 import sys
 from pathlib import Path
 
@@ -91,3 +92,82 @@ async def test_get_portfolio_loc_dung_fact_lien_quan(monkeypatch):
     assert result is not None
     assert "FPT, HPG" in result
     assert "mau_thich" not in result  # không liên quan danh mục -> không lẫn vào
+
+
+@pytest.mark.asyncio
+async def test_get_weather_khong_noi_dia_diem_dung_mac_dinh(monkeypatch):
+    from services import weather
+
+    calls = []
+
+    async def fake_get_weather(location="", days=1):
+        calls.append((location, days))
+        return {"location": weather.DEFAULT_LABEL, "source": "Open-Meteo", "now": {}, "daily": []}
+
+    async def fake_generate(prompt):
+        return {"tool": "get_weather", "args": {"location": "", "days": 2}}
+
+    monkeypatch.setattr(weather, "get_weather", fake_get_weather)
+    monkeypatch.setattr(official_client, "generate_utility_json", fake_generate)
+
+    result = await tools.maybe_run_tool(1, "mai trời có mưa không em")
+
+    assert calls == [("", 2)]
+    assert result is not None and "TP. Hồ Chí Minh" in result
+
+
+@pytest.mark.asyncio
+async def test_get_weather_loi_tra_thong_bao_khong_raise(monkeypatch):
+    from services import weather
+
+    async def fake_get_weather(location="", days=1):
+        raise weather.WeatherError("mô phỏng lỗi")
+
+    monkeypatch.setattr(weather, "get_weather", fake_get_weather)
+
+    result = await tools._tool_get_weather(1, location="Huế", days=1)
+
+    assert "KHÔNG tự bịa" in result
+
+
+@pytest.mark.asyncio
+async def test_lunar_calendar_duong_sang_am():
+    result = await tools._tool_lunar_calendar(1, date="2026-10-21")
+    assert "ngày 12 tháng 9 năm Bính Ngọ" in result
+    assert "Hàn lộ" in result
+
+
+@pytest.mark.asyncio
+async def test_lunar_calendar_am_sang_duong_co_nam():
+    result = await tools._tool_lunar_calendar(1, lunar_day=15, lunar_month=8, lunar_year=2026)
+    assert result.startswith("Ngày 15 tháng 8 năm Bính Ngọ âm lịch")
+    assert "Thứ Sáu 25/09/2026" in result
+
+
+@pytest.mark.asyncio
+async def test_lunar_calendar_khong_noi_nam_lay_lan_sap_toi():
+    import datetime as dt
+
+    from services import lunar
+
+    result = await tools._tool_lunar_calendar(1, lunar_day=1, lunar_month=1)
+    today = dt.datetime.now(tools._VN_TZ).date()
+    tet = lunar.next_tet(today)
+    assert f"{tet:%d/%m/%Y}" in result
+
+
+@pytest.mark.asyncio
+async def test_lunar_calendar_ngay_30_thang_thieu_va_nhuan_khong_ton_tai():
+    # Tháng 2 âm năm 2026 chỉ có 29 ngày (mùng 1 tháng 2 là 19/03, mùng 1 tháng 3 là 17/04).
+    result = await tools._tool_lunar_calendar(1, lunar_day=30, lunar_month=2, lunar_year=2026)
+    assert "chỉ có 29 ngày" in result
+    result = await tools._tool_lunar_calendar(
+        1, lunar_day=1, lunar_month=3, lunar_year=2025, leap=True
+    )
+    assert "không có tháng 3 nhuận" in result
+    assert "không hợp lệ" in await tools._tool_lunar_calendar(1, date="31/02/2026")
+
+
+def test_cau_hoi_thoi_tiet_luon_qua_router():
+    # web_search bỏ qua câu hỏi thời tiết -> router phải chạy dù không trúng từ khoá.
+    assert tools._looks_like_tool_intent("trời nóng quá, mai Đà Lạt trời có lạnh không")

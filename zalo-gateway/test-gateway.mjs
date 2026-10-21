@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { allowedMediaHost, downloadImage, imageCandidates, sniffImage } from "./dist/media.js";
+import {
+  allowedMediaHost,
+  downloadImage,
+  imageCandidates,
+  linkHref,
+  sniffImage,
+} from "./dist/media.js";
 import { KnownSenders, SeenIds, isTransientNetworkError, splitForZalo } from "./dist/text.js";
 import {
   FacebookPostBuffer,
@@ -297,4 +303,21 @@ test("KnownSenders chỉ nhớ người đã được trả lời, LRU có trầ
   assert.equal(known.size, 2);
   known.mark("");
   assert.equal(known.size, 2);
+});
+
+test("linkHref chỉ nhận tin chia sẻ link có href http(s)", () => {
+  const content = {
+    title: "xem bài này",
+    href: "https://vnexpress.net/bai-viet-123.html",
+    thumb: "https://photo-stal.zadn.vn/thumb.jpg",
+  };
+  assert.equal(linkHref("chat.recommended", content), "https://vnexpress.net/bai-viet-123.html");
+  assert.equal(
+    linkHref("webchat", { ...content, action: "recommened.link" }),
+    "https://vnexpress.net/bai-viet-123.html",
+  );
+  // Tin ảnh cũng có href (link ảnh) nhưng không phải tin link.
+  assert.equal(linkHref("chat.photo", content), "");
+  assert.equal(linkHref("chat.recommended", { href: "javascript:alert(1)" }), "");
+  assert.equal(linkHref("chat.recommended", "text"), "");
 });

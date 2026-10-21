@@ -28,7 +28,7 @@ import {
   KeyedSerialQueue,
   QueueFullError,
 } from "./limits.js";
-import { downloadImage, imageCandidates } from "./media.js";
+import { downloadImage, imageCandidates, linkHref } from "./media.js";
 import { OutboxDelivery } from "./outbox.js";
 import { ReconnectScheduler } from "./reconnect.js";
 import { SEND_RETRY_DELAYS_MS, STORE_RETRY_DELAYS_MS, retry } from "./retry.js";
@@ -244,6 +244,8 @@ type ParsedMessage = {
   text: string;
   caption: string;
   urls: string[];
+  /** Link của tin "chia sẻ link" (rỗng nếu không phải). */
+  link: string;
   sender: string;
   senderName: string;
   id: string;
@@ -263,6 +265,7 @@ function parseMessage(message: ZaloMessage): ParsedMessage {
         : String((isObject && content.title) || "").trim(),
     caption: isObject ? String(content.description || content.title || "").trim() : "",
     urls: isObject ? imageCandidates(content) : [],
+    link: linkHref(message.data?.msgType, content),
     sender: String(message.data?.uidFrom || ""),
     senderName: String(message.data?.dName || ""),
     id: String(message.data?.msgId || message.data?.cliMsgId || ""),
@@ -340,6 +343,15 @@ function handleGroupMessage(message: ZaloMessage, msg: ParsedMessage): void {
 }
 
 async function handleDirectMessage(msg: ParsedMessage): Promise<void> {
+  if (msg.link) {
+    // Tin chia sẻ link: gửi kèm URL sang Python (đọc nguyên bài báo...), không
+    // coi thumb xem trước là ảnh.
+    msg = {
+      ...msg,
+      text: msg.text.includes(msg.link) ? msg.text : `${msg.text} ${msg.link}`.trim(),
+      urls: [],
+    };
+  }
   if (msg.urls.length && !msg.text.startsWith("/")) {
     try {
       const image = await fetchImage(msg.urls, 1);

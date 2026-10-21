@@ -56,6 +56,18 @@ export function imageCandidates(content: unknown): string[] {
   return [...new Set(found)];
 }
 
+/**
+ * Link http(s) của tin dạng "chia sẻ link" (msgType chat.recommended), rỗng nếu
+ * không phải. Tin link có thumb trên CDN Zalo nên không được coi là tin ảnh.
+ */
+export function linkHref(msgType: unknown, content: unknown): string {
+  if (typeof content !== "object" || content === null) return "";
+  const record = content as Record<string, unknown>;
+  const isLink = msgType === "chat.recommended" || record.action === "recommened.link";
+  const href = typeof record.href === "string" ? record.href.trim() : "";
+  return isLink && /^https?:\/\//i.test(href) ? href : "";
+}
+
 /** Nhận diện định dạng ảnh qua magic bytes (không tin Content-Type). */
 export function sniffImage(bytes: Uint8Array): string | null {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {

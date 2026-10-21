@@ -30,13 +30,15 @@ dạng) - đổi sang function-calling sẽ đánh đổi độ tin cậy của 
 chạy tốt để lấy sự "gọn" không thật sự cần thiết ở đây.
 """
 
+import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import date as date_cls, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 from stock import analysis as stock_analysis
 from core import database as db
+from services import lunar, weather
 from services.reminder_delivery import current_target
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,19 @@ Danh sách tool khả dụng:
 - "get_portfolio": xem lại danh mục đầu tư đã ghi nhận trong trí nhớ dài hạn.
   args: {}. Dùng khi người dùng hỏi "danh mục của anh gồm những gì", "em nhớ
   anh đang giữ mã nào không"...
+- "get_weather": tra thời tiết thật (hiện tại + dự báo). args: {"location":
+  "tên địa danh người dùng nói, để rỗng nếu không nói địa điểm", "days": số
+  ngày dự báo TÍNH CẢ HÔM NAY (1 = hôm nay, 2 = tới ngày mai, cuối tuần thì
+  tính tới Chủ Nhật; tối đa 7)}. Dùng khi hỏi thời tiết, mưa/nắng, nhiệt độ,
+  có nên mang áo mưa... KHÔNG tự điền địa điểm khi người dùng không nói.
+- "lunar_calendar": tra âm lịch. Hai dạng args:
+  (a) {"date": "YYYY-MM-DD"} - ngày DƯƠNG cần xem âm lịch, can chi, giờ hoàng
+  đạo, tiết khí, số ngày tới Tết ("" = hôm nay). Vd "hôm nay âm bao nhiêu",
+  "20/11 là ngày mấy âm", "còn mấy ngày nữa Tết".
+  (b) {"lunar_day": số, "lunar_month": số, "lunar_year": số năm âm hoặc bỏ
+  trống nếu người dùng không nói năm, "leap": true nếu nói rõ tháng nhuận} -
+  đổi ngày ÂM sang dương. Vd "rằm tháng 8 là ngày nào" -> lunar_day 15,
+  lunar_month 8; "mùng 1 Tết" -> lunar_day 1, lunar_month 1.
 - "none": tin nhắn KHÔNG cần gọi tool nào (chuyện phiếm, hỏi đáp thông
   thường, hỏi giá/phân tích cổ phiếu cụ thể - các trường hợp đó đã được xử
   lý riêng, không thuộc phạm vi router này). args: {}.
@@ -118,6 +133,105 @@ async def _tool_set_reminder(user_id: int, message: str = "", minutes_from_now: 
     return f"Đã đặt nhắc việc lúc {due_at:%H:%M %d/%m} (giờ VN): {message}"
 
 
+# Open-Meteo/wttr.in tự có timeout từng request; chặn thêm tổng thời gian để
+# lượt chat không phải chờ geocode + fallback cộng dồn.
+_WEATHER_TIMEOUT_SEC = 20
+
+
+async def _tool_get_weather(user_id: int, location: str = "", days: int = 1, **_ignored) -> str:
+    try:
+        data = await asyncio.wait_for(
+            weather.get_weather(str(location or ""), days), _WEATHER_TIMEOUT_SEC
+        )
+    except (weather.WeatherError, TimeoutError):
+        logger.warning("Tra thời tiết lỗi (location=%r)", location, exc_info=True)
+        return (
+            "Không lấy được dữ liệu thời tiết lúc này (Open-Meteo và wttr.in đều lỗi). "
+            "Báo thật với người dùng, KHÔNG tự bịa số liệu thời tiết."
+        )
+    if data.get("error"):
+        return f"{data['error']}. Hỏi lại người dùng tên tỉnh/thành phố cụ thể hơn."
+    return (
+        "Số liệu thời tiết thật vừa tra (dùng đúng các số này, không lấy số liệu thời "
+        "tiết từ kết quả web nếu có):\n" + weather.describe_weather(data)
+    )
+
+
+def _parse_solar_date(raw: str) -> date_cls | None:
+    raw = (raw or "").strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _as_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _tool_lunar_calendar(
+    user_id: int,
+    date: str = "",
+    lunar_day=None,
+    lunar_month=None,
+    lunar_year=None,
+    leap=False,
+    **_ignored,
+) -> str:
+    today = datetime.now(_VN_TZ).date()
+    ld, lm = _as_int(lunar_day), _as_int(lunar_month)
+    if ld is None and lm is None:
+        target = _parse_solar_date(str(date or "")) if date else today
+        if target is None or not 1900 <= target.year <= 2100:
+            return f"Ngày dương lịch '{date}' không hợp lệ (cần trong khoảng 1900-2100)."
+        return "Thông tin lịch (tính offline, chính xác):\n" + lunar.describe_date(
+            lunar.date_info(target)
+        )
+
+    if ld is None or lm is None or not 1 <= ld <= 30 or not 1 <= lm <= 12:
+        return "Ngày/tháng âm lịch không hợp lệ (ngày 1-30, tháng 1-12)."
+    is_leap = leap is True or str(leap).strip().lower() in ("1", "true")
+    ly = _as_int(lunar_year)
+    if ly is not None:
+        years = [ly]
+    else:
+        # Không nói năm: lấy lần gần nhất sắp tới (năm âm hiện tại, đã qua thì năm sau).
+        current = lunar.solar_to_lunar(today.day, today.month, today.year)[2]
+        years = [current, current + 1]
+    if not all(1900 <= y <= 2100 for y in years):
+        return "Năm âm lịch cần trong khoảng 1900-2100."
+
+    found: tuple[int, date_cls] | None = None
+    short_month_year: int | None = None
+    for year in years:
+        solar = lunar.lunar_to_solar(ld, lm, year, is_leap)
+        if solar is None:
+            continue
+        d = date_cls(solar[2], solar[1], solar[0])
+        # Tháng âm thiếu (29 ngày) không có ngày 30: thuật toán trả ngày 1 tháng sau.
+        if lunar.solar_to_lunar(d.day, d.month, d.year) != (ld, lm, year, is_leap):
+            short_month_year = short_month_year or year
+            continue
+        found = (year, d)
+        if ly is not None or d >= today:
+            break
+    if found is None:
+        if short_month_year is not None:
+            return f"Tháng {lm} âm lịch năm {lunar.year_can_chi(short_month_year)} chỉ có 29 ngày."
+        return f"Năm âm lịch đó không có tháng {lm} nhuận."
+    year, d = found
+    label = lunar.lunar_text(ld, lm, year, is_leap)
+    return (
+        f"{label[0].upper()}{label[1:]} âm lịch rơi vào (tính offline, chính xác):\n"
+        + lunar.describe_date(lunar.date_info(d))
+    )
+
+
 async def _tool_get_portfolio(user_id: int) -> str:
     facts = await db.get_facts(user_id)
     # Tiêu chí "fact nào thuộc danh mục" lấy từ stock_analysis để chỉ có 1
@@ -133,6 +247,8 @@ _HANDLERS = {
     "list_notes": _tool_list_notes,
     "set_reminder": _tool_set_reminder,
     "get_portfolio": _tool_get_portfolio,
+    "get_weather": _tool_get_weather,
+    "lunar_calendar": _tool_lunar_calendar,
 }
 
 
@@ -140,15 +256,16 @@ def _build_router_prompt(user_text: str) -> str:
     now = datetime.now(_VN_TZ)
     return (
         f"{_ROUTER_INSTRUCTION}\n\n"
-        f"[Thời điểm hiện tại: {now:%H:%M} ngày {now:%d/%m/%Y}, giờ Việt Nam]\n\n"
+        f"[Thời điểm hiện tại: {now:%H:%M} {lunar.WEEKDAYS[now.weekday()]} ngày "
+        f"{now:%d/%m/%Y}, giờ Việt Nam]\n\n"
         f"### Tin nhắn của người dùng\n{user_text}\n\n"
         "Trả về JSON theo đúng định dạng đã mô tả, không thêm gì khác."
     )
 
 
-# Bộ lọc rẻ trước khi gọi LLM: đủ 4 tool đều dùng những từ này khi người dùng
-# diễn đạt ý định thật (ghi chú/nhắc việc/xem danh mục), nên tin nhắn không
-# khớp từ nào coi như không cần tool - tiết kiệm 1 lượt gọi utility API cho
+# Bộ lọc rẻ trước khi gọi LLM: các tool đều dùng những từ này khi người dùng
+# diễn đạt ý định thật (ghi chú/nhắc việc/xem danh mục/thời tiết/âm lịch), nên
+# tin nhắn không khớp từ nào coi như không cần tool - tiết kiệm 1 lượt gọi utility API cho
 # phần lớn tin chat phiếm. Đánh đổi: bỏ lỡ câu lệnh diễn đạt lạ hoàn toàn
 # không chứa từ khóa nào ở dưới.
 _TOOL_INTENT_KEYWORDS = (
@@ -173,12 +290,36 @@ _TOOL_INTENT_KEYWORDS = (
     "hen gio",
     "remind",
     "todo",
+    "thời tiết",
+    "thoi tiet",
+    "mưa",
+    "nắng",
+    "nhiệt độ",
+    "nhiet do",
+    "dự báo",
+    "du bao",
+    "bão",
+    "âm lịch",
+    "am lich",
+    "lịch âm",
+    "ngày âm",
+    "ngay am",
+    "tết",
+    "rằm",
+    "mùng",
+    "can chi",
+    "hoàng đạo",
+    "tiết khí",
 )
 
 
 def _looks_like_tool_intent(user_text: str) -> bool:
     lower = user_text.lower()
-    return any(kw in lower for kw in _TOOL_INTENT_KEYWORDS)
+    # Câu web_search đã bỏ qua vì là hỏi thời tiết thì router PHẢI chạy, nếu
+    # không lượt chat chẳng có số liệu nào.
+    return any(kw in lower for kw in _TOOL_INTENT_KEYWORDS) or (
+        weather.looks_like_weather_question(lower)
+    )
 
 
 async def maybe_run_tool(user_id: int, user_text: str) -> Optional[str]:

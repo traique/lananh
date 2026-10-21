@@ -64,6 +64,35 @@ async def test_build_digest_goi_ai_tong_hop_tu_rss(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_build_digest_danh_so_link_va_luu_de_doc_bai(monkeypatch):
+    from services import article_reader
+
+    async def fake_read_rss(url: str) -> str:
+        return (
+            "[Feed: VnExpress]\n1. Tin A\nTóm tắt A\nhttps://vnexpress.net/a.html\n\n"
+            "2. Tin B\nTóm tắt B\nhttps://vnexpress.net/b.html"
+        )
+
+    async def fake_ask(prompt: str):
+        return SimpleNamespace(
+            text="Sáng nay có hai tin đáng chú ý về kinh doanh và thị trường trong nước, "
+            "anh xem nhanh bên dưới nhé.\n"
+            "IMPORTANT_IDS: F1I2, F1I1"
+        )
+
+    monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
+    monkeypatch.setattr(orchestrator, "ask", fake_ask)
+
+    digest = await morning_news.build_digest()
+
+    assert "1. Tin B\n   https://vnexpress.net/b.html" in digest
+    assert "2. Tin A\n   https://vnexpress.net/a.html" in digest
+    assert '"đọc bài 1"' in digest
+    saved = await db.get_setting(article_reader.LAST_LINKS_KEY)
+    assert '"url": "https://vnexpress.net/b.html"' in saved
+
+
+@pytest.mark.asyncio
 async def test_build_digest_bo_qua_feed_loi_van_tong_hop_feed_con_lai(monkeypatch):
     monkeypatch.setattr(
         config, "MORNING_NEWS_RSS_FEEDS", ["https://a.example/rss", "https://b.example/rss"]

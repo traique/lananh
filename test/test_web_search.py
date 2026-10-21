@@ -269,6 +269,10 @@ async def test_maybe_search_passes_user_id_into_rewrite(monkeypatch):
         ("tin tức về lãi suất tuần này", True),
         ("Việt Nam có bao nhiêu tỉnh sau sáp nhập?", True),
         ("làm sao để cấu hình nginx reverse proxy cho fastapi?", True),
+        # Thời tiết: tool get_weather lo, không tốn Tavily.
+        ("thời tiết Hà Nội ngày mai thế nào?", False),
+        ("chiều nay Sài Gòn có mưa không em?", False),
+        ("giá kem chống nắng Anessa bao nhiêu", True),
     ],
 )
 def test_search_intent_gate_khong_bat_nham_cau_tam_su(text, expected):
