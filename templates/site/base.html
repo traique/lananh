@@ -26,6 +26,16 @@
           {% endfor %}
         </ul>
       </nav>
+      <div class="site-actions">
+        {% if logged_in %}
+        <a class="btn btn-secondary btn-sm" href="/admin">Quản trị</a>
+        <form method="post" action="/admin/logout">
+          <button class="btn-link" type="submit">Đăng xuất</button>
+        </form>
+        {% else %}
+        <a class="btn btn-secondary btn-sm" href="{{ login_url }}">Đăng nhập</a>
+        {% endif %}
+      </div>
     </div>
   </header>
   <main id="main" tabindex="-1">
@@ -40,7 +50,7 @@
   </main>
   <footer class="site-footer">
     <div class="inner">
-      <span>© LCTA · tính bằng thuật toán, không dùng AI</span>
+      <span>© LCTA · tính bằng thuật toán, AI chỉ chạy khi bạn bấm luận giải</span>
       <a href="/privacy">Quyền riêng tư</a>
       <a href="/terms">Điều khoản</a>
     </div>

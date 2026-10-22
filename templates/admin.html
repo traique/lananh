@@ -103,6 +103,8 @@
   .nav a:hover{background:var(--surface-2);color:var(--text)}
   .nav a.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
   .nav a.active svg{opacity:1}
+  .nav-label{display:block;margin:14px 10px 4px;color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+  .nav-sep{flex:none;width:1px;align-self:stretch;margin:4px 2px;background:var(--border-strong)}
   .sidebar-foot{border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--muted)}
 
   .main{min-width:0;display:flex;flex-direction:column}
@@ -292,7 +294,9 @@
     .controls{width:100%;gap:6px}
     .controls .select{flex:1;min-width:0;padding-right:24px;font-size:12.5px}
     .controls .btn.icon{flex:none}
-    .mobile-nav{position:static;top:auto;padding:10px 16px 6px}
+    /* Điện thoại: chip xuống dòng để thấy hết tab, không phải vuốt ngang */
+    .mobile-nav{position:static;top:auto;padding:10px 16px 6px;flex-wrap:wrap;overflow-x:visible}
+    .mobile-nav .nav-sep{display:none}
     section{scroll-margin-top:108px}
     .tbl.responsive thead{display:none}
     .tbl.responsive tbody tr{display:block;border-bottom:1px solid var(--border);padding:8px 0}
@@ -324,6 +328,11 @@
       <a href="#users"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4a3.5 3.5 0 0 1 0 7M18 13.5a6.5 6.5 0 0 1 3.5 6.5"/></svg>Người dùng &amp; Zalo</a>
       <a href="#market"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"/><path d="M4 15l5-6 4 3 7-8"/></svg>Page chứng khoán</a>
       <a href="#system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="8" ry="2.5"/><path d="M4 5.5v13c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-13"/><path d="M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></svg>Hệ thống</a>
+      <span class="nav-label">Công cụ web</span>
+      <a class="ext" href="/lich"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9.5h18M8 3v3M16 3v3"/></svg>Lịch</a>
+      <a class="ext" href="/thoi-tiet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 1 1 1.2-8.84A6 6 0 0 1 19.5 11 3.5 3.5 0 0 1 18 18z"/></svg>Thời tiết</a>
+      <a class="ext" href="/tu-vi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"/></svg>Tử vi</a>
+      <a class="ext" href="/than-so-hoc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9h14M5 15h14M10 4L8 20M16 4l-2 16"/></svg>Thần số học</a>
     </nav>
     <div class="sidebar-foot">
       <button class="btn sm theme-toggle" type="button" aria-label="Đổi giao diện sáng/tối">
@@ -370,6 +379,8 @@
     <nav class="mobile-nav" id="mobile-nav" aria-label="Mục">
       <a href="#overview">Tổng quan</a><a href="#ai">Thống kê AI</a><a href="#providers">Provider</a>
       <a href="#users">Người dùng &amp; Zalo</a><a href="#market">Page CK</a><a href="#system">Hệ thống</a>
+      <span class="nav-sep" aria-hidden="true"></span>
+      <a class="ext" href="/lich">Lịch</a><a class="ext" href="/thoi-tiet">Thời tiết</a><a class="ext" href="/tu-vi">Tử vi</a><a class="ext" href="/than-so-hoc">Thần số học</a>
     </nav>
 
     <main>
@@ -1264,7 +1275,8 @@ document.querySelectorAll('.logout-btn').forEach(btn => {
 
 /* ---------- Điều hướng dạng tab: mỗi lần chỉ hiện 1 mục ---------- */
 const sections = Array.from(document.querySelectorAll('main > section'));
-const navLinks = Array.from(document.querySelectorAll('#side-nav a, #mobile-nav a'));
+// Link ngoài (Lịch, Thời tiết... của web công khai) đi trang thường, không phải tab.
+const navLinks = Array.from(document.querySelectorAll('#side-nav a[href^="#"], #mobile-nav a[href^="#"]'));
 function tabFromHash() {
   const id = (location.hash || '').slice(1);
   return sections.some(x => x.id === id) ? id : 'overview';

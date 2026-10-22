@@ -97,9 +97,18 @@ p { margin: 0 0 var(--s3); }
 }
 .site-nav a:hover { background: var(--surface-2); color: var(--text); }
 .site-nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
-/* Điện thoại: 5 tab nằm gọn 1 hàng dưới logo */
+.site-actions { margin-left: auto; display: flex; align-items: center; gap: var(--s2); }
+.site-actions form { margin: 0; }
+.btn-sm { min-height: 44px; padding: var(--s1) var(--s3); font-size: 0.875rem; }
+.btn-link {
+  min-height: 44px; padding: var(--s1) var(--s2); border: 0; background: none; cursor: pointer;
+  color: var(--muted); font: 600 0.875rem/1 var(--font); border-radius: var(--radius-sm);
+}
+.btn-link:hover { color: var(--text); background: var(--surface-2); }
+/* Điện thoại: 5 tab nằm gọn 1 hàng dưới logo, nút Quản trị cùng hàng logo */
 @media (max-width: 599px) {
-  .site-nav { flex-basis: 100%; }
+  .site-actions { order: 2; }
+  .site-nav { order: 3; flex-basis: 100%; }
   .site-nav ul { justify-content: space-between; gap: 0; }
   .site-nav a { padding: var(--s2) 6px; font-size: 0.875rem; }
 }
@@ -147,6 +156,22 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh
 }
 .chips a:hover { border-color: var(--accent); color: var(--accent); }
 .chips a[aria-current="page"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.chip-edit { display: inline-flex; align-items: stretch; }
+.chip-edit > a { border-radius: 999px 0 0 999px; padding-right: var(--s3); }
+.chip-edit form { margin: 0; display: flex; }
+.chip-x {
+  min-width: 36px; min-height: 44px; padding: 0 var(--s3) 0 var(--s2); cursor: pointer;
+  border: 1px solid var(--border-strong); border-left: 0; border-radius: 0 999px 999px 0;
+  background: var(--surface); color: var(--muted); font: 600 1.125rem/1 var(--font);
+}
+.chip-x:hover { color: var(--lunar); background: var(--lunar-soft); }
+.add-place { display: flex; gap: var(--s2); max-width: 480px; }
+.add-place input { flex: 1; min-width: 0; }
+.ok-box {
+  border: 1px solid var(--good); color: var(--text); padding: var(--s3) var(--s4);
+  border-radius: var(--radius-sm); background: color-mix(in srgb, var(--good) 10%, transparent);
+}
+.ai-box .answer { line-height: 1.7; }
 
 /* Danh sách ngày lễ */
 .holiday-list { list-style: none; margin: 0; padding: 0 var(--s4); }

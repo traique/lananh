@@ -154,6 +154,7 @@ api.add_middleware(RequestLimitsMiddleware)
 api.include_router(zalo_router)
 api.include_router(web_admin.router)
 api.include_router(web_admin.api_router)
+api.include_router(web_site.static_router)
 api.include_router(web_site.router)
 api.include_router(web_site.api_router)
 
@@ -163,7 +164,7 @@ async def health(request: Request) -> Response:
     """Trình duyệt (Accept: text/html) nhận trang chủ; Render health check,
     UptimeRobot và mọi client khác vẫn nhận JSON {"status": "ok"} như cũ."""
     if request.method == "GET" and web_site.wants_html(request):
-        return web_site.home_page()
+        return await web_site.home(request)
     return JSONResponse({"status": "ok"})
 
 

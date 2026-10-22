@@ -7,6 +7,18 @@ from fastapi import FastAPI
 import web_site
 
 
+async def _logged_in(request):
+    return True
+
+
+async def _logged_out(request):
+    return False
+
+
+async def _no_setting(key):
+    return None
+
+
 @pytest.fixture
 async def client(monkeypatch):
     from ai import orchestrator
@@ -16,7 +28,11 @@ async def client(monkeypatch):
 
     monkeypatch.setattr(orchestrator, "ask", boom)
     monkeypatch.setattr(orchestrator, "chat", boom)
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_out)
+    monkeypatch.setattr(web_site.weather_places, "_cache", None)
+    monkeypatch.setattr(web_site.weather_places.db, "get_setting", _no_setting)
     app = FastAPI()
+    app.include_router(web_site.static_router)
     app.include_router(web_site.router)
     app.include_router(web_site.api_router)
     transport = httpx.ASGITransport(app=app)
@@ -24,8 +40,10 @@ async def client(monkeypatch):
         yield c
 
 
-async def test_root_tra_html_cho_trinh_duyet_json_cho_health_check():
+async def test_root_tra_html_cho_trinh_duyet_json_cho_health_check(monkeypatch):
     import web
+
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_in)
 
     transport = httpx.ASGITransport(app=web.api)
     async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
@@ -35,6 +53,118 @@ async def test_root_tra_html_cho_trinh_duyet_json_cho_health_check():
         page = await c.get("/", headers={"Accept": "text/html,application/xhtml+xml"})
         assert page.status_code == 200
         assert "Hôm nay" in page.text and 'alt="LCTA"' in page.text
+
+
+async def test_chua_dang_nhap_van_xem_duoc_header_co_nut_dang_nhap(client):
+    r = await client.get("/lich/hoi", params={"q": "rằm tháng 8"})
+    assert r.status_code == 200 and "rằm" in r.text
+    assert 'href="/admin?next=%2Flich%2Fhoi%3Fq%3D' in r.text and ">Đăng nhập</a>" in r.text
+    assert ">Quản trị</a>" not in r.text and "/admin/logout" not in r.text
+    for path in ("/lich", "/tu-vi", "/than-so-hoc", "/lich/ngay-le", "/lich/doi-ngay"):
+        assert (await client.get(path)).status_code == 200, path
+    assert (await client.get("/api/v1/calendar/days/2026-10-22")).status_code == 200
+
+
+async def test_da_dang_nhap_moi_hien_nut_quan_tri(client, monkeypatch):
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_in)
+    html = (await client.get("/lich")).text
+    assert 'href="/admin">Quản trị</a>' in html
+    assert '<form method="post" action="/admin/logout">' in html
+    assert ">Đăng nhập</a>" not in html
+
+
+async def test_root_html_cong_khai_health_check_van_json(monkeypatch):
+    import web
+
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_out)
+    transport = httpx.ASGITransport(app=web.api)
+    async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
+        assert (await c.get("/")).json() == {"status": "ok"}
+        page = await c.get("/", headers={"Accept": "text/html"})
+        assert page.status_code == 200 and "Hôm nay" in page.text
+        assert 'href="/admin?next=%2F"' in page.text
+
+
+_TUVI_FORM = {
+    "ngay": "15",
+    "thang": "3",
+    "nam": "1990",
+    "gio": "5",
+    "gioi": "male",
+    "lich": "duong",
+}
+
+
+async def test_ai_luan_giai_chi_khi_dang_nhap(client, monkeypatch):
+    calls = []
+
+    async def fake_ai_text(user_id, kind, channel, explain):
+        calls.append((kind, channel))
+        return "## Tổng quan\n**Mệnh** vững vàng."
+
+    monkeypatch.setattr(web_site.divination_commands, "ai_text", fake_ai_text)
+    # Chưa đăng nhập: bấm AI (ai=1) cũng không gọi AI, chỉ hiện nút đăng nhập.
+    html = (await client.post("/tu-vi", data={**_TUVI_FORM, "ai": "1"})).text
+    assert calls == [] and "Đăng nhập để dùng AI" in html and 'href="/admin?next=%2Ftu-vi"' in html
+    html = (await client.post("/than-so-hoc", data={"ngay": "1990-03-15", "ai": "1"})).text
+    assert calls == [] and "Đăng nhập để dùng AI" in html
+
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_in)
+    html = (await client.post("/tu-vi", data=_TUVI_FORM)).text
+    assert calls == [] and "AI luận giải lá số" in html  # chưa bấm thì chưa tốn lượt AI
+    assert '<input type="hidden" name="nam" value="1990">' in html
+    html = (await client.post("/tu-vi", data={**_TUVI_FORM, "ai": "1"})).text
+    assert calls == [("tuvi_chitiet", "web")]
+    assert "Tổng quan\nMệnh vững vàng." in html and "**" not in html
+    html = (
+        await client.post("/than-so-hoc", data={"ngay": "1990-03-15", "ten": "An", "ai": "1"})
+    ).text
+    assert calls[-1] == ("tsh_chitiet", "web") and "Mệnh vững vàng." in html
+
+
+async def test_them_xoa_dia_diem_thoi_tiet(client, monkeypatch):
+    store = {}
+
+    async def get_setting(key):
+        return store.get(key)
+
+    async def set_setting(key, value):
+        store[key] = value
+
+    async def fake_get_weather(location="", days=1):
+        return _FAKE_WEATHER
+
+    monkeypatch.setattr(web_site.weather_places.db, "get_setting", get_setting)
+    monkeypatch.setattr(web_site.weather_places.db, "set_setting", set_setting)
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+
+    # Chưa đăng nhập: thấy chip nhưng không có nút thêm/xoá, POST bị từ chối.
+    html = (await client.get("/thoi-tiet")).text
+    assert ">Nha Trang</a>" in html and 'class="chip-x"' not in html and "dia-diem/them" not in html
+    r = await client.post("/thoi-tiet/dia-diem/them", data={"ten": "Vũng Tàu"})
+    assert r.status_code == 303 and "tb=dang-nhap" in r.headers["location"] and store == {}
+
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_in)
+    html = (await client.get("/thoi-tiet", params={"noi": "Vũng Tàu"})).text
+    assert 'aria-label="Xoá Huế"' in html and 'value="Vũng Tàu" placeholder' in html
+    r = await client.post(
+        "/thoi-tiet/dia-diem/them", data={"ten": " Vũng  Tàu ", "noi": "Vũng Tàu"}
+    )
+    assert r.headers["location"] == "/thoi-tiet?tb=da-them&noi=V%C5%A9ng+T%C3%A0u"
+    html = (await client.get(r.headers["location"])).text
+    assert ">Vũng Tàu</a>" in html and "Đã thêm địa điểm." in html
+    await client.post(
+        "/thoi-tiet/dia-diem/them", data={"ten": "vung tau"}
+    )  # trùng (bỏ dấu) -> bỏ qua
+    r = await client.post("/thoi-tiet/dia-diem/xoa", data={"ten": "Huế"})
+    assert "tb=da-xoa" in r.headers["location"]
+    assert web_site.weather_places.json.loads(store["web_weather_places"]) == [
+        "TP.HCM", "Hà Nội", "Đà Nẵng", "Nha Trang", "Đà Lạt", "Cần Thơ", "Hải Phòng", "Vũng Tàu",
+    ]  # fmt: skip
+    r = await client.post("/thoi-tiet/dia-diem/them", data={"ten": "<script>"})
+    assert "tb=ten" in r.headers["location"]
+    html = (await client.get("/thoi-tiet", params={"tb": "XyzLaHoat"})).text
+    assert "XyzLaHoat" not in html and "ok-box" not in html.split("</style>")[1]  # chỉ mã cố định
 
 
 async def test_trang_lich_thang(client):

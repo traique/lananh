@@ -632,10 +632,22 @@ kênh bạn yêu cầu).
   "đã gửi hôm nay" - dùng để test mà không cần đợi tới 8h sáng hôm sau.
 - Tắt hẳn tính năng: set `MORNING_NEWS_ENABLED=false`.
 
-## Web công khai (lịch, thời tiết, tử vi, thần số học)
+## Web LCTA (lịch, thời tiết, tử vi, thần số học)
 
-`web_site.py` - trang render sẵn ở server (chạy được khi tắt JavaScript), KHÔNG
-gọi AI, không đụng DB. Mỗi công cụ là một trang riêng, gọn trong 1 màn hình;
+`web_site.py` - trang render sẵn ở server (chạy được khi tắt JavaScript). Xem
+lịch, thời tiết, tử vi, thần số học KHÔNG cần đăng nhập và không tốn AI. Cần
+đăng nhập bằng tài khoản admin (`ADMIN_USER`/`ADMIN_PASS`, chung phiên với
+`/admin`) cho việc tốn quota hoặc đổi dữ liệu chung:
+- nút "AI luận giải" ở trang kết quả tử vi/thần số học (1 lượt AI, chạy dưới
+  khoá lượt của chủ bot như chat, có telemetry kênh `web`);
+- thêm/xoá địa điểm hay xem ở `/thoi-tiet` (lưu trong bảng `settings`, key
+  `web_weather_places`, tối đa 16 mục, cache RAM - `services/weather_places.py`).
+
+Chưa đăng nhập thì header có nút "Đăng nhập" (về lại đúng trang sau khi đăng
+nhập); đăng nhập rồi mới hiện "Quản trị" và "Đăng xuất". Menu admin có nhóm
+"Công cụ web" sang các trang này.
+
+Mỗi công cụ là một trang riêng, gọn trong 1 màn hình;
 CSS `static/site.css` được nhúng thẳng vào HTML (không tốn thêm request). Logo LCTA
 có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo nền sáng/tối) và
 `static/favicon.png`, tạo bằng `scripts/make_site_logo.py` từ ảnh logo nền đen.
@@ -648,6 +660,7 @@ có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo nền 
 | `/lich/doi-ngay?am=15/8/2027&nhuan=1` | Đổi ngày âm sang dương |
 | `/lich/ngay-le` | Ngày lễ âm/dương trong 12 tháng tới |
 | `/thoi-tiet?noi=Đà Lạt` | Thời tiết hiện tại + dự báo 7 ngày (Open-Meteo, mặc định TP.HCM; tối đa 3 lượt tra song song, cache có trần trong `services/weather.py`) |
+| `POST /thoi-tiet/dia-diem/them`, `/xoa` (cần đăng nhập) | Thêm/xoá địa điểm hay xem |
 | `/tu-vi` (form, POST ra trang kết quả) | Lá số Tử Vi Đẩu Số dạng lưới 4x4 |
 | `/than-so-hoc` (form, POST ra trang kết quả) | Thần số học |
 | `GET /api/v1/calendar/days/{YYYY-MM-DD}`, `/months/{YYYY-MM}`, `/conversions?lunarDay=&lunarMonth=&lunarYear=&isLeapMonth=`, `/answers?q=` | JSON lịch |
