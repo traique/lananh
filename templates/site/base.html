@@ -26,6 +26,12 @@
           {% endfor %}
         </ul>
       </nav>
+      <div class="site-actions">
+        <a class="btn btn-secondary btn-sm" href="/admin">Quản trị</a>
+        <form method="post" action="/admin/logout">
+          <button class="btn-link" type="submit">Đăng xuất</button>
+        </form>
+      </div>
     </div>
   </header>
   <main id="main" tabindex="-1">

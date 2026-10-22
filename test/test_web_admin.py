@@ -61,6 +61,26 @@ async def _login(client, **kwargs):
     )
 
 
+async def test_login_quay_lai_trang_dang_mo_va_chan_open_redirect(client):
+    page = (await client.get("/admin", params={"next": '/lich?x=1&y="<b>'})).text
+    assert 'name="next" value="/lich?x=1&amp;y=&quot;&lt;b&gt;"' in page  # escape trong HTML
+    r = await client.post(
+        "/admin/login", data={"username": "admin", "password": "pass", "next": "/thoi-tiet?noi=Huế"}
+    )
+    assert r.status_code == 303 and r.headers["location"] == "/thoi-tiet?noi=Hu%E1%BA%BF"
+    for bad in ("//evil.com", "https://evil.com", "/\\evil.com", "lich", "/a\nb", "/" + "x" * 400):
+        assert web_admin.safe_next(bad) == "/admin", bad
+    r = await client.post(
+        "/admin/login", data={"username": "admin", "password": "pass", "next": "//evil.com"}
+    )
+    assert r.headers["location"] == "/admin"
+    # Sai mật khẩu vẫn giữ trang cần quay lại.
+    r = await client.post(
+        "/admin/login", data={"username": "admin", "password": "x", "next": "/tu-vi"}
+    )
+    assert r.status_code == 401 and 'name="next" value="/tu-vi"' in r.text
+
+
 async def test_admin_api_requires_session(client):
     assert (await client.get("/admin/api/state")).status_code == 403
 

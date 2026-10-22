@@ -632,10 +632,15 @@ kênh bạn yêu cầu).
   "đã gửi hôm nay" - dùng để test mà không cần đợi tới 8h sáng hôm sau.
 - Tắt hẳn tính năng: set `MORNING_NEWS_ENABLED=false`.
 
-## Web công khai (lịch, thời tiết, tử vi, thần số học)
+## Web LCTA (lịch, thời tiết, tử vi, thần số học)
 
 `web_site.py` - trang render sẵn ở server (chạy được khi tắt JavaScript), KHÔNG
-gọi AI, không đụng DB. Mỗi công cụ là một trang riêng, gọn trong 1 màn hình;
+gọi AI, không đụng DB. **Cần đăng nhập** bằng tài khoản admin
+(`ADMIN_USER`/`ADMIN_PASS`, chung phiên với `/admin`): chưa đăng nhập thì trang
+HTML chuyển sang `/admin?next=<trang đang mở>` (đăng nhập xong quay lại đúng
+trang), JSON API trả 401. Header web có nút "Quản trị" sang `/admin`; menu admin
+có nhóm "Công cụ web" sang các trang này. Vẫn công khai: health check `/` (JSON),
+webhook, ảnh `/static/*`, `/privacy`, `/terms`, `/data-deletion`. Mỗi công cụ là một trang riêng, gọn trong 1 màn hình;
 CSS `static/site.css` được nhúng thẳng vào HTML (không tốn thêm request). Logo LCTA
 có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo nền sáng/tối) và
 `static/favicon.png`, tạo bằng `scripts/make_site_logo.py` từ ảnh logo nền đen.
@@ -653,7 +658,7 @@ có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo nền 
 | `GET /api/v1/calendar/days/{YYYY-MM-DD}`, `/months/{YYYY-MM}`, `/conversions?lunarDay=&lunarMonth=&lunarYear=&isLeapMonth=`, `/answers?q=` | JSON lịch |
 | `POST /api/v1/numerology/readings`, `POST /api/v1/tuvi/charts` | JSON thần số học/lá số (ngày sinh trong body, không nằm trong URL/log) |
 
-Lỗi API luôn là HTTP 422 `{"error": {"code": "...", "message": "..."}}`.
+Lỗi API luôn có dạng `{"error": {"code": "...", "message": "..."}}` (422 khi dữ liệu sai, 401 khi chưa đăng nhập).
 Khoá JSON camelCase; chỉ thêm trường mới, không đổi/bỏ trường cũ.
 
 ## Trang quản trị (Admin dashboard)

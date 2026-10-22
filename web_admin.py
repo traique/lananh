@@ -15,6 +15,7 @@
 import asyncio
 import hashlib
 import hmac
+import html
 import logging
 import os
 import secrets
@@ -254,6 +255,26 @@ async def _admin_session_valid(request: Request) -> bool:
     return hmac.compare_digest(sig.encode(), _admin_session_sig(expiry, epoch).encode())
 
 
+async def is_logged_in(request: Request) -> bool:
+    """Phiên admin hợp lệ - dùng chung cho web (web_site.py) để chỉ chủ bot vào được."""
+    return await _admin_session_valid(request)
+
+
+def safe_next(value: str) -> str:
+    """Đường dẫn quay lại sau đăng nhập: chỉ nhận path nội bộ ("/lich?..."),
+    chặn open redirect kiểu "//evil.com", "/\\evil.com" hay "https://..."."""
+    value = value.strip()
+    if (
+        not value.startswith("/")
+        or value.startswith("//")
+        or "\\" in value
+        or len(value) > 300
+        or any(ord(ch) < 32 for ch in value)
+    ):
+        return "/admin"
+    return value
+
+
 async def require_admin(request: Request) -> None:
     if not await _admin_session_valid(request):
         raise HTTPException(status_code=403)
@@ -265,17 +286,19 @@ api_router = APIRouter(
 )
 
 
-def _login_page(error: str, status_code: int) -> HTMLResponse:
+def _login_page(error: str, status_code: int, next_path: str = "/admin") -> HTMLResponse:
     login_html = _ADMIN_LOGIN_PATH.read_text(encoding="utf-8").replace(
-        "<!--ERROR-->", f'<div class="err">{error}</div>'
+        "<!--NEXT-->", html.escape(safe_next(next_path), quote=True)
     )
+    if error:
+        login_html = login_html.replace("<!--ERROR-->", f'<div class="err">{error}</div>')
     return HTMLResponse(login_html, status_code=status_code)
 
 
 @router.get("/admin")
 async def admin_page(request: Request) -> Response:
     if not await _admin_session_valid(request):
-        return HTMLResponse(_ADMIN_LOGIN_PATH.read_text(encoding="utf-8"))
+        return _login_page("", 200, request.query_params.get("next", "/admin"))
     return HTMLResponse(_ADMIN_TEMPLATE_PATH.read_text(encoding="utf-8"))
 
 
@@ -286,6 +309,7 @@ async def admin_login(request: Request) -> Response:
     if _login_limiter.is_blocked(client_ip):
         return _login_page(too_many, 429)
     form = await request.form()
+    next_path = safe_next(str(form.get("next", "/admin")))
     username = str(form.get("username", ""))
     password = str(form.get("password", ""))
     # Làm chậm mọi lượt (kể cả đúng mật khẩu) theo tổng số lần sai gần đây từ
@@ -296,7 +320,7 @@ async def admin_login(request: Request) -> Response:
     # Kiểm tra lại sau các await ở trên: nhiều request song song cùng IP không
     # được lách khoá. Từ đây tới record_failure không có await nên không bị chen.
     if _login_limiter.is_blocked(client_ip):
-        return _login_page(too_many, 429)
+        return _login_page(too_many, 429, next_path)
     valid = (
         config.ADMIN_USER
         and config.ADMIN_PASS
@@ -314,13 +338,13 @@ async def admin_login(request: Request) -> Response:
             client_ip,
             ",".join(request.headers.getlist("x-forwarded-for"))[:200] or "-",
         )
-        return _login_page("Sai tài khoản hoặc mật khẩu.", 401)
+        return _login_page("Sai tài khoản hoặc mật khẩu.", 401, next_path)
     _login_limiter.reset(client_ip)
     epoch = await _session_epoch.get()
     if epoch is None:
         # Fail closed: không có epoch thì không phát cookie được.
-        return _login_page("Không kết nối được cơ sở dữ liệu. Thử lại sau.", 503)
-    response = RedirectResponse("/admin", status_code=303)
+        return _login_page("Không kết nối được cơ sở dữ liệu. Thử lại sau.", 503, next_path)
+    response = RedirectResponse(next_path, status_code=303)
     response.set_cookie(
         _ADMIN_SESSION_COOKIE,
         _admin_session_token(epoch),

@@ -7,6 +7,14 @@ from fastapi import FastAPI
 import web_site
 
 
+async def _logged_in(request):
+    return True
+
+
+async def _logged_out(request):
+    return False
+
+
 @pytest.fixture
 async def client(monkeypatch):
     from ai import orchestrator
@@ -16,7 +24,9 @@ async def client(monkeypatch):
 
     monkeypatch.setattr(orchestrator, "ask", boom)
     monkeypatch.setattr(orchestrator, "chat", boom)
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_in)
     app = FastAPI()
+    app.include_router(web_site.static_router)
     app.include_router(web_site.router)
     app.include_router(web_site.api_router)
     transport = httpx.ASGITransport(app=app)
@@ -24,8 +34,10 @@ async def client(monkeypatch):
         yield c
 
 
-async def test_root_tra_html_cho_trinh_duyet_json_cho_health_check():
+async def test_root_tra_html_cho_trinh_duyet_json_cho_health_check(monkeypatch):
     import web
+
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_in)
 
     transport = httpx.ASGITransport(app=web.api)
     async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
@@ -35,6 +47,42 @@ async def test_root_tra_html_cho_trinh_duyet_json_cho_health_check():
         page = await c.get("/", headers={"Accept": "text/html,application/xhtml+xml"})
         assert page.status_code == 200
         assert "Hôm nay" in page.text and 'alt="LCTA"' in page.text
+
+
+async def test_chua_dang_nhap_chuyen_sang_admin_api_401_anh_van_cong_khai(client, monkeypatch):
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_out)
+    r = await client.get("/lich/hoi", params={"q": "rằm tháng 8"})
+    assert r.status_code == 303
+    assert (
+        r.headers["location"]
+        == "/admin?next=%2Flich%2Fhoi%3Fq%3Dr%25E1%25BA%25B1m%2Bth%25C3%25A1ng%2B8"
+    )
+    for path in ("/lich", "/thoi-tiet", "/tu-vi", "/than-so-hoc", "/lich/ngay-le"):
+        assert (await client.get(path)).status_code == 303, path
+    r = await client.post("/than-so-hoc", data={"ngay": "1990-03-15", "ten": "A"})
+    assert r.status_code == 303  # không tính toán, không lộ dữ liệu khi chưa đăng nhập
+    r = await client.get("/api/v1/calendar/days/2026-10-22")
+    assert r.status_code == 401 and r.json()["error"]["code"] == "unauthorized"
+    assert (await client.get("/static/logo-light.webp")).status_code == 200
+    assert (await client.get("/favicon.ico")).status_code == 200
+
+
+async def test_root_chua_dang_nhap_chuyen_sang_admin_health_check_van_json(monkeypatch):
+    import web
+
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_out)
+    transport = httpx.ASGITransport(app=web.api)
+    async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
+        assert (await c.get("/")).json() == {"status": "ok"}
+        page = await c.get("/", headers={"Accept": "text/html"})
+        assert page.status_code == 303 and page.headers["location"] == "/admin?next=%2F"
+        assert (await c.get("/privacy")).status_code == 200  # trang chính sách vẫn công khai
+
+
+async def test_header_co_link_quan_tri_va_dang_xuat(client):
+    html = (await client.get("/lich")).text
+    assert 'href="/admin">Quản trị</a>' in html
+    assert '<form method="post" action="/admin/logout">' in html
 
 
 async def test_trang_lich_thang(client):

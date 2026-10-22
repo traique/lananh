@@ -1,5 +1,10 @@
-"""Web công khai: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le), /tu-vi,
+"""Web LCTA: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le), /tu-vi,
 /than-so-hoc (form -> trang kết quả riêng), /thoi-tiet và JSON API /api/v1.
+
+Cần đăng nhập bằng tài khoản admin (ADMIN_USER/ADMIN_PASS, cùng phiên với
+/admin) để quản lý tập trung: trang HTML chưa đăng nhập chuyển sang
+/admin?next=<trang đang mở>, JSON API trả 401. Ảnh tĩnh (logo dùng ở trang
+đăng nhập) vẫn công khai.
 
 Chỉ tính toán bằng code (services/site_data.py), KHÔNG gọi AI, không đụng DB
 - trang công khai không được đốt quota AI. /thoi-tiet tra Open-Meteo qua
@@ -30,10 +35,12 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request
+from fastapi.routing import APIRoute
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
+import web_admin
 from services import calendar_query, lunar, site_data, weather
 from services.site_data import InputError
 
@@ -82,8 +89,44 @@ _WEATHER_TIMEOUT_SEC = 15
 _weather_slots = asyncio.Semaphore(3)
 _MAX_JSON_BYTES = 4096
 
-router = APIRouter(include_in_schema=False)
-api_router = APIRouter(prefix="/api/v1")
+
+def _login_url(request: Request) -> str:
+    target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    return "/admin?" + urlencode({"next": web_admin.safe_next(target)})
+
+
+class _LoginPageRoute(APIRoute):
+    """Trang HTML: chưa đăng nhập thì chuyển sang màn đăng nhập rồi quay lại."""
+
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def guarded(request: Request) -> Response:
+            if not await web_admin.is_logged_in(request):
+                return RedirectResponse(_login_url(request), status_code=303)
+            return await handler(request)
+
+        return guarded
+
+
+class _LoginApiRoute(APIRoute):
+    """JSON API: chưa đăng nhập thì 401 cùng dạng lỗi với các lỗi API khác."""
+
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def guarded(request: Request) -> Response:
+            if not await web_admin.is_logged_in(request):
+                return _error(401, "unauthorized", "Cần đăng nhập tại /admin.")
+            return await handler(request)
+
+        return guarded
+
+
+router = APIRouter(include_in_schema=False, route_class=_LoginPageRoute)
+api_router = APIRouter(prefix="/api/v1", route_class=_LoginApiRoute)
+# Ảnh tĩnh không cần đăng nhập: trang đăng nhập cũng dùng logo/favicon.
+static_router = APIRouter(include_in_schema=False)
 
 
 @functools.lru_cache(maxsize=1)
@@ -159,6 +202,13 @@ def _upcoming_holidays(today: dt.date, limit: int) -> list[dict]:
         }
         for day, name, is_lunar in upcoming[:limit]
     ]
+
+
+async def home(request: Request) -> Response:
+    """Trang chủ cho trình duyệt (web.py gọi khi Accept có text/html)."""
+    if not await web_admin.is_logged_in(request):
+        return RedirectResponse(_login_url(request), status_code=303)
+    return home_page()
 
 
 def home_page() -> HTMLResponse:
@@ -414,7 +464,7 @@ async def tsh_submit(request: Request) -> HTMLResponse:
     )
 
 
-@router.get("/static/{name}")
+@static_router.get("/static/{name}")
 async def static_file(name: str) -> Response:
     media_type = _STATIC_FILES.get(name)
     if media_type is None:
@@ -427,7 +477,7 @@ async def static_file(name: str) -> Response:
     )
 
 
-@router.get("/favicon.ico", include_in_schema=False)
+@static_router.get("/favicon.ico", include_in_schema=False)
 async def favicon() -> Response:
     return await static_file("favicon.png")
 
