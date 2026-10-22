@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<div>
+  <h1>Thời tiết</h1>
+  <p class="lead">Hiện tại và dự báo 7 ngày. Không nhập địa điểm thì xem TP. Hồ Chí Minh.</p>
+  <form class="search" action="/thoi-tiet" method="get" role="search">
+    <label class="sr-only" for="noi">Địa điểm</label>
+    <input type="search" id="noi" name="noi" maxlength="60" value="{{ place }}" placeholder="Ví dụ: Đà Lạt" autocomplete="off">
+    <button class="btn" type="submit">Xem</button>
+  </form>
+  <ul class="chips mt-3" aria-label="Địa điểm hay xem">
+    {% for p in places %}<li><a href="/thoi-tiet?noi={{ p | urlencode }}"{% if p == place or (not place and loop.first) %} aria-current="page"{% endif %}>{{ p }}</a></li>{% endfor %}
+  </ul>
+
+  {% if error %}
+  <div class="error-box mt-4" role="alert"><strong>Chưa tra được:</strong> {{ error }}</div>
+  {% endif %}
+
+  {% if data %}
+  <div class="layout-2 mt-4">
+    <section class="panel weather-now" aria-labelledby="now-title">
+      <h2 id="now-title" class="eyebrow">Bây giờ · {{ data.location }}</h2>
+      <p class="temp">{{ fmt(data.now.temperature_c) }}°C</p>
+      <p class="desc">{{ data.now.description | capitalize }}</p>
+      <dl class="facts">
+        <dt>Cảm giác</dt><dd>{{ fmt(data.now.feels_like_c) }}°C</dd>
+        <dt>Độ ẩm</dt><dd>{{ fmt(data.now.humidity_percent) }}%</dd>
+        <dt>Gió</dt><dd>{{ fmt(data.now.wind_kmh) }} km/h</dd>
+        <dt>Mưa</dt><dd>{{ data.now.precipitation_mm if data.now.precipitation_mm is not none else "?" }} mm</dd>
+      </dl>
+    </section>
+    <section class="panel" aria-labelledby="fc-title">
+      <h2 id="fc-title" class="small-title">Dự báo {{ data.daily | length }} ngày</h2>
+      <ul class="forecast">
+        {% for d in data.daily %}
+        <li>
+          <span class="when"><strong>{{ d.label }}</strong> <span class="muted">{{ d.short }}</span></span>
+          <span class="what">{{ d.description | capitalize }}</span>
+          <span class="range"><span class="muted">{{ fmt(d.min_c) }}°</span> – <strong>{{ fmt(d.max_c) }}°</strong></span>
+          <span class="rain">Mưa {{ fmt(d.rain_chance_percent) }}% · UV {{ fmt(d.uv_max) }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+  </div>
+  <p class="small muted mt-3">Nguồn: {{ data.source }}. Số liệu cập nhật khoảng 10 phút một lần.</p>
+  {% endif %}
+</div>
+{% endblock %}
