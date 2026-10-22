@@ -144,7 +144,7 @@ def numerology_reading(birth: dt.date, name: str = "") -> dict:
     if len(name) > 80:
         raise InputError("NAME_TOO_LONG", "Họ tên tối đa 80 ký tự.")
     if name.strip() and not numerology.has_letters(name):
-        raise InputError("INVALID_NAME", "Họ tên cần viết bằng chữ Latin (A-Z, có dấu được).")
+        raise InputError("INVALID_NAME", numerology.NAME_ERROR)
     return numerology.reading_data(numerology.compute(birth, name, today()))
 
 

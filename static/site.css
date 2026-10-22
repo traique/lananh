@@ -334,9 +334,9 @@ table.month .hd { width: 6px; height: 6px; border-radius: 50%; background: var(-
 .palace .main .empty { color: var(--muted); font-weight: 600; }
 .palace .minor { color: var(--text-2); font-size: 0.8125rem; }
 /* Độ sáng sao: chữ nhỏ sau tên sao (M miếu, V vượng, Đ đắc, B bình, H hãm) */
-.palace .lvl { font-size: 0.6875rem; font-weight: 600; color: var(--muted); vertical-align: super; margin-left: 1px; }
-.palace .lvl.h { color: var(--lunar); }
-.palace .lvl.m, .palace .lvl.v { color: var(--water); }
+.lvl { font-size: 0.6875rem; font-weight: 600; color: var(--muted); vertical-align: super; margin-left: 1px; }
+.lvl.h { color: var(--lunar); }
+.lvl.m, .lvl.v { color: var(--water); }
 .palace footer { margin-top: var(--s1); color: var(--muted); font-size: 0.75rem; display: flex; flex-wrap: wrap; gap: var(--s1) var(--s2); }
 .chart-center { border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: var(--s3); font-size: 0.875rem; }
 .chart-center h3 { font-size: 1rem; }

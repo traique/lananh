@@ -488,6 +488,21 @@ async def test_api_giu_truong_cu_va_truong_moi_song_song(client):
     assert 1 <= reading["personalMonthDetail"]["month"] <= 12
 
 
+@pytest.mark.parametrize(
+    "kw,code",
+    [
+        ({"json": {"birthDate": "1990-03-15", "hourBranch": True, "gender": "male"}}, "INVALID_HOUR"),
+        ({"json": {"birthDate": "1990-03-15", "hourBranch": 5.0, "gender": "male"}}, "INVALID_HOUR"),
+        ({"json": {"birthDate": "1990-03-15", "hourBranch": 12, "gender": "male"}}, "INVALID_HOUR"),
+        ({"content": b""}, "INVALID_HOUR"),
+        ({"content": b"null", "headers": {"content-type": "application/json"}}, "INVALID_JSON"),
+    ],
+)  # fmt: skip
+async def test_api_tuvi_tu_choi_hour_branch_sai_kieu_va_body_rong(client, kw, code):
+    r = await client.post("/api/v1/tuvi/charts", **kw)
+    assert r.status_code == 422 and r.json()["error"]["code"] == code
+
+
 async def test_api_body_qua_lon(client):
     r = await client.post("/api/v1/numerology/readings", content=b"{" + b" " * 5000 + b"}")
     assert r.json()["error"]["code"] == "BODY_TOO_LARGE"

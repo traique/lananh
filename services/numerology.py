@@ -65,6 +65,7 @@ USAGE = (
     "/tsh_chitiet <như trên> - AI diễn giải chi tiết (tốn 1 lượt AI)."
 )
 DISCLAIMER = "ℹ️ Thần số học mang tính tham khảo, giải trí."
+NAME_ERROR = "Họ tên cần viết bằng chữ Latin (A-Z, có dấu được)."
 
 
 @dataclass

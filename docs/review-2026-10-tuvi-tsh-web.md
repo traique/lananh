@@ -12,8 +12,8 @@ nguồn độc lập (sách "Tử Vi Đẩu Số Tân Biên" bản PDF, mã ngu�
 tracuutuvi.com, thayungkhiem.vn, tuvihiendai.vn, tuvi.cohoc.net, hoc.kabala.vn,
 thaiam.vn; thần số học: tracuuthansohoc, sách Lê Đỗ Quỳnh Hương / David A.
 Phillips, Hans Decoz) và chỉ nhận khi ≥ 2 nguồn khớp; chỗ các trường phái
-khác nhau được ghi rõ trong code/YAML. Mỗi finding của review được một agent
-khác cố bác bỏ trước khi sửa; mỗi sửa đổi có test tái hiện lỗi.
+khác nhau được ghi rõ trong code/YAML. Mỗi finding của review được tái hiện
+bằng input cụ thể trước khi sửa và mỗi sửa đổi có test đỏ-khi-hỏng đi kèm.
 
 ## Việc cần làm khi deploy
 
@@ -163,6 +163,17 @@ giữ logo vàng kim cũ thì đổi lại hai dải màu trong script và chạ
 29. `aria-label` trên `<p>` bị bỏ qua - đã đổi thành chữ ẩn.
 30. Nút AI bấm hai lần tốn hai lượt - đã khoá nút sau khi gửi.
 31. Thiếu test bảng độ sáng đủ 14 sao / đúng 12 ký tự - đã thêm.
+32. Chiều nghịch (âm nam / dương nữ) của Hỏa Linh, vòng Tràng Sinh, vòng Bác Sĩ
+    không có test - đã thêm (dương nam vs dương nữ cùng ngày giờ).
+33. Triệt không có test, Tuần chỉ test một tuần Giáp - đã thêm 10 năm.
+34. Tứ hóa chỉ test can Canh; Tứ hóa gắn vào phụ tinh (Hữu Bật, Tả Phù, Xương
+    Khúc) không test - đã thêm đủ 10 can.
+35. API `hourBranch` kiểu bool/float/12, body rỗng hoặc `null` chưa có test - đã thêm.
+36. Năm/tháng cá nhân theo giờ Việt Nam không có test fail-when-broken - đã thêm
+    (giả lập 17:30 UTC 31/12 = 00:30 1/1 giờ VN).
+37. Bot `/tsh` im lặng với họ tên không có chữ Latin trong khi web trả 422 - đã
+    dùng chung quy tắc (`numerology.NAME_ERROR`).
+38. Chú giải độ sáng không cùng màu với ký hiệu trong cung - đã sửa selector.
 
 ## Chưa đổi (cố ý)
 

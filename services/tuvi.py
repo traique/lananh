@@ -372,12 +372,6 @@ def brightness(star: str, pos: int) -> str | None:
     return level if level in BRIGHTNESS_NAMES else None
 
 
-def _split_stars(names: list[str]) -> tuple[list[str], list[str]]:
-    main = [n for n in names if n.split(" (")[0] in CHINH_TINH]
-    other = [n for n in names if n not in main]
-    return main, other
-
-
 def format_chart(c: Chart) -> str:
     born = can_chi.year_profile(c.lunar_year)
     gender = ("Dương" if c.can_y % 2 == 0 else "Âm") + (" Nam" if c.male else " Nữ")

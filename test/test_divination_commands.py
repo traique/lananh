@@ -100,3 +100,9 @@ def test_help_telegram_chia_tin_duoi_gioi_han():
     assert all(len(c) <= 3500 for c in chunks)
     assert "\n\n".join(chunks) == commands.HELP_TEXT
     assert all(c.count("*") % 2 == 0 for c in chunks)  # Markdown cân dấu từng tin
+
+
+def test_tsh_ten_khong_co_chu_latin_bao_loi_nhu_web():
+    assert "chữ Latin" in divination_commands.tsh("15/3/1990 李明")
+    assert "chữ Latin" in divination_commands.tsh("15/3/1990 123")
+    assert "Con số chủ đạo" in divination_commands.tsh("15/3/1990 Nguyễn Văn An")

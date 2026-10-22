@@ -8,6 +8,7 @@ dài câu trả lời để đếm lượt AI, không ghi tham số hay nội du
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 
 from ai.timeouts import TurnTimeoutError
@@ -23,12 +24,22 @@ def lich(argument: str) -> str:
     return calendar_query.answer(argument)
 
 
-def tsh(argument: str) -> str:
+def _parse_tsh(argument: str) -> tuple[dt.date, str] | str:
+    """(ngày sinh, họ tên) hoặc câu báo lỗi - cùng quy tắc tên với web/API."""
     parsed = numerology.parse(argument)
     if isinstance(parsed, str):
         return parsed
     birth, name = parsed
-    return numerology.format_reading(numerology.compute(birth, name))
+    if name and not numerology.has_letters(name):
+        return numerology.NAME_ERROR
+    return birth, name
+
+
+def tsh(argument: str) -> str:
+    parsed = _parse_tsh(argument)
+    if isinstance(parsed, str):
+        return parsed
+    return numerology.format_reading(numerology.compute(*parsed))
 
 
 def tuvi_chart(argument: str) -> str:
@@ -58,7 +69,7 @@ async def _with_ai(user_id: int, kind: str, channel: str, base: str, explain) ->
 
 
 async def tsh_chitiet(user_id: int, argument: str, channel: str) -> list[str]:
-    parsed = numerology.parse(argument)
+    parsed = _parse_tsh(argument)
     if isinstance(parsed, str):
         return [parsed]
     reading = numerology.compute(*parsed)

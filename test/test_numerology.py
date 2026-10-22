@@ -132,3 +132,17 @@ def test_so_truong_thanh_giu_so_bac_thay():
     # Chủ đạo 10 tính là 1.
     r10 = numerology.compute(dt.date(1990, 3, 15), "Lê An", TODAY)
     assert r10.maturity == numerology.reduce_number(1 + r10.expression)
+
+
+def test_mac_dinh_tinh_theo_gio_viet_nam(monkeypatch):
+    class FakeDatetime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            utc = dt.datetime(2026, 12, 31, 17, 30, tzinfo=dt.timezone.utc)  # 00:30 1/1/2027 VN
+            return utc.astimezone(tz) if tz else utc.replace(tzinfo=None)
+
+    monkeypatch.setattr(numerology.dt, "datetime", FakeDatetime)
+    r = numerology.compute(dt.date(1990, 3, 15))
+    assert (r.for_year, r.as_of, r.personal_year, r.personal_month) == (
+        2027, dt.date(2027, 1, 1), 2, 3,
+    )  # fmt: skip

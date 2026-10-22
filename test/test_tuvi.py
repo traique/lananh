@@ -207,3 +207,58 @@ def test_chart_data_hop_dong_json():
     assert data["palaces"][0]["stars"][0]["brightness"] == "Đ"
     assert data["hourText"] == "giờ Tỵ" and data["isEarlyTy"] is False and data["anMonth"] == 2
     assert data["gender"] == "male" and data["isThuan"] is True
+
+
+def test_hoa_linh_trang_sinh_bac_si_theo_chieu_thuan_nghich():
+    nam = tuvi.parse("15/3/1990 9h30 nam")  # Canh Ngọ, dương nam -> thuận
+    nu = tuvi.parse("15/3/1990 9h30 nữ")  # dương nữ -> nghịch
+    assert (_star(nam, "Hỏa Tinh"), _star(nam, "Linh Tinh")) == (NGO, TUAT)
+    assert (_star(nu, "Hỏa Tinh"), _star(nu, "Linh Tinh")) == (THAN, THAN)
+    assert nam.trang_sinh[DAU] == "Mộc Dục" and nu.trang_sinh[7] == "Mộc Dục"
+    assert _star(nam, "Lực Sĩ") == DAU and _star(nu, "Lực Sĩ") == 7
+
+
+@pytest.mark.parametrize(
+    "year,triet,tuan",
+    [(1984, (8, 9), (10, 11)), (1985, (6, 7), (10, 11)), (1986, (4, 5), (10, 11)),
+     (1987, (2, 3), (10, 11)), (1988, (0, 1), (10, 11)), (1989, (8, 9), (10, 11)),
+     (1993, (0, 1), (10, 11)), (1994, (8, 9), (8, 9)), (1975, (6, 7), (0, 1)),
+     (2026, (4, 5), (2, 3))],
+)  # fmt: skip
+def test_tuan_triet_theo_can_chi_nam(year, triet, tuan):
+    c = tuvi.build_chart(1, 1, year, 0, True)
+    assert (c.triet, c.tuan) == (triet, tuan)
+
+
+def test_triet_hien_tren_ban_chu_va_json():
+    c = tuvi.parse("15/3/1990 9h30 nam")  # Canh -> Triệt Ngọ Mùi = Tài Bạch, Tử Tức
+    assert "▸ TÀI BẠCH (Nhâm Ngọ) [Triệt]" in tuvi.format_chart(c)
+    data = tuvi.chart_data(c)
+    assert [p["name"] for p in data["palaces"] if p["hasTriet"]] == ["Tài Bạch", "Tử Tức"]
+
+
+@pytest.mark.parametrize(
+    "year,loc,quyen,khoa,ky",
+    [(1984, "Liêm Trinh", "Phá Quân", "Vũ Khúc", "Thái Dương"),
+     (1985, "Thiên Cơ", "Thiên Lương", "Tử Vi", "Thái Âm"),
+     (1986, "Thiên Đồng", "Thiên Cơ", "Văn Xương", "Liêm Trinh"),
+     (1987, "Thái Âm", "Thiên Đồng", "Thiên Cơ", "Cự Môn"),
+     (1988, "Tham Lang", "Thái Âm", "Hữu Bật", "Thiên Cơ"),
+     (1989, "Vũ Khúc", "Tham Lang", "Thiên Lương", "Văn Khúc"),
+     (1990, "Thái Dương", "Vũ Khúc", "Thái Âm", "Thiên Đồng"),
+     (1991, "Cự Môn", "Thái Dương", "Văn Khúc", "Văn Xương"),
+     (1992, "Thiên Lương", "Tử Vi", "Tả Phù", "Vũ Khúc"),
+     (1993, "Phá Quân", "Cự Môn", "Thái Âm", "Tham Lang")],
+)  # fmt: skip
+def test_tu_hoa_10_can_va_gan_vao_ca_phu_tinh(year, loc, quyen, khoa, ky):
+    c = tuvi.build_chart(1, 1, year, 0, True)
+    assert list(c.tu_hoa.values()) == [loc, quyen, khoa, ky]
+    labels = [n for names in c.stars.values() for n in names if "(Hóa" in n]
+    expected = [f"{s} ({h})" for s, h in zip((loc, quyen, khoa, ky), tuvi._HOA_NAMES, strict=True)]
+    assert sorted(labels) == sorted(expected)
+
+
+def test_hoa_khoa_nam_mau_nam_o_huu_bat():
+    data = tuvi.chart_data(tuvi.build_chart(1, 1, 1988, 0, True))
+    tai = next(p for p in data["palaces"] if p["name"] == "Tài Bạch")
+    assert "Hữu Bật (Hóa Khoa)" in tai["minorStars"]
