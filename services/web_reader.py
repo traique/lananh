@@ -286,7 +286,12 @@ async def read_url(raw_url: str) -> str:
                 "Jina Reader trả HTTP %d cho '%s', thử fetch trực tiếp.", status_code, url
             )
         logger.info("Jina Reader không đọc được '%s', thử fetch trực tiếp.", url)
-        text = await _fetch_direct(url)
+        try:
+            text = await _fetch_direct(url)
+        except httpx.HTTPError as exc:
+            # Giữ đúng hợp đồng "chỉ raise WebReaderError": nơi gọi (đọc bài báo,
+            # web_search đọc sâu, agent) chỉ bắt WebReaderError.
+            raise WebReaderError(f"Không kết nối được trang ({type(exc).__name__}).") from exc
 
     if len(text) > config.WEB_READER_MAX_CHARS:
         text = text[: config.WEB_READER_MAX_CHARS] + "\n\n[... đã cắt bớt, nội dung dài hơn]"

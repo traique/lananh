@@ -16,6 +16,7 @@ Không bao giờ strip dấu hay ASCII-hoá tên người dùng ở đây - đó
 khác hoàn toàn (làm slug), không phải chuẩn hoá encoding.
 """
 
+import re
 import unicodedata
 
 
@@ -26,3 +27,13 @@ def nfc(text: str | None) -> str:
     if not text:
         return ""
     return unicodedata.normalize("NFC", text)
+
+
+def fold(text: str) -> str:
+    """Chữ thường, BỎ DẤU tiếng Việt, gộp khoảng trắng - chỉ dùng để SO KHỚP
+    (nhận diện câu hỏi lịch/thời tiết, tên địa danh), không dùng để hiển thị
+    hay lưu. Khác nfc(): hàm này cố ý làm mất thông tin dấu."""
+    text = (text or "").replace("đ", "d").replace("Đ", "D")
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", text.lower()).strip()

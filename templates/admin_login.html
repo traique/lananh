@@ -58,8 +58,7 @@
   }
   .brand{display:flex;align-items:center;gap:12px;margin-bottom:20px}
   .logo{
-    width:40px;height:40px;border-radius:12px;display:grid;place-items:center;flex:none;
-    background:var(--accent);color:var(--on-accent);font-weight:800;font-size:16px;letter-spacing:-.02em;
+    width:40px;height:40px;display:block;flex:none;
   }
   h1{font-size:18px;margin:0;letter-spacing:-.015em}
   p.sub{color:var(--muted);font-size:13px;margin:2px 0 0}
@@ -87,7 +86,7 @@
 <body>
   <main class="card">
     <div class="brand">
-      <div class="logo" aria-hidden="true">LA</div>
+      <img class="logo" src="/static/logo.svg" alt="" width="40" height="40">
       <div>
         <h1>Lan Anh Bot Admin</h1>
         <p class="sub">Đăng nhập để quản lý provider và xem thống kê.</p>

@@ -53,7 +53,9 @@ Repository được thiết kế cho **một chủ sở hữu**:
     không nói địa điểm (hoặc nói Sài Gòn/HCM) thì mặc định TP. Hồ Chí Minh, nói
     tỉnh/thành cụ thể thì tra toạ độ nơi đó. Cache toạ độ/dự báo có trần.
     Câu hỏi thời tiết (`weather.looks_like_weather_question`) không tra web
-    Tavily nữa - số liệu chỉ lấy từ tool.
+    Tavily nữa. `services/weather_chat.py` tự tách địa điểm (danh sách địa danh
+    VN hoặc "ở/tại X") và mốc thời gian rồi trả lời thẳng, KHÔNG tốn lượt AI;
+    câu không chắc mới đi router tool + chat AI.
   - `services/lunar.py`: âm lịch Hồ Ngọc Đức chạy offline - đổi âm ↔ dương,
     tháng nhuận, can chi, tiết khí, giờ hoàng đạo, số ngày tới Tết.
   - `services/lunar_chat.py`: câu hỏi âm lịch hay gặp ("rằm tháng 8 là ngày
@@ -629,6 +631,23 @@ kênh bạn yêu cầu).
 - `/bantinsang` (chỉ admin, Zalo/Zoom) gửi thử ngay lập tức, bỏ qua guard
   "đã gửi hôm nay" - dùng để test mà không cần đợi tới 8h sáng hôm sau.
 - Tắt hẳn tính năng: set `MORNING_NEWS_ENABLED=false`.
+
+## Web công khai (lịch, tử vi, thần số học)
+
+`web_site.py` - trang render sẵn ở server (chạy được khi tắt JavaScript), KHÔNG
+gọi AI, không đụng DB; logo `static/logo.svg`, CSS `static/site.css`.
+
+| Đường dẫn | Nội dung |
+|---|---|
+| `/` | Trang chủ cho trình duyệt (`Accept: text/html`); health check/Render vẫn nhận `{"status":"ok"}` |
+| `/lich?thang=YYYY-MM&ngay=YYYY-MM-DD&q=...&am=15/8/2027` | Lịch tháng dương-âm, chi tiết ngày, hỏi tự do (như `/lich`), đổi âm sang dương |
+| `/tu-vi` (POST form) | Lá số Tử Vi Đẩu Số dạng lưới 4x4 |
+| `/than-so-hoc` (POST form) | Thần số học |
+| `GET /api/v1/calendar/days/{YYYY-MM-DD}`, `/months/{YYYY-MM}`, `/conversions?lunarDay=&lunarMonth=&lunarYear=&isLeapMonth=`, `/answers?q=` | JSON lịch |
+| `POST /api/v1/numerology/readings`, `POST /api/v1/tuvi/charts` | JSON thần số học/lá số (ngày sinh trong body, không nằm trong URL/log) |
+
+Lỗi API luôn là HTTP 422 `{"error": {"code": "...", "message": "..."}}`.
+Khoá JSON camelCase; chỉ thêm trường mới, không đổi/bỏ trường cũ.
 
 ## Trang quản trị (Admin dashboard)
 

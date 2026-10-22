@@ -193,42 +193,16 @@ async def _tool_lunar_calendar(
             lunar.date_info(target)
         )
 
-    if ld is None or lm is None or not 1 <= ld <= 30 or not 1 <= lm <= 12:
+    if ld is None or lm is None:
         return "Ngày/tháng âm lịch không hợp lệ (ngày 1-30, tháng 1-12)."
     is_leap = leap is True or str(leap).strip().lower() in ("1", "true")
-    ly = _as_int(lunar_year)
-    if ly is not None:
-        years = [ly]
-    else:
-        # Không nói năm: lấy lần gần nhất sắp tới (năm âm hiện tại, đã qua thì năm sau).
-        current = lunar.solar_to_lunar(today.day, today.month, today.year)[2]
-        years = [current, current + 1]
-    if not all(1900 <= y <= 2100 for y in years):
-        return "Năm âm lịch cần trong khoảng 1900-2100."
-
-    found: tuple[int, date_cls] | None = None
-    short_month_year: int | None = None
-    for year in years:
-        solar = lunar.lunar_to_solar(ld, lm, year, is_leap)
-        if solar is None:
-            continue
-        d = date_cls(solar[2], solar[1], solar[0])
-        # Tháng âm thiếu (29 ngày) không có ngày 30: thuật toán trả ngày 1 tháng sau.
-        if lunar.solar_to_lunar(d.day, d.month, d.year) != (ld, lm, year, is_leap):
-            short_month_year = short_month_year or year
-            continue
-        found = (year, d)
-        if ly is not None or d >= today:
-            break
-    if found is None:
-        if short_month_year is not None:
-            return f"Tháng {lm} âm lịch năm {lunar.year_can_chi(short_month_year)} chỉ có 29 ngày."
-        return f"Năm âm lịch đó không có tháng {lm} nhuận."
-    year, d = found
+    day, year, error = lunar.find_lunar_date(ld, lm, _as_int(lunar_year), is_leap, today)
+    if day is None:
+        return error
     label = lunar.lunar_text(ld, lm, year, is_leap)
     return (
         f"{label[0].upper()}{label[1:]} âm lịch rơi vào (tính offline, chính xác):\n"
-        + lunar.describe_date(lunar.date_info(d))
+        + lunar.describe_date(lunar.date_info(day))
     )
 
 

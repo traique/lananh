@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ title }} · Lan Anh{% endblock %}</title>
+  <meta name="description" content="{{ description }}">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/site.css?v={{ asset_version }}">
+</head>
+<body>
+  <a class="skip-link" href="#main">Bỏ qua đến nội dung chính</a>
+  <header class="site-header">
+    <div class="inner">
+      <a class="brand" href="/"><img src="/static/logo.svg" alt="" width="32" height="32">Lan Anh</a>
+      <nav class="site-nav" aria-label="Điều hướng chính">
+        <ul>
+          {% for href, label in nav %}
+          <li><a href="{{ href }}"{% if href == active %} aria-current="page"{% endif %}>{{ label }}</a></li>
+          {% endfor %}
+        </ul>
+      </nav>
+    </div>
+  </header>
+  <main id="main" tabindex="-1">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <span>Lan Anh · tra cứu tính bằng thuật toán, không dùng AI</span>
+      <a href="/privacy">Quyền riêng tư</a>
+      <a href="/terms">Điều khoản</a>
+    </div>
+  </footer>
+</body>
+</html>

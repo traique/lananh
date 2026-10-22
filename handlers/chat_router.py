@@ -13,7 +13,13 @@ from telegram.ext import ContextTypes
 import messages
 from core.text_normalize import nfc
 from handlers import common, stock_handler
-from services import article_reader, channel_chat_service, lunar_chat, portfolio_service
+from services import (
+    article_reader,
+    channel_chat_service,
+    lunar_chat,
+    portfolio_service,
+    weather_chat,
+)
 from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -40,7 +46,12 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await common.reply_long_text(update.message, article)
         return
 
-    # Âm lịch tính offline: trả lời thẳng, không tốn lượt AI nào.
+    # Thời tiết và âm lịch: trả lời thẳng bằng code, không tốn lượt AI nào.
+    weather_reply = await weather_chat.maybe_handle(text)
+    if weather_reply is not None:
+        await common.reply_long_text(update.message, weather_reply)
+        return
+
     lunar_reply = await lunar_chat.maybe_handle(text)
     if lunar_reply is not None:
         await common.reply_long_text(update.message, lunar_reply)

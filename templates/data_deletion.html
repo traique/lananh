@@ -42,7 +42,7 @@
     .page{max-width:820px;margin:0 auto}
     .top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}
     .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text);font-weight:700}
-    .logo{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--accent);color:#fff;font-weight:800;font-size:13px}
+    .logo{width:32px;height:32px;display:block}
     nav.links{display:flex;gap:4px;flex-wrap:wrap}
     nav.links a{color:var(--text-2);text-decoration:none;font-size:13px;font-weight:600;padding:6px 10px;border-radius:999px}
     nav.links a:hover{background:var(--surface-2);color:var(--text)}
@@ -64,7 +64,7 @@
 <body>
   <div class="page">
     <div class="top">
-      <a class="brand" href="/privacy"><span class="logo" aria-hidden="true">LA</span>Lan Anh Bot</a>
+      <a class="brand" href="/"><img class="logo" src="/static/logo.svg" alt="" width="32" height="32">Lan Anh</a>
       <nav class="links" aria-label="Trang pháp lý">
         <a href="/privacy">Quyền riêng tư</a>
         <a href="/terms">Điều khoản</a>

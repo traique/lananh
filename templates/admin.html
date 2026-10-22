@@ -91,8 +91,7 @@
   }
   .brand{display:flex;align-items:center;gap:10px;padding:4px 8px 18px}
   .brand .logo{
-    width:34px;height:34px;border-radius:10px;flex:none;display:grid;place-items:center;
-    background:var(--accent);color:var(--on-accent);font-weight:800;font-size:15px;letter-spacing:-.02em;
+    width:34px;height:34px;flex:none;display:block;
   }
   .brand b{display:block;font-size:14.5px;letter-spacing:-.01em}
   .brand small{display:block;color:var(--muted);font-size:11.5px;margin-top:1px}
@@ -114,7 +113,7 @@
     -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);
   }
   .topbar .mobile-brand{display:none;align-items:center;gap:8px;font-weight:700}
-  .topbar .mobile-brand .logo{width:28px;height:28px;font-size:12px;border-radius:8px}
+  .topbar .mobile-brand .logo{width:28px;height:28px}
   .topbar-title{font-weight:600;font-size:15px;margin-right:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .updated{color:var(--muted);font-size:12px;white-space:nowrap}
   .controls{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
@@ -314,7 +313,7 @@
 <div class="app">
   <aside class="sidebar" aria-label="Điều hướng">
     <div class="brand">
-      <div class="logo" aria-hidden="true">LA</div>
+      <img class="logo" src="/static/logo.svg" alt="" width="34" height="34">
       <div><b>Lan Anh Bot</b><small>Bảng điều khiển</small></div>
     </div>
     <nav class="nav" id="side-nav">
@@ -338,7 +337,7 @@
 
   <div class="main">
     <header class="topbar">
-      <div class="mobile-brand"><div class="logo brand-logo" aria-hidden="true">LA</div><span>Lan Anh Bot</span></div>
+      <div class="mobile-brand"><img class="logo brand-logo" src="/static/logo.svg" alt="" width="28" height="28"><span>Lan Anh Bot</span></div>
       <div class="topbar-title" id="topbar-title">Tổng quan</div>
       <span class="updated" id="updated-at">Đang tải…</span>
       <div class="controls">

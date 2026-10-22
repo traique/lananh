@@ -38,7 +38,12 @@ _VNEXPRESS_HTML = """<html><head>
             ("url", "https://vnexpress.net/gia-vang-123.html"),
         ),
         ("đọc bài này https://e.vnexpress.net/a.html.", ("url", "https://e.vnexpress.net/a.html")),
-        ("Giá vàng tăng mạnh https://cafef.vn/x.chn", ("url", "https://cafef.vn/x.chn")),
+        # Link kèm câu khác (câu hỏi, tiêu đề) -> chat AI; chỉ link / "đọc bài này" mới đọc.
+        ("Giá vàng tăng mạnh https://cafef.vn/x.chn", None),
+        ("tin này tốt hay xấu cho HPG https://cafef.vn/hpg-123.chn", None),
+        ("tom luoc giup anh https://vnexpress.net/a.html", None),
+        ("Ngân hàng tăng phí dịch vụ https://vnexpress.net/a.html", None),
+        ("xem giúp em https://vnexpress.net/a.html nhé", ("url", "https://vnexpress.net/a.html")),
         # Link bị kênh chat (Zoom...) bọc lại.
         ("<https://vnexpress.net/a.html>", ("url", "https://vnexpress.net/a.html")),
         ("[Giá vàng](https://vnexpress.net/a.html)", ("url", "https://vnexpress.net/a.html")),

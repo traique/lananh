@@ -18,11 +18,11 @@ import datetime as dt
 import logging
 import re
 import time
-import unicodedata
 from collections import OrderedDict
 
 import httpx
 
+from core.text_normalize import fold
 from services import http_client
 
 logger = logging.getLogger(__name__)
@@ -90,14 +90,6 @@ WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "T
 
 class WeatherError(RuntimeError):
     """Không nguồn thời tiết nào trả được dữ liệu."""
-
-
-def fold(text: str) -> str:
-    """Chữ thường, bỏ dấu tiếng Việt, gộp khoảng trắng."""
-    text = (text or "").replace("đ", "d").replace("Đ", "D")
-    text = unicodedata.normalize("NFD", text)
-    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
-    return re.sub(r"\s+", " ", text.lower()).strip()
 
 
 # Câu hỏi thời tiết: tool get_weather (services/tools.py) lấy số liệu thật,

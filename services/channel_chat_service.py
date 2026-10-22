@@ -19,6 +19,7 @@ from core import database as db
 from services import (
     article_reader,
     lunar_chat,
+    weather_chat,
     memory_service,
     portfolio_service,
     tools,
@@ -270,7 +271,11 @@ async def handle_channel_text(
     article = await article_reader.maybe_handle(text)
     if article is not None:
         return ChannelResult([article])
-    # Âm lịch tính offline: trả lời thẳng, không tốn lượt AI nào.
+    # Thời tiết (Open-Meteo) và âm lịch (offline): trả lời thẳng, không tốn
+    # lượt AI nào; câu không chắc trả None và đi tiếp xuống chat AI như cũ.
+    weather_reply = await weather_chat.maybe_handle(text)
+    if weather_reply is not None:
+        return ChannelResult([weather_reply])
     lunar_reply = await lunar_chat.maybe_handle(text)
     if lunar_reply is not None:
         return ChannelResult([lunar_reply])

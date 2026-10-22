@@ -344,13 +344,10 @@ function handleGroupMessage(message: ZaloMessage, msg: ParsedMessage): void {
 
 async function handleDirectMessage(msg: ParsedMessage): Promise<void> {
   if (msg.link) {
-    // Tin chia sẻ link: gửi kèm URL sang Python (đọc nguyên bài báo...), không
-    // coi thumb xem trước là ảnh.
-    msg = {
-      ...msg,
-      text: msg.text.includes(msg.link) ? msg.text : `${msg.text} ${msg.link}`.trim(),
-      urls: [],
-    };
+    // Tin chia sẻ link: title chứa link = chữ người dùng gõ kèm link, giữ nguyên;
+    // ngược lại title chỉ là tiêu đề trang -> gửi riêng link (Python coi là
+    // "đọc bài này"). Thumb xem trước không phải tin ảnh.
+    msg = { ...msg, text: msg.text.includes(msg.link) ? msg.text : msg.link, urls: [] };
   }
   if (msg.urls.length && !msg.text.startsWith("/")) {
     try {

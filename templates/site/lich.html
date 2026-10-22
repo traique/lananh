@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Lịch âm dương</h1>
+  <p>Chọn một ngày để xem âm lịch, can chi, giờ hoàng đạo; hoặc gõ câu hỏi tự do.</p>
+</div>
+
+<section class="panel" aria-labelledby="ask-title">
+  <h2 id="ask-title">Hỏi lịch</h2>
+  <form class="search" action="/lich" method="get" role="search">
+    <label class="sr-only" for="q">Câu hỏi về lịch</label>
+    <input type="search" id="q" name="q" maxlength="200" value="{{ q }}" placeholder="Ví dụ: trung thu năm sau, ngày tốt tháng này, sao hạn 1990 nam" autocomplete="off">
+    <button class="btn" type="submit">Tra</button>
+  </form>
+  {% if answer %}
+  <div class="notice mt-3" role="status"><p class="answer">{{ answer }}</p></div>
+  {% endif %}
+</section>
+
+{% include "_errors.html" %}
+
+<div class="layout-2 mt-4">
+  <section class="panel" aria-labelledby="month-title">
+    <div class="month-nav">
+      <a href="/lich?thang={{ month.previous }}" aria-label="Tháng trước">‹ Trước</a>
+      <h2 id="month-title">Tháng {{ month.month }}/{{ month.year }}</h2>
+      <a href="/lich?thang={{ month.next }}" aria-label="Tháng sau">Sau ›</a>
+    </div>
+    <table class="month">
+      <caption class="sr-only">Lịch tháng {{ month.month }}/{{ month.year }}, mỗi ô ghi ngày dương và ngày âm</caption>
+      <thead><tr>{% for wd in ["T2","T3","T4","T5","T6","T7","CN"] %}<th scope="col">{{ wd }}</th>{% endfor %}</tr></thead>
+      <tbody>
+      {% for week in weeks %}
+        <tr>
+        {% for d in week %}
+          {% if d %}
+          {% set mark = d.lunarDay == 1 or d.lunarDay == 15 %}
+          <td><a class="day{% if mark %} is-lunar-mark{% endif %}{% if d.holidays %} is-holiday{% endif %}{% if d.date == today_iso %} is-today{% endif %}"
+                 href="/lich?thang={{ month.year }}-{{ '%02d' % month.month }}&amp;ngay={{ d.date }}"
+                 {% if d.date == selected.date %}aria-current="date"{% endif %}
+                 aria-label="{{ d.day }}/{{ month.month }}, âm {{ d.lunarDay }}/{{ d.lunarMonth }}{% if d.lunarDay == 15 %}, rằm{% elif d.lunarDay == 1 %}, mùng 1{% endif %}{% if d.isHoangDao %}, hoàng đạo{% endif %}{% for h in d.holidays %}, {{ h }}{% endfor %}">
+            <span class="d">{{ d.day }}</span>
+            <span class="l">{% if d.lunarDay == 1 %}{{ d.lunarDay }}/{{ d.lunarMonth }}{% else %}{{ d.lunarDay }}{% endif %}</span>
+            {% if d.isHoangDao %}<span class="hd" aria-hidden="true"></span>{% endif %}
+          </a></td>
+          {% else %}<td></td>{% endif %}
+        {% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="legend"><span><span class="hd" aria-hidden="true"></span>Ngày hoàng đạo</span><span>Số đỏ đậm: mùng 1, rằm</span><span>Nền son: ngày lễ</span></p>
+  </section>
+
+  <section class="panel day-detail" aria-labelledby="day-title" aria-live="polite">
+    <h2 id="day-title">{{ selected.weekday }} {{ selected_date.strftime('%d/%m/%Y') }}</h2>
+    <p class="lunar-line">{{ selected.lunar.text }} âm lịch</p>
+    <dl class="facts">
+      <dt>Can chi</dt><dd>Ngày {{ selected.lunar.dayCanChi }}, tháng {{ selected.lunar.monthCanChi }}, năm {{ selected.lunar.yearCanChi }}</dd>
+      <dt>Ngày</dt><dd>{% if selected.isHoangDao %}<span class="tag good">Hoàng đạo</span>{% else %}<span class="tag">Hắc đạo</span>{% endif %} {{ selected.dayGod }}{% if selected.isTamNuong %} · <span class="tag warn">Tam nương</span>{% endif %}{% if selected.isNguyetKy %} · <span class="tag warn">Nguyệt kỵ</span>{% endif %}</dd>
+      <dt>Tiết khí</dt><dd>{{ selected.solarTerm }}</dd>
+      <dt>Giờ tốt</dt><dd>{{ selected.luckyHours | join(", ") }}</dd>
+      {% if selected.holidays %}<dt>Ngày lễ</dt><dd>{{ selected.holidays | join(", ") }}</dd>{% endif %}
+      <dt>Tết</dt><dd>{% if selected.daysToTet == 0 %}Hôm nay là Tết{% else %}Còn {{ selected.daysToTet }} ngày{% endif %}</dd>
+    </dl>
+  </section>
+</div>
+
+<section class="panel mt-4" aria-labelledby="convert-title">
+  <h2 id="convert-title">Đổi ngày âm sang dương</h2>
+  <form class="form" action="/lich" method="get">
+    <div class="form-row">
+      <div class="field">
+        <label for="am">Ngày âm lịch</label>
+        <input type="text" id="am" name="am" value="{{ am }}" inputmode="numeric" placeholder="15/8/2027" aria-describedby="am-hint" pattern="\d{1,2}/\d{1,2}(/\d{4})?">
+        <span class="hint" id="am-hint">Ngày/tháng hoặc ngày/tháng/năm âm. Bỏ năm = lần sắp tới.</span>
+      </div>
+      <fieldset>
+        <legend>Tháng nhuận</legend>
+        <div class="choices"><label><input type="checkbox" name="nhuan" value="1"{% if nhuan %} checked{% endif %}> Là tháng nhuận</label></div>
+      </fieldset>
+    </div>
+    <div><button class="btn btn-secondary" type="submit">Đổi ngày</button></div>
+  </form>
+</section>
+{% endblock %}
