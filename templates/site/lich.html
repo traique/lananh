@@ -1,25 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-head">
-  <h1>Lịch âm dương</h1>
-  <p>Chọn một ngày để xem âm lịch, can chi, giờ hoàng đạo; hoặc gõ câu hỏi tự do.</p>
-</div>
-
-<section class="panel" aria-labelledby="ask-title">
-  <h2 id="ask-title">Hỏi lịch</h2>
-  <form class="search" action="/lich" method="get" role="search">
-    <label class="sr-only" for="q">Câu hỏi về lịch</label>
-    <input type="search" id="q" name="q" maxlength="200" value="{{ q }}" placeholder="Ví dụ: trung thu năm sau, ngày tốt tháng này, sao hạn 1990 nam" autocomplete="off">
-    <button class="btn" type="submit">Tra</button>
-  </form>
-  {% if answer %}
-  <div class="notice mt-3" role="status"><p class="answer">{{ answer }}</p></div>
-  {% endif %}
-</section>
-
+<h1 class="sr-only">Lịch tháng {{ month.month }}/{{ month.year }}</h1>
 {% include "_errors.html" %}
-
-<div class="layout-2 mt-4">
+<div class="layout-2">
   <section class="panel" aria-labelledby="month-title">
     <div class="month-nav">
       <a href="/lich?thang={{ month.previous }}" aria-label="Tháng trước">‹ Trước</a>
@@ -49,38 +32,13 @@
       {% endfor %}
       </tbody>
     </table>
-    <p class="legend"><span><span class="hd" aria-hidden="true"></span>Ngày hoàng đạo</span><span>Số đỏ đậm: mùng 1, rằm</span><span>Nền son: ngày lễ</span></p>
+    <p class="legend"><span><span class="hd" aria-hidden="true"></span>Hoàng đạo</span><span>Số son: mùng 1, rằm</span><span>Nền son: ngày lễ</span></p>
   </section>
 
-  <section class="panel day-detail" aria-labelledby="day-title" aria-live="polite">
+  <section class="panel day-detail" aria-labelledby="day-title">
     <h2 id="day-title">{{ selected.weekday }} {{ selected_date.strftime('%d/%m/%Y') }}</h2>
     <p class="lunar-line">{{ selected.lunar.text }} âm lịch</p>
-    <dl class="facts">
-      <dt>Can chi</dt><dd>Ngày {{ selected.lunar.dayCanChi }}, tháng {{ selected.lunar.monthCanChi }}, năm {{ selected.lunar.yearCanChi }}</dd>
-      <dt>Ngày</dt><dd>{% if selected.isHoangDao %}<span class="tag good">Hoàng đạo</span>{% else %}<span class="tag">Hắc đạo</span>{% endif %} {{ selected.dayGod }}{% if selected.isTamNuong %} · <span class="tag warn">Tam nương</span>{% endif %}{% if selected.isNguyetKy %} · <span class="tag warn">Nguyệt kỵ</span>{% endif %}</dd>
-      <dt>Tiết khí</dt><dd>{{ selected.solarTerm }}</dd>
-      <dt>Giờ tốt</dt><dd>{{ selected.luckyHours | join(", ") }}</dd>
-      {% if selected.holidays %}<dt>Ngày lễ</dt><dd>{{ selected.holidays | join(", ") }}</dd>{% endif %}
-      <dt>Tết</dt><dd>{% if selected.daysToTet == 0 %}Hôm nay là Tết{% else %}Còn {{ selected.daysToTet }} ngày{% endif %}</dd>
-    </dl>
+    {% with day = selected %}{% include "_day_facts.html" %}{% endwith %}
   </section>
 </div>
-
-<section class="panel mt-4" aria-labelledby="convert-title">
-  <h2 id="convert-title">Đổi ngày âm sang dương</h2>
-  <form class="form" action="/lich" method="get">
-    <div class="form-row">
-      <div class="field">
-        <label for="am">Ngày âm lịch</label>
-        <input type="text" id="am" name="am" value="{{ am }}" inputmode="numeric" placeholder="15/8/2027" aria-describedby="am-hint" pattern="\d{1,2}/\d{1,2}(/\d{4})?">
-        <span class="hint" id="am-hint">Ngày/tháng hoặc ngày/tháng/năm âm. Bỏ năm = lần sắp tới.</span>
-      </div>
-      <fieldset>
-        <legend>Tháng nhuận</legend>
-        <div class="choices"><label><input type="checkbox" name="nhuan" value="1"{% if nhuan %} checked{% endif %}> Là tháng nhuận</label></div>
-      </fieldset>
-    </div>
-    <div><button class="btn btn-secondary" type="submit">Đổi ngày</button></div>
-  </form>
-</section>
 {% endblock %}

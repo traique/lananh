@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="narrow">
+  <h1>Hỏi lịch</h1>
+  <p class="lead">Gõ tự nhiên như khi nhắn tin. Trả lời bằng thuật toán, không dùng AI.</p>
+  <form class="search" action="/lich/hoi" method="get" role="search">
+    <label class="sr-only" for="q">Câu hỏi về lịch</label>
+    <input type="search" id="q" name="q" maxlength="200" value="{{ q }}" placeholder="Ví dụ: rằm tháng 8 là ngày nào" autocomplete="off">
+    <button class="btn" type="submit">Tra</button>
+  </form>
+  {% if answer %}
+  <section class="panel mt-4" role="status" aria-label="Kết quả">
+    <p class="answer">{{ answer }}</p>
+  </section>
+  {% endif %}
+  <h2 class="section-title">Thử hỏi</h2>
+  <ul class="chips">
+    {% for ex in examples %}<li><a href="/lich/hoi?q={{ ex | urlencode }}">{{ ex }}</a></li>{% endfor %}
+  </ul>
+</div>
+{% endblock %}
