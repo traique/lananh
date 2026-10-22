@@ -9,8 +9,29 @@
     <button class="btn" type="submit">Xem</button>
   </form>
   <ul class="chips mt-3" aria-label="Địa điểm hay xem">
-    {% for p in places %}<li><a href="/thoi-tiet?noi={{ p | urlencode }}"{% if p == place or (not place and loop.first) %} aria-current="page"{% endif %}>{{ p }}</a></li>{% endfor %}
+    {% for p in places %}
+    <li class="{% if logged_in %}chip-edit{% endif %}">
+      <a href="/thoi-tiet?noi={{ p | urlencode }}"{% if p == place or (not place and loop.first) %} aria-current="page"{% endif %}>{{ p }}</a>
+      {% if logged_in %}
+      <form method="post" action="/thoi-tiet/dia-diem/xoa">
+        <input type="hidden" name="ten" value="{{ p }}"><input type="hidden" name="noi" value="{{ place }}">
+        <button type="submit" class="chip-x" aria-label="Xoá {{ p }}" title="Xoá {{ p }}">×</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
   </ul>
+  {% if logged_in %}
+  <form class="add-place mt-3" method="post" action="/thoi-tiet/dia-diem/them">
+    <label class="sr-only" for="ten-moi">Thêm địa điểm</label>
+    <input type="text" id="ten-moi" name="ten" maxlength="40" value="{{ place if place and place not in places else '' }}" placeholder="Thêm địa điểm, ví dụ: Vũng Tàu" autocomplete="off">
+    <input type="hidden" name="noi" value="{{ place }}">
+    <button class="btn btn-secondary" type="submit">+ Thêm</button>
+  </form>
+  {% endif %}
+  {% if notice %}
+  <div class="{{ 'error-box' if notice[0] == 'error' else 'ok-box' }} mt-3" role="{{ 'alert' if notice[0] == 'error' else 'status' }}">{{ notice[1] }}</div>
+  {% endif %}
 
   {% if error %}
   <div class="error-box mt-4" role="alert"><strong>Chưa tra được:</strong> {{ error }}</div>

@@ -33,5 +33,6 @@
   </article>
   {% endfor %}
 </div>
-<p class="muted small mt-4">{{ chart.disclaimer }} Chưa an độ sáng (miếu/vượng/hãm) và vài phụ tinh hiếm. Muốn AI luận giải, dùng lệnh /tuvi_chitiet trong chat.</p>
+{% include "_ai_box.html" %}
+<p class="muted small mt-4">{{ chart.disclaimer }} Chưa an độ sáng (miếu/vượng/hãm) và vài phụ tinh hiếm.</p>
 {% endblock %}

@@ -179,7 +179,7 @@ def parse_ymd(raw: str) -> tuple[int, int, int]:
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
 
 
-def tuvi_chart(
+def build_tuvi(
     year: int,
     month: int,
     day: int,
@@ -187,8 +187,9 @@ def tuvi_chart(
     gender: str,
     is_lunar: bool = False,
     is_leap: bool = False,
-) -> dict:
-    """Lá số từ ngày sinh dương, hoặc (is_lunar) ngày/tháng/năm ÂM."""
+) -> tuvi.Chart:
+    """Lá số (đối tượng Chart) từ ngày sinh dương, hoặc (is_lunar) ngày/tháng/năm ÂM.
+    Raise InputError khi dữ liệu sai."""
     if gender not in GENDERS:
         raise InputError("INVALID_GENDER", "Giới tính là male hoặc female.")
     if not 0 <= hour_branch <= 11:
@@ -209,6 +210,21 @@ def tuvi_chart(
             raise InputError("INVALID_DATE", "Ngày dương lịch không tồn tại.") from None
         ld, lm, ly, leap = lunar.solar_to_lunar(birth.day, birth.month, birth.year)
         c = tuvi.build_chart(ld, lm, ly, hour_branch, male, leap, birth)
+    return c
+
+
+def tuvi_chart(
+    year: int,
+    month: int,
+    day: int,
+    hour_branch: int,
+    gender: str,
+    is_lunar: bool = False,
+    is_leap: bool = False,
+) -> dict:
+    """Lá số dạng dict (cho trang web/JSON API), xem build_tuvi."""
+    c = build_tuvi(year, month, day, hour_branch, gender, is_lunar, is_leap)
+    male = gender == "male"
     born = can_chi.year_profile(c.lunar_year)
     texts = tuvi._texts()
     palaces = []

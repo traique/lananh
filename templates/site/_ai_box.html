@@ -1,0 +1,16 @@
+<section class="panel ai-box mt-4" aria-labelledby="ai-title">
+  <h2 id="ai-title" class="small-title">Luận giải bằng AI</h2>
+  {% if ai_text %}
+  <div class="answer" role="status">{{ ai_text }}</div>
+  {% elif logged_in %}
+  <form method="post" action="{{ ai_action }}">
+    {% for k, val in ai_fields.items() %}<input type="hidden" name="{{ k }}" value="{{ val }}">{% endfor %}
+    <input type="hidden" name="ai" value="1">
+    <p class="small muted">Gửi kết quả đã tính cho AI diễn giải thêm. Tốn 1 lượt AI, có thể mất vài chục giây.</p>
+    <button class="btn" type="submit">{{ ai_label }}</button>
+  </form>
+  {% else %}
+  <p class="small muted">Phần luận giải bằng AI chỉ dành cho tài khoản đã đăng nhập.</p>
+  <a class="btn btn-secondary" href="{{ login_url }}">Đăng nhập để dùng AI</a>
+  {% endif %}
+</section>

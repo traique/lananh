@@ -36,22 +36,27 @@ def tuvi_chart(argument: str) -> str:
     return chart if isinstance(chart, str) else tuvi.format_chart(chart)
 
 
-async def _with_ai(
-    user_id: int, kind: str, argument: str, channel: str, base: str, explain
-) -> list[str]:
+async def ai_text(user_id: int, kind: str, channel: str, explain) -> str:
+    """1 lượt AI diễn giải có telemetry; lỗi/hết hạn thì trả câu báo lỗi."""
     prompt_id = await telemetry.start(user_id, kind, f"/{kind}", channel=channel)
     try:
         text = await explain()
     except TurnTimeoutError as exc:
         logger.warning("%s hết hạn chót lượt: %s", kind, exc)
         await telemetry.failure(prompt_id, kind, exc)
-        return [base, f"⏱️ {exc}"]
+        return f"⏱️ {exc}"
     except Exception as exc:
         logger.warning("%s lỗi: %r", kind, exc)
         await telemetry.failure(prompt_id, kind, exc)
-        return [base, _AI_ERROR]
+        return _AI_ERROR
     await telemetry.success(prompt_id, kind, f"({len(text)} ký tự)")
-    return [base, text or _AI_ERROR]
+    return text or _AI_ERROR
+
+
+async def _with_ai(
+    user_id: int, kind: str, argument: str, channel: str, base: str, explain
+) -> list[str]:
+    return [base, await ai_text(user_id, kind, channel, explain)]
 
 
 async def tsh_chitiet(user_id: int, argument: str, channel: str) -> list[str]:

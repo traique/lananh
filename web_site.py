@@ -1,15 +1,14 @@
 """Web LCTA: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le), /tu-vi,
 /than-so-hoc (form -> trang kết quả riêng), /thoi-tiet và JSON API /api/v1.
 
-Cần đăng nhập bằng tài khoản admin (ADMIN_USER/ADMIN_PASS, cùng phiên với
-/admin) để quản lý tập trung: trang HTML chưa đăng nhập chuyển sang
-/admin?next=<trang đang mở>, JSON API trả 401. Ảnh tĩnh (logo dùng ở trang
-đăng nhập) vẫn công khai.
+Xem nội dung KHÔNG cần đăng nhập: lịch, tử vi, thần số học tính bằng code
+(services/site_data.py), không gọi AI, không đụng DB. /thoi-tiet tra Open-Meteo
+qua services/weather.py (cache có trần), giới hạn số lượt tra song song. Trang
+render sẵn ở server nên chạy được cả khi tắt JavaScript.
 
-Chỉ tính toán bằng code (services/site_data.py), KHÔNG gọi AI, không đụng DB
-- trang công khai không được đốt quota AI. /thoi-tiet tra Open-Meteo qua
-services/weather.py (cache có trần), giới hạn số lượt tra song song. Trang render sẵn ở server nên chạy
-được cả khi tắt JavaScript.
+Cần đăng nhập (tài khoản admin, chung phiên với /admin) cho việc tốn quota hoặc
+đổi dữ liệu chung: nút "AI luận giải" ở kết quả tử vi/thần số học, thêm/xoá địa
+điểm thời tiết. Đăng nhập rồi header mới hiện nút "Quản trị".
 
 JSON API (chỉ thêm trường mới, không đổi/bỏ trường cũ):
   GET  /api/v1/calendar/days/{YYYY-MM-DD}
@@ -26,6 +25,7 @@ Mọi lỗi: HTTP 4xx + {"error": {"code": "...", "message": "..."}}.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import datetime as dt
 import functools
 import hashlib
@@ -41,7 +41,18 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
 import web_admin
-from services import calendar_query, lunar, site_data, weather
+from core import config
+from services import (
+    calendar_query,
+    concurrency,
+    divination_commands,
+    lunar,
+    numerology,
+    site_data,
+    tuvi,
+    weather,
+    weather_places,
+)
 from services.site_data import InputError
 
 _ROOT = Path(__file__).resolve().parent
@@ -72,16 +83,18 @@ _ASK_EXAMPLES = [
     "sao hạn 1990 nam năm 2027",
     "1990 và 1995 có hợp không",
 ]
-_WEATHER_PLACES = [
-    "TP.HCM",
-    "Hà Nội",
-    "Đà Nẵng",
-    "Huế",
-    "Nha Trang",
-    "Đà Lạt",
-    "Cần Thơ",
-    "Hải Phòng",
-]
+# Thông báo sau khi thêm/xoá địa điểm: chỉ nhận mã cố định, không phản chiếu chữ từ URL.
+_PLACE_NOTICES = {
+    "da-them": ("ok", "Đã thêm địa điểm."),
+    "da-xoa": ("ok", "Đã xoá địa điểm."),
+    "ten": (
+        "error",
+        f"Tên địa điểm 1-{weather_places.MAX_NAME_LEN} ký tự, không chứa ký tự đặc biệt.",
+    ),
+    "day": ("error", f"Tối đa {weather_places.MAX_PLACES} địa điểm, xoá bớt trước khi thêm."),
+    "luu": ("error", "Không lưu được, thử lại sau."),
+    "dang-nhap": ("error", "Cần đăng nhập để thêm/xoá địa điểm."),
+}
 _WEATHER_DAYS = 7
 _WEATHER_TIMEOUT_SEC = 15
 # Trang công khai: chặn số lượt gọi Open-Meteo song song để người lạ spam
@@ -90,42 +103,44 @@ _weather_slots = asyncio.Semaphore(3)
 _MAX_JSON_BYTES = 4096
 
 
-def _login_url(request: Request) -> str:
-    target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
-    return "/admin?" + urlencode({"next": web_admin.safe_next(target)})
+# (đã đăng nhập, đường dẫn đang xem) của request hiện tại - để header hiện nút
+# Quản trị/Đăng xuất hay Đăng nhập mà không phải truyền request qua mọi hàm.
+_viewer: contextvars.ContextVar[tuple[bool, str]] = contextvars.ContextVar(
+    "site_viewer", default=(False, "/")
+)
 
 
-class _LoginPageRoute(APIRoute):
-    """Trang HTML: chưa đăng nhập thì chuyển sang màn đăng nhập rồi quay lại."""
+def _current_path(request: Request) -> str:
+    return request.url.path + (f"?{request.url.query}" if request.url.query else "")
+
+
+def _login_url(path: str) -> str:
+    return "/admin?" + urlencode({"next": web_admin.safe_next(path)})
+
+
+async def _set_viewer(request: Request) -> bool:
+    logged_in = await web_admin.is_logged_in(request)
+    # POST (kết quả form) không mở lại được bằng link: đăng nhập xong về trang form.
+    path = _current_path(request) if request.method == "GET" else request.url.path
+    _viewer.set((logged_in, path))
+    return logged_in
+
+
+class _ViewerRoute(APIRoute):
+    """Ghi nhận trạng thái đăng nhập trước khi render trang."""
 
     def get_route_handler(self):
         handler = super().get_route_handler()
 
-        async def guarded(request: Request) -> Response:
-            if not await web_admin.is_logged_in(request):
-                return RedirectResponse(_login_url(request), status_code=303)
+        async def with_viewer(request: Request) -> Response:
+            await _set_viewer(request)
             return await handler(request)
 
-        return guarded
+        return with_viewer
 
 
-class _LoginApiRoute(APIRoute):
-    """JSON API: chưa đăng nhập thì 401 cùng dạng lỗi với các lỗi API khác."""
-
-    def get_route_handler(self):
-        handler = super().get_route_handler()
-
-        async def guarded(request: Request) -> Response:
-            if not await web_admin.is_logged_in(request):
-                return _error(401, "unauthorized", "Cần đăng nhập tại /admin.")
-            return await handler(request)
-
-        return guarded
-
-
-router = APIRouter(include_in_schema=False, route_class=_LoginPageRoute)
-api_router = APIRouter(prefix="/api/v1", route_class=_LoginApiRoute)
-# Ảnh tĩnh không cần đăng nhập: trang đăng nhập cũng dùng logo/favicon.
+router = APIRouter(include_in_schema=False, route_class=_ViewerRoute)
+api_router = APIRouter(prefix="/api/v1")
 static_router = APIRouter(include_in_schema=False)
 
 
@@ -164,6 +179,8 @@ def _render(name: str, *, title: str, description: str, active: str, **ctx) -> H
             nav=_NAV,
             inline_css=css,
             v=version,
+            logged_in=_viewer.get()[0],
+            login_url=_login_url(_viewer.get()[1]),
             **ctx,
         )
     )
@@ -206,8 +223,7 @@ def _upcoming_holidays(today: dt.date, limit: int) -> list[dict]:
 
 async def home(request: Request) -> Response:
     """Trang chủ cho trình duyệt (web.py gọi khi Accept có text/html)."""
-    if not await web_admin.is_logged_in(request):
-        return RedirectResponse(_login_url(request), status_code=303)
+    await _set_viewer(request)
     return home_page()
 
 
@@ -367,9 +383,37 @@ async def weather_page(request: Request) -> HTMLResponse:
         place=place,
         data=data,
         error=error,
-        places=_WEATHER_PLACES,
+        places=await weather_places.get(),
+        notice=_PLACE_NOTICES.get(request.query_params.get("tb", "")),
         fmt=lambda x: "?" if x is None else round(float(x)),
     )
+
+
+async def _change_place(request: Request, action) -> Response:
+    form = await _form(request)
+    name = form.get("ten", "")
+    if not await web_admin.is_logged_in(request):
+        code = "dang-nhap"
+    else:
+        try:
+            await action(name)
+            code = "da-them" if action is weather_places.add else "da-xoa"
+        except weather_places.PlacesError as exc:
+            code = exc.code
+    query = {"tb": code}
+    if form.get("noi"):
+        query["noi"] = form["noi"]
+    return RedirectResponse("/thoi-tiet?" + urlencode(query), status_code=303)
+
+
+@router.post("/thoi-tiet/dia-diem/them")
+async def weather_place_add(request: Request) -> Response:
+    return await _change_place(request, weather_places.add)
+
+
+@router.post("/thoi-tiet/dia-diem/xoa")
+async def weather_place_remove(request: Request) -> Response:
+    return await _change_place(request, weather_places.remove)
 
 
 async def _form(request: Request) -> dict[str, str]:
@@ -394,32 +438,60 @@ async def tuvi_page() -> HTMLResponse:
     return _tuvi_form({"gio": "0", "lich": "duong", "gioi": "male"})
 
 
+_TUVI_FIELDS = ("ngay", "thang", "nam", "gio", "gioi", "lich", "nhuan")
+_TSH_FIELDS = ("ngay", "ten")
+
+
+def _clean_ai_text(text: str) -> str:
+    """Bỏ ký hiệu markdown hay gặp (**, #) vì trang hiện chữ thường."""
+    lines = [
+        line.lstrip("#").strip() if line.lstrip().startswith("#") else line
+        for line in text.splitlines()
+    ]
+    return "\n".join(lines).replace("**", "").strip()
+
+
+async def _ai_reading(request: Request, form: dict, kind: str, explain) -> str:
+    """Luận giải AI khi người xem bấm nút AI và đã đăng nhập; còn lại trả "".
+    Chạy dưới khoá lượt của chủ bot như chat (AI qua provider-chain, có hạn chót)."""
+    if form.get("ai") != "1" or not _viewer.get()[0]:
+        return ""
+    async with concurrency.assistant_turn(concurrency.OWNER_TURN_KEY):
+        text = await divination_commands.ai_text(config.ALLOWED_USER_ID, kind, "web", explain)
+    return _clean_ai_text(text)
+
+
 @router.post("/tu-vi", response_class=HTMLResponse)
 async def tuvi_submit(request: Request) -> HTMLResponse:
-    """Kết quả ở trang riêng (tuvi_result.html); nhập sai thì quay lại form."""
+    """Kết quả ở trang riêng (tuvi_result.html); nhập sai thì quay lại form.
+    Có ai=1 và đã đăng nhập thì kèm AI luận giải."""
     form = await _form(request)
     try:
         try:
             day, month, year, hour = (int(form.get(k, "")) for k in ("ngay", "thang", "nam", "gio"))
         except ValueError:
             raise InputError("INVALID_DATE", "Nhập đủ ngày, tháng, năm sinh và giờ sinh.") from None
-        chart = site_data.tuvi_chart(
-            year,
-            month,
-            day,
-            hour,
-            form.get("gioi", ""),
-            is_lunar=form.get("lich") == "am",
-            is_leap=form.get("nhuan") == "1",
-        )
+        args = (year, month, day, hour, form.get("gioi", ""))
+        flags = {"is_lunar": form.get("lich") == "am", "is_leap": form.get("nhuan") == "1"}
+        chart = site_data.tuvi_chart(*args, **flags)
     except InputError as exc:
         return _tuvi_form(form, exc.message)
+    ai_text = await _ai_reading(
+        request,
+        form,
+        "tuvi_chitiet",
+        lambda: tuvi.explain_with_ai(site_data.build_tuvi(*args, **flags)),
+    )
     return _render(
         "tuvi_result.html",
         title="Lá số tử vi",
         description="Lá số Tử Vi Đẩu Số.",
         active="/tu-vi",
         chart=chart,
+        ai_text=ai_text,
+        ai_action="/tu-vi",
+        ai_fields={k: form[k] for k in _TUVI_FIELDS if k in form},
+        ai_label="AI luận giải lá số",
     )
 
 
@@ -454,6 +526,13 @@ async def tsh_submit(request: Request) -> HTMLResponse:
         ("Số linh hồn (nguyên âm)", reading["soul"]),
         ("Số nhân cách (phụ âm)", reading["personality"]),
     ]
+    name = form.get("ten", "").strip()
+    ai_text = await _ai_reading(
+        request,
+        form,
+        "tsh_chitiet",
+        lambda: numerology.explain_with_ai(numerology.compute(birth, name)),
+    )
     return _render(
         "tsh_result.html",
         title="Thần số học",
@@ -461,6 +540,10 @@ async def tsh_submit(request: Request) -> HTMLResponse:
         active="/than-so-hoc",
         reading=reading,
         rows=rows,
+        ai_text=ai_text,
+        ai_action="/than-so-hoc",
+        ai_fields={k: form[k] for k in _TSH_FIELDS if k in form},
+        ai_label="AI diễn giải chi tiết",
     )
 
 

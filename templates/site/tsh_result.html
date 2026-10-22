@@ -37,5 +37,6 @@
     {% if reading.emptyArrows %}<h3 class="mt-3">Mũi tên trống</h3><ul class="plain">{% for a in reading.emptyArrows %}<li>{{ a.meaning }}</li>{% endfor %}</ul>{% endif %}
   </section>
 </div>
-<p class="muted small mt-3">{{ reading.disclaimer }} Muốn AI diễn giải chi tiết, dùng lệnh /tsh_chitiet trong chat.</p>
+{% include "_ai_box.html" %}
+<p class="muted small mt-3">{{ reading.disclaimer }}</p>
 {% endblock %}
