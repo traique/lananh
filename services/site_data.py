@@ -18,10 +18,13 @@ _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 MIN_YEAR, MAX_YEAR = 1900, 2100
 GENDERS = ("male", "female")
 HOUR_BRANCHES = [
-    (0, "Tý", "23h-1h"), (1, "Sửu", "1h-3h"), (2, "Dần", "3h-5h"), (3, "Mão", "5h-7h"),
+    (0, "Tý", "0h-1h"), (1, "Sửu", "1h-3h"), (2, "Dần", "3h-5h"), (3, "Mão", "5h-7h"),
     (4, "Thìn", "7h-9h"), (5, "Tỵ", "9h-11h"), (6, "Ngọ", "11h-13h"), (7, "Mùi", "13h-15h"),
     (8, "Thân", "15h-17h"), (9, "Dậu", "17h-19h"), (10, "Tuất", "19h-21h"), (11, "Hợi", "21h-23h"),
 ]  # fmt: skip
+# Ô chọn giờ trên web: thêm "Tý đầu" (23h-24h, an theo ngày hôm sau) với mã riêng.
+EARLY_TY = 12
+HOUR_OPTIONS = [*HOUR_BRANCHES, (EARLY_TY, "Tý đầu", "23h-24h, an theo ngày hôm sau")]
 
 
 class InputError(ValueError):
@@ -40,17 +43,21 @@ def _check_year(year: int) -> None:
         raise InputError("YEAR_OUT_OF_RANGE", f"Năm cần trong khoảng {MIN_YEAR}-{MAX_YEAR}.")
 
 
+_YMD_RE = re.compile(
+    r"\s*(?:(?P<y>\d{4})-(?P<m>\d{1,2})-(?P<d>\d{1,2})|(?P<d2>\d{1,2})/(?P<m2>\d{1,2})/(?P<y2>\d{4}))\s*"
+)
+
+
 def parse_date(raw: str) -> dt.date:
-    """'YYYY-MM-DD' (input type=date) hoặc 'DD/MM/YYYY'."""
-    raw = (raw or "").strip()
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
-        try:
-            value = dt.datetime.strptime(raw, fmt).date()
-        except ValueError:
-            continue
-        _check_year(value.year)
-        return value
-    raise InputError("INVALID_DATE", "Ngày không hợp lệ (dạng YYYY-MM-DD hoặc DD/MM/YYYY).")
+    """'YYYY-MM-DD' (input type=date, không cần đệm 0) hoặc 'DD/MM/YYYY' -> ngày
+    dương hợp lệ trong 1900-2100."""
+    year, month, day = parse_ymd(raw)
+    try:
+        value = dt.date(year, month, day)
+    except ValueError:
+        raise InputError("INVALID_DATE", "Ngày không tồn tại trên lịch dương.") from None
+    _check_year(value.year)
+    return value
 
 
 def day_info(day: dt.date) -> dict:
@@ -60,7 +67,8 @@ def day_info(day: dt.date) -> dict:
     ld = info["lunar"]["day"]
     return {
         "date": info["date"],
-        "weekday": info["weekday"],
+        "weekday": info["weekday"],  # tên thứ ("Thứ Tư")
+        "weekdayIndex": day.weekday(),  # 0 = Thứ Hai
         "lunar": {
             "day": ld,
             "month": info["lunar"]["month"],
@@ -95,7 +103,8 @@ def month_grid(year: int, month: int) -> dict:
             {
                 "date": day.isoformat(),
                 "day": day.day,
-                "weekday": day.weekday(),  # 0 = Thứ Hai
+                "weekday": day.weekday(),  # 0 = Thứ Hai (số, khác /days trả tên)
+                "weekdayName": lunar.WEEKDAYS[day.weekday()],
                 "lunarDay": ld,
                 "lunarMonth": lm,
                 "isLeapMonth": leap,
@@ -134,49 +143,22 @@ def numerology_reading(birth: dt.date, name: str = "") -> dict:
     _check_year(birth.year)
     if len(name) > 80:
         raise InputError("NAME_TOO_LONG", "Họ tên tối đa 80 ký tự.")
-    r = numerology.compute(birth, name)
-    texts = numerology._texts()
-    meaning = texts.get("so", {})
-
-    def number(value: int | None) -> dict | None:
-        return None if value is None else {"value": value, "meaning": meaning.get(value, "")}
-
-    return {
-        "birthDate": birth.isoformat(),
-        "name": r.name,
-        "lifePath": {
-            "value": r.life_path,
-            "meaning": texts.get("chu_dao", {}).get(r.life_path, ""),
-        },
-        "dayNumber": number(r.day_number),
-        "attitude": number(r.attitude),
-        "personalYear": {
-            "year": r.for_year,
-            "value": r.personal_year,
-            "meaning": texts.get("nam_ca_nhan", {}).get(r.personal_year, ""),
-        },
-        "personalMonth": r.personal_month,
-        "expression": number(r.expression),
-        "soul": number(r.soul),
-        "personality": number(r.personality),
-        "chart": {str(d): r.counts[d] for d in range(1, 10)},
-        "missingDigits": [d for d in range(1, 10) if not r.counts[d]],
-        "arrows": [{"digits": a, "meaning": texts.get("mui_ten", {}).get(a, "")} for a in r.arrows],
-        "emptyArrows": [
-            {"digits": a, "meaning": texts.get("mui_ten_trong", {}).get(a, "")}
-            for a in r.empty_arrows
-        ],
-        "disclaimer": numerology.DISCLAIMER,
-    }
+    if name.strip() and not numerology.has_letters(name):
+        raise InputError("INVALID_NAME", "Họ tên cần viết bằng chữ Latin (A-Z, có dấu được).")
+    return numerology.reading_data(numerology.compute(birth, name, today()))
 
 
 def parse_ymd(raw: str) -> tuple[int, int, int]:
-    """'YYYY-MM-DD' -> (năm, tháng, ngày) KHÔNG kiểm tra theo lịch dương (ngày âm
-    như 30/2 vẫn hợp lệ)."""
-    m = re.fullmatch(r"\s*(\d{4})-(\d{1,2})-(\d{1,2})\s*", raw or "")
+    """'YYYY-MM-DD' hoặc 'DD/MM/YYYY' -> (năm, tháng, ngày) KHÔNG kiểm tra theo
+    lịch dương (ngày âm như 30/2 vẫn hợp lệ)."""
+    if not (raw or "").strip():
+        raise InputError("INVALID_DATE", "Thiếu ngày (birthDate), dạng YYYY-MM-DD hoặc DD/MM/YYYY.")
+    m = _YMD_RE.fullmatch(raw)
     if not m:
-        raise InputError("INVALID_DATE", "Ngày có dạng YYYY-MM-DD.")
-    return int(m.group(1)), int(m.group(2)), int(m.group(3))
+        raise InputError("INVALID_DATE", "Ngày có dạng YYYY-MM-DD hoặc DD/MM/YYYY.")
+    if m.group("y"):
+        return int(m.group("y")), int(m.group("m")), int(m.group("d"))
+    return int(m.group("y2")), int(m.group("m2")), int(m.group("d2"))
 
 
 def build_tuvi(
@@ -187,13 +169,17 @@ def build_tuvi(
     gender: str,
     is_lunar: bool = False,
     is_leap: bool = False,
+    early_ty: bool = False,
 ) -> tuvi.Chart:
     """Lá số (đối tượng Chart) từ ngày sinh dương, hoặc (is_lunar) ngày/tháng/năm ÂM.
-    Raise InputError khi dữ liệu sai."""
+    early_ty: sinh 23h-24h (giờ Tý đầu) - an theo ngày hôm sau, chỉ hợp lệ với
+    hour_branch = 0. Raise InputError khi dữ liệu sai."""
     if gender not in GENDERS:
         raise InputError("INVALID_GENDER", "Giới tính là male hoặc female.")
     if not 0 <= hour_branch <= 11:
-        raise InputError("INVALID_HOUR", "Giờ sinh (chi) từ 0 (Tý) đến 11 (Hợi).")
+        raise InputError("INVALID_HOUR", "hourBranch là số 0 (Tý) đến 11 (Hợi).")
+    if early_ty and hour_branch != 0:
+        raise InputError("INVALID_HOUR", "Giờ Tý đầu (23h-24h) chỉ đi với giờ Tý (0).")
     _check_year(year)
     male = gender == "male"
     if is_lunar:
@@ -202,15 +188,12 @@ def build_tuvi(
         solar = calendar_query.lunar_to_solar_exact(day, month, year, is_leap)
         if solar is None:
             raise InputError("LUNAR_DATE_NOT_FOUND", "Ngày âm lịch này không tồn tại.")
-        c = tuvi.build_chart(day, month, year, hour_branch, male, is_leap, solar)
     else:
         try:
-            birth = dt.date(year, month, day)
+            solar = dt.date(year, month, day)
         except ValueError:
             raise InputError("INVALID_DATE", "Ngày dương lịch không tồn tại.") from None
-        ld, lm, ly, leap = lunar.solar_to_lunar(birth.day, birth.month, birth.year)
-        c = tuvi.build_chart(ld, lm, ly, hour_branch, male, leap, birth)
-    return c
+    return tuvi.chart_for(solar, hour_branch, male, early_ty)
 
 
 def tuvi_chart(
@@ -221,59 +204,9 @@ def tuvi_chart(
     gender: str,
     is_lunar: bool = False,
     is_leap: bool = False,
+    early_ty: bool = False,
 ) -> dict:
     """Lá số dạng dict (cho trang web/JSON API), xem build_tuvi."""
-    c = build_tuvi(year, month, day, hour_branch, gender, is_lunar, is_leap)
-    male = gender == "male"
-    born = can_chi.year_profile(c.lunar_year)
-    texts = tuvi._texts()
-    palaces = []
-    for i in range(12):
-        pos = (c.menh + i) % 12
-        main, other = tuvi._split_stars(c.stars[pos])
-        start_age, end_age = c.dai_han[pos]
-        palaces.append(
-            {
-                "name": tuvi.PALACES[i],
-                "branch": can_chi.CHI[pos],
-                "branchIndex": pos,
-                "stem": can_chi.CAN[c.palace_can(pos)],
-                "mainStars": main,
-                "minorStars": other,
-                "isThan": pos == c.than,
-                "hasTuan": pos in c.tuan,
-                "hasTriet": pos in c.triet,
-                "daiHan": {"from": start_age, "to": end_age},
-                "trangSinh": c.trang_sinh[pos],
-            }
-        )
-    menh_main, _ = tuvi._split_stars(c.stars[c.menh])
-    menh_notes = [
-        {"star": n.split(" (")[0], "meaning": texts.get("chinh_tinh", {}).get(n.split(" (")[0], "")}
-        for n in menh_main
-    ]
-    return {
-        "solarDate": c.solar.isoformat() if c.solar else None,
-        "lunarDate": {
-            "day": c.lunar_day,
-            "month": c.lunar_month,
-            "year": c.lunar_year,
-            "isLeapMonth": c.leap,
-            "text": lunar.lunar_text(c.lunar_day, c.lunar_month, c.lunar_year, c.leap),
-        },
-        "hourBranch": can_chi.CHI[c.hour_chi],
-        "gender": gender,
-        "yinYang": ("Dương" if c.can_y % 2 == 0 else "Âm") + (" Nam" if male else " Nữ"),
-        "napAm": born["nap_am"],
-        "element": born["menh"],
-        "cuc": tuvi._CUC_NAME[c.cuc],
-        "menhChu": tuvi._MENH_CHU[c.menh],
-        "thanChu": tuvi._THAN_CHU[c.chi_y],
-        "thanPalace": c.palace_at(c.than),
-        "tuHoa": c.tu_hoa,
-        "palaces": palaces,
-        "menhNotes": menh_notes,
-        "isMenhEmpty": not menh_main,
-        "menhEmptyNote": texts.get("vo_chinh_dieu", "") if not menh_main else "",
-        "disclaimer": tuvi.DISCLAIMER,
-    }
+    return tuvi.chart_data(
+        build_tuvi(year, month, day, hour_branch, gender, is_lunar, is_leap, early_ty)
+    )

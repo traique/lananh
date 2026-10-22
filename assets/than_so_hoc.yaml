@@ -102,3 +102,41 @@ mui_ten_trong:
   "1-5-9": Mũi tên Trì hoãn (trống 1-5-9) - cần đặt mục tiêu rõ và hạn chót.
   "3-5-7": Mũi tên Hoài nghi (trống 3-5-7) - cần mở lòng với điều mới.
   "1-2-3": Mũi tên Thiếu kế hoạch (trống 1-2-3) - nên tập lập kế hoạch trước khi làm.
+
+# thang_ca_nhan: chủ đề của tháng cá nhân 1-9 (ngắn hơn năm cá nhân).
+thang_ca_nhan:
+  1: tháng khởi đầu - bắt tay vào việc mới.
+  2: tháng kiên nhẫn - lắng nghe, hợp tác.
+  3: tháng giao tiếp - sáng tạo, gặp gỡ.
+  4: tháng làm việc - sắp xếp, hoàn thiện.
+  5: tháng thay đổi - linh hoạt, đón cái mới.
+  6: tháng gia đình - chăm lo người thân.
+  7: tháng tĩnh lặng - học hỏi, suy ngẫm.
+  8: tháng thu hoạch - tài chính, công việc.
+  9: tháng khép lại - dọn dẹp, buông bỏ.
+
+# dinh_cao: ý nghĩa 4 đỉnh cao (pinnacles) - cơ hội nổi bật của từng giai đoạn.
+dinh_cao:
+  1: giai đoạn tự lập, dựng sự nghiệp riêng, học cách quyết định một mình.
+  2: giai đoạn hợp tác, kiên nhẫn, xây quan hệ; thành quả đến qua người khác.
+  3: giai đoạn sáng tạo, giao tiếp, mở rộng quan hệ xã hội.
+  4: giai đoạn làm việc chăm chỉ, xây nền tảng tài chính và gia đình.
+  5: giai đoạn thay đổi, di chuyển, nhiều cơ hội mới cần chọn lọc.
+  6: giai đoạn gia đình, trách nhiệm, chăm sóc; hôn nhân và nhà cửa nổi bật.
+  7: giai đoạn học hỏi, chuyên môn sâu, chiêm nghiệm nội tâm.
+  8: giai đoạn thành tựu vật chất, quyền hạn, quản lý tiền bạc lớn.
+  9: giai đoạn cống hiến, buông bỏ, hoàn tất và mở rộng tầm nhìn.
+  11: giai đoạn trực giác và cảm hứng mạnh, dễ được chú ý; cần giữ cân bằng.
+  22: giai đoạn kiến tạo việc lớn, lâu dài cho nhiều người.
+
+# thu_thach: ý nghĩa 4 thử thách (challenges), giá trị 0-8.
+thu_thach:
+  0: thử thách tự do lựa chọn - phải tự quyết, không dựa vào hoàn cảnh.
+  1: học cách tự tin, đứng vững ý kiến riêng mà không áp đặt.
+  2: học cách bớt nhạy cảm, không để ý kiến người khác làm chùn bước.
+  3: học cách tập trung, diễn đạt rõ, tránh phân tán và tự phê bình.
+  4: học tính kỷ luật, kiên trì với việc nhỏ và đúng hạn.
+  5: học cách dùng tự do có trách nhiệm, tránh bốc đồng.
+  6: học cách chấp nhận không hoàn hảo, bớt cầu toàn với người thân.
+  7: học cách mở lòng, tin tưởng và chia sẻ thay vì khép kín.
+  8: học cách cân bằng tiền bạc và quyền lực với tình cảm, tránh lạm dụng.

@@ -77,3 +77,58 @@ async def test_ai_chi_dien_giai_so_da_tinh(monkeypatch):
     r = numerology.compute(dt.date(1990, 3, 15), "", TODAY)
     assert await numerology.explain_with_ai(r) == "Diễn giải"
     assert "KHÔNG tự tính lại" in prompts[0] and "Con số chủ đạo: 10" in prompts[0]
+
+
+def test_dinh_cao_thu_thach_truong_thanh():
+    # 15/3/1990: ngày 6, tháng 3, năm 1+9+9+0=19 -> 1; chủ đạo 10 -> bản rút gọn 1.
+    r = numerology.compute(dt.date(1990, 3, 15), "Nguyễn Văn An", TODAY)
+    assert r.life_path_single == 1 and r.age == 36
+    assert [s.value for s in r.pinnacles] == [9, 7, 7, 4]
+    assert [s.value for s in r.challenges] == [3, 5, 2, 2]
+    assert [(s.from_age, s.to_age) for s in r.pinnacles] == [
+        (0, 35),
+        (36, 44),
+        (45, 53),
+        (54, None),
+    ]
+    assert [s.contains(36) for s in r.pinnacles] == [False, True, False, False]
+    assert r.maturity == 4  # 1 (chủ đạo rút gọn) + 3 (sứ mệnh)
+    assert r.name_counts[5] == 5 and r.combined_counts[1] == 4
+    text = numerology.format_reading(r)
+    assert "Số trưởng thành (sau 35-40 tuổi): 4" in text
+    assert "2. 36-44 tuổi: 7" in text and "◀ hiện tại" in text
+    assert "Biểu đồ tổng hợp" in text
+
+
+def test_tuoi_dinh_cao_theo_so_chu_dao():
+    # Chủ đạo 11 -> rút gọn 2 -> đỉnh 1 tới 34 tuổi; 22 -> 4 -> tới 32 tuổi.
+    r11 = numerology.compute(dt.date(1975, 12, 4), "", TODAY)
+    assert r11.life_path == 11 and r11.pinnacles[0].to_age == 34
+    r22 = numerology.compute(dt.date(1984, 8, 2), "", TODAY)  # 0+2+0+8+1+9+8+4 = 32 -> 5
+    assert r22.life_path == 5
+    assert numerology._stages([1, 2, 3, 4], 4)[0].to_age == 32
+    assert numerology.stage_label(numerology.Stage(1, 54, None)) == "từ 54 tuổi"
+
+
+def test_khong_ten_thi_khong_co_so_theo_ten():
+    r = numerology.compute(dt.date(1990, 3, 15), "", TODAY)
+    assert r.maturity is None and r.name_counts is None and r.combined_counts is None
+    assert len(r.pinnacles) == 4 and len(r.challenges) == 4
+
+
+def test_file_y_nghia_giai_doan():
+    texts = numerology._texts()
+    for n in (*range(1, 10), 11, 22):
+        assert texts["dinh_cao"][n]
+    for n in range(0, 9):
+        assert texts["thu_thach"][n]
+
+
+def test_so_truong_thanh_giu_so_bac_thay():
+    # 4/12/1975: chủ đạo 11 -> cộng 11 (không rút về 2) với số sứ mệnh.
+    r = numerology.compute(dt.date(1975, 12, 4), "Lê An", TODAY)
+    assert r.life_path == 11
+    assert r.maturity == numerology.reduce_number(11 + r.expression)
+    # Chủ đạo 10 tính là 1.
+    r10 = numerology.compute(dt.date(1990, 3, 15), "Lê An", TODAY)
+    assert r10.maturity == numerology.reduce_number(1 + r10.expression)

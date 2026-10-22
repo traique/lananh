@@ -8,29 +8,30 @@
   <style>
     :root{
       color-scheme:light;
-      --bg:#f3f4f7; --surface:#ffffff; --surface-2:#eef0f4;
-      --border:rgba(15,23,42,.10);
-      --text:#0f172a; --text-2:#475569; --muted:#64748b;
-      --accent:#2a78d6; --accent-hover:#1c5cab;
-      --shadow:0 1px 2px rgba(15,23,42,.05),0 10px 28px -16px rgba(15,23,42,.22);
+      /* Bảng màu Mộc (Đại Lâm Mộc) dùng chung với static/site.css */
+      --bg:#eef3ea; --surface:#f8faf5; --surface-2:#e4ece0;
+      --border:rgba(19,35,26,.14);
+      --text:#13231a; --text-2:#2d4a39; --muted:#4f6a5c;
+      --accent:#1e6b3f; --accent-hover:#155230;
+      --shadow:0 1px 2px rgba(19,35,26,.05),0 10px 28px -16px rgba(19,35,26,.22);
       --radius:14px; --radius-sm:8px;
     }
     @media (prefers-color-scheme:dark){
       :root:not([data-theme="light"]){
         color-scheme:dark;
-        --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
-        --border:rgba(255,255,255,.09);
-        --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
-        --accent:#5598e7; --accent-hover:#6da7ec;
+        --bg:#0c1510; --surface:#132019; --surface-2:#1a2b21;
+        --border:rgba(228,237,229,.12);
+        --text:#e4ede5; --text-2:#bccdc0; --muted:#93a89a;
+        --accent:#79d39a; --accent-hover:#95e0ae;
         --shadow:0 1px 2px rgba(0,0,0,.45),0 10px 28px -16px rgba(0,0,0,.7);
       }
     }
     :root[data-theme="dark"]{
       color-scheme:dark;
-      --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
-      --border:rgba(255,255,255,.09);
-      --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
-      --accent:#5598e7; --accent-hover:#6da7ec;
+      --bg:#0c1510; --surface:#132019; --surface-2:#1a2b21;
+      --border:rgba(228,237,229,.12);
+      --text:#e4ede5; --text-2:#bccdc0; --muted:#93a89a;
+      --accent:#79d39a; --accent-hover:#95e0ae;
       --shadow:0 1px 2px rgba(0,0,0,.45),0 10px 28px -16px rgba(0,0,0,.7);
     }
     *{box-sizing:border-box}

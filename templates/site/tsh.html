@@ -2,7 +2,7 @@
 {% block content %}
 <div class="narrow">
   <h1>Thần số học</h1>
-  <p class="lead">Tính theo hệ Pythagoras phổ biến ở Việt Nam. Thông tin chỉ dùng để tính, không lưu lại.</p>
+  <p class="lead">Tính theo hệ Pythagoras phổ biến ở Việt Nam: con số chủ đạo, biểu đồ ngày sinh, 4 đỉnh cao, 4 thử thách, năm cá nhân. Thông tin chỉ dùng để tính, không lưu lại.</p>
   {% include "_errors.html" %}
   <form class="panel form" action="/than-so-hoc" method="post" novalidate>
     <div class="field">
@@ -12,7 +12,7 @@
     <div class="field">
       <label for="ten">Họ tên (không bắt buộc)</label>
       <input type="text" id="ten" name="ten" value="{{ form.ten }}" maxlength="80" autocomplete="name" aria-describedby="ten-hint">
-      <span class="hint" id="ten-hint">Có họ tên thì tính thêm số linh hồn, nhân cách, sứ mệnh.</span>
+      <span class="hint" id="ten-hint">Có họ tên thì tính thêm số sứ mệnh, linh hồn, nhân cách, trưởng thành và biểu đồ tên.</span>
     </div>
     <div><button class="btn" type="submit">Tính</button></div>
   </form>

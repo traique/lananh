@@ -148,7 +148,8 @@ def _next_lunar(ld: int, lm: int, today: dt.date, year: int | None = None) -> dt
 def _next_solar(d: int, m: int, today: dt.date, year: int | None = None) -> dt.date | None:
     try:
         if year is not None:
-            return dt.date(year, m, d)
+            # Năm ngoài 1900-2100: lịch âm không hỗ trợ (năm 9999 làm next_tet crash).
+            return dt.date(year, m, d) if _MIN_YEAR <= year <= _MAX_YEAR else None
         day = dt.date(today.year, m, d)
         return day if day >= today else dt.date(today.year + 1, m, d)
     except ValueError:
@@ -210,10 +211,11 @@ def _relative_day(t: str, today: dt.date) -> tuple[dt.date, str] | None:
 def _solar_dates(t: str, today: dt.date) -> list[dt.date]:
     out = []
     for m in _SOLAR_DATE_RE.finditer(t):
+        year = int(m.group("y") or today.year)
+        if not _MIN_YEAR <= year <= _MAX_YEAR:
+            continue
         try:
-            out.append(
-                dt.date(int(m.group("y") or today.year), int(m.group("m")), int(m.group("d")))
-            )
+            out.append(dt.date(year, int(m.group("m")), int(m.group("d"))))
         except ValueError:
             continue
     return out

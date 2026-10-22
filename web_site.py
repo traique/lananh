@@ -13,24 +13,29 @@ Cần đăng nhập (tài khoản admin, chung phiên với /admin) cho việc t
 JSON API (chỉ thêm trường mới, không đổi/bỏ trường cũ):
   GET  /api/v1/calendar/days/{YYYY-MM-DD}
   GET  /api/v1/calendar/months/{YYYY-MM}
-  GET  /api/v1/calendar/conversions?lunarDay=&lunarMonth=&lunarYear=&isLeapMonth=
+  GET  /api/v1/calendar/conversions?lunarDay=&lunarMonth=&lunarYear=&isLeapMonth=true|false
   GET  /api/v1/calendar/answers?q=
-  POST /api/v1/numerology/readings  {"birthDate": "YYYY-MM-DD", "name"?: str}
-  POST /api/v1/tuvi/charts          {"birthDate", "calendar": "solar"|"lunar",
-                                     "isLeapMonth"?, "hourBranch": 0-11, "gender": "male"|"female"}
+  POST /api/v1/numerology/readings  {"birthDate": "YYYY-MM-DD"|"DD/MM/YYYY", "name"?: str}
+  POST /api/v1/tuvi/charts          {"birthDate": "YYYY-MM-DD"|"DD/MM/YYYY",
+                                     "calendar": "solar"|"lunar", "isLeapMonth"?: bool (chỉ lunar),
+                                     "hourBranch": 0-11, "gender": "male"|"female",
+                                     "isEarlyTy"?: bool (sinh 23h-24h, an theo ngày hôm sau)}
 Ngày sinh/họ tên đi bằng POST để không nằm trong URL và log truy cập.
-Mọi lỗi: HTTP 4xx + {"error": {"code": "...", "message": "..."}}.
+Lỗi nhập liệu: HTTP 422 + {"error": {"code": "...", "message": "..."}}; 404/405 dưới
+/api/v1 cũng cùng dạng {"error"} (web.py); body quá 1 MiB bị middleware chặn 413.
 """
 
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextvars
 import datetime as dt
 import functools
 import hashlib
 import json
 import re
+import time
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -100,6 +105,11 @@ _WEATHER_TIMEOUT_SEC = 15
 # Trang công khai: chặn số lượt gọi Open-Meteo song song để người lạ spam
 # địa danh không chiếm hết kết nối/RAM của 1 worker (webhook Telegram/Zalo).
 _weather_slots = asyncio.Semaphore(3)
+# Địa điểm LẠ (không có trong danh sách hay xem) tốn 3-4 request Open-Meteo mỗi
+# lượt (geocoding + dự báo) và dùng chung hạn mức miễn phí với tool thời tiết
+# của chat: giới hạn tổng số lượt tra địa điểm lạ toàn site trong 10 phút.
+_NEW_PLACE_LIMIT, _NEW_PLACE_WINDOW_SEC = 30, 600
+_new_place_times: collections.deque[float] = collections.deque()
 _MAX_JSON_BYTES = 4096
 
 
@@ -360,15 +370,31 @@ async def _limited_weather(place: str) -> dict:
         return await weather.get_weather(place, days=_WEATHER_DAYS)
 
 
+def _new_place_allowed(now: float | None = None) -> bool:
+    """Lấy 1 lượt trong ngân sách tra địa điểm lạ; hết thì False (không gọi API)."""
+    now = time.monotonic() if now is None else now
+    while _new_place_times and now - _new_place_times[0] > _NEW_PLACE_WINDOW_SEC:
+        _new_place_times.popleft()
+    if len(_new_place_times) >= _NEW_PLACE_LIMIT:
+        return False
+    _new_place_times.append(now)
+    return True
+
+
 @router.get("/thoi-tiet", response_class=HTMLResponse)
 async def weather_page(request: Request) -> HTMLResponse:
     place = request.query_params.get("noi", "").strip()[:60]
+    places = await weather_places.get()
     error, data = "", None
-    try:
-        # Hạn chót tính cả lúc xếp hàng chờ slot, không chỉ lúc tra.
-        data = await asyncio.wait_for(_limited_weather(place), _WEATHER_TIMEOUT_SEC)
-    except (weather.WeatherError, asyncio.TimeoutError):
-        error = "Nguồn thời tiết đang chậm hoặc lỗi, thử lại sau ít phút."
+    known = {weather_places.fold(p) for p in places}
+    if place and weather_places.fold(place) not in known and not _new_place_allowed():
+        error = "Đang tạm giới hạn tra địa điểm mới, chọn một địa điểm trong danh sách."
+    else:
+        try:
+            # Hạn chót tính cả lúc xếp hàng chờ slot, không chỉ lúc tra.
+            data = await asyncio.wait_for(_limited_weather(place), _WEATHER_TIMEOUT_SEC)
+        except (weather.WeatherError, asyncio.TimeoutError):
+            error = "Nguồn thời tiết đang chậm hoặc lỗi, thử lại sau ít phút."
     if data and data.get("error"):
         error, data = f"Không tìm thấy địa điểm “{place}”. Thử gõ tên tỉnh/thành phố.", None
     if data:
@@ -383,20 +409,20 @@ async def weather_page(request: Request) -> HTMLResponse:
         place=place,
         data=data,
         error=error,
-        places=await weather_places.get(),
+        places=places,
         notice=_PLACE_NOTICES.get(request.query_params.get("tb", "")),
         fmt=lambda x: "?" if x is None else round(float(x)),
     )
 
 
 async def _change_place(request: Request, action) -> Response:
-    form = await _form(request)
-    name = form.get("ten", "")
-    if not await web_admin.is_logged_in(request):
-        code = "dang-nhap"
+    form: dict[str, str] = {}
+    if not _viewer.get()[0]:
+        code = "dang-nhap"  # chưa đăng nhập: không đọc form
     else:
+        form = await _form(request)
         try:
-            await action(name)
+            await action(form.get("ten", ""))
             code = "da-them" if action is weather_places.add else "da-xoa"
         except weather_places.PlacesError as exc:
             code = exc.code
@@ -427,7 +453,7 @@ def _tuvi_form(form: dict, error: str = "") -> HTMLResponse:
         title="Lá số tử vi",
         description="An lá số Tử Vi Đẩu Số: 12 cung, chính tinh, phụ tinh, đại hạn.",
         active="/tu-vi",
-        hours=site_data.HOUR_BRANCHES,
+        hours=site_data.HOUR_OPTIONS,
         form=form,
         error=error,
     )
@@ -445,13 +471,13 @@ _TSH_FIELDS = ("ngay", "ten")
 def _clean_ai_text(text: str) -> str:
     """Bỏ ký hiệu markdown hay gặp (**, #) vì trang hiện chữ thường."""
     lines = [
-        line.lstrip("#").strip() if line.lstrip().startswith("#") else line
+        line.strip().lstrip("#").strip() if line.lstrip().startswith("#") else line
         for line in text.splitlines()
     ]
     return "\n".join(lines).replace("**", "").strip()
 
 
-async def _ai_reading(request: Request, form: dict, kind: str, explain) -> str:
+async def _ai_reading(form: dict, kind: str, explain) -> str:
     """Luận giải AI khi người xem bấm nút AI và đã đăng nhập; còn lại trả "".
     Chạy dưới khoá lượt của chủ bot như chat (AI qua provider-chain, có hạn chót)."""
     if form.get("ai") != "1" or not _viewer.get()[0]:
@@ -471,23 +497,26 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
             day, month, year, hour = (int(form.get(k, "")) for k in ("ngay", "thang", "nam", "gio"))
         except ValueError:
             raise InputError("INVALID_DATE", "Nhập đủ ngày, tháng, năm sinh và giờ sinh.") from None
-        args = (year, month, day, hour, form.get("gioi", ""))
-        flags = {"is_lunar": form.get("lich") == "am", "is_leap": form.get("nhuan") == "1"}
-        chart = site_data.tuvi_chart(*args, **flags)
+        early_ty = hour == site_data.EARLY_TY
+        c = site_data.build_tuvi(
+            year,
+            month,
+            day,
+            0 if early_ty else hour,
+            form.get("gioi", ""),
+            is_lunar=form.get("lich") == "am",
+            is_leap=form.get("nhuan") == "1",
+            early_ty=early_ty,
+        )
     except InputError as exc:
         return _tuvi_form(form, exc.message)
-    ai_text = await _ai_reading(
-        request,
-        form,
-        "tuvi_chitiet",
-        lambda: tuvi.explain_with_ai(site_data.build_tuvi(*args, **flags)),
-    )
+    ai_text = await _ai_reading(form, "tuvi_chitiet", lambda: tuvi.explain_with_ai(c))
     return _render(
         "tuvi_result.html",
         title="Lá số tử vi",
         description="Lá số Tử Vi Đẩu Số.",
         active="/tu-vi",
-        chart=chart,
+        chart=tuvi.chart_data(c),
         ai_text=ai_text,
         ai_action="/tu-vi",
         ai_fields={k: form[k] for k in _TUVI_FIELDS if k in form},
@@ -525,13 +554,11 @@ async def tsh_submit(request: Request) -> HTMLResponse:
         ("Số sứ mệnh (cả tên)", reading["expression"]),
         ("Số linh hồn (nguyên âm)", reading["soul"]),
         ("Số nhân cách (phụ âm)", reading["personality"]),
+        ("Số trưởng thành (sau 35-40 tuổi)", reading["maturity"]),
     ]
     name = form.get("ten", "").strip()
     ai_text = await _ai_reading(
-        request,
-        form,
-        "tsh_chitiet",
-        lambda: numerology.explain_with_ai(numerology.compute(birth, name)),
+        form, "tsh_chitiet", lambda: numerology.explain_with_ai(numerology.compute(birth, name))
     )
     return _render(
         "tsh_result.html",
@@ -578,7 +605,7 @@ def _ok(data: dict) -> JSONResponse:
 
 @api_router.get("/calendar/days/{date}")
 async def api_day(date: str) -> JSONResponse:
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+    if not re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", date):
         return _error(422, "INVALID_DATE", "Ngày có dạng YYYY-MM-DD.")
     try:
         return _ok(site_data.day_info(site_data.parse_date(date)))
@@ -604,8 +631,11 @@ async def api_conversion(request: Request) -> JSONResponse:
         day, month, year = (int(p.get(k, "")) for k in ("lunarDay", "lunarMonth", "lunarYear"))
     except ValueError:
         return _error(422, "INVALID_LUNAR_DATE", "Cần lunarDay, lunarMonth, lunarYear là số.")
+    flag = p.get("isLeapMonth", "false").lower()
+    if flag not in ("true", "false", "1", "0"):
+        return _error(422, "INVALID_LEAP_FLAG", "isLeapMonth là true hoặc false.")
     try:
-        return _ok(site_data.lunar_to_solar(day, month, year, p.get("isLeapMonth") == "true"))
+        return _ok(site_data.lunar_to_solar(day, month, year, flag in ("true", "1")))
     except InputError as exc:
         return _error(422, exc.code, exc.message)
 
@@ -638,7 +668,7 @@ async def api_numerology(request: Request) -> JSONResponse:
         name = data.get("name") or ""
         if not isinstance(name, str):
             raise InputError("INVALID_NAME", "name phải là chuỗi.")
-        birth = site_data.parse_date(str(data.get("birthDate", "")))
+        birth = site_data.parse_date(str(data.get("birthDate") or ""))
         return _ok(site_data.numerology_reading(birth, name.strip()))
     except InputError as exc:
         return _error(422, exc.code, exc.message)
@@ -654,7 +684,12 @@ async def api_tuvi(request: Request) -> JSONResponse:
         hour = data.get("hourBranch")
         if not isinstance(hour, int) or isinstance(hour, bool):
             raise InputError("INVALID_HOUR", "hourBranch là số 0 (Tý) đến 11 (Hợi).")
-        year, month, day = site_data.parse_ymd(str(data.get("birthDate", "")))
+        leap, early = data.get("isLeapMonth", False), data.get("isEarlyTy", False)
+        if not isinstance(leap, bool) or not isinstance(early, bool):
+            raise InputError("INVALID_FLAG", "isLeapMonth và isEarlyTy là true/false (bool).")
+        if leap and calendar != "lunar":
+            raise InputError("INVALID_LEAP_FLAG", "isLeapMonth chỉ dùng với calendar=lunar.")
+        year, month, day = site_data.parse_ymd(str(data.get("birthDate") or ""))
         chart = site_data.tuvi_chart(
             year,
             month,
@@ -662,7 +697,8 @@ async def api_tuvi(request: Request) -> JSONResponse:
             hour,
             str(data.get("gender", "")),
             is_lunar=calendar == "lunar",
-            is_leap=data.get("isLeapMonth") is True,
+            is_leap=leap,
+            early_ty=early,
         )
         return _ok(chart)
     except InputError as exc:

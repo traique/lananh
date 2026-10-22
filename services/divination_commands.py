@@ -53,9 +53,7 @@ async def ai_text(user_id: int, kind: str, channel: str, explain) -> str:
     return text or _AI_ERROR
 
 
-async def _with_ai(
-    user_id: int, kind: str, argument: str, channel: str, base: str, explain
-) -> list[str]:
+async def _with_ai(user_id: int, kind: str, channel: str, base: str, explain) -> list[str]:
     return [base, await ai_text(user_id, kind, channel, explain)]
 
 
@@ -67,7 +65,6 @@ async def tsh_chitiet(user_id: int, argument: str, channel: str) -> list[str]:
     return await _with_ai(
         user_id,
         "tsh_chitiet",
-        argument,
         channel,
         numerology.format_reading(reading),
         lambda: numerology.explain_with_ai(reading),
@@ -81,7 +78,6 @@ async def tuvi_chitiet(user_id: int, argument: str, channel: str) -> list[str]:
     return await _with_ai(
         user_id,
         "tuvi_chitiet",
-        argument,
         channel,
         tuvi.format_chart(chart),
         lambda: tuvi.explain_with_ai(chart),

@@ -8,7 +8,9 @@ from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from telegram import Update
 from telegram.ext import Application
 
@@ -149,8 +151,32 @@ async def lifespan(_: FastAPI):
         application = None
 
 
-api = FastAPI(lifespan=lifespan)
+# Không mở /docs, /openapi.json: handler nhận Request thô nên schema sinh ra
+# rỗng (hợp đồng thật ở docstring web_site.py + README) và danh sách route
+# nội bộ (/internal/zalo/*, /webhook) không cần lộ cho người lạ.
+api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 api.add_middleware(RequestLimitsMiddleware)
+
+
+@api.exception_handler(StarletteHTTPException)
+async def _http_error(request: Request, exc: StarletteHTTPException) -> Response:
+    """Dưới /api/v1 mọi lỗi HTTP (404, 405...) cùng dạng {"error": {code, message}}
+    như lỗi nhập liệu 422; các đường dẫn khác giữ dạng mặc định của FastAPI."""
+    if request.url.path.startswith("/api/v1/"):
+        codes = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
+        return JSONResponse(
+            {
+                "error": {
+                    "code": codes.get(exc.status_code, "HTTP_ERROR"),
+                    "message": str(exc.detail),
+                }
+            },
+            status_code=exc.status_code,
+            headers=getattr(exc, "headers", None),
+        )
+    return await http_exception_handler(request, exc)
+
+
 api.include_router(zalo_router)
 api.include_router(web_admin.router)
 api.include_router(web_admin.api_router)

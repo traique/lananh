@@ -1,26 +1,33 @@
-/* LCTA - giao diện web công khai (lịch, tử vi, thần số học).
-   Màu chủ đạo vàng kim theo logo (sáng #8a5a00 ~5.8:1 trên trắng; tối #e3b64f),
-   thêm đúng 1 màu son (--lunar) cho mùng 1/rằm/ngày lễ, xanh lá cho hoàng đạo.
-   Khoảng cách theo thang 4px: 4 8 12 16 24 32 48. */
+/* LCTA - giao diện web công khai (lịch, thời tiết, tử vi, thần số học).
+
+   Bảng màu theo mệnh chủ site: Đại Lâm Mộc (Mộc - gỗ rừng lớn).
+   - Màu chủ đạo: xanh rừng (bản mệnh Mộc)   --accent  sáng #1e6b3f (6.2:1 trên nền ngà) / tối #79d39a
+   - Màu phụ:     xanh nước (Thủy sinh Mộc)  --water   dùng cho hoàng đạo, Thân, thông tin
+   - Điểm nhấn:   son (Hỏa, Mộc sinh Hỏa - chỉ dùng ít) --lunar cho mùng 1/rằm/ngày lễ/lỗi
+   - Nền ngà pha xanh, KHÔNG dùng trắng tinh, xám hay ánh kim (Kim khắc Mộc).
+   Mọi cặp chữ/nền đạt WCAG AA (chữ ≥ 4.5:1, thành phần ≥ 3:1), tối/sáng tự theo hệ máy.
+   Khoảng cách theo thang 4px: 4 8 12 16 24 32 48. Bo góc: khối 8px, ô nhập 6px, chip 999px. */
 :root {
   color-scheme: light;
-  --bg: #f3f4f7;
-  --surface: #ffffff;
-  --surface-2: #eef0f4;
-  --border: rgba(15, 23, 42, 0.12);
-  --border-strong: rgba(15, 23, 42, 0.24);
-  --text: #0f172a;
-  --text-2: #3f4b5e;
-  --muted: #5b6678;
-  --accent: #8a5a00;
-  --accent-hover: #6f4800;
-  --accent-soft: rgba(184, 134, 34, 0.14);
-  --on-accent: #ffffff;
-  --lunar: #a32519;
-  --lunar-soft: rgba(196, 50, 36, 0.1);
-  --good: #0a6b2f;
-  --focus: #8a5a00;
-  --radius: 10px;
+  --bg: #eef3ea;
+  --surface: #f8faf5;
+  --surface-2: #e4ece0;
+  --border: rgba(19, 35, 26, 0.14);
+  --border-strong: rgba(19, 35, 26, 0.28);
+  --text: #13231a;
+  --text-2: #2d4a39;
+  --muted: #4f6a5c;
+  --accent: #1e6b3f;
+  --accent-hover: #155230;
+  --accent-soft: rgba(30, 107, 63, 0.12);
+  --on-accent: #f3faf4;
+  --water: #1d5a86;
+  --water-soft: rgba(29, 90, 134, 0.12);
+  --lunar: #a8321f;
+  --lunar-soft: rgba(168, 50, 31, 0.1);
+  --good: var(--water);
+  --focus: #1d5a86;
+  --radius: 8px;
   --radius-sm: 6px;
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -29,22 +36,24 @@
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --bg: #0e1015;
-    --surface: #161922;
-    --surface-2: #1e222c;
-    --border: rgba(255, 255, 255, 0.1);
-    --border-strong: rgba(255, 255, 255, 0.22);
-    --text: #e8eaef;
-    --text-2: #c2c8d3;
-    --muted: #9aa2b0;
-    --accent: #e3b64f;
-    --accent-hover: #f0c86a;
-    --accent-soft: rgba(227, 182, 79, 0.16);
-    --on-accent: #1a1405;
-    --lunar: #f08a7e;
-    --lunar-soft: rgba(240, 138, 126, 0.14);
-    --good: #63d47d;
-    --focus: #f0c86a;
+    --bg: #0c1510;
+    --surface: #132019;
+    --surface-2: #1a2b21;
+    --border: rgba(228, 237, 229, 0.12);
+    --border-strong: rgba(228, 237, 229, 0.26);
+    --text: #e4ede5;
+    --text-2: #bccdc0;
+    --muted: #93a89a;
+    --accent: #79d39a;
+    --accent-hover: #95e0ae;
+    --accent-soft: rgba(121, 211, 154, 0.14);
+    --on-accent: #0b1a11;
+    --water: #7fb9e3;
+    --water-soft: rgba(127, 185, 227, 0.14);
+    --lunar: #f0998b;
+    --lunar-soft: rgba(240, 153, 139, 0.14);
+    --good: var(--water);
+    --focus: #95e0ae;
   }
 }
 
@@ -56,7 +65,7 @@ body {
   color: var(--text);
   font: 400 1rem/1.6 var(--font);
 }
-a { color: var(--accent); }
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
 a:hover { color: var(--accent-hover); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
 h1, h2, h3 { line-height: 1.25; letter-spacing: -0.01em; }
@@ -75,8 +84,8 @@ p { margin: 0 0 var(--s3); }
 }
 .skip-link:focus { top: var(--s2); }
 
-/* Khung trang */
-.site-header { background: var(--surface); border-bottom: 1px solid var(--border); }
+/* Khung trang: viền trên xanh rừng là dấu hiệu nhận diện duy nhất, không gradient */
+.site-header { background: var(--surface); border-bottom: 1px solid var(--border); border-top: 3px solid var(--accent); }
 .site-header .inner, main, .site-footer .inner {
   max-width: 1040px; margin: 0 auto; padding-left: var(--s4); padding-right: var(--s4);
 }
@@ -168,8 +177,8 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh
 .add-place { display: flex; gap: var(--s2); max-width: 480px; }
 .add-place input { flex: 1; min-width: 0; }
 .ok-box {
-  border: 1px solid var(--good); color: var(--text); padding: var(--s3) var(--s4);
-  border-radius: var(--radius-sm); background: color-mix(in srgb, var(--good) 10%, transparent);
+  border: 1px solid var(--accent); color: var(--text); padding: var(--s3) var(--s4);
+  border-radius: var(--radius-sm); background: var(--accent-soft);
 }
 .ai-box .answer { line-height: 1.7; }
 
@@ -213,7 +222,7 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2);
 }
 .today-date .wd { font-weight: 600; color: var(--text-2); }
-.today-date .big { font-size: 3rem; font-weight: 800; line-height: 1; }
+.today-date .big { font-size: 3rem; font-weight: 800; line-height: 1; color: var(--accent); }
 .today-date .lunar { color: var(--lunar); font-weight: 700; }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s4); margin: 0; }
 .facts dt { color: var(--muted); }
@@ -222,14 +231,15 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh
 @media (min-width: 900px) { .tools { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 .tools a {
   display: block; height: 100%; padding: var(--s4); border: 1px solid var(--border);
-  border-radius: var(--radius); background: var(--surface); text-decoration: none; color: var(--text);
+  border-left: 3px solid var(--accent); border-radius: var(--radius); background: var(--surface);
+  text-decoration: none; color: var(--text);
 }
-.tools a:hover { border-color: var(--accent); }
+.tools a:hover { border-color: var(--accent); background: var(--accent-soft); }
 .tools strong { display: block; color: var(--accent); margin-bottom: var(--s1); }
 .tools span { color: var(--text-2); font-size: 0.9375rem; }
 
 /* Thời tiết */
-.weather-now .temp { font-size: 3rem; font-weight: 800; line-height: 1.1; margin: var(--s2) 0 0; }
+.weather-now .temp { font-size: 3rem; font-weight: 800; line-height: 1.1; margin: var(--s2) 0 0; color: var(--water); }
 .weather-now .desc { font-weight: 600; color: var(--text-2); margin: 0 0 var(--s4); }
 .forecast { list-style: none; margin: 0; padding: 0; }
 .forecast li {
@@ -254,6 +264,7 @@ input[type="text"], input[type="date"], input[type="search"], input[type="number
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   background: var(--surface); color: var(--text); font: inherit;
 }
+input:focus-visible, select:focus-visible { border-color: var(--accent); }
 fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: var(--s1); }
 .choices { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); }
 .choices label { display: inline-flex; align-items: center; gap: var(--s2); min-height: 44px; font-weight: 400; }
@@ -290,26 +301,35 @@ table.month a.day.is-holiday { background: var(--lunar-soft); }
 table.month a.day.is-today { border-color: var(--accent); }
 table.month a.day[aria-current="date"] { background: var(--accent); color: var(--on-accent); }
 table.month a.day[aria-current="date"] .l { color: var(--on-accent); }
+table.month a.day[aria-current="date"] .hd { background: var(--on-accent); }
 table.month .hd { width: 6px; height: 6px; border-radius: 50%; background: var(--good); justify-self: start; }
 .legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: 0.8125rem; color: var(--muted); margin-top: var(--s3); }
 .legend .hd { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--good); margin-right: var(--s1); vertical-align: middle; }
 .day-detail h2 { margin-bottom: var(--s1); }
 .day-detail .lunar-line { color: var(--lunar); font-weight: 700; margin-bottom: var(--s3); }
 .tag { display: inline-block; padding: 2px var(--s2); border-radius: var(--radius-sm); font-size: 0.8125rem; font-weight: 600; background: var(--surface-2); color: var(--text-2); }
-.tag.good { color: var(--good); }
-.tag.warn { color: var(--lunar); }
+.tag.good { color: var(--water); background: var(--water-soft); }
+.tag.warn { color: var(--lunar); background: var(--lunar-soft); }
+.tag.accent { color: var(--accent); background: var(--accent-soft); }
 
 /* Lá số tử vi: lưới 4x4 truyền thống (cung theo địa chi), giữa là thông tin chung */
 .chart { display: grid; gap: var(--s1); grid-template-columns: 1fr; }
 .palace { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--s2) var(--s3); background: var(--surface); font-size: 0.875rem; }
 .palace.is-menh { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.palace.is-than { border-color: var(--water); }
 .palace header { display: flex; justify-content: space-between; gap: var(--s2); font-weight: 700; }
 .palace header .branch { color: var(--muted); font-weight: 600; }
-.palace .main { color: var(--lunar); font-weight: 700; margin: var(--s1) 0; }
+.palace .main { color: var(--accent); font-weight: 700; margin: var(--s1) 0; }
+.palace .main .empty { color: var(--muted); font-weight: 600; }
 .palace .minor { color: var(--text-2); font-size: 0.8125rem; }
+/* Độ sáng sao: chữ nhỏ sau tên sao (M miếu, V vượng, Đ đắc, B bình, H hãm) */
+.palace .lvl { font-size: 0.6875rem; font-weight: 600; color: var(--muted); vertical-align: super; margin-left: 1px; }
+.palace .lvl.h { color: var(--lunar); }
+.palace .lvl.m, .palace .lvl.v { color: var(--water); }
 .palace footer { margin-top: var(--s1); color: var(--muted); font-size: 0.75rem; display: flex; flex-wrap: wrap; gap: var(--s1) var(--s2); }
 .chart-center { border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: var(--s3); font-size: 0.875rem; }
 .chart-center h3 { font-size: 1rem; }
+.star-legend { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); font-size: 0.8125rem; color: var(--muted); margin: var(--s3) 0 0; }
 @media (min-width: 900px) {
   .chart {
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -330,15 +350,25 @@ table.month .hd { width: 6px; height: 6px; border-radius: 50%; background: var(-
 table.numbers { width: 100%; border-collapse: collapse; }
 table.numbers th, table.numbers td { text-align: left; padding: var(--s2) var(--s2) var(--s2) 0; border-top: 1px solid var(--border); vertical-align: top; }
 table.numbers th { font-weight: 600; width: 40%; }
-table.numbers td.n { font-weight: 800; width: 3rem; }
+table.numbers td.n { font-weight: 800; width: 3rem; color: var(--accent); }
 .birth-grid { display: grid; grid-template-columns: repeat(3, 64px); gap: var(--s1); }
 .birth-grid div {
   height: 64px; display: grid; place-items: center; border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm); font: 700 1.125rem var(--mono);
+  border-radius: var(--radius-sm); font: 700 1.125rem var(--mono); background: var(--accent-soft);
 }
-.birth-grid div.empty { color: var(--muted); font-weight: 400; border-style: dashed; }
+.birth-grid div.empty { color: var(--muted); font-weight: 400; border-style: dashed; background: transparent; }
+.grids { display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.grids h3 { margin-bottom: var(--s2); }
 ul.plain { padding-left: 1.2rem; margin: 0; }
 ul.plain li { margin: var(--s1) 0; }
+/* Đỉnh cao / thử thách theo 4 giai đoạn */
+.stages { display: grid; gap: var(--s2); grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
+@media (min-width: 600px) { .stages { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.stages li { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--s2) var(--s3); background: var(--surface-2); }
+.stages .age { display: block; font-size: 0.75rem; color: var(--muted); }
+.stages .n { font-size: 1.5rem; font-weight: 800; color: var(--accent); line-height: 1.2; }
+.stages .n.c { color: var(--water); }
+.stages .is-now { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 
 .mt-3 { margin-top: var(--s3); }
 .mt-4 { margin-top: var(--s4); }

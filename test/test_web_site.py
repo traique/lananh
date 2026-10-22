@@ -200,6 +200,8 @@ async def test_trang_tuvi_post_va_loi(client):
     )
     assert "Thổ ngũ cục" in r.text and "Phá Quân" in r.text
     assert "Lập lá số khác" in r.text and 'name="ngay"' not in r.text  # trang kết quả riêng
+    assert "(đắc)" in r.text and 'title="miếu"' in r.text  # độ sáng sao
+    assert "Hóa Lộc" in r.text and "Đẩu Quân" in r.text
     lunar = await client.post(
         "/tu-vi",
         data={
@@ -216,10 +218,64 @@ async def test_trang_tuvi_post_va_loi(client):
     assert 'role="alert"' in bad.text
 
 
+async def test_tuvi_gio_ty_dau_tren_web_va_api(client):
+    html = (await client.get("/tu-vi")).text
+    assert 'value="12"' in html and "Tý đầu" in html and "Tháng nhuận: sinh ngày 1-15" in html
+    r = await client.post("/tu-vi", data={**_TUVI_FORM, "gio": "12"})
+    assert "an theo ngày hôm sau" in r.text and "ngày 20 tháng 2 năm Canh Ngọ" in r.text
+    assert "Sinh 15/03/1990 dương lịch" in r.text  # vẫn hiển thị ngày đã nhập
+    api = await client.post(
+        "/api/v1/tuvi/charts",
+        json={"birthDate": "1990-03-15", "hourBranch": 0, "gender": "male", "isEarlyTy": True},
+    )
+    assert api.json()["isEarlyTy"] is True and api.json()["lunarDate"]["day"] == 20
+    bad = await client.post(
+        "/api/v1/tuvi/charts",
+        json={"birthDate": "1990-03-15", "hourBranch": 5, "gender": "male", "isEarlyTy": True},
+    )
+    assert bad.status_code == 422 and bad.json()["error"]["code"] == "INVALID_HOUR"
+
+
+def test_clean_ai_text_bo_markdown_ca_dong_thut_dau():
+    assert web_site._clean_ai_text("  ## Tổng quan\n**Mệnh** tốt") == "Tổng quan\nMệnh tốt"
+
+
+async def test_hoi_lich_nam_ngoai_khoang_khong_500(client):
+    for q in ("25/12/9999", "noel năm 9999", "ngày 25 tháng 12 năm 9999"):
+        page = await client.get("/lich/hoi", params={"q": q})
+        assert page.status_code == 200 and "chưa hiểu" in page.text, q
+        api = await client.get("/api/v1/calendar/answers", params={"q": q})
+        assert api.status_code == 200, q
+
+
+async def test_thoi_tiet_gioi_han_dia_diem_la(client, monkeypatch):
+    calls = []
+
+    async def fake_get_weather(location="", days=1):
+        calls.append(location)
+        return _FAKE_WEATHER
+
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    monkeypatch.setattr(web_site, "_new_place_times", web_site.collections.deque())
+    monkeypatch.setattr(web_site, "_NEW_PLACE_LIMIT", 3)
+    for i in range(3):
+        assert "°C" in (await client.get("/thoi-tiet", params={"noi": f"La{i}"})).text
+    html = (await client.get("/thoi-tiet", params={"noi": "La9"})).text
+    assert "tạm giới hạn" in html and 'role="alert"' in html and len(calls) == 3
+    # Địa điểm trong danh sách hay xem và mặc định không bị giới hạn.
+    assert "°C" in (await client.get("/thoi-tiet", params={"noi": "đà lạt"})).text
+    assert "°C" in (await client.get("/thoi-tiet")).text
+    assert len(calls) == 5
+    assert web_site._new_place_allowed(now=10_000.0)  # cửa sổ 10 phút đã qua
+
+
 async def test_trang_than_so_hoc_escape_ho_ten(client):
     r = await client.post("/than-so-hoc", data={"ngay": "1990-03-15", "ten": "<script>x</script>"})
     assert "Con số chủ đạo" in r.text and "Tính cho người khác" in r.text
     assert "<script>x</script>" not in r.text and "&lt;script&gt;" in r.text
+    assert "4 đỉnh cao" in r.text and "4 thử thách" in r.text and "Biểu đồ tổng hợp" in r.text
+    no_name = await client.post("/than-so-hoc", data={"ngay": "1990-03-15"})
+    assert "Biểu đồ tổng hợp" not in no_name.text and "Nhập họ tên" in no_name.text
 
 
 _FAKE_WEATHER = {
@@ -334,7 +390,102 @@ async def test_api_numerology_va_tuvi(client):
     chart = r.json()
     assert chart["cuc"] == "Thổ ngũ cục"
     assert chart["palaces"][0]["name"] == "Mệnh" and chart["palaces"][0]["branch"] == "Tuất"
-    assert chart["palaces"][0]["mainStars"] == ["Phá Quân"]
+    assert chart["palaces"][0]["mainStars"] == ["Phá Quân"]  # trường cũ giữ nguyên
+    # Trường mới (thêm, không đổi trường cũ): từng sao kèm độ sáng và Tứ hóa.
+    menh = chart["palaces"][0]["stars"][0]
+    assert menh == {
+        "name": "Phá Quân", "isMain": True, "hoa": None, "brightness": "Đ", "brightnessName": "đắc",
+    }  # fmt: skip
+    dien = next(p for p in chart["palaces"] if p["name"] == "Điền Trạch")
+    assert dien["mainStars"] == ["Thái Dương (Hóa Lộc)", "Thái Âm (Hóa Khoa)"]
+    assert dien["stars"][0]["hoa"] == "Hóa Lộc" and dien["stars"][0]["brightness"] == "Đ"
+    assert chart["cucRelation"] and chart["isThuan"] is True and chart["brightnessLegend"]["M"]
+    assert data["maturity"]["value"] == 4 and data["lifePath"]["single"] == 1
+    assert [p["value"] for p in data["pinnacles"]] == [9, 7, 7, 4]
+    assert data["challenges"][0]["label"] == "0-35 tuổi" and data["combinedChart"]["5"] == 6
+
+
+async def test_api_thang_nhuan_va_dinh_dang_ngay(client):
+    # GET conversions: isLeapMonth nhận true/false/1/0, giá trị khác -> 422.
+    base = {"lunarDay": 15, "lunarMonth": 6, "lunarYear": 2025}
+    normal = await client.get("/api/v1/calendar/conversions", params=base)
+    leap = await client.get("/api/v1/calendar/conversions", params={**base, "isLeapMonth": "true"})
+    assert normal.json()["date"] == "2025-07-09" and leap.json()["date"] == "2025-08-08"
+    assert (
+        await client.get("/api/v1/calendar/conversions", params={**base, "isLeapMonth": "1"})
+    ).json()["date"] == "2025-08-08"
+    bad = await client.get("/api/v1/calendar/conversions", params={**base, "isLeapMonth": "yes"})
+    assert bad.status_code == 422 and bad.json()["error"]["code"] == "INVALID_LEAP_FLAG"
+    # POST tuvi: lịch âm + tháng nhuận; cờ phải là bool; nhuận chỉ đi với lunar.
+    body = {"calendar": "lunar", "birthDate": "2025-06-15", "hourBranch": 0, "gender": "male"}
+    r = await client.post("/api/v1/tuvi/charts", json={**body, "isLeapMonth": True})
+    assert r.json()["lunarDate"]["isLeapMonth"] is True and r.json()["solarDate"] == "2025-08-08"
+    r = await client.post("/api/v1/tuvi/charts", json={**body, "isLeapMonth": "true"})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "INVALID_FLAG"
+    r = await client.post(
+        "/api/v1/tuvi/charts", json={**body, "calendar": "solar", "isLeapMonth": True}
+    )
+    assert r.json()["error"]["code"] == "INVALID_LEAP_FLAG"
+    # birthDate: cả hai POST nhận YYYY-MM-DD lẫn DD/MM/YYYY; GET days không cần đệm 0.
+    r = await client.post(
+        "/api/v1/tuvi/charts", json={"birthDate": "15/03/1990", "hourBranch": 5, "gender": "male"}
+    )
+    assert r.status_code == 200 and r.json()["palaces"][0]["mainStars"] == ["Phá Quân"]
+    assert (await client.get("/api/v1/calendar/days/1990-3-5")).status_code == 200
+    r = await client.post("/api/v1/numerology/readings", json={})
+    assert r.status_code == 422 and "Thiếu ngày" in r.json()["error"]["message"]
+    r = await client.post(
+        "/api/v1/numerology/readings", json={"birthDate": "1990-03-15", "name": "123 !!!"}
+    )
+    assert r.status_code == 422 and r.json()["error"]["code"] == "INVALID_NAME"
+
+
+async def test_api_404_405_cung_dang_loi_va_khong_mo_docs(monkeypatch):
+    import web
+
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_out)
+    transport = httpx.ASGITransport(app=web.api)
+    async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
+        r = await c.get("/api/v1/nope")
+        assert r.status_code == 404 and r.json()["error"]["code"] == "NOT_FOUND"
+        r = await c.get("/api/v1/tuvi/charts")
+        assert r.status_code == 405 and r.json()["error"]["code"] == "METHOD_NOT_ALLOWED"
+        for path in ("/docs", "/openapi.json", "/redoc"):
+            assert (await c.get(path)).status_code == 404, path
+        assert (await c.get("/khong-co")).status_code == 404  # ngoài API: dạng mặc định
+
+
+async def test_api_giu_truong_cu_va_truong_moi_song_song(client):
+    day = (await client.get("/api/v1/calendar/days/2026-10-21")).json()
+    assert day["weekday"] == "Thứ Tư" and day["weekdayIndex"] == 2
+    month = (await client.get("/api/v1/calendar/months/2026-10")).json()
+    assert month["days"][20]["weekday"] == 2 and month["days"][20]["weekdayName"] == "Thứ Tư"
+    assert set(day) >= {"date", "weekday", "lunar", "solarTerm", "luckyHours", "dayGod", "isHoangDao",
+                        "isTamNuong", "isNguyetKy", "holidays", "nextTet", "daysToTet"}  # fmt: skip
+    chart = (
+        await client.post(
+            "/api/v1/tuvi/charts",
+            json={"birthDate": "1990-03-15", "hourBranch": 5, "gender": "male"},
+        )
+    ).json()
+    assert set(chart) >= {"solarDate", "lunarDate", "hourBranch", "gender", "yinYang", "napAm", "element", "cuc",
+                          "menhChu", "thanChu", "thanPalace", "tuHoa", "palaces", "menhNotes", "isMenhEmpty",
+                          "menhEmptyNote", "disclaimer"}  # fmt: skip
+    palace = chart["palaces"][0]
+    assert set(palace) >= {"name", "branch", "branchIndex", "stem", "mainStars", "minorStars", "isThan",
+                           "hasTuan", "hasTriet", "daiHan", "trangSinh"}  # fmt: skip
+    assert palace["daiHan"] == {"from": 5, "to": 14, "fromAge": 5, "toAge": 14}
+    assert chart["menhNotes"][0]["star"] == chart["menhNotes"][0]["name"] == "Phá Quân"
+    reading = (
+        await client.post(
+            "/api/v1/numerology/readings", json={"birthDate": "1990-03-15", "name": "An"}
+        )
+    ).json()
+    assert set(reading) >= {"birthDate", "name", "lifePath", "dayNumber", "attitude", "personalYear",
+                            "personalMonth", "expression", "soul", "personality", "chart", "missingDigits",
+                            "arrows", "emptyArrows", "disclaimer"}  # fmt: skip
+    assert reading["asOf"] and reading["personalMonthDetail"]["value"] == reading["personalMonth"]
+    assert 1 <= reading["personalMonthDetail"]["month"] <= 12
 
 
 async def test_api_body_qua_lon(client):
