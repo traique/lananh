@@ -26,7 +26,7 @@ Các sửa bổ sung để vận hành ổn định: ghi chú/reminder có event
 
 | Thành phần | Giới hạn/mặc định của bản sửa |
 |---|---|
-| Python web | 1 Uvicorn worker; tối đa 8 kết nối/tác vụ HTTP cùng lúc; keep-alive 5 giây |
+| Python web | 1 Uvicorn worker; tối đa 32 kết nối/tác vụ HTTP cùng lúc (8 từng bị web công khai vượt -> 503 cả webhook); keep-alive 5 giây |
 | Telegram/Zoom inbox | 2 worker; backlog nằm trong DB, không tạo một task RAM cho mỗi webhook |
 | Request thường | Tối đa 1 MiB, kiểm tra cả body chunked trước khi parse JSON |
 | Ảnh Zalo | Tối đa 8 MiB/ảnh; download theo stream và dừng khi vượt giới hạn |

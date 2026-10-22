@@ -90,9 +90,8 @@
     background:var(--surface);border-right:1px solid var(--border);padding:18px 14px;
   }
   .brand{display:flex;align-items:center;gap:10px;padding:4px 8px 18px}
-  .brand .logo{
-    width:34px;height:34px;flex:none;display:block;
-  }
+  .brand .logo{flex:none;display:block}
+  .brand .logo img{height:34px;width:auto;display:block}
   .brand b{display:block;font-size:14.5px;letter-spacing:-.01em}
   .brand small{display:block;color:var(--muted);font-size:11.5px;margin-top:1px}
   .nav{display:flex;flex-direction:column;gap:2px;flex:1}
@@ -113,7 +112,7 @@
     -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);
   }
   .topbar .mobile-brand{display:none;align-items:center;gap:8px;font-weight:700}
-  .topbar .mobile-brand .logo{width:28px;height:28px}
+  .topbar .mobile-brand .logo img{height:28px}
   .topbar-title{font-weight:600;font-size:15px;margin-right:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .updated{color:var(--muted);font-size:12px;white-space:nowrap}
   .controls{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
@@ -307,13 +306,14 @@
     .kpi .value{font-size:21px}
     .card{padding:16px 14px 14px}
   }
+  .logo img.logo-d{display:none}@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .logo img.logo-l{display:none}:root:not([data-theme="light"]) .logo img.logo-d{display:block}}:root[data-theme="dark"] .logo img.logo-l{display:none}:root[data-theme="dark"] .logo img.logo-d{display:block}
 </style>
 </head>
 <body>
 <div class="app">
   <aside class="sidebar" aria-label="Điều hướng">
     <div class="brand">
-      <img class="logo" src="/static/logo.svg" alt="" width="34" height="34">
+      <span class="logo"><img class="logo-l" src="/static/logo-light.webp" alt="LCTA" height="34"><img class="logo-d" src="/static/logo-dark.webp" alt="LCTA" height="34"></span>
       <div><b>Lan Anh Bot</b><small>Bảng điều khiển</small></div>
     </div>
     <nav class="nav" id="side-nav">
@@ -337,7 +337,7 @@
 
   <div class="main">
     <header class="topbar">
-      <div class="mobile-brand"><img class="logo brand-logo" src="/static/logo.svg" alt="" width="28" height="28"><span>Lan Anh Bot</span></div>
+      <div class="mobile-brand"><span class="logo"><img class="logo-l" src="/static/logo-light.webp" alt="LCTA" height="28"><img class="logo-d" src="/static/logo-dark.webp" alt="LCTA" height="28"></span><span>Lan Anh Bot</span></div>
       <div class="topbar-title" id="topbar-title">Tổng quan</div>
       <span class="updated" id="updated-at">Đang tải…</span>
       <div class="controls">

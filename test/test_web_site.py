@@ -34,23 +34,34 @@ async def test_root_tra_html_cho_trinh_duyet_json_cho_health_check():
         assert (await c.head("/")).status_code == 200
         page = await c.get("/", headers={"Accept": "text/html,application/xhtml+xml"})
         assert page.status_code == 200
-        assert "<h1>Lịch âm, tử vi, thần số học</h1>" in page.text
+        assert "Hôm nay" in page.text and 'alt="LCTA"' in page.text
 
 
-async def test_trang_lich(client):
-    r = await client.get("/lich", params={"ngay": "2026-10-24", "q": "trung thu"})
+async def test_trang_lich_thang(client):
+    r = await client.get("/lich", params={"ngay": "2026-10-24"})
     assert r.status_code == 200
-    assert "Tháng 10/2026" in r.text
-    assert 'aria-current="date"' in r.text
-    assert "Tết Trung thu" in r.text
+    assert "Tháng 10/2026" in r.text and 'aria-current="date"' in r.text
     assert "ngày 15 tháng 9 năm Bính Ngọ âm lịch" in r.text
+    assert 'href="/lich/hoi"' in r.text  # thanh mục con
 
 
-async def test_trang_lich_doi_ngay_am_va_loi_nhap(client):
-    r = await client.get("/lich", params={"am": "15/8/2027"})
-    assert "Thứ Tư 15/09/2027" in r.text
-    bad = await client.get("/lich", params={"thang": "abc"})
-    assert bad.status_code == 200 and 'role="alert"' in bad.text
+async def test_trang_lich_tach_rieng(client):
+    ask = await client.get("/lich/hoi", params={"q": "trung thu"})
+    assert "Tết Trung thu" in ask.text and 'aria-current="page">Hỏi lịch' in ask.text
+    conv = await client.get("/lich/doi-ngay", params={"am": "15/8/2027"})
+    assert "Thứ Tư 15/09/2027" in conv.text
+    bad = await client.get("/lich/doi-ngay", params={"am": "30/2/2026"})
+    assert 'role="alert"' in bad.text and "chỉ có 29 ngày" in bad.text
+    holidays = await client.get("/lich/ngay-le")
+    assert "Tết Nguyên đán" in holidays.text and "Ngày Nhà giáo Việt Nam" in holidays.text
+    assert 'role="alert"' in (await client.get("/lich", params={"thang": "abc"})).text
+
+
+async def test_link_cu_chuyen_sang_trang_moi(client):
+    r = await client.get("/lich", params={"q": "trung thu"})
+    assert r.status_code == 307 and r.headers["location"] == "/lich/hoi?q=trung+thu"
+    r = await client.get("/lich", params={"am": "15/6/2025", "nhuan": "1"})
+    assert r.headers["location"] == "/lich/doi-ngay?am=15%2F6%2F2025&nhuan=1"
 
 
 async def test_trang_tuvi_post_va_loi(client):
@@ -58,6 +69,7 @@ async def test_trang_tuvi_post_va_loi(client):
         "/tu-vi", data={"ngay": "15", "thang": "3", "nam": "1990", "gio": "5", "gioi": "male"}
     )
     assert "Thổ ngũ cục" in r.text and "Phá Quân" in r.text
+    assert "Lập lá số khác" in r.text and 'name="ngay"' not in r.text  # trang kết quả riêng
     lunar = await client.post(
         "/tu-vi",
         data={
@@ -76,13 +88,15 @@ async def test_trang_tuvi_post_va_loi(client):
 
 async def test_trang_than_so_hoc_escape_ho_ten(client):
     r = await client.post("/than-so-hoc", data={"ngay": "1990-03-15", "ten": "<script>x</script>"})
-    assert "Con số chủ đạo" in r.text
+    assert "Con số chủ đạo" in r.text and "Tính cho người khác" in r.text
     assert "<script>x</script>" not in r.text and "&lt;script&gt;" in r.text
 
 
 async def test_static_chi_phuc_vu_file_trong_danh_sach(client):
-    assert (await client.get("/static/logo.svg")).headers["content-type"] == "image/svg+xml"
-    assert (await client.get("/static/site.css")).status_code == 200
+    assert (await client.get("/static/logo-light.webp")).headers["content-type"] == "image/webp"
+    assert (await client.get("/static/favicon.png")).status_code == 200
+    assert (await client.get("/favicon.ico")).headers["content-type"] == "image/png"
+    assert (await client.get("/static/site.css")).status_code == 404  # CSS nhúng trong HTML
     assert (await client.get("/static/..%2Fweb.py")).status_code == 404
     assert (await client.get("/static/web.py")).status_code == 404
 
@@ -144,3 +158,27 @@ async def test_api_numerology_va_tuvi(client):
 async def test_api_body_qua_lon(client):
     r = await client.post("/api/v1/numerology/readings", content=b"{" + b" " * 5000 + b"}")
     assert r.json()["error"]["code"] == "BODY_TOO_LARGE"
+
+
+async def test_trang_khong_keo_css_rieng_anh_cache_dai(client):
+    """CSS nhúng sẵn trong HTML; chỉ logo/favicon là file riêng, có ?v=<hash> và
+    cache 1 năm. Trước đây mỗi lượt xem tải 3 file song song, vài người xem
+    cùng lúc vượt --limit-concurrency của uvicorn -> 503 cả webhook Telegram/Zalo."""
+    import re
+
+    for path in ("/lich", "/lich/hoi", "/tu-vi", "/than-so-hoc"):
+        html = (await client.get(path)).text
+        assert "<style>" in html and 'rel="stylesheet"' not in html
+        refs = re.findall(r'(?:src|href|srcset)="(/static/[^"]+)"', html)
+        assert refs and all(re.search(r"\?v=[0-9a-f]{10}$", r) for r in refs), path
+    r = await client.get("/static/logo-dark.webp")
+    assert "immutable" in r.headers["cache-control"]
+
+
+def test_uvicorn_limit_concurrency_du_cho_web_va_webhook():
+    import re
+    from pathlib import Path
+
+    conf = (Path(__file__).resolve().parent.parent / "supervisord.conf").read_text()
+    limit = int(re.search(r"--limit-concurrency (\d+)", conf).group(1))
+    assert limit >= 32

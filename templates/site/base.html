@@ -3,17 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{{ title }} · Lan Anh{% endblock %}</title>
+  <title>{% block title %}{{ title }} · LCTA{% endblock %}</title>
   <meta name="description" content="{{ description }}">
   <meta name="color-scheme" content="light dark">
-  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/site.css?v={{ asset_version }}">
+  <link rel="icon" href="/static/favicon.png?v={{ v }}" type="image/png">
+  <style>{{ inline_css }}</style>
 </head>
 <body>
   <a class="skip-link" href="#main">Bỏ qua đến nội dung chính</a>
   <header class="site-header">
     <div class="inner">
-      <a class="brand" href="/"><img src="/static/logo.svg" alt="" width="32" height="32">Lan Anh</a>
+      <a class="brand" href="/" aria-label="LCTA - Trang chủ">
+        <picture>
+          <source srcset="/static/logo-dark.webp?v={{ v }}" media="(prefers-color-scheme: dark)">
+          <img src="/static/logo-light.webp?v={{ v }}" alt="LCTA" width="69" height="48">
+        </picture>
+      </a>
       <nav class="site-nav" aria-label="Điều hướng chính">
         <ul>
           {% for href, label in nav %}
@@ -24,11 +29,18 @@
     </div>
   </header>
   <main id="main" tabindex="-1">
+    {% if tabs %}
+    <nav class="tabs" aria-label="Mục lịch">
+      {% for href, label in tabs %}
+      <a href="{{ href }}"{% if href == tab %} aria-current="page"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </nav>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer">
     <div class="inner">
-      <span>Lan Anh · tra cứu tính bằng thuật toán, không dùng AI</span>
+      <span>© LCTA · tính bằng thuật toán, không dùng AI</span>
       <a href="/privacy">Quyền riêng tư</a>
       <a href="/terms">Điều khoản</a>
     </div>

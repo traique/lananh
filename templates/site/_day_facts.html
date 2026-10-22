@@ -1,0 +1,9 @@
+<dl class="facts">
+  <dt>Can chi</dt><dd>Ngày {{ day.lunar.dayCanChi }}, tháng {{ day.lunar.monthCanChi }}, năm {{ day.lunar.yearCanChi }}</dd>
+  <dt>Ngày</dt>
+  <dd>{% if day.isHoangDao %}<span class="tag good">Hoàng đạo</span>{% else %}<span class="tag">Hắc đạo</span>{% endif %} {{ day.dayGod }}{% if day.isTamNuong %} <span class="tag warn">Tam nương</span>{% endif %}{% if day.isNguyetKy %} <span class="tag warn">Nguyệt kỵ</span>{% endif %}</dd>
+  <dt>Tiết khí</dt><dd>{{ day.solarTerm }}</dd>
+  <dt>Giờ tốt</dt><dd>{{ day.luckyHours | join(", ") }}</dd>
+  {% if day.holidays %}<dt>Ngày lễ</dt><dd>{{ day.holidays | join(", ") }}</dd>{% endif %}
+  <dt>Tết</dt><dd>{% if day.daysToTet == 0 %}Hôm nay là Tết{% else %}Còn {{ day.daysToTet }} ngày{% endif %}</dd>
+</dl>

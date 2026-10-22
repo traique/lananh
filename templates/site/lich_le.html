@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="narrow">
+  <h1>Ngày lễ sắp tới</h1>
+  <p class="lead">Ngày lễ âm lịch và dương lịch trong 12 tháng tới.</p>
+  <ul class="panel holiday-list">
+    {% for h in holidays %}
+    <li>
+      <div><strong>{{ h.name }}</strong><span class="tag">{{ "Âm lịch" if h.isLunar else "Dương lịch" }}</span></div>
+      <div class="muted"><a href="/lich?ngay={{ h.date.isoformat() }}">{{ h.weekday }} {{ h.date.strftime('%d/%m/%Y') }}</a> · còn {{ h.days }} ngày</div>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endblock %}

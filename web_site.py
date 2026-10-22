@@ -1,4 +1,5 @@
-"""Web công khai: trang chủ, /lich, /tu-vi, /than-so-hoc và JSON API /api/v1.
+"""Web công khai: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le), /tu-vi,
+/than-so-hoc (form -> trang kết quả riêng) và JSON API /api/v1.
 
 Chỉ tính toán bằng code (services/site_data.py), KHÔNG gọi AI, không đụng DB
 - trang công khai không được đốt quota AI. Trang render sẵn ở server nên chạy
@@ -24,18 +25,38 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup
 
-from services import calendar_query, site_data
+from services import calendar_query, lunar, site_data
 from services.site_data import InputError
 
 _ROOT = Path(__file__).resolve().parent
 _STATIC = _ROOT / "static"
-_STATIC_FILES = {"site.css": "text/css; charset=utf-8", "logo.svg": "image/svg+xml"}
+_STATIC_FILES = {
+    "logo-light.webp": "image/webp",
+    "logo-dark.webp": "image/webp",
+    "favicon.png": "image/png",
+}
 _NAV = [("/", "Trang chủ"), ("/lich", "Lịch"), ("/tu-vi", "Tử vi"), ("/than-so-hoc", "Thần số học")]
+_LICH_TABS = [
+    ("/lich", "Lịch tháng"),
+    ("/lich/hoi", "Hỏi lịch"),
+    ("/lich/doi-ngay", "Đổi ngày âm"),
+    ("/lich/ngay-le", "Ngày lễ"),
+]
+_ASK_EXAMPLES = [
+    "rằm tháng 8",
+    "còn mấy ngày nữa Tết",
+    "ngày tốt tháng này",
+    "tuổi 15/3/1990",
+    "sao hạn 1990 nam năm 2027",
+    "1990 và 1995 có hợp không",
+]
 _MAX_JSON_BYTES = 4096
 
 router = APIRouter(include_in_schema=False)
@@ -55,14 +76,18 @@ def _env() -> Environment:
 
 
 @functools.lru_cache(maxsize=1)
-def _asset_version() -> str:
-    data = b"".join((_STATIC / name).read_bytes() for name in sorted(_STATIC_FILES))
-    return hashlib.sha256(data).hexdigest()[:10]
+def _assets() -> tuple[Markup, str]:
+    """(CSS nhúng thẳng vào HTML, phiên bản ảnh). CSS inline để trang không kéo
+    thêm request song song: uvicorn chạy --limit-concurrency (đếm cả kết nối
+    keep-alive rảnh), nhiều request phụ từng làm webhook Telegram/Zalo nhận 503.
+    Logo/favicon vẫn là file riêng nhưng cache 1 năm theo phiên bản nội dung."""
+    css = Markup((_STATIC / "site.css").read_text(encoding="utf-8"))
+    digest = hashlib.sha256(b"".join((_STATIC / n).read_bytes() for n in sorted(_STATIC_FILES)))
+    return css, digest.hexdigest()[:10]
 
 
-def _render(
-    name: str, *, title: str, description: str, active: str, status: int = 200, **ctx
-) -> HTMLResponse:
+def _render(name: str, *, title: str, description: str, active: str, **ctx) -> HTMLResponse:
+    css, version = _assets()
     html = (
         _env()
         .get_template(name)
@@ -71,13 +96,20 @@ def _render(
             description=description,
             active=active,
             nav=_NAV,
-            asset_version=_asset_version(),
+            inline_css=css,
+            v=version,
             **ctx,
         )
     )
     # Lỗi nhập liệu hiện ngay trên trang (role=alert) với HTTP 200: trang HTML
     # trả 4xx làm trình duyệt ghi lỗi console dù người dùng chỉ nhập sai.
     return HTMLResponse(html)
+
+
+def _render_lich(name: str, *, tab: str, title: str, description: str, **ctx) -> HTMLResponse:
+    return _render(
+        name, title=title, description=description, active="/lich", tabs=_LICH_TABS, tab=tab, **ctx
+    )
 
 
 def wants_html(request: Request) -> bool:
@@ -87,18 +119,27 @@ def wants_html(request: Request) -> bool:
 # ─── Trang ───────────────────────────────────────────────────────────────────
 
 
-def home_page() -> HTMLResponse:
-    today = site_data.today()
+def _upcoming_holidays(today: dt.date, limit: int) -> list[dict]:
     upcoming = []
     for holiday in calendar_query.HOLIDAYS:
         day = calendar_query.holiday_entry_date(holiday, today)
         if day is not None:
-            upcoming.append((day, holiday[0]))
+            upcoming.append((day, holiday[0], holiday[1]))
     upcoming.sort()
-    items = [
-        {"name": name, "when": f"{day:%d/%m/%Y}", "days": (day - today).days}
-        for day, name in upcoming[:5]
+    return [
+        {
+            "name": name,
+            "date": day,
+            "weekday": site_data.day_info(day)["weekday"],
+            "isLunar": is_lunar,
+            "days": (day - today).days,
+        }
+        for day, name, is_lunar in upcoming[:limit]
     ]
+
+
+def home_page() -> HTMLResponse:
+    today = site_data.today()
     return _render(
         "home.html",
         title="Lịch âm, tử vi, thần số học",
@@ -106,13 +147,32 @@ def home_page() -> HTMLResponse:
         active="/",
         today=site_data.day_info(today),
         today_date=today,
-        upcoming=items,
+        next_holiday=_upcoming_holidays(today, 1)[0],
     )
 
 
+def _weeks(grid: dict) -> list[list[dict | None]]:
+    weeks: list[list[dict | None]] = []
+    week: list[dict | None] = [None] * grid["days"][0]["weekday"]
+    for d in grid["days"]:
+        week.append(d)
+        if len(week) == 7:
+            weeks.append(week)
+            week = []
+    if week:
+        weeks.append(week + [None] * (7 - len(week)))
+    return weeks
+
+
 @router.get("/lich", response_class=HTMLResponse)
-async def lich_page(request: Request) -> HTMLResponse:
+async def lich_page(request: Request) -> Response:
     params = request.query_params
+    # Link cũ: /lich?q=... và /lich?am=... nay là trang riêng.
+    if params.get("q"):
+        return RedirectResponse(f"/lich/hoi?{urlencode({'q': params['q']})}", status_code=307)
+    if params.get("am"):
+        query = {"am": params["am"], **({"nhuan": "1"} if params.get("nhuan") == "1" else {})}
+        return RedirectResponse(f"/lich/doi-ngay?{urlencode(query)}", status_code=307)
     today = site_data.today()
     error = ""
     selected_date = today
@@ -134,44 +194,75 @@ async def lich_page(request: Request) -> HTMLResponse:
     except InputError as exc:
         error, grid = exc.message, site_data.month_grid(today.year, today.month)
         selected_date = today
-
-    q, answer = params.get("q", "").strip()[:200], ""
-    if q:
-        answer = site_data.calendar_answer(q)
-    am, nhuan = params.get("am", "").strip()[:20], params.get("nhuan") == "1"
-    if am:
-        m = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", am)
-        if not m:
-            error = "Ngày âm phải có dạng ngày/tháng hoặc ngày/tháng/năm."
-        else:
-            year = f"/{m.group(3)}" if m.group(3) else ""
-            answer = calendar_query.answer(
-                f"âm {m.group(1)}/{m.group(2)}{'n' if nhuan else ''}{year}", today
-            )
-
-    weeks, week = [], [None] * grid["days"][0]["weekday"]
-    for d in grid["days"]:
-        week.append(d)
-        if len(week) == 7:
-            weeks.append(week)
-            week = []
-    if week:
-        weeks.append(week + [None] * (7 - len(week)))
-    return _render(
+    return _render_lich(
         "lich.html",
-        title="Lịch âm dương",
-        description="Lịch tháng có ngày âm, ngày hoàng đạo, ngày lễ; đổi ngày âm dương.",
-        active="/lich",
+        tab="/lich",
+        title="Lịch tháng",
+        description="Lịch tháng dương - âm, ngày hoàng đạo, ngày lễ.",
         month=grid,
-        weeks=weeks,
+        weeks=_weeks(grid),
         selected=site_data.day_info(selected_date),
         selected_date=selected_date,
         today_iso=today.isoformat(),
+        error=error,
+    )
+
+
+@router.get("/lich/hoi", response_class=HTMLResponse)
+async def lich_ask_page(request: Request) -> HTMLResponse:
+    q = request.query_params.get("q", "").strip()[:200]
+    return _render_lich(
+        "lich_hoi.html",
+        tab="/lich/hoi",
+        title="Hỏi lịch",
+        description="Hỏi tự do về lịch âm, ngày tốt, tuổi, sao hạn - trả lời bằng thuật toán.",
         q=q,
-        answer=answer,
+        answer=site_data.calendar_answer(q) if q else "",
+        examples=_ASK_EXAMPLES,
+    )
+
+
+@router.get("/lich/doi-ngay", response_class=HTMLResponse)
+async def lich_convert_page(request: Request) -> HTMLResponse:
+    params = request.query_params
+    am, nhuan = params.get("am", "").strip()[:20], params.get("nhuan") == "1"
+    error, result = "", None
+    if am:
+        m = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", am)
+        if not m:
+            error = "Ngày âm phải có dạng ngày/tháng hoặc ngày/tháng/năm, ví dụ 15/8/2027."
+        else:
+            day, _, msg = lunar.find_lunar_date(
+                int(m.group(1)),
+                int(m.group(2)),
+                int(m.group(3)) if m.group(3) else None,
+                nhuan,
+                site_data.today(),
+            )
+            if day is None:
+                error = msg
+            else:
+                result = site_data.day_info(day)
+    return _render_lich(
+        "lich_doi.html",
+        tab="/lich/doi-ngay",
+        title="Đổi ngày âm sang dương",
+        description="Đổi ngày âm lịch sang dương lịch, có tháng nhuận.",
         am=am,
         nhuan=nhuan,
+        result=result,
         error=error,
+    )
+
+
+@router.get("/lich/ngay-le", response_class=HTMLResponse)
+async def lich_holidays_page() -> HTMLResponse:
+    return _render_lich(
+        "lich_le.html",
+        tab="/lich/ngay-le",
+        title="Ngày lễ sắp tới",
+        description="Các ngày lễ âm lịch và dương lịch sắp tới.",
+        holidays=_upcoming_holidays(site_data.today(), len(calendar_query.HOLIDAYS)),
     )
 
 
@@ -180,7 +271,7 @@ async def _form(request: Request) -> dict[str, str]:
     return {k: str(v)[:100] for k, v in form.items()}
 
 
-def _tuvi_render(form: dict, chart: dict | None = None, error: str = "") -> HTMLResponse:
+def _tuvi_form(form: dict, error: str = "") -> HTMLResponse:
     return _render(
         "tuvi.html",
         title="Lá số tử vi",
@@ -188,18 +279,18 @@ def _tuvi_render(form: dict, chart: dict | None = None, error: str = "") -> HTML
         active="/tu-vi",
         hours=site_data.HOUR_BRANCHES,
         form=form,
-        chart=chart,
         error=error,
     )
 
 
 @router.get("/tu-vi", response_class=HTMLResponse)
 async def tuvi_page() -> HTMLResponse:
-    return _tuvi_render({"gio": "0", "lich": "duong", "gioi": "male"})
+    return _tuvi_form({"gio": "0", "lich": "duong", "gioi": "male"})
 
 
 @router.post("/tu-vi", response_class=HTMLResponse)
 async def tuvi_submit(request: Request) -> HTMLResponse:
+    """Kết quả ở trang riêng (tuvi_result.html); nhập sai thì quay lại form."""
     form = await _form(request)
     try:
         try:
@@ -216,35 +307,30 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
             is_leap=form.get("nhuan") == "1",
         )
     except InputError as exc:
-        return _tuvi_render(form, error=exc.message)
-    return _tuvi_render(form, chart)
+        return _tuvi_form(form, exc.message)
+    return _render(
+        "tuvi_result.html",
+        title="Lá số tử vi",
+        description="Lá số Tử Vi Đẩu Số.",
+        active="/tu-vi",
+        chart=chart,
+    )
 
 
-def _tsh_render(form: dict, reading: dict | None = None, error: str = "") -> HTMLResponse:
-    rows = []
-    if reading:
-        rows = [
-            ("Số ngày sinh", reading["dayNumber"]),
-            ("Số thái độ", reading["attitude"]),
-            ("Số sứ mệnh (cả tên)", reading["expression"]),
-            ("Số linh hồn (nguyên âm)", reading["soul"]),
-            ("Số nhân cách (phụ âm)", reading["personality"]),
-        ]
+def _tsh_form(form: dict, error: str = "") -> HTMLResponse:
     return _render(
         "tsh.html",
         title="Thần số học",
         description="Con số chủ đạo, biểu đồ ngày sinh, năm cá nhân theo thần số học Pythagoras.",
         active="/than-so-hoc",
         form=form,
-        reading=reading,
-        rows=rows,
         error=error,
     )
 
 
 @router.get("/than-so-hoc", response_class=HTMLResponse)
 async def tsh_page() -> HTMLResponse:
-    return _tsh_render({})
+    return _tsh_form({})
 
 
 @router.post("/than-so-hoc", response_class=HTMLResponse)
@@ -254,8 +340,22 @@ async def tsh_submit(request: Request) -> HTMLResponse:
         birth = site_data.parse_date(form.get("ngay", ""))
         reading = site_data.numerology_reading(birth, form.get("ten", "").strip())
     except InputError as exc:
-        return _tsh_render(form, error=exc.message)
-    return _tsh_render(form, reading)
+        return _tsh_form(form, exc.message)
+    rows = [
+        ("Số ngày sinh", reading["dayNumber"]),
+        ("Số thái độ", reading["attitude"]),
+        ("Số sứ mệnh (cả tên)", reading["expression"]),
+        ("Số linh hồn (nguyên âm)", reading["soul"]),
+        ("Số nhân cách (phụ âm)", reading["personality"]),
+    ]
+    return _render(
+        "tsh_result.html",
+        title="Thần số học",
+        description="Kết quả thần số học.",
+        active="/than-so-hoc",
+        reading=reading,
+        rows=rows,
+    )
 
 
 @router.get("/static/{name}")
@@ -266,8 +366,14 @@ async def static_file(name: str) -> Response:
     return FileResponse(
         _STATIC / name,
         media_type=media_type,
-        headers={"Cache-Control": "public, max-age=86400"},
+        # URL kèm ?v=<hash nội dung> nên cache lâu được; đổi ảnh thì đổi URL.
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> Response:
+    return await static_file("favicon.png")
 
 
 # ─── JSON API ───────────────────────────────────────────────────────────────

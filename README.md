@@ -635,14 +635,20 @@ kênh bạn yêu cầu).
 ## Web công khai (lịch, tử vi, thần số học)
 
 `web_site.py` - trang render sẵn ở server (chạy được khi tắt JavaScript), KHÔNG
-gọi AI, không đụng DB; logo `static/logo.svg`, CSS `static/site.css`.
+gọi AI, không đụng DB. Mỗi công cụ là một trang riêng, gọn trong 1 màn hình;
+CSS `static/site.css` được nhúng thẳng vào HTML (không tốn thêm request). Logo LCTA
+có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo nền sáng/tối) và
+`static/favicon.png`, tạo bằng `scripts/make_site_logo.py` từ ảnh logo nền đen.
 
 | Đường dẫn | Nội dung |
 |---|---|
 | `/` | Trang chủ cho trình duyệt (`Accept: text/html`); health check/Render vẫn nhận `{"status":"ok"}` |
-| `/lich?thang=YYYY-MM&ngay=YYYY-MM-DD&q=...&am=15/8/2027` | Lịch tháng dương-âm, chi tiết ngày, hỏi tự do (như `/lich`), đổi âm sang dương |
-| `/tu-vi` (POST form) | Lá số Tử Vi Đẩu Số dạng lưới 4x4 |
-| `/than-so-hoc` (POST form) | Thần số học |
+| `/lich?thang=YYYY-MM&ngay=YYYY-MM-DD` | Lịch tháng dương-âm + chi tiết ngày (link cũ `?q=`/`?am=` tự chuyển sang trang mới) |
+| `/lich/hoi?q=...` | Hỏi lịch tự do (như lệnh `/lich`) |
+| `/lich/doi-ngay?am=15/8/2027&nhuan=1` | Đổi ngày âm sang dương |
+| `/lich/ngay-le` | Ngày lễ âm/dương trong 12 tháng tới |
+| `/tu-vi` (form, POST ra trang kết quả) | Lá số Tử Vi Đẩu Số dạng lưới 4x4 |
+| `/than-so-hoc` (form, POST ra trang kết quả) | Thần số học |
 | `GET /api/v1/calendar/days/{YYYY-MM-DD}`, `/months/{YYYY-MM}`, `/conversions?lunarDay=&lunarMonth=&lunarYear=&isLeapMonth=`, `/answers?q=` | JSON lịch |
 | `POST /api/v1/numerology/readings`, `POST /api/v1/tuvi/charts` | JSON thần số học/lá số (ngày sinh trong body, không nằm trong URL/log) |
 

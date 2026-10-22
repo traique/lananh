@@ -1,6 +1,6 @@
-/* Lan Anh - giao diện web công khai (lịch, tử vi, thần số học).
-   Token màu dùng lại từ các trang hiện có (privacy/admin): xanh #2a78d6 làm
-   màu chính, thêm đúng 1 màu son (--lunar) cho mùng 1/rằm/ngày lễ.
+/* LCTA - giao diện web công khai (lịch, tử vi, thần số học).
+   Màu chủ đạo vàng kim theo logo (sáng #8a5a00 ~5.8:1 trên trắng; tối #e3b64f),
+   thêm đúng 1 màu son (--lunar) cho mùng 1/rằm/ngày lễ, xanh lá cho hoàng đạo.
    Khoảng cách theo thang 4px: 4 8 12 16 24 32 48. */
 :root {
   color-scheme: light;
@@ -12,14 +12,14 @@
   --text: #0f172a;
   --text-2: #3f4b5e;
   --muted: #5b6678;
-  --accent: #1d5aa6;
-  --accent-hover: #164a8a;
-  --accent-soft: rgba(42, 120, 214, 0.12);
+  --accent: #8a5a00;
+  --accent-hover: #6f4800;
+  --accent-soft: rgba(184, 134, 34, 0.14);
   --on-accent: #ffffff;
   --lunar: #a32519;
   --lunar-soft: rgba(196, 50, 36, 0.1);
   --good: #0a6b2f;
-  --focus: #2a78d6;
+  --focus: #8a5a00;
   --radius: 10px;
   --radius-sm: 6px;
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
@@ -37,14 +37,14 @@
     --text: #e8eaef;
     --text-2: #c2c8d3;
     --muted: #9aa2b0;
-    --accent: #6da7ec;
-    --accent-hover: #8ab9f0;
-    --accent-soft: rgba(85, 152, 231, 0.16);
-    --on-accent: #0b1220;
+    --accent: #e3b64f;
+    --accent-hover: #f0c86a;
+    --accent-soft: rgba(227, 182, 79, 0.16);
+    --on-accent: #1a1405;
     --lunar: #f08a7e;
     --lunar-soft: rgba(240, 138, 126, 0.14);
     --good: #63d47d;
-    --focus: #8ab9f0;
+    --focus: #f0c86a;
   }
 }
 
@@ -88,7 +88,7 @@ p { margin: 0 0 var(--s3); }
   display: inline-flex; align-items: center; gap: var(--s2);
   color: var(--text); text-decoration: none; font-weight: 700; font-size: 1.0625rem;
 }
-.brand img { width: 32px; height: 32px; display: block; }
+.brand img { width: auto; height: 48px; display: block; }
 .site-nav ul { display: flex; flex-wrap: wrap; gap: var(--s1); list-style: none; margin: 0; padding: 0; }
 .site-nav a {
   display: inline-block; padding: var(--s2) var(--s3); border-radius: var(--radius-sm);
@@ -97,9 +97,55 @@ p { margin: 0 0 var(--s3); }
 }
 .site-nav a:hover { background: var(--surface-2); color: var(--text); }
 .site-nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
-main { padding-top: var(--s5); padding-bottom: var(--s7); }
-.page-head { margin-bottom: var(--s5); }
-.page-head p { color: var(--text-2); max-width: 64ch; }
+main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh - 160px); }
+.narrow { max-width: 640px; margin: 0 auto; }
+.lead { color: var(--text-2); margin-bottom: var(--s5); }
+.section-title { font-size: 1rem; margin: var(--s6) 0 var(--s3); color: var(--text-2); }
+.small-title { font-size: 0.9375rem; margin: var(--s4) 0 var(--s2); }
+.eyebrow { font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0; }
+
+/* Thanh mục con (Lịch tháng / Hỏi lịch / Đổi ngày / Ngày lễ) */
+.tabs {
+  display: flex; gap: var(--s1); overflow-x: auto; margin: 0 0 var(--s5);
+  border-bottom: 1px solid var(--border); scrollbar-width: none;
+}
+.tabs a {
+  flex: none; padding: var(--s2) var(--s3); min-height: 44px; line-height: 28px;
+  color: var(--text-2); text-decoration: none; font-weight: 600; font-size: 0.9375rem;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tabs a:hover { color: var(--text); }
+.tabs a[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); }
+/* Màn hẹp: 4 tab không vừa một hàng -> lưới 2x2, không cắt chữ */
+@media (max-width: 479px) {
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); border-bottom: 0; }
+  .tabs a {
+    text-align: center; margin: 0; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); background: var(--surface);
+  }
+  .tabs a[aria-current="page"] { background: var(--accent-soft); border-color: var(--accent); }
+}
+
+/* Đầu trang kết quả: tiêu đề + nút làm lại */
+.result-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s4); }
+.result-head h1 { margin-bottom: var(--s1); }
+.result-head .lead { margin-bottom: 0; }
+
+/* Gợi ý câu hỏi */
+.chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s2); }
+.chips a {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--s4);
+  border: 1px solid var(--border-strong); border-radius: 999px; color: var(--text); text-decoration: none;
+  background: var(--surface);
+}
+.chips a:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Danh sách ngày lễ */
+.holiday-list { list-style: none; margin: 0; padding: 0 var(--s4); }
+.holiday-list li { display: grid; gap: var(--s1); padding: var(--s3) 0; border-top: 1px solid var(--border); }
+.holiday-list li:first-child { border-top: 0; }
+.holiday-list li > div:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+@media (min-width: 600px) { .holiday-list li { grid-template-columns: 1fr auto; align-items: center; } }
 .site-footer { border-top: 1px solid var(--border); color: var(--muted); font-size: 0.875rem; }
 .site-footer .inner { padding-top: var(--s4); padding-bottom: var(--s5); display: flex; gap: var(--s4); flex-wrap: wrap; }
 .site-footer a { color: var(--muted); }
@@ -116,7 +162,6 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); }
 .muted { color: var(--muted); }
 .small { font-size: 0.875rem; }
 .answer { white-space: pre-line; margin: 0; }
-.notice { padding: var(--s3) var(--s4); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-2); }
 .error-box {
   border: 1px solid var(--lunar); background: var(--lunar-soft); color: var(--text);
   padding: var(--s3) var(--s4); border-radius: var(--radius-sm); margin-bottom: var(--s4);
@@ -124,8 +169,12 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); }
 .error-box strong { color: var(--lunar); }
 
 /* Hôm nay (trang chủ) */
-.today { display: grid; gap: var(--s4); grid-template-columns: 1fr; }
-@media (min-width: 720px) { .today { grid-template-columns: auto 1fr; align-items: center; } }
+.today-card {
+  display: grid; gap: var(--s5); grid-template-columns: 1fr; align-items: center;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s5);
+}
+@media (min-width: 720px) { .today-card { grid-template-columns: 220px 1fr; } }
+.today-date p { margin: 0; }
 .today-date {
   display: grid; justify-items: center; gap: var(--s1); padding: var(--s4) var(--s5);
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2);
@@ -136,8 +185,8 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s4); margin: 0; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; }
-.tools { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s3); }
-@media (min-width: 720px) { .tools { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.tools { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s3); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 900px) { .tools { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .tools a {
   display: block; height: 100%; padding: var(--s4); border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface); text-decoration: none; color: var(--text);
@@ -145,9 +194,6 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); }
 .tools a:hover { border-color: var(--accent); }
 .tools strong { display: block; color: var(--accent); margin-bottom: var(--s1); }
 .tools span { color: var(--text-2); font-size: 0.9375rem; }
-.upcoming { list-style: none; margin: 0; padding: 0; }
-.upcoming li { display: flex; justify-content: space-between; gap: var(--s3); padding: var(--s2) 0; border-top: 1px solid var(--border); }
-.upcoming li:first-child { border-top: 0; }
 
 /* Biểu mẫu */
 .form { display: grid; gap: var(--s4); }
