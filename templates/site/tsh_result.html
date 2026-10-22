@@ -58,7 +58,7 @@
 <section class="panel mt-4" aria-labelledby="stage-title">
   <h2 id="stage-title">Các giai đoạn cuộc đời</h2>
   <h3>4 đỉnh cao</h3>
-  <ol class="stages">
+  <ol class="stages" role="list">
     {% for s in reading.pinnacles %}
     <li{% if s.isCurrent %} class="is-now"{% endif %}>
       <span class="age">Đỉnh {{ loop.index }} · {{ s.label }}{% if s.isCurrent %} · hiện tại{% endif %}</span>
@@ -68,7 +68,7 @@
     {% endfor %}
   </ol>
   <h3 class="mt-4">4 thử thách</h3>
-  <ol class="stages">
+  <ol class="stages" role="list">
     {% for s in reading.challenges %}
     <li{% if s.isCurrent %} class="is-now"{% endif %}>
       <span class="age">Thử thách {{ loop.index }} · {{ s.label }}{% if s.isCurrent %} · hiện tại{% endif %}</span>

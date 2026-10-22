@@ -24,7 +24,7 @@
     {% else %}
     {% for n in chart.menhNotes %}<p class="small"><strong>{{ n.star }}{% if n.brightnessName %} ({{ n.brightnessName }}){% endif %}:</strong> {{ n.meaning }}</p>{% endfor %}
     {% endif %}
-    <p class="star-legend" aria-label="Chú giải độ sáng">{% for k, v in chart.brightnessLegend.items() %}<span><span class="lvl {{ k | lower }}">{{ k }}</span> {{ v }}</span>{% endfor %}</p>
+    <p class="star-legend"><span class="sr-only">Chú giải độ sáng: </span>{% for k, v in chart.brightnessLegend.items() %}<span><span class="lvl {{ k | lower }}">{{ k }}</span> {{ v }}</span>{% endfor %}</p>
   </div>
   {% for p in chart.palaces %}
   <article class="palace b{{ p.branchIndex }}{% if loop.first %} is-menh{% endif %}{% if p.isThan %} is-than{% endif %}" aria-label="Cung {{ p.name }}{% if p.isThan %}, Thân cư{% endif %}">

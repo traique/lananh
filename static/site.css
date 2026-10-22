@@ -13,7 +13,7 @@
   --surface: #f8faf5;
   --surface-2: #e4ece0;
   --border: rgba(19, 35, 26, 0.14);
-  --border-strong: rgba(19, 35, 26, 0.28);
+  --border-strong: rgba(19, 35, 26, 0.5); /* viền ô nhập 3.2:1 trên nền (WCAG 1.4.11) */
   --text: #13231a;
   --text-2: #2d4a39;
   --muted: #4f6a5c;
@@ -40,7 +40,7 @@
     --surface: #132019;
     --surface-2: #1a2b21;
     --border: rgba(228, 237, 229, 0.12);
-    --border-strong: rgba(228, 237, 229, 0.26);
+    --border-strong: rgba(228, 237, 229, 0.4); /* 3.4:1 */
     --text: #e4ede5;
     --text-2: #bccdc0;
     --muted: #93a89a;
@@ -105,7 +105,8 @@ p { margin: 0 0 var(--s3); }
   min-height: 44px; line-height: 28px;
 }
 .site-nav a:hover { background: var(--surface-2); color: var(--text); }
-.site-nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
+/* Mục đang xem: màu + gạch dưới (không chỉ dựa vào màu) */
+.site-nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 -3px 0 var(--accent); }
 .site-actions { margin-left: auto; display: flex; align-items: center; gap: var(--s2); }
 .site-actions form { margin: 0; }
 .btn-sm { min-height: 44px; padding: var(--s1) var(--s3); font-size: 0.875rem; }
@@ -114,12 +115,16 @@ p { margin: 0 0 var(--s3); }
   color: var(--muted); font: 600 0.875rem/1 var(--font); border-radius: var(--radius-sm);
 }
 .btn-link:hover { color: var(--text); background: var(--surface-2); }
-/* Điện thoại: 5 tab nằm gọn 1 hàng dưới logo, nút Quản trị cùng hàng logo */
+/* Điện thoại: 5 mục chia đều 5 cột dưới logo (mục dài tự xuống dòng trong ô,
+   vừa cả 320px), nút Quản trị cùng hàng logo */
 @media (max-width: 599px) {
   .site-actions { order: 2; }
   .site-nav { order: 3; flex-basis: 100%; }
-  .site-nav ul { justify-content: space-between; gap: 0; }
-  .site-nav a { padding: var(--s2) 6px; font-size: 0.875rem; }
+  .site-nav ul { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; }
+  .site-nav a {
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    padding: var(--s1) 2px; font-size: 0.8125rem; line-height: 1.2;
+  }
 }
 main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh - 160px); }
 .narrow { max-width: 640px; margin: 0 auto; }
@@ -284,7 +289,8 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; accent-
 /* Lịch tháng */
 .month-nav { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin-bottom: var(--s3); }
 .month-nav h2 { margin: 0; }
-.month-nav a { min-height: 44px; display: inline-flex; align-items: center; padding: 0 var(--s3); border-radius: var(--radius-sm); text-decoration: none; font-weight: 600; }
+.month-nav a { min-height: 44px; display: inline-flex; align-items: center; padding: 0 var(--s3); border-radius: var(--radius-sm); text-decoration: none; font-weight: 600; white-space: nowrap; }
+@media (max-width: 359px) { .month-nav h2 { font-size: 1rem; } .month-nav a { padding: 0 var(--s2); } }
 .month-nav a:hover { background: var(--surface-2); }
 table.month { width: 100%; border-collapse: collapse; table-layout: fixed; }
 table.month th { font-size: 0.8125rem; color: var(--muted); font-weight: 600; padding: var(--s1) 0 var(--s2); }
@@ -296,8 +302,13 @@ table.month a.day {
 table.month a.day:hover { border-color: var(--border-strong); }
 table.month a.day .d { font-weight: 700; }
 table.month a.day .l { font-size: 0.75rem; color: var(--muted); }
+/* Mùng 1/rằm: số son đậm + chấm; ngày lễ: nền son nhạt + gạch chân son (không chỉ dựa vào màu) */
 table.month a.day.is-lunar-mark .l { color: var(--lunar); font-weight: 700; }
+table.month a.day.is-lunar-mark .l::before { content: "●"; font-size: 6px; vertical-align: middle; margin-right: 2px; }
 table.month a.day.is-holiday { background: var(--lunar-soft); }
+table.month a.day.is-holiday .d { text-decoration: underline; text-decoration-thickness: 2px; text-decoration-color: var(--lunar); text-underline-offset: 3px; }
+table.month a.day[aria-current="date"].is-holiday .d { text-decoration-color: var(--on-accent); }
+table.month a.day[aria-current="date"].is-lunar-mark .l { color: var(--on-accent); }
 table.month a.day.is-today { border-color: var(--accent); }
 table.month a.day[aria-current="date"] { background: var(--accent); color: var(--on-accent); }
 table.month a.day[aria-current="date"] .l { color: var(--on-accent); }

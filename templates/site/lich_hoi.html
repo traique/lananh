@@ -14,7 +14,7 @@
   </section>
   {% endif %}
   <h2 class="section-title">Thử hỏi</h2>
-  <ul class="chips">
+  <ul class="chips" role="list">
     {% for ex in examples %}<li><a href="/lich/hoi?q={{ ex | urlencode }}">{{ ex }}</a></li>{% endfor %}
   </ul>
 </div>
