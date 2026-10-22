@@ -30,10 +30,11 @@ giữ logo vàng kim cũ thì đổi lại hai dải màu trong script và chạ
   Khúc, Hình Riêu, Khốc Hư, Thiên Mã, Song Hao). Bảng 14 chính tinh chép theo
   "Tử Vi Đẩu Số Tân Biên" (Vân Đằng Thái Thứ Lang, 1956) và khớp 168/168 ô với
   ba nguồn độc lập; nằm trong `assets/tu_vi.yaml`, sửa không cần đổi code.
-- **Thêm 9 phụ tinh** có trên hầu hết lá số Việt Nam nhưng trước đây thiếu:
-  Thiên Quan, Thiên Phúc, Lưu Hà, Thiên Trù (theo can năm), Quốc Ấn, Đường Phù
-  (từ Lộc Tồn), Đẩu Quân (chi năm + tháng + giờ), Thiên Không (sau Thái Tuế),
-  Giải Thần (cùng Phượng Các).
+- **Thêm 10 phụ tinh** có trên hầu hết lá số Việt Nam nhưng trước đây thiếu:
+  Thiên Quan, Thiên Phúc, Lưu Hà, Thiên Trù (theo can năm), Quốc Ấn, Đường Phù,
+  Lưu Niên Văn Tinh (từ Lộc Tồn), Đẩu Quân (chi năm + tháng + giờ), Thiên Không
+  (sau Thái Tuế), Giải Thần (cùng Phượng Các). Bảng Lưu Hà theo Thái Thứ Lang
+  (bản Việt Viêm Tử khác ở can Đinh/Canh/Tân - ghi trong code).
 - **Giờ Tý đầu**: sinh 23h-24h an theo ngày hôm sau (cách phổ biến ở VN); bot
   nhận "23h", web có mục "Tý đầu", API có `isEarlyTy: true`. Ngày hiển thị vẫn
   là ngày đã nhập.

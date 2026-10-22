@@ -113,8 +113,9 @@ def test_phu_tinh_bo_sung_15_3_1990():
     bảng Thái Thứ Lang)."""
     c = tuvi.parse("15/3/1990 9h30 nam")  # Canh Ngọ, tháng 2, giờ Tỵ, Lộc Tồn ở Thân
     assert _star(c, "Thiên Quan") == HOI and _star(c, "Thiên Phúc") == NGO
-    assert _star(c, "Thiên Trù") == DAN
+    assert _star(c, "Thiên Trù") == DAN and _star(c, "Lưu Hà") == THAN
     assert _star(c, "Quốc Ấn") == THIN and _star(c, "Đường Phù") == SUU
+    assert _star(c, "Lưu Niên Văn Tinh") == HOI  # Lộc Tồn Thân + 3
     assert _star(c, "Đẩu Quân") == TUAT  # Ngọ lùi 1 tháng = Tỵ, tiến 5 giờ = Tuất
     assert _star(c, "Thiên Không") == 7  # cung liền sau Thái Tuế (Ngọ -> Mùi)
     assert _star(c, "Giải Thần") == _star(c, "Phượng Các") == THIN
@@ -127,6 +128,13 @@ def test_phu_tinh_bo_sung_15_3_1990():
 )  # fmt: skip
 def test_bang_thien_quan_thien_phuc(can, quan, phuc):
     assert (tuvi._THIEN_QUAN[can], tuvi._THIEN_PHUC[can]) == (quan, phuc)
+
+
+def test_bang_luu_ha_thien_tru_theo_thai_thu_lang():
+    # Giáp Dậu, Ất Tuất, Bính Mùi, Đinh Thìn, Mậu Tỵ, Kỷ Ngọ, Canh Thân, Tân Mão, Nhâm Hợi, Quý Dần
+    assert tuvi._LUU_HA == [9, 10, 7, 4, 5, 6, 8, 3, 11, 2]
+    # Giáp Tỵ, Ất Ngọ, Bính Tý, Đinh Tỵ, Mậu Ngọ, Kỷ Thân, Canh Dần, Tân Ngọ, Nhâm Dậu, Quý Tuất
+    assert tuvi._THIEN_TRU == [5, 6, 0, 5, 6, 8, 2, 6, 9, 10]
 
 
 def test_do_sang_chinh_tinh():

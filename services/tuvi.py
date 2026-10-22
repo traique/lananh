@@ -16,7 +16,7 @@ Thái Thứ Lang, cũng là cách của các chương trình an sao lyso.vn, tuv
 5. Phụ tinh theo giờ (Xương Khúc, Không Kiếp, Thai Phụ, Phong Cáo), tháng
    (Tả Hữu, Hình Riêu Y, Thiên Giải Địa Giải), ngày (Tam Thai Bát Tọa, Ân
    Quang Thiên Quý), can năm (Lộc Tồn Kình Đà, Khôi Việt, Thiên Quan Thiên
-   Phúc, Lưu Hà Thiên Trù, Quốc Ấn Đường Phù), chi năm (Mã, Đào, Cái, Kiếp
+   Phúc, Lưu Hà Thiên Trù, Quốc Ấn Đường Phù, Lưu Niên Văn Tinh), chi năm (Mã, Đào, Cái, Kiếp
    Sát, Hỏa Linh, Hồng Hỷ, Khốc Hư, Long Phượng Giải Thần, Thiên Đức Nguyệt
    Đức, Cô Quả, Phá Toái, Thiên Tài Thiên Thọ), tháng + giờ (Đẩu Quân), cố
    định (Thiên La Địa Võng, Thiên Thương Thiên Sứ).
@@ -28,8 +28,8 @@ Thái Thứ Lang, cũng là cách của các chương trình an sao lyso.vn, tuv
    phụ tinh tra bảng ``do_sang`` trong ``assets/tu_vi.yaml`` (mỗi sao là chuỗi
    12 ký tự theo cung Tý..Hợi; "-" = không xét).
 
-Vài phụ tinh hiếm (Lưu niên Văn Tinh, Thiên Khố, Thiên Quý khác trường phái)
-chưa an - ghi rõ ở cuối lá số. AI chỉ luận giải lá số ĐÃ AN, không an lại.
+Chưa an tiểu hạn, lưu niên và vài sao hiếm (Thiên Khố...) - ghi rõ ở cuối lá
+số. AI chỉ luận giải lá số ĐÃ AN, không an lại.
 """
 
 from __future__ import annotations
@@ -63,11 +63,17 @@ _CUC_ELEMENT = {v: k for k, v in _CUC.items()}
 _DAN_CAN = [2, 4, 6, 8, 0]  # can của cung Dần theo can năm % 5 (Ngũ hổ độn)
 # Theo can năm Giáp..Quý (chi 0=Tý..11=Hợi).
 _LOC_TON = [2, 3, 5, 6, 5, 6, 8, 9, 11, 0]
+# Thiên Khôi / Thiên Việt: "Giáp Mậu ngưu dương, Ất Kỷ thử hầu, Bính Đinh trư kê,
+# Canh Tân mã hổ, Nhâm Quý thố xà" (Tử Vi Đẩu Số Toàn Tập, phổ biến ở lá số VN).
+# Biến thể Toàn Thư xếp Canh cùng Giáp Mậu (Sửu/Mùi) - không dùng.
 _KHOI_VIET = {0: (1, 7), 4: (1, 7), 1: (0, 8), 5: (0, 8), 2: (11, 9), 3: (11, 9),
               6: (6, 2), 7: (6, 2), 8: (3, 5), 9: (3, 5)}  # fmt: skip
+# Thiên Quan / Thiên Phúc / Thiên Trù: khớp giữa mọi nguồn VN (lethuc, sơn khiêm,
+# tracuutuvi, cohoc, lasotuvi). Lưu Hà theo Thái Thứ Lang (lyso.vn, xemtuong,
+# lasotuvi): bản Việt Viêm Tử khác ở can Đinh/Canh/Tân (Thân/Thìn/Dậu).
 _THIEN_QUAN = [7, 4, 5, 2, 3, 9, 11, 9, 10, 6]
 _THIEN_PHUC = [9, 8, 0, 11, 3, 2, 6, 5, 6, 5]
-_LUU_HA = [9, 10, 7, 8, 5, 6, 4, 3, 11, 2]
+_LUU_HA = [9, 10, 7, 4, 5, 6, 8, 3, 11, 2]
 _THIEN_TRU = [5, 6, 0, 5, 6, 8, 2, 6, 9, 10]
 _TRIET = [(8, 9), (6, 7), (4, 5), (2, 3), (0, 1)]  # theo can năm % 5
 _TU_HOA = {  # Lộc, Quyền, Khoa, Kỵ theo can năm
@@ -109,7 +115,10 @@ USAGE = (
     "/tuvi_chitiet <như trên> - AI luận giải lá số (tốn 1 lượt AI)."
 )
 DISCLAIMER = "ℹ️ Tử vi mang tính tham khảo, giải trí."
-_NOTE = "Vài phụ tinh hiếm (Lưu niên Văn Tinh, Thiên Khố...) chưa an; mỗi trường phái mỗi khác."
+_NOTE = (
+    "Chưa an tiểu hạn, lưu niên và vài sao hiếm (Thiên Khố, Thiên Trù khác phái...); "
+    "Lưu Hà, Thiên Khôi/Việt tuổi Canh theo phái Thái Thứ Lang."
+)
 
 
 @dataclass
@@ -274,6 +283,7 @@ def build_chart(
     put(loc - 1, "Đà La")
     put(loc + 8, "Quốc Ấn")  # từ Lộc Tồn thuận tới cung thứ 9
     put(loc - 7, "Đường Phù")  # từ Lộc Tồn nghịch tới cung thứ 8
+    put(loc + 3, "Lưu Niên Văn Tinh")  # từ Lộc Tồn thuận tới cung thứ 4
     khoi, viet = _KHOI_VIET[cy]
     put(khoi, "Thiên Khôi")
     put(viet, "Thiên Việt")
