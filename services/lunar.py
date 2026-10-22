@@ -306,3 +306,34 @@ def describe_date(info: dict) -> str:
         f"Còn {info['days_to_tet']} ngày tới Tết Nguyên đán "
         f"({dt.date.fromisoformat(info['next_tet']):%d/%m/%Y})."
     )
+
+
+def find_lunar_date(
+    ld: int, lm: int, year: int | None, leap: bool, today: dt.date
+) -> tuple[dt.date | None, int, str]:
+    """Ngày dương của ngày âm ld/lm (năm ``year``, hoặc lần sắp tới nếu None).
+
+    Trả (ngày dương, năm âm đã dùng, "") hoặc (None, năm, câu báo lỗi): ngày 30
+    của tháng thiếu, tháng nhuận không có, ngày/tháng/năm ngoài phạm vi. Dùng
+    chung cho chat (lunar_chat), /lich (calendar_query) và router tool."""
+    if not (1 <= ld <= 30 and 1 <= lm <= 12):
+        return None, year or 0, "Ngày/tháng âm lịch không hợp lệ (ngày 1-30, tháng 1-12)."
+    current = solar_to_lunar(today.day, today.month, today.year)[2]
+    years = [year] if year is not None else [current, current + 1]
+    if not all(1900 <= y <= 2100 for y in years):
+        return None, years[0], "Năm âm lịch cần trong khoảng 1900-2100."
+    error = ""
+    for y in years:
+        solar = lunar_to_solar(ld, lm, y, leap)
+        if solar is None:
+            error = error or f"Năm âm lịch {year_can_chi(y)} ({y}) không có tháng {lm} nhuận."
+            continue
+        day = dt.date(solar[2], solar[1], solar[0])
+        # Tháng thiếu (29 ngày) không có ngày 30: thuật toán trả ngày 1 tháng sau.
+        if solar_to_lunar(day.day, day.month, day.year) != (ld, lm, y, leap):
+            error = error or f"Tháng {lm} âm lịch năm {year_can_chi(y)} chỉ có 29 ngày."
+            continue
+        if year is None and day < today:
+            continue
+        return day, y, ""
+    return None, years[-1], error or "Không tìm thấy ngày âm lịch này."

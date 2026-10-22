@@ -69,11 +69,16 @@ _READ_NUMBER_RE = re.compile(
     r"^(?:đọc|doc|xem|mở|mo)\s+(?:bài|bai|tin)\s*(?:số|so)?\s*(\d{1,2})\s*[.!]?$",
     re.IGNORECASE,
 )
-# Kèm link mà có yêu cầu xử lý khác -> để chat AI lo (không dump nguyên bài).
-_INSTRUCTION_RE = re.compile(
-    r"tóm tắt|tom tat|phân tích|phan tich|nhận xét|nhan xet|đánh giá|danh gia|"
-    r"nghĩ sao|nghi sao|ý kiến|y kien|dịch|giải thích|giai thich|so sánh|so sanh|"
-    r"ảnh hưởng|anh huong|nên mua|nên bán",
+# Danh sách CHO PHÉP (không phải danh sách chặn): chỉ đọc nguyên bài khi tin
+# nhắn chỉ có link, hoặc link kèm lời nhờ đọc ("đọc bài này", "xem giúp em").
+# Link kèm câu hỏi bất kỳ ("tin này tốt hay xấu cho HPG") đi chat AI như cũ -
+# danh sách chặn cũ sót hầu hết câu hỏi và chặn nhầm cả "dịch vụ".
+_READ_ONLY_RE = re.compile(
+    r"^(?:(?:cho\s+)?(?:em|anh|chị|chi|mình|minh)\s+)?"
+    r"(?:(?:đọc|doc|xem|mở|mo|show)(?:\s+(?:giúp|giup|hộ|ho|full|hết|het|toàn bộ|nguyên))?"
+    r"(?:\s+(?:em|anh|chị|chi|mình|minh))?(?:\s+(?:bài|bai|tin|link))?"
+    r"(?:\s+(?:này|nay|đó|do|đầy đủ|day du))?)?"
+    r"(?:\s*(?:đi|di|nhé|nhe|nha|với|voi|ạ|a))*\s*[.!:]?$",
     re.IGNORECASE,
 )
 
@@ -142,6 +147,10 @@ def is_news_url(url: str) -> bool:
 def find_request(text: str) -> tuple[str, str | int] | None:
     """("url", link) | ("number", n) nếu tin nhắn là yêu cầu đọc bài, ngược lại None."""
     text = (text or "").strip()
+    # Kênh chat bọc link kèm chữ hiển thị: <url|chữ>, [chữ](url), <url> -> url.
+    text = re.sub(r"<(https?://[^|>\s]+)\|[^>]*>", r"\1", text)
+    text = re.sub(r"\[[^\]]*\]\((https?://[^)\s]+)\)", r"\1", text)
+    text = re.sub(r"<(https?://[^>\s]+)>", r"\1", text)
     match = _READ_NUMBER_RE.match(text)
     if match:
         return "number", int(match.group(1))
@@ -149,8 +158,8 @@ def find_request(text: str) -> tuple[str, str | int] | None:
     news = [u for u in urls if is_news_url(u)]
     if len(news) != 1 or len(urls) != 1:
         return None
-    rest = _URL_RE.sub(" ", text)
-    if _INSTRUCTION_RE.search(rest):
+    rest = re.sub(r"\s+", " ", _URL_RE.sub(" ", text)).strip()
+    if not _READ_ONLY_RE.match(rest):
         return None
     return "url", news[0]
 
@@ -166,7 +175,11 @@ async def save_digest_links(items: list[tuple[str, str]]) -> None:
 
 async def _digest_link(number: int) -> tuple[str | None, str]:
     """(url, "") hoặc (None, câu báo lỗi)."""
-    raw = await db.get_setting(LAST_LINKS_KEY)
+    try:
+        raw = await db.get_setting(LAST_LINKS_KEY)
+    except Exception:
+        logger.warning("Không đọc được danh sách link bản tin.", exc_info=True)
+        return None, "Chưa đọc được danh sách bài của bản tin, thử lại sau nhé."
     try:
         links = json.loads(raw) if raw else []
     except ValueError:
@@ -217,9 +230,14 @@ def _pick_body(soup):
 
 def _format_published(raw: str) -> str:
     try:
-        return datetime.fromisoformat(raw).astimezone(_VN_TZ).strftime("%H:%M %d/%m/%Y")
+        published = datetime.fromisoformat(raw)
     except ValueError:
         return ""
+    if published.tzinfo is None:
+        # Báo VN ghi giờ không kèm múi giờ là giờ Việt Nam; astimezone() trên
+        # datetime "naive" lại hiểu theo múi giờ của server (UTC trên Render).
+        published = published.replace(tzinfo=_VN_TZ)
+    return published.astimezone(_VN_TZ).strftime("%H:%M %d/%m/%Y")
 
 
 def extract_article(html: str, url: str) -> Article:

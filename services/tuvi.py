@@ -25,7 +25,7 @@ from pathlib import Path
 import yaml
 
 from services import can_chi, lunar
-from services.weather import fold
+from core.text_normalize import fold
 
 CHI = can_chi.CHI
 CAN = can_chi.CAN
@@ -332,7 +332,14 @@ def parse(argument: str) -> Chart | str:
     m = _DATE_RE.search(low)
     if not m:
         return USAGE
-    is_lunar = bool(re.match(r"^(âm|am|al)\b", low)) or bool(m.group(3))
+    # "âm"/"âm lịch" ở bất cứ đâu (có dấu); không dấu chỉ nhận "am lich" hoặc
+    # "am" đứng đầu - "9 am" kiểu tiếng Anh không được biến ngày dương thành âm.
+    is_lunar = (
+        bool(re.search(r"\b(?:âm|âm lịch|al)\b", low))
+        or bool(re.match(r"^am\b", low))
+        or "am lich" in low
+        or bool(m.group(3))
+    )
     d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(4))
     if not 1900 <= y <= 2100:
         return "Năm sinh cần trong khoảng 1900-2100."
@@ -344,10 +351,19 @@ def parse(argument: str) -> Chart | str:
             return "Giờ Tý hay giờ Tỵ? Gõ có dấu hoặc ghi giờ cụ thể (vd 23h, 10h)."
         hour_chi = _CHI_WORDS[word]
     else:
-        hm = _HOUR_RE.search(fold(rest))
+        folded = fold(rest)
+        hm = _HOUR_RE.search(folded)
         if not hm or int(hm.group(1)) > 23:
             return "Thiếu giờ sinh.\n" + USAGE
-        hour_chi = ((int(hm.group(1)) + 1) // 2) % 12
+        hour = int(hm.group(1))
+        # "3h chiều", "9 giờ tối", "8h đêm": giờ 12h -> cộng 12 ("11h đêm" = 23h).
+        period = re.match(r"\s*(?:\d{1,2})?\s*(sang|trua|chieu|toi|dem)\b", folded[hm.end() :])
+        if period and hour < 12:
+            if period.group(1) in ("chieu", "toi") or (period.group(1) == "dem" and hour >= 6):
+                hour += 12
+            elif period.group(1) == "trua" and hour < 6:
+                hour += 12
+        hour_chi = ((hour + 1) // 2) % 12
     if re.search(r"\b(nữ|nu|gái|gai)\b", rest):
         male = False
     elif re.search(r"\b(nam|trai)\b", rest):

@@ -21,8 +21,8 @@ import datetime as dt
 import re
 from zoneinfo import ZoneInfo
 
-from services import lunar
-from services.weather import fold
+from services import can_chi, lunar
+from core.text_normalize import fold
 
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _MIN_YEAR, _MAX_YEAR = 1900, 2100
@@ -36,11 +36,15 @@ _TET_COUNTDOWN_RE = re.compile(
     r"\b(?:con|bao) (?:may|bao nhieu) ngay (?:nua )?(?:(?:la|toi|den|thi) )?tet\b|"
     r"\bbao (?:gio|lau)(?: nua)?(?: thi| la| moi)? (?:toi |den )?tet\b"
 )
+_YEAR_WORD = r"(?P<year>\d{4}|nay|sau|toi|truoc|ngoai)"
+# Chỉ "ngày nào/ngày mấy/thứ mấy": "nghỉ tết mấy ngày" không phải hỏi ngày Tết.
 _TET_DATE_RE = re.compile(
-    r"\btet(?: nguyen dan)?(?: nam (?P<year>\d{4}|nay|sau|toi))?"
-    r"(?: (?:la|vao|roi vao|nham))? (?:ngay )?(?:nao|may|bao nhieu|thu may)\b"
+    r"\btet(?: nguyen dan)?(?: nam " + _YEAR_WORD + r")?"
+    r"(?: (?:la|vao|roi vao|nham))? (?:ngay (?:nao|may|bao nhieu)|thu may)\b"
 )
-_RELATIVE_DAY_RE = re.compile(r"\b(hom nay|bua nay|ngay mai|mai|hom qua|ngay kia|mot)\b")
+# "mốt" (ngày kia) được đổi sẵn thành "ngay kia" trong fold_question (bỏ dấu
+# thì "mốt" trùng "một").
+_RELATIVE_DAY_RE = re.compile(r"\b(hom nay|bua nay|ngay mai|mai|hom qua|ngay kia)\b")
 _RELATIVE_OFFSET = {
     "hom nay": 0,
     "bua nay": 0,
@@ -48,8 +52,22 @@ _RELATIVE_OFFSET = {
     "mai": 1,
     "hom qua": -1,
     "ngay kia": 2,
-    "mot": 2,
 }
+# Chữ có dấu trùng nghĩa sau khi bỏ dấu: đổi thành token riêng TRƯỚC khi fold.
+_COLLISIONS = (
+    (re.compile(r"\bẩm\b"), "x_am"),  # độ ẩm != âm
+    (re.compile(r"(?<!mười )(?<!tháng )\bmột\b"), "x_mot"),  # một != mốt (giữ "mười một")
+    (re.compile(r"\bmốt\b"), "ngày kia"),
+)
+# "Mai" viết hoa giữa câu là tên người, không phải "ngày mai".
+_NAME_MAI_RE = re.compile(r"(?<=\S )Mai\b")
+_YEAR_IN_TEXT_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+# Phần còn lại của câu chỉ có từ đệm thì vẫn coi là hỏi ngày ("rằm tháng 8 ạ").
+_FILLER_RE = re.compile(r"\b(?:a|ah|nhe|nha|nhi|vay|em|anh|chi|oi|ha|the|day|nhi)\b")
+_ASK_DATE_RE = re.compile(
+    r"\b(?:duong|ngay nao|thu may|vao ngay|roi vao|ngay may|ngay bao nhieu|bao gio|khi nao|"
+    r"hom nao|la ngay|ngay gi)\b"
+)
 # Hỏi về âm lịch của 1 ngày dương: "âm lịch ngày mấy", "can chi", "hoàng đạo"...
 _ASK_LUNAR_INFO_RE = re.compile(
     r"\b(?:am lich|lich am|ngay am|(?:may|bao nhieu|gi) am|am (?:may|bao nhieu|la)|"
@@ -82,21 +100,25 @@ _MONTH_NAMES = {
 _LUNAR_WORDS_RE = re.compile(
     r"\b(?:(?P<ram>ram)|(?P<mung>mung|mong|ngay) (?P<day>\d{1,2}))"
     r"(?: (?P<tet>tet)| thang " + _MONTH_WORD + r")?"
-    r"(?P<leap> nhuan)?(?P<am> (?:am lich|am|al)\b)?(?: nam (?P<year>\d{4}|nay|sau|toi))?"
+    r"(?P<leap> nhuan)?(?P<am> (?:am lich|am|al)\b)?(?: nam " + _YEAR_WORD + r")?"
 )
 # "15/8 âm", "15/6 nhuận âm năm 2025", "20/11/2026 là ngày mấy âm"
 _NUMERIC_DATE_RE = re.compile(
     r"\b(?P<day>\d{1,2})[/-](?P<month>\d{1,2})(?:[/-](?P<year>\d{4}))?"
-    r"(?P<leap> nhuan)?(?P<am> (?:am lich|am|al)\b)?(?: nam (?P<year2>\d{4}|nay|sau|toi))?"
+    r"(?P<leap> nhuan)?(?P<am> (?:am lich|am|al)\b)?"
+    r"(?: nam " + _YEAR_WORD.replace("?P<year>", "?P<year2>") + r")?"
 )
 # Chỉ cụm đòi ngày DƯƠNG rõ ràng: "ngày mấy"/"là ngày" dùng cho cả hai chiều
 # ("20/11 âm lịch ngày mấy" là hỏi ngày âm) nên không nằm đây.
 _ASK_SOLAR_RE = re.compile(r"\b(?:duong|ngay nao|thu may|vao ngay|roi vao)\b")
 _ASK_FOCUS = (
-    ("hoang dao", "hours"),
+    ("gio hoang dao", "hours"),
+    ("gio tot", "hours"),
     ("tiet khi", "term"),
     ("can chi", "canchi"),
 )
+# Hỏi NGÀY tốt xấu (khác giờ hoàng đạo): trả hoàng đạo/hắc đạo, Tam nương...
+_DAY_QUALITY_RE = re.compile(r"\b(?:ngay (?:hoang dao|hac dao|tot|xau)|hac dao|tot xau)\b")
 
 
 def _today() -> dt.date:
@@ -111,18 +133,41 @@ def _month_value(raw: str | None) -> int | None:
     return _MONTH_NAMES.get(raw.strip())
 
 
-def _year_value(raw: str | None, base: int) -> int | None:
-    """None = không nói năm; 'nay' = base; 'sau'/'toi' = base + 1."""
+def _year_value(raw: str | None, today: dt.date) -> int | None:
+    """None = không nói năm. "năm nay/sau/ngoái" tính theo năm DƯƠNG: Tết của
+    năm âm Y luôn rơi vào năm dương Y, nên tháng 1 dương (trước Tết) hỏi "Tết
+    năm nay" vẫn là Tết sắp tới chứ không phải Tết đã qua."""
     if not raw:
         return None
     if raw.isdigit():
         return int(raw)
-    return base + 1 if raw in ("sau", "toi") else base
+    return today.year + {"nay": 0, "sau": 1, "toi": 1, "truoc": -1, "ngoai": -1}[raw]
+
+
+def fold_question(text: str) -> str:
+    """Bỏ dấu để so khớp, nhưng giữ riêng các chữ trùng nghĩa sau khi bỏ dấu."""
+    text = _NAME_MAI_RE.sub("x_mai", text or "")
+    low = text.lower()
+    for pattern, repl in _COLLISIONS:
+        low = pattern.sub(repl, low)
+    t = re.sub(r"[?!.,;:]+", " ", fold(low))
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _is_date_question(rest: str) -> bool:
+    """Sau ngày âm, câu chỉ hỏi ngày dương (hoặc không hỏi gì thêm). "rằm tháng 7
+    nên cúng gì" thì KHÔNG - để AI trả lời."""
+    return not _FILLER_RE.sub(" ", rest).strip() or bool(_ASK_DATE_RE.search(rest))
 
 
 def _asks_solar(rest: str) -> bool:
     """Phần sau ngày hỏi ra ngày dương ("là ngày nào", "dương lịch"...) hoặc trống."""
     return not rest.strip() or bool(_ASK_SOLAR_RE.search(rest))
+
+
+def _quality_answer(day: dt.date, prefix: str) -> str:
+    info = lunar.date_info(day)
+    return f"{prefix} ({info['weekday']} {info['date_vn']}): {can_chi.day_quality(day)}."
 
 
 def _focus(text: str) -> str:
@@ -192,33 +237,14 @@ def _tet_of_year(lunar_year: int) -> str | None:
 def _lunar_to_solar_answer(
     ld: int, lm: int, year: int | None, leap: bool, today: dt.date
 ) -> str | None:
-    if not 1 <= ld <= 30 or not 1 <= lm <= 12:
-        return None
-    current = lunar.solar_to_lunar(today.day, today.month, today.year)[2]
-    years = [year] if year is not None else [current, current + 1]
-    if not all(_MIN_YEAR <= y <= _MAX_YEAR for y in years):
-        return None
-    short_year: int | None = None
-    for y in years:
-        solar = lunar.lunar_to_solar(ld, lm, y, leap)
-        if solar is None:
-            if year is not None:
-                return f"Năm âm lịch {lunar.year_can_chi(y)} ({y}) không có tháng {lm} nhuận."
-            continue
-        day = dt.date(solar[2], solar[1], solar[0])
-        if lunar.solar_to_lunar(day.day, day.month, day.year) != (ld, lm, y, leap):
-            short_year = short_year or y
-            continue
-        if year is None and day < today:
-            continue
-        info = lunar.date_info(day)
-        return (
-            f"{_lunar_label(ld, lm, y, leap)} âm lịch rơi vào {info['weekday']} "
-            f"{info['date_vn']} dương lịch (ngày {info['lunar']['day_can_chi']})."
-        )
-    if short_year is not None:
-        return f"Tháng {lm} âm lịch năm {lunar.year_can_chi(short_year)} chỉ có 29 ngày."
-    return None
+    day, used_year, error = lunar.find_lunar_date(ld, lm, year, leap, today)
+    if day is None:
+        return error or None
+    info = lunar.date_info(day)
+    return (
+        f"{_lunar_label(ld, lm, used_year, leap)} âm lịch rơi vào {info['weekday']} "
+        f"{info['date_vn']} dương lịch (ngày {info['lunar']['day_can_chi']})."
+    )
 
 
 def _solar_date(day: int, month: int, year: int | None, today: dt.date) -> dt.date | None:
@@ -230,18 +256,16 @@ def _solar_date(day: int, month: int, year: int | None, today: dt.date) -> dt.da
 
 def answer(text: str, today: dt.date | None = None) -> str | None:
     """Câu trả lời cho câu hỏi âm lịch, hoặc None nếu không chắc (để AI lo)."""
-    t = re.sub(r"[?!.,;:]+", " ", fold(text))
-    t = re.sub(r"\s+", " ", t).strip()
+    t = fold_question(text)
     if not t or len(t) > 160 or not _LUNAR_HINT_RE.search(t):
         return None
     today = today or _today()
-    current_lunar_year = lunar.solar_to_lunar(today.day, today.month, today.year)[2]
 
     if _TET_COUNTDOWN_RE.search(t):
         return _tet_countdown(today)
     tet_date = _TET_DATE_RE.search(t)
     if tet_date and not re.search(r"\b(?:mung|mong|ngay) \d", t):
-        year = _year_value(tet_date.group("year"), current_lunar_year)
+        year = _year_value(tet_date.group("year"), today)
         if year is None:
             return _tet_countdown(today)
         return _tet_of_year(year)
@@ -264,7 +288,9 @@ def answer(text: str, today: dt.date | None = None) -> str | None:
         if lm is not None and match.group("am") and not explicit_lunar:
             return None
         if lm is not None and explicit_lunar:
-            year = _year_value(match.group("year"), current_lunar_year)
+            if not _is_date_question(rest):
+                return None
+            year = _year_value(match.group("year"), today)
             return _lunar_to_solar_answer(ld, lm, year, bool(match.group("leap")), today)
         if lm is not None and match.group("day") and not explicit_lunar:
             # "mùng 2 tháng 9 là ngày mấy âm" -> ngày dương hỏi ra âm.
@@ -282,7 +308,7 @@ def answer(text: str, today: dt.date | None = None) -> str | None:
         year_raw = match.group("year") or match.group("year2")
         rest = t[match.end() :]
         if match.group("leap") or (match.group("am") and _asks_solar(rest)):
-            year = _year_value(year_raw, current_lunar_year)
+            year = _year_value(year_raw, today)
             return _lunar_to_solar_answer(ld, lm, year, bool(match.group("leap")), today)
         if match.group("am"):
             return None  # "20/11 âm lịch là bao nhiêu": không rõ chiều, để AI hỏi lại.
@@ -296,10 +322,14 @@ def answer(text: str, today: dt.date | None = None) -> str | None:
 
     # Hôm nay / mai / hôm qua + âm lịch, can chi, hoàng đạo, tiết khí
     rel = _RELATIVE_DAY_RE.search(t)
-    if rel and _ASK_LUNAR_INFO_RE.search(t):
+    if rel and _YEAR_IN_TEXT_RE.search(t):
+        return None  # "chị Mai sinh năm 1990 can chi là gì": hỏi về năm, không về ngày
+    if rel and (_ASK_LUNAR_INFO_RE.search(t) or _DAY_QUALITY_RE.search(t)):
         offset = _RELATIVE_OFFSET[rel.group(1)]
         day = today + dt.timedelta(days=offset)
         label = {0: "Hôm nay", 1: "Ngày mai", -1: "Hôm qua", 2: "Ngày kia"}[offset]
+        if _DAY_QUALITY_RE.search(t) and "gio" not in t:
+            return _quality_answer(day, label)
         return _describe_focused(day, _focus(t), label)
     if not rel and re.fullmatch(r"(?:xem )?(?:am lich|lich am)(?: hom nay)?", t):
         return _describe_focused(today, "full", "Hôm nay")
