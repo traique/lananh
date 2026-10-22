@@ -266,9 +266,11 @@ def compute(birth: dt.date, name: str = "", today: dt.date | None = None) -> Rea
     if letters:
         reading.soul = _name_number(name, _is_vowel)
         reading.personality = _name_number(name, lambda w, i: not _is_vowel(w, i))
-        reading.expression = _name_number(name, lambda w, i: True)
-        base = lp if lp in _MASTER else single
-        reading.maturity = reduce_number(base + reading.expression)
+        expression = _name_number(name, lambda w, i: True)
+        reading.expression = expression
+        if expression is not None:  # luôn có khi tên có chữ cái
+            base = lp if lp in _MASTER else single
+            reading.maturity = reduce_number(base + expression)
         values = [_letter_value(c) for c in letters]
         reading.name_counts = {d: values.count(d) for d in range(1, 10)}
     return reading
