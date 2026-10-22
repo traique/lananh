@@ -19,8 +19,8 @@ Mọi lỗi: HTTP 4xx + {"error": {"code": "...", "message": "..."}}.
 from __future__ import annotations
 
 import datetime as dt
+import base64
 import functools
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -28,6 +28,7 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup
 
 from services import calendar_query, site_data
 from services.site_data import InputError
@@ -55,14 +56,18 @@ def _env() -> Environment:
 
 
 @functools.lru_cache(maxsize=1)
-def _asset_version() -> str:
-    data = b"".join((_STATIC / name).read_bytes() for name in sorted(_STATIC_FILES))
-    return hashlib.sha256(data).hexdigest()[:10]
+def _inline_assets() -> tuple[Markup, str]:
+    """CSS và logo nhúng thẳng vào HTML: mỗi lượt xem trang chỉ còn 1 request.
+    Uvicorn chạy --limit-concurrency (đếm cả kết nối keep-alive đang rảnh);
+    trình duyệt tải CSS + logo + favicon song song từng làm nhiều người xem
+    cùng lúc vượt giới hạn -> 503 cho chính webhook Telegram/Zalo."""
+    css = Markup((_STATIC / "site.css").read_text(encoding="utf-8"))
+    logo = base64.b64encode((_STATIC / "logo.svg").read_bytes()).decode("ascii")
+    return css, f"data:image/svg+xml;base64,{logo}"
 
 
-def _render(
-    name: str, *, title: str, description: str, active: str, status: int = 200, **ctx
-) -> HTMLResponse:
+def _render(name: str, *, title: str, description: str, active: str, **ctx) -> HTMLResponse:
+    css, logo = _inline_assets()
     html = (
         _env()
         .get_template(name)
@@ -71,7 +76,8 @@ def _render(
             description=description,
             active=active,
             nav=_NAV,
-            asset_version=_asset_version(),
+            inline_css=css,
+            logo_uri=logo,
             **ctx,
         )
     )

@@ -144,3 +144,24 @@ async def test_api_numerology_va_tuvi(client):
 async def test_api_body_qua_lon(client):
     r = await client.post("/api/v1/numerology/readings", content=b"{" + b" " * 5000 + b"}")
     assert r.json()["error"]["code"] == "BODY_TOO_LARGE"
+
+
+async def test_moi_trang_chi_mot_request(client):
+    """CSS/logo/favicon nhúng sẵn: trang không kéo thêm file nào. Trước đây mỗi
+    lượt xem tải 3 file song song, vài người xem cùng lúc vượt --limit-concurrency
+    của uvicorn -> 503 cả webhook Telegram/Zalo."""
+    import re
+
+    for path in ("/lich", "/tu-vi", "/than-so-hoc"):
+        html = (await client.get(path)).text
+        assert "<style>" in html and "data:image/svg+xml;base64," in html
+        assert not re.search(r'(?:src|href)="/static/', html), path
+
+
+def test_uvicorn_limit_concurrency_du_cho_web_va_webhook():
+    import re
+    from pathlib import Path
+
+    conf = (Path(__file__).resolve().parent.parent / "supervisord.conf").read_text()
+    limit = int(re.search(r"--limit-concurrency (\d+)", conf).group(1))
+    assert limit >= 32
