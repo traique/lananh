@@ -632,7 +632,7 @@ kênh bạn yêu cầu).
   "đã gửi hôm nay" - dùng để test mà không cần đợi tới 8h sáng hôm sau.
 - Tắt hẳn tính năng: set `MORNING_NEWS_ENABLED=false`.
 
-## Web công khai (lịch, tử vi, thần số học)
+## Web công khai (lịch, thời tiết, tử vi, thần số học)
 
 `web_site.py` - trang render sẵn ở server (chạy được khi tắt JavaScript), KHÔNG
 gọi AI, không đụng DB. Mỗi công cụ là một trang riêng, gọn trong 1 màn hình;
@@ -647,6 +647,7 @@ có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo nền 
 | `/lich/hoi?q=...` | Hỏi lịch tự do (như lệnh `/lich`) |
 | `/lich/doi-ngay?am=15/8/2027&nhuan=1` | Đổi ngày âm sang dương |
 | `/lich/ngay-le` | Ngày lễ âm/dương trong 12 tháng tới |
+| `/thoi-tiet?noi=Đà Lạt` | Thời tiết hiện tại + dự báo 7 ngày (Open-Meteo, mặc định TP.HCM; tối đa 3 lượt tra song song, cache có trần trong `services/weather.py`) |
 | `/tu-vi` (form, POST ra trang kết quả) | Lá số Tử Vi Đẩu Số dạng lưới 4x4 |
 | `/than-so-hoc` (form, POST ra trang kết quả) | Thần số học |
 | `GET /api/v1/calendar/days/{YYYY-MM-DD}`, `/months/{YYYY-MM}`, `/conversions?lunarDay=&lunarMonth=&lunarYear=&isLeapMonth=`, `/answers?q=` | JSON lịch |

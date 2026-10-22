@@ -315,6 +315,15 @@ def test_admin_template_sections_and_controls():
     assert "try { localStorage" in html or "try {\n      var saved = localStorage" in html
 
 
+def test_admin_template_la_dang_tab_khong_cuon_dai():
+    html = (ROOT / "templates" / "admin.html").read_text(encoding="utf-8")
+    # Mỗi lần chỉ hiện 1 mục: ẩn các section khác, đổi theo hash (Back/Forward được).
+    assert "function showTab" in html and "sec.hidden = sec.id !== id" in html
+    assert "main > section[hidden]{display:none}" in html
+    assert "popstate" in html and "aria-current" in html
+    assert "IntersectionObserver" not in html  # bỏ scroll-spy của trang dài
+
+
 def test_login_page_renders_error_block(client):
     html = web_admin._login_page("Sai tài khoản hoặc mật khẩu.", 401).body.decode()
     assert '<div class="err">Sai tài khoản hoặc mật khẩu.</div>' in html

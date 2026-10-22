@@ -97,11 +97,18 @@ p { margin: 0 0 var(--s3); }
 }
 .site-nav a:hover { background: var(--surface-2); color: var(--text); }
 .site-nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
+/* Điện thoại: 5 tab nằm gọn 1 hàng dưới logo */
+@media (max-width: 599px) {
+  .site-nav { flex-basis: 100%; }
+  .site-nav ul { justify-content: space-between; gap: 0; }
+  .site-nav a { padding: var(--s2) 6px; font-size: 0.875rem; }
+}
 main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh - 160px); }
 .narrow { max-width: 640px; margin: 0 auto; }
 .lead { color: var(--text-2); margin-bottom: var(--s5); }
 .section-title { font-size: 1rem; margin: var(--s6) 0 var(--s3); color: var(--text-2); }
 .small-title { font-size: 0.9375rem; margin: var(--s4) 0 var(--s2); }
+.panel > .small-title:first-child { margin-top: 0; }
 .eyebrow { font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0; }
 
 /* Thanh mục con (Lịch tháng / Hỏi lịch / Đổi ngày / Ngày lễ) */
@@ -139,6 +146,7 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh
   background: var(--surface);
 }
 .chips a:hover { border-color: var(--accent); color: var(--accent); }
+.chips a[aria-current="page"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 
 /* Danh sách ngày lễ */
 .holiday-list { list-style: none; margin: 0; padding: 0 var(--s4); }
@@ -186,7 +194,7 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; }
 .tools { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s3); grid-template-columns: repeat(2, minmax(0, 1fr)); }
-@media (min-width: 900px) { .tools { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .tools { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 .tools a {
   display: block; height: 100%; padding: var(--s4); border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface); text-decoration: none; color: var(--text);
@@ -194,6 +202,20 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh
 .tools a:hover { border-color: var(--accent); }
 .tools strong { display: block; color: var(--accent); margin-bottom: var(--s1); }
 .tools span { color: var(--text-2); font-size: 0.9375rem; }
+
+/* Thời tiết */
+.weather-now .temp { font-size: 3rem; font-weight: 800; line-height: 1.1; margin: var(--s2) 0 0; }
+.weather-now .desc { font-weight: 600; color: var(--text-2); margin: 0 0 var(--s4); }
+.forecast { list-style: none; margin: 0; padding: 0; }
+.forecast li {
+  display: grid; gap: 0 var(--s3); padding: var(--s2) 0; border-top: 1px solid var(--border);
+  grid-template-columns: minmax(0, 1fr) max-content; grid-template-areas: "when range" "what rain";
+}
+.forecast li:first-child { border-top: 0; }
+.forecast .when { grid-area: when; }
+.forecast .what { grid-area: what; color: var(--text-2); font-size: 0.9375rem; }
+.forecast .range { grid-area: range; text-align: right; }
+.forecast .rain { grid-area: rain; text-align: right; color: var(--muted); font-size: 0.875rem; }
 
 /* Biểu mẫu */
 .form { display: grid; gap: var(--s4); }

@@ -1,8 +1,9 @@
 """Web công khai: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le), /tu-vi,
-/than-so-hoc (form -> trang kết quả riêng) và JSON API /api/v1.
+/than-so-hoc (form -> trang kết quả riêng), /thoi-tiet và JSON API /api/v1.
 
 Chỉ tính toán bằng code (services/site_data.py), KHÔNG gọi AI, không đụng DB
-- trang công khai không được đốt quota AI. Trang render sẵn ở server nên chạy
+- trang công khai không được đốt quota AI. /thoi-tiet tra Open-Meteo qua
+services/weather.py (cache có trần), giới hạn số lượt tra song song. Trang render sẵn ở server nên chạy
 được cả khi tắt JavaScript.
 
 JSON API (chỉ thêm trường mới, không đổi/bỏ trường cũ):
@@ -19,6 +20,7 @@ Mọi lỗi: HTTP 4xx + {"error": {"code": "...", "message": "..."}}.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import functools
 import hashlib
@@ -32,7 +34,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
-from services import calendar_query, lunar, site_data
+from services import calendar_query, lunar, site_data, weather
 from services.site_data import InputError
 
 _ROOT = Path(__file__).resolve().parent
@@ -42,7 +44,13 @@ _STATIC_FILES = {
     "logo-dark.webp": "image/webp",
     "favicon.png": "image/png",
 }
-_NAV = [("/", "Trang chủ"), ("/lich", "Lịch"), ("/tu-vi", "Tử vi"), ("/than-so-hoc", "Thần số học")]
+_NAV = [
+    ("/", "Trang chủ"),
+    ("/lich", "Lịch"),
+    ("/thoi-tiet", "Thời tiết"),
+    ("/tu-vi", "Tử vi"),
+    ("/than-so-hoc", "Thần số học"),
+]
 _LICH_TABS = [
     ("/lich", "Lịch tháng"),
     ("/lich/hoi", "Hỏi lịch"),
@@ -57,6 +65,21 @@ _ASK_EXAMPLES = [
     "sao hạn 1990 nam năm 2027",
     "1990 và 1995 có hợp không",
 ]
+_WEATHER_PLACES = [
+    "TP.HCM",
+    "Hà Nội",
+    "Đà Nẵng",
+    "Huế",
+    "Nha Trang",
+    "Đà Lạt",
+    "Cần Thơ",
+    "Hải Phòng",
+]
+_WEATHER_DAYS = 7
+_WEATHER_TIMEOUT_SEC = 15
+# Trang công khai: chặn số lượt gọi Open-Meteo song song để người lạ spam
+# địa danh không chiếm hết kết nối/RAM của 1 worker (webhook Telegram/Zalo).
+_weather_slots = asyncio.Semaphore(3)
 _MAX_JSON_BYTES = 4096
 
 router = APIRouter(include_in_schema=False)
@@ -263,6 +286,39 @@ async def lich_holidays_page() -> HTMLResponse:
         title="Ngày lễ sắp tới",
         description="Các ngày lễ âm lịch và dương lịch sắp tới.",
         holidays=_upcoming_holidays(site_data.today(), len(calendar_query.HOLIDAYS)),
+    )
+
+
+async def _limited_weather(place: str) -> dict:
+    async with _weather_slots:
+        return await weather.get_weather(place, days=_WEATHER_DAYS)
+
+
+@router.get("/thoi-tiet", response_class=HTMLResponse)
+async def weather_page(request: Request) -> HTMLResponse:
+    place = request.query_params.get("noi", "").strip()[:60]
+    error, data = "", None
+    try:
+        # Hạn chót tính cả lúc xếp hàng chờ slot, không chỉ lúc tra.
+        data = await asyncio.wait_for(_limited_weather(place), _WEATHER_TIMEOUT_SEC)
+    except (weather.WeatherError, asyncio.TimeoutError):
+        error = "Nguồn thời tiết đang chậm hoặc lỗi, thử lại sau ít phút."
+    if data and data.get("error"):
+        error, data = f"Không tìm thấy địa điểm “{place}”. Thử gõ tên tỉnh/thành phố.", None
+    if data:
+        for i, day in enumerate(data.get("daily") or []):
+            day["label"] = "Hôm nay" if i == 0 else ("Ngày mai" if i == 1 else day["weekday"])
+            day["short"] = dt.date.fromisoformat(day["date"]).strftime("%d/%m")
+    return _render(
+        "thoi_tiet.html",
+        title=f"Thời tiết {data['location']}" if data else "Thời tiết",
+        description="Thời tiết hiện tại và dự báo 7 ngày cho các tỉnh thành Việt Nam.",
+        active="/thoi-tiet",
+        place=place,
+        data=data,
+        error=error,
+        places=_WEATHER_PLACES,
+        fmt=lambda x: "?" if x is None else round(float(x)),
     )
 
 

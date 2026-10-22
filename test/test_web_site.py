@@ -92,6 +92,58 @@ async def test_trang_than_so_hoc_escape_ho_ten(client):
     assert "<script>x</script>" not in r.text and "&lt;script&gt;" in r.text
 
 
+_FAKE_WEATHER = {
+    "location": "Đà Lạt",
+    "source": "Open-Meteo",
+    "now": {
+        "description": "mưa nhẹ",
+        "temperature_c": 18.4,
+        "feels_like_c": 17.6,
+        "humidity_percent": 91,
+        "wind_kmh": 7.2,
+        "precipitation_mm": 0.3,
+    },
+    "daily": [
+        {
+            "date": f"2026-10-{22 + i}",
+            "weekday": "Thứ Năm",
+            "description": "có mưa rào",
+            "min_c": 15.2,
+            "max_c": 22.8,
+            "rain_chance_percent": 80,
+            "uv_max": 6.1,
+        }
+        for i in range(7)
+    ],
+}
+
+
+async def test_trang_thoi_tiet(client, monkeypatch):
+    calls = []
+
+    async def fake_get_weather(location="", days=1):
+        calls.append((location, days))
+        if location == "Xyzabc":
+            return {"error": "Không tìm thấy địa điểm 'Xyzabc'"}
+        if location == "loi":
+            raise web_site.weather.WeatherError("down")
+        return _FAKE_WEATHER
+
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    html = (await client.get("/thoi-tiet")).text
+    assert calls[-1] == ("", 7)  # không nhập -> mặc định TP.HCM ở services/weather
+    assert 'href="/thoi-tiet" aria-current="page"' in html  # tab Thời tiết trên menu
+    assert "18°C" in html and "Mưa nhẹ" in html and "Hôm nay" in html and "Ngày mai" in html
+    assert html.count('class="when"') == 7
+
+    html = (await client.get("/thoi-tiet", params={"noi": "Xyzabc"})).text
+    assert 'role="alert"' in html and "Không tìm thấy địa điểm" in html and "°C" not in html
+    html = (await client.get("/thoi-tiet", params={"noi": "loi"})).text
+    assert 'role="alert"' in html and "thử lại sau" in html
+    await client.get("/thoi-tiet", params={"noi": "x" * 500})
+    assert len(calls[-1][0]) == 60  # cắt độ dài trước khi tra geocoding
+
+
 async def test_static_chi_phuc_vu_file_trong_danh_sach(client):
     assert (await client.get("/static/logo-light.webp")).headers["content-type"] == "image/webp"
     assert (await client.get("/static/favicon.png")).status_code == 200

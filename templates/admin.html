@@ -121,6 +121,7 @@
 
   main{padding:20px 20px 72px;display:flex;flex-direction:column;gap:30px;max-width:1240px;width:100%;margin:0 auto}
   section{scroll-margin-top:calc(var(--topbar-h) + 14px)}
+  main > section[hidden]{display:none}
   .section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 12px;flex-wrap:wrap}
   .section-head h2{margin:0;font-size:18px;font-weight:700;letter-spacing:-.015em}
   .section-head p{margin:0;color:var(--muted);font-size:12.5px}
@@ -1261,19 +1262,32 @@ document.querySelectorAll('.logout-btn').forEach(btn => {
   });
 });
 
-/* ---------- Điều hướng: đánh dấu mục đang xem ---------- */
+/* ---------- Điều hướng dạng tab: mỗi lần chỉ hiện 1 mục ---------- */
 const sections = Array.from(document.querySelectorAll('main > section'));
 const navLinks = Array.from(document.querySelectorAll('#side-nav a, #mobile-nav a'));
-function setActive(id) {
-  navLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === `#${id}`));
+function tabFromHash() {
+  const id = (location.hash || '').slice(1);
+  return sections.some(x => x.id === id) ? id : 'overview';
+}
+function showTab(id) {
+  sections.forEach(sec => { sec.hidden = sec.id !== id; });
+  navLinks.forEach(a => {
+    const on = a.getAttribute('href') === `#${id}`;
+    a.classList.toggle('active', on);
+    if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
   const sec = sections.find(x => x.id === id);
-  if (sec) $('topbar-title').textContent = sec.querySelector('h2').textContent;
+  if (sec) {
+    $('topbar-title').textContent = sec.querySelector('h2').textContent;
+    document.title = `${sec.querySelector('h2').textContent} · Lan Anh Bot Admin`;
+  }
+  // Biểu đồ vẽ theo bề rộng thật; lúc tab ẩn bề rộng = 0 nên vẽ lại khi hiện.
+  if (id === 'overview' && chartData) renderChart(chartData);
   revealChip(id);
 }
-// Cuộn NGANG thanh chip tới mục đang xem bằng scrollLeft của chính thanh nav.
+// Cuộn NGANG thanh chip tới tab đang chọn bằng scrollLeft của chính thanh nav.
 // KHÔNG dùng chip.scrollIntoView(): thanh nav là position:sticky nên trình duyệt
-// sẽ cuộn cả TRANG về vị trí gốc của thanh nav - trên điện thoại trang bị kéo
-// ngược về đầu mỗi lần scroll-spy đổi mục (không kéo được, bấm tab không nhảy).
+// sẽ cuộn cả TRANG về vị trí gốc của thanh nav.
 function revealChip(id) {
   const nav = $('mobile-nav');
   const chip = nav && nav.querySelector(`a[href="#${id}"]`);
@@ -1283,18 +1297,17 @@ function revealChip(id) {
   if (Math.abs(nav.scrollLeft - target) < 2) return;
   try { nav.scrollTo({ left: target, behavior: 'smooth' }); } catch (e) { nav.scrollLeft = target; }
 }
-if ('IntersectionObserver' in window) {
-  const visible = new Map();
-  const io = new IntersectionObserver(entries => {
-    entries.forEach(en => visible.set(en.target.id, en.isIntersecting ? en.intersectionRatio : 0));
-    let best = null, bestRatio = 0;
-    sections.forEach(sec => { const r = visible.get(sec.id) || 0; if (r > bestRatio) { best = sec.id; bestRatio = r; } });
-    if (best) setActive(best);
-  }, { rootMargin: '-45% 0px -45% 0px', threshold: [0, 0.01, 0.25, 0.5, 1] });
-  sections.forEach(sec => io.observe(sec));
-}
-navLinks.forEach(a => a.addEventListener('click', () => setActive(a.getAttribute('href').slice(1))));
-setActive((location.hash || '#overview').slice(1));
+navLinks.forEach(a => a.addEventListener('click', ev => {
+  ev.preventDefault();
+  const id = a.getAttribute('href').slice(1);
+  if (location.hash !== `#${id}`) history.pushState(null, '', `#${id}`);
+  showTab(id);
+  window.scrollTo(0, 0);
+}));
+// Nút Back/Forward của trình duyệt đổi tab theo hash.
+window.addEventListener('popstate', () => showTab(tabFromHash()));
+window.addEventListener('hashchange', () => showTab(tabFromHash()));
+showTab(tabFromHash());
 
 /* ---------- Khởi động ---------- */
 (function init() {
