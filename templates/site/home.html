@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Lịch âm, tử vi, thần số học</h1>
+  <p>Tra nhanh ngày âm lịch, ngày tốt xấu, lá số tử vi và các con số thần số học. Mọi kết quả tính bằng thuật toán ngay trên máy chủ.</p>
+</div>
+
+<section class="panel" aria-labelledby="today-title">
+  <h2 id="today-title">Hôm nay</h2>
+  <div class="today">
+    <div class="today-date">
+      <span class="wd">{{ today.weekday }}</span>
+      <span class="big">{{ today_date.day }}</span>
+      <span>tháng {{ today_date.month }}/{{ today_date.year }}</span>
+      <span class="lunar">{{ today.lunar.day }}/{{ today.lunar.month }}{% if today.lunar.isLeapMonth %} nhuận{% endif %} âm lịch</span>
+    </div>
+    <dl class="facts">
+      <dt>Âm lịch</dt><dd>{{ today.lunar.text }}</dd>
+      <dt>Can chi</dt><dd>Ngày {{ today.lunar.dayCanChi }}, tháng {{ today.lunar.monthCanChi }}</dd>
+      <dt>Ngày</dt><dd>{% if today.isHoangDao %}<span class="tag good">Hoàng đạo</span>{% else %}<span class="tag">Hắc đạo</span>{% endif %} {{ today.dayGod }}{% if today.isTamNuong %} · <span class="tag warn">Tam nương</span>{% endif %}{% if today.isNguyetKy %} · <span class="tag warn">Nguyệt kỵ</span>{% endif %}</dd>
+      <dt>Tiết khí</dt><dd>{{ today.solarTerm }}</dd>
+      <dt>Giờ tốt</dt><dd>{{ today.luckyHours | join(", ") }}</dd>
+      <dt>Tết</dt><dd>Còn {{ today.daysToTet }} ngày</dd>
+    </dl>
+  </div>
+</section>
+
+<section class="panel" aria-labelledby="ask-title">
+  <h2 id="ask-title">Hỏi lịch</h2>
+  <form class="search" action="/lich" method="get" role="search">
+    <label class="sr-only" for="q">Câu hỏi về lịch</label>
+    <input type="search" id="q" name="q" maxlength="200" placeholder="Ví dụ: rằm tháng 8, còn mấy ngày tới Tết, tuổi 15/3/1990" autocomplete="off">
+    <button class="btn" type="submit">Tra</button>
+  </form>
+</section>
+
+<section class="panel" aria-labelledby="tools-title">
+  <h2 id="tools-title">Công cụ</h2>
+  <ul class="tools">
+    <li><a href="/lich"><strong>Lịch âm dương</strong><span>Lịch tháng có ngày âm, ngày hoàng đạo, ngày lễ; đổi ngày âm dương.</span></a></li>
+    <li><a href="/tu-vi"><strong>Lá số tử vi</strong><span>An lá số Tử Vi Đẩu Số: 12 cung, chính tinh, phụ tinh, đại hạn.</span></a></li>
+    <li><a href="/than-so-hoc"><strong>Thần số học</strong><span>Con số chủ đạo, biểu đồ ngày sinh, năm cá nhân.</span></a></li>
+  </ul>
+</section>
+
+<section class="panel" aria-labelledby="next-title">
+  <h2 id="next-title">Ngày lễ sắp tới</h2>
+  <ul class="upcoming">
+    {% for item in upcoming %}
+    <li><span>{{ item.name }}</span><span class="muted">{{ item.when }} · còn {{ item.days }} ngày</span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

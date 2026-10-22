@@ -8,12 +8,13 @@ from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from telegram import Update
 from telegram.ext import Application
 
 import bot_app
 import web_admin
+import web_site
 import logging_setup
 from channels import (
     facebook_commands,
@@ -153,11 +154,17 @@ api.add_middleware(RequestLimitsMiddleware)
 api.include_router(zalo_router)
 api.include_router(web_admin.router)
 api.include_router(web_admin.api_router)
+api.include_router(web_site.router)
+api.include_router(web_site.api_router)
 
 
 @api.api_route("/", methods=["GET", "HEAD"])
-async def health() -> dict:
-    return {"status": "ok"}
+async def health(request: Request) -> Response:
+    """Trình duyệt (Accept: text/html) nhận trang chủ; Render health check,
+    UptimeRobot và mọi client khác vẫn nhận JSON {"status": "ok"} như cũ."""
+    if request.method == "GET" and web_site.wants_html(request):
+        return web_site.home_page()
+    return JSONResponse({"status": "ok"})
 
 
 @api.get("/privacy", response_class=HTMLResponse, include_in_schema=False)

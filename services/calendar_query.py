@@ -54,7 +54,7 @@ _WEEKDAY_WORDS = {
 _CHI_FOLDED = [fold(c) for c in can_chi.CHI]  # "ty", "suu", ... ("ty" hai lần: Tý/Tỵ)
 
 # (tên hiển thị, âm lịch?, ngày, tháng, các cách gọi đã bỏ dấu)
-_HOLIDAYS = [
+HOLIDAYS = [
     ("Tết Dương lịch", False, 1, 1, ("tet duong lich", "tet tay")),
     ("Rằm tháng Giêng (Tết Nguyên tiêu)", True, 15, 1, ("nguyen tieu", "ram thang gieng")),
     ("Lễ Tình nhân (Valentine)", False, 14, 2, ("valentine", "le tinh nhan")),
@@ -106,11 +106,11 @@ def _cap(text: str) -> str:
     return text[:1].upper() + text[1:]
 
 
-def _holidays_on(day: dt.date) -> list[str]:
+def holidays_on(day: dt.date) -> list[str]:
     ld, lm, _, leap = lunar.solar_to_lunar(day.day, day.month, day.year)
     return [
         name
-        for name, is_lunar, d, m, _ in _HOLIDAYS
+        for name, is_lunar, d, m, _ in HOLIDAYS
         if (is_lunar and not leap and (d, m) == (ld, lm))
         or (not is_lunar and (d, m) == (day.day, day.month))
     ]
@@ -118,7 +118,7 @@ def _holidays_on(day: dt.date) -> list[str]:
 
 def describe_full(day: dt.date, label: str = "") -> str:
     head = f"📅 {_cap(label)}\n" if label else "📅 "
-    holidays = _holidays_on(day)
+    holidays = holidays_on(day)
     tail = f"\n🎉 {', '.join(holidays)}" if holidays else ""
     return (
         f"{head}{lunar.describe_date(lunar.date_info(day))}\n"
@@ -126,7 +126,9 @@ def describe_full(day: dt.date, label: str = "") -> str:
     )
 
 
-def _lunar_to_solar(ld: int, lm: int, ly: int, leap: bool = False) -> dt.date | None:
+def lunar_to_solar_exact(ld: int, lm: int, ly: int, leap: bool = False) -> dt.date | None:
+    """Ngày dương của 1 ngày âm; None nếu không tồn tại (ngày 30 của tháng thiếu,
+    tháng nhuận năm không nhuận, năm ngoài 1900-2100)."""
     if not _MIN_YEAR <= ly <= _MAX_YEAR:
         return None
     solar = lunar.lunar_to_solar(ld, lm, ly, leap)
@@ -140,10 +142,10 @@ def _lunar_to_solar(ld: int, lm: int, ly: int, leap: bool = False) -> dt.date | 
 
 def _next_lunar(ld: int, lm: int, today: dt.date, year: int | None = None) -> dt.date | None:
     if year is not None:
-        return _lunar_to_solar(ld, lm, year)
+        return lunar_to_solar_exact(ld, lm, year)
     current = can_chi.lunar_year_of(today)
     for y in (current, current + 1):
-        day = _lunar_to_solar(ld, lm, y)
+        day = lunar_to_solar_exact(ld, lm, y)
         if day is not None and day >= today:
             return day
     return None
@@ -159,13 +161,13 @@ def _next_solar(d: int, m: int, today: dt.date, year: int | None = None) -> dt.d
         return None
 
 
-def _holiday_date(h, today: dt.date, year: int | None = None) -> dt.date | None:
+def holiday_entry_date(h, today: dt.date, year: int | None = None) -> dt.date | None:
     _, is_lunar, d, m, _ = h
     return (_next_lunar if is_lunar else _next_solar)(d, m, today, year)
 
 
 def _find_holiday(t: str):
-    for h in _HOLIDAYS:
+    for h in HOLIDAYS:
         if any(re.search(rf"\b{re.escape(alias)}\b", t) for alias in h[4]):
             return h
     return None
@@ -314,7 +316,7 @@ def _tuoi_answer(t: str, today: dt.date) -> str | None:
     )
 
 
-def _month_days(year: int, month: int) -> list[dt.date]:
+def month_days(year: int, month: int) -> list[dt.date]:
     first = dt.date(year, month, 1)
     nxt = dt.date(year + (month == 12), month % 12 + 1, 1)
     return [first + dt.timedelta(days=i) for i in range((nxt - first).days)]
@@ -330,7 +332,7 @@ def _good_days_answer(t: str, today: dt.date) -> str | None:
         year, mon = _resolve_month(month, today)
         if year is None:
             return None
-        days = _month_days(year, mon)
+        days = month_days(year, mon)
         good = []
         for day in days:
             god, ok = can_chi.day_god(day)
@@ -364,7 +366,7 @@ def _target_date(
     thì lấy năm sau ("còn mấy ngày tới 1/1"); tắt khi đếm "từ ... đến ..."."""
     holiday = _find_holiday(fragment)
     if holiday:
-        day = _holiday_date(holiday, today, _year_modifier(fragment, today, holiday[1]))
+        day = holiday_entry_date(holiday, today, _year_modifier(fragment, today, holiday[1]))
         return (day, holiday[0]) if day else None
     if re.search(r"\btet\b", fragment):
         tet = lunar.next_tet(today)
@@ -379,7 +381,7 @@ def _target_date(
             year = today.year
         day = _next_solar(int(m.group("d")), int(m.group("m")), today, year)
         if day:
-            names = _holidays_on(day)
+            names = holidays_on(day)
             return day, names[0] if names else f"ngày {day:%d/%m/%Y}"
     return None
 
@@ -416,8 +418,8 @@ def _count_answer(t: str, today: dt.date) -> str | None:
 def _holiday_answer(t: str, today: dt.date) -> str | None:
     if re.search(r"\b(cac ngay le|ngay le|le sap toi|le tet|cac le)\b", t):
         upcoming = []
-        for h in _HOLIDAYS:
-            day = _holiday_date(h, today)
+        for h in HOLIDAYS:
+            day = holiday_entry_date(h, today)
             if day is not None:
                 upcoming.append((day, h[0], h[1]))
         upcoming.sort()
@@ -430,7 +432,7 @@ def _holiday_answer(t: str, today: dt.date) -> str | None:
     holiday = _find_holiday(t)
     if not holiday:
         return None
-    day = _holiday_date(holiday, today, _year_modifier(t, today, holiday[1]))
+    day = holiday_entry_date(holiday, today, _year_modifier(t, today, holiday[1]))
     if day is None:
         return None
     info = lunar.date_info(day)
@@ -461,7 +463,7 @@ def _month_table_answer(t: str, today: dt.date) -> str | None:
     if lunar_month and m.group("m"):
         lm = int(m.group("m"))
         ly = int(m.group("y") or m.group("y2") or can_chi.lunar_year_of(today))
-        start = _lunar_to_solar(1, lm, ly)
+        start = lunar_to_solar_exact(1, lm, ly)
         if start is None or not 1 <= lm <= 12:
             return None
         lines = [f"📅 Tháng {lm} âm lịch năm {lunar.year_can_chi(ly)} ({ly}):"]
@@ -478,7 +480,7 @@ def _month_table_answer(t: str, today: dt.date) -> str | None:
     if year is None:
         return None
     lines = [f"📅 Tháng {mon}/{year} (dương - âm):"]
-    for day in _month_days(year, mon):
+    for day in month_days(year, mon):
         ld, lm, _, leap = lunar.solar_to_lunar(day.day, day.month, day.year)
         lunar_txt = f"{ld}/{lm}{'n' if leap else ''}" if ld == 1 or day.day == 1 else f"{ld}"
         mark = " ⭐" if ld == 1 else " 🌕" if ld == 15 else ""
@@ -524,12 +526,12 @@ def _lunar_prefix_answer(t: str, today: dt.date) -> str | None:
     if year is None:
         current = can_chi.lunar_year_of(today)
         for y in (current, current + 1):
-            day = _lunar_to_solar(ld, lm, y, leap)
+            day = lunar_to_solar_exact(ld, lm, y, leap)
             if day and day >= today:
                 year = y
                 break
         year = year or current
-    day = _lunar_to_solar(ld, lm, year, leap)
+    day = lunar_to_solar_exact(ld, lm, year, leap)
     if day is None:
         return f"Không có ngày {ld} tháng {lm}{' nhuận' if leap else ''} năm âm lịch {year}."
     return describe_full(day, f"{lunar.lunar_text(ld, lm, year, leap)} âm lịch rơi vào:")
