@@ -322,6 +322,10 @@ def test_admin_template_la_dang_tab_khong_cuon_dai():
     assert "main > section[hidden]{display:none}" in html
     assert "popstate" in html and "aria-current" in html
     assert "IntersectionObserver" not in html  # bỏ scroll-spy của trang dài
+    # Có lối sang các trang công cụ của web công khai; link ngoài không bị coi là tab.
+    for href in ("/lich", "/thoi-tiet", "/tu-vi", "/than-so-hoc"):
+        assert html.count(f'class="ext" href="{href}"') == 2  # menu bên + chip điện thoại
+    assert "#side-nav a[href^=" in html
 
 
 def test_login_page_renders_error_block(client):
