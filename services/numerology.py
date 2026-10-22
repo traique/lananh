@@ -8,17 +8,23 @@ David A. Phillips), có đối chiếu với cách tính Pythagoras phương Tâ
   (28 -> 10 chứ không rút tiếp về 1; 29 -> 11; 22, 33 giữ nguyên).
   ``single`` là bản rút gọn 1..9 (10 -> 1, 11 -> 2, 22 -> 4, 33 -> 6) dùng
   để tính tuổi các đỉnh cao và số trưởng thành.
-- Số ngày sinh: rút gọn ngày sinh, giữ 11/22. Số thái độ: ngày + tháng.
+- Số ngày sinh: rút gọn ngày sinh về 1..9 (29 -> 11 -> 2, như các trang VN;
+  Decoz giữ 11/22). Số thái độ: ngày + tháng, rút gọn về 1..9.
 - Số sứ mệnh (expression) = cả tên; số linh hồn (soul urge) = nguyên âm;
   số nhân cách (personality) = phụ âm. Bảng Pythagoras A=1 ... I=9, J=1 ...
-  Bỏ dấu tiếng Việt, Đ -> D; Y được tính là nguyên âm (trong tên tiếng Việt
-  Y luôn đọc như nguyên âm: Huy, Thúy, Yến).
+  Bỏ dấu tiếng Việt, Đ -> D. Rút gọn TỪNG TỪ (giữ 11/22/33) rồi cộng các từ
+  và rút gọn lần nữa (cách Decoz và tracuuthansohoc; cộng liền một chuỗi có
+  thể tạo/che số bậc thầy). Y là nguyên âm khi không đứng cạnh nguyên âm khác
+  trong từ (Ly, My, Kỳ: nguyên âm; Nguyên, Huy, Thúy, Yến: phụ âm).
 - Số trưởng thành (maturity) = chủ đạo + sứ mệnh, giữ 11/22/33 (chủ đạo 10
-  tính là 1; 11/22/33 giữ nguyên như Pythagoras phương Tây).
-- 4 đỉnh cao (pinnacles): ngày+tháng; ngày+năm; đỉnh 1 + đỉnh 2; tháng+năm
-  (mỗi thành phần đã rút gọn về 1..9; kết quả giữ 11/22). Đỉnh 1 kết thúc ở
-  tuổi 36 - số chủ đạo (bản 1..9), mỗi đỉnh sau dài 9 năm, đỉnh 4 tới hết đời.
-- 4 thử thách (challenges): hiệu tuyệt đối |ngày-tháng|, |ngày-năm|,
+  tính là 1).
+- 4 đỉnh cao (pinnacles): tháng+ngày; ngày+năm; đỉnh 1 + đỉnh 2; tháng+năm
+  (mỗi thành phần đã rút gọn về 1..9; đỉnh 1, 2 rút gọn về 1..9, đỉnh 3, 4
+  giữ 11/22 - "kim tự tháp" của các trang VN). Tuổi đỉnh 1 = 36 - số chủ đạo
+  (10 -> 26, 11 -> 25, 22 -> 32, 33 -> 30), mỗi đỉnh sau cách 9 năm; giai
+  đoạn 1 từ lúc sinh tới tuổi đỉnh 1, các giai đoạn sau 9 năm, giai đoạn 4
+  tới hết đời.
+- 4 thử thách (challenges): hiệu tuyệt đối |tháng-ngày|, |ngày-năm|,
   |thử thách 1 - thử thách 2|, |tháng-năm| (thành phần rút gọn 1..9, kết quả
   0..8), cùng mốc tuổi với đỉnh cao.
 - Năm cá nhân = ngày + tháng sinh + năm dương lịch hiện tại (rút gọn 1..9,
@@ -51,11 +57,11 @@ _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _TEXTS_PATH = Path(__file__).resolve().parent.parent / "assets" / "than_so_hoc.yaml"
 _MASTER = (11, 22, 33)
 _DATE_RE = re.compile(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})")
-_VOWELS = set("AEIOUY")
+_VOWELS = set("AEIOU")
 # Lưới biểu đồ ngày sinh (hàng trên xuống): 3 6 9 / 2 5 8 / 1 4 7.
 _GRID = ((3, 6, 9), (2, 5, 8), (1, 4, 7))
 _ARROWS = ("1-2-3", "4-5-6", "7-8-9", "1-4-7", "2-5-8", "3-6-9", "1-5-9", "3-5-7")
-# Đỉnh 1 kết thúc ở tuổi 36 - số chủ đạo (1..9); các đỉnh sau dài 9 năm.
+# Tuổi đỉnh 1 = 36 - số chủ đạo (10/11 giữ nguyên, 22/33 rút gọn); các đỉnh sau cách 9 năm.
 _STAGE_BASE = 36
 _STAGE_LEN = 9
 
@@ -71,11 +77,12 @@ NAME_ERROR = "Họ tên cần viết bằng chữ Latin (A-Z, có dấu được
 @dataclass
 class Stage:
     """Một giai đoạn đời: đỉnh cao hoặc thử thách, từ tuổi from_age tới to_age
-    (to_age None = tới hết đời)."""
+    (to_age None = tới hết đời); peak_age là "tuổi đỉnh" theo kim tự tháp VN."""
 
     value: int
     from_age: int
     to_age: int | None
+    peak_age: int = 0
 
     def contains(self, age: int) -> bool:
         return age >= self.from_age and (self.to_age is None or age <= self.to_age)
@@ -139,11 +146,19 @@ def life_path(birth: dt.date) -> int:
     return total
 
 
-def _letters(name: str) -> str:
+def _ascii(name: str) -> str:
     text = name.replace("đ", "d").replace("Đ", "D")
     text = unicodedata.normalize("NFD", text)
-    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
-    return re.sub(r"[^A-Za-z]", "", text).upper()
+    return "".join(c for c in text if unicodedata.category(c) != "Mn").upper()
+
+
+def _words(name: str) -> list[str]:
+    """Các từ (chỉ chữ cái Latin, bỏ dấu, viết hoa) của họ tên."""
+    return [w for w in re.split(r"[^A-Z]+", _ascii(name)) if w]
+
+
+def _letters(name: str) -> str:
+    return "".join(_words(name))
 
 
 def has_letters(name: str) -> bool:
@@ -153,6 +168,28 @@ def has_letters(name: str) -> bool:
 
 def _letter_value(ch: str) -> int:
     return (ord(ch) - ord("A")) % 9 + 1
+
+
+def _is_vowel(word: str, i: int) -> bool:
+    """A E I O U luôn là nguyên âm; Y là nguyên âm khi không kề nguyên âm khác."""
+    ch = word[i]
+    if ch in _VOWELS:
+        return True
+    if ch != "Y":
+        return False
+    around = word[max(i - 1, 0) : i] + word[i + 1 : i + 2]
+    return not any(c in _VOWELS for c in around)
+
+
+def _name_number(name: str, keep) -> int | None:
+    """Rút gọn từng từ (giữ số bậc thầy) rồi cộng và rút gọn lần nữa; ``keep``
+    chọn chữ cái (toàn bộ / nguyên âm / phụ âm). None nếu không có chữ nào."""
+    totals = []
+    for word in _words(name):
+        values = [_letter_value(c) for i, c in enumerate(word) if keep(word, i)]
+        if values:
+            totals.append(reduce_number(sum(values)))
+    return reduce_number(sum(totals)) if totals else None
 
 
 def _arrows(counts: dict[int, int]) -> tuple[list[str], list[str]]:
@@ -167,25 +204,31 @@ def _arrows(counts: dict[int, int]) -> tuple[list[str], list[str]]:
     return arrows, empty
 
 
-def _stages(values: list[int], single: int) -> list[Stage]:
-    end = _STAGE_BASE - single
+def first_peak_age(lp: int) -> int:
+    """Tuổi đỉnh cao 1 = 36 - số chủ đạo (10, 11 giữ nguyên; 22 -> 4, 33 -> 6)."""
+    return _STAGE_BASE - (lp if lp <= 11 else reduce_number(lp, keep_master=False))
+
+
+def _stages(values: list[int], lp: int) -> list[Stage]:
+    peak = first_peak_age(lp)
     stages = []
     start = 0
     for i, value in enumerate(values):
         last = i == len(values) - 1
-        stages.append(Stage(value, start, None if last else end))
-        start, end = end + 1, end + _STAGE_LEN
+        stages.append(Stage(value, start, None if last else peak, peak))
+        start, peak = peak + 1, peak + _STAGE_LEN
     return stages
 
 
-def pinnacles_and_challenges(birth: dt.date, single: int) -> tuple[list[Stage], list[Stage]]:
-    """4 đỉnh cao và 4 thử thách (thành phần ngày/tháng/năm rút gọn về 1..9)."""
+def pinnacles_and_challenges(birth: dt.date, lp: int) -> tuple[list[Stage], list[Stage]]:
+    """4 đỉnh cao và 4 thử thách (thành phần ngày/tháng/năm rút gọn về 1..9;
+    đỉnh 1, 2 rút gọn hẳn, đỉnh 3, 4 giữ 11/22)."""
     d, m, y = (reduce_number(x, keep_master=False) for x in (birth.day, birth.month, birth.year))
-    p1, p2 = reduce_number(d + m), reduce_number(d + y)
+    p1, p2 = reduce_number(m + d, keep_master=False), reduce_number(d + y, keep_master=False)
     p3, p4 = reduce_number(p1 + p2), reduce_number(m + y)
-    c1, c2 = abs(d - m), abs(d - y)
+    c1, c2 = abs(m - d), abs(d - y)
     c3, c4 = abs(c1 - c2), abs(m - y)
-    return _stages([p1, p2, p3, p4], single), _stages([c1, c2, c3, c4], single)
+    return _stages([p1, p2, p3, p4], lp), _stages([c1, c2, c3, c4], lp)
 
 
 def compute(birth: dt.date, name: str = "", today: dt.date | None = None) -> Reading:
@@ -199,14 +242,14 @@ def compute(birth: dt.date, name: str = "", today: dt.date | None = None) -> Rea
     )
     lp = life_path(birth)
     single = reduce_number(lp, keep_master=False)
-    pinnacles, challenges = pinnacles_and_challenges(birth, single)
+    pinnacles, challenges = pinnacles_and_challenges(birth, lp)
     age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
     reading = Reading(
         birth=birth,
         name=name.strip(),
         life_path=lp,
         life_path_single=single,
-        day_number=reduce_number(birth.day),
+        day_number=reduce_number(birth.day, keep_master=False),
         attitude=reduce_number(birth.day + birth.month, keep_master=False),
         personal_year=personal_year,
         personal_month=reduce_number(personal_year + today.month, keep_master=False),
@@ -221,13 +264,9 @@ def compute(birth: dt.date, name: str = "", today: dt.date | None = None) -> Rea
     )
     letters = _letters(name)
     if letters:
-        vowels = [c for c in letters if c in _VOWELS]
-        consonants = [c for c in letters if c not in _VOWELS]
-        reading.soul = reduce_number(sum(map(_letter_value, vowels))) if vowels else None
-        reading.personality = (
-            reduce_number(sum(map(_letter_value, consonants))) if consonants else None
-        )
-        reading.expression = reduce_number(sum(map(_letter_value, letters)))
+        reading.soul = _name_number(name, _is_vowel)
+        reading.personality = _name_number(name, lambda w, i: not _is_vowel(w, i))
+        reading.expression = _name_number(name, lambda w, i: True)
         base = lp if lp in _MASTER else single
         reading.maturity = reduce_number(base + reading.expression)
         values = [_letter_value(c) for c in letters]
@@ -266,7 +305,8 @@ def _grid_text(counts: dict[int, int]) -> str:
 
 
 def stage_label(s: Stage) -> str:
-    return f"{s.from_age}-{s.to_age} tuổi" if s.to_age is not None else f"từ {s.from_age} tuổi"
+    span = f"{s.from_age}-{s.to_age} tuổi" if s.to_age is not None else f"từ {s.from_age} tuổi"
+    return f"{span}, đỉnh ở tuổi {s.peak_age}"
 
 
 def format_reading(r: Reading) -> str:
@@ -327,6 +367,7 @@ def reading_data(r: Reading) -> dict:
                 "value": s.value,
                 "fromAge": s.from_age,
                 "toAge": s.to_age,
+                "peakAge": s.peak_age,
                 "label": stage_label(s),
                 "meaning": texts.get(key, {}).get(s.value, ""),
                 "isCurrent": s.contains(r.age),

@@ -1,59 +1,65 @@
 /* LCTA - giao diện web công khai (lịch, thời tiết, tử vi, thần số học).
 
-   Bảng màu theo mệnh chủ site: Đại Lâm Mộc (Mộc - gỗ rừng lớn).
-   - Màu chủ đạo: xanh rừng (bản mệnh Mộc)   --accent  sáng #1e6b3f (6.2:1 trên nền ngà) / tối #79d39a
-   - Màu phụ:     xanh nước (Thủy sinh Mộc)  --water   dùng cho hoàng đạo, Thân, thông tin
-   - Điểm nhấn:   son (Hỏa, Mộc sinh Hỏa - chỉ dùng ít) --lunar cho mùng 1/rằm/ngày lễ/lỗi
-   - Nền ngà pha xanh, KHÔNG dùng trắng tinh, xám hay ánh kim (Kim khắc Mộc).
-   Mọi cặp chữ/nền đạt WCAG AA (chữ ≥ 4.5:1, thành phần ≥ 3:1), tối/sáng tự theo hệ máy.
-   Khoảng cách theo thang 4px: 4 8 12 16 24 32 48. Bo góc: khối 8px, ô nhập 6px, chip 999px. */
+   Bảng màu theo mệnh chủ site (Đại Lâm Mộc) trên nền ấm cùng tông với nangdecor.com:
+   - Nền kem ấm (--cream #fff9f4, chữ mực #211c24 như nangdecor), KHÔNG dùng trắng
+     tinh, xám lạnh hay ánh kim (Kim khắc Mộc).
+   - Màu chủ đạo: xanh rừng (bản mệnh Mộc)   --accent  sáng #1f6b40 (6.2:1) / tối #93c6a3 (sage dịu, 8.6:1)
+   - Màu phụ:     xanh nước (Thủy sinh Mộc)  --water   hoàng đạo, Thân, thông tin
+   - Điểm nhấn:   son/cam đất (Hỏa, dùng ít) --lunar   mùng 1/rằm/ngày lễ/lỗi
+   Dark mode: than ấm (#17141a / #211c24) thay cho đen ám xanh, accent giảm bão hoà
+   để không chói. Mọi cặp chữ/nền đạt WCAG AA (chữ ≥ 4.5:1, thành phần ≥ 3:1).
+   Chữ: Manrope / Plus Jakarta Sans nếu máy có (bộ chữ của nangdecor), không thì
+   system-ui - không tải font ngoài. Khoảng cách theo thang 4px: 4 8 12 16 24 32 48.
+   Bo góc: khối 16px, ô nhập 10px, nút và chip tròn (999px) - theo nangdecor. */
 :root {
   color-scheme: light;
-  --bg: #eef3ea;
-  --surface: #f8faf5;
-  --surface-2: #e4ece0;
-  --border: rgba(19, 35, 26, 0.14);
-  --border-strong: rgba(19, 35, 26, 0.5); /* viền ô nhập 3.2:1 trên nền (WCAG 1.4.11) */
-  --text: #13231a;
-  --text-2: #2d4a39;
-  --muted: #4f6a5c;
-  --accent: #1e6b3f;
-  --accent-hover: #155230;
-  --accent-soft: rgba(30, 107, 63, 0.12);
-  --on-accent: #f3faf4;
-  --water: #1d5a86;
-  --water-soft: rgba(29, 90, 134, 0.12);
-  --lunar: #a8321f;
-  --lunar-soft: rgba(168, 50, 31, 0.1);
+  --bg: #f7f1ea;
+  --surface: #fff9f4;
+  --surface-2: #f1e8df;
+  --border: rgba(86, 63, 58, 0.14);
+  --border-strong: rgba(86, 63, 58, 0.45); /* viền ô nhập ≥ 3:1 trên nền (WCAG 1.4.11) */
+  --text: #211c24;
+  --text-2: #4a4350;
+  --muted: #6a626b;
+  --accent: #1f6b40;
+  --accent-hover: #17532f;
+  --accent-soft: rgba(31, 107, 64, 0.12);
+  --on-accent: #fff9f4;
+  --water: #1f5c86;
+  --water-soft: rgba(31, 92, 134, 0.12);
+  --lunar: #b53727;
+  --lunar-soft: rgba(181, 55, 39, 0.1);
   --good: var(--water);
-  --focus: #1d5a86;
-  --radius: 8px;
-  --radius-sm: 6px;
+  --focus: #1f5c86;
+  --radius: 16px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font: Manrope, "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-head: "Plus Jakarta Sans", Manrope, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --bg: #0c1510;
-    --surface: #132019;
-    --surface-2: #1a2b21;
-    --border: rgba(228, 237, 229, 0.12);
-    --border-strong: rgba(228, 237, 229, 0.4); /* 3.4:1 */
-    --text: #e4ede5;
-    --text-2: #bccdc0;
-    --muted: #93a89a;
-    --accent: #79d39a;
-    --accent-hover: #95e0ae;
-    --accent-soft: rgba(121, 211, 154, 0.14);
-    --on-accent: #0b1a11;
-    --water: #7fb9e3;
-    --water-soft: rgba(127, 185, 227, 0.14);
-    --lunar: #f0998b;
-    --lunar-soft: rgba(240, 153, 139, 0.14);
+    --bg: #17141a;
+    --surface: #211c24;
+    --surface-2: #2b2530;
+    --border: rgba(243, 237, 232, 0.12);
+    --border-strong: rgba(243, 237, 232, 0.38); /* 3.4:1 */
+    --text: #f3ede8;
+    --text-2: #cfc6cb;
+    --muted: #a79ea8;
+    --accent: #93c6a3;
+    --accent-hover: #aad6b7;
+    --accent-soft: rgba(147, 198, 163, 0.14);
+    --on-accent: #15201a;
+    --water: #8fb8d6;
+    --water-soft: rgba(143, 184, 214, 0.14);
+    --lunar: #f0a090;
+    --lunar-soft: rgba(240, 160, 144, 0.14);
     --good: var(--water);
-    --focus: #95e0ae;
+    --focus: #aad6b7;
   }
 }
 
@@ -68,8 +74,8 @@ body {
 a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
 a:hover { color: var(--accent-hover); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
-h1, h2, h3 { line-height: 1.25; letter-spacing: -0.01em; }
-h1 { font-size: 1.5rem; margin: 0 0 var(--s2); }
+h1, h2, h3 { font-family: var(--font-head); line-height: 1.25; letter-spacing: -0.015em; }
+h1 { font-size: 1.625rem; font-weight: 800; margin: 0 0 var(--s2); }
 h2 { font-size: 1.125rem; margin: 0 0 var(--s3); }
 h3 { font-size: 1rem; margin: 0 0 var(--s2); }
 p { margin: 0 0 var(--s3); }
@@ -100,19 +106,19 @@ p { margin: 0 0 var(--s3); }
 .brand img { width: auto; height: 48px; display: block; }
 .site-nav ul { display: flex; flex-wrap: wrap; gap: var(--s1); list-style: none; margin: 0; padding: 0; }
 .site-nav a {
-  display: inline-block; padding: var(--s2) var(--s3); border-radius: var(--radius-sm);
+  display: inline-block; padding: var(--s2) var(--s3); border-radius: var(--radius-pill);
   color: var(--text-2); text-decoration: none; font-weight: 600; font-size: 0.9375rem;
   min-height: 44px; line-height: 28px;
 }
 .site-nav a:hover { background: var(--surface-2); color: var(--text); }
 /* Mục đang xem: màu + gạch dưới (không chỉ dựa vào màu) */
-.site-nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 -3px 0 var(--accent); }
+.site-nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 -2px 0 var(--accent); }
 .site-actions { margin-left: auto; display: flex; align-items: center; gap: var(--s2); }
 .site-actions form { margin: 0; }
-.btn-sm { min-height: 44px; padding: var(--s1) var(--s3); font-size: 0.875rem; }
+.btn-sm { min-height: 44px; padding: var(--s1) var(--s4); font-size: 0.875rem; }
 .btn-link {
-  min-height: 44px; padding: var(--s1) var(--s2); border: 0; background: none; cursor: pointer;
-  color: var(--muted); font: 600 0.875rem/1 var(--font); border-radius: var(--radius-sm);
+  min-height: 44px; padding: var(--s1) var(--s3); border: 0; background: none; cursor: pointer;
+  color: var(--muted); font: 600 0.875rem/1 var(--font); border-radius: var(--radius-pill);
 }
 .btn-link:hover { color: var(--text); background: var(--surface-2); }
 /* Điện thoại: 5 mục chia đều 5 cột dưới logo (mục dài tự xuống dòng trong ô,
@@ -132,7 +138,7 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh
 .section-title { font-size: 1rem; margin: var(--s6) 0 var(--s3); color: var(--text-2); }
 .small-title { font-size: 0.9375rem; margin: var(--s4) 0 var(--s2); }
 .panel > .small-title:first-child { margin-top: 0; }
-.eyebrow { font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0; }
+.eyebrow { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; color: var(--accent); margin: 0; }
 
 /* Thanh mục con (Lịch tháng / Hỏi lịch / Đổi ngày / Ngày lễ) */
 .tabs {
@@ -227,7 +233,7 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2);
 }
 .today-date .wd { font-weight: 600; color: var(--text-2); }
-.today-date .big { font-size: 3rem; font-weight: 800; line-height: 1; color: var(--accent); }
+.today-date .big { font-family: var(--font-head); font-size: 3.25rem; font-weight: 800; line-height: 1; color: var(--accent); }
 .today-date .lunar { color: var(--lunar); font-weight: 700; }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s4); margin: 0; }
 .facts dt { color: var(--muted); }
@@ -236,15 +242,15 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh
 @media (min-width: 900px) { .tools { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 .tools a {
   display: block; height: 100%; padding: var(--s4); border: 1px solid var(--border);
-  border-left: 3px solid var(--accent); border-radius: var(--radius); background: var(--surface);
+  border-radius: var(--radius); background: var(--surface);
   text-decoration: none; color: var(--text);
 }
 .tools a:hover { border-color: var(--accent); background: var(--accent-soft); }
-.tools strong { display: block; color: var(--accent); margin-bottom: var(--s1); }
+.tools strong { display: block; font-family: var(--font-head); color: var(--accent); margin-bottom: var(--s1); }
 .tools span { color: var(--text-2); font-size: 0.9375rem; }
 
 /* Thời tiết */
-.weather-now .temp { font-size: 3rem; font-weight: 800; line-height: 1.1; margin: var(--s2) 0 0; color: var(--water); }
+.weather-now .temp { font-family: var(--font-head); font-size: 3.25rem; font-weight: 800; line-height: 1.1; margin: var(--s2) 0 0; color: var(--water); }
 .weather-now .desc { font-weight: 600; color: var(--text-2); margin: 0 0 var(--s4); }
 .forecast { list-style: none; margin: 0; padding: 0; }
 .forecast li {
@@ -276,7 +282,7 @@ fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: var(--s1); }
 input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; min-height: 44px;
-  padding: var(--s2) var(--s5); border: 1px solid var(--accent); border-radius: var(--radius-sm);
+  padding: var(--s2) var(--s5); border: 1px solid var(--accent); border-radius: var(--radius-pill);
   background: var(--accent); color: var(--on-accent); font: 600 1rem/1 var(--font); cursor: pointer;
   text-decoration: none;
 }
@@ -355,8 +361,8 @@ table.month .hd { width: 6px; height: 6px; border-radius: 50%; background: var(-
 /* Thần số học */
 .life-path { display: grid; grid-template-columns: auto 1fr; gap: var(--s4); align-items: center; }
 .life-path .num {
-  width: 80px; height: 80px; display: grid; place-items: center; border-radius: var(--radius);
-  background: var(--accent); color: var(--on-accent); font-size: 2.25rem; font-weight: 800;
+  width: 80px; height: 80px; display: grid; place-items: center; border-radius: var(--radius-pill);
+  background: var(--accent); color: var(--on-accent); font: 800 2.25rem/1 var(--font-head);
 }
 table.numbers { width: 100%; border-collapse: collapse; }
 table.numbers th, table.numbers td { text-align: left; padding: var(--s2) var(--s2) var(--s2) 0; border-top: 1px solid var(--border); vertical-align: top; }
@@ -377,7 +383,7 @@ ul.plain li { margin: var(--s1) 0; }
 @media (min-width: 600px) { .stages { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .stages li { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--s2) var(--s3); background: var(--surface-2); }
 .stages .age { display: block; font-size: 0.75rem; color: var(--muted); }
-.stages .n { font-size: 1.5rem; font-weight: 800; color: var(--accent); line-height: 1.2; }
+.stages .n { font-family: var(--font-head); font-size: 1.5rem; font-weight: 800; color: var(--accent); line-height: 1.2; }
 .stages .n.c { color: var(--water); }
 .stages .is-now { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 

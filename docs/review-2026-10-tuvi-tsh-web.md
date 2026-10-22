@@ -4,7 +4,7 @@
 gọi khi code hỏng", thiết kế API/giao diện lập trình, kỹ thuật giao diện +
 khả năng tiếp cận WCAG 2.1 AA, gỡ lỗi có hệ thống + test bảo vệ), rồi sửa
 ngay trong cùng nhánh. Kết quả kiểm tra: `ruff check .` sạch, `ruff format`
-đúng trên mọi file .py đã sửa, `pytest -q` 1357 passed / 26 skipped (trước
+đúng trên mọi file .py đã sửa, `pytest -q` 1392 passed / 26 skipped (trước
 đợt: 1321 passed).
 
 Cách làm: bảng an sao, độ sáng và quy ước thần số học được tra chéo từ nhiều
@@ -51,18 +51,26 @@ giữ logo vàng kim cũ thì đổi lại hai dải màu trong script và chạ
   **4 đỉnh cao** và **4 thử thách** theo mốc tuổi (đỉnh 1 kết thúc ở 36 trừ số
   chủ đạo rút gọn, mỗi giai đoạn sau 9 năm), **biểu đồ tên** và **biểu đồ tổng
   hợp** (ngày sinh + tên), ý nghĩa tháng cá nhân.
-- Ghi rõ quy ước hệ phổ biến ở VN (số chủ đạo có 10, không có 1; năm cá nhân
-  theo năm dương lịch; Y tính là nguyên âm) ngay trong docstring và cuối trang.
+- Đối chiếu với tracuuthansohoc.com và Hans Decoz (worldnumerology.com) rồi
+  chỉnh theo cách phổ biến ở VN: các số theo tên **rút gọn từng từ** rồi cộng
+  (trước đây cộng liền một chuỗi - ví dụ "Lê Thị Hoài Lam" linh hồn 22 nay
+  khớp trang tra cứu, trước ra 4); **Y là nguyên âm chỉ khi không kề nguyên âm
+  khác** (NGUYEN, HUY: phụ âm; LY: nguyên âm); số ngày sinh rút gọn về 1-9;
+  tuổi đỉnh cao theo kim tự tháp (36 − số chủ đạo, 10/11 giữ nguyên) với đỉnh
+  1, 2 rút gọn hẳn, đỉnh 3, 4 giữ 11/22. Quy ước ghi trong docstring và cuối trang.
 - Họ tên không có chữ cái Latin bị báo lỗi thay vì trả nửa kết quả null.
 
 ### Web (giao diện theo mệnh Đại Lâm Mộc)
 
 - Bảng màu mới trong `static/site.css`: xanh rừng là màu chủ đạo (bản mệnh Mộc),
-  xanh nước cho hoàng đạo / Thân / thông tin (Thủy sinh Mộc), son chỉ dùng cho
-  mùng 1, rằm, ngày lễ và lỗi (Hỏa, dùng ít), nền ngà pha xanh; **không** dùng
-  trắng tinh, xám hay vàng kim (Kim khắc Mộc). Logo LCTA tô lại tông xanh (bản
-  sáng và tối), favicon nền xanh đêm. Các trang Quyền riêng tư / Điều khoản /
-  Xoá dữ liệu dùng cùng bảng màu.
+  xanh nước cho hoàng đạo / Thân / thông tin (Thủy sinh Mộc), son/cam đất chỉ
+  dùng cho mùng 1, rằm, ngày lễ và lỗi (Hỏa, dùng ít); nền kem ấm và chữ mực
+  lấy theo nangdecor.com (`#fff9f4` / `#211c24`), cùng bộ chữ Manrope / Plus
+  Jakarta Sans khi máy có, nút và chip tròn, nhãn nhỏ viết hoa; **không** dùng
+  trắng tinh, xám lạnh hay vàng kim (Kim khắc Mộc). Dark mode dùng than ấm
+  (`#17141a` / `#211c24`) và xanh sage dịu thay cho đen ám xanh + xanh mint chói.
+  Logo LCTA tô lại tông xanh (bản sáng và tối), favicon nền than. Các trang
+  Quyền riêng tư / Điều khoản / Xoá dữ liệu dùng cùng bảng màu.
 - Mọi cặp chữ/nền đạt WCAG AA ở cả sáng và tối (thấp nhất 4.9:1); viền ô nhập
   ≥ 3:1; mục menu đang xem có gạch dưới, ngày lễ có gạch chân, mùng 1/rằm có
   chấm - không còn thông tin chỉ bằng màu. Menu 5 mục chia đều 5 cột trên màn

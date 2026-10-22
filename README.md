@@ -525,7 +525,7 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/anh <mô tả>` / `/anh on\|off` | Tạo ảnh thật (Agnes AI) / bật tắt |
 | `/tintuc` | Điểm tin mới ngay tại kênh đang gọi (không broadcast) |
 | `/lich <câu hỏi>` | Tra lịch tự do bằng code, KHÔNG tốn AI (`services/calendar_query.py`): âm ↔ dương, bảng tháng, ngày lễ, đếm ngày, ngày hoàng đạo/Tam nương, tuổi - mệnh - hợp xung, sao hạn/Tam tai/Kim lâu/Hoang ốc (`services/can_chi.py`); không hiểu thì gợi ý cách hỏi |
-| `/tsh <ngày sinh> [họ tên]` | Thần số học (`services/numerology.py`, hệ Pythagoras phổ biến ở VN - số chủ đạo có 10, không có 1): số chủ đạo, ngày sinh, thái độ, năm/tháng cá nhân, 4 đỉnh cao + 4 thử thách theo tuổi, biểu đồ ngày sinh + mũi tên; có họ tên thì thêm sứ mệnh/linh hồn/nhân cách/trưởng thành và biểu đồ tổng hợp; ý nghĩa soạn sẵn ở `assets/than_so_hoc.yaml` |
+| `/tsh <ngày sinh> [họ tên]` | Thần số học (`services/numerology.py`, hệ Pythagoras phổ biến ở VN - số chủ đạo có 10, không có 1; số theo tên rút gọn từng từ, Y là nguyên âm khi không kề nguyên âm khác): số chủ đạo, ngày sinh, thái độ, năm/tháng cá nhân, 4 đỉnh cao + 4 thử thách theo tuổi (kim tự tháp 36 − số chủ đạo), biểu đồ ngày sinh + mũi tên; có họ tên thì thêm sứ mệnh/linh hồn/nhân cách/trưởng thành và biểu đồ tổng hợp; ý nghĩa soạn sẵn ở `assets/than_so_hoc.yaml` |
 | `/tuvi <ngày sinh> <giờ> <nam\|nữ>` | An lá số Tử Vi Đẩu Số (`services/tuvi.py`, cách Thái Thứ Lang): 12 cung, 14 chính tinh kèm độ sáng miếu/vượng/đắc/bình/hãm, ~70 phụ tinh (Lộc Tồn Kình Đà, Khôi Việt, Xương Khúc, Tả Hữu, Không Kiếp, Hỏa Linh, Thiên Quan Thiên Phúc, Lưu Hà Thiên Trù, Quốc Ấn Đường Phù, Lưu Niên Văn Tinh, Đẩu Quân, Thiên Không, Giải Thần...), Tứ hóa, vòng Tràng sinh / Lộc Tồn / Thái Tuế, Tuần/Triệt, đại hạn; ý nghĩa sao thủ Mệnh và bảng độ sáng ở `assets/tu_vi.yaml` |
 | `/tsh_chitiet`, `/tuvi_chitiet` | Như trên + AI diễn giải (1 lượt AI; AI chỉ diễn giải số/lá số đã tính, không tính lại). Ngày sinh, họ tên không lưu DB |
 | `/router9 on\|off`, `/tavily on\|off` | Bật/tắt 9Router thủ công; bật/tắt tra web Tavily |
@@ -649,10 +649,11 @@ nhập); đăng nhập rồi mới hiện "Quản trị" và "Đăng xuất". Me
 
 Mỗi công cụ là một trang riêng, gọn trong 1 màn hình;
 CSS `static/site.css` được nhúng thẳng vào HTML (không tốn thêm request). Bảng màu
-theo mệnh chủ site (Đại Lâm Mộc): xanh rừng làm màu chủ đạo (bản mệnh Mộc), xanh
-nước cho hoàng đạo/Thân/thông tin (Thủy sinh Mộc), son chỉ dùng cho mùng 1, rằm,
-ngày lễ và lỗi; nền ngà pha xanh, không dùng trắng tinh, xám hay ánh kim (Kim khắc
-Mộc). Mọi cặp chữ/nền đạt WCAG AA, tối/sáng tự theo hệ máy. Logo LCTA có 2 bản
+theo mệnh chủ site (Đại Lâm Mộc) trên nền kem ấm cùng tông nangdecor.com: xanh
+rừng làm màu chủ đạo (bản mệnh Mộc), xanh nước cho hoàng đạo/Thân/thông tin (Thủy
+sinh Mộc), son/cam đất chỉ dùng cho mùng 1, rằm, ngày lễ và lỗi; không dùng trắng
+tinh, xám lạnh hay ánh kim (Kim khắc Mộc). Dark mode nền than ấm, xanh sage dịu.
+Mọi cặp chữ/nền đạt WCAG AA, tối/sáng tự theo hệ máy. Logo LCTA có 2 bản
 `static/logo-light.webp` / `logo-dark.webp` (tô lại tông xanh, tự đổi theo nền) và
 `static/favicon.png`, tạo bằng `scripts/make_site_logo.py` từ ảnh logo gốc nền đen.
 

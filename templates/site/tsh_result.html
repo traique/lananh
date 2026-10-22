@@ -77,8 +77,8 @@
     </li>
     {% endfor %}
   </ol>
-  <p class="muted small mt-3">Đỉnh 1 kết thúc ở tuổi 36 trừ số chủ đạo (bản rút gọn {{ reading.lifePath.single }}); mỗi giai đoạn sau dài 9 năm.</p>
+  <p class="muted small mt-3">Tuổi đỉnh 1 = 36 trừ số chủ đạo ({{ reading.lifePath.value }}); các đỉnh sau cách nhau 9 năm (kim tự tháp thần số học). Đỉnh 1, 2 rút gọn về 1-9; đỉnh 3, 4 giữ 11/22.</p>
 </section>
 {% include "_ai_box.html" %}
-<p class="muted small mt-3">{{ reading.disclaimer }} Tính theo hệ Pythagoras phổ biến ở Việt Nam (số chủ đạo có 10, không có 1); năm cá nhân tính theo năm dương lịch.</p>
+<p class="muted small mt-3">{{ reading.disclaimer }} Tính theo hệ Pythagoras phổ biến ở Việt Nam: số chủ đạo có 10, không có 1; các số theo tên rút gọn từng từ (Y là nguyên âm khi không kề nguyên âm khác); năm cá nhân theo năm dương lịch.</p>
 {% endblock %}

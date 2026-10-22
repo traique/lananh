@@ -381,7 +381,7 @@ async def test_api_numerology_va_tuvi(client):
         "/api/v1/numerology/readings", json={"birthDate": "1990-03-15", "name": "Nguyễn Văn An"}
     )
     data = r.json()
-    assert data["lifePath"]["value"] == 10 and data["soul"]["value"] == 8
+    assert data["lifePath"]["value"] == 10 and data["soul"]["value"] == 1
     assert data["arrows"][0]["digits"] == "1-5-9"
     r = await client.post(
         "/api/v1/tuvi/charts",
@@ -402,7 +402,8 @@ async def test_api_numerology_va_tuvi(client):
     assert chart["cucRelation"] and chart["isThuan"] is True and chart["brightnessLegend"]["M"]
     assert data["maturity"]["value"] == 4 and data["lifePath"]["single"] == 1
     assert [p["value"] for p in data["pinnacles"]] == [9, 7, 7, 4]
-    assert data["challenges"][0]["label"] == "0-35 tuổi" and data["combinedChart"]["5"] == 6
+    assert data["challenges"][0]["label"] == "0-26 tuổi, đỉnh ở tuổi 26"
+    assert data["pinnacles"][0]["peakAge"] == 26 and data["combinedChart"]["5"] == 6
 
 
 async def test_api_thang_nhuan_va_dinh_dang_ngay(client):
