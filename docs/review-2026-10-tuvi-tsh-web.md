@@ -140,8 +140,13 @@ giữ logo vàng kim cũ thì đổi lại hai dải màu trong script và chạ
     thêm gạch chân (lễ) và chấm (mùng 1/rằm), sửa chú giải.
 16. **Mục menu đang xem chỉ khác màu** (tối 1.09:1). Đã thêm gạch dưới.
 17. **Thiên Khôi/Việt tuổi Canh** đang ở Ngọ/Dần (như tuổi Tân). Hai phái:
-    "Giáp Mậu Canh ngưu dương" (Toàn Thư) và "Canh Tân phùng mã hổ" (Toàn Tập,
-    phổ biến ở lá số VN hiện nay). Giữ cách hiện tại, ghi rõ trong code.
+    "Giáp Mậu Canh ngưu dương" (Toàn Thư, tuvisonkhiem) và "Canh Tân phùng mã
+    hổ" (Toàn Tập; đa số trang VN hiện nay: thaiam, thanglongdaoquan,
+    tuvicaimenh...). Tra chéo xong: giữ cách hiện tại, ghi rõ trong code.
+    Cùng đợt tra chéo: **Thân chủ năm Ngọ** đổi từ Hỏa Tinh sang Linh Tinh
+    (bản phổ biến; repo trước đây gộp cả Tý và Ngọ thành Hỏa Tinh - biến thể
+    thiểu số). Tứ hóa 10 can, Hỏa Linh, vòng Tràng Sinh, Tuần Triệt, Lộc Tồn,
+    Mệnh chủ và 30 phụ tinh theo chi/tháng/giờ/ngày đều khớp nguồn.
 
 ### Nên có
 

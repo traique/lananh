@@ -162,6 +162,13 @@ def test_format_chart_co_do_sang_va_sao_moi():
     assert hoa.hoa == "Hóa Lộc" and hoa.label == "Thái Dương (Hóa Lộc)"
 
 
+def test_menh_chu_than_chu():
+    c = tuvi.parse("15/3/1990 9h30 nam")  # Mệnh ở Tuất -> Lộc Tồn; năm Ngọ -> Linh Tinh
+    assert tuvi._MENH_CHU[c.menh] == "Lộc Tồn" and tuvi._THAN_CHU[c.chi_y] == "Linh Tinh"
+    assert "Mệnh chủ: Lộc Tồn · Thân chủ: Linh Tinh" in tuvi.format_chart(c)
+    assert tuvi._THAN_CHU[0] == "Hỏa Tinh" and tuvi._MENH_CHU[0] == "Tham Lang"
+
+
 def test_hour_to_chi():
     assert [tuvi.hour_to_chi(h) for h in (23, 0, 1, 2, 3, 12, 13, 22)] == [0, 0, 1, 1, 2, 6, 7, 11]
 
