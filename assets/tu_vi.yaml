@@ -1,5 +1,14 @@
-# Ý nghĩa ngắn soạn sẵn cho /tuvi (services/tuvi.py): sao chính tinh thủ cung
-# Mệnh. Sửa thoải mái, không cần đổi code. /tuvi_chitiet mới dùng AI luận giải.
+# Dữ liệu soạn sẵn cho /tuvi (services/tuvi.py). Sửa thoải mái, không cần đổi
+# code. /tuvi_chitiet mới dùng AI luận giải.
+#
+# chinh_tinh: ý nghĩa ngắn khi sao thủ cung Mệnh.
+# do_sang: độ sáng từng sao theo 12 cung Tý Sửu Dần Mão Thìn Tỵ Ngọ Mùi Thân
+#   Dậu Tuất Hợi (chuỗi 12 ký tự): M miếu, V vượng, Đ đắc, B bình, H hãm,
+#   "-" không xét. 14 chính tinh chép theo "Tử Vi Đẩu Số Tân Biên" (Vân Đằng
+#   Thái Thứ Lang, 1956, mục "Đặc tính các sao" tr. 33-38) - khớp 168/168 ô
+#   với lasotuvi (mã nguồn mở), tracuutuvi.com, thayungkhiem.vn, tuvihiendai.vn
+#   (đối chiếu 10/2026). Tử Vi Đẩu Số Toàn Thư (Trung Quốc) khác ở vài ô (Tử
+#   Vi Tý Hợi vượng, Tham Lang Dần Thân không nêu...) - không dùng.
 
 chinh_tinh:
   Tử Vi: Đế tinh - tự trọng, có tố chất lãnh đạo, thích được tôn trọng; hợp vị trí quản lý.
@@ -21,3 +30,39 @@ vo_chinh_dieu: >-
   Cung Mệnh không có chính tinh, tính cách chịu ảnh hưởng nhiều từ các sao chiếu
   sang (cung Thiên Di đối diện, Tài Bạch, Quan Lộc) và phụ tinh trong cung; người
   linh hoạt, dễ thích nghi với hoàn cảnh.
+
+do_sang:
+  #            Tý Sửu Dần Mão Thìn Tỵ Ngọ Mùi Thân Dậu Tuất Hợi
+  Tử Vi:       "BĐMBVMMĐMBVB"
+  Thiên Cơ:    "ĐĐHMMVĐĐVMMH"
+  Thái Dương:  "HĐVVVMMĐHHHH"
+  Vũ Khúc:     "VMVĐMHVMVĐMH"
+  Thiên Đồng:  "VHMĐHĐHHMHHĐ"
+  Liêm Trinh:  "VĐVHMHVĐVHMH"
+  Thiên Phủ:   "MBMBVĐMĐMBVĐ"
+  Thái Âm:     "VĐHHHHHĐVMMM"
+  Tham Lang:   "HMĐHVHHMĐHVH"
+  Cự Môn:      "VHVMHHVHĐMHĐ"
+  Thiên Tướng: "VĐMHVĐVĐMHVĐ"
+  Thiên Lương: "VĐVVMHMĐVHMH"
+  Thất Sát:    "MĐMHHVMĐMHHV"
+  Phá Quân:    "MVHHĐHMVHHĐH"
+  # Phụ tinh thường ghi đắc/hãm trên lá số VN (2 mức, theo tracuulasotuvi, lasotuvi,
+  # tuvi.cohoc.net, hoc.kabala.vn, thaiam.vn; Toàn Thư chia nhiều mức hơn - không
+  # dùng). Xương Khúc: đắc Thìn Tuất Sửu Mùi Tỵ Hợi, hãm Tý Dần Ngọ Thân, Mão Dậu
+  # không xếp (các nguồn lệch nhau ở Mão Dậu).
+  Kình Dương:  "HĐHHĐHHĐHHĐH"
+  Đà La:       "HĐHHĐHHĐHHĐH"
+  Hỏa Tinh:    "HHĐĐĐĐĐHHHHH"
+  Linh Tinh:   "HHĐĐĐĐĐHHHHH"
+  Địa Không:   "HHĐHHĐHHĐHHĐ"
+  Địa Kiếp:    "HHĐHHĐHHĐHHĐ"
+  Văn Xương:   "HĐH-ĐĐHĐH-ĐĐ"
+  Văn Khúc:    "HĐH-ĐĐHĐH-ĐĐ"
+  Thiên Hình:  "HHĐĐHHHHĐĐHH"
+  Thiên Riêu:  "HHĐĐHHHHHĐĐH"
+  Thiên Khốc:  "ĐĐHĐHHĐĐHĐHH"
+  Thiên Hư:    "ĐĐHĐHHĐĐHĐHH"
+  Thiên Mã:    "--V--V--Đ--H"
+  Đại Hao:     "--ĐĐ----ĐĐ--"
+  Tiểu Hao:    "--ĐĐ----ĐĐ--"

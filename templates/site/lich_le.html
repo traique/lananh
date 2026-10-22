@@ -3,7 +3,7 @@
 <div class="narrow">
   <h1>Ngày lễ sắp tới</h1>
   <p class="lead">Ngày lễ âm lịch và dương lịch trong 12 tháng tới.</p>
-  <ul class="panel holiday-list">
+  <ul class="panel holiday-list" role="list">
     {% for h in holidays %}
     <li>
       <div><strong>{{ h.name }}</strong><span class="tag">{{ "Âm lịch" if h.isLunar else "Dương lịch" }}</span></div>

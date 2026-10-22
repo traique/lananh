@@ -2,7 +2,7 @@
 {% block content %}
 <div class="narrow">
   <h1>Lá số tử vi</h1>
-  <p class="lead">An lá số Tử Vi Đẩu Số theo cách phổ biến ở Việt Nam. Thông tin chỉ dùng để tính, không lưu lại.</p>
+  <p class="lead">An lá số Tử Vi Đẩu Số theo cách phổ biến ở Việt Nam (Thái Thứ Lang): 14 chính tinh kèm độ sáng, phụ tinh, Tứ hóa, Tuần Triệt, đại hạn. Thông tin chỉ dùng để tính, không lưu lại.</p>
   {% include "_errors.html" %}
   <form class="panel form" action="/tu-vi" method="post" novalidate>
     <fieldset>
@@ -20,15 +20,17 @@
         <label><input type="radio" name="lich" value="am"{% if form.lich == "am" %} checked{% endif %}> Âm lịch</label>
         <label><input type="checkbox" name="nhuan" value="1"{% if form.nhuan %} checked{% endif %}> Tháng nhuận</label>
       </div>
+      <span class="hint">Tháng nhuận: sinh ngày 1-15 an như tháng trước, từ 16 an như tháng sau.</span>
     </fieldset>
     <div class="form-row">
       <div class="field">
         <label for="gio">Giờ sinh <span aria-hidden="true">*</span></label>
-        <select id="gio" name="gio" required aria-required="true">
+        <select id="gio" name="gio" required aria-required="true" aria-describedby="gio-hint">
           {% for idx, name, span in hours %}
           <option value="{{ idx }}"{% if form.gio == idx|string %} selected{% endif %}>Giờ {{ name }} ({{ span }})</option>
           {% endfor %}
         </select>
+        <span class="hint" id="gio-hint">Sinh 23h-24h chọn "Tý đầu": an theo ngày hôm sau, như cách phổ biến ở Việt Nam.</span>
       </div>
       <fieldset>
         <legend>Giới tính <span aria-hidden="true">*</span></legend>

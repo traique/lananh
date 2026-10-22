@@ -3,12 +3,13 @@
 <div>
   <h1>Thời tiết</h1>
   <p class="lead">Hiện tại và dự báo 7 ngày. Không nhập địa điểm thì xem TP. Hồ Chí Minh.</p>
+  {% include "_errors.html" %}
   <form class="search" action="/thoi-tiet" method="get" role="search">
     <label class="sr-only" for="noi">Địa điểm</label>
-    <input type="search" id="noi" name="noi" maxlength="60" value="{{ place }}" placeholder="Ví dụ: Đà Lạt" autocomplete="off">
+    <input type="search" id="noi" name="noi" maxlength="60" value="{{ place }}" placeholder="Ví dụ: Đà Lạt" autocomplete="off"{% if error %} aria-describedby="form-error"{% endif %}>
     <button class="btn" type="submit">Xem</button>
   </form>
-  <ul class="chips mt-3" aria-label="Địa điểm hay xem">
+  <ul class="chips mt-3" aria-label="Địa điểm hay xem" role="list">
     {% for p in places %}
     <li class="{% if logged_in %}chip-edit{% endif %}">
       <a href="/thoi-tiet?noi={{ p | urlencode }}"{% if p == place or (not place and loop.first) %} aria-current="page"{% endif %}>{{ p }}</a>
@@ -33,9 +34,6 @@
   <div class="{{ 'error-box' if notice[0] == 'error' else 'ok-box' }} mt-3" role="{{ 'alert' if notice[0] == 'error' else 'status' }}">{{ notice[1] }}</div>
   {% endif %}
 
-  {% if error %}
-  <div class="error-box mt-4" role="alert"><strong>Chưa tra được:</strong> {{ error }}</div>
-  {% endif %}
 
   {% if data %}
   <div class="layout-2 mt-4">
@@ -52,7 +50,7 @@
     </section>
     <section class="panel" aria-labelledby="fc-title">
       <h2 id="fc-title" class="small-title">Dự báo {{ data.daily | length }} ngày</h2>
-      <ul class="forecast">
+      <ul class="forecast" role="list">
         {% for d in data.daily %}
         <li>
           <span class="when"><strong>{{ d.label }}</strong> <span class="muted">{{ d.short }}</span></span>
