@@ -1,73 +1,133 @@
 /* LCTA - giao diện web công khai (lịch, thời tiết, tử vi, thần số học).
 
-   Bảng màu theo mệnh chủ site (Đại Lâm Mộc) trên nền ấm cùng tông với nangdecor.com:
-   - Nền kem ấm (--cream #fff9f4, chữ mực #211c24 như nangdecor), KHÔNG dùng trắng
-     tinh, xám lạnh hay ánh kim (Kim khắc Mộc).
-   - Màu chủ đạo: xanh rừng (bản mệnh Mộc)   --accent  sáng #1f6b40 (6.2:1) / tối #93c6a3 (sage dịu, 8.6:1)
+   Phong cách "ngọc lục bảo" sang trọng theo mệnh chủ site (Đại Lâm Mộc):
+   - Màu chủ đạo: xanh ngọc lục bảo (Mộc)   --accent  sáng #0b6644 (6.8:1) / tối #3fcf8e (8.9:1)
+   - Khối nhấn: nền xanh rừng sâu chuyển sắc --jade-1 → --jade-2, chữ ngà #f7f2e7 (≥ 10:1)
    - Màu phụ:     xanh nước (Thủy sinh Mộc)  --water   hoàng đạo, Thân, thông tin
-   - Điểm nhấn:   son/cam đất (Hỏa, dùng ít) --lunar   mùng 1/rằm/ngày lễ/lỗi
-   Dark mode: than ấm (#17141a / #211c24) thay cho đen ám xanh, accent giảm bão hoà
-   để không chói. Mọi cặp chữ/nền đạt WCAG AA (chữ ≥ 4.5:1, thành phần ≥ 3:1).
-   Chữ: Manrope / Plus Jakarta Sans nếu máy có (bộ chữ của nangdecor), không thì
-   system-ui - không tải font ngoài. Khoảng cách theo thang 4px: 4 8 12 16 24 32 48.
-   Bo góc: khối 16px, ô nhập 10px, nút và chip tròn (999px) - theo nangdecor. */
+   - Điểm nhấn:   son (Hỏa, dùng ít)          --lunar   mùng 1/rằm/ngày lễ/lỗi
+   - Nền ngà ấm (sáng) / rừng đêm (tối); KHÔNG dùng vàng kim, trắng tinh, xám lạnh
+     (Kim khắc Mộc).
+   Tiêu đề dùng chữ có chân (serif) có sẵn trên máy; thân chữ Manrope/system-ui -
+   không tải font ngoài. Sáng/tối theo hệ máy, nút đổi ở header ghi đè bằng
+   data-theme trên <html> (lưu localStorage "lcta.theme"). Mọi cặp chữ/nền đạt WCAG AA.
+   Khoảng cách theo thang 4px: 4 8 12 16 24 32 48. Bo góc: khối 18px, ô nhập 12px,
+   nút và chip tròn. */
 :root {
   color-scheme: light;
-  --bg: #f7f1ea;
-  --surface: #fff9f4;
-  --surface-2: #f1e8df;
-  --border: rgba(86, 63, 58, 0.14);
-  --border-strong: rgba(86, 63, 58, 0.45); /* viền ô nhập ≥ 3:1 trên nền (WCAG 1.4.11) */
-  --text: #211c24;
-  --text-2: #4a4350;
-  --muted: #6a626b;
-  --accent: #1f6b40;
-  --accent-hover: #17532f;
-  --accent-soft: rgba(31, 107, 64, 0.12);
-  --on-accent: #fff9f4;
-  --water: #1f5c86;
-  --water-soft: rgba(31, 92, 134, 0.12);
-  --lunar: #b53727;
-  --lunar-soft: rgba(181, 55, 39, 0.1);
+  --bg: #f5f0e6;
+  --surface: #fffcf6;
+  --surface-2: #ece5d6;
+  --border: rgba(19, 32, 26, 0.12);
+  --border-strong: rgba(19, 32, 26, 0.45); /* viền ô nhập ≥ 3:1 trên nền (WCAG 1.4.11) */
+  --text: #13201a;
+  --text-2: #34453b;
+  --muted: #5b6a61;
+  --accent: #0b6644;
+  --accent-hover: #084f34;
+  --accent-soft: rgba(11, 102, 68, 0.1);
+  --accent-glow: rgba(11, 102, 68, 0.22);
+  --on-accent: #f7f2e7;
+  --water: #1b5d84;
+  --water-soft: rgba(27, 93, 132, 0.1);
+  --lunar: #ad3420;
+  --lunar-soft: rgba(173, 52, 32, 0.09);
   --good: var(--water);
-  --focus: #1f5c86;
-  --radius: 16px;
-  --radius-sm: 10px;
+  --focus: #1b5d84;
+  /* Khối "ngọc lục bảo" (hero, số chủ đạo): nền xanh rừng sâu, chữ ngà */
+  --jade-1: #0a3d2a;
+  --jade-2: #0f5a3c;
+  --on-jade: #f7f2e7;
+  --on-jade-2: #cfe9da;
+  --on-jade-accent: #9be3c0;
+  --on-jade-lunar: #ffb4a3;
+  --header-bg: rgba(255, 252, 246, 0.86);
+  --shadow: 0 1px 2px rgba(19, 32, 26, 0.04), 0 12px 32px -18px rgba(19, 32, 26, 0.28);
+  --shadow-lift: 0 2px 4px rgba(19, 32, 26, 0.05), 0 18px 40px -18px rgba(11, 102, 68, 0.35);
+  --page-glow: radial-gradient(1200px 520px at 85% -10%, rgba(11, 102, 68, 0.09), transparent 60%),
+    radial-gradient(900px 420px at -10% 0%, rgba(27, 93, 132, 0.06), transparent 60%);
+  --radius: 18px;
+  --radius-sm: 12px;
   --radius-pill: 999px;
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
   --font: Manrope, "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-head: "Plus Jakarta Sans", Manrope, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-head: "Playfair Display", "Noto Serif", "Source Serif Pro", Georgia, "Times New Roman", serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #17141a;
-    --surface: #211c24;
-    --surface-2: #2b2530;
-    --border: rgba(243, 237, 232, 0.12);
-    --border-strong: rgba(243, 237, 232, 0.38); /* 3.4:1 */
-    --text: #f3ede8;
-    --text-2: #cfc6cb;
-    --muted: #a79ea8;
-    --accent: #93c6a3;
-    --accent-hover: #aad6b7;
-    --accent-soft: rgba(147, 198, 163, 0.14);
-    --on-accent: #15201a;
-    --water: #8fb8d6;
-    --water-soft: rgba(143, 184, 214, 0.14);
-    --lunar: #f0a090;
-    --lunar-soft: rgba(240, 160, 144, 0.14);
+    --bg: #07110d;
+    --surface: #0e1b15;
+    --surface-2: #15281f;
+    --border: rgba(214, 236, 222, 0.1);
+    --border-strong: rgba(214, 236, 222, 0.36); /* 3.4:1 */
+    --text: #eef4ec;
+    --text-2: #c6d5ca;
+    --muted: #94a89b;
+    --accent: #3fcf8e;
+    --accent-hover: #6adca8;
+    --accent-soft: rgba(63, 207, 142, 0.12);
+    --accent-glow: rgba(63, 207, 142, 0.28);
+    --on-accent: #062014;
+    --water: #7cc4e6;
+    --water-soft: rgba(124, 196, 230, 0.12);
+    --lunar: #ff9b85;
+    --lunar-soft: rgba(255, 155, 133, 0.12);
     --good: var(--water);
-    --focus: #aad6b7;
+    --focus: #6adca8;
+    --jade-1: #0b3324;
+    --jade-2: #12573c;
+    --on-jade: #f7f2e7;
+    --on-jade-2: #cfe9da;
+    --on-jade-accent: #9be3c0;
+    --on-jade-lunar: #ffb4a3;
+    --header-bg: rgba(10, 21, 16, 0.82);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 36px -20px rgba(0, 0, 0, 0.8);
+    --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.4), 0 18px 44px -18px rgba(63, 207, 142, 0.35);
+    --page-glow: radial-gradient(1100px 520px at 85% -10%, rgba(63, 207, 142, 0.12), transparent 60%),
+      radial-gradient(900px 460px at -10% 10%, rgba(124, 196, 230, 0.07), transparent 60%);
   }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #07110d;
+  --surface: #0e1b15;
+  --surface-2: #15281f;
+  --border: rgba(214, 236, 222, 0.1);
+  --border-strong: rgba(214, 236, 222, 0.36); /* 3.4:1 */
+  --text: #eef4ec;
+  --text-2: #c6d5ca;
+  --muted: #94a89b;
+  --accent: #3fcf8e;
+  --accent-hover: #6adca8;
+  --accent-soft: rgba(63, 207, 142, 0.12);
+  --accent-glow: rgba(63, 207, 142, 0.28);
+  --on-accent: #062014;
+  --water: #7cc4e6;
+  --water-soft: rgba(124, 196, 230, 0.12);
+  --lunar: #ff9b85;
+  --lunar-soft: rgba(255, 155, 133, 0.12);
+  --good: var(--water);
+  --focus: #6adca8;
+  --jade-1: #0b3324;
+  --jade-2: #12573c;
+  --on-jade: #f7f2e7;
+  --on-jade-2: #cfe9da;
+  --on-jade-accent: #9be3c0;
+  --on-jade-lunar: #ffb4a3;
+  --header-bg: rgba(10, 21, 16, 0.82);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 36px -20px rgba(0, 0, 0, 0.8);
+  --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.4), 0 18px 44px -18px rgba(63, 207, 142, 0.35);
+  --page-glow: radial-gradient(1100px 520px at 85% -10%, rgba(63, 207, 142, 0.12), transparent 60%),
+    radial-gradient(900px 460px at -10% 10%, rgba(124, 196, 230, 0.07), transparent 60%);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--page-glow), var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   font: 400 1rem/1.6 var(--font);
 }
@@ -75,8 +135,8 @@ a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset:
 a:hover { color: var(--accent-hover); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
 h1, h2, h3 { font-family: var(--font-head); line-height: 1.25; letter-spacing: -0.015em; }
-h1 { font-size: 1.625rem; font-weight: 800; margin: 0 0 var(--s2); }
-h2 { font-size: 1.125rem; margin: 0 0 var(--s3); }
+h1 { font-size: 1.875rem; font-weight: 700; margin: 0 0 var(--s2); }
+h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 var(--s3); }
 h3 { font-size: 1rem; margin: 0 0 var(--s2); }
 p { margin: 0 0 var(--s3); }
 .sr-only {
@@ -90,8 +150,13 @@ p { margin: 0 0 var(--s3); }
 }
 .skip-link:focus { top: var(--s2); }
 
-/* Khung trang: viền trên xanh rừng là dấu hiệu nhận diện duy nhất, không gradient */
-.site-header { background: var(--surface); border-bottom: 1px solid var(--border); border-top: 3px solid var(--accent); }
+/* Khung trang: header mờ kính dính trên cùng, viền dưới ánh ngọc */
+.site-header {
+  position: sticky; top: 0; z-index: 20; background: var(--header-bg);
+  -webkit-backdrop-filter: saturate(1.4) blur(12px); backdrop-filter: saturate(1.4) blur(12px);
+  border-bottom: 1px solid var(--border);
+  box-shadow: inset 0 -1px 0 var(--accent-soft);
+}
 .site-header .inner, main, .site-footer .inner {
   max-width: 1040px; margin: 0 auto; padding-left: var(--s4); padding-right: var(--s4);
 }
@@ -103,7 +168,29 @@ p { margin: 0 0 var(--s3); }
   display: inline-flex; align-items: center; gap: var(--s2);
   color: var(--text); text-decoration: none; font-weight: 700; font-size: 1.0625rem;
 }
-.brand img { width: auto; height: 48px; display: block; }
+.brand img { width: auto; height: 44px; display: block; }
+/* Logo đổi theo giao diện (kể cả khi người xem tự chọn bằng nút) */
+.brand .logo-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .brand .logo-light { display: none; }
+  :root:not([data-theme="light"]) .brand .logo-dark { display: block; }
+}
+:root[data-theme="dark"] .brand .logo-light { display: none; }
+:root[data-theme="dark"] .brand .logo-dark { display: block; }
+.theme-toggle {
+  display: inline-grid; place-items: center; width: 44px; height: 44px; padding: 0; cursor: pointer;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
+  background: var(--surface); color: var(--accent);
+}
+.theme-toggle:hover { background: var(--accent-soft); }
+.theme-toggle svg { width: 20px; height: 20px; }
+.theme-toggle .moon { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-toggle .sun { display: none; }
+  :root:not([data-theme="light"]) .theme-toggle .moon { display: block; }
+}
+:root[data-theme="dark"] .theme-toggle .sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .moon { display: block; }
 .site-nav ul { display: flex; flex-wrap: wrap; gap: var(--s1); list-style: none; margin: 0; padding: 0; }
 .site-nav a {
   display: inline-block; padding: var(--s2) var(--s3); border-radius: var(--radius-pill);
@@ -121,10 +208,24 @@ p { margin: 0 0 var(--s3); }
   color: var(--muted); font: 600 0.875rem/1 var(--font); border-radius: var(--radius-pill);
 }
 .btn-link:hover { color: var(--text); background: var(--surface-2); }
+.logout { display: inline-flex; align-items: center; gap: var(--s1); }
+.logout svg { width: 18px; height: 18px; display: none; }
+/* Màn hẹp: Đăng xuất chỉ còn biểu tượng để logo + nút nằm gọn một hàng */
+@media (max-width: 439px) {
+  .logout { min-width: 44px; justify-content: center; }
+  .logout svg { display: block; }
+  .logout .label {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
+  }
+}
 /* Điện thoại: 5 mục chia đều 5 cột dưới logo (mục dài tự xuống dòng trong ô,
-   vừa cả 320px), nút Quản trị cùng hàng logo */
+   vừa cả 320px), nút Quản trị + đổi giao diện cùng hàng logo */
 @media (max-width: 599px) {
-  .site-actions { order: 2; }
+  .site-header .inner { gap: var(--s2) var(--s3); }
+  .brand img { height: 34px; }
+  .site-actions { order: 2; gap: var(--s1); }
+  .site-actions .btn-sm { padding: var(--s1) var(--s3); }
+  .site-actions .btn-link { padding: var(--s1) var(--s2); }
   .site-nav { order: 3; flex-basis: 100%; }
   .site-nav ul { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; }
   .site-nav a {
@@ -221,20 +322,27 @@ main { padding-top: var(--s5); padding-bottom: var(--s7); min-height: calc(100vh
 }
 .error-box strong { color: var(--lunar); }
 
-/* Hôm nay (trang chủ) */
+/* Hôm nay (trang chủ): thẻ ngọc lục bảo bên trái, chi tiết ngày bên phải */
 .today-card {
   display: grid; gap: var(--s5); grid-template-columns: 1fr; align-items: center;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s5);
+  box-shadow: var(--shadow);
 }
-@media (min-width: 720px) { .today-card { grid-template-columns: 220px 1fr; } }
+@media (min-width: 720px) { .today-card { grid-template-columns: 240px 1fr; } }
 .today-date p { margin: 0; }
 .today-date {
-  display: grid; justify-items: center; gap: var(--s1); padding: var(--s4) var(--s5);
-  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2);
+  position: relative; overflow: hidden;
+  display: grid; justify-items: center; gap: var(--s1); padding: var(--s5);
+  border-radius: var(--radius); color: var(--on-jade);
+  background:
+    radial-gradient(140px 140px at 85% 0%, rgba(155, 227, 192, 0.22), transparent 70%),
+    linear-gradient(150deg, var(--jade-1), var(--jade-2));
+  box-shadow: inset 0 0 0 1px rgba(155, 227, 192, 0.18), var(--shadow-lift);
 }
-.today-date .wd { font-weight: 600; color: var(--text-2); }
-.today-date .big { font-family: var(--font-head); font-size: 3.25rem; font-weight: 800; line-height: 1; color: var(--accent); }
-.today-date .lunar { color: var(--lunar); font-weight: 700; }
+.today-date .eyebrow { color: var(--on-jade-accent); }
+.today-date .wd { font-weight: 600; color: var(--on-jade-2); }
+.today-date .big { font-family: var(--font-head); font-size: 4rem; font-weight: 700; line-height: 1; color: var(--on-jade); }
+.today-date .lunar { color: var(--on-jade-lunar); font-weight: 700; }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s4); margin: 0; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; }
@@ -391,3 +499,39 @@ ul.plain li { margin: var(--s1) 0; }
 .mt-4 { margin-top: var(--s4); }
 .date-parts { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: var(--s2); }
 .date-parts .field label { font-weight: 400; font-size: 0.8125rem; color: var(--muted); }
+
+/* ── Lớp "sang trọng": bóng mềm, viền ánh ngọc, chuyển động nhẹ ───────────── */
+.panel, .tools a, .palace, .chart-center, .stages li, .holiday-list { box-shadow: var(--shadow); }
+.btn {
+  background: linear-gradient(150deg, var(--accent), var(--accent-hover));
+  box-shadow: 0 8px 20px -10px var(--accent-glow);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.btn:hover { transform: translateY(-1px); box-shadow: 0 12px 26px -12px var(--accent-glow); }
+.btn-secondary, .btn-secondary:hover { background: transparent; box-shadow: none; transform: none; }
+.btn-secondary { border-color: var(--accent); }
+.btn-secondary:hover { background: var(--accent-soft); }
+.tools a { position: relative; transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
+.tools a::before {
+  content: ""; position: absolute; left: var(--s4); right: var(--s4); top: 0; height: 2px;
+  border-radius: 0 0 2px 2px; background: linear-gradient(90deg, var(--accent), var(--water));
+  opacity: 0.7;
+}
+.tools a:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); border-color: var(--accent); background: var(--surface); }
+.section-title { font-family: var(--font-head); font-size: 1.25rem; color: var(--text); }
+.life-path .num {
+  background: linear-gradient(150deg, var(--jade-1), var(--jade-2)); color: var(--on-jade);
+  box-shadow: inset 0 0 0 1px rgba(155, 227, 192, 0.25), var(--shadow-lift);
+}
+.palace.is-menh { box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-lift); }
+table.month a.day[aria-current="date"] {
+  background: linear-gradient(150deg, var(--jade-1), var(--jade-2)); color: var(--on-jade);
+}
+table.month a.day[aria-current="date"] .l, table.month a.day[aria-current="date"].is-lunar-mark .l { color: var(--on-jade-2); }
+table.month a.day[aria-current="date"] .hd { background: var(--on-jade); }
+table.month a.day[aria-current="date"].is-holiday .d { text-decoration-color: var(--on-jade-lunar); }
+@media (prefers-reduced-motion: reduce) {
+  .btn, .tools a { transition: none; }
+  .btn:hover, .tools a:hover { transform: none; }
+}
+@media (max-width: 439px) { .brand img { height: 30px; } .theme-toggle { width: 40px; height: 40px; } }

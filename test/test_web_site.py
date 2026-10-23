@@ -531,3 +531,12 @@ def test_uvicorn_limit_concurrency_du_cho_web_va_webhook():
     conf = (Path(__file__).resolve().parent.parent / "supervisord.conf").read_text()
     limit = int(re.search(r"--limit-concurrency (\d+)", conf).group(1))
     assert limit >= 32
+
+
+async def test_nut_doi_sang_toi_va_logo_theo_giao_dien(client):
+    html = (await client.get("/lich")).text
+    # Nút ẩn khi không có JS (theo hệ máy); script đọc lựa chọn TRƯỚC thẻ <style>.
+    assert 'id="theme-toggle"' in html and "hidden>" in html
+    assert html.index("lcta.theme") < html.index("<style>")
+    assert 'class="logo-light"' in html and 'class="logo-dark"' in html
+    assert ':root[data-theme="dark"]' in html  # CSS ghi đè theo lựa chọn

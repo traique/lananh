@@ -649,10 +649,11 @@ nhập); đăng nhập rồi mới hiện "Quản trị" và "Đăng xuất". Me
 
 Mỗi công cụ là một trang riêng, gọn trong 1 màn hình;
 CSS `static/site.css` được nhúng thẳng vào HTML (không tốn thêm request). Bảng màu
-theo mệnh chủ site (Đại Lâm Mộc) trên nền kem ấm cùng tông nangdecor.com: xanh
-rừng làm màu chủ đạo (bản mệnh Mộc), xanh nước cho hoàng đạo/Thân/thông tin (Thủy
-sinh Mộc), son/cam đất chỉ dùng cho mùng 1, rằm, ngày lễ và lỗi; không dùng trắng
-tinh, xám lạnh hay ánh kim (Kim khắc Mộc). Dark mode nền than ấm, xanh sage dịu.
+theo mệnh chủ site (Đại Lâm Mộc), phong cách ngọc lục bảo: xanh ngọc làm màu chủ
+đạo, khối nhấn nền xanh rừng sâu chuyển sắc với chữ ngà, xanh nước cho hoàng
+đạo/Thân/thông tin (Thủy sinh Mộc), son chỉ cho mùng 1, rằm, ngày lễ và lỗi; nền ngà
+ấm (sáng) / rừng đêm (tối), tiêu đề chữ có chân; không dùng vàng kim (Kim khắc Mộc).
+Header có nút đổi sáng/tối (lưu `localStorage` key `lcta.theme`, không JS thì theo hệ máy).
 Mọi cặp chữ/nền đạt WCAG AA, tối/sáng tự theo hệ máy. Logo LCTA có 2 bản
 `static/logo-light.webp` / `logo-dark.webp` (tô lại tông xanh, tự đổi theo nền) và
 `static/favicon.png`, tạo bằng `scripts/make_site_logo.py` từ ảnh logo gốc nền đen.
