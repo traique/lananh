@@ -10,7 +10,7 @@
   // chặn (chế độ riêng tư) nên luôn bọc try/catch; không có thì theo hệ điều hành.
   (function () {
     try {
-      var saved = localStorage.getItem('admin.theme');
+      var saved = localStorage.getItem('lcta.theme') || localStorage.getItem('admin.theme');
       if (saved === 'dark' || saved === 'light') document.documentElement.dataset.theme = saved;
     } catch (e) {}
   })();
@@ -18,26 +18,26 @@
 <style>
   :root{
     color-scheme:light;
-    --bg:#f3f4f7;
-    --surface:#ffffff;
-    --surface-2:#eef0f4;
-    --border:rgba(15,23,42,.10);
-    --border-strong:rgba(15,23,42,.20);
-    --text:#0f172a;
-    --text-2:#475569;
-    --muted:#64748b;
-    --accent:#2a78d6;
-    --accent-hover:#1c5cab;
-    --accent-soft:rgba(42,120,214,.12);
-    --on-accent:#ffffff;
-    --ok-fg:#0a6b2f;  --ok-bg:rgba(12,163,12,.14);
-    --bad-fg:#b3261e; --bad-bg:rgba(208,59,59,.14);
-    --warn-fg:#7a4f00;--warn-bg:rgba(250,178,25,.20);
-    --series-1:#2a78d6;
-    --series-1-strong:#1c5cab;
-    --grid:#e1e0d9;
-    --axis:#c3c2b7;
-    --shadow:0 1px 2px rgba(15,23,42,.05),0 10px 28px -16px rgba(15,23,42,.22);
+    --bg:#f5f0e6;
+    --surface:#fffcf6;
+    --surface-2:#ece5d6;
+    --border:rgba(19,32,26,.12);
+    --border-strong:rgba(19,32,26,.40);
+    --text:#13201a;
+    --text-2:#34453b;
+    --muted:#5b6a61;
+    --accent:#0b6644;
+    --accent-hover:#084f34;
+    --accent-soft:rgba(11,102,68,.10);
+    --on-accent:#f7f2e7;
+    --ok-fg:#0b6644;  --ok-bg:rgba(11,102,68,.12);
+    --bad-fg:#ad3420; --bad-bg:rgba(173,52,32,.10);
+    --warn-fg:#7a4f00;--warn-bg:rgba(214,150,30,.16);
+    --series-1:#0b6644;
+    --series-1-strong:#084f34;
+    --grid:#e3dccd;
+    --axis:#c9bfac;
+    --shadow:0 1px 2px rgba(19,32,26,.05),0 10px 28px -16px rgba(19,32,26,.22);
     --radius:14px;
     --radius-sm:9px;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -47,35 +47,35 @@
   @media (prefers-color-scheme:dark){
     :root:not([data-theme="light"]){
       color-scheme:dark;
-      --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
-      --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
-      --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
-      --accent:#5598e7; --accent-hover:#6da7ec; --accent-soft:rgba(85,152,231,.16); --on-accent:#0b1220;
-      --ok-fg:#63d47d; --ok-bg:rgba(12,163,12,.20);
-      --bad-fg:#f29088; --bad-bg:rgba(230,103,103,.20);
-      --warn-fg:#f4c85e; --warn-bg:rgba(250,178,25,.16);
-      --series-1:#3987e5; --series-1-strong:#6da7ec; --grid:#2c2c2a; --axis:#383835;
+      --bg:#07110d; --surface:#0e1b15; --surface-2:#15281f;
+      --border:rgba(214,236,222,.10); --border-strong:rgba(214,236,222,.32);
+      --text:#eef4ec; --text-2:#c6d5ca; --muted:#94a89b;
+      --accent:#3fcf8e; --accent-hover:#6adca8; --accent-soft:rgba(63,207,142,.14); --on-accent:#062014;
+      --ok-fg:#3fcf8e; --ok-bg:rgba(63,207,142,.16);
+      --bad-fg:#ff9b85; --bad-bg:rgba(255,155,133,.16);
+      --warn-fg:#f4c85e; --warn-bg:rgba(250,178,25,.14);
+      --series-1:#3fcf8e; --series-1-strong:#6adca8; --grid:#1d3128; --axis:#2b4237;
       --shadow:0 1px 2px rgba(0,0,0,.45),0 10px 28px -16px rgba(0,0,0,.7);
     }
   }
   :root[data-theme="dark"]{
     color-scheme:dark;
-    --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
-    --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
-    --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
-    --accent:#5598e7; --accent-hover:#6da7ec; --accent-soft:rgba(85,152,231,.16); --on-accent:#0b1220;
-    --ok-fg:#63d47d; --ok-bg:rgba(12,163,12,.20);
-    --bad-fg:#f29088; --bad-bg:rgba(230,103,103,.20);
-    --warn-fg:#f4c85e; --warn-bg:rgba(250,178,25,.16);
-    --series-1:#3987e5; --series-1-strong:#6da7ec; --grid:#2c2c2a; --axis:#383835;
+    --bg:#07110d; --surface:#0e1b15; --surface-2:#15281f;
+    --border:rgba(214,236,222,.10); --border-strong:rgba(214,236,222,.32);
+    --text:#eef4ec; --text-2:#c6d5ca; --muted:#94a89b;
+    --accent:#3fcf8e; --accent-hover:#6adca8; --accent-soft:rgba(63,207,142,.14); --on-accent:#062014;
+    --ok-fg:#3fcf8e; --ok-bg:rgba(63,207,142,.16);
+    --bad-fg:#ff9b85; --bad-bg:rgba(255,155,133,.16);
+    --warn-fg:#f4c85e; --warn-bg:rgba(250,178,25,.14);
+    --series-1:#3fcf8e; --series-1-strong:#6adca8; --grid:#1d3128; --axis:#2b4237;
     --shadow:0 1px 2px rgba(0,0,0,.45),0 10px 28px -16px rgba(0,0,0,.7);
   }
 
   *{box-sizing:border-box}
   html{-webkit-text-size-adjust:100%}
   body{
-    margin:0;min-height:100vh;background:var(--bg);color:var(--text);
-    font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    margin:0;min-height:100vh;background:radial-gradient(1100px 520px at 85% -10%,var(--accent-soft),transparent 60%),var(--bg);background-attachment:fixed;color:var(--text);
+    font-family:Manrope,"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
     font-size:14px;line-height:1.5;overflow-x:hidden;
   }
   a{color:var(--accent)}
@@ -89,9 +89,9 @@
     position:sticky;top:0;height:100vh;display:flex;flex-direction:column;
     background:var(--surface);border-right:1px solid var(--border);padding:18px 14px;
   }
-  .brand{display:flex;align-items:center;gap:10px;padding:4px 8px 18px}
+  .brand{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:4px 8px 18px}
   .brand .logo{flex:none;display:block}
-  .brand .logo img{height:34px;width:auto;display:block}
+  .brand .logo img{height:30px;width:auto;display:block}
   .brand b{display:block;font-size:14.5px;letter-spacing:-.01em}
   .brand small{display:block;color:var(--muted);font-size:11.5px;margin-top:1px}
   .nav{display:flex;flex-direction:column;gap:2px;flex:1}
@@ -195,7 +195,7 @@
   }
   .btn:hover{background:var(--surface-2)}
   .btn:active{transform:translateY(1px)}
-  .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+  .btn.primary{background:linear-gradient(150deg,var(--accent),var(--accent-hover));border-color:var(--accent);color:var(--on-accent)}
   .btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
   .btn.danger{color:var(--bad-fg)}
   .btn.sm{padding:4px 10px;font-size:12px;min-height:28px}
@@ -546,7 +546,7 @@ document.querySelectorAll('.theme-toggle').forEach(btn => {
   btn.addEventListener('click', () => {
     const next = effectiveTheme() === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = next;
-    savePref('admin.theme', next);
+    savePref('lcta.theme', next);
     applyThemeLabel();
     if (chartData) renderChart(chartData);
   });

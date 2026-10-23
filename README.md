@@ -653,7 +653,8 @@ theo mệnh chủ site (Đại Lâm Mộc), phong cách ngọc lục bảo: xanh
 đạo, khối nhấn nền xanh rừng sâu chuyển sắc với chữ ngà, xanh nước cho hoàng
 đạo/Thân/thông tin (Thủy sinh Mộc), son chỉ cho mùng 1, rằm, ngày lễ và lỗi; nền ngà
 ấm (sáng) / rừng đêm (tối), tiêu đề chữ có chân; không dùng vàng kim (Kim khắc Mộc).
-Header có nút đổi sáng/tối (lưu `localStorage` key `lcta.theme`, không JS thì theo hệ máy).
+Header có nút đổi sáng/tối (lưu `localStorage` key `lcta.theme`, không JS thì theo hệ máy);
+trang `/admin` và trang đăng nhập admin dùng cùng bảng màu và cùng key này.
 Mọi cặp chữ/nền đạt WCAG AA, tối/sáng tự theo hệ máy. Logo LCTA có 2 bản
 `static/logo-light.webp` / `logo-dark.webp` (tô lại tông xanh, tự đổi theo nền) và
 `static/favicon.png`, tạo bằng `scripts/make_site_logo.py` từ ảnh logo gốc nền đen.

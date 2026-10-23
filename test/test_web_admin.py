@@ -352,3 +352,17 @@ def test_login_page_renders_error_block(client):
     html = web_admin._login_page("Sai tài khoản hoặc mật khẩu.", 401).body.decode()
     assert '<div class="err">Sai tài khoản hoặc mật khẩu.</div>' in html
     assert "<!--ERROR-->" not in html
+
+
+def test_trang_admin_dung_logo_co_phien_ban_va_chung_lua_chon_giao_dien():
+    """/static cache 1 năm (immutable) nên logo trên admin phải có ?v=<hash>;
+    admin và web công khai dùng chung key giao diện lcta.theme."""
+    import web_admin
+
+    page = web_admin._with_logo_version(web_admin._ADMIN_TEMPLATE_PATH.read_text(encoding="utf-8"))
+    v = web_admin._logo_version()
+    assert f"/static/logo-light.webp?v={v}" in page and f"/static/logo-dark.webp?v={v}" in page
+    assert '/static/logo-light.webp"' not in page
+    login = web_admin._login_page("", 200).body.decode()
+    assert f"logo-dark.webp?v={v}" in login and "lcta.theme" in login
+    assert "savePref('lcta.theme'" in page

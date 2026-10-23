@@ -13,6 +13,7 @@
 """
 
 import asyncio
+import functools
 import hashlib
 import hmac
 import html
@@ -286,8 +287,24 @@ api_router = APIRouter(
 )
 
 
+@functools.lru_cache(maxsize=1)
+def _logo_version() -> str:
+    """Hash nội dung logo: /static phục vụ cache 1 năm (immutable) nên URL phải
+    đổi khi đổi logo, nếu không trình duyệt giữ logo cũ mãi."""
+    static = Path(__file__).resolve().parent / "static"
+    data = b"".join((static / n).read_bytes() for n in ("logo-dark.webp", "logo-light.webp"))
+    return hashlib.sha256(data).hexdigest()[:10]
+
+
+def _with_logo_version(page: str) -> str:
+    v = _logo_version()
+    for name in ("logo-light.webp", "logo-dark.webp"):
+        page = page.replace(f'/static/{name}"', f'/static/{name}?v={v}"')
+    return page
+
+
 def _login_page(error: str, status_code: int, next_path: str = "/admin") -> HTMLResponse:
-    login_html = _ADMIN_LOGIN_PATH.read_text(encoding="utf-8").replace(
+    login_html = _with_logo_version(_ADMIN_LOGIN_PATH.read_text(encoding="utf-8")).replace(
         "<!--NEXT-->", html.escape(safe_next(next_path), quote=True)
     )
     if error:
@@ -299,7 +316,7 @@ def _login_page(error: str, status_code: int, next_path: str = "/admin") -> HTML
 async def admin_page(request: Request) -> Response:
     if not await _admin_session_valid(request):
         return _login_page("", 200, request.query_params.get("next", "/admin"))
-    return HTMLResponse(_ADMIN_TEMPLATE_PATH.read_text(encoding="utf-8"))
+    return HTMLResponse(_with_logo_version(_ADMIN_TEMPLATE_PATH.read_text(encoding="utf-8")))
 
 
 @router.post("/admin/login")

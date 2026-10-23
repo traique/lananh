@@ -8,7 +8,7 @@
 <script>
   (function () {
     try {
-      var saved = localStorage.getItem('admin.theme');
+      var saved = localStorage.getItem('lcta.theme') || localStorage.getItem('admin.theme');
       if (saved === 'dark' || saved === 'light') document.documentElement.dataset.theme = saved;
     } catch (e) {}
   })();
@@ -16,38 +16,38 @@
 <style>
   :root{
     color-scheme:light;
-    --bg:#f3f4f7; --surface:#ffffff; --surface-2:#eef0f4;
-    --border:rgba(15,23,42,.10); --border-strong:rgba(15,23,42,.20);
-    --text:#0f172a; --text-2:#475569; --muted:#64748b;
-    --accent:#2a78d6; --accent-hover:#1c5cab; --on-accent:#ffffff;
-    --bad-fg:#b3261e; --bad-bg:rgba(208,59,59,.14);
-    --shadow:0 1px 2px rgba(15,23,42,.05),0 18px 40px -20px rgba(15,23,42,.28);
+    --bg:#f5f0e6; --surface:#fffcf6; --surface-2:#ece5d6;
+    --border:rgba(19,32,26,.12); --border-strong:rgba(19,32,26,.40);
+    --text:#13201a; --text-2:#34453b; --muted:#5b6a61;
+    --accent:#0b6644; --accent-hover:#084f34; --accent-soft:rgba(11,102,68,.10); --on-accent:#f7f2e7;
+    --bad-fg:#ad3420; --bad-bg:rgba(173,52,32,.10);
+    --shadow:0 1px 2px rgba(19,32,26,.05),0 18px 40px -20px rgba(19,32,26,.28);
     --radius:16px; --radius-sm:9px;
   }
   @media (prefers-color-scheme:dark){
     :root:not([data-theme="light"]){
       color-scheme:dark;
-      --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
-      --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
-      --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
-      --accent:#5598e7; --accent-hover:#6da7ec; --on-accent:#0b1220;
-      --bad-fg:#f29088; --bad-bg:rgba(230,103,103,.20);
+      --bg:#07110d; --surface:#0e1b15; --surface-2:#15281f;
+      --border:rgba(214,236,222,.10); --border-strong:rgba(214,236,222,.32);
+      --text:#eef4ec; --text-2:#c6d5ca; --muted:#94a89b;
+      --accent:#3fcf8e; --accent-hover:#6adca8; --accent-soft:rgba(63,207,142,.14); --on-accent:#062014;
+      --bad-fg:#ff9b85; --bad-bg:rgba(255,155,133,.16);
       --shadow:0 1px 2px rgba(0,0,0,.45),0 18px 40px -20px rgba(0,0,0,.8);
     }
   }
   :root[data-theme="dark"]{
     color-scheme:dark;
-    --bg:#0e1015; --surface:#161922; --surface-2:#1e222c;
-    --border:rgba(255,255,255,.09); --border-strong:rgba(255,255,255,.18);
-    --text:#e8eaef; --text-2:#b6bcc8; --muted:#8b93a1;
-    --accent:#5598e7; --accent-hover:#6da7ec; --on-accent:#0b1220;
-    --bad-fg:#f29088; --bad-bg:rgba(230,103,103,.20);
+    --bg:#07110d; --surface:#0e1b15; --surface-2:#15281f;
+    --border:rgba(214,236,222,.10); --border-strong:rgba(214,236,222,.32);
+    --text:#eef4ec; --text-2:#c6d5ca; --muted:#94a89b;
+    --accent:#3fcf8e; --accent-hover:#6adca8; --accent-soft:rgba(63,207,142,.14); --on-accent:#062014;
+    --bad-fg:#ff9b85; --bad-bg:rgba(255,155,133,.16);
     --shadow:0 1px 2px rgba(0,0,0,.45),0 18px 40px -20px rgba(0,0,0,.8);
   }
   *{box-sizing:border-box}
   body{
-    margin:0;min-height:100vh;background:var(--bg);color:var(--text);
-    font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:14px;line-height:1.5;
+    margin:0;min-height:100vh;background:radial-gradient(1100px 520px at 85% -10%,var(--accent-soft),transparent 60%),var(--bg);background-attachment:fixed;color:var(--text);
+    font-family:Manrope,"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:14px;line-height:1.5;
     display:flex;align-items:center;justify-content:center;padding:24px 16px;
   }
   button,input{font:inherit;color:inherit}
@@ -69,7 +69,7 @@
   input::placeholder{color:var(--muted)}
   button{
     width:100%;margin-top:22px;padding:11px;border:1px solid var(--accent);border-radius:var(--radius-sm);
-    font-size:14.5px;font-weight:600;color:var(--on-accent);cursor:pointer;background:var(--accent);min-height:44px;
+    font-size:14.5px;font-weight:600;color:var(--on-accent);cursor:pointer;background:linear-gradient(150deg,var(--accent),var(--accent-hover));min-height:44px;border-radius:999px;
     transition:background .12s;
   }
   button:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
