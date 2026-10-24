@@ -1,15 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="narrow">
-  <h1>Ngày lễ sắp tới</h1>
-  <p class="lead">Ngày lễ âm lịch và dương lịch trong 12 tháng tới.</p>
-  <ul class="panel holiday-list" role="list">
-    {% for h in holidays %}
-    <li>
-      <div><strong>{{ h.name }}</strong><span class="tag">{{ "Âm lịch" if h.isLunar else "Dương lịch" }}</span></div>
-      <div class="muted"><a href="/lich?ngay={{ h.date.isoformat() }}">{{ h.weekday }} {{ h.date.strftime('%d/%m/%Y') }}</a> · còn {{ h.days }} ngày</div>
-    </li>
-    {% endfor %}
-  </ul>
+<div class="title-row">
+  <div>
+    <h1>Ngày lễ sắp tới</h1>
+    <p class="sub">Ngày lễ âm lịch và dương lịch trong 12 tháng tới.</p>
+  </div>
 </div>
+<section class="panel" aria-label="Danh sách ngày lễ">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Ngày lễ</th><th scope="col">Ngày</th><th scope="col">Theo lịch</th><th scope="col" class="n">Còn</th></tr></thead>
+      <tbody>
+        {% for h in holidays %}
+        <tr>
+          <td>{{ h.name }}</td>
+          <td><a href="/lich?ngay={{ h.date.isoformat() }}">{{ h.weekday }}, {{ h.date.strftime('%d/%m/%Y') }}</a></td>
+          <td>{% if h.isLunar %}<span class="pill">Âm lịch</span>{% else %}<span class="pill">Dương lịch</span>{% endif %}</td>
+          <td class="n">{% if h.days == 0 %}Hôm nay{% else %}{{ h.days }} ngày{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endblock %}

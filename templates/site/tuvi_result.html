@@ -1,44 +1,46 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="result-head">
+<div class="title-row">
   <div>
     <h1>Lá số {{ chart.yinYang }}</h1>
-    <p class="lead">{% if chart.solarDate %}Sinh {{ chart.solarDate | vn_date }} dương lịch, tức {% endif %}{{ chart.lunarDate.text }} âm lịch, {{ chart.hourText }}.</p>
+    <p class="sub">{% if chart.solarDate %}Sinh {{ chart.solarDate | vn_date }} dương lịch, tức {% endif %}{{ chart.lunarDate.text }} âm lịch, {{ chart.hourText }}.</p>
   </div>
-  <a class="btn btn-secondary" href="/tu-vi">Lập lá số khác</a>
+  <div class="title-actions"><a class="btn" href="/tu-vi">Lập lá số khác</a></div>
 </div>
-<div class="chart">
-  <div class="chart-center">
-    <dl class="facts">
-      <dt>Bản mệnh</dt><dd>{{ chart.napAm }} ({{ chart.element }})</dd>
-      <dt>Cục</dt><dd>{{ chart.cuc }} · {{ chart.cucRelation }}</dd>
-      <dt>Mệnh chủ</dt><dd>{{ chart.menhChu }}</dd>
-      <dt>Thân chủ</dt><dd>{{ chart.thanChu }}</dd>
-      <dt>Thân cư</dt><dd>{{ chart.thanPalace }}</dd>
-      <dt>Đại hạn</dt><dd>{{ "Thuận" if chart.isThuan else "Nghịch" }}, khởi {{ chart.palaces[0].daiHan.from }} tuổi</dd>
-      <dt>Tứ hóa</dt><dd>{% for k, v in chart.tuHoa.items() %}{{ k }}: {{ v }}{% if not loop.last %}; {% endif %}{% endfor %}</dd>
-    </dl>
-    <h2 class="small-title">Sao chính ở Mệnh</h2>
-    {% if chart.isMenhEmpty %}
-    <p class="small"><strong>Vô chính diệu:</strong> {{ chart.menhEmptyNote }}</p>
-    {% else %}
-    {% for n in chart.menhNotes %}<p class="small"><strong>{{ n.star }}{% if n.brightnessName %} ({{ n.brightnessName }}){% endif %}:</strong> {{ n.meaning }}</p>{% endfor %}
-    {% endif %}
-    <p class="star-legend"><span class="sr-only">Chú giải độ sáng: </span>{% for k, v in chart.brightnessLegend.items() %}<span><span class="lvl {{ k | lower }}">{{ k }}</span> {{ v }}</span>{% endfor %}</p>
+<section class="panel" aria-label="Lá số 12 cung">
+  <div class="chart">
+    <div class="chart-center">
+      <dl class="facts">
+        <dt>Bản mệnh</dt><dd>{{ chart.napAm }} ({{ chart.element }})</dd>
+        <dt>Cục</dt><dd>{{ chart.cuc }} · {{ chart.cucRelation }}</dd>
+        <dt>Mệnh chủ</dt><dd>{{ chart.menhChu }}</dd>
+        <dt>Thân chủ</dt><dd>{{ chart.thanChu }}</dd>
+        <dt>Thân cư</dt><dd>{{ chart.thanPalace }}</dd>
+        <dt>Đại hạn</dt><dd>{{ "Thuận" if chart.isThuan else "Nghịch" }}, khởi {{ chart.palaces[0].daiHan.from }} tuổi</dd>
+        <dt>Tứ hóa</dt><dd>{% for k, v in chart.tuHoa.items() %}{{ k }}: {{ v }}{% if not loop.last %}; {% endif %}{% endfor %}</dd>
+      </dl>
+      <h2>Sao chính ở Mệnh</h2>
+      {% if chart.isMenhEmpty %}
+      <p class="small"><strong>Vô chính diệu:</strong> {{ chart.menhEmptyNote }}</p>
+      {% else %}
+      <div class="prose small">{% for n in chart.menhNotes %}<p><strong>{{ n.star }}{% if n.brightnessName %} ({{ n.brightnessName }}){% endif %}:</strong> {{ n.meaning }}</p>{% endfor %}</div>
+      {% endif %}
+      <p class="star-legend"><span class="sr-only">Chú giải độ sáng: </span>{% for k, v in chart.brightnessLegend.items() %}<span><span class="lvl {{ k | lower }}">{{ k }}</span> {{ v }}</span>{% endfor %}</p>
+    </div>
+    {% for p in chart.palaces %}
+    <article class="palace b{{ p.branchIndex }}{% if loop.first %} is-menh{% endif %}{% if p.isThan %} is-than{% endif %}" aria-label="Cung {{ p.name }}{% if p.isThan %}, Thân cư{% endif %}">
+      <header><span>{{ p.name }}{% if p.isThan %} <span class="pill sm">Thân</span>{% endif %}</span><span class="branch">{{ p.stem }} {{ p.branch }}</span></header>
+      <p class="main">
+        {% set mains = p.stars | selectattr("isMain") | list %}
+        {% if mains %}{% for s in mains %}{{ s.name }}{% if s.brightness %}<span class="lvl {{ s.brightness | lower }}" title="{{ s.brightnessName }}"><span class="sr-only"> ({{ s.brightnessName }})</span><span aria-hidden="true">{{ s.brightness }}</span></span>{% endif %}{% if s.hoa %} <span class="pill sm pos">{{ s.hoa }}</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}<span class="empty">Vô chính diệu</span>{% endif %}
+      </p>
+      {% set minors = p.stars | rejectattr("isMain") | list %}
+      {% if minors %}<p class="minor">{% for s in minors %}{{ s.name }}{% if s.brightness %}<span class="lvl {{ s.brightness | lower }}" title="{{ s.brightnessName }}"><span class="sr-only"> ({{ s.brightnessName }})</span><span aria-hidden="true">{{ s.brightness }}</span></span>{% endif %}{% if s.hoa %} ({{ s.hoa }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+      <footer><span>ĐH {{ p.daiHan.from }}-{{ p.daiHan.to }}</span><span>{{ p.trangSinh }}</span>{% if p.hasTuan %}<span class="pill sm warn">Tuần</span>{% endif %}{% if p.hasTriet %}<span class="pill sm warn">Triệt</span>{% endif %}</footer>
+    </article>
+    {% endfor %}
   </div>
-  {% for p in chart.palaces %}
-  <article class="palace b{{ p.branchIndex }}{% if loop.first %} is-menh{% endif %}{% if p.isThan %} is-than{% endif %}" aria-label="Cung {{ p.name }}{% if p.isThan %}, Thân cư{% endif %}">
-    <header><span>{{ p.name }}{% if p.isThan %} <span class="tag good">Thân</span>{% endif %}</span><span class="branch">{{ p.stem }} {{ p.branch }}</span></header>
-    <p class="main">
-      {% set mains = p.stars | selectattr("isMain") | list %}
-      {% if mains %}{% for s in mains %}{{ s.name }}{% if s.brightness %}<span class="lvl {{ s.brightness | lower }}" title="{{ s.brightnessName }}"><span class="sr-only"> ({{ s.brightnessName }})</span><span aria-hidden="true">{{ s.brightness }}</span></span>{% endif %}{% if s.hoa %} <span class="tag accent">{{ s.hoa }}</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}<span class="empty">Vô chính diệu</span>{% endif %}
-    </p>
-    {% set minors = p.stars | rejectattr("isMain") | list %}
-    {% if minors %}<p class="minor">{% for s in minors %}{{ s.name }}{% if s.brightness %}<span class="lvl {{ s.brightness | lower }}" title="{{ s.brightnessName }}"><span class="sr-only"> ({{ s.brightnessName }})</span><span aria-hidden="true">{{ s.brightness }}</span></span>{% endif %}{% if s.hoa %} ({{ s.hoa }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
-    <footer><span>ĐH {{ p.daiHan.from }}-{{ p.daiHan.to }}</span><span>{{ p.trangSinh }}</span>{% if p.hasTuan %}<span class="tag warn">Tuần</span>{% endif %}{% if p.hasTriet %}<span class="tag warn">Triệt</span>{% endif %}</footer>
-  </article>
-  {% endfor %}
-</div>
+</section>
 {% include "_ai_box.html" %}
-<p class="muted small mt-4">{{ chart.disclaimer }} {{ chart.note }}</p>
+<p class="note-line">{{ chart.disclaimer | replace("ℹ️ ", "") }} {{ chart.note }}</p>
 {% endblock %}

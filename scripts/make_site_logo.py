@@ -31,9 +31,9 @@ def recolor(lo_hex, hi_hex, alpha_floor, alpha_gamma):
     return Image.fromarray((img * 255).round().astype(np.uint8), "RGBA")
 
 
-# Nền sáng: ngọc lục bảo đậm -> ngọc sáng (tương phản tốt trên nền ngà #fffcf6).
+# Nền sáng: ngọc lục bảo đậm -> ngọc sáng (tương phản tốt trên nền trắng #ffffff).
 light = recolor("053a25", "16a06b", alpha_floor=0.22, alpha_gamma=1.3)
-# Nền tối: ngọc -> ngọc nhạt ánh bạc trên nền rừng đêm #07110d, giữ hào quang mờ.
+# Nền tối: ngọc -> ngọc nhạt ánh bạc trên nền than #0e100f, giữ hào quang mờ.
 dark = recolor("12845a", "b9f3d6", alpha_floor=0.03, alpha_gamma=1.0)
 bbox = dark.getchannel("A").point(lambda v: 255 if v > 40 else 0).getbbox()
 pad = 12

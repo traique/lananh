@@ -67,18 +67,41 @@ _STATIC_FILES = {
     "logo-dark.webp": "image/webp",
     "favicon.png": "image/png",
 }
+# Thanh bên: (nhóm, [(đường dẫn, nhãn, biểu tượng)]); biểu tượng là lớp .i-* trong site.css.
 _NAV = [
-    ("/", "Trang chủ"),
-    ("/lich", "Lịch"),
-    ("/thoi-tiet", "Thời tiết"),
-    ("/tu-vi", "Tử vi"),
-    ("/than-so-hoc", "Thần số học"),
+    ("", [("/", "Hôm nay", "home")]),
+    (
+        "Lịch",
+        [
+            ("/lich", "Lịch tháng", "calendar"),
+            ("/lich/hoi", "Hỏi lịch", "ask"),
+            ("/lich/doi-ngay", "Đổi ngày âm", "swap"),
+            ("/lich/ngay-le", "Ngày lễ", "flag"),
+        ],
+    ),
+    (
+        "Tra cứu",
+        [
+            ("/thoi-tiet", "Thời tiết", "cloud"),
+            ("/tu-vi", "Lá số tử vi", "chart"),
+            ("/than-so-hoc", "Thần số học", "number"),
+        ],
+    ),
 ]
-_LICH_TABS = [
-    ("/lich", "Lịch tháng"),
-    ("/lich/hoi", "Hỏi lịch"),
-    ("/lich/doi-ngay", "Đổi ngày âm"),
-    ("/lich/ngay-le", "Ngày lễ"),
+# 12 giờ địa chi theo thứ tự trong ngày (Tý vắt qua nửa đêm).
+_HOURS = [
+    ("Tý", "23-1h"),
+    ("Sửu", "1-3h"),
+    ("Dần", "3-5h"),
+    ("Mão", "5-7h"),
+    ("Thìn", "7-9h"),
+    ("Tỵ", "9-11h"),
+    ("Ngọ", "11-13h"),
+    ("Mùi", "13-15h"),
+    ("Thân", "15-17h"),
+    ("Dậu", "17-19h"),
+    ("Tuất", "19-21h"),
+    ("Hợi", "21-23h"),
 ]
 _ASK_EXAMPLES = [
     "rằm tháng 8",
@@ -200,9 +223,7 @@ def _render(name: str, *, title: str, description: str, active: str, **ctx) -> H
 
 
 def _render_lich(name: str, *, tab: str, title: str, description: str, **ctx) -> HTMLResponse:
-    return _render(
-        name, title=title, description=description, active="/lich", tabs=_LICH_TABS, tab=tab, **ctx
-    )
+    return _render(name, title=title, description=description, active=tab, **ctx)
 
 
 def wants_html(request: Request) -> bool:
@@ -237,16 +258,35 @@ async def home(request: Request) -> Response:
     return home_page()
 
 
+def _hour_strip(lucky_hours: list[str], hour: int) -> list[dict]:
+    """12 giờ địa chi của ngày: giờ hoàng đạo (từ luckyHours dạng "Dần (3h-5h)")
+    và giờ đang là lúc này (giờ VN, 0-23)."""
+    good = {h.split(" (")[0] for h in lucky_hours}
+    now = (hour + 1) // 2 % 12
+    return [
+        {"name": name, "span": span, "isGood": name in good, "isNow": i == now}
+        for i, (name, span) in enumerate(_HOURS)
+    ]
+
+
 def home_page() -> HTMLResponse:
-    today = site_data.today()
+    now = site_data.now()
+    today = now.date()
+    info = site_data.day_info(today)
+    hours = _hour_strip(info["luckyHours"], now.hour)
+    # Giờ hoàng đạo kế tiếp tính từ giờ hiện tại (kể cả giờ đang là), không vòng sang ngày mai.
+    current = next(i for i, h in enumerate(hours) if h["isNow"])
+    upcoming = [h for h in hours[current:] if h["isGood"]] if now.hour != 23 else []
     return _render(
         "home.html",
         title="Lịch âm, tử vi, thần số học",
         description="Tra lịch âm dương, ngày tốt xấu, lá số tử vi và thần số học - tính bằng thuật toán.",
         active="/",
-        today=site_data.day_info(today),
+        today=info,
         today_date=today,
-        next_holiday=_upcoming_holidays(today, 1)[0],
+        hours=hours,
+        next_good=upcoming[0] if upcoming else None,
+        holidays=_upcoming_holidays(today, 3),
     )
 
 
@@ -398,9 +438,17 @@ async def weather_page(request: Request) -> HTMLResponse:
     if data and data.get("error"):
         error, data = f"Không tìm thấy địa điểm “{place}”. Thử gõ tên tỉnh/thành phố.", None
     if data:
-        for i, day in enumerate(data.get("daily") or []):
+        daily = data.get("daily") or []
+        temps = [float(t) for d in daily for t in (d.get("min_c"), d.get("max_c")) if t is not None]
+        low, span = (min(temps), (max(temps) - min(temps)) or 1) if temps else (0, 1)
+        for i, day in enumerate(daily):
             day["label"] = "Hôm nay" if i == 0 else ("Ngày mai" if i == 1 else day["weekday"])
             day["short"] = dt.date.fromisoformat(day["date"]).strftime("%d/%m")
+            # Vạch thấp-cao của ngày trên thang chung cả tuần (phần trăm), thiếu số thì bỏ vạch.
+            if day.get("min_c") is not None and day.get("max_c") is not None:
+                left = (float(day["min_c"]) - low) / span * 100
+                width = (float(day["max_c"]) - low) / span * 100 - left
+                day["bar"] = (round(left), max(round(width), 4))
     return _render(
         "thoi_tiet.html",
         title=f"Thời tiết {data['location']}" if data else "Thời tiết",
@@ -454,6 +502,7 @@ def _tuvi_form(form: dict, error: str = "") -> HTMLResponse:
         description="An lá số Tử Vi Đẩu Số: 12 cung, chính tinh, phụ tinh, đại hạn.",
         active="/tu-vi",
         hours=site_data.HOUR_OPTIONS,
+        hour_table=[(name, *(f"{h}h" for h in span[:-1].split("-"))) for name, span in _HOURS],
         form=form,
         error=error,
     )

@@ -643,20 +643,25 @@ lịch, thời tiết, tử vi, thần số học KHÔNG cần đăng nhập và
 - thêm/xoá địa điểm hay xem ở `/thoi-tiet` (lưu trong bảng `settings`, key
   `web_weather_places`, tối đa 16 mục, cache RAM - `services/weather_places.py`).
 
-Chưa đăng nhập thì header có nút "Đăng nhập" (về lại đúng trang sau khi đăng
+Chưa đăng nhập thì cuối thanh bên có "Đăng nhập" (về lại đúng trang sau khi đăng
 nhập); đăng nhập rồi mới hiện "Quản trị" và "Đăng xuất". Menu admin có nhóm
 "Công cụ web" sang các trang này.
 
-Mỗi công cụ là một trang riêng, gọn trong 1 màn hình;
-CSS `static/site.css` được nhúng thẳng vào HTML (không tốn thêm request). Bảng màu
-theo mệnh chủ site (Đại Lâm Mộc), phong cách ngọc lục bảo: xanh ngọc làm màu chủ
-đạo, khối nhấn nền xanh rừng sâu chuyển sắc với chữ ngà, xanh nước cho hoàng
-đạo/Thân/thông tin (Thủy sinh Mộc), son chỉ cho mùng 1, rằm, ngày lễ và lỗi; nền ngà
-ấm (sáng) / rừng đêm (tối), tiêu đề chữ có chân; không dùng vàng kim (Kim khắc Mộc).
-Header có nút đổi sáng/tối (lưu `localStorage` key `lcta.theme`, không JS thì theo hệ máy);
-trang `/admin` và trang đăng nhập admin dùng cùng bảng màu và cùng key này.
-Mọi cặp chữ/nền đạt WCAG AA, tối/sáng tự theo hệ máy. Logo LCTA có 2 bản
-`static/logo-light.webp` / `logo-dark.webp` (tô lại tông xanh, tự đổi theo nền) và
+Giao diện dạng ứng dụng (thanh bên trái nhóm Lịch / Tra cứu, cột nội dung 1100px
+lưới 12 cột), dựng theo skill ui-craft: khối nội dung tông xanh lá xám (sage) trên
+nền trắng, cách nhau bằng bậc tông - không bóng, không gradient, không kính. Một màu
+nhấn xanh rừng (mệnh Đại Lâm Mộc) chỉ đặt trên dữ liệu: giờ hoàng đạo, hôm nay,
+cung Mệnh, số chủ đạo; nút chính xanh đen; đỏ chỉ cho lỗi, độ sáng hãm. Chữ Be
+Vietnam Pro (Google Fonts, có subset tiếng Việt), tiêu đề ngày ở trang chủ dùng
+Newsreader. Trang chủ lấy ngày hôm nay làm tiêu đề, kèm dải 12 giờ địa chi tô
+giờ hoàng đạo và đánh dấu giờ hiện tại. Trên điện thoại thanh bên gập thành thanh
+trên 56px + bảng danh mục toàn màn (không JS vẫn mở được bằng `#menu`).
+CSS `static/site.css` được nhúng thẳng vào HTML (không tốn thêm request tới server;
+phông chữ tải từ Google). Nút đổi sáng/tối ở cuối thanh bên (lưu `localStorage` key
+`lcta.theme`, không JS thì theo hệ máy); trang `/admin`, trang đăng nhập admin và
+các trang Quyền riêng tư / Điều khoản / Xoá dữ liệu dùng cùng bảng màu và key này.
+Mọi chữ đạt ≥ 4.5:1 trên nền của nó, viền ô nhập ≥ 3:1, ở cả sáng lẫn tối. Logo
+LCTA có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo nền) và
 `static/favicon.png`, tạo bằng `scripts/make_site_logo.py` từ ảnh logo gốc nền đen.
 
 | Đường dẫn | Nội dung |

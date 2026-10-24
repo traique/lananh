@@ -179,7 +179,7 @@ async def test_trang_lich_tach_rieng(client):
     ask = await client.get("/lich/hoi", params={"q": "trung thu"})
     assert "Tết Trung thu" in ask.text and 'aria-current="page">Hỏi lịch' in ask.text
     conv = await client.get("/lich/doi-ngay", params={"am": "15/8/2027"})
-    assert "Thứ Tư 15/09/2027" in conv.text
+    assert "Thứ Tư, 15/09/2027" in conv.text
     bad = await client.get("/lich/doi-ngay", params={"am": "30/2/2026"})
     assert 'role="alert"' in bad.text and "chỉ có 29 ngày" in bad.text
     holidays = await client.get("/lich/ngay-le")
@@ -512,12 +512,15 @@ async def test_api_body_qua_lon(client):
 async def test_trang_khong_keo_css_rieng_anh_cache_dai(client):
     """CSS nhúng sẵn trong HTML; chỉ logo/favicon là file riêng, có ?v=<hash> và
     cache 1 năm. Trước đây mỗi lượt xem tải 3 file song song, vài người xem
-    cùng lúc vượt --limit-concurrency của uvicorn -> 503 cả webhook Telegram/Zalo."""
+    cùng lúc vượt --limit-concurrency của uvicorn -> 503 cả webhook Telegram/Zalo.
+    Phông chữ tải từ Google Fonts (máy chủ khác, không tính vào giới hạn đó)."""
     import re
 
     for path in ("/lich", "/lich/hoi", "/tu-vi", "/than-so-hoc"):
         html = (await client.get(path)).text
-        assert "<style>" in html and 'rel="stylesheet"' not in html
+        sheets = re.findall(r'<link rel="stylesheet" href="([^"]+)"', html)
+        assert "<style>" in html and html.count('rel="stylesheet"') == len(sheets)
+        assert all(h.startswith("https://fonts.googleapis.com/") for h in sheets), path
         refs = re.findall(r'(?:src|href|srcset)="(/static/[^"]+)"', html)
         assert refs and all(re.search(r"\?v=[0-9a-f]{10}$", r) for r in refs), path
     r = await client.get("/static/logo-dark.webp")
@@ -540,3 +543,32 @@ async def test_nut_doi_sang_toi_va_logo_theo_giao_dien(client):
     assert html.index("lcta.theme") < html.index("<style>")
     assert 'class="logo-light"' in html and 'class="logo-dark"' in html
     assert ':root[data-theme="dark"]' in html  # CSS ghi đè theo lựa chọn
+
+
+def test_dai_gio_hoang_dao_trang_chu():
+    lucky = [
+        "Dần (3h-5h)",
+        "Mão (5h-7h)",
+        "Tỵ (9h-11h)",
+        "Thân (15h-17h)",
+        "Tuất (19h-21h)",
+        "Hợi (21h-23h)",
+    ]
+    hours = web_site._hour_strip(lucky, 9)
+    assert [h["name"] for h in hours if h["isGood"]] == ["Dần", "Mão", "Tỵ", "Thân", "Tuất", "Hợi"]
+    assert [h["name"] for h in hours if h["isNow"]] == ["Tỵ"]
+    # 23h và 0h đều là giờ Tý (vắt qua nửa đêm).
+    assert (
+        web_site._hour_strip(lucky, 23)[0]["isNow"] and web_site._hour_strip(lucky, 0)[0]["isNow"]
+    )
+    assert web_site._hour_strip(lucky, 22)[11]["isNow"]
+
+
+def test_trang_chu_co_dai_12_gio():
+    import re
+
+    html = bytes(web_site.home_page().body).decode()
+    assert (
+        len(re.findall(r'class="hour[ "]', html)) == 12 and html.count('aria-current="time"') == 1
+    )
+    assert 'href="/" aria-current="page"' in html  # mục Hôm nay trên thanh bên

@@ -1,16 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="narrow">
-  <h1>Lá số tử vi</h1>
-  <p class="lead">An lá số Tử Vi Đẩu Số theo cách phổ biến ở Việt Nam (Thái Thứ Lang): 14 chính tinh kèm độ sáng, phụ tinh, Tứ hóa, Tuần Triệt, đại hạn. Thông tin chỉ dùng để tính, không lưu lại.</p>
-  {% include "_errors.html" %}
-  <form class="panel form" action="/tu-vi" method="post" novalidate>
+<div class="title-row">
+  <div>
+    <h1>Lá số tử vi</h1>
+    <p class="sub">An lá số Tử Vi Đẩu Số theo cách phổ biến ở Việt Nam (Thái Thứ Lang). Thông tin chỉ dùng để tính, không lưu lại.</p>
+  </div>
+</div>
+<div class="grid">
+  <form class="panel form s7" action="/tu-vi" method="post" novalidate>
+    {% include "_errors.html" %}
     <fieldset>
       <legend>Ngày sinh <span aria-hidden="true">*</span></legend>
       <div class="date-parts">
-        <div class="field"><label for="ngay">Ngày</label><input type="number" id="ngay" name="ngay" value="{{ form.ngay }}" min="1" max="31" inputmode="numeric" required aria-required="true"{% if error %} aria-describedby="form-error"{% endif %}></div>
-        <div class="field"><label for="thang">Tháng</label><input type="number" id="thang" name="thang" value="{{ form.thang }}" min="1" max="12" inputmode="numeric" required aria-required="true"></div>
-        <div class="field"><label for="nam">Năm</label><input type="number" id="nam" name="nam" value="{{ form.nam }}" min="1900" max="2100" inputmode="numeric" required aria-required="true"></div>
+        <div class="field"><label for="ngay">Ngày</label><input class="input" type="number" id="ngay" name="ngay" value="{{ form.ngay }}" min="1" max="31" inputmode="numeric" required aria-required="true"{% if error %} aria-describedby="form-error"{% endif %}></div>
+        <div class="field"><label for="thang">Tháng</label><input class="input" type="number" id="thang" name="thang" value="{{ form.thang }}" min="1" max="12" inputmode="numeric" required aria-required="true"></div>
+        <div class="field"><label for="nam">Năm</label><input class="input" type="number" id="nam" name="nam" value="{{ form.nam }}" min="1900" max="2100" inputmode="numeric" required aria-required="true"></div>
       </div>
     </fieldset>
     <fieldset>
@@ -25,7 +29,7 @@
     <div class="form-row">
       <div class="field">
         <label for="gio">Giờ sinh <span aria-hidden="true">*</span></label>
-        <select id="gio" name="gio" required aria-required="true" aria-describedby="gio-hint">
+        <select class="input" id="gio" name="gio" required aria-required="true" aria-describedby="gio-hint">
           {% for idx, name, span in hours %}
           <option value="{{ idx }}"{% if form.gio == idx|string %} selected{% endif %}>Giờ {{ name }} ({{ span }})</option>
           {% endfor %}
@@ -40,7 +44,19 @@
         </div>
       </fieldset>
     </div>
-    <div><button class="btn" type="submit">An lá số</button></div>
+    <div class="form-actions"><button class="btn primary" type="submit">An lá số</button></div>
   </form>
+  <section class="panel s5" aria-labelledby="hours-title">
+    <header><h2 id="hours-title">Giờ sinh theo địa chi</h2><span class="meta">giờ đồng hồ Việt Nam</span></header>
+    <table class="compact">
+      <caption class="sr-only">Mười hai giờ địa chi và khoảng giờ tương ứng</caption>
+      <thead><tr><th scope="col">Giờ</th><th scope="col" class="n">Từ</th><th scope="col" class="n">Đến</th></tr></thead>
+      <tbody>
+        {% for name, start, end in hour_table %}
+        <tr><td>{{ name }}</td><td class="n">{{ start }}</td><td class="n">{{ end }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
 </div>
 {% endblock %}
