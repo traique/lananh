@@ -20,9 +20,11 @@
     <fieldset>
       <legend>Lịch của ngày sinh</legend>
       <div class="choices">
-        <label><input type="radio" name="lich" value="duong"{% if form.lich != "am" %} checked{% endif %}> Dương lịch</label>
-        <label><input type="radio" name="lich" value="am"{% if form.lich == "am" %} checked{% endif %}> Âm lịch</label>
-        <label><input type="checkbox" name="nhuan" value="1"{% if form.nhuan %} checked{% endif %}> Tháng nhuận</label>
+        <div class="segmented">
+          <label><input type="radio" name="lich" value="duong"{% if form.lich != "am" %} checked{% endif %}>Dương lịch</label>
+          <label><input type="radio" name="lich" value="am"{% if form.lich == "am" %} checked{% endif %}>Âm lịch</label>
+        </div>
+        <label class="switch-row"><input type="checkbox" name="nhuan" value="1"{% if form.nhuan %} checked{% endif %}><span class="switch" aria-hidden="true"></span>Tháng nhuận</label>
       </div>
       <span class="hint">Tháng nhuận: sinh ngày 1-15 an như tháng trước, từ 16 an như tháng sau.</span>
     </fieldset>
@@ -38,9 +40,9 @@
       </div>
       <fieldset>
         <legend>Giới tính <span aria-hidden="true">*</span></legend>
-        <div class="choices">
-          <label><input type="radio" name="gioi" value="male"{% if form.gioi != "female" %} checked{% endif %}> Nam</label>
-          <label><input type="radio" name="gioi" value="female"{% if form.gioi == "female" %} checked{% endif %}> Nữ</label>
+        <div class="segmented">
+          <label><input type="radio" name="gioi" value="male"{% if form.gioi != "female" %} checked{% endif %}>Nam</label>
+          <label><input type="radio" name="gioi" value="female"{% if form.gioi == "female" %} checked{% endif %}>Nữ</label>
         </div>
       </fieldset>
     </div>

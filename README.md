@@ -656,6 +656,11 @@ Vietnam Pro (Google Fonts, có subset tiếng Việt), tiêu đề ngày ở tra
 Newsreader. Trang chủ lấy ngày hôm nay làm tiêu đề, kèm dải 12 giờ địa chi tô
 giờ hoàng đạo và đánh dấu giờ hiện tại. Trên điện thoại thanh bên gập thành thanh
 trên 56px + bảng danh mục toàn màn (không JS vẫn mở được bằng `#menu`).
+Điều khiển dùng chung một bộ (web và `/admin`): nút dạng viên thuốc (38px trên web, 36/32px
+trong admin), một nút chính xanh đen mỗi màn, nút phụ nền trắng viền 1px; chọn một trong vài
+giá trị bằng segmented (âm/dương lịch, nam/nữ, khoảng 24 giờ/7 ngày/30 ngày); mọi bật/tắt là
+công tắc `role="switch"` 32x20 (xanh đen khi bật); ô nhập + nút Lưu/Tra dính liền; nút bị khoá
+vẫn đọc được. Chuyển động chỉ là phản hồi: bấm 120ms, rê chuột 150ms, công tắc/bảng 200ms.
 CSS `static/site.css` được nhúng thẳng vào HTML (không tốn thêm request tới server;
 phông chữ tải từ Google). Nút đổi sáng/tối ở cuối thanh bên (lưu `localStorage` key
 `lcta.theme`, không JS thì theo hệ máy); trang `/admin`, trang đăng nhập admin và

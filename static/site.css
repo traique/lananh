@@ -44,7 +44,10 @@
   --pad: 20px;          /* đệm trong khối */
   --radius: 16px;       /* khối */
   --radius-inner: 8px;  /* thẻ trong khối, ô lịch */
-  --control-h: 40px;
+  --control-h: 38px;   /* mọi nút, ô nhập, segmented */
+  --seg-on: #ffffff;   /* ô đang chọn của segmented */
+  --knob: #ffffff;     /* núm công tắc */
+  --t-press: 120ms; --t-hover: 150ms; --t-ui: 200ms;
   --nav-row: 36px;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -60,6 +63,7 @@
   --pill-neg-bg: #321c1a; --pill-neg-ink: #f1998f;
   --pill-warn-bg: #2e2814; --pill-warn-ink: #e6c46b;
   --pill-neutral-bg: #232825; --pill-neutral-ink: #d5dbd6;
+  --seg-on: #2c322e; --knob: #0e100f;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -74,6 +78,7 @@
     --pill-neg-bg: #321c1a; --pill-neg-ink: #f1998f;
     --pill-warn-bg: #2e2814; --pill-warn-ink: #e6c46b;
     --pill-neutral-bg: #232825; --pill-neutral-ink: #d5dbd6;
+    --seg-on: #2c322e; --knob: #0e100f;
   }
 }
 
@@ -123,7 +128,7 @@ a { color: inherit; text-underline-offset: 3px; }
 .nav-item {
   display: flex; align-items: center; gap: 10px; height: var(--nav-row); padding: 0 10px; margin-bottom: 2px;
   border-radius: 10px; color: var(--muted); text-decoration: none;
-  transition: background-color 150ms ease, color 150ms ease;
+  transition: background-color var(--t-hover) ease, color var(--t-hover) ease;
 }
 .nav-item::before, .side-action[class*="i-"]::before {
   content: ""; width: 16px; height: 16px; flex: none; background: currentColor;
@@ -153,13 +158,7 @@ a { color: inherit; text-underline-offset: 3px; }
 .side-action:hover { background: var(--raised); color: var(--text); }
 .side-action svg { width: 16px; height: 16px; flex: none; }
 .side-action[hidden] { display: none; }
-.theme-toggle .moon { display: none; }
-:root[data-theme="dark"] .theme-toggle .sun { display: none; }
-:root[data-theme="dark"] .theme-toggle .moon { display: block; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .theme-toggle .sun { display: none; }
-  :root:not([data-theme="light"]) .theme-toggle .moon { display: block; }
-}
+.side-action .switch { margin-left: auto; }
 
 .canvas { min-width: 0; padding: 40px 32px 32px; display: flex; flex-direction: column; min-height: 100vh; }
 .canvas > .column { width: 100%; }
@@ -252,14 +251,56 @@ td .sub { display: block; color: var(--muted); font-size: var(--fs-small); }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   height: var(--control-h); padding: 0 18px; border-radius: 999px; border: 1px solid var(--control);
+  background: var(--sheet);
   background: transparent; color: var(--text); font-weight: 500; text-decoration: none; cursor: pointer;
-  white-space: nowrap; transition: background-color 150ms ease, transform 120ms var(--ease);
+  white-space: nowrap; transition: background-color var(--t-hover) ease, transform var(--t-press) var(--ease);
 }
 .btn:hover { background: var(--raised); }
 .btn:active { transform: translateY(1px); }
 .btn.primary { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); }
 .btn.primary:hover { background: var(--primary); opacity: 0.9; }
-.btn[disabled] { cursor: progress; opacity: 0.75; }
+/* nút đang chạy / bị khoá vẫn đọc được, không làm mờ */
+.btn[disabled] { cursor: progress; background: var(--raised); border-color: transparent; color: var(--muted); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover { background: var(--raised); }
+/* nhóm nút dính liền (‹ Hôm nay ›): chung viền, góc trong vuông */
+.btn-group { display: inline-flex; }
+.btn-group .btn { border-radius: 0; padding: 0 14px; }
+.btn-group .btn + .btn { margin-left: -1px; }
+.btn-group .btn:first-child { border-radius: 999px 0 0 999px; }
+.btn-group .btn:last-child { border-radius: 0 999px 999px 0; }
+.btn-group .btn:focus-visible { position: relative; z-index: 1; }
+
+/* segmented: chọn một trong vài giá trị (radio thật bên trong, chạy cả khi tắt JS) */
+.segmented {
+  display: inline-flex; gap: 2px; width: max-content; max-width: 100%; height: var(--control-h); padding: 3px;
+  border-radius: 999px; background: var(--raised);
+}
+.segmented label {
+  position: relative; display: inline-flex; align-items: center; padding: 0 16px; border-radius: 999px;
+  color: var(--muted); font-weight: 500; cursor: pointer; white-space: nowrap;
+  transition: background-color var(--t-hover) ease, color var(--t-hover) ease;
+}
+.segmented label:hover { color: var(--text); }
+.segmented input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.segmented label:has(input:checked) { background: var(--seg-on); color: var(--text); }
+.segmented label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* công tắc 32x20: nền xanh đen khi bật (không dùng màu nhấn). Checkbox thật nằm ẩn
+   ngay trước .switch nên vẫn gửi form, vẫn dùng bàn phím được. */
+.switch {
+  position: relative; display: inline-block; flex: none; width: 32px; height: 20px; border-radius: 999px;
+  background: var(--control); transition: background-color var(--t-ui) ease;
+}
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--knob); transition: transform var(--t-ui) var(--ease);
+}
+input:checked + .switch, [aria-checked="true"] > .switch { background: var(--text); }
+input:checked + .switch::after, [aria-checked="true"] > .switch::after { transform: translateX(12px); }
+.switch-row input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.switch-row input:focus-visible + .switch { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch-row { position: relative; display: inline-flex; align-items: center; gap: 12px; min-height: 40px; cursor: pointer; }
 .form { display: grid; gap: 16px; }
 .form-row { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .field { display: grid; gap: 8px; align-content: start; }
@@ -270,6 +311,11 @@ td .sub { display: block; color: var(--muted); font-size: var(--fs-small); }
   border-radius: 10px; background: var(--ground); color: var(--text);
 }
 .input::placeholder { color: var(--faint); }
+select.input {
+  appearance: none; -webkit-appearance: none; padding-right: 38px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237d887f' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center;
+}
 legend { padding: 0; }
 fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; min-width: 0; }
 .date-parts { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 8px; }
@@ -278,8 +324,10 @@ fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; min-width:
 .choices label { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; cursor: pointer; }
 input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
 .form-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-.search { display: flex; gap: 8px; }
-.search .input { flex: 1; min-width: 0; }
+.search { display: flex; }
+.search .input { flex: 1; min-width: 0; border-radius: 999px 0 0 999px; padding-left: 18px; }
+.search .btn { border-radius: 0 999px 999px 0; margin-left: -1px; }
+.search .input:focus-visible { position: relative; z-index: 1; }
 .links { display: flex; flex-wrap: wrap; gap: 8px; }
 .links a, .place {
   display: inline-flex; align-items: center; height: 36px; padding: 0 14px; border-radius: 999px;
@@ -295,8 +343,10 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
   background: var(--raised); color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1;
 }
 .chip-x:hover { color: var(--negative); }
-.add-place { display: flex; gap: 8px; margin-top: 16px; }
-.add-place .input { flex: 1; min-width: 0; }
+.add-place { display: flex; margin-top: 16px; }
+.add-place .input { flex: 1; min-width: 0; border-radius: 999px 0 0 999px; padding-left: 18px; }
+.add-place .btn { border-radius: 0 999px 999px 0; margin-left: -1px; }
+.add-place .input:focus-visible { position: relative; z-index: 1; }
 
 /* thông báo: trong khối, một câu */
 .error-box, .ok-box {
@@ -449,6 +499,7 @@ tbody tr:last-child th { border-bottom: 0; }
 .notice { margin: 0 0 16px; }
 .title-row .search { flex: 1 1 320px; max-width: 440px; }
 .panel.search { padding: 12px; }
+.panel.search .input { background: var(--sheet); }
 .range-col { width: 26%; }
 table.compact td { padding-top: 7px; padding-bottom: 7px; }
 table.forecast td { white-space: nowrap; }
@@ -488,9 +539,9 @@ main.column { padding-bottom: 48px; }
   .sidebar {
     position: fixed; inset: 0; z-index: 30; height: 100%; width: 100%; border: 0;
     transform: translateX(-100%); visibility: hidden;
-    transition: transform 220ms var(--ease), visibility 0s linear 220ms;
+    transition: transform var(--t-ui) var(--ease), visibility 0s linear var(--t-ui);
   }
-  .sidebar:target, .sidebar.open { transform: none; visibility: visible; transition: transform 220ms var(--ease); }
+  .sidebar:target, .sidebar.open { transform: none; visibility: visible; transition: transform var(--t-ui) var(--ease); }
   .sidebar .close { display: inline-flex; }
   .sidebar-head { padding-bottom: 0; }
   .nav-item, .side-action { height: 44px; }

@@ -14,7 +14,7 @@
       <input class="input" type="text" id="am" name="am" value="{{ am }}" inputmode="numeric" placeholder="15/8/2027" aria-describedby="am-hint{% if error %} form-error{% endif %}">
       <span class="hint" id="am-hint">Dạng ngày/tháng hoặc ngày/tháng/năm.</span>
     </div>
-    <div class="choices"><label><input type="checkbox" name="nhuan" value="1"{% if nhuan %} checked{% endif %}> Là tháng nhuận</label></div>
+    <label class="switch-row"><input type="checkbox" name="nhuan" value="1"{% if nhuan %} checked{% endif %}><span class="switch" aria-hidden="true"></span>Là tháng nhuận</label>
     <div class="form-actions"><button class="btn primary" type="submit">Đổi ngày</button></div>
   </form>
   {% if result %}

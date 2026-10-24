@@ -344,8 +344,25 @@ def test_admin_template_la_dang_tab_khong_cuon_dai():
     assert "IntersectionObserver" not in html  # bỏ scroll-spy của trang dài
     # Có lối sang các trang công cụ của web công khai; link ngoài không bị coi là tab.
     for href in ("/lich", "/thoi-tiet", "/tu-vi", "/than-so-hoc"):
-        assert html.count(f'class="ext" href="{href}"') == 2  # menu bên + chip điện thoại
+        assert (
+            html.count(f'class="ext" href="{href}"') == 1
+        )  # chỉ menu bên (điện thoại: bảng danh mục)
     assert "#side-nav a[href^=" in html
+    # Điện thoại: thanh bên gập thành bảng danh mục mở bằng nút, Esc đóng.
+    assert 'id="menu-btn"' in html and 'aria-controls="side-sheet"' in html and "Escape" in html
+
+
+def test_admin_dieu_khien_theo_chuan():
+    """Khoảng thời gian là segmented (radiogroup), mọi Bật/Tắt là công tắc role=switch,
+    ô nhập + nút Lưu dính liền; chỉ một kiểu nút chính."""
+    html = (ROOT / "templates" / "admin.html").read_text(encoding="utf-8")
+    assert 'id="range" role="radiogroup"' in html and html.count('role="radio"') == 3
+    assert 'role="switch"' in html and "function toggle(" in html
+    assert (
+        ">${p.enabled ? 'Tắt' : 'Bật'}<" not in html
+        and ">${t.enabled ? 'Tắt' : 'Bật'}<" not in html
+    )
+    assert html.count("btn sm primary") == 0  # một nút chính mỗi màn (Thử lại 9Router)
 
 
 def test_login_page_renders_error_block(client):
