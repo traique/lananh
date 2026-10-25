@@ -1,9 +1,10 @@
-"""Lệnh /lich, /tsh, /tsh_chitiet, /tuvi, /tuvi_chitiet dùng chung cho mọi kênh.
+"""Lệnh /lich, /tsh, /tsh_chitiet, /tuvi, /tuvi_chitiet, /kymon, /kymon_chitiet
+dùng chung cho mọi kênh.
 
-/lich, /tsh, /tuvi tính bằng code, KHÔNG gọi AI. Hai lệnh *_chitiet gửi kết
-quả đã tính cho AI diễn giải (1 lượt AI, có telemetry như các lệnh AI khác).
-Ngày sinh, họ tên KHÔNG lưu vào DB/trí nhớ: telemetry chỉ ghi tên lệnh và độ
-dài câu trả lời để đếm lượt AI, không ghi tham số hay nội dung luận giải.
+/lich, /tsh, /tuvi, /kymon tính bằng code, KHÔNG gọi AI. Các lệnh *_chitiet gửi
+kết quả đã tính cho AI diễn giải (1 lượt AI, có telemetry như các lệnh AI khác).
+Ngày sinh, họ tên, việc cần xem KHÔNG lưu vào DB/trí nhớ: telemetry chỉ ghi tên
+lệnh và độ dài câu trả lời để đếm lượt AI, không ghi tham số hay nội dung luận giải.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import datetime as dt
 import logging
 
 from ai.timeouts import TurnTimeoutError
-from services import calendar_query, numerology, tuvi
+from services import calendar_query, kymon, numerology, tuvi
 from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,11 @@ def tsh(argument: str) -> str:
 def tuvi_chart(argument: str) -> str:
     chart = tuvi.parse(argument)
     return chart if isinstance(chart, str) else tuvi.format_chart(chart)
+
+
+def kymon_chart(argument: str) -> str:
+    chart = kymon.parse(argument)
+    return chart if isinstance(chart, str) else kymon.format_chart(chart)
 
 
 async def ai_text(user_id: int, kind: str, channel: str, explain) -> str:
@@ -95,6 +101,20 @@ async def tuvi_chitiet(user_id: int, argument: str, channel: str) -> list[str]:
     )
 
 
+async def kymon_chitiet(user_id: int, argument: str, channel: str) -> list[str]:
+    parsed = kymon.parse_question(argument)
+    if isinstance(parsed, str):
+        return [parsed]
+    chart, question = parsed
+    return await _with_ai(
+        user_id,
+        "kymon_chitiet",
+        channel,
+        kymon.format_chart(chart),
+        lambda: kymon.explain_with_ai(chart, question),
+    )
+
+
 async def handle(command: str, argument: str, user_id: int, channel: str) -> list[str] | None:
     """Kết quả cho 1 lệnh huyền học, None nếu không phải lệnh của module này."""
     if command == "/lich":
@@ -107,4 +127,8 @@ async def handle(command: str, argument: str, user_id: int, channel: str) -> lis
         return [tuvi_chart(argument)]
     if command == "/tuvi_chitiet":
         return await tuvi_chitiet(user_id, argument, channel)
+    if command == "/kymon":
+        return [kymon_chart(argument)]
+    if command == "/kymon_chitiet":
+        return await kymon_chitiet(user_id, argument, channel)
     return None

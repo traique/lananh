@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block content %}
+{% set start = chart.solarTerm.startsAt %}
+<div class="title-row">
+  <div>
+    <h1>Kỳ Môn Độn Giáp</h1>
+    <p class="sub">Bàn thời gia theo giờ đồng hồ Việt Nam: chuyển bàn, định cục chiết bổ. Tính bằng thuật toán, không lưu lại.</p>
+  </div>
+</div>
+<div class="grid">
+  <form class="panel form s5" action="/ky-mon" method="get" novalidate>
+    {% include "_errors.html" %}
+    <div class="form-row">
+      <div class="field"><label for="ngay">Ngày</label><input class="input" type="date" id="ngay" name="ngay" value="{{ form.ngay }}" min="1900-01-01" max="2100-12-31"{% if error %} aria-describedby="form-error"{% endif %}></div>
+      <div class="field"><label for="gio">Giờ</label><input class="input" type="time" id="gio" name="gio" value="{{ form.gio }}" aria-describedby="gio-hint{% if error %} form-error{% endif %}"></div>
+    </div>
+    <span class="hint" id="gio-hint">Mở trang là bàn của lúc này. Từ 23h tính là giờ Tý của ngày hôm sau.</span>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Lập bàn</button>
+      {% if not is_now %}<a class="btn ghost" href="/ky-mon">Về lúc này</a>{% endif %}
+    </div>
+  </form>
+  <section class="panel s7" aria-labelledby="qm-facts">
+    <header><h2 id="qm-facts">{{ chart.dunText }} {{ chart.ju }} cục · {{ chart.yuanText }}</h2><span class="meta">{{ form.gio }} {{ form.ngay | vn_date }}{% if is_now %} · lúc này{% endif %}</span></header>
+    <dl class="facts">
+      <dt>Tứ trụ</dt><dd>Giờ {{ chart.pillars.hour.text }} · ngày {{ chart.pillars.day.text }} · tháng {{ chart.pillars.month.text }} · năm {{ chart.pillars.year.text }}</dd>
+      <dt>Tiết khí</dt><dd>{{ chart.solarTerm.name }}, giao {{ start[11:16] }} {{ start[:10] | vn_date }} (phù đầu {{ chart.fuTou }})</dd>
+      <dt>Tuần thủ</dt><dd>{{ chart.xunShou.jiazi }} ẩn {{ chart.xunShou.stem }}, cung {{ chart.xunShou.palace }}</dd>
+      <dt>Trực phù</dt><dd>{{ chart.zhiFu.star }} tới cung {{ chart.zhiFu.palace }}</dd>
+      <dt>Trực sử</dt><dd>{{ chart.zhiShi.door }} tới cung {{ chart.zhiShi.palace }}{% if chart.zhiShi.landingPalace == 5 %} (rơi trung cung, ký Khôn){% endif %}</dd>
+      <dt>Không vong</dt><dd>{{ chart.void.branches | join(", ") }} (cung {{ chart.void.palaces | join(", ") }})</dd>
+      <dt>Mã tinh</dt><dd>{{ chart.horse.branch }} (cung {{ chart.horse.palace }})</dd>
+    </dl>
+  </section>
+</div>
+<section class="panel qm-panel" aria-labelledby="qm-board">
+  <header><h2 id="qm-board">Bàn 9 cung</h2><span class="meta">Nam ở trên, Bắc ở dưới · thần, sao, cửa, can thiên/địa</span></header>
+  <ol class="qm-board">
+    {% for row in rows %}{% for p in row %}
+    {% if p.number == 5 %}
+    <li class="qm-cell qm-center" aria-label="Cung 5 trung cung">
+      <header><span>5 Trung cung</span></header>
+      <p class="qm-big">{{ chart.dunText }}<br>{{ chart.ju }} cục</p>
+      <p class="qm-stems"><span class="muted">Địa</span> {{ p.earthStems | join("/") }} <span class="muted">· ký Khôn 2</span></p>
+    </li>
+    {% else %}
+    <li class="qm-cell{% if p.isZhiFu %} is-zhifu{% endif %}" aria-label="Cung {{ p.number }} {{ p.name }}, hướng {{ p.direction }}{% if p.isZhiFu %}, Trực phù{% endif %}{% if p.isZhiShi %}, Trực sử{% endif %}{% if p.isVoid %}, không vong{% endif %}{% if p.isHorse %}, mã tinh{% endif %}">
+      <header><span>{{ p.number }} {{ p.name }}</span><span class="dir">{{ p.direction }}</span></header>
+      <p class="qm-god">{{ p.god }}</p>
+      <p class="qm-star">{{ p.star }}{% if p.lodgedStar %} <span class="muted">+ {{ p.lodgedStar | replace("Thiên ", "") }}</span>{% endif %}</p>
+      <p class="qm-door"><span class="pill sm{% if p.door in good_doors %} pos{% endif %}">{{ p.door }}</span></p>
+      <p class="qm-stems"><span class="muted">Thiên</span> {{ p.heavenStems | join("/") }} <span class="muted">· Địa</span> {{ p.earthStems | join("/") }}</p>
+      {% if p.isZhiFu or p.isZhiShi or p.isVoid or p.isHorse %}
+      <p class="qm-flags">{% if p.isZhiFu %}<span class="pill sm pos">Trực phù</span>{% endif %}{% if p.isZhiShi %}<span class="pill sm">Trực sử</span>{% endif %}{% if p.isVoid %}<span class="pill sm warn">Không</span>{% endif %}{% if p.isHorse %}<span class="pill sm">Mã</span>{% endif %}</p>
+      {% endif %}
+    </li>
+    {% endif %}
+    {% endfor %}{% endfor %}
+  </ol>
+</section>
+<div class="grid top">
+  <section class="panel s7" aria-labelledby="qm-points">
+    <header><h2 id="qm-points">Cách cục và điểm chính</h2></header>
+    <ul class="rows">
+      {% if chart.starFuYin or chart.doorFuYin %}
+      <li class="row"><span><strong>Phục ngâm</strong> ({{ "sao" if chart.starFuYin else "" }}{{ " và " if chart.starFuYin and chart.doorFuYin else "" }}{{ "cửa" if chart.doorFuYin else "" }})<span class="sub">{{ texts.phuc_phan_ngam.phuc_ngam }}</span></span><span class="pill sm warn">Tĩnh</span></li>
+      {% endif %}
+      {% if chart.starFanYin or chart.doorFanYin %}
+      <li class="row"><span><strong>Phản ngâm</strong> ({{ "sao" if chart.starFanYin else "" }}{{ " và " if chart.starFanYin and chart.doorFanYin else "" }}{{ "cửa" if chart.doorFanYin else "" }})<span class="sub">{{ texts.phuc_phan_ngam.phan_ngam }}</span></span><span class="pill sm warn">Động</span></li>
+      {% endif %}
+      {% for g in chart.patternGroups %}
+      <li class="row"><span><strong>{{ g.name }}</strong><span class="sub">{% for it in g["items"] %}{% if it.palace %}Cung {{ it.palace }}: {% endif %}{{ it.detail }}{{ "; " if not loop.last else ". " }}{% endfor %}{{ g.meaning }}</span></span><span class="pill sm {{ 'pos' if g.isAuspicious else 'neg' }}">{{ "Cát" if g.isAuspicious else "Hung" }}</span></li>
+      {% else %}
+      <li class="row"><span class="muted">Không gặp cách cục đặc biệt nào trong danh sách đang xét.</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+  <section class="panel s5" aria-labelledby="qm-meanings">
+    <header><h2 id="qm-meanings">Ý nghĩa từng cung</h2></header>
+    <div class="qm-details">
+      {% for row in rows %}{% for p in row %}{% if p.number != 5 %}
+      <details{% if p.isZhiFu %} open{% endif %}>
+        <summary>Cung {{ p.number }} {{ p.name }} · {{ p.direction }}</summary>
+        <dl class="small">
+          <dt>{{ p.star }}</dt><dd>{{ p.starMeaning }}</dd>
+          <dt>{{ p.door }}</dt><dd>{{ p.doorMeaning }}</dd>
+          <dt>{{ p.god }}</dt><dd>{{ p.godMeaning }}</dd>
+        </dl>
+      </details>
+      {% endif %}{% endfor %}{% endfor %}
+    </div>
+  </section>
+</div>
+<section class="panel ai-box" aria-labelledby="ai-title">
+  <header><h2 id="ai-title">Luận giải bằng AI</h2></header>
+  {% if ai_text %}
+  {% if question %}<p class="muted">Việc cần xem: {{ question }}</p>{% endif %}
+  <div class="answer" role="status">{{ ai_text }}</div>
+  {% elif logged_in %}
+  <form class="form" method="post" action="/ky-mon" onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent='Đang luận giải…'">
+    <input type="hidden" name="ngay" value="{{ form.ngay }}">
+    <input type="hidden" name="gio" value="{{ form.gio }}">
+    <input type="hidden" name="ai" value="1">
+    <div class="field">
+      <label for="cau_hoi">Việc cần xem</label>
+      <textarea class="input" id="cau_hoi" name="cau_hoi" rows="3" maxlength="400" required aria-describedby="cau-hoi-hint">{{ question }}</textarea>
+      <span class="hint" id="cau-hoi-hint">Ví dụ: ký hợp đồng với đối tác mới có thuận không. AI chỉ diễn giải bàn đã lập ở trên, tốn 1 lượt AI, có thể mất vài chục giây.</span>
+    </div>
+    <div class="form-actions"><button class="btn" type="submit">AI luận giải bàn</button></div>
+  </form>
+  {% else %}
+  <p class="muted">Phần luận giải bằng AI chỉ dành cho tài khoản đã đăng nhập.</p>
+  <div class="form-actions"><a class="btn" href="{{ login_url }}">Đăng nhập để dùng AI</a></div>
+  {% endif %}
+</section>
+<p class="note-line">{{ chart.disclaimer | replace("ℹ️ ", "") }} {{ chart.note }}</p>
+{% endblock %}
