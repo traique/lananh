@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import messages
 from ai import orchestrator
 from ai.timeouts import TurnTimeoutError, turn_deadline
-from core import database as db
+from core import database as db, untrusted, urls
 from services import (
     article_reader,
     lunar_chat,
@@ -113,21 +113,29 @@ async def run_chat_turn(
             # 3 nguồn ngữ cảnh độc lập nhau - chạy song song thay vì tuần tự
             # (trước đây Tavily + memory nối tiếp, thêm vài trăm ms - vài giây
             # độ trễ cho mọi tin nhắn).
-            tool_result, search_result, memory = await asyncio.gather(
+            tool_result, plan, memory = await asyncio.gather(
                 tools.maybe_run_tool(user_id, text),
-                web_search.maybe_search(text, user_id=user_id),
+                web_search.plan_search(text, user_id=user_id),
                 memory_service.build_memory_context(user_id, text),
             )
-            combined = "\n\n".join(part for part in (grounding, tool_result, search_result) if part)
+            combined = "\n\n".join(
+                part for part in (grounding, tool_result, plan.grounding) if part
+            )
+            forced = stock_analysis.wants_external_market_data(text)
             response = await orchestrator.chat(
                 user_id,
                 text,
                 grounding=combined,
                 memory_context=memory,
-                require_real_search=stock_analysis.wants_external_market_data(text),
-                web_grounded=bool(search_result),
+                require_real_search=forced,
+                search_mode=_search_mode(plan, forced, bool(grounding), bool(tool_result)),
             )
         reply = (response.text or "").strip()
+        searched = bool(getattr(response, "searched", False))
+        untrusted_context = plan.untrusted or untrusted.contains_untrusted(combined)
+        reply = _filter_reply_links(
+            reply, (text, combined, memory), untrusted_context=untrusted_context, searched=searched
+        )
     except TurnTimeoutError as exc:
         logger.warning("Lượt chat hết hạn chót (kênh %s): %s", channel, exc)
         await telemetry.failure(prompt_id, "chat", exc)
@@ -142,8 +150,49 @@ async def run_chat_turn(
     await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
     if reply:
         await _save_turn_best_effort(user_id, text, reply)
-        _track_background_task(asyncio.create_task(_update_memory_bounded(user_id, text, reply)))
+        # Lượt trả lời dựa trên dữ liệu web ngoài (Tavily, provider tự tra web):
+        # câu trả lời có thể mang nội dung bị prompt injection -> chỉ trích nhớ
+        # từ lời người dùng (reply rỗng, xem memory_service._ASSISTANT_SKIPPED).
+        memory_reply = "" if (untrusted_context or searched) else reply
+        _track_background_task(
+            asyncio.create_task(_update_memory_bounded(user_id, text, memory_reply))
+        )
     return ChatTurn(reply, bool(getattr(response, "used_fallback", False)), prompt_id=prompt_id)
+
+
+def _search_mode(
+    plan: web_search.SearchPlan, forced: bool, has_stock_grounding: bool, has_tool_result: bool
+) -> str:
+    """search_mode cho orchestrator.chat. Số liệu ngoài sàn VN (vàng, tỷ giá...)
+    luôn "forced". Có số liệu cổ phiếu chuẩn (DNSE) thì provider không tự tra web
+    chồng lên (dễ lẫn giá web khác giá sàn); có kết quả tool (thời tiết, âm lịch,
+    ghi chú...) thì không để Gemini tự tra thêm ở lượt chat thường."""
+    if forced:
+        return orchestrator.SEARCH_FORCED
+    if has_stock_grounding and plan.mode in (orchestrator.SEARCH_AUTO, orchestrator.SEARCH_NATIVE):
+        return orchestrator.SEARCH_OFF
+    if has_tool_result and plan.mode == orchestrator.SEARCH_AUTO:
+        return orchestrator.SEARCH_OFF
+    return plan.mode
+
+
+def _filter_reply_links(
+    reply: str, sources: tuple[str, ...], *, untrusted_context: bool, searched: bool
+) -> str:
+    """Vô hiệu hoá link lạ trong câu trả lời (core/urls.py) theo
+    REPLY_URL_FILTER. Bỏ qua lượt provider tự tra web: link nguồn do provider
+    tìm ra, không có trong dữ liệu của bot nên lọc sẽ hỏng trích dẫn thật."""
+    from core import config
+
+    mode = config.REPLY_URL_FILTER
+    if not reply or searched or mode == "off":
+        return reply
+    if mode != "all" and not untrusted_context:
+        return reply
+    filtered, removed = urls.filter_reply_urls(reply, sources)
+    if removed:
+        logger.warning("Đã vô hiệu hoá %d link lạ trong câu trả lời chat.", removed)
+    return filtered
 
 
 async def _save_turn_best_effort(user_id: int, text: str, reply: str) -> None:

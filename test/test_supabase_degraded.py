@@ -130,7 +130,7 @@ async def test_luu_lich_su_loi_van_tra_cau_tra_loi(monkeypatch):
         return ""
 
     async def plan(text, *, user_id=None):
-        return ""
+        return ccs.web_search.SearchPlan()
 
     async def fake_chat(*args, **kwargs):
         return SimpleNamespace(text="Dạ em đây.", used_fallback=False)
@@ -145,7 +145,7 @@ async def test_luu_lich_su_loi_van_tra_cau_tra_loi(monkeypatch):
     monkeypatch.setattr(ccs.telemetry, "success", telemetry_noop)
     monkeypatch.setattr(ccs.telemetry, "failure", telemetry_noop)
     monkeypatch.setattr(ccs.tools, "maybe_run_tool", no_tool)
-    monkeypatch.setattr(ccs.web_search, "maybe_search", plan)
+    monkeypatch.setattr(ccs.web_search, "plan_search", plan)
     monkeypatch.setattr(ccs.memory_service, "build_memory_context", no_memory)
     monkeypatch.setattr(ccs.memory_service, "update_memory", no_update)
     monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)

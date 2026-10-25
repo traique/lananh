@@ -2,9 +2,10 @@
 -> api2), gateway OpenAI-compatible (core.config.OPENROUTER_BASE_URL/
 OPENROUTER_API_KEY), miễn phí (model mặc định có hậu tố ":free").
 
-Không có generate_realtime() như groq_client - model ":free" trên OpenRouter
-không đảm bảo có tool tìm kiếm web tích hợp, nên KHÔNG dùng cho
-require_real_search (xem ai/orchestrator.py:_search_only_providers)."""
+generate_search(): OpenRouter tự tra web qua plugin "web" (openrouter.ai/docs/
+guides/features/web-search) - TỐN CREDIT kể cả với model ":free", nên chỉ bật
+qua OPENROUTER_WEB_SEARCH (mặc định tắt). Bằng chứng đã tra: annotations
+url_citation trong message; không có thì coi như chưa tra (NoSearchEvidenceError)."""
 
 from typing import Optional
 
@@ -60,6 +61,49 @@ async def generate(
             )
 
     return Response(await _pool.bounded("OpenRouter", _call))
+
+
+def supports_web_search() -> bool:
+    return config.OPENROUTER_WEB_SEARCH
+
+
+async def generate_search(
+    prompt: str,
+    *,
+    system_instruction: Optional[str] = None,
+    history: Optional[list[tuple[str, str]]] = None,
+    temperature: float = 0.5,
+    max_tokens: int = 4096,
+) -> Response:
+    """1 lượt OpenRouter TỰ tra web (plugin "web", tối đa 5 kết quả)."""
+    if not supports_web_search():
+        raise openai_compatible.NoSearchEvidenceError("OpenRouter web search đang tắt")
+    api_key = await _api_key()
+    if not api_key:
+        raise openai_compatible.OpenAICompatibleError("Chưa cấu hình OPENROUTER_API_KEY")
+    messages = openai_compatible.build_messages(prompt, system_instruction, history)
+    model_name = await _model()
+
+    async def _call() -> openai_compatible.CompletionResult:
+        async with _pool.get_semaphore():
+            return await openai_compatible.post_chat_completion_full(
+                _pool.get_client(),
+                base_url=config.OPENROUTER_BASE_URL,
+                api_key=api_key,
+                messages=messages,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider_label="OpenRouter web search",
+                extra_payload={"plugins": [{"id": "web", "max_results": 5}]},
+            )
+
+    result = await _pool.bounded("OpenRouter web search", _call)
+    if not result.url_citations:
+        raise openai_compatible.NoSearchEvidenceError(
+            "OpenRouter trả lời nhưng không kèm url_citation - không tin là đã tra web"
+        )
+    return Response(result.text, searched=True)
 
 
 async def generate_image_prompt(instruction: str, image_path: str) -> Response:

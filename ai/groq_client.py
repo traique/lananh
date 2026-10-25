@@ -1,14 +1,16 @@
 """Nhánh Groq của provider-chain (router9 -> groq -> openrouter -> api1 -> api2),
 gateway OpenAI-compatible (core.config.GROQ_BASE_URL/GROQ_API_KEY).
 
-generate_realtime() dùng model GROQ_REALTIME_MODEL (mặc định groq/compound-mini,
-có tool tìm kiếm web tích hợp sẵn) - dành riêng cho tác vụ require_real_search,
-đứng trước api1/api2 (Gemini grounding) trong chuỗi search.
-Không dùng cho ask()/chat() thường vì compound-mini chậm hơn model chat thường.
+generate_realtime() là lượt Groq TỰ tra web: model GROQ_REALTIME_MODEL (mặc định
+openai/gpt-oss-120b) + tool dựng sẵn ``browser_search`` chạy phía server Groq
+(console.groq.com/docs/browser-search; groq/compound-mini cũ đã bị khai tử
+21/09/2026). Nhận persona + lịch sử + trí nhớ như chat thường để câu trả lời
+giữ giọng Lan Anh. Không dùng cho chat thường vì chậm và tốn quota tra web.
 """
 
 import json
 import logging
+import re
 from typing import Optional
 
 from ai import openai_compatible, provider_overrides
@@ -31,10 +33,11 @@ async def _model() -> str:
     return await provider_overrides.get_model_override("groq") or config.GROQ_MODEL
 
 
-class RealtimeNoEvidenceError(openai_compatible.OpenAICompatibleError):
+class RealtimeNoEvidenceError(openai_compatible.NoSearchEvidenceError):
     """generate_realtime() trả lời nhưng không có dấu hiệu đã tra web thật
-    (không URL/nguồn nào) - coi như thất bại để orchestrator rơi xuống Gemini
-    grounding, tránh nuốt câu trả lời bịa từ trí nhớ model."""
+    (không executed_tools, không trích dẫn/URL/nguồn nào) - coi như thất bại để
+    orchestrator rơi xuống provider kế tiếp, tránh nuốt câu trả lời bịa từ trí
+    nhớ model."""
 
 
 async def close() -> None:
@@ -127,6 +130,11 @@ async def generate_image_prompt(instruction: str, image_path: str) -> Response:
 
 
 _WEB_EVIDENCE_MARKERS = ("http://", "https://", "nguồn:", "source:")
+# Trích dẫn kiểu 【2†L6-L10】 mà gpt-oss + browser_search chèn vào câu trả lời:
+# vừa là bằng chứng đã đọc trang, vừa là rác với người đọc chat -> gỡ đi.
+_BROWSER_CITATION_RE = re.compile(r"[ \t]?【[^】\n]{0,60}†[^】\n]{0,60}】")
+# Model hỗ trợ browser_search (console.groq.com/docs/browser-search).
+_BROWSER_SEARCH_MODEL_PREFIX = "openai/gpt-oss"
 
 
 def _has_web_evidence(text: str) -> bool:
@@ -134,35 +142,68 @@ def _has_web_evidence(text: str) -> bool:
     return any(marker in lowered for marker in _WEB_EVIDENCE_MARKERS)
 
 
+def search_model() -> str:
+    return config.GROQ_REALTIME_MODEL
+
+
+def supports_web_search() -> bool:
+    """Groq tự tra web được không: bật GROQ_WEB_SEARCH + model gpt-oss (key
+    kiểm riêng ở orchestrator - key có thể đến từ trang admin)."""
+    return config.GROQ_WEB_SEARCH and search_model().lower().startswith(
+        _BROWSER_SEARCH_MODEL_PREFIX
+    )
+
+
 async def generate_realtime(
     prompt: str,
     *,
+    system_instruction: Optional[str] = None,
+    history: Optional[list[tuple[str, str]]] = None,
     temperature: float = 0.3,
-    max_tokens: int = 2048,
+    max_tokens: int = 4096,
 ) -> Response:
+    """1 lượt Groq TỰ tra web (browser_search, tool_choice="required" nên luôn
+    tra trước khi trả lời). Bằng chứng: executed_tools trong response, hoặc
+    trích dẫn 【...†...】/URL/"Nguồn:" trong câu trả lời; không có -> raise
+    RealtimeNoEvidenceError. ``max_tokens`` gồm cả token suy luận của gpt-oss."""
+    if not supports_web_search():
+        raise RealtimeNoEvidenceError(
+            f"Groq web search đang tắt hoặc model {search_model()} không hỗ trợ browser_search"
+        )
     api_key = await _api_key()
     if not api_key:
         raise openai_compatible.OpenAICompatibleError("Chưa cấu hình GROQ_API_KEY")
-    messages = openai_compatible.build_messages(prompt)
+    messages = openai_compatible.build_messages(prompt, system_instruction, history)
 
-    async def _call() -> str:
+    async def _call() -> openai_compatible.CompletionResult:
         async with _pool.get_semaphore():
-            return await openai_compatible.post_chat_completion(
+            return await openai_compatible.post_chat_completion_full(
                 _pool.get_client(),
                 base_url=config.GROQ_BASE_URL,
                 api_key=api_key,
                 messages=messages,
-                model=config.GROQ_REALTIME_MODEL,
+                model=search_model(),
                 temperature=temperature,
                 max_tokens=max_tokens,
-                provider_label="Groq realtime",
-                extra_payload={"search_settings": {"country": "vietnam"}},
+                provider_label="Groq web search",
+                extra_payload={
+                    "tools": [{"type": "browser_search"}],
+                    "tool_choice": "required",
+                    # Groq khuyên reasoning_effort="low" khi dùng browser search:
+                    # mức cao kéo dài phiên duyệt web, tốn token.
+                    "reasoning_effort": "low",
+                },
             )
 
-    text = await _pool.bounded("Groq realtime", _call)
-    if not _has_web_evidence(text):
-        raise RealtimeNoEvidenceError("Groq realtime không có dấu hiệu đã tra web thật")
-    return Response(text)
+    result = await _pool.bounded("Groq web search", _call)
+    text = result.text
+    has_citation = bool(_BROWSER_CITATION_RE.search(text))
+    if not (result.executed_tools or has_citation or _has_web_evidence(text)):
+        raise RealtimeNoEvidenceError("Groq web search không có dấu hiệu đã tra web thật")
+    cleaned = _BROWSER_CITATION_RE.sub("", text).strip()
+    if not cleaned:
+        raise openai_compatible.OpenAICompatibleError("Groq web search trả kết quả rỗng")
+    return Response(cleaned, searched=True)
 
 
 async def check_status() -> tuple[bool, str]:

@@ -25,19 +25,19 @@ logger = logging.getLogger(__name__)
 RAG_DIR = Path("rag")
 
 # Giới hạn độ lớn để prompt không phình vô hạn.
-MAX_CHUNK_CHARS = 2000      # trần cứng 1 mẩu (đoạn đơn lẻ khổng lồ bị cắt)
-CHUNK_TARGET_CHARS = 1200   # cỡ mong muốn khi chia mẩu theo đoạn trống
-MAX_MATCHES = 4             # số chunk đưa vào grounding
+MAX_CHUNK_CHARS = 2000  # trần cứng 1 mẩu (đoạn đơn lẻ khổng lồ bị cắt)
+CHUNK_TARGET_CHARS = 1200  # cỡ mong muốn khi chia mẩu theo đoạn trống
+MAX_MATCHES = 4  # số chunk đưa vào grounding
 MAX_GROUNDING_CHARS = 6000  # trần tổng chiều dài grounding
-SUGGESTION_LIMIT = 8        # số từ khóa gợi ý khi không tìm thấy
+SUGGESTION_LIMIT = 8  # số từ khóa gợi ý khi không tìm thấy
+
 
 def strip_vn_diacritics(text: str) -> str:
     """Bỏ dấu tiếng Việt, giữ chữ cái gốc: "đất nền" -> "dat nen"."""
     decomposed = unicodedata.normalize("NFD", text)
     # đ (U+0111) không tổ hợp được ở NFD nên thay tay trước khi lọc dấu.
     no_marks = "".join(
-        ch for ch in decomposed.replace("đ", "d").replace("Đ", "D")
-        if not unicodedata.combining(ch)
+        ch for ch in decomposed.replace("đ", "d").replace("Đ", "D") if not unicodedata.combining(ch)
     )
     return unicodedata.normalize("NFC", no_marks).casefold()
 
@@ -69,9 +69,9 @@ def tokenize(text: str) -> set[str]:
 class Chunk:
     """Một mẩu kiến thức: nội dung dưới 1 heading trong 1 file .md."""
 
-    file: str          # đường dẫn tương đối, hiện cho người dùng
-    heading: str       # chuỗi heading (vd "Đầu tư > Chiến lược DCA")
-    content: str       # nội dung chunk (đã strip, cắt theo MAX_CHUNK_CHARS)
+    file: str  # đường dẫn tương đối, hiện cho người dùng
+    heading: str  # chuỗi heading (vd "Đầu tư > Chiến lược DCA")
+    content: str  # nội dung chunk (đã strip, cắt theo MAX_CHUNK_CHARS)
     tokens: frozenset  # token của heading + nội dung, đã bỏ dấu
     heading_tokens: frozenset  # riêng token heading để tính điểm thưởng
 
@@ -92,7 +92,8 @@ def _iter_markdown_files() -> list[Path]:
     # Bỏ qua file/Thư mục bắt đầu bằng "_" hoặc "." (vd rag/_goc/ là backup
     # bản gốc chưa dọn của /ragxuly) - chỉ nội dung "chính thức" mới vào kho.
     return sorted(
-        p for p in RAG_DIR.rglob("*.md")
+        p
+        for p in RAG_DIR.rglob("*.md")
         if p.is_file()
         and p.name.casefold() != "readme.md"
         and not any(part.startswith(("_", ".")) for part in p.relative_to(RAG_DIR).parts)
@@ -163,13 +164,15 @@ def _split_chunks(file: Path, text: str) -> list[Chunk]:
                 label = f"{last_heading} (phần {i}/{len(parts)})"
             else:
                 label = f"(phần {i}/{len(parts)})"
-            chunks.append(Chunk(
-                file=rel,
-                heading=label,
-                content=part,
-                tokens=frozenset(tokenize(f"{label} {part}")),
-                heading_tokens=frozenset(tokenize(last_heading)),
-            ))
+            chunks.append(
+                Chunk(
+                    file=rel,
+                    heading=label,
+                    content=part,
+                    tokens=frozenset(tokenize(f"{label} {part}")),
+                    heading_tokens=frozenset(tokenize(last_heading)),
+                )
+            )
 
     for line in text.splitlines():
         stripped = line.strip()
@@ -273,7 +276,7 @@ _GROUNDING_DIRECTIVE = (
     "- TUYỆT ĐỐI không bịa thông tin ngoài tài liệu, không dùng kiến thức "
     "riêng của bạn để bổ sung, không tra web.\n"
     "- Trích dẫn có thể bị cắt giữa chừng (dấu …) - đừng suy diễn phần bị cắt.\n"
-    "- Không nhắc tới chữ \"trích dẫn\" hay quy trình - cứ trả lời trực tiếp."
+    '- Không nhắc tới chữ "trích dẫn" hay quy trình - cứ trả lời trực tiếp.'
 )
 
 
@@ -294,8 +297,11 @@ async def _ask_llm(user_id: int, query: str, matches: list[Match]) -> str:
     from ai import orchestrator  # tránh import vòng khi ai.* import services.*
 
     grounding, prompt = build_prompt(query, matches)
+    # search_mode="off": /rag CHỈ trả lời từ tài liệu riêng của chủ bot - nhánh
+    # Gemini không được bật Google Search (trước đây bật ngầm vì không truyền
+    # web_grounded, trộn kết quả web vào câu trả lời "chỉ từ tài liệu").
     response = await orchestrator.chat(
-        user_id, prompt, grounding=grounding, memory_context=""
+        user_id, prompt, grounding=grounding, memory_context="", search_mode="off"
     )
     answer = (getattr(response, "text", "") or "").strip()
     if not answer:
@@ -318,7 +324,6 @@ async def ask(user_id: int, query: str) -> str:
     except Exception as exc:
         logger.warning("AI diễn giải /rag lỗi, fallback trả trích dẫn: %s", exc)
         return (
-            "⚠️ AI diễn giải lỗi nên em gửi nguyên trích dẫn nhé:\n\n"
-            f"{_format_citations(matches)}"
+            f"⚠️ AI diễn giải lỗi nên em gửi nguyên trích dẫn nhé:\n\n{_format_citations(matches)}"
         )
     return answer

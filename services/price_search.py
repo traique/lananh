@@ -173,7 +173,7 @@ KẾT QUẢ TÌM KIẾM (Tavily):
 {search_results}"""
 
 
-# Tavily yếu/lỗi -> Groq Compound web search trước, rồi Google Search grounding.
+# Tavily yếu/lỗi -> Groq browser_search trước, rồi Google Search grounding.
 # Không dùng OpenRouter ở nhánh /gia vì không có đảm bảo tool search thật.
 _PRICE_FALLBACK_PROVIDERS = ["groq", "api1", "api2"]
 
@@ -182,7 +182,7 @@ async def search_price(product_name: str) -> tuple[str, bool]:
     """Tìm giá sản phẩm: Tavily trước (1 request duy nhất, search_depth="advanced"
     để có nguồn đa dạng hơn basic, kèm giới hạn tối đa 2 kết quả/domain để 1
     shop SEO mạnh không chiếm hết top-N - xem tavily_client.search()), lỗi/
-    rỗng/yếu thì fallback Groq Compound -> Google Search (api1 -> api2). Dùng
+    rỗng/yếu thì fallback Groq browser_search -> Google Search (api1 -> api2). Dùng
     chung cho Telegram (handlers/commands.py::price_cmd), Zalo/Zoom
     (services/channel_command_service.py::_price) và tool tim_gia của /agent.
 

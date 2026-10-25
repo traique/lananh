@@ -51,8 +51,10 @@ def chat_fakes(monkeypatch):
     async def fake_tool(user_id, text):
         return "TOOL"
 
-    async def fake_search(text, user_id=None):
-        return ""
+    async def fake_plan(text, user_id=None):
+        from services.web_search import SearchPlan
+
+        return SearchPlan()
 
     async def fake_memory(user_id, query=""):
         return "MEM"
@@ -72,7 +74,7 @@ def chat_fakes(monkeypatch):
     monkeypatch.setattr(ccs.telemetry, "success", fake_success)
     monkeypatch.setattr(ccs.telemetry, "failure", fake_failure)
     monkeypatch.setattr(ccs.tools, "maybe_run_tool", fake_tool)
-    monkeypatch.setattr(ccs.web_search, "maybe_search", fake_search)
+    monkeypatch.setattr(ccs.web_search, "plan_search", fake_plan)
     monkeypatch.setattr(ccs.memory_service, "build_memory_context", fake_memory)
     monkeypatch.setattr(ccs.memory_service, "update_memory", fake_update_memory)
     monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
@@ -281,7 +283,7 @@ async def test_run_chat_turn_shares_one_deadline_across_search_and_chat(monkeypa
     async def slow_search(text, user_id=None):
         async def call():
             await _asyncio.sleep(0.2)
-            return "kết quả"
+            return svc.web_search.SearchPlan("kết quả", "off", True)
 
         return await timeouts.bounded(call)
 
@@ -301,7 +303,7 @@ async def test_run_chat_turn_shares_one_deadline_across_search_and_chat(monkeypa
     async def telemetry_noop(*args, **kwargs):
         return 1
 
-    monkeypatch.setattr(svc.web_search, "maybe_search", slow_search)
+    monkeypatch.setattr(svc.web_search, "plan_search", slow_search)
     monkeypatch.setattr(svc.tools, "maybe_run_tool", no_tool)
     monkeypatch.setattr(svc.memory_service, "build_memory_context", no_memory)
     monkeypatch.setattr(svc.orchestrator, "chat", slow_chat)

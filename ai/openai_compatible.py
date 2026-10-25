@@ -125,12 +125,54 @@ def error_text(exc: BaseException) -> str:
     return " | ".join(str(item) for item in _error_chain(exc))
 
 
+class NoSearchEvidenceError(OpenAICompatibleError):
+    """Lượt "provider tự tra web" trả lời nhưng KHÔNG có bằng chứng đã tra web
+    thật (không executed_tools/annotations/grounding metadata...) - hoặc
+    provider chưa bật/không hỗ trợ tra web. Coi như provider này thất bại ở
+    lượt tra cứu: không tin câu trả lời có thể bịa từ trí nhớ model, và KHÔNG
+    phải lỗi sức khoẻ/quota (không cooldown, không khai tử)."""
+
+
 class Response:
     """Bọc kết quả text trả về, cùng interface `.text` như FallbackResponse
-    của official_client, để orchestrator dùng chung 1 contract cho mọi nhánh."""
+    của official_client, để orchestrator dùng chung 1 contract cho mọi nhánh.
 
-    def __init__(self, text: str) -> None:
+    ``searched``: provider đã TỰ tra web trong chính lượt gọi này (có bằng
+    chứng) - caller dùng để biết câu trả lời dựa trên dữ liệu web ngoài."""
+
+    def __init__(self, text: str, *, searched: bool = False) -> None:
         self.text = text
+        self.searched = searched
+
+
+class CompletionResult:
+    """Kết quả đầy đủ của 1 lượt /chat/completions: text + bằng chứng tra web
+    (``annotations`` url_citation kiểu OpenAI/OpenRouter, ``executed_tools``
+    tool chạy phía server kiểu Groq browser_search)."""
+
+    def __init__(
+        self,
+        text: str,
+        annotations: Optional[list[dict[str, Any]]] = None,
+        executed_tools: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
+        self.text = text
+        self.annotations = annotations or []
+        self.executed_tools = executed_tools or []
+
+    @property
+    def url_citations(self) -> list[str]:
+        urls: list[str] = []
+        for item in self.annotations:
+            if not isinstance(item, dict) or item.get("type") != "url_citation":
+                continue
+            citation = (
+                item.get("url_citation") if isinstance(item.get("url_citation"), dict) else item
+            )
+            url = str(citation.get("url") or "")
+            if url and url not in urls:
+                urls.append(url)
+        return urls
 
 
 class ToolCallResponse:
@@ -349,6 +391,84 @@ def _http_error(provider_label: str, exc: httpx.HTTPStatusError) -> OpenAICompat
         status_code=status,
         retry_after_sec=retry_hint_from_response(exc.response, body) if status == 429 else None,
     )
+
+
+def _parse_sse_extras(raw: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Gom annotations + executed_tools nằm rải rác trong các chunk SSE."""
+    annotations: list[dict[str, Any]] = []
+    executed: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[len("data:") :].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(chunk, dict):
+            continue
+        for choice in chunk.get("choices") or []:
+            for part in (choice.get("delta") or {}, choice.get("message") or {}):
+                annotations.extend(a for a in part.get("annotations") or [] if isinstance(a, dict))
+                executed.extend(t for t in part.get("executed_tools") or [] if isinstance(t, dict))
+    return annotations, executed
+
+
+async def post_chat_completion_full(
+    client: httpx.AsyncClient,
+    *,
+    base_url: str,
+    api_key: str,
+    messages: list[dict[str, Any]],
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    provider_label: str,
+    extra_payload: Optional[dict[str, Any]] = None,
+    stream: bool = False,
+) -> CompletionResult:
+    """Như post_chat_completion() nhưng trả cả bằng chứng tra web
+    (annotations/executed_tools) - dùng cho lượt "provider tự tra web".
+
+    ``stream=False`` mặc định: Groq/OpenRouter gọi thẳng (không qua proxy cắt
+    kết nối im lặng) và trường executed_tools/annotations nằm gọn trong
+    message cuối. 9Router đi qua proxy Render nên vẫn xin stream=True như
+    post_chat_completion() - annotations được gom từ các chunk."""
+    headers = {"Authorization": f"Bearer {api_key}"}
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": stream,
+    }
+    if extra_payload:
+        payload.update(extra_payload)
+    try:
+        response = await client.post(
+            f"{base_url.rstrip('/')}/chat/completions", headers=headers, json=payload
+        )
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        if "text/event-stream" in content_type or response.text.lstrip().startswith("data:"):
+            text = parse_sse_content(response.text)
+            annotations, executed = _parse_sse_extras(response.text)
+        else:
+            body = response.json()
+            message = ((body.get("choices") or [{}])[0].get("message")) or {}
+            text = message.get("content") or ""
+            annotations = [a for a in message.get("annotations") or [] if isinstance(a, dict)]
+            executed = [t for t in message.get("executed_tools") or [] if isinstance(t, dict)]
+    except httpx.HTTPStatusError as exc:
+        raise _http_error(provider_label, exc) from exc
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, AttributeError) as exc:
+        raise OpenAICompatibleError(f"{provider_label}: {type(exc).__name__}: {exc}") from exc
+    if not text:
+        raise OpenAICompatibleError(f"{provider_label} trả kết quả rỗng")
+    return CompletionResult(text.strip(), annotations, executed)
 
 
 def _parse_tool_calls(raw_tool_calls: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:

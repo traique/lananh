@@ -88,6 +88,13 @@ ROUTER9_CALL_TIMEOUT_SEC = _env_int(
     _env_int("GEMINI_COOKIE_CALL_TIMEOUT_SEC", 120),
 )
 ROUTER9_MAX_CONCURRENCY = _env_int("ROUTER9_MAX_CONCURRENCY", 4)
+# 9Router tự tra web: gửi web_search_options (chuẩn OpenAI Chat Completions)
+# tới model ROUTER9_WEB_SEARCH_MODEL (trống = model đang dùng cho chat). TẮT mặc
+# định: tài liệu 9Router không mô tả web search trong /chat/completions, và
+# gateway từng âm thầm bỏ qua `tools`. Khi bật, câu trả lời chỉ được tin là đã
+# tra web nếu kèm annotations url_citation - không có thì coi như chưa tra.
+ROUTER9_WEB_SEARCH = _env_bool("ROUTER9_WEB_SEARCH", False)
+ROUTER9_WEB_SEARCH_MODEL = os.getenv("ROUTER9_WEB_SEARCH_MODEL", "").strip()
 
 # Khoảng nghỉ (giây) giữa các lệnh gọi LLM liên tiếp trong 1 lượt phân tích
 # (news -> bull -> bear -> manager -> tổng hợp cuối, xem stock/debate.py và
@@ -95,11 +102,11 @@ ROUTER9_MAX_CONCURRENCY = _env_int("ROUTER9_MAX_CONCURRENCY", 4)
 ROUTER9_STEP_DELAY_SEC = _env_int("ROUTER9_STEP_DELAY_SEC", 3)
 
 # Groq — gateway OpenAI-compatible, provider thứ 2 của provider-chain.
-# (router9 -> groq -> openrouter -> api1 -> api2). GROQ_REALTIME_MODEL
-# (compound-mini) có tool tìm kiếm web tích hợp, chỉ dùng cho tác vụ
-# require_real_search; built-in web search có thể phát sinh phí theo Groq.
-# Danh mục model free đổi theo thời gian - xem README mục Provider-chain nếu
-# model mặc định ngừng hoạt động.
+# (router9 -> groq -> openrouter -> api1 -> api2). GROQ_REALTIME_MODEL là model
+# dùng khi cần Groq TỰ tra web (tool browser_search chạy phía server Groq) -
+# xem GROQ_WEB_SEARCH bên dưới; built-in web search có thể phát sinh phí theo
+# Groq. Danh mục model free đổi theo thời gian - xem README mục Provider-chain
+# nếu model mặc định ngừng hoạt động.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip()
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
@@ -108,7 +115,34 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
 # lỗi 400/404 nếu còn dùng model đó. qwen/qwen3.6-27b hiện là model vision
 # DUY NHẤT Groq liệt kê ở console.groq.com/docs/vision, miễn phí (free tier).
 GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b").strip()
-GROQ_REALTIME_MODEL = os.getenv("GROQ_REALTIME_MODEL", "groq/compound-mini").strip()
+# groq/compound và groq/compound-mini (giá trị mặc định cũ) đã bị Groq khai tử
+# (shutdown 21/09/2026, console.groq.com/docs/deprecations) - mọi request lỗi.
+# Thay bằng tool browser_search trên openai/gpt-oss-* (console.groq.com/docs/
+# browser-search: hỗ trợ openai/gpt-oss-20b, gpt-oss-120b, gpt-oss-safeguard-20b).
+# Render env còn lưu giá trị compound cũ thì tự đổi về mặc định mới (có log).
+_GROQ_DEFAULT_REALTIME_MODEL = "openai/gpt-oss-120b"
+_GROQ_DECOMMISSIONED_MODELS = {"groq/compound", "groq/compound-mini"}
+
+
+def _normalize_groq_realtime_model(raw: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return _GROQ_DEFAULT_REALTIME_MODEL
+    if value.lower() in _GROQ_DECOMMISSIONED_MODELS:
+        logger.warning(
+            "GROQ_REALTIME_MODEL=%s đã bị Groq khai tử - dùng %s (tool browser_search).",
+            value,
+            _GROQ_DEFAULT_REALTIME_MODEL,
+        )
+        return _GROQ_DEFAULT_REALTIME_MODEL
+    return value
+
+
+GROQ_REALTIME_MODEL = _normalize_groq_realtime_model(os.getenv("GROQ_REALTIME_MODEL", ""))
+# Groq tự tra web (browser_search) cho câu cần thông tin mới khi Tavily tắt/lỗi/
+# quá mỏng, và cho nhánh tra cứu bắt buộc (giá vàng, tỷ giá...). Chỉ có hiệu
+# lực khi GROQ_REALTIME_MODEL là model openai/gpt-oss-*.
+GROQ_WEB_SEARCH = _env_bool("GROQ_WEB_SEARCH", True)
 GROQ_CALL_TIMEOUT_SEC = _env_int("GROQ_CALL_TIMEOUT_SEC", 30)
 # GROQ_CALL_TIMEOUT_SEC chỉ là timeout từng pha của httpx (connect/đọc từng
 # chunk) - với response stream nhỏ giọt nó không bao giờ hết hạn. Biến dưới
@@ -135,6 +169,10 @@ OPENROUTER_CALL_TIMEOUT_SEC = _env_int("OPENROUTER_CALL_TIMEOUT_SEC", 30)
 # Chặn tổng thời gian 1 lượt gọi OpenRouter - xem chú thích GROQ_TOTAL_TIMEOUT_SEC.
 OPENROUTER_TOTAL_TIMEOUT_SEC = _env_int("OPENROUTER_TOTAL_TIMEOUT_SEC", 90)
 OPENROUTER_MAX_CONCURRENCY = _env_int("OPENROUTER_MAX_CONCURRENCY", 4)
+# OpenRouter tự tra web qua plugin "web" (openrouter.ai/docs/guides/features/
+# web-search). TẮT mặc định: tra web TỐN CREDIT kể cả với model ":free" (Exa
+# ~$0.007/request) - tài khoản không nạp credit sẽ lỗi. Bật khi đã nạp credit.
+OPENROUTER_WEB_SEARCH = _env_bool("OPENROUTER_WEB_SEARCH", False)
 
 # Tavily — web search dùng làm grounding cho chat, bật/tắt qua lệnh
 # /tavily on|off (ai/tavily_client.py: get_enabled()/set_enabled()), mặc định
@@ -143,6 +181,14 @@ OPENROUTER_MAX_CONCURRENCY = _env_int("OPENROUTER_MAX_CONCURRENCY", 4)
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 TAVILY_BASE_URL = os.getenv("TAVILY_BASE_URL", "https://api.tavily.com").strip()
 TAVILY_CALL_TIMEOUT_SEC = _env_int("TAVILY_CALL_TIMEOUT_SEC", 20)
+
+# Lọc link lạ trong câu trả lời chat (core/urls.py): link không có trong tin
+# người dùng/dữ liệu tra cứu bị hiện dạng hxxps://ten[.]mien. "untrusted" (mặc
+# định): chỉ lọc lượt có dữ liệu ngoài (Tavily, đọc trang...) trong prompt -
+# đúng lượt có thể bị prompt injection; "all": lọc mọi lượt chat; "off": tắt.
+# Lượt provider tự tra web (Google Search, browser_search) không lọc vì link
+# nguồn do provider tìm ra, không nằm trong dữ liệu của bot.
+REPLY_URL_FILTER = os.getenv("REPLY_URL_FILTER", "untrusted").strip().lower() or "untrusted"
 
 # vnstock — API key MIỄN PHÍ (gói Community, đăng ký tại vnstocks.com/login)
 # nâng rate limit 20 -> 60 request/phút và số kỳ BCTC 4 -> 8 kỳ so với chế độ

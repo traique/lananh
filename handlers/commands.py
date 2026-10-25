@@ -81,7 +81,7 @@ HELP_TEXT = (
     "/status — xem trạng thái provider chain\n"
     "/userouter9 — ép thử lại 9Router ngay\n"
     "/router9 on|off — bật/tắt 9Router thủ công\n"
-    "/tavily on|off — bật/tắt tra web Tavily trước khi trả lời\n\n"
+    "/tavily on|off — bật/tắt tra web Tavily (tắt thì dùng web search của provider)\n\n"
     "*Zalo bot B*\n"
     "/zalo — đăng nhập bằng QR hoặc xem trạng thái Zalo B; /zalologout — đăng xuất\n"
     "/zalopair <id> [tên] — cấp quyền thành viên; /zaloadmin <id> [tên] — cấp quyền admin\n"

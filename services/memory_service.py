@@ -160,6 +160,12 @@ Quy tắc bắt buộc:
 """
 
 
+_ASSISTANT_SKIPPED = (
+    "(bỏ qua - lượt này trợ lý trả lời dựa trên dữ liệu tra cứu bên ngoài; CHỈ trích "
+    "fact/highlight từ lời User, không lấy thông tin nào từ phía trợ lý)"
+)
+
+
 def _build_extraction_prompt(
     existing_facts: list[tuple[str, str]],
     old_summary: str,
@@ -170,13 +176,16 @@ def _build_extraction_prompt(
         "\n".join(f"- {k}: {v}" for k, v in existing_facts) if existing_facts else "(chưa có)"
     )
     summary_block = old_summary or "(chưa có)"
+    # model_text rỗng = lượt trả lời dựa trên dữ liệu web/ngoài (có thể bị prompt
+    # injection): CHỈ trích nhớ từ lời người dùng, không lấy gì từ câu trả lời.
+    assistant_line = model_text or _ASSISTANT_SKIPPED
     return (
         f"{_EXTRACTION_INSTRUCTION}\n\n"
         f"### Sự thật đã biết hiện tại\n{facts_block}\n\n"
         f"### Tóm tắt hội thoại trước đó\n{summary_block}\n\n"
         f"### Lượt hội thoại mới nhất\n"
         f"User: {user_text}\n"
-        f"Trợ lý: {model_text}\n\n"
+        f"Trợ lý: {assistant_line}\n\n"
         "Trả về JSON theo đúng định dạng đã mô tả ở trên, không thêm gì khác."
     )
 

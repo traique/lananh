@@ -88,6 +88,22 @@ services:
         value: "900"
       - key: API_QUOTA_COOLDOWN_SEC
         value: "3600"
+      # Provider tự tra web khi Tavily tắt/lỗi/mỏng. OpenRouter tốn credit,
+      # 9Router chưa xác minh được - cả 2 tắt mặc định.
+      - key: GROQ_REALTIME_MODEL
+        value: "openai/gpt-oss-120b"
+      - key: GROQ_WEB_SEARCH
+        value: "1"
+      - key: OPENROUTER_WEB_SEARCH
+        value: "0"
+      - key: ROUTER9_WEB_SEARCH
+        value: "0"
+      - key: REPLY_URL_FILTER
+        value: "untrusted"
+      - key: DB_CONNECT_TIMEOUT_SEC
+        value: "8"
+      - key: DB_BREAKER_OPEN_SEC
+        value: "30"
       - key: ROUTER9_CALL_TIMEOUT_SEC
         value: "120"
       - key: ROUTER9_STEP_DELAY_SEC

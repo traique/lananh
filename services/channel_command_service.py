@@ -11,6 +11,7 @@ from services import (
     memory_service,
     price_search,
     prompt_templates,
+    search_status,
     translate_service,
     usage_stats,
 )
@@ -53,7 +54,7 @@ Chỉ admin
 /thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày
 /userouter9 — thử lại 9Router
 /router9 on|off — bật/tắt 9Router thủ công
-/tavily on|off — bật/tắt tra web Tavily trước khi trả lời
+/tavily on|off — bật/tắt tra web Tavily (tắt thì dùng web search của provider)
 /anh on|off — bật/tắt tạo ảnh Agnes AI
 /agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm)
 /rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/
@@ -463,7 +464,8 @@ async def maybe_handle_command(
     if command == "/status":
         state = orchestrator.get_provider_state_snapshot()
         return [
-            f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}"
+            f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}\n"
+            f"{await search_status.search_mode_line()}"
         ], None
     if command == "/thongke":
         # Dùng chung logic/format với Telegram - xem services/usage_stats.py.
@@ -492,13 +494,20 @@ async def maybe_handle_command(
         toggle = parse_on_off(argument)
         if toggle is True:
             await tavily_client.set_enabled(True)
-            return ["✅ Đã bật tra web Tavily trước khi trả lời."], None
+            return [
+                "✅ Đã bật tra web Tavily trước khi trả lời.\n"
+                f"{await search_status.search_mode_line()}"
+            ], None
         if toggle is False:
             await tavily_client.set_enabled(False)
-            return ["🔴 Đã tắt Tavily, chat trở lại luồng bình thường."], None
+            return [
+                "🔴 Đã tắt Tavily. Câu cần thông tin mới em sẽ dùng web search của chính "
+                f"provider đang trả lời.\n{await search_status.search_mode_line()}"
+            ], None
         enabled = await tavily_client.get_enabled()
         return [
-            f"Tavily đang {'BẬT' if enabled else 'TẮT'}. Dùng /tavily on hoặc /tavily off để đổi."
+            f"Tavily đang {'BẬT' if enabled else 'TẮT'}.\n{await search_status.search_mode_line()}\n"
+            "Dùng /tavily on hoặc /tavily off để đổi."
         ], None
     if command == "/model":
         if not argument:

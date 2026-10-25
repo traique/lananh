@@ -411,8 +411,9 @@ async def test_groq_het_quota_chuyen_openrouter_va_cooldown(fake_store, monkeypa
 
 @pytest.mark.asyncio
 async def test_search_only_providers_groq_truoc_google_roi_openrouter(monkeypatch):
-    """require_real_search ưu tiên Groq Compound rồi Google Search grounding;
-    OpenRouter chỉ đứng cuối làm lưới an toàn."""
+    """require_real_search ưu tiên Groq browser_search rồi Google Search grounding;
+    OpenRouter chỉ đứng cuối KHI đã bật tra web cho nó (OPENROUTER_WEB_SEARCH) -
+    provider không tự tra web được không còn đứng trong chuỗi tra cứu bắt buộc."""
     from ai import official_client
 
     async def fake_api_key_for(idx):
@@ -420,9 +421,15 @@ async def test_search_only_providers_groq_truoc_google_roi_openrouter(monkeypatc
 
     monkeypatch.setattr(config, "ROUTER9_API_KEY", "fake-router9-key")
     monkeypatch.setattr(config, "GROQ_API_KEY", "fake-groq-key")
+    monkeypatch.setattr(config, "GROQ_WEB_SEARCH", True)
     monkeypatch.setattr(config, "OPENROUTER_API_KEY", "fake-openrouter-key")
+    monkeypatch.setattr(config, "OPENROUTER_WEB_SEARCH", False)
+    monkeypatch.setattr(config, "ROUTER9_WEB_SEARCH", False)
     monkeypatch.setattr(official_client, "api_key_for", fake_api_key_for)
 
+    assert await orchestrator._search_only_providers() == ["groq", "api1", "api2"]
+
+    monkeypatch.setattr(config, "OPENROUTER_WEB_SEARCH", True)
     order = await orchestrator._search_only_providers()
 
     assert order == ["groq", "api1", "api2", "openrouter"]
@@ -439,6 +446,7 @@ async def test_search_only_providers_khong_co_api1_thi_bo_qua(monkeypatch):
 
     monkeypatch.setattr(config, "GROQ_API_KEY", "")
     monkeypatch.setattr(config, "OPENROUTER_API_KEY", "fake-openrouter-key")
+    monkeypatch.setattr(config, "OPENROUTER_WEB_SEARCH", True)
     monkeypatch.setattr(official_client, "api_key_for", fake_api_key_for)
 
     order = await orchestrator._search_only_providers()

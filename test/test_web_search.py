@@ -236,9 +236,16 @@ async def test_maybe_search_passes_user_id_into_rewrite(monkeypatch):
         return ["giá cổ phiếu VNM hôm nay", "giá VNM mới nhất"]
 
     async def fake_search_web(
-        primary, *, extra_queries=None, deep_read=False, topic="general", time_range=None
+        primary,
+        *,
+        extra_queries=None,
+        deep_read=False,
+        topic="general",
+        time_range=None,
+        fallback=True,
     ):
         captured["primary"] = primary
+        captured["fallback"] = fallback
         captured["topic"] = topic
         captured["time_range"] = time_range
         captured["extra_queries"] = extra_queries
@@ -255,6 +262,9 @@ async def test_maybe_search_passes_user_id_into_rewrite(monkeypatch):
     assert captured["user_id"] == 42
     assert captured["primary"] == "giá cổ phiếu VNM hôm nay"
     assert captured["extra_queries"] == ["giá VNM mới nhất"]
+    # Chat không chạy bước "provider tra web hộ" riêng nữa: Tavily mỏng/lỗi thì
+    # provider đang trả lời tự tra web ngay trong lượt chat (chế độ native).
+    assert captured["fallback"] is False
 
 
 @pytest.mark.parametrize(

@@ -14,6 +14,7 @@ from ai import agnes_client, orchestrator, router9_client, tavily_client
 from core import config
 from core.text_utils import parse_on_off
 from handlers import common
+from services import search_status
 
 
 @common.restricted
@@ -83,15 +84,23 @@ async def tavily_toggle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     toggle = parse_on_off(common.extract_arg(context))
     if toggle is True:
         await tavily_client.set_enabled(True)
-        await update.message.reply_text("✅ Đã bật tra web Tavily trước khi trả lời.")
+        await update.message.reply_text(
+            f"✅ Đã bật tra web Tavily trước khi trả lời.\n{await search_status.search_mode_line()}"
+        )
         return
     if toggle is False:
         await tavily_client.set_enabled(False)
-        await update.message.reply_text("🔴 Đã tắt Tavily, chat trở lại luồng bình thường.")
+        await update.message.reply_text(
+            "🔴 Đã tắt Tavily. Câu cần thông tin mới em sẽ dùng web search của chính "
+            f"provider đang trả lời.\n{await search_status.search_mode_line()}"
+        )
         return
     enabled = await tavily_client.get_enabled()
     status = "🟢 đang BẬT" if enabled else "🔴 đang TẮT"
-    await update.message.reply_text(f"Tavily {status}.\nDùng /tavily on hoặc /tavily off để đổi.")
+    await update.message.reply_text(
+        f"Tavily {status}.\n{await search_status.search_mode_line()}\n"
+        "Dùng /tavily on hoặc /tavily off để đổi."
+    )
 
 
 @common.restricted
@@ -254,12 +263,14 @@ async def _build_status_text() -> str:
         f"OpenRouter: {html.escape(config.OPENROUTER_MODEL)}, API: {html.escape(config.GOOGLE_AI_STUDIO_MODEL)})"
     )
     order_line = "🔢 PROVIDER_ORDER: " + " → ".join(config.PROVIDER_ORDER)
+    search_line = html.escape(await search_status.search_mode_line())
 
     lines = [
         "📡 <b>Trạng thái bot</b>",
         "",
         active_line,
         order_line,
+        search_line,
         "",
         router9_line,
         groq_line,

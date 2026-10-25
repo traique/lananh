@@ -125,9 +125,24 @@ def now_vn_context() -> str:
 
 
 class FallbackResponse:
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, *, searched: bool = False) -> None:
         self.text = text
         self.used_fallback = True
+        # Gemini đã THẬT SỰ gọi Google Search trong lượt này (có grounding metadata).
+        self.searched = searched
+
+
+def _used_google_search(response) -> bool:
+    """True nếu response có grounding metadata của Google Search (truy vấn đã
+    chạy hoặc trang nguồn) - bằng chứng Gemini đã tra web, không chỉ "được phép"
+    tra (bật tool google_search thì model vẫn tự quyết có tra hay không)."""
+    for candidate in getattr(response, "candidates", None) or []:
+        meta = getattr(candidate, "grounding_metadata", None)
+        if meta is None:
+            continue
+        if getattr(meta, "web_search_queries", None) or getattr(meta, "grounding_chunks", None):
+            return True
+    return False
 
 
 def is_quota_exhausted_error(exc: BaseException) -> bool:
@@ -154,7 +169,13 @@ async def generate(
     persona_generation_config: bool = False,
     enable_search: bool = False,
     model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    require_search_evidence: bool = False,
 ) -> FallbackResponse:
+    """``temperature``: ghi đè nhiệt độ persona (lượt có dữ liệu tra cứu dùng
+    thấp hơn để giữ đúng số liệu). ``require_search_evidence``: lượt bắt buộc
+    tự tra web - Gemini trả lời mà không có grounding metadata thì raise
+    NoSearchEvidenceError (provider-chain chuyển provider kế tiếp)."""
     from google.genai import types
 
     client = await _get_official_client(idx)
@@ -176,6 +197,8 @@ async def generate(
     cfg_kwargs = {"system_instruction": system_instruction or None}
     if persona_generation_config:
         cfg_kwargs.update(temperature=_PERSONA_TEMPERATURE, top_p=_PERSONA_TOP_P)
+    if temperature is not None:
+        cfg_kwargs["temperature"] = temperature
     if enable_search:
         cfg_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
 
@@ -188,7 +211,12 @@ async def generate(
         OFFICIAL_CHAT_TIMEOUT_SEC,
         f"api{idx} generate_content",
     )
-    return FallbackResponse((response.text or "").strip())
+    searched = bool(enable_search) and _used_google_search(response)
+    if require_search_evidence and not searched:
+        from ai.openai_compatible import NoSearchEvidenceError
+
+        raise NoSearchEvidenceError(f"api{idx} trả lời nhưng không gọi Google Search")
+    return FallbackResponse((response.text or "").strip(), searched=searched)
 
 
 async def generate_image_prompt(idx: int, instruction: str, image_path: str) -> FallbackResponse:
