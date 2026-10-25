@@ -43,14 +43,16 @@ HELP_TEXT = (
     '(action do hệ thống quyết, AI chỉ diễn giải). "Soi danh mục" để xem cả rổ. Thêm "theo Buffett/Minervini/'
     'Đoàn Vĩnh Bình" (hoặc "3 huyền thoại") để nghe góc nhìn định tính.\n\n'
     "🖼️ *Gửi 1 ảnh chân dung* để Gemini viết lại prompt giữ nguyên khuôn mặt.\n\n"
-    "*Lịch, thần số học, tử vi*\n"
+    "*Lịch, thần số học, tử vi, kỳ môn*\n"
     "/lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8, "
     "/lich tháng này, /lich trung thu, /lich ngày tốt tháng này, /lich tuổi 15/3/1990, "
     "/lich sao hạn 1990 nam năm 2027 (/lich help xem thêm ví dụ)\n"
     "/tsh <ngày sinh> [họ tên] — thần số học: con số chủ đạo, biểu đồ ngày sinh (không tốn AI)\n"
     "/tsh\\_chitiet <như trên> — AI diễn giải chi tiết\n"
     "/tuvi <ngày sinh> <giờ> <nam|nữ> — an lá số tử vi (không tốn AI), vd /tuvi 15/3/1990 9h30 nam\n"
-    "/tuvi\\_chitiet <như trên> — AI luận giải lá số\n\n"
+    "/tuvi\\_chitiet <như trên> — AI luận giải lá số\n"
+    "/kymon [ngày] [giờ] — lập bàn Kỳ Môn Độn Giáp (không tốn AI), mặc định lúc này\n"
+    "/kymon\\_chitiet [thời điểm] <việc cần xem> — AI luận giải bàn Kỳ Môn cho việc đó\n\n"
     "*Chat và tiện ích*\n"
     "/prompt <mô tả> — viết prompt tạo ảnh từ mô tả cơ bản\n"
     "/anh <mô tả> — tạo ảnh thật (Agnes AI); /anh on|off — bật/tắt\n"
@@ -411,11 +413,25 @@ async def tuvi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+@common.restricted
+async def kymon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/kymon [ngày] [giờ] - lập bàn Kỳ Môn Độn Giáp (không AI)."""
+    await common.reply_long_text(
+        update.message, divination_commands.kymon_chart(common.extract_arg(context))
+    )
+
+
+_CHITIET = {
+    "tsh": divination_commands.tsh_chitiet,
+    "tuvi": divination_commands.tuvi_chitiet,
+    "kymon": divination_commands.kymon_chitiet,
+}
+
+
 async def _reply_chitiet(update: Update, context: ContextTypes.DEFAULT_TYPE, kind: str) -> None:
     argument = common.extract_arg(context)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    handler = divination_commands.tsh_chitiet if kind == "tsh" else divination_commands.tuvi_chitiet
-    for part in await handler(update.effective_user.id, argument, "telegram"):
+    for part in await _CHITIET[kind](update.effective_user.id, argument, "telegram"):
         await common.reply_long_text(update.message, part)
 
 
@@ -429,6 +445,12 @@ async def tsh_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def tuvi_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/tuvi_chitiet - lá số tử vi kèm AI luận giải (1 lượt AI)."""
     await _reply_chitiet(update, context, "tuvi")
+
+
+@common.restricted
+async def kymon_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/kymon_chitiet [thời điểm] <việc cần xem> - bàn Kỳ Môn kèm AI luận giải (1 lượt AI)."""
+    await _reply_chitiet(update, context, "kymon")
 
 
 @common.restricted

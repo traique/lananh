@@ -20,7 +20,7 @@ HELP = """📖 Lệnh trên Zalo/Zoom
 💬 Nhắn bình thường để trò chuyện. Nhắc tới 1 mã cổ phiếu là có giá realtime; nói "phân tích FPT" để xem báo cáo
 (thành viên nhận bản tham khảo, admin nhận bản đầy đủ). Nói "đã mua FPT 100 giá 120" để ghi danh mục.
 
-Lịch, thần số học, tử vi
+Lịch, thần số học, tử vi, kỳ môn
 /lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8,
   /lich tháng này, /lich trung thu, /lich ngày tốt tháng này, /lich tuổi 15/3/1990,
   /lich sao hạn 1990 nam năm 2027 (gõ /lich help để xem thêm ví dụ)
@@ -28,6 +28,8 @@ Lịch, thần số học, tử vi
 /tsh_chitiet <như trên> — AI diễn giải chi tiết
 /tuvi <ngày sinh> <giờ> <nam|nữ> — an lá số tử vi (không tốn AI), vd /tuvi 15/3/1990 9h30 nam
 /tuvi_chitiet <như trên> — AI luận giải lá số
+/kymon [ngày] [giờ] — lập bàn Kỳ Môn Độn Giáp (không tốn AI), mặc định lúc này, vd /kymon 25/10/2026 9:00
+/kymon_chitiet [thời điểm] <việc cần xem> — AI luận giải bàn Kỳ Môn cho việc đó
 
 Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
@@ -360,7 +362,7 @@ async def maybe_handle_command(
 
     if command in {"/start", "/help"}:
         return [HELP], None
-    # /lich, /tsh, /tuvi: tính bằng code (không AI); *_chitiet mới gọi AI.
+    # /lich, /tsh, /tuvi, /kymon: tính bằng code (không AI); *_chitiet mới gọi AI.
     divination = await divination_commands.handle(command, argument, user_id, channel)
     if divination is not None:
         return divination, None
