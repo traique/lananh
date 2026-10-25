@@ -47,11 +47,14 @@ def _block_real_network(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _clear_settings_cache():
-    """core.settings_cache giữ giá trị settings trong RAM của process: xoá giữa
-    các test để giá trị db.get_setting giả của test này không rò sang test khác."""
-    from core import settings_cache
+def _reset_process_state():
+    """Xoá state sống theo process giữa các test: cache settings ghi-xuyên
+    (core.settings_cache - giá trị db.get_setting giả của test này không được
+    rò sang test khác) và circuit breaker DB (core.database)."""
+    from core import database, settings_cache
 
     settings_cache.clear()
+    database.reset_circuit_breaker()
     yield
     settings_cache.clear()
+    database.reset_circuit_breaker()

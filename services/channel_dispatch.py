@@ -13,12 +13,15 @@ hay ``web.handle_channel_text`` vẫn có hiệu lực).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from services.channel_result import ChannelResult
 from services.concurrency import assistant_turn
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,22 @@ class DispatchHandlers:
     # Khoá lượt theo người dùng (services.concurrency.assistant_turn); tiêm để
     # kênh/test thay thế được.
     turn: Callable[[str], Any] = field(default=assistant_turn)
+
+
+async def _save_cached_best_effort(h: DispatchHandlers, req: DispatchRequest, payload) -> None:
+    """Lưu cache idempotency kiểu best-effort: câu trả lời ĐÃ sinh xong không được
+    mất chỉ vì DB lỗi lúc ghi cache (trước đây lỗi này làm gateway Zalo gửi
+    BRIDGE_ERROR_REPLY thay cho câu trả lời). Mất cache chỉ có nghĩa 1 lượt gửi
+    trùng từ gateway (hiếm) có thể chạy lại."""
+    try:
+        await h.save_cached(req.account_id, req.event_id, req.cache_kind, payload)
+    except Exception:
+        logger.warning(
+            "Không lưu được cache idempotency %s/%s (DB lỗi) - vẫn trả câu trả lời.",
+            req.cache_kind,
+            req.event_id,
+            exc_info=True,
+        )
 
 
 def payload_from_result(result: ChannelResult, chunk) -> dict[str, Any]:
@@ -87,9 +106,9 @@ async def dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]:
                 # kênh khác bọc lambda để truyền channel=.
                 result = await h.chat(req.user_id, text, req.is_admin)
             payload = payload_from_result(result, h.chunk)
-            await h.save_cached(req.account_id, req.event_id, req.cache_kind, payload)
+            await _save_cached_best_effort(h, req, payload)
             return payload
 
     payload = payload_from_result(result, h.chunk)
-    await h.save_cached(req.account_id, req.event_id, req.cache_kind, payload)
+    await _save_cached_best_effort(h, req, payload)
     return payload

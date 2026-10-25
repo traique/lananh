@@ -304,7 +304,22 @@ async def build_memory_context(user_id: int, query: str = "") -> str:
     """Build khối text trí nhớ dài hạn để chèn vào prompt gửi Gemini (xem
     ai.orchestrator.chat(..., memory_context=...)). Trả về "" nếu chưa có gì
     ĐỂ NHỚ. Tin ĐẦU phiên: toàn bộ trí nhớ (summary + facts + highlights).
-    Giữa phiên: chỉ fact/highlight liên quan ``query`` (select_relevant_memory)."""
+    Giữa phiên: chỉ fact/highlight liên quan ``query`` (select_relevant_memory).
+
+    Fail-open: DB lỗi/chập chờn thì trả "" (lượt chat vẫn trả lời, chỉ thiếu
+    trí nhớ) thay vì làm hỏng cả lượt."""
+    try:
+        return await _build_memory_context(user_id, query)
+    except Exception:
+        logger.warning(
+            "Không đọc được trí nhớ dài hạn user_id=%s (DB lỗi) - trả lời không kèm trí nhớ.",
+            user_id,
+            exc_info=True,
+        )
+        return ""
+
+
+async def _build_memory_context(user_id: int, query: str) -> str:
     if not await is_enabled(user_id):
         return ""
     if not await _is_new_session(user_id):

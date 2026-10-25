@@ -128,14 +128,6 @@ async def run_chat_turn(
                 web_grounded=bool(search_result),
             )
         reply = (response.text or "").strip()
-        await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
-        if reply:
-            await db.add_chat_message(user_id, "user", text)
-            await db.add_chat_message(user_id, "model", reply)
-            _track_background_task(
-                asyncio.create_task(_update_memory_bounded(user_id, text, reply))
-            )
-        return ChatTurn(reply, bool(getattr(response, "used_fallback", False)), prompt_id=prompt_id)
     except TurnTimeoutError as exc:
         logger.warning("Lượt chat hết hạn chót (kênh %s): %s", channel, exc)
         await telemetry.failure(prompt_id, "chat", exc)
@@ -144,6 +136,29 @@ async def run_chat_turn(
         logger.exception("Lỗi lượt chat (kênh %s)", channel)
         await telemetry.failure(prompt_id, "chat", exc)
         return ChatTurn(failed=True, prompt_id=prompt_id)
+
+    # Từ đây câu trả lời ĐÃ sinh xong (đã tốn quota): lỗi ghi DB/telemetry chỉ
+    # log, không bao giờ biến thành "❌ Có lỗi khi trò chuyện" và mất câu trả lời.
+    await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
+    if reply:
+        await _save_turn_best_effort(user_id, text, reply)
+        _track_background_task(asyncio.create_task(_update_memory_bounded(user_id, text, reply)))
+    return ChatTurn(reply, bool(getattr(response, "used_fallback", False)), prompt_id=prompt_id)
+
+
+async def _save_turn_best_effort(user_id: int, text: str, reply: str) -> None:
+    """Lưu cả lượt vào lịch sử (1 transaction, core.database.add_chat_turn); lỗi
+    thì lượt sau chỉ thiếu ngữ cảnh lượt này - không chặn việc gửi câu trả lời.
+    Không giữ hàng đợi ghi bù: dòng ghi muộn mang id/created_at mới sẽ làm lộn
+    thứ tự lịch sử phiên."""
+    try:
+        await db.add_chat_turn(user_id, text, reply)
+    except Exception:
+        logger.warning(
+            "Không lưu được lịch sử chat user_id=%s (DB lỗi) - vẫn gửi câu trả lời.",
+            user_id,
+            exc_info=True,
+        )
 
 
 def split_for_zalo(text: str, limit: int = 1800) -> list[str]:

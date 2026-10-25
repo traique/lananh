@@ -61,8 +61,9 @@ def chat_fakes(monkeypatch):
         calls["chat"] = (grounding, memory_context)
         return calls.get("response", _FakeResponse("trả lời", used_fallback=True))
 
-    async def fake_add(user_id, role, content):
-        calls["saved"].append((role, content))
+    async def fake_add_turn(user_id, user_text, model_text):
+        # 1 transaction cho cả lượt (core.database.add_chat_turn).
+        calls["saved"].extend([("user", user_text), ("model", model_text)])
 
     async def fake_update_memory(user_id, text, reply):
         return None
@@ -75,7 +76,7 @@ def chat_fakes(monkeypatch):
     monkeypatch.setattr(ccs.memory_service, "build_memory_context", fake_memory)
     monkeypatch.setattr(ccs.memory_service, "update_memory", fake_update_memory)
     monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
-    monkeypatch.setattr(ccs.db, "add_chat_message", fake_add)
+    monkeypatch.setattr(ccs.db, "add_chat_turn", fake_add_turn)
     return calls
 
 

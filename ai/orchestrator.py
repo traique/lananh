@@ -626,6 +626,22 @@ async def ask(
     )
 
 
+async def _read_history(user_id: int) -> list[tuple[str, str]]:
+    """Lịch sử phiên cho lượt chat; DB lỗi thì trả [] (trả lời không kèm lịch sử)
+    thay vì làm hỏng cả lượt - _with_reconnect đã tự thử lại 1 lỗi kết nối lẻ."""
+    try:
+        return await db.get_session_messages(
+            user_id, config.CHAT_HISTORY_TURNS, config.CHAT_SESSION_TIMEOUT_SEC
+        )
+    except Exception:
+        logger.warning(
+            "Không đọc được lịch sử chat user_id=%s (DB lỗi) - trả lời không kèm lịch sử.",
+            user_id,
+            exc_info=True,
+        )
+        return []
+
+
 async def chat(
     user_id: int,
     prompt: str,
@@ -645,9 +661,7 @@ async def chat(
     # Lịch sử đọc DB ĐÚNG 1 LẦN cho mọi provider trong lượt (trước đây mỗi
     # closure provider tự query -> 3-4 query giống nhau khi fallback), rồi cắt
     # cùng grounding/trí nhớ cho vừa ngân sách prompt.
-    raw_history = await db.get_session_messages(
-        user_id, config.CHAT_HISTORY_TURNS, config.CHAT_SESSION_TIMEOUT_SEC
-    )
+    raw_history = await _read_history(user_id)
     history, memory_context, grounding = prompt_budget.fit_chat_prompt(
         persona=persona,
         history=raw_history,

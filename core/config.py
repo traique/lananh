@@ -413,6 +413,15 @@ SETTINGS_REJECT_PLAINTEXT = _env_bool("SETTINGS_REJECT_PLAINTEXT", False)
 # DATABASE_SSL_CA trỏ tới file CA của Supabase nếu CA đó không có trong hệ thống).
 DATABASE_SSL_MODE = os.getenv("DATABASE_SSL_MODE", "require").strip().lower() or "require"
 DATABASE_SSL_CA = os.getenv("DATABASE_SSL_CA", "").strip() or None
+# Trần thời gian MỞ 1 kết nối DB mới (asyncpg mặc định 60s): Supabase treo/mất
+# mạng thì lượt chat fail nhanh thay vì giữ khoá người dùng + slot
+# MAX_CONCURRENT_TURNS cả phút cho mỗi câu lệnh.
+DB_CONNECT_TIMEOUT_SEC = max(2, min(60, _env_int("DB_CONNECT_TIMEOUT_SEC", 8)))
+# Circuit breaker DB (core/database.py): khi cả lần thử lại sau reconnect cũng
+# mất kết nối (hoặc mở kết nối quá DB_CONNECT_TIMEOUT_SEC), coi DB sập trong
+# chừng này giây - mọi lệnh DB báo lỗi ngay thay vì treo; hết hạn cho 1 lệnh
+# thăm dò đi qua. 0 = tắt breaker.
+DB_BREAKER_OPEN_SEC = max(0, min(600, _env_int("DB_BREAKER_OPEN_SEC", 30)))
 
 # Secret riêng cho endpoint /diagnose (KHÔNG dùng chung với WEBHOOK_SECRET), truyền
 # qua header X-Diagnose-Token thay vì query string để tránh lộ qua access log.

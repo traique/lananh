@@ -4,6 +4,7 @@ import asyncio
 import contextvars
 import functools
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -17,6 +18,72 @@ _pool: Optional[asyncpg.pool.Pool] = None
 _pool_lock = asyncio.Lock()
 
 _CONNECTION_ERRORS = (asyncpg.PostgresConnectionError, asyncpg.InterfaceError, OSError)
+
+
+class DatabaseUnavailableError(ConnectionError):
+    """DB đang được coi là sập (circuit breaker mở): lệnh DB báo lỗi NGAY thay vì
+    treo tới timeout - caller degrade trong vài ms (đọc trí nhớ/lịch sử trả
+    rỗng, webhook trả 503 để Telegram tự gửi lại)."""
+
+
+# ─── Circuit breaker ─────────────────────────────────────────────────────────
+# CHỈ mở khi lần thử lại sau reconnect CŨNG mất kết nối, hoặc mở kết nối mới
+# quá DB_CONNECT_TIMEOUT_SEC. Một connection bị Supavisor cắt lúc rảnh (chuyện
+# thường ngày, max_inactive_connection_lifetime=60) chỉ là 1 lỗi đơn lẻ được
+# _with_reconnect tự chữa, KHÔNG làm mở breaker. Hết DB_BREAKER_OPEN_SEC thì
+# cho đúng 1 lệnh thăm dò đi qua: thành công -> đóng, lỗi kết nối -> mở tiếp.
+_breaker_open_until = 0.0
+_breaker_probe_inflight = False
+_in_db_call: contextvars.ContextVar[bool] = contextvars.ContextVar("db_in_call", default=False)
+
+
+def reset_circuit_breaker() -> None:
+    global _breaker_open_until, _breaker_probe_inflight
+    _breaker_open_until = 0.0
+    _breaker_probe_inflight = False
+
+
+def circuit_open() -> bool:
+    return _breaker_open_until > 0 and time.monotonic() < _breaker_open_until
+
+
+def _breaker_enter() -> bool:
+    """Gọi trước mỗi lệnh DB. Trả True nếu lệnh này là lệnh thăm dò."""
+    global _breaker_probe_inflight
+    if _breaker_open_until <= 0:
+        return False
+    if time.monotonic() < _breaker_open_until or _breaker_probe_inflight:
+        raise DatabaseUnavailableError("DB tạm thời không kết nối được (circuit breaker mở)")
+    _breaker_probe_inflight = True
+    return True
+
+
+def _breaker_trip(exc: BaseException) -> None:
+    global _breaker_open_until, _breaker_probe_inflight
+    open_sec = config.DB_BREAKER_OPEN_SEC
+    _breaker_probe_inflight = False
+    if open_sec <= 0:
+        return
+    if not circuit_open():
+        logger.warning(
+            "DB mất kết nối cả sau khi reconnect (%s: %s) - fail nhanh trong %ss.",
+            type(exc).__name__,
+            exc,
+            open_sec,
+        )
+    _breaker_open_until = time.monotonic() + open_sec
+
+
+def _breaker_ok() -> None:
+    global _breaker_open_until, _breaker_probe_inflight
+    if _breaker_open_until > 0:
+        logger.info("DB kết nối lại được, đóng circuit breaker.")
+    _breaker_open_until = 0.0
+    _breaker_probe_inflight = False
+
+
+def _is_command_timeout(exc: BaseException) -> bool:
+    return isinstance(exc, TimeoutError) and not isinstance(exc, DatabaseUnavailableError)
 
 
 async def _reset_pool(failed_pool: Optional[asyncpg.pool.Pool]) -> None:
@@ -68,21 +135,48 @@ def _with_reconnect(func=None, *, idempotent: bool = True):
     def decorate(fn):
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
+            # Lệnh lồng trong 1 lệnh DB khác (vd enqueue -> ensure_migrations) đi
+            # theo quyết định breaker của lệnh ngoài, không tự kiểm lại (nếu
+            # không, lệnh thăm dò sẽ tự chặn chính lệnh con của nó).
+            nested = _in_db_call.get()
+            probe = False if nested else _breaker_enter()
+            nested_token = _in_db_call.set(True)
             token = _pool_in_use.set(None)
             try:
-                return await fn(*args, **kwargs)
+                try:
+                    result = await fn(*args, **kwargs)
+                except _CONNECTION_ERRORS as exc:
+                    # TimeoutError là lớp con của OSError (Python 3.11+): câu lệnh
+                    # chạy quá command_timeout KHÔNG phải mất kết nối - đóng cả pool
+                    # rồi chạy lại chỉ nhân đôi thời gian chờ.
+                    if isinstance(exc, DatabaseUnavailableError) or _is_command_timeout(exc):
+                        raise
+                    await _reset_pool(_pool_in_use.get())
+                    if not _safe_to_retry(exc, idempotent):
+                        raise
+                    try:
+                        result = await fn(*args, **kwargs)
+                    except _CONNECTION_ERRORS as retry_exc:
+                        if not _is_command_timeout(retry_exc):
+                            _breaker_trip(retry_exc)
+                        raise
             except _CONNECTION_ERRORS as exc:
-                # TimeoutError là lớp con của OSError (Python 3.11+): câu lệnh
-                # chạy quá command_timeout KHÔNG phải mất kết nối - đóng cả pool
-                # rồi chạy lại chỉ nhân đôi thời gian chờ.
-                if isinstance(exc, TimeoutError):
-                    raise
-                await _reset_pool(_pool_in_use.get())
-                if not _safe_to_retry(exc, idempotent):
-                    raise
-                return await fn(*args, **kwargs)
+                if probe and not _is_command_timeout(exc):
+                    _breaker_trip(exc)
+                elif probe:
+                    _breaker_ok()
+                raise
+            except Exception:
+                # Lỗi SQL/dữ liệu: DB vẫn trả lời được -> breaker đóng.
+                if probe:
+                    _breaker_ok()
+                raise
             finally:
                 _pool_in_use.reset(token)
+                _in_db_call.reset(nested_token)
+            if probe or (_breaker_open_until and not nested):
+                _breaker_ok()
+            return result
 
         return wrapper
 
@@ -134,20 +228,34 @@ async def _get_or_create_pool() -> asyncpg.pool.Pool:
         return _pool
     async with _pool_lock:
         if _pool is None:
-            _pool = await asyncpg.create_pool(
-                config.DATABASE_URL,
-                min_size=1,
-                max_size=5,
-                # Đóng connection rảnh sau 60s: Supavisor/Supabase hay cắt
-                # connection idle, giữ lại chỉ tạo lỗi "connection is closed" ở
-                # lượt kế tiếp (và tốn RAM vô ích).
-                max_inactive_connection_lifetime=60,
-                command_timeout=30,
-                ssl=_ssl_setting(),
-                # PgBouncer/Supavisor transaction mode không giữ prepared statement
-                statement_cache_size=0,
-            )
+            try:
+                _pool = await _create_pool()
+            except TimeoutError as exc:
+                # Mở kết nối quá DB_CONNECT_TIMEOUT_SEC: DB treo/mất mạng ->
+                # mở breaker ngay (không đợi thêm 1 lần timeout nữa).
+                _breaker_trip(exc)
+                raise DatabaseUnavailableError(
+                    f"Không mở được kết nối DB trong {config.DB_CONNECT_TIMEOUT_SEC}s"
+                ) from exc
     return _pool
+
+
+async def _create_pool() -> asyncpg.pool.Pool:
+    return await asyncpg.create_pool(
+        config.DATABASE_URL,
+        min_size=1,
+        max_size=5,
+        # Trần thời gian mở 1 kết nối (asyncpg mặc định 60s).
+        timeout=config.DB_CONNECT_TIMEOUT_SEC,
+        # Đóng connection rảnh sau 60s: Supavisor/Supabase hay cắt
+        # connection idle, giữ lại chỉ tạo lỗi "connection is closed" ở
+        # lượt kế tiếp (và tốn RAM vô ích).
+        max_inactive_connection_lifetime=60,
+        command_timeout=30,
+        ssl=_ssl_setting(),
+        # PgBouncer/Supavisor transaction mode không giữ prepared statement
+        statement_cache_size=0,
+    )
 
 
 @_with_reconnect
@@ -388,6 +496,21 @@ async def add_chat_message(telegram_user_id: int, role: str, content: str) -> No
                 telegram_user_id,
                 CHAT_MESSAGES_RETENTION_LIMIT,
             )
+
+
+@_with_reconnect(idempotent=False)
+async def add_chat_turn(telegram_user_id: int, user_text: str, model_text: str) -> None:
+    """Lưu CẢ lượt (tin người dùng + câu trả lời) trong 1 transaction - không
+    bao giờ còn nửa lượt (chỉ có câu hỏi) khi DB lỗi giữa 2 lệnh INSERT."""
+    from core.repositories import chat_history
+
+    await chat_history.add_turn(
+        await get_pool(),
+        telegram_user_id,
+        user_text,
+        model_text,
+        retention=CHAT_MESSAGES_RETENTION_LIMIT,
+    )
 
 
 @_with_reconnect

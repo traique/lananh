@@ -551,3 +551,43 @@ async def test_daily_summary_toggle_per_group_and_all(delivery_db):
         False,
     ]
     assert await zalo_repository.list_groups_with_daily("b") == [("g9", "khac", True)]
+
+
+@pytest.mark.asyncio
+async def test_add_chat_turn_ghi_ca_luot_dung_thu_tu_va_cat_retention(delivery_db, monkeypatch):
+    monkeypatch.setattr(db, "CHAT_MESSAGES_RETENTION_LIMIT", 4)
+    for i in range(3):
+        await db.add_chat_turn(5, f"hỏi {i}", f"đáp {i}")
+    rows = await delivery_db.fetch(
+        "SELECT role, content FROM chat_messages WHERE telegram_user_id=5 ORDER BY id"
+    )
+    assert [(r["role"], r["content"]) for r in rows] == [
+        ("user", "hỏi 1"),
+        ("model", "đáp 1"),
+        ("user", "hỏi 2"),
+        ("model", "đáp 2"),
+    ]
+    assert await db.get_session_messages(5, 10, 3600) == [
+        ("user", "hỏi 1"),
+        ("model", "đáp 1"),
+        ("user", "hỏi 2"),
+        ("model", "đáp 2"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_inbox_loi_khong_dang_thu_lai_ket_thuc_ngay_va_giu_last_error(
+    delivery_db, monkeypatch
+):
+    pool = delivery_db
+    sent = []
+    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text: sent.append(text) or True)
+    await webhook_inbox.enqueue("telegram", "bug", {"update_id": 8})
+    row = await webhook_inbox.claim()
+    await webhook_inbox.retry(row, KeyError("missing"))
+    stored = await pool.fetchrow("SELECT status, payload, last_error FROM webhook_inbox")
+    assert stored["status"] == "DONE" and stored["payload"] is None
+    assert stored["last_error"] == "KeyError"
+    assert len(sent) == 1
+    await pool.execute("UPDATE webhook_inbox SET available_at=now()-interval '1 second'")
+    assert await webhook_inbox.claim() is None
