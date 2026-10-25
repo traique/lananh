@@ -61,11 +61,9 @@ tự động dùng được, không cần sửa gì khác.
 
 import json
 import logging
-import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Iterator, Optional
-from urllib.parse import urlsplit, urlunsplit
 
 from ai import official_client
 from ai.official_client import is_quota_exhausted_error
@@ -76,7 +74,7 @@ from ai.timeouts import (
     turn_deadline,
     with_timeout,
 )
-from core import config
+from core import config, untrusted, urls
 from core.text_utils import strip_json_fence
 
 logger = logging.getLogger(__name__)
@@ -88,34 +86,21 @@ logger = logging.getLogger(__name__)
 # vào query string của 1 URL lạ để rò rỉ ra ngoài. Vì vậy mỗi lượt /agent chỉ
 # cho đọc URL CÓ SẴN NGUYÊN VĂN trong câu hỏi của người dùng hoặc trong kết
 # quả của tool tìm kiếm - model không thể tự dựng URL mới chứa dữ liệu.
-_URL_RE = re.compile(r"https?://[^\s<>\"'`\]\[(){}]+", re.IGNORECASE)
-_URL_TRAILING_PUNCT = ".,;:!?…»”’"
 # Tool trả về URL nguồn đáng tin để doc_link được phép đọc tiếp.
 _URL_SOURCE_TOOLS = frozenset({"tim_web", "tim_gia"})
+# Tool trả về nội dung lấy từ BÊN NGOÀI (web, trang, RSS): kết quả được rào bằng
+# core.untrusted trước khi quay lại model - câu "bỏ qua mọi chỉ dẫn" trong trang
+# chỉ còn là dữ liệu.
+_UNTRUSTED_RESULT_TOOLS = frozenset({"tim_web", "tim_gia", "doc_link", "xem_rss"})
+# Trần ký tự 1 kết quả tool ngoài (cắt trước khi rào để marker đóng không mất).
+_TOOL_RESULT_MAX_CHARS = 8000
 # Trần số URL được phép trong 1 lượt (tránh phình bộ nhớ với kết quả dài).
 _MAX_ALLOWED_URLS = 200
 _allowed_urls: ContextVar[Optional[set[str]]] = ContextVar("agent_allowed_urls", default=None)
 
-
-def _normalize_url(url: str) -> str:
-    try:
-        parts = urlsplit(url.strip())
-    except ValueError:
-        return ""
-    if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
-        return ""
-    path = parts.path.rstrip("/") or ""
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, parts.query, ""))
-
-
-def extract_urls(text: str) -> list[str]:
-    urls = []
-    for match in _URL_RE.finditer(text or ""):
-        url = match.group(0).rstrip(_URL_TRAILING_PUNCT)
-        normalized = _normalize_url(url)
-        if normalized:
-            urls.append(normalized)
-    return urls
+# Tách/chuẩn hoá URL dùng chung với bộ lọc link câu trả lời chat (core/urls.py).
+_normalize_url = urls.normalize_url
+extract_urls = urls.extract_urls
 
 
 def _allow_urls_from(text: str) -> None:
@@ -394,6 +379,11 @@ async def _call_tool(name: str, args: dict) -> str:
         result = await bounded(lambda: fn(**(args or {})))
         if name in _URL_SOURCE_TOOLS and isinstance(result, str):
             _allow_urls_from(result)
+        if name in _UNTRUSTED_RESULT_TOOLS and isinstance(result, str):
+            return (
+                untrusted.wrap_untrusted(result, f"tool {name}", max_chars=_TOOL_RESULT_MAX_CHARS)
+                or result
+            )
         return result
     except TurnTimeoutError:
         raise

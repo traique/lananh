@@ -4,6 +4,7 @@ Không thuộc provider-chain. Module giữ cả structured result để caller 
 giá chất lượng trước khi quyết định dùng/fallback, đồng thời giữ ``search()``
 trả ``str`` để tương thích các call site cũ.
 """
+
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -12,7 +13,7 @@ from urllib.parse import urlparse
 import httpx
 
 from ai import provider_overrides
-from core import config, database as db
+from core import config, database as db, untrusted
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +91,9 @@ def _domain_of(url: str) -> str:
 # kiếm/kết quả anh gửi" - đọc gượng gạo, lộ rõ đây là raw search dump thay vì
 # câu trả lời tự nhiên.
 _GROUNDING_USAGE_NOTE = (
-    "Dùng thông tin bên dưới để trả lời tự nhiên như thể tự biết, KHÔNG kể "
-    "lể quá trình tìm kiếm (không viết \"theo kết quả tìm kiếm\", \"theo các "
-    "kết quả anh gửi\", \"nguồn tìm được\" hay tương tự), KHÔNG chèn số thứ tự "
+    "Dùng thông tin trong khối dữ liệu tra cứu bên dưới để trả lời tự nhiên, "
+    'KHÔNG kể lể quá trình tìm kiếm (không viết "theo kết quả tìm kiếm", "theo các '
+    'kết quả anh gửi", "nguồn tìm được" hay tương tự), KHÔNG chèn số thứ tự '
     "trích dẫn kiểu [1][2]. Nếu cần nêu nguồn thì nói tên nguồn tự nhiên "
     "trong câu (vd: theo VnExpress, theo Reuters). CHỈ nêu đúng phần trả lời "
     "điều người dùng hỏi, KHÔNG kể thêm thông tin phụ trong kết quả mà họ "
@@ -104,15 +105,24 @@ _GROUNDING_USAGE_NOTE = (
 )
 
 
+# Trần ký tự cho phần kết quả (bên trong rào) - cắt TRƯỚC khi bọc để marker
+# đóng không bao giờ bị prompt_budget cắt mất (GROUNDING_MAX_CHARS mặc định 9000).
+_RESULTS_MAX_CHARS = 7000
+
+
 def format_search_results(response: TavilySearchResponse) -> str:
-    lines = [f"[Kết quả tìm kiếm web (Tavily) cho: {response.query}]", _GROUNDING_USAGE_NOTE]
+    """Grounding cho LLM: câu hỏi + chỉ dẫn dùng kết quả (tin cậy, ngoài rào) rồi
+    tới kết quả Tavily (KHÔNG tin cậy, bọc bằng core.untrusted.wrap_untrusted)."""
+    lines: list[str] = []
     if response.answer:
         lines.append(f"Tóm tắt: {response.answer}")
     for i, item in enumerate(response.results, start=1):
         title = item.title or item.url or "?"
         date_suffix = f" - đăng {item.published_date}" if item.published_date else ""
         lines.append(f"{i}. {title}{date_suffix} ({item.url})\n{item.content}")
-    return "\n\n".join(lines)
+    fenced = untrusted.wrap_untrusted("\n\n".join(lines), "Tavily", max_chars=_RESULTS_MAX_CHARS)
+    header = f"[Kết quả tìm kiếm web (Tavily) cho: {response.query}]"
+    return "\n\n".join(part for part in (header, _GROUNDING_USAGE_NOTE, fenced) if part)
 
 
 async def search_results(

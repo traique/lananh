@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from ai import orchestrator
-from core import config
+from core import config, untrusted
 from core import database as db
 from services import article_reader, web_reader
 
@@ -162,7 +162,10 @@ def _annotate_feed(feed_text: str, feed_index: int) -> str:
 def _build_prompt(feed_texts: list[str]) -> str:
     annotated = [_annotate_feed(text, i) for i, text in enumerate(feed_texts, start=1)]
     combined = "\n\n--- NGUỒN KHÁC ---\n\n".join(annotated)
-    return f"Tổng hợp các tin RSS dưới đây thành bản tin.\n{_GROUNDING}\n{_STYLE}\n\n{combined}"
+    # Nội dung RSS là dữ liệu ngoài: rào lại (core.untrusted) để câu lệnh cài
+    # trong tiêu đề/tóm tắt tin không điều khiển được bản tin.
+    fenced = untrusted.wrap_untrusted(combined, "tin RSS")
+    return f"Tổng hợp các tin RSS dưới đây thành bản tin.\n{_GROUNDING}\n{_STYLE}\n\n{fenced}"
 
 
 def _extract_important_ids(body: str) -> tuple[str, list[str]]:

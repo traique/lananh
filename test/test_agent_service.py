@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from ai import agent_service, router9_client  # noqa: E402
 from ai.openai_compatible import ToolCallResponse  # noqa: E402
 from ai.provider_state import provider_state  # noqa: E402
-from core import database as db  # noqa: E402
+from core import database as db, untrusted  # noqa: E402
 
 
 class FakeSettingsStore:
@@ -284,7 +284,9 @@ async def test_tool_doc_link_duoc_dang_ky_va_goi_dung(monkeypatch):
             "doc_link", {"url": "https://vnexpress.net/bai-viet"}
         )
 
-    assert result == "Nội dung bài báo đã đọc."
+    # Nội dung trang là dữ liệu ngoài: được rào (core.untrusted) trước khi quay lại model.
+    assert "Nội dung bài báo đã đọc." in result
+    assert untrusted.contains_untrusted(result)
 
 
 @pytest.mark.asyncio
@@ -384,7 +386,7 @@ async def test_doc_link_allows_urls_from_search_results_only(monkeypatch):
         ok = await agent_service._call_tool("doc_link", {"url": "https://cafef.vn/bai-1.chn"})
         # Link xuất hiện trong NỘI DUNG trang đã đọc (không phải kết quả tìm kiếm) vẫn bị chặn.
         blocked = await agent_service._call_tool("doc_link", {"url": "https://other.example/x"})
-    assert ok == "nội dung https://cafef.vn/bai-1.chn"
+    assert "nội dung https://cafef.vn/bai-1.chn" in ok and untrusted.contains_untrusted(ok)
     assert "Không đọc được link" in blocked
 
 

@@ -36,6 +36,7 @@ from services.concurrency import OWNER_TURN_KEY, assistant_turn
 from services.reminder_delivery import NotificationTarget, notification_target
 from services.telegram_processing import update_error
 from services.request_limits import RequestLimitsMiddleware
+from services.security_headers import SecurityHeadersMiddleware
 
 logging_setup.configure_logging()
 logger = logging.getLogger(__name__)
@@ -156,6 +157,8 @@ async def lifespan(_: FastAPI):
 # nội bộ (/internal/zalo/*, /webhook) không cần lộ cho người lạ.
 api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 api.add_middleware(RequestLimitsMiddleware)
+# Thêm SAU (= bọc NGOÀI cùng) để cả response 413/503 của RequestLimits cũng có header.
+api.add_middleware(SecurityHeadersMiddleware)
 
 
 @api.exception_handler(StarletteHTTPException)

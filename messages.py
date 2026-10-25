@@ -59,6 +59,18 @@ WEBHOOK_DEAD_ALERT = (
     "đã ngừng thử lại (DEAD). Xem log server nếu cần xử lý tay."
 )
 CHAT_TURN_TIMEOUT_ERROR = "Hết {seconds}s chờ AI trả lời (mọi provider đều chậm/lỗi)."
+# core/untrusted.py - dữ liệu ngoài (web/RSS/nhóm Zalo) có câu giống prompt
+# injection. Chỉ báo (giãn cách 1 giờ), không chặn gì.
+UNTRUSTED_INJECTION_ALERT = (
+    "🛡️ Dữ liệu ngoài ({source}) có câu nghi là prompt injection: “{phrase}”. "
+    "Em đã rào nó như dữ liệu tham khảo, không làm theo - anh để ý nếu câu trả lời lạ."
+)
+# core/webhook_inbox.py - lỗi chắc chắn lặp lại nếu chạy lại (lỗi lập trình,
+# Telegram từ chối tin, hết hạn chót lượt): không thử lại kẻo gửi trùng muộn.
+WEBHOOK_NO_RETRY_ALERT = (
+    "⚠️ Sự kiện {channel}/{event_id} lỗi {error} - lỗi kiểu này chạy lại vẫn hỏng nên em "
+    "KHÔNG thử lại (tránh tốn quota và gửi trùng). Xem log server nếu cần xử lý tay."
+)
 MARKET_PAGE_UNCERTAIN_ALERT = (
     "⚠️ Page chứng khoán: lượt đăng {job} ({key}) bị gián đoạn giữa chừng nên chưa rõ "
     "bài đã lên Facebook hay chưa. Bot KHÔNG tự đăng lại - anh kiểm tra Page, "

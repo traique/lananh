@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import os
 
+from core import untrusted
+
 CHARS_PER_TOKEN = 4
 
 
@@ -41,18 +43,26 @@ def estimate_tokens(text: str) -> int:
 
 
 def truncate_middle(text: str, max_chars: int) -> str:
-    """Giữ đầu và cuối (đầu thường là chỉ dẫn, cuối là dữ liệu mới nhất)."""
+    """Giữ đầu và cuối (đầu thường là chỉ dẫn, cuối là dữ liệu mới nhất).
+
+    Văn bản có rào dữ liệu ngoài (core/untrusted.py): khối bị cắt ngang được
+    đóng/mở lại marker ở 2 bên vết cắt, để không đoạn dữ liệu ngoài nào nằm
+    "ngoài rào" (có thể vượt max_chars vài chục ký tự marker)."""
     text = text or ""
     if max_chars <= 0:
         return ""
     if len(text) <= max_chars:
         return text
     if max_chars <= len(_CUT_MARK) + 20:
+        if untrusted.contains_untrusted(text):
+            return ""
         return text[:max_chars]
     keep = max_chars - len(_CUT_MARK)
-    head = keep * 2 // 3
-    tail = keep - head
-    return text[:head] + _CUT_MARK + text[-tail:]
+    head_len = keep * 2 // 3
+    head, tail = text[:head_len], text[len(text) - (keep - head_len) :]
+    if untrusted.contains_untrusted(text):
+        head, tail = untrusted.balance_cut(head, tail)
+    return head + _CUT_MARK + tail
 
 
 def truncate_tail(text: str, max_chars: int) -> str:

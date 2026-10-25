@@ -3,8 +3,8 @@
 import asyncio
 import logging
 
-from telegram import BotCommand
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram import BotCommand, LinkPreviewOptions
+from telegram.ext import Application, CommandHandler, Defaults, MessageHandler, filters
 from telegram.request import HTTPXRequest
 
 import scheduler
@@ -177,6 +177,12 @@ def build_application():
         Application.builder()
         .token(config.TELEGRAM_TOKEN)
         .request(request)
+        # Tắt link preview cho MỌI tin bot gửi (reply/edit/send_message, scheduler,
+        # bản tin...): Telegram tự tải URL trong tin để dựng preview mà không cần
+        # ai bấm - 1 trang độc xúi model viết https://ke-xau/?q=<trí nhớ> là rò
+        # rỉ dữ liệu "zero-click". Mọi đường gửi đều đi qua app.bot nên 1 Defaults
+        # ở đây là đủ.
+        .defaults(Defaults(link_preview_options=LinkPreviewOptions(is_disabled=True)))
         .post_init(_post_init)
         .post_shutdown(_post_shutdown)
         .build()

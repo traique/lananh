@@ -33,6 +33,7 @@ from stock import backtest
 from stock import report_format as rfmt
 from stock.schemas import BearCase, BullCase, FinalDecision, NewsAnalysis, ask_structured
 from core import config
+from core.untrusted import wrap_untrusted
 
 if TYPE_CHECKING:
     from stock.analysis import StockContext
@@ -81,7 +82,7 @@ async def run_news_step(ctx: "StockContext") -> NewsAnalysis | None:
     prompt = (
         f"Bạn tóm tắt tin tức chứng khoán Việt Nam cho một báo cáo thông tin tham khảo. Đọc danh sách tin dưới đây về mã "
         f"{ctx.symbol} và tóm tắt tác động tới nhận định kỹ thuật đang có.\n\n"
-        f"[TIN TỨC]\n{news_lines}\n\n"
+        f"[TIN TỨC]\n{wrap_untrusted(news_lines, 'tin tức Google News')}\n\n"
         f"Chỉ coi là 'relevant' nếu có ít nhất 1 tin nhắc đúng tên mã (không phải tin ngành/thị trường chung). "
         f"key_points tối đa 3 gạch đầu dòng, mỗi dòng 1 sự kiện cụ thể kèm ngày, không suy diễn thêm ngoài tin đã cho."
     )
