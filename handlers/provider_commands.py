@@ -234,6 +234,11 @@ async def _build_status_text() -> str:
         state["groq_exhausted_until"],
         reasons.get("groq"),
     )
+    groq_search_until = state.get("groq_search_exhausted_until", 0.0)
+    if config.GROQ_API_KEY and groq_search_until > now:
+        groq_line += "\n   🔎 tra web (browser_search):" + _cooldown_suffix(
+            groq_search_until, reasons.get("groq_search"), now
+        ).replace("\n   ⥅", "", 1)
     openrouter_line = _provider_line(
         "OpenRouter",
         config.OPENROUTER_API_KEY,

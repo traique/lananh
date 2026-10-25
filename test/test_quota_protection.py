@@ -364,3 +364,30 @@ def test_reply_cache_co_tran_so_muc():
     assert len(reply_cache._cache) == reply_cache.MAX_ENTRIES
     reply_cache.put("big", "x" * (reply_cache.MAX_VALUE_CHARS + 1))
     assert reply_cache.get("big") is None
+
+
+@pytest.mark.asyncio
+async def test_groq_429_luc_tra_web_chi_khoa_groq_tra_web_khong_khoa_groq_chat(monkeypatch):
+    monkeypatch.setattr(config, "PROVIDER_ORDER", ["groq", "api1"])
+    monkeypatch.setattr(config, "GROQ_API_KEY", "g")
+
+    async def groq_rate_limited():
+        raise _http_error(429, "Rate limit reached on requests per day (RPD)")
+
+    async def api_call(idx):
+        return "api1-ok"
+
+    with orchestrator.call_stage("search"):
+        await orchestrator._run_provider_chain(
+            router9_call=None, api_call=api_call, groq_call=groq_rate_limited
+        )
+    assert provider_state.api_in_cooldown("groq_search")
+    assert not provider_state.api_in_cooldown("groq")
+
+    async def groq_chat():
+        return "groq-chat-ok"
+
+    result = await orchestrator._run_provider_chain(
+        router9_call=None, api_call=api_call, groq_call=groq_chat
+    )
+    assert result == "groq-chat-ok"

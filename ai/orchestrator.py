@@ -31,7 +31,7 @@ tự core.config.PROVIDER_ORDER (mặc định router9 -> groq -> openrouter -> 
 import asyncio
 import logging
 import re
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from typing import Awaitable, Callable, Iterator, Optional
 
@@ -332,6 +332,14 @@ async def _effective_model(provider: str) -> str:
 _call_stage: ContextVar[str | None] = ContextVar("provider_call_stage", default=None)
 
 
+def _cooldown_key(provider: str) -> str:
+    """Groq ở lượt tự tra web dùng model riêng (GROQ_REALTIME_MODEL) với bucket
+    rate-limit riêng -> cooldown riêng "groq_search", không khoá Groq chat."""
+    if provider == "groq" and _call_stage.get() == "search":
+        return "groq_search"
+    return provider
+
+
 @contextmanager
 def call_stage(stage: str) -> Iterator[None]:
     token = _call_stage.set(stage)
@@ -630,8 +638,9 @@ async def _run_provider_chain_within_deadline(
                 continue
             if not await provider_overrides.is_enabled(provider):
                 continue
-            if provider_state.api_in_cooldown(provider):
-                cooling_skipped.append(provider)
+            cooldown_key = _cooldown_key(provider)
+            if provider_state.api_in_cooldown(cooldown_key):
+                cooling_skipped.append(cooldown_key)
                 continue
             try:
                 return await _attempt_generic(provider)
@@ -640,7 +649,7 @@ async def _run_provider_chain_within_deadline(
             except Exception as exc:
                 if openai_compatible.is_rate_limited(exc):
                     seconds, reason = cooldown.cooldown_for(provider, exc)
-                    await provider_state.mark_api_exhausted(provider, seconds, reason)
+                    await provider_state.mark_api_exhausted(cooldown_key, seconds, reason)
                     last_exc = exc
                     continue
                 _log_provider_failure(provider, exc)
@@ -724,14 +733,15 @@ async def ask(
             enable_search=enable_search or require_real_search,
         )
 
-    return await _run_provider_chain(
-        router9_call=_router9_call,
-        api_call=_api_call,
-        groq_call=_groq_call,
-        openrouter_call=_openrouter_call,
-        providers_override=providers_override,
-        allow_cjk=allow_cjk,
-    )
+    with call_stage("search") if require_real_search else nullcontext():
+        return await _run_provider_chain(
+            router9_call=_router9_call,
+            api_call=_api_call,
+            groq_call=_groq_call,
+            openrouter_call=_openrouter_call,
+            providers_override=providers_override,
+            allow_cjk=allow_cjk,
+        )
 
 
 async def _read_history(user_id: int) -> list[tuple[str, str]]:

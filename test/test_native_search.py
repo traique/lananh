@@ -161,9 +161,10 @@ async def test_native_groq_khong_chung_minh_da_tra_thi_sang_gemini_bat_buoc_co_g
 @pytest.mark.asyncio
 async def test_native_ton_trong_cooldown_va_provider_bat_web_search(monkeypatch):
     calls = _Calls(monkeypatch)
-    provider_state.api_exhausted_until["groq"] = time.time() + 600
+    # Groq tra web (model riêng) đang cooldown 429 -> bỏ qua, không gọi lại.
+    provider_state.api_exhausted_until["groq_search"] = time.time() + 600
     monkeypatch.setattr(config, "OPENROUTER_WEB_SEARCH", True)
-    monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "openrouter", "groq", "api1"])
+    monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9", "groq", "openrouter", "api1"])
 
     response = await orchestrator.chat(1, "tin mới?", search_mode="native")
 
