@@ -5,9 +5,22 @@
     <h1>Lá số {{ chart.yinYang }}</h1>
     <p class="sub">{% if chart.solarDate %}Sinh {{ chart.solarDate | vn_date }} dương lịch, tức {% endif %}{{ chart.lunarDate.text }} âm lịch, {{ chart.hourText }}.</p>
   </div>
-  <div class="title-actions"><a class="btn" href="/tu-vi">Lập lá số khác</a></div>
+  <div class="title-actions">
+    <form method="post" action="/tu-vi">
+      {% for k, val in ai_fields.items() %}<input type="hidden" name="{{ k }}" value="{{ val }}">{% endfor %}
+      <input type="hidden" name="sua" value="1">
+      <button class="btn" type="submit">Sửa thông tin</button>
+    </form>
+    <a class="btn ghost" href="/tu-vi">Lập lá số khác</a>
+  </div>
 </div>
-<section class="panel" aria-label="Lá số 12 cung">
+<section class="panel chart-panel" aria-label="Lá số 12 cung">
+  <nav class="chart-map" aria-label="Sơ đồ 12 cung, bấm để xem chi tiết">
+    {% for p in chart.palaces %}
+    {% set mains = p.stars | selectattr("isMain") | map(attribute="name") | list %}
+    <a class="b{{ p.branchIndex }}{% if loop.first %} is-menh{% endif %}" href="#cung-{{ p.branchIndex }}"><b>{{ p.name }}</b><span>{{ mains | join(", ") if mains else "Vô chính diệu" }}</span></a>
+    {% endfor %}
+  </nav>
   <div class="chart">
     <div class="chart-center">
       <dl class="facts">
@@ -28,11 +41,11 @@
       <p class="star-legend"><span class="sr-only">Chú giải độ sáng: </span>{% for k, v in chart.brightnessLegend.items() %}<span><span class="lvl {{ k | lower }}">{{ k }}</span> {{ v }}</span>{% endfor %}</p>
     </div>
     {% for p in chart.palaces %}
-    <article class="palace b{{ p.branchIndex }}{% if loop.first %} is-menh{% endif %}{% if p.isThan %} is-than{% endif %}" aria-label="Cung {{ p.name }}{% if p.isThan %}, Thân cư{% endif %}">
+    <article id="cung-{{ p.branchIndex }}" class="palace b{{ p.branchIndex }}{% if loop.first %} is-menh{% endif %}{% if p.isThan %} is-than{% endif %}" aria-label="Cung {{ p.name }}{% if p.isThan %}, Thân cư{% endif %}">
       <header><span>{{ p.name }}{% if p.isThan %} <span class="pill sm">Thân</span>{% endif %}</span><span class="branch">{{ p.stem }} {{ p.branch }}</span></header>
       <p class="main">
         {% set mains = p.stars | selectattr("isMain") | list %}
-        {% if mains %}{% for s in mains %}{{ s.name }}{% if s.brightness %}<span class="lvl {{ s.brightness | lower }}" title="{{ s.brightnessName }}"><span class="sr-only"> ({{ s.brightnessName }})</span><span aria-hidden="true">{{ s.brightness }}</span></span>{% endif %}{% if s.hoa %} <span class="pill sm pos">{{ s.hoa }}</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}<span class="empty">Vô chính diệu</span>{% endif %}
+        {% if mains %}{% for s in mains %}{{ s.name }}{% if s.brightness %}<span class="lvl {{ s.brightness | lower }}" title="{{ s.brightnessName }}"><span class="sr-only"> ({{ s.brightnessName }})</span><span aria-hidden="true">{{ s.brightness }}</span></span>{% endif %}{% if s.hoa %} <span class="pill sm {{ 'warn' if 'Kỵ' in s.hoa else 'pos' }}">{{ s.hoa }}</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}<span class="empty">Vô chính diệu</span>{% endif %}
       </p>
       {% set minors = p.stars | rejectattr("isMain") | list %}
       {% if minors %}<p class="minor">{% for s in minors %}{{ s.name }}{% if s.brightness %}<span class="lvl {{ s.brightness | lower }}" title="{{ s.brightnessName }}"><span class="sr-only"> ({{ s.brightnessName }})</span><span aria-hidden="true">{{ s.brightness }}</span></span>{% endif %}{% if s.hoa %} ({{ s.hoa }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}

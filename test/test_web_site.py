@@ -199,7 +199,7 @@ async def test_trang_tuvi_post_va_loi(client):
         "/tu-vi", data={"ngay": "15", "thang": "3", "nam": "1990", "gio": "5", "gioi": "male"}
     )
     assert "Thổ ngũ cục" in r.text and "Phá Quân" in r.text
-    assert "Lập lá số khác" in r.text and 'name="ngay"' not in r.text  # trang kết quả riêng
+    assert "Lập lá số khác" in r.text and 'id="ngay"' not in r.text  # trang kết quả riêng
     assert "(đắc)" in r.text and 'title="miếu"' in r.text  # độ sáng sao
     assert "Hóa Lộc" in r.text and "Đẩu Quân" in r.text
     lunar = await client.post(
@@ -562,6 +562,36 @@ def test_dai_gio_hoang_dao_trang_chu():
         web_site._hour_strip(lucky, 23)[0]["isNow"] and web_site._hour_strip(lucky, 0)[0]["isNow"]
     )
     assert web_site._hour_strip(lucky, 22)[11]["isNow"]
+
+
+def test_dai_gio_chi_to_dam_mot_gio_tot_gan_nhat():
+    lucky = ["Dần (3h-5h)", "Tỵ (9h-11h)", "Thân (15h-17h)"]
+    at_ngo = web_site._hour_strip(lucky, 12)  # giờ Ngọ: không tốt
+    assert [h["name"] for h in at_ngo if h["isFocus"]] == ["Thân"]
+    assert [h["name"] for h in at_ngo if h["isPast"]] == ["Tý", "Sửu", "Dần", "Mão", "Thìn", "Tỵ"]
+    at_ty = web_site._hour_strip(lucky, 10)  # đang trong giờ tốt Tỵ
+    assert [h["name"] for h in at_ty if h["isFocus"]] == ["Tỵ"]
+    # Sau giờ tốt cuối cùng của ngày thì không còn ô nào được tô đậm.
+    assert not any(h["isFocus"] for h in web_site._hour_strip(lucky, 18))
+    # 23h là giờ Tý mở đầu ngày mới: chưa giờ nào "đã qua".
+    assert not any(h["isPast"] for h in web_site._hour_strip(lucky, 23))
+
+
+async def test_sua_thong_tin_la_so_ve_form_dien_san(client):
+    r = await client.post("/tu-vi", data={**_TUVI_FORM, "sua": "1"})
+    assert 'id="ngay"' in r.text and 'value="1990"' in r.text and "Thổ ngũ cục" not in r.text
+    assert '<option value="5" selected>' in r.text
+
+
+async def test_form_tuvi_chua_chon_gio_va_ky_khong_mau_tot(client):
+    html = (await client.get("/tu-vi")).text
+    assert '<option value="" selected disabled>Chọn giờ sinh</option>' in html
+    # Tý đầu (23h) đứng trước Tý (0h): xếp theo giờ đồng hồ.
+    assert html.index('value="12"') < html.index('<option value="0"')
+    no_hour = await client.post("/tu-vi", data={**_TUVI_FORM, "gio": ""})
+    assert 'role="alert"' in no_hour.text and "giờ sinh" in no_hour.text
+    r = await client.post("/tu-vi", data=_TUVI_FORM)
+    assert 'pill sm pos">Hóa Kỵ' not in r.text and 'pill sm warn">Hóa Kỵ' in r.text
 
 
 def test_trang_chu_co_dai_12_gio():
