@@ -77,6 +77,7 @@ def test_cau_nghi_injection_duoc_log_va_bao_chu_bot_gian_cach(_no_alert_spam):
     assert "Tavily" in _no_alert_spam[0]
     # Văn bản tiếng Việt bình thường không bị coi là injection.
     assert untrusted.find_injection("Hôm nay giá vàng tăng, anh bỏ qua tin cũ nhé") is None
+    assert untrusted.find_injection("Mọi người bỏ qua các lệnh chờ hôm nay nhé") is None
 
 
 def test_truncate_middle_khong_de_du_lieu_ngoai_nam_ngoai_rao():

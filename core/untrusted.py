@@ -81,8 +81,9 @@ _INJECTION_RE = re.compile(
     r"|you\s+are\s+now\s+(?:a|an|in)\b"
     r"|new\s+system\s+prompt|reveal\s+(?:your|the)\s+system\s+prompt"
     r"|<\s*/?\s*(?:system|assistant|instructions?)\s*>"
-    r"|bỏ\s+qua\s+(?:mọi|tất\s+cả|các|toàn\s+bộ|hết)\s+(?:chỉ\s+dẫn|hướng\s+dẫn|lệnh|yêu\s+cầu)"
-    r"|quên\s+(?:hết|mọi|tất\s+cả|các)\s+(?:chỉ\s+dẫn|hướng\s+dẫn|lệnh)"
+    # Không bắt "lệnh"/"yêu cầu": nhóm chứng khoán hay nói "bỏ qua các lệnh chờ".
+    r"|bỏ\s+qua\s+(?:mọi|tất\s+cả|các|toàn\s+bộ|hết)\s+(?:chỉ\s+dẫn|hướng\s+dẫn|chỉ\s+thị)"
+    r"|quên\s+(?:hết|mọi|tất\s+cả|các)\s+(?:chỉ\s+dẫn|hướng\s+dẫn|chỉ\s+thị)"
     r"|từ\s+giờ\s+(?:bạn|em|mày)\s+(?:là|phải)"
     r"|(?:tiết\s+lộ|in\s+ra)\s+(?:system\s+prompt|chỉ\s+dẫn\s+hệ\s+thống))",
     re.IGNORECASE,
