@@ -14,6 +14,7 @@ huống nặng hơn: router9 CỘNG mọi provider cooldown còn lại trong
 config.PROVIDER_ORDER đều đang exhausted cùng lúc - nghĩa là KHÔNG provider
 nào trả lời được, mọi lệnh AI sẽ lỗi.
 """
+
 import asyncio
 import logging
 import time
@@ -33,7 +34,11 @@ _all_down_since: float | None = None
 
 def _is_provider_down(name: str, now: float) -> bool:
     if name == "router9":
-        return (not provider_state.router9_enabled) or (provider_state.router9_dead_since is not None)
+        return (
+            (not provider_state.router9_enabled)
+            or (provider_state.router9_dead_since is not None)
+            or provider_state.api_exhausted_until.get("router9", 0.0) > now
+        )
     return provider_state.api_exhausted_until.get(name, 0.0) > now
 
 

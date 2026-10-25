@@ -11,6 +11,9 @@ import base64
 import json
 import logging
 import mimetypes
+import re
+import time
+from email.utils import parsedate_to_datetime
 from typing import Any, Awaitable, Callable, Optional
 
 import httpx
@@ -19,7 +22,107 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleError(RuntimeError):
-    """Lỗi khi gọi 1 gateway OpenAI-compatible bất kỳ (HTTP lỗi, payload rỗng)."""
+    """Lỗi khi gọi 1 gateway OpenAI-compatible bất kỳ (HTTP lỗi, payload rỗng).
+
+    ``status_code``: mã HTTP (None nếu lỗi mạng/payload). ``retry_after_sec``:
+    số giây provider gợi ý chờ trước khi gọi lại (đọc từ Retry-After,
+    X-RateLimit-Reset hoặc câu "try again in Xs" trong body) - dùng để đặt
+    cooldown đúng thay vì 1 giờ cố định cho mọi lỗi 429."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: Optional[int] = None,
+        retry_after_sec: Optional[float] = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after_sec = retry_after_sec
+
+
+# "Please try again in 7.66s" / "try again in 1m30.5s" / "retry in 20s" (Groq,
+# OpenRouter và nhiều gateway ghi thời gian chờ ngay trong body lỗi 429).
+_RETRY_IN_RE = re.compile(
+    r"(?:try again|retry)\s+in\s+(?:(\d+(?:\.\d+)?)\s*h)?\s*(?:(\d+(?:\.\d+)?)\s*m(?!s))?"
+    r"\s*(?:(\d+(?:\.\d+)?)\s*(s|ms))?",
+    re.IGNORECASE,
+)
+
+
+def _seconds_from_body(body: str) -> Optional[float]:
+    match = _RETRY_IN_RE.search(body or "")
+    if not match:
+        return None
+    hours, minutes, value, unit = match.groups()
+    if not (hours or minutes or value):
+        return None
+    total = float(hours or 0) * 3600 + float(minutes or 0) * 60
+    if value:
+        total += float(value) / 1000 if unit and unit.lower() == "ms" else float(value)
+    return total
+
+
+def retry_hint_from_response(response: httpx.Response, body: str = "") -> Optional[float]:
+    """Số giây nên chờ, theo thứ tự tin cậy: Retry-After (giây hoặc HTTP-date),
+    X-RateLimit-Reset (epoch mili-giây kiểu OpenRouter), rồi câu trong body.
+    KHÔNG dùng x-ratelimit-reset-requests của Groq (đó là bucket theo NGÀY,
+    có trên mọi response, không phải thời gian chờ của lỗi 429 này)."""
+    headers = response.headers
+    raw = (headers.get("retry-after") or "").strip()
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            try:
+                when = parsedate_to_datetime(raw)
+                return max(0.0, when.timestamp() - time.time())
+            except (TypeError, ValueError, IndexError, OverflowError):
+                pass
+    raw = (headers.get("x-ratelimit-reset") or "").strip()
+    if raw:
+        try:
+            value = float(raw)
+            # Epoch mili-giây (OpenRouter) / epoch giây / số giây tương đối.
+            if value > 1e11:
+                return max(0.0, value / 1000 - time.time())
+            if value > 1e9:
+                return max(0.0, value - time.time())
+            return max(0.0, value)
+        except ValueError:
+            pass
+    return _seconds_from_body(body)
+
+
+def _error_chain(exc: BaseException):
+    seen: set[int] = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def http_status(exc: BaseException) -> Optional[int]:
+    """Mã HTTP của lỗi (kể cả khi bị bọc lại, vd Router9Error from exc)."""
+    for item in _error_chain(exc):
+        status = getattr(item, "status_code", None)
+        if isinstance(status, int):
+            return status
+    return None
+
+
+def retry_after(exc: BaseException) -> Optional[float]:
+    for item in _error_chain(exc):
+        value = getattr(item, "retry_after_sec", None)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def error_text(exc: BaseException) -> str:
+    """Toàn bộ thông điệp của chuỗi lỗi (để dò dấu hiệu quota theo ngày...)."""
+    return " | ".join(str(item) for item in _error_chain(exc))
 
 
 class Response:
@@ -230,15 +333,22 @@ async def post_chat_completion(
                 "content", ""
             )
     except httpx.HTTPStatusError as exc:
-        body = exc.response.text[:500]
-        raise OpenAICompatibleError(
-            f"{provider_label} HTTP {exc.response.status_code}: {body}"
-        ) from exc
+        raise _http_error(provider_label, exc) from exc
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
         raise OpenAICompatibleError(f"{provider_label}: {type(exc).__name__}: {exc}") from exc
     if not text:
         raise OpenAICompatibleError(f"{provider_label} trả kết quả rỗng")
     return text.strip()
+
+
+def _http_error(provider_label: str, exc: httpx.HTTPStatusError) -> OpenAICompatibleError:
+    body = exc.response.text[:500]
+    status = exc.response.status_code
+    return OpenAICompatibleError(
+        f"{provider_label} HTTP {status}: {body}",
+        status_code=status,
+        retry_after_sec=retry_hint_from_response(exc.response, body) if status == 429 else None,
+    )
 
 
 def _parse_tool_calls(raw_tool_calls: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -331,10 +441,7 @@ async def post_chat_completion_with_tools(
             text = (message.get("content") or "").strip()
             tool_calls = _parse_tool_calls(message.get("tool_calls"))
     except httpx.HTTPStatusError as exc:
-        body = exc.response.text[:500]
-        raise OpenAICompatibleError(
-            f"{provider_label} HTTP {exc.response.status_code}: {body}"
-        ) from exc
+        raise _http_error(provider_label, exc) from exc
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
         raise OpenAICompatibleError(f"{provider_label}: {type(exc).__name__}: {exc}") from exc
     if not text and not tool_calls:
@@ -345,8 +452,11 @@ async def post_chat_completion_with_tools(
 
 
 def is_rate_limited(exc: BaseException) -> bool:
-    """True nếu lỗi là HTTP 429 (hết quota/rate-limit) - dựa trên message do
-    post_chat_completion() tự dựng ở trên (f"{label} HTTP {status}: ...")."""
+    """True nếu lỗi là HTTP 429 (hết quota/rate-limit) - theo status_code mang
+    theo lỗi, hoặc message do post_chat_completion() tự dựng (f"{label} HTTP
+    {status}: ...") cho lỗi cũ/bọc lại."""
+    if http_status(exc) == 429:
+        return True
     return isinstance(exc, OpenAICompatibleError) and "HTTP 429" in str(exc)
 
 

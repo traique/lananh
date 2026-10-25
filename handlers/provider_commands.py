@@ -148,6 +148,13 @@ def _fmt_epoch_vn(ts: float) -> str:
     return datetime.fromtimestamp(ts, ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%H:%M %d/%m")
 
 
+def _cooldown_suffix(until: float, reason: str | None, now: float) -> str:
+    """Dòng phụ "cooldown tới HH:MM (còn N phút - lý do)" cho /status."""
+    minutes = max(1, int((until - now + 59) // 60))
+    detail = f"còn {minutes} phút" + (f" - {html.escape(reason)}" if reason else "")
+    return f"\n   ⥅ cooldown tới {_fmt_epoch_vn(until)} ({detail})"
+
+
 async def _noop_ai_status() -> tuple[bool, str]:
     return False, "Chưa cấu hình"
 
@@ -193,32 +200,51 @@ async def _build_status_text() -> str:
     )
     if not state["router9_enabled"]:
         router9_line += "\n   ⛔ đang TẮT thủ công (/router9 on để bật lại)"
+    reasons = state.get("cooldown_reasons") or {}
     if state["router9_dead_since"]:
         router9_line += f"\n   ⥅ chết lúc {_fmt_epoch_vn(state['router9_dead_since'])}"
+        if reasons.get("router9_dead"):
+            router9_line += f" ({html.escape(reasons['router9_dead'])})"
+    router9_until = state.get("router9_exhausted_until", 0.0)
+    if router9_until > now:
+        router9_line += _cooldown_suffix(router9_until, reasons.get("router9"), now)
 
-    def _provider_line(label, key, status, exhausted_until):
+    def _provider_line(label, key, status, exhausted_until, reason=None):
         if not key:
             return f"⚪ {label}: chưa cấu hình"
         ok, detail = status
         line = f"✅ {label}: OK" if ok else f"❌ {label}: lỗi ({html.escape(detail)})"
         if exhausted_until > now:
-            line += f"\n   ⥅ cooldown tới {_fmt_epoch_vn(exhausted_until)}"
+            line += _cooldown_suffix(exhausted_until, reason, now)
         return line
 
     groq_line = _provider_line(
-        "Groq", config.GROQ_API_KEY, groq_status, state["groq_exhausted_until"]
+        "Groq",
+        config.GROQ_API_KEY,
+        groq_status,
+        state["groq_exhausted_until"],
+        reasons.get("groq"),
     )
     openrouter_line = _provider_line(
         "OpenRouter",
         config.OPENROUTER_API_KEY,
         openrouter_status,
         state["openrouter_exhausted_until"],
+        reasons.get("openrouter"),
     )
     api1_line = _provider_line(
-        "API 1", config.GOOGLE_AI_STUDIO_API_KEY_1, api1_status, state["api1_exhausted_until"]
+        "API 1",
+        config.GOOGLE_AI_STUDIO_API_KEY_1,
+        api1_status,
+        state["api1_exhausted_until"],
+        reasons.get("api1"),
     )
     api2_line = _provider_line(
-        "API 2", config.GOOGLE_AI_STUDIO_API_KEY_2, api2_status, state["api2_exhausted_until"]
+        "API 2",
+        config.GOOGLE_AI_STUDIO_API_KEY_2,
+        api2_status,
+        state["api2_exhausted_until"],
+        reasons.get("api2"),
     )
 
     preferred = await router9_client.get_preferred_model_name()

@@ -107,10 +107,14 @@ async def usable_indices() -> list[int]:
 
 
 async def note_failure(idx: int, exc: BaseException) -> None:
-    """Lỗi hết quota (429) -> đặt cooldown dùng chung với provider-chain."""
+    """Lỗi hết quota (429) -> đặt cooldown dùng chung với provider-chain, dài
+    ngắn theo loại quota Gemini báo (theo ngày/theo phút - ai/cooldown.py)."""
     if is_quota_exhausted_error(exc):
+        from ai import cooldown
+
         try:
-            await provider_state.mark_api_exhausted(f"api{idx}")
+            seconds, reason = cooldown.cooldown_for(f"api{idx}", exc)
+            await provider_state.mark_api_exhausted(f"api{idx}", seconds, reason)
         except Exception:
             logger.warning("Không ghi được cooldown api%s.", idx, exc_info=True)
 

@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 import httpx
 
 from ai import provider_overrides
-from core import config, database as db, untrusted
+from core import config, database as db, settings_cache, untrusted
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +67,12 @@ async def close() -> None:
 
 
 async def get_enabled() -> bool:
-    return await db.get_setting(_SETTING_ENABLED) == "1"
+    # Cache RAM ghi-xuyên (core.settings_cache): đọc ở mọi tin nhắn chat.
+    return await settings_cache.get(_SETTING_ENABLED) == "1"
 
 
 async def set_enabled(enabled: bool) -> None:
-    await db.set_setting(_SETTING_ENABLED, "1" if enabled else "0")
+    await settings_cache.set(_SETTING_ENABLED, "1" if enabled else "0")
     logger.info("Tavily search %s.", "bật" if enabled else "tắt")
 
 

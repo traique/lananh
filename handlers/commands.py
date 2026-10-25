@@ -25,6 +25,7 @@ from services import (
     prompt_templates,
     rag_clean_service,
     rag_service,
+    reply_cache,
     usage_stats,
 )
 from services.telemetry import telemetry
@@ -257,7 +258,11 @@ async def dich_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     prompt_id = await telemetry.start(user_id, "translate", text)
     try:
-        result, resolved, response = await translate_service.translate(text, direction)
+        # Cache theo sự kiện webhook: lỗi ở bước gửi -> inbox thử lại chỉ gửi
+        # lại bản đã dịch, không gọi LLM lần nữa (services/reply_cache.py).
+        result, resolved, response = await reply_cache.generate_once(
+            "dich", lambda: translate_service.translate(text, direction)
+        )
     except ValueError as exc:
         await update.message.reply_text(f"Cú pháp: /dich [ja>vi|vi>ja] <nội dung>\n({exc})")
         return
@@ -372,7 +377,9 @@ async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from ai import agent_service
 
-        text, provider = await agent_service.ask_agent(question)
+        text, provider = await reply_cache.generate_once(
+            "agent", lambda: agent_service.ask_agent(question)
+        )
         await telemetry.success(prompt_id, "agent", text)
     except Exception as exc:
         logger.exception("Agent lỗi với câu hỏi: %r", question)
@@ -447,7 +454,10 @@ async def rag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     prompt_id = await telemetry.start(user_id, "rag", query)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     try:
-        text = await rag_service.ask(user_id, query)
+        # Lệnh gửi để NGOÀI try có chủ đích: Telegram lỗi tạm lúc gửi thì inbox
+        # thử lại sự kiện và nhận lại đúng câu trả lời đã sinh từ cache (không
+        # gọi LLM lại, không mất câu trả lời như khi nuốt lỗi gửi trong try).
+        text = await reply_cache.generate_once("rag", lambda: rag_service.ask(user_id, query))
         await telemetry.success(prompt_id, "rag", text)
     except Exception as exc:
         logger.exception("Lỗi /rag với câu hỏi: %r", query)

@@ -44,3 +44,14 @@ def _block_real_network(request, monkeypatch):
     _real_connect = socket.socket.connect
     monkeypatch.setattr(socket.socket, "connect", _blocked_connect)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    """core.settings_cache giữ giá trị settings trong RAM của process: xoá giữa
+    các test để giá trị db.get_setting giả của test này không rò sang test khác."""
+    from core import settings_cache
+
+    settings_cache.clear()
+    yield
+    settings_cache.clear()

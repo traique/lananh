@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
 _ADMIN_TEMPLATE_PATH = _TEMPLATES / "admin.html"
 _ADMIN_LOGIN_PATH = _TEMPLATES / "admin_login.html"
-_ADMIN_COOLDOWN_PROVIDERS = ("groq", "openrouter", "api1", "api2")
+_ADMIN_COOLDOWN_PROVIDERS = ("groq", "openrouter", "api1", "api2", "router9")
 _ADMIN_SESSION_COOKIE = "admin_session"
 _CHANNEL_LABELS = {"telegram": "Telegram", "zoom": "Zoom", "zalo": "Zalo"}
 # Key bảng settings giữ epoch phiên admin (xem SessionEpoch).

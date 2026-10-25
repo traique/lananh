@@ -29,7 +29,7 @@ from typing import Awaitable, Callable, Iterator, Optional
 
 from core import config, database as db
 from ai import openai_compatible, router9_client, groq_client, openrouter_client, official_client
-from ai import prompt_budget, provider_overrides
+from ai import cooldown, prompt_budget, provider_overrides
 from ai import provider_state as provider_state_module
 from ai.provider_state import ProviderStateSnapshot, provider_state
 from ai.timeouts import TurnTimeoutError, bounded, remaining_turn_seconds, turn_deadline
@@ -269,6 +269,34 @@ def _classify_outcome(exc: BaseException) -> str:
     return "error"
 
 
+# Lỗi theo REQUEST của router9: chạy lại vẫn hỏng với đúng request đó, nhưng
+# router9 vẫn khoẻ cho request khác (context quá dài, nội dung bị lọc, ảnh không
+# hỗ trợ...). 404 (model không có) KHÔNG nằm đây - lặp lại mọi lượt nên coi là
+# lỗi sức khoẻ.
+_ROUTER9_REQUEST_ERROR_STATUSES = frozenset({400, 413, 415, 422})
+
+
+def _router9_failure_kind(exc: BaseException) -> str:
+    """timeout | auth | rate_limited | request | health (xem
+    _run_provider_chain_within_deadline._attempt_router9_with_health)."""
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return "timeout"
+    if isinstance(exc, OutputContaminatedError):
+        return "request"
+    status = openai_compatible.http_status(exc)
+    if status in (401, 403):
+        return "auth"
+    if status == 429:
+        return "rate_limited"
+    if status in _ROUTER9_REQUEST_ERROR_STATUSES:
+        return "request"
+    return "health"
+
+
+def _short_error(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {str(exc)[:200]}"
+
+
 async def _record_provider_call(
     provider: str,
     *,
@@ -400,8 +428,58 @@ async def _run_provider_chain_within_deadline(
             for name, is_configured in _GENERIC_PROVIDER_CONFIGURED.items()
         )
 
+    async def _attempt_router9_with_health(has_fallback: bool):
+        """Gọi router9 và phân loại lỗi (xem _router9_failure_kind):
+        - timeout / 401-403: khai tử ngay, không retry (timeout retry chỉ nhân
+          đôi thời gian chờ - quyết định có chủ đích, có test riêng);
+        - 429: cooldown ngắn theo Retry-After, KHÔNG khai tử;
+        - lỗi theo request (400/413/422, nội dung bị lọc, ảnh không hỗ trợ,
+          output lẫn CJK): chuyển provider, không đổi trạng thái sức khoẻ;
+        - 5xx/mất kết nối/lỗi lạ: retry 1 lần; khai tử khi đủ 2 lỗi trong 5 phút.
+        Không có provider dự phòng nào thì raise lỗi gốc, không khai tử."""
+        for attempt in (1, 2):
+            try:
+                return await _attempt_router9()
+            except TurnTimeoutError:
+                raise
+            except Exception as exc:
+                kind = _router9_failure_kind(exc)
+                if kind == "request":
+                    logger.warning(
+                        "9Router từ chối request này (%s) - chuyển provider, giữ trạng thái.",
+                        _short_error(exc),
+                    )
+                    raise
+                if kind == "rate_limited":
+                    seconds, reason = cooldown.cooldown_for("router9", exc)
+                    await provider_state.mark_api_exhausted("router9", seconds, reason)
+                    raise
+                if kind in ("timeout", "auth"):
+                    if not has_fallback:
+                        raise
+                    logger.warning(
+                        "9Router %s; chuyển provider luôn.",
+                        f"timeout sau {_call_timeout_sec()}s"
+                        if kind == "timeout"
+                        else "từ chối key",
+                    )
+                    await provider_state.mark_router9_dead(
+                        "timeout" if kind == "timeout" else "API key bị từ chối (401/403)"
+                    )
+                    raise
+                should_die = provider_state.note_router9_health_failure()
+                if should_die or attempt == 2:
+                    if not has_fallback:
+                        raise
+                    logger.warning("9Router vẫn lỗi (%s); chuyển provider.", _short_error(exc))
+                    await provider_state.mark_router9_dead("lỗi máy chủ/kết nối 2 lần liên tiếp")
+                    raise
+                logger.warning("Gọi 9Router lỗi lần 1 (%s), thử lại 1 lần.", _short_error(exc))
+        raise RuntimeError("unreachable")  # pragma: no cover
+
     last_exc: Optional[BaseException] = None
     known_bad_skipped: list[str] = []
+    cooling_skipped: list[str] = []
 
     for provider in order:
         if provider == "router9":
@@ -410,40 +488,18 @@ async def _run_provider_chain_within_deadline(
             if provider_state.router9_dead_since is not None:
                 known_bad_skipped.append("router9")
                 continue
+            if provider_state.api_in_cooldown("router9"):
+                # 429 của router9 chỉ là cooldown ngắn (Retry-After), không phải
+                # chết - không gọi lại kể cả ở lượt cứu cánh cuối.
+                cooling_skipped.append("router9")
+                continue
             has_fallback = await _has_any_fallback_configured()
             try:
-                return await _attempt_router9()
+                return await _attempt_router9_with_health(has_fallback)
             except TurnTimeoutError:
                 raise
-            except asyncio.TimeoutError as exc:
-                # Timeout nghĩa là router9 đã treo đủ lâu - retry cùng ngân
-                # sách chỉ nhân đôi thời gian chờ trước khi fallback.
-                last_exc = exc
-                if not has_fallback:
-                    raise
-                logger.warning(
-                    "9Router timeout sau %ss; chuyển provider luôn.", _call_timeout_sec()
-                )
-                await provider_state.mark_router9_dead()
             except Exception as exc:
                 last_exc = exc
-                logger.warning(
-                    "Gọi Gemini (9Router) lỗi/treo lần 1, thử lại 1 lần.",
-                    exc_info=True,
-                )
-                try:
-                    return await _attempt_router9()
-                except TurnTimeoutError:
-                    raise
-                except Exception as retry_exc:
-                    last_exc = retry_exc
-                    if not has_fallback:
-                        raise
-                    logger.warning(
-                        "9Router vẫn lỗi sau retry; chuyển provider.",
-                        exc_info=True,
-                    )
-                    await provider_state.mark_router9_dead()
         elif provider in ("api1", "api2"):
             idx = 1 if provider == "api1" else 2
             if not await provider_overrides.is_enabled(provider):
@@ -451,7 +507,7 @@ async def _run_provider_chain_within_deadline(
             if not await official_client.api_key_for(idx):
                 continue
             if provider_state.api_in_cooldown(provider):
-                known_bad_skipped.append(provider)
+                cooling_skipped.append(provider)
                 continue
             try:
                 return await _attempt_api(idx)
@@ -459,7 +515,8 @@ async def _run_provider_chain_within_deadline(
                 raise
             except Exception as exc:
                 if official_client.is_quota_exhausted_error(exc):
-                    await provider_state.mark_api_exhausted(provider)
+                    seconds, reason = cooldown.cooldown_for(provider, exc)
+                    await provider_state.mark_api_exhausted(provider, seconds, reason)
                     last_exc = exc
                     continue
                 logger.exception("%s lỗi (không phải hết quota).", provider)
@@ -472,7 +529,7 @@ async def _run_provider_chain_within_deadline(
             if not await provider_overrides.is_enabled(provider):
                 continue
             if provider_state.api_in_cooldown(provider):
-                known_bad_skipped.append(provider)
+                cooling_skipped.append(provider)
                 continue
             try:
                 return await _attempt_generic(provider)
@@ -480,7 +537,8 @@ async def _run_provider_chain_within_deadline(
                 raise
             except Exception as exc:
                 if openai_compatible.is_rate_limited(exc):
-                    await provider_state.mark_api_exhausted(provider)
+                    seconds, reason = cooldown.cooldown_for(provider, exc)
+                    await provider_state.mark_api_exhausted(provider, seconds, reason)
                     last_exc = exc
                     continue
                 logger.exception("%s lỗi (không phải hết quota).", provider)
@@ -496,8 +554,9 @@ async def _run_provider_chain_within_deadline(
             raise
         except Exception as exc:
             last_exc = exc
-    if last_exc is None and known_bad_skipped:
-        last_exc = RuntimeError("Mọi provider đang cooldown/chết: " + ", ".join(known_bad_skipped))
+    skipped = known_bad_skipped + cooling_skipped
+    if last_exc is None and skipped:
+        last_exc = RuntimeError("Mọi provider đang cooldown/chết: " + ", ".join(skipped))
 
     if last_exc is not None:
         raise last_exc
@@ -683,7 +742,8 @@ async def utility_json(prompt: str) -> Optional[dict]:
             raise
         except Exception as exc:
             if openai_compatible.is_rate_limited(exc):
-                await provider_state.mark_api_exhausted("groq")
+                seconds, reason = cooldown.cooldown_for("groq", exc)
+                await provider_state.mark_api_exhausted("groq", seconds, reason)
             logger.info("utility_json: Groq lỗi, dùng Gemini utility: %r", exc)
     with call_stage("utility"):
         return await official_client.generate_utility_json(prompt)
