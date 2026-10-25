@@ -31,10 +31,10 @@ def recolor(lo_hex, hi_hex, alpha_floor, alpha_gamma):
     return Image.fromarray((img * 255).round().astype(np.uint8), "RGBA")
 
 
-# Nền sáng: xanh rừng đậm -> xanh lá (đủ tương phản trên nền kem #fff9f4).
-light = recolor("0d3620", "287a49", alpha_floor=0.22, alpha_gamma=1.3)
-# Nền tối: xanh rêu -> sage dịu (không chói trên nền than ấm #17141a), giữ hào quang mờ.
-dark = recolor("3f7a56", "a8d2b5", alpha_floor=0.03, alpha_gamma=1.0)
+# Nền sáng: ngọc lục bảo đậm -> ngọc sáng (tương phản tốt trên nền trắng #ffffff).
+light = recolor("053a25", "16a06b", alpha_floor=0.22, alpha_gamma=1.3)
+# Nền tối: ngọc -> ngọc nhạt ánh bạc trên nền than #0e100f, giữ hào quang mờ.
+dark = recolor("12845a", "b9f3d6", alpha_floor=0.03, alpha_gamma=1.0)
 bbox = dark.getchannel("A").point(lambda v: 255 if v > 40 else 0).getbbox()
 pad = 12
 bbox = (
@@ -53,7 +53,7 @@ for name, im in (("dark", dark), ("light", light)):
 # favicon vuông 64px (bản nền tối đặt trên nền xanh đêm bo góc để rõ ở mọi tab)
 mark = dark.crop(bbox)
 side = max(mark.size)
-sq = Image.new("RGBA", (side, side), (23, 20, 26, 255))
+sq = Image.new("RGBA", (side, side), (10, 61, 42, 255))
 sq.alpha_composite(mark, ((side - mark.width) // 2, (side - mark.height) // 2))
 mask = Image.new("L", (side, side), 0)
 ImageDraw.Draw(mask).rounded_rectangle((0, 0, side - 1, side - 1), radius=side // 5, fill=255)

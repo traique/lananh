@@ -1,23 +1,32 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="narrow">
-  <h1>Đổi ngày âm sang dương</h1>
-  <p class="lead">Nhập ngày âm lịch; bỏ năm thì lấy lần sắp tới.</p>
-  {% include "_errors.html" %}
-  <form class="panel form" action="/lich/doi-ngay" method="get">
+<div class="title-row">
+  <div>
+    <h1>Đổi ngày âm sang dương</h1>
+    <p class="sub">Nhập ngày âm lịch; bỏ năm thì lấy lần sắp tới.</p>
+  </div>
+</div>
+<div class="grid">
+  <form class="panel form s5" action="/lich/doi-ngay" method="get">
+    {% include "_errors.html" %}
     <div class="field">
       <label for="am">Ngày âm lịch</label>
-      <input type="text" id="am" name="am" value="{{ am }}" inputmode="numeric" placeholder="15/8/2027" aria-describedby="am-hint{% if error %} form-error{% endif %}">
+      <input class="input" type="text" id="am" name="am" value="{{ am }}" inputmode="numeric" placeholder="15/8/2027" aria-describedby="am-hint{% if error %} form-error{% endif %}">
       <span class="hint" id="am-hint">Dạng ngày/tháng hoặc ngày/tháng/năm.</span>
     </div>
-    <div class="choices"><label><input type="checkbox" name="nhuan" value="1"{% if nhuan %} checked{% endif %}> Là tháng nhuận</label></div>
-    <div><button class="btn" type="submit">Đổi ngày</button></div>
+    <label class="switch-row"><input type="checkbox" name="nhuan" value="1"{% if nhuan %} checked{% endif %}><span class="switch" aria-hidden="true"></span>Là tháng nhuận</label>
+    <div class="form-actions"><button class="btn primary" type="submit">Đổi ngày</button></div>
   </form>
   {% if result %}
-  <section class="panel mt-4" aria-labelledby="result-title" role="status">
-    <h2 id="result-title">{{ result.weekday }} {{ result.date | vn_date }}</h2>
+  <section class="panel s7" aria-labelledby="result-title" role="status">
+    <header><h2 id="result-title">{{ result.weekday }}, {{ result.date | vn_date }}</h2></header>
     <p class="lunar-line">{{ result.lunar.text }} âm lịch</p>
     {% with day = result %}{% include "_day_facts.html" %}{% endwith %}
+  </section>
+  {% else %}
+  <section class="panel s7" aria-labelledby="empty-title">
+    <header><h2 id="empty-title">Kết quả</h2></header>
+    <p class="muted">Chưa có ngày nào. Nhập ngày âm bên cạnh, ví dụ 15/8 để xem Trung thu năm nay rơi vào ngày dương nào.</p>
   </section>
   {% endif %}
 </div>

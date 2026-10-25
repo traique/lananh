@@ -1,7 +1,7 @@
 <dl class="facts">
   <dt>Can chi</dt><dd>Ngày {{ day.lunar.dayCanChi }}, tháng {{ day.lunar.monthCanChi }}, năm {{ day.lunar.yearCanChi }}</dd>
   <dt>Ngày</dt>
-  <dd>{% if day.isHoangDao %}<span class="tag good">Hoàng đạo</span>{% else %}<span class="tag">Hắc đạo</span>{% endif %} {{ day.dayGod }}{% if day.isTamNuong %} <span class="tag warn">Tam nương</span>{% endif %}{% if day.isNguyetKy %} <span class="tag warn">Nguyệt kỵ</span>{% endif %}</dd>
+  <dd><span class="pills">{% if day.isHoangDao %}<span class="pill pos">Hoàng đạo</span>{% else %}<span class="pill">Hắc đạo</span>{% endif %}<span>{{ day.dayGod }}</span>{% if day.isTamNuong %}<span class="pill warn">Tam nương</span>{% endif %}{% if day.isNguyetKy %}<span class="pill warn">Nguyệt kỵ</span>{% endif %}</span></dd>
   <dt>Tiết khí</dt><dd>{{ day.solarTerm }}</dd>
   <dt>Giờ tốt</dt><dd>{{ day.luckyHours | join(", ") }}</dd>
   {% if day.holidays %}<dt>Ngày lễ</dt><dd>{{ day.holidays | join(", ") }}</dd>{% endif %}

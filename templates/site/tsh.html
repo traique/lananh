@@ -1,20 +1,33 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="narrow">
-  <h1>Thần số học</h1>
-  <p class="lead">Tính theo hệ Pythagoras phổ biến ở Việt Nam: con số chủ đạo, biểu đồ ngày sinh, 4 đỉnh cao, 4 thử thách, năm cá nhân. Thông tin chỉ dùng để tính, không lưu lại.</p>
-  {% include "_errors.html" %}
-  <form class="panel form" action="/than-so-hoc" method="post" novalidate>
+<div class="title-row">
+  <div>
+    <h1>Thần số học</h1>
+    <p class="sub">Tính theo hệ Pythagoras phổ biến ở Việt Nam. Thông tin chỉ dùng để tính, không lưu lại.</p>
+  </div>
+</div>
+<div class="grid">
+  <form class="panel form s7" action="/than-so-hoc" method="post" novalidate>
+    {% include "_errors.html" %}
     <div class="field">
       <label for="ngay">Ngày sinh (dương lịch) <span aria-hidden="true">*</span></label>
-      <input type="date" id="ngay" name="ngay" value="{{ form.ngay }}" min="1900-01-01" max="2100-12-31" required aria-required="true"{% if error %} aria-describedby="form-error"{% endif %}>
+      <input class="input" type="date" id="ngay" name="ngay" value="{{ form.ngay }}" min="1900-01-01" max="2100-12-31" required aria-required="true"{% if error %} aria-describedby="form-error"{% endif %}>
     </div>
     <div class="field">
       <label for="ten">Họ tên (không bắt buộc)</label>
-      <input type="text" id="ten" name="ten" value="{{ form.ten }}" maxlength="80" autocomplete="name" aria-describedby="ten-hint">
+      <input class="input" type="text" id="ten" name="ten" value="{{ form.ten }}" maxlength="80" autocomplete="name" aria-describedby="ten-hint">
       <span class="hint" id="ten-hint">Họ tên khai sinh đầy đủ: tính thêm số sứ mệnh, linh hồn, nhân cách, trưởng thành và biểu đồ tên.</span>
     </div>
-    <div><button class="btn" type="submit">Tính</button></div>
+    <div class="form-actions"><button class="btn primary" type="submit">Tính</button></div>
   </form>
+  <section class="panel s5" aria-labelledby="what-title">
+    <header><h2 id="what-title">Kết quả gồm</h2></header>
+    <ul class="rows" role="list">
+      <li class="row"><span>Con số chủ đạo, số ngày sinh, số thái độ</span></li>
+      <li class="row"><span>Biểu đồ ngày sinh 3x3 và các mũi tên</span></li>
+      <li class="row"><span>4 đỉnh cao và 4 thử thách theo tuổi</span></li>
+      <li class="row"><span>Năm và tháng cá nhân hiện tại</span></li>
+    </ul>
+  </section>
 </div>
 {% endblock %}

@@ -79,6 +79,22 @@ giữ logo vàng kim cũ thì đổi lại hai dải màu trong script và chạ
 - Trang kết quả tử vi hiện độ sáng từng sao, Tứ hóa dạng nhãn, viền cung Thân;
   trang thần số học thêm khối "Các giai đoạn cuộc đời" và biểu đồ tổng hợp.
 
+### Web: thiết kế lại theo skill ui-craft (thay bản ở trên)
+
+Bảng màu kem/than và phong cách "sang trọng" (gradient, bóng, chữ có chân, nhãn
+viết hoa) bị thay bằng giao diện dạng ứng dụng theo ui-craft (style "editorial
+greeting"): thanh bên trái nhóm Lịch / Tra cứu; cột 1100px lưới 12 cột; khối
+tông sage trên nền trắng, không bóng/gradient/kính; một màu nhấn xanh rừng chỉ
+trên dữ liệu; nút chính xanh đen; chữ Be Vietnam Pro (Instrument Sans của style
+không có tiếng Việt), tiêu đề ngày trang chủ Newsreader. Trang chủ: tiêu đề là
+ngày hôm nay, dải 12 giờ địa chi (giờ hoàng đạo tô màu, giờ hiện tại có viền),
+4 ô số liệu, ngày lễ tới, form nhanh. Bảng có vạch hàng, số căn phải; nhãn
+trạng thái dạng pill nhạt. Điện thoại: thanh trên 56px + bảng danh mục toàn màn.
+Đã chạy `lint.mjs --app` (0 lỗi) và `inspect.mjs --app` (0 FAIL) trên mọi trang;
+cảnh báo còn lại: tiêu đề ngày 48px (chủ đích của style) và khoảng trống phía trên
+nút ở các khối kéo cao bằng nhau. Admin, trang đăng nhập và các trang pháp lý
+dùng cùng token màu.
+
 ### API `/api/v1` (chỉ thêm trường, không đổi trường cũ)
 
 - `isLeapMonth` (GET conversions: true/false/1/0; POST tuvi: bool) và `isEarlyTy`

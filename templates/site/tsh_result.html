@@ -1,35 +1,38 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="result-head">
+<div class="title-row">
   <div>
     <h1>Thần số học</h1>
-    <p class="lead">Sinh {{ reading.birthDate | vn_date }}{% if reading.name %} · {{ reading.name }}{% endif %} · {{ reading.age }} tuổi</p>
+    <p class="sub">Sinh {{ reading.birthDate | vn_date }}{% if reading.name %} · {{ reading.name }}{% endif %} · {{ reading.age }} tuổi</p>
   </div>
-  <a class="btn btn-secondary" href="/than-so-hoc">Tính cho người khác</a>
+  <div class="title-actions"><a class="btn" href="/than-so-hoc">Tính cho người khác</a></div>
 </div>
-<div class="layout-2">
-  <section class="panel" aria-labelledby="lp-title">
-    <h2 id="lp-title">Con số chủ đạo</h2>
-    <div class="life-path">
-      <div class="num" aria-hidden="true">{{ reading.lifePath.value }}</div>
+<div class="grid top">
+  <section class="panel s7" aria-labelledby="lp-title">
+    <header><h2 id="lp-title">Con số chủ đạo</h2></header>
+    <div class="lp">
+      <div class="lp-num" aria-hidden="true">{{ reading.lifePath.value }}</div>
       <p><span class="sr-only">Số {{ reading.lifePath.value }}. </span>{{ reading.lifePath.meaning }}</p>
     </div>
-    <table class="numbers mt-4">
-      <caption class="sr-only">Các con số khác</caption>
-      <tbody>
-        {% for label, item in rows %}{% if item %}
-        <tr><th scope="row">{{ label }}</th><td class="n">{{ item.value }}</td><td>{{ item.meaning }}</td></tr>
-        {% endif %}{% endfor %}
-        <tr><th scope="row">Năm cá nhân {{ reading.personalYear.year }}</th><td class="n">{{ reading.personalYear.value }}</td><td>{{ reading.personalYear.meaning }}</td></tr>
-        <tr><th scope="row">Tháng cá nhân (tháng {{ reading.personalMonthDetail.month }})</th><td class="n">{{ reading.personalMonth }}</td><td>{{ reading.personalMonthDetail.meaning }}</td></tr>
-      </tbody>
-    </table>
+    <h3>Các con số khác</h3>
+    <div class="table-wrap">
+      <table class="numbers">
+        <caption class="sr-only">Các con số khác</caption>
+        <tbody>
+          {% for label, item in rows %}{% if item %}
+          <tr><th scope="row">{{ label }}</th><td class="n">{{ item.value }}</td><td>{{ item.meaning }}</td></tr>
+          {% endif %}{% endfor %}
+          <tr><th scope="row">Năm cá nhân {{ reading.personalYear.year }}</th><td class="n">{{ reading.personalYear.value }}</td><td>{{ reading.personalYear.meaning }}</td></tr>
+          <tr><th scope="row">Tháng cá nhân (tháng {{ reading.personalMonthDetail.month }})</th><td class="n">{{ reading.personalMonth }}</td><td>{{ reading.personalMonthDetail.meaning }}</td></tr>
+        </tbody>
+      </table>
+    </div>
     {% if not reading.name %}
-    <p class="muted small mt-3">Nhập họ tên để tính thêm số sứ mệnh, linh hồn, nhân cách, trưởng thành và biểu đồ tên.</p>
+    <p class="hint spaced">Nhập họ tên để tính thêm số sứ mệnh, linh hồn, nhân cách, trưởng thành và biểu đồ tên.</p>
     {% endif %}
   </section>
-  <section class="panel" aria-labelledby="grid-title">
-    <h2 id="grid-title">Biểu đồ ngày sinh</h2>
+  <section class="panel s5" aria-labelledby="grid-title">
+    <header><h2 id="grid-title">Biểu đồ ngày sinh</h2></header>
     <div class="grids">
       <div>
         <div class="birth-grid" role="img" aria-label="Biểu đồ ngày sinh 3x3. {% for d in range(1, 10) %}Số {{ d }}: {{ reading.chart[d|string] }} lần. {% endfor %}">
@@ -37,7 +40,7 @@
           <div class="{% if not n %}empty{% endif %}" aria-hidden="true">{{ (d|string) * n if n else d }}</div>
           {% endfor %}
         </div>
-        <p class="muted small mt-3">Ô nét đứt là số thiếu ({{ reading.missingDigits | join(", ") or "không có" }}).</p>
+        <p class="hint spaced">Ô viền mảnh là số thiếu ({{ reading.missingDigits | join(", ") or "không có" }}).</p>
       </div>
       {% if reading.combinedChart %}
       <div>
@@ -47,38 +50,38 @@
           <div class="{% if not n %}empty{% endif %}" aria-hidden="true">{% if n > 4 %}{{ d }}×{{ n }}{% elif n %}{{ (d|string) * n }}{% else %}{{ d }}{% endif %}</div>
           {% endfor %}
         </div>
-        <p class="muted small mt-3">Cộng thêm các chữ trong họ tên (A=1 … I=9, J=1 …).</p>
+        <p class="hint spaced">Cộng thêm các chữ trong họ tên (A=1 … I=9, J=1 …).</p>
       </div>
       {% endif %}
     </div>
-    {% if reading.arrows %}<h3 class="mt-3">Mũi tên có</h3><ul class="plain">{% for a in reading.arrows %}<li>{{ a.meaning }}</li>{% endfor %}</ul>{% endif %}
-    {% if reading.emptyArrows %}<h3 class="mt-3">Mũi tên trống</h3><ul class="plain">{% for a in reading.emptyArrows %}<li>{{ a.meaning }}</li>{% endfor %}</ul>{% endif %}
+    {% if reading.arrows %}<h3>Mũi tên có</h3><ul class="rows" role="list">{% for a in reading.arrows %}<li class="row"><span>{{ a.meaning }}</span></li>{% endfor %}</ul>{% endif %}
+    {% if reading.emptyArrows %}<h3>Mũi tên trống</h3><ul class="rows" role="list">{% for a in reading.emptyArrows %}<li class="row"><span>{{ a.meaning }}</span></li>{% endfor %}</ul>{% endif %}
   </section>
 </div>
-<section class="panel mt-4" aria-labelledby="stage-title">
-  <h2 id="stage-title">Các giai đoạn cuộc đời</h2>
-  <h3>4 đỉnh cao</h3>
+<section class="panel" aria-labelledby="stage-title">
+  <header><h2 id="stage-title">Các giai đoạn cuộc đời</h2></header>
+  <h3 class="first">4 đỉnh cao</h3>
   <ol class="stages" role="list">
     {% for s in reading.pinnacles %}
     <li{% if s.isCurrent %} class="is-now"{% endif %}>
       <span class="age">Đỉnh {{ loop.index }} · {{ s.label }}{% if s.isCurrent %} · hiện tại{% endif %}</span>
       <span class="n">{{ s.value }}</span>
-      <p class="small">{{ s.meaning }}</p>
+      <p>{{ s.meaning }}</p>
     </li>
     {% endfor %}
   </ol>
-  <h3 class="mt-4">4 thử thách</h3>
+  <h3>4 thử thách</h3>
   <ol class="stages" role="list">
     {% for s in reading.challenges %}
     <li{% if s.isCurrent %} class="is-now"{% endif %}>
       <span class="age">Thử thách {{ loop.index }} · {{ s.label }}{% if s.isCurrent %} · hiện tại{% endif %}</span>
-      <span class="n c">{{ s.value }}</span>
-      <p class="small">{{ s.meaning }}</p>
+      <span class="n">{{ s.value }}</span>
+      <p>{{ s.meaning }}</p>
     </li>
     {% endfor %}
   </ol>
-  <p class="muted small mt-3">Tuổi đỉnh 1 = 36 trừ số chủ đạo ({{ reading.lifePath.value }}); các đỉnh sau cách nhau 9 năm (kim tự tháp thần số học). Đỉnh 1, 2 rút gọn về 1-9; đỉnh 3, 4 giữ 11/22.</p>
+  <p class="hint spaced">Tuổi đỉnh 1 = 36 trừ số chủ đạo ({{ reading.lifePath.value }}); các đỉnh sau cách nhau 9 năm (kim tự tháp thần số học). Đỉnh 1, 2 rút gọn về 1-9; đỉnh 3, 4 giữ 11/22.</p>
 </section>
 {% include "_ai_box.html" %}
-<p class="muted small mt-3">{{ reading.disclaimer }} Tính theo hệ Pythagoras phổ biến ở Việt Nam: số chủ đạo có 10, không có 1; các số theo tên rút gọn từng từ (Y là nguyên âm khi không kề nguyên âm khác); năm cá nhân theo năm dương lịch.</p>
+<p class="note-line">{{ reading.disclaimer | replace("ℹ️ ", "") }} Tính theo hệ Pythagoras phổ biến ở Việt Nam: số chủ đạo có 10, không có 1; các số theo tên rút gọn từng từ (Y là nguyên âm khi không kề nguyên âm khác); năm cá nhân theo năm dương lịch.</p>
 {% endblock %}

@@ -1,21 +1,30 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="narrow">
-  <h1>Hỏi lịch</h1>
-  <p class="lead">Gõ tự nhiên như khi nhắn tin. Trả lời bằng thuật toán, không dùng AI.</p>
-  <form class="search" action="/lich/hoi" method="get" role="search">
-    <label class="sr-only" for="q">Câu hỏi về lịch</label>
-    <input type="search" id="q" name="q" maxlength="200" value="{{ q }}" placeholder="Ví dụ: rằm tháng 8 là ngày nào" autocomplete="off">
-    <button class="btn" type="submit">Tra</button>
-  </form>
-  {% if answer %}
-  <section class="panel mt-4" role="status" aria-label="Kết quả">
-    <p class="answer">{{ answer }}</p>
+<div class="title-row">
+  <div>
+    <h1>Hỏi lịch</h1>
+    <p class="sub">Gõ tự nhiên như khi nhắn tin. Trả lời bằng thuật toán, không dùng AI.</p>
+  </div>
+</div>
+<div class="grid top">
+  <div class="s8">
+    <form class="panel search" action="/lich/hoi" method="get" role="search">
+      <label class="sr-only" for="q">Câu hỏi về lịch</label>
+      <input class="input" type="search" id="q" name="q" maxlength="200" value="{{ q }}" placeholder="Ví dụ: rằm tháng 8 là ngày nào" autocomplete="off">
+      <button class="btn primary" type="submit">Tra</button>
+    </form>
+    {% if answer %}
+    <section class="panel" role="status" aria-labelledby="answer-title">
+      <header><h2 id="answer-title">Trả lời</h2><span class="meta">{{ q }}</span></header>
+      <p class="answer">{{ answer }}</p>
+    </section>
+    {% endif %}
+  </div>
+  <section class="panel s4" aria-labelledby="ex-title">
+    <header><h2 id="ex-title">Thử hỏi</h2></header>
+    <ul class="rows" role="list">
+      {% for ex in examples %}<li class="row"><a href="/lich/hoi?q={{ ex | urlencode }}">{{ ex[:1] | upper }}{{ ex[1:] }}</a></li>{% endfor %}
+    </ul>
   </section>
-  {% endif %}
-  <h2 class="section-title">Thử hỏi</h2>
-  <ul class="chips" role="list">
-    {% for ex in examples %}<li><a href="/lich/hoi?q={{ ex | urlencode }}">{{ ex }}</a></li>{% endfor %}
-  </ul>
 </div>
 {% endblock %}

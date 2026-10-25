@@ -643,18 +643,30 @@ lịch, thời tiết, tử vi, thần số học KHÔNG cần đăng nhập và
 - thêm/xoá địa điểm hay xem ở `/thoi-tiet` (lưu trong bảng `settings`, key
   `web_weather_places`, tối đa 16 mục, cache RAM - `services/weather_places.py`).
 
-Chưa đăng nhập thì header có nút "Đăng nhập" (về lại đúng trang sau khi đăng
+Chưa đăng nhập thì cuối thanh bên có "Đăng nhập" (về lại đúng trang sau khi đăng
 nhập); đăng nhập rồi mới hiện "Quản trị" và "Đăng xuất". Menu admin có nhóm
 "Công cụ web" sang các trang này.
 
-Mỗi công cụ là một trang riêng, gọn trong 1 màn hình;
-CSS `static/site.css` được nhúng thẳng vào HTML (không tốn thêm request). Bảng màu
-theo mệnh chủ site (Đại Lâm Mộc) trên nền kem ấm cùng tông nangdecor.com: xanh
-rừng làm màu chủ đạo (bản mệnh Mộc), xanh nước cho hoàng đạo/Thân/thông tin (Thủy
-sinh Mộc), son/cam đất chỉ dùng cho mùng 1, rằm, ngày lễ và lỗi; không dùng trắng
-tinh, xám lạnh hay ánh kim (Kim khắc Mộc). Dark mode nền than ấm, xanh sage dịu.
-Mọi cặp chữ/nền đạt WCAG AA, tối/sáng tự theo hệ máy. Logo LCTA có 2 bản
-`static/logo-light.webp` / `logo-dark.webp` (tô lại tông xanh, tự đổi theo nền) và
+Giao diện dạng ứng dụng (thanh bên trái nhóm Lịch / Tra cứu, cột nội dung 1100px
+lưới 12 cột), dựng theo skill ui-craft: khối nội dung tông xanh lá xám (sage) trên
+nền trắng, cách nhau bằng bậc tông - không bóng, không gradient, không kính. Một màu
+nhấn xanh rừng (mệnh Đại Lâm Mộc) chỉ đặt trên dữ liệu: giờ hoàng đạo, hôm nay,
+cung Mệnh, số chủ đạo; nút chính xanh đen; đỏ chỉ cho lỗi, độ sáng hãm. Chữ Be
+Vietnam Pro (Google Fonts, có subset tiếng Việt), tiêu đề ngày ở trang chủ dùng
+Newsreader. Trang chủ lấy ngày hôm nay làm tiêu đề, kèm dải 12 giờ địa chi tô
+giờ hoàng đạo và đánh dấu giờ hiện tại. Trên điện thoại thanh bên gập thành thanh
+trên 56px + bảng danh mục toàn màn (không JS vẫn mở được bằng `#menu`).
+Điều khiển dùng chung một bộ (web và `/admin`): nút dạng viên thuốc (38px trên web, 36/32px
+trong admin), một nút chính xanh đen mỗi màn, nút phụ nền trắng viền 1px; chọn một trong vài
+giá trị bằng segmented (âm/dương lịch, nam/nữ, khoảng 24 giờ/7 ngày/30 ngày); mọi bật/tắt là
+công tắc `role="switch"` 32x20 (xanh đen khi bật); ô nhập + nút Lưu/Tra dính liền; nút bị khoá
+vẫn đọc được. Chuyển động chỉ là phản hồi: bấm 120ms, rê chuột 150ms, công tắc/bảng 200ms.
+CSS `static/site.css` được nhúng thẳng vào HTML (không tốn thêm request tới server;
+phông chữ tải từ Google). Nút đổi sáng/tối ở cuối thanh bên (lưu `localStorage` key
+`lcta.theme`, không JS thì theo hệ máy); trang `/admin`, trang đăng nhập admin và
+các trang Quyền riêng tư / Điều khoản / Xoá dữ liệu dùng cùng bảng màu và key này.
+Mọi chữ đạt ≥ 4.5:1 trên nền của nó, viền ô nhập ≥ 3:1, ở cả sáng lẫn tối. Logo
+LCTA có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo nền) và
 `static/favicon.png`, tạo bằng `scripts/make_site_logo.py` từ ảnh logo gốc nền đen.
 
 | Đường dẫn | Nội dung |

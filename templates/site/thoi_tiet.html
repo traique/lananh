@@ -1,68 +1,76 @@
 {% extends "base.html" %}
 {% block content %}
-<div>
-  <h1>Thời tiết</h1>
-  <p class="lead">Hiện tại và dự báo 7 ngày. Không nhập địa điểm thì xem TP. Hồ Chí Minh.</p>
-  {% include "_errors.html" %}
+<div class="title-row">
+  <div>
+    <h1>{{ "Thời tiết " ~ data.location if data else "Thời tiết" }}</h1>
+    <p class="sub">Hiện tại và dự báo 7 ngày. Không nhập địa điểm thì xem TP. Hồ Chí Minh.</p>
+  </div>
   <form class="search" action="/thoi-tiet" method="get" role="search">
     <label class="sr-only" for="noi">Địa điểm</label>
-    <input type="search" id="noi" name="noi" maxlength="60" value="{{ place }}" placeholder="Ví dụ: Đà Lạt" autocomplete="off"{% if error %} aria-describedby="form-error"{% endif %}>
-    <button class="btn" type="submit">Xem</button>
+    <input class="input" type="search" id="noi" name="noi" maxlength="60" value="{{ place }}" placeholder="Ví dụ: Đà Lạt" autocomplete="off"{% if error %} aria-describedby="form-error"{% endif %}>
+    <button class="btn primary" type="submit">Xem</button>
   </form>
-  <ul class="chips mt-3" aria-label="Địa điểm hay xem" role="list">
-    {% for p in places %}
-    <li class="{% if logged_in %}chip-edit{% endif %}">
-      <a href="/thoi-tiet?noi={{ p | urlencode }}"{% if p == place or (not place and loop.first) %} aria-current="page"{% endif %}>{{ p }}</a>
-      {% if logged_in %}
-      <form method="post" action="/thoi-tiet/dia-diem/xoa">
-        <input type="hidden" name="ten" value="{{ p }}"><input type="hidden" name="noi" value="{{ place }}">
-        <button type="submit" class="chip-x" aria-label="Xoá {{ p }}" title="Xoá {{ p }}">×</button>
-      </form>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% if logged_in %}
-  <form class="add-place mt-3" method="post" action="/thoi-tiet/dia-diem/them">
-    <label class="sr-only" for="ten-moi">Thêm địa điểm</label>
-    <input type="text" id="ten-moi" name="ten" maxlength="40" value="{{ place if place and place not in places else '' }}" placeholder="Thêm địa điểm, ví dụ: Vũng Tàu" autocomplete="off">
-    <input type="hidden" name="noi" value="{{ place }}">
-    <button class="btn btn-secondary" type="submit">+ Thêm</button>
-  </form>
-  {% endif %}
-  {% if notice %}
-  <div class="{{ 'error-box' if notice[0] == 'error' else 'ok-box' }} mt-3" role="{{ 'alert' if notice[0] == 'error' else 'status' }}">{{ notice[1] }}</div>
-  {% endif %}
-
-
-  {% if data %}
-  <div class="layout-2 mt-4">
-    <section class="panel weather-now" aria-labelledby="now-title">
-      <h2 id="now-title" class="eyebrow">Bây giờ · {{ data.location }}</h2>
-      <p class="temp">{{ fmt(data.now.temperature_c) }}°C</p>
-      <p class="desc">{{ data.now.description | capitalize }}</p>
-      <dl class="facts">
-        <dt>Cảm giác</dt><dd>{{ fmt(data.now.feels_like_c) }}°C</dd>
-        <dt>Độ ẩm</dt><dd>{{ fmt(data.now.humidity_percent) }}%</dd>
-        <dt>Gió</dt><dd>{{ fmt(data.now.wind_kmh) }} km/h</dd>
-        <dt>Mưa</dt><dd>{{ data.now.precipitation_mm if data.now.precipitation_mm is not none else "?" }} mm</dd>
-      </dl>
-    </section>
-    <section class="panel" aria-labelledby="fc-title">
-      <h2 id="fc-title" class="small-title">Dự báo {{ data.daily | length }} ngày</h2>
-      <ul class="forecast" role="list">
-        {% for d in data.daily %}
-        <li>
-          <span class="when"><strong>{{ d.label }}</strong> <span class="muted">{{ d.short }}</span></span>
-          <span class="what">{{ d.description | capitalize }}</span>
-          <span class="range"><span class="muted">{{ fmt(d.min_c) }}°</span> – <strong>{{ fmt(d.max_c) }}°</strong></span>
-          <span class="rain">Mưa {{ fmt(d.rain_chance_percent) }}% · UV {{ fmt(d.uv_max) }}</span>
-        </li>
-        {% endfor %}
-      </ul>
-    </section>
-  </div>
-  <p class="small muted mt-3">Nguồn: {{ data.source }}. Số liệu cập nhật khoảng 10 phút một lần.</p>
-  {% endif %}
 </div>
+{% include "_errors.html" %}
+<ul class="links" aria-label="Địa điểm hay xem" role="list">
+  {% for p in places %}
+  <li class="{% if logged_in %}place-edit{% endif %}">
+    <a href="/thoi-tiet?noi={{ p | urlencode }}"{% if p == place or (not place and loop.first) %} aria-current="page"{% endif %}>{{ p }}</a>
+    {% if logged_in %}
+    <form method="post" action="/thoi-tiet/dia-diem/xoa">
+      <input type="hidden" name="ten" value="{{ p }}"><input type="hidden" name="noi" value="{{ place }}">
+      <button type="submit" class="chip-x" aria-label="Xoá {{ p }}" title="Xoá {{ p }}">×</button>
+    </form>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% if logged_in %}
+<form class="add-place" method="post" action="/thoi-tiet/dia-diem/them">
+  <label class="sr-only" for="ten-moi">Thêm địa điểm</label>
+  <input class="input" type="text" id="ten-moi" name="ten" maxlength="40" value="{{ place if place and place not in places else '' }}" placeholder="Thêm địa điểm, ví dụ: Vũng Tàu" autocomplete="off">
+  <input type="hidden" name="noi" value="{{ place }}">
+  <button class="btn" type="submit">Thêm</button>
+</form>
+{% endif %}
+{% if notice %}
+<div class="{{ 'error-box' if notice[0] == 'error' else 'ok-box' }} notice" role="{{ 'alert' if notice[0] == 'error' else 'status' }}">{{ notice[1] }}</div>
+{% endif %}
+
+{% if data %}
+<section class="panel weather-now" aria-labelledby="now-title">
+  <header><h2 id="now-title">Bây giờ</h2><span class="meta">{{ data.location }}</span></header>
+  <div class="strip">
+    <div>
+      <p class="lead-figure">{{ fmt(data.now.temperature_c) }}°C</p>
+      <p class="muted">{{ data.now.description | capitalize }}</p>
+    </div>
+    <div><span class="meta">Cảm giác</span><p class="v">{{ fmt(data.now.feels_like_c) }}°C</p></div>
+    <div><span class="meta">Độ ẩm</span><p class="v">{{ fmt(data.now.humidity_percent) }}%</p></div>
+    <div><span class="meta">Gió</span><p class="v">{{ fmt(data.now.wind_kmh) }} km/h</p></div>
+    <div><span class="meta">Mưa</span><p class="v">{{ data.now.precipitation_mm if data.now.precipitation_mm is not none else "?" }} mm</p></div>
+  </div>
+</section>
+<section class="panel" aria-labelledby="fc-title">
+  <header><h2 id="fc-title">Dự báo {{ data.daily | length }} ngày</h2><span class="meta">Nguồn: {{ data.source }}, cập nhật khoảng 10 phút một lần</span></header>
+  <div class="table-wrap">
+    <table class="forecast">
+      <thead><tr><th scope="col">Ngày</th><th scope="col">Trời</th><th scope="col" class="n">Thấp</th><th scope="col" class="range-col"><span class="sr-only">Biên độ</span></th><th scope="col" class="n">Cao</th><th scope="col" class="n">Mưa</th><th scope="col" class="n">UV</th></tr></thead>
+      <tbody>
+        {% for d in data.daily %}
+        <tr>
+          <td class="when">{{ d.label }}<span class="sub">{{ d.short }}</span></td>
+          <td>{{ d.description | capitalize }}</td>
+          <td class="n muted">{{ fmt(d.min_c) }}°</td>
+          <td class="range-col">{% if d.bar %}<div class="range" aria-hidden="true"><i style="left: {{ d.bar[0] }}%; width: {{ d.bar[1] }}%"></i></div>{% endif %}</td>
+          <td class="n">{{ fmt(d.max_c) }}°</td>
+          <td class="n">{{ fmt(d.rain_chance_percent) }}%</td>
+          <td class="n">{{ fmt(d.uv_max) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
 {% endblock %}

@@ -1,14 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
-<h1 class="sr-only">Lịch tháng {{ month.month }}/{{ month.year }}</h1>
+<div class="title-row">
+  <div>
+    <h1>Tháng {{ month.month }}/{{ month.year }}</h1>
+    <p class="sub">Ngày dương kèm ngày âm. Bấm một ngày để xem can chi, giờ tốt.</p>
+  </div>
+  <nav class="btn-group" aria-label="Chuyển tháng">
+    <a class="btn" href="/lich?thang={{ month.previous }}">‹ Tháng trước</a>
+    <a class="btn" href="/lich">Hôm nay</a>
+    <a class="btn" href="/lich?thang={{ month.next }}">Tháng sau ›</a>
+  </nav>
+</div>
 {% include "_errors.html" %}
-<div class="layout-2">
-  <section class="panel" aria-labelledby="month-title">
-    <div class="month-nav">
-      <a href="/lich?thang={{ month.previous }}" aria-label="Tháng trước">‹ Trước</a>
-      <h2 id="month-title">Tháng {{ month.month }}/{{ month.year }}</h2>
-      <a href="/lich?thang={{ month.next }}" aria-label="Tháng sau">Sau ›</a>
-    </div>
+<div class="grid">
+  <section class="panel s8" aria-label="Lưới tháng {{ month.month }}/{{ month.year }}">
     <table class="month">
       <caption class="sr-only">Lịch tháng {{ month.month }}/{{ month.year }}, mỗi ô ghi ngày dương và ngày âm</caption>
       <thead><tr>{% for wd in ["T2","T3","T4","T5","T6","T7","CN"] %}<th scope="col">{{ wd }}</th>{% endfor %}</tr></thead>
@@ -18,13 +23,13 @@
         {% for d in week %}
           {% if d %}
           {% set mark = d.lunarDay == 1 or d.lunarDay == 15 %}
-          <td><a class="day{% if mark %} is-lunar-mark{% endif %}{% if d.holidays %} is-holiday{% endif %}{% if d.date == today_iso %} is-today{% endif %}"
+          <td><a class="day{% if loop.index > 5 %} weekend{% endif %}{% if mark %} is-lunar-mark{% endif %}{% if d.holidays %} is-holiday{% endif %}{% if d.isHoangDao %} is-good{% endif %}{% if d.date == today_iso %} is-today{% endif %}"
                  href="/lich?thang={{ month.year }}-{{ '%02d' % month.month }}&amp;ngay={{ d.date }}"
                  {% if d.date == selected.date %}aria-current="date"{% endif %}
-                 aria-label="{{ d.day }}/{{ month.month }}, âm {{ d.lunarDay }}/{{ d.lunarMonth }}{% if d.lunarDay == 15 %}, rằm{% elif d.lunarDay == 1 %}, mùng 1{% endif %}{% if d.isHoangDao %}, hoàng đạo{% endif %}{% for h in d.holidays %}, {{ h }}{% endfor %}">
+                 aria-label="{{ d.day }}/{{ month.month }}, âm {{ d.lunarDay }}/{{ d.lunarMonth }}{% if d.lunarDay == 15 %}, rằm{% elif d.lunarDay == 1 %}, mùng 1{% endif %}{% if d.isHoangDao %}, hoàng đạo{% endif %}{% for h in d.holidays %}, {{ h }}{% endfor %}{% if d.date == today_iso %}, hôm nay{% endif %}">
             <span class="d">{{ d.day }}</span>
             <span class="l">{% if d.lunarDay == 1 %}{{ d.lunarDay }}/{{ d.lunarMonth }}{% else %}{{ d.lunarDay }}{% endif %}</span>
-            {% if d.isHoangDao %}<span class="hd" aria-hidden="true"></span>{% endif %}
+            {% if d.holidays %}<span class="note">{{ d.holidays[0] }}</span>{% endif %}
           </a></td>
           {% else %}<td></td>{% endif %}
         {% endfor %}
@@ -32,13 +37,16 @@
       {% endfor %}
       </tbody>
     </table>
-    <p class="legend"><span><span class="hd" aria-hidden="true"></span>Hoàng đạo</span><span>● Số son: mùng 1, rằm</span><span><u>Gạch chân</u> nền son: ngày lễ</span></p>
+    <p class="month-key"><span class="dot">Hoàng đạo</span><span>Chữ đậm: mùng 1, rằm</span><span>Viền xanh: hôm nay</span></p>
   </section>
 
-  <section class="panel day-detail" aria-labelledby="day-title">
-    <h2 id="day-title">{{ selected.weekday }} {{ selected_date.strftime('%d/%m/%Y') }}</h2>
+  <section class="panel s4" aria-labelledby="day-title">
+    <header><h2 id="day-title">{{ selected.weekday }}, {{ selected_date.strftime('%d/%m/%Y') }}</h2></header>
     <p class="lunar-line">{{ selected.lunar.text }} âm lịch</p>
     {% with day = selected %}{% include "_day_facts.html" %}{% endwith %}
+    <div class="form-actions">
+      <a class="btn" href="/lich/doi-ngay">Đổi ngày âm sang dương</a>
+    </div>
   </section>
 </div>
 {% endblock %}

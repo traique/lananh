@@ -5,52 +5,52 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Data Deletion Instructions / Hướng dẫn xóa dữ liệu</title>
   <meta name="color-scheme" content="light dark">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&amp;display=swap">
   <style>
     :root{
       color-scheme:light;
-      /* Bảng màu Mộc trên nền kem ấm, dùng chung với static/site.css */
-      --bg:#f7f1ea; --surface:#fff9f4; --surface-2:#f1e8df;
-      --border:rgba(86,63,58,.14);
-      --text:#211c24; --text-2:#4a4350; --muted:#6a626b;
-      --accent:#1f6b40; --accent-hover:#17532f;
-      --shadow:0 1px 2px rgba(33,28,36,.05),0 10px 28px -16px rgba(33,28,36,.22);
-      --radius:14px; --radius-sm:8px;
+      /* Bảng màu dùng chung với static/site.css */
+      --bg:#ffffff; --surface:#eff3ec; --surface-2:#e5ebe1;
+      --border:#e3e8df;
+      --text:#121a15; --text-2:#2c362f; --muted:#4f5b53;
+      --accent:#1f6b45; --accent-hover:#16241c;
+      --radius:16px; --radius-sm:8px;
     }
     @media (prefers-color-scheme:dark){
       :root:not([data-theme="light"]){
         color-scheme:dark;
-        --bg:#17141a; --surface:#211c24; --surface-2:#2b2530;
-        --border:rgba(243,237,232,.12);
-        --text:#f3ede8; --text-2:#cfc6cb; --muted:#a79ea8;
-        --accent:#93c6a3; --accent-hover:#aad6b7;
-        --shadow:0 1px 2px rgba(0,0,0,.45),0 10px 28px -16px rgba(0,0,0,.7);
+        --bg:#0e100f; --surface:#171a18; --surface-2:#1f2320;
+        --border:#242926;
+        --text:#eef1ee; --text-2:#d5dbd6; --muted:#b2bab4;
+        --accent:#63c08f; --accent-hover:#eef1ee;
       }
     }
     :root[data-theme="dark"]{
       color-scheme:dark;
-      --bg:#17141a; --surface:#211c24; --surface-2:#2b2530;
-      --border:rgba(243,237,232,.12);
-      --text:#f3ede8; --text-2:#cfc6cb; --muted:#a79ea8;
-      --accent:#93c6a3; --accent-hover:#aad6b7;
-      --shadow:0 1px 2px rgba(0,0,0,.45),0 10px 28px -16px rgba(0,0,0,.7);
+      --bg:#0e100f; --surface:#171a18; --surface-2:#1f2320;
+      --border:#242926;
+      --text:#eef1ee; --text-2:#d5dbd6; --muted:#b2bab4;
+      --accent:#63c08f; --accent-hover:#eef1ee;
     }
     *{box-sizing:border-box}
     body{
       margin:0;background:var(--bg);color:var(--text);
-      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+      font-family:"Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
       font-size:15px;line-height:1.65;padding:28px 16px 64px;
     }
     .page{max-width:820px;margin:0 auto}
     .top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}
-    .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text);font-weight:700}
+    .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text);font-weight:600}
     .logo img{height:32px;width:auto;display:block}
     nav.links{display:flex;gap:4px;flex-wrap:wrap}
-    nav.links a{color:var(--text-2);text-decoration:none;font-size:13px;font-weight:600;padding:6px 10px;border-radius:999px}
+    nav.links a{color:var(--text-2);text-decoration:none;font-size:14px;font-weight:500;padding:6px 12px;border-radius:999px}
     nav.links a:hover{background:var(--surface-2);color:var(--text)}
-    nav.links a[aria-current]{background:var(--surface);border:1px solid var(--border);color:var(--text)}
-    article{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:28px 30px}
-    h1{font-size:1.65rem;margin:0 0 .25rem;letter-spacing:-.02em;line-height:1.25}
-    h2{margin-top:1.8rem;font-size:1.1rem;letter-spacing:-.01em}
+    nav.links a[aria-current]{background:var(--surface-2);color:var(--text)}
+    article{background:var(--surface);border:0;border-radius:var(--radius);padding:28px 30px}
+    h1{font-size:24px;font-weight:600;margin:0 0 .25rem;letter-spacing:-.01em;line-height:1.25}
+    h2{margin-top:1.8rem;font-size:18px;font-weight:600}
     p{margin:.6rem 0}
     .muted{color:var(--muted);font-size:13px}
     .box{background:var(--surface-2);border-radius:var(--radius-sm);padding:12px 16px;margin:14px 0 4px;font-size:14px;color:var(--text-2)}

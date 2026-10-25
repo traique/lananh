@@ -34,8 +34,12 @@ class InputError(ValueError):
         self.message = message
 
 
+def now() -> dt.datetime:
+    return dt.datetime.now(_VN_TZ)
+
+
 def today() -> dt.date:
-    return dt.datetime.now(_VN_TZ).date()
+    return now().date()
 
 
 def _check_year(year: int) -> None:
