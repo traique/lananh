@@ -259,12 +259,21 @@ async def home(request: Request) -> Response:
 
 
 def _hour_strip(lucky_hours: list[str], hour: int) -> list[dict]:
-    """12 giờ địa chi của ngày: giờ hoàng đạo (từ luckyHours dạng "Dần (3h-5h)")
-    và giờ đang là lúc này (giờ VN, 0-23)."""
+    """12 giờ địa chi của ngày: giờ hoàng đạo (từ luckyHours dạng "Dần (3h-5h)"), giờ
+    đang là lúc này (giờ VN, 0-23), giờ đã qua, và giờ tốt cần chú ý (isFocus): giờ
+    hiện tại nếu tốt, không thì giờ hoàng đạo kế tiếp trong ngày."""
     good = {h.split(" (")[0] for h in lucky_hours}
     now = (hour + 1) // 2 % 12
+    focus = next((i for i in range(now, 12) if _HOURS[i][0] in good), None)
     return [
-        {"name": name, "span": span, "isGood": name in good, "isNow": i == now}
+        {
+            "name": name,
+            "span": span,
+            "isGood": name in good,
+            "isNow": i == now,
+            "isPast": i < now,
+            "isFocus": i == focus,
+        }
         for i, (name, span) in enumerate(_HOURS)
     ]
 
@@ -273,11 +282,13 @@ def home_page() -> HTMLResponse:
     now = site_data.now()
     today = now.date()
     info = site_data.day_info(today)
-    hours = _hour_strip(info["luckyHours"], now.hour)
-    # Giờ hoàng đạo kế tiếp tính từ giờ hiện tại (kể cả giờ đang là), không vòng sang ngày mai.
-    current = next(i for i, h in enumerate(hours) if h["isNow"])
-    upcoming = [h for h in hours[current:] if h["isGood"]] if now.hour != 23 else []
-    return _render(
+    # Ngày âm đổi ở đầu giờ Tý (23h): từ 23h dải giờ là của ngày hôm sau.
+    hours_day = today + dt.timedelta(days=1) if now.hour == 23 else today
+    lucky = (
+        info["luckyHours"] if hours_day == today else site_data.day_info(hours_day)["luckyHours"]
+    )
+    hours = _hour_strip(lucky, now.hour)
+    page = _render(
         "home.html",
         title="Lịch âm, tử vi, thần số học",
         description="Tra lịch âm dương, ngày tốt xấu, lá số tử vi và thần số học - tính bằng thuật toán.",
@@ -285,9 +296,13 @@ def home_page() -> HTMLResponse:
         today=info,
         today_date=today,
         hours=hours,
-        next_good=upcoming[0] if upcoming else None,
+        hours_tomorrow=hours_day != today,
+        next_good=next((h for h in hours if h["isFocus"]), None),
         holidays=_upcoming_holidays(today, 3),
     )
+    # Dải giờ đánh dấu "bây giờ": trình duyệt phải hỏi lại server thay vì dùng bản cũ.
+    page.headers["Cache-Control"] = "no-cache"
+    return page
 
 
 def _weeks(grid: dict) -> list[list[dict | None]]:
@@ -501,7 +516,8 @@ def _tuvi_form(form: dict, error: str = "") -> HTMLResponse:
         title="Lá số tử vi",
         description="An lá số Tử Vi Đẩu Số: 12 cung, chính tinh, phụ tinh, đại hạn.",
         active="/tu-vi",
-        hours=site_data.HOUR_OPTIONS,
+        # Theo giờ đồng hồ từ 23h: Tý đầu (23h-24h) đứng trước Tý (0h-1h).
+        hours=[site_data.HOUR_OPTIONS[site_data.EARLY_TY], *site_data.HOUR_OPTIONS[:12]],
         hour_table=[(name, *(f"{h}h" for h in span[:-1].split("-"))) for name, span in _HOURS],
         form=form,
         error=error,
@@ -510,7 +526,7 @@ def _tuvi_form(form: dict, error: str = "") -> HTMLResponse:
 
 @router.get("/tu-vi", response_class=HTMLResponse)
 async def tuvi_page() -> HTMLResponse:
-    return _tuvi_form({"gio": "0", "lich": "duong", "gioi": "male"})
+    return _tuvi_form({"gio": "", "lich": "duong", "gioi": "male"})
 
 
 _TUVI_FIELDS = ("ngay", "thang", "nam", "gio", "gioi", "lich", "nhuan")
@@ -541,6 +557,8 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
     """Kết quả ở trang riêng (tuvi_result.html); nhập sai thì quay lại form.
     Có ai=1 và đã đăng nhập thì kèm AI luận giải."""
     form = await _form(request)
+    if form.get("sua") == "1":  # "Sửa thông tin" ở trang kết quả: về form đã điền sẵn
+        return _tuvi_form(form)
     try:
         try:
             day, month, year, hour = (int(form.get(k, "")) for k in ("ngay", "thang", "nam", "gio"))

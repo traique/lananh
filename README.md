@@ -653,10 +653,14 @@ nền trắng, cách nhau bằng bậc tông - không bóng, không gradient, kh
 nhấn xanh rừng (mệnh Đại Lâm Mộc) chỉ đặt trên dữ liệu: giờ hoàng đạo, hôm nay,
 cung Mệnh, số chủ đạo; nút chính xanh đen; đỏ chỉ cho lỗi, độ sáng hãm. Chữ Be
 Vietnam Pro (Google Fonts, có subset tiếng Việt), tiêu đề ngày ở trang chủ dùng
-Newsreader. Trang chủ lấy ngày hôm nay làm tiêu đề, kèm dải 12 giờ địa chi tô
-giờ hoàng đạo và đánh dấu giờ hiện tại. Trên điện thoại thanh bên gập thành thanh
+Newsreader. Trang chủ lấy ngày hôm nay làm tiêu đề; ngay dưới là câu trả lời "giờ hoàng
+đạo kế tiếp" và dải 12 giờ địa chi: giờ hoàng đạo nền xanh nhạt, chỉ một ô tô đậm (giờ hiện
+tại nếu tốt, không thì giờ tốt kế tiếp), giờ đã qua lùi xuống, giờ hiện tại có vòng ngoài;
+từ 23h dải chuyển sang ngày hôm sau (ngày âm đổi ở giờ Tý). Dải tự gập 4 cột x 3 hàng khi
+khối hẹp (container query). Lá số tử vi hiện bàn 4x4 khi khối rộng từ 680px; hẹp hơn thì
+có sơ đồ 4x4 thu nhỏ, bấm để nhảy tới cung. Trên điện thoại thanh bên gập thành thanh
 trên 56px + bảng danh mục toàn màn (không JS vẫn mở được bằng `#menu`).
-Điều khiển dùng chung một bộ (web và `/admin`): nút dạng viên thuốc (38px trên web, 36/32px
+Điều khiển dùng chung một bộ (web và `/admin`): nút dạng viên thuốc (38px trên web, 44px trên màn cảm ứng; 36/32px
 trong admin), một nút chính xanh đen mỗi màn, nút phụ nền trắng viền 1px; chọn một trong vài
 giá trị bằng segmented (âm/dương lịch, nam/nữ, khoảng 24 giờ/7 ngày/30 ngày); mọi bật/tắt là
 công tắc `role="switch"` 32x20 (xanh đen khi bật); ô nhập + nút Lưu/Tra dính liền; nút bị khoá

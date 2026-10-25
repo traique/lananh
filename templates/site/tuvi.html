@@ -9,29 +9,31 @@
 <div class="grid">
   <form class="panel form s7" action="/tu-vi" method="post" novalidate>
     {% include "_errors.html" %}
+    <p class="hint">Mục có <span aria-hidden="true">*</span><span class="sr-only">dấu sao</span> là bắt buộc.</p>
     <fieldset>
       <legend>Ngày sinh <span aria-hidden="true">*</span></legend>
       <div class="date-parts">
         <div class="field"><label for="ngay">Ngày</label><input class="input" type="number" id="ngay" name="ngay" value="{{ form.ngay }}" min="1" max="31" inputmode="numeric" required aria-required="true"{% if error %} aria-describedby="form-error"{% endif %}></div>
-        <div class="field"><label for="thang">Tháng</label><input class="input" type="number" id="thang" name="thang" value="{{ form.thang }}" min="1" max="12" inputmode="numeric" required aria-required="true"></div>
-        <div class="field"><label for="nam">Năm</label><input class="input" type="number" id="nam" name="nam" value="{{ form.nam }}" min="1900" max="2100" inputmode="numeric" required aria-required="true"></div>
+        <div class="field"><label for="thang">Tháng</label><input class="input" type="number" id="thang" name="thang" value="{{ form.thang }}"{% if error %} aria-describedby="form-error"{% endif %} min="1" max="12" inputmode="numeric" required aria-required="true"></div>
+        <div class="field"><label for="nam">Năm</label><input class="input" type="number" id="nam" name="nam" value="{{ form.nam }}"{% if error %} aria-describedby="form-error"{% endif %} min="1900" max="2100" inputmode="numeric" required aria-required="true"></div>
       </div>
     </fieldset>
-    <fieldset>
+    <fieldset class="calendar-pick">
       <legend>Lịch của ngày sinh</legend>
       <div class="choices">
         <div class="segmented">
           <label><input type="radio" name="lich" value="duong"{% if form.lich != "am" %} checked{% endif %}>Dương lịch</label>
           <label><input type="radio" name="lich" value="am"{% if form.lich == "am" %} checked{% endif %}>Âm lịch</label>
         </div>
-        <label class="switch-row"><input type="checkbox" name="nhuan" value="1"{% if form.nhuan %} checked{% endif %}><span class="switch" aria-hidden="true"></span>Tháng nhuận</label>
+        <label class="switch-row leap"><input type="checkbox" name="nhuan" value="1"{% if form.nhuan %} checked{% endif %}><span class="switch" aria-hidden="true"></span>Tháng nhuận</label>
       </div>
-      <span class="hint">Tháng nhuận: sinh ngày 1-15 an như tháng trước, từ 16 an như tháng sau.</span>
+      <span class="hint leap">Tháng nhuận: sinh ngày 1-15 an như tháng trước, từ 16 an như tháng sau.</span>
     </fieldset>
     <div class="form-row">
       <div class="field">
         <label for="gio">Giờ sinh <span aria-hidden="true">*</span></label>
-        <select class="input" id="gio" name="gio" required aria-required="true" aria-describedby="gio-hint">
+        <select class="input" id="gio" name="gio" required aria-required="true" aria-describedby="gio-hint{% if error %} form-error{% endif %}">
+          <option value=""{% if not form.gio %} selected{% endif %} disabled>Chọn giờ sinh</option>
           {% for idx, name, span in hours %}
           <option value="{{ idx }}"{% if form.gio == idx|string %} selected{% endif %}>Giờ {{ name }} ({{ span }})</option>
           {% endfor %}

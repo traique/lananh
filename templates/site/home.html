@@ -11,6 +11,30 @@
 </div>
 
 <div class="grid">
+  <section class="panel s12 hours-panel" aria-labelledby="hours-title">
+    <header>
+      <h2 id="hours-title">Giờ hoàng đạo {{ "ngày mai" if hours_tomorrow else "hôm nay" }}</h2>
+      {% if hours_tomorrow %}<span class="meta">Từ 23h đã sang giờ Tý của ngày mới</span>{% endif %}
+    </header>
+    <p class="next-hour">
+      {% if next_good and next_good.isNow %}Bây giờ là giờ hoàng đạo <b>{{ next_good.name }}</b>, {{ next_good.span }}.
+      {% elif next_good %}Giờ hoàng đạo kế tiếp: <b>{{ next_good.name }}</b>, {{ next_good.span }}.
+      {% else %}Hôm nay đã hết giờ hoàng đạo; giờ Tý (23h) mở đầu ngày mới.{% endif %}
+    </p>
+    <ol class="hours" role="list">
+      {% for h in hours %}
+      <li class="hour{% if h.isGood %} good{% endif %}{% if h.isFocus %} focus{% endif %}{% if h.isPast %} past{% endif %}{% if h.isNow %} now{% endif %}"{% if h.isNow %} aria-current="time"{% endif %}>
+        <b>{{ h.name }}</b>
+        <span>{{ h.span }}</span>
+        <span class="sr-only">{% if h.isGood %}, hoàng đạo{% endif %}{% if h.isNow %}, giờ hiện tại{% elif h.isPast %}, đã qua{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ol>
+    <p class="hours-key" aria-hidden="true"><span class="key good">Hoàng đạo</span><span class="key focus">Giờ tốt gần nhất</span><span class="key now">Bây giờ</span></p>
+  </section>
+</div>
+
+<div class="grid">
   <div class="panel tile s3">
     <span class="tile-label">Âm lịch</span>
     <span class="tile-value">{{ ld.day }}/{{ ld.month }}{% if ld.isLeapMonth %} nhuận{% endif %}</span>
@@ -24,39 +48,12 @@
   <div class="panel tile s3">
     <span class="tile-label">Tiết khí</span>
     <span class="tile-value">{{ today.solarTerm }}</span>
-    <span class="tile-note">Theo kinh độ mặt trời</span>
   </div>
   <div class="panel tile s3">
     <span class="tile-label">Đến Tết</span>
     <span class="tile-value">{% if today.daysToTet == 0 %}Hôm nay{% else %}{{ today.daysToTet }} ngày{% endif %}</span>
     <span class="tile-note">Mùng 1 Tết là {{ today.nextTet | vn_date }}</span>
   </div>
-</div>
-
-<div class="grid">
-  <section class="panel s12" aria-labelledby="hours-title">
-    <header>
-      <h2 id="hours-title">Giờ hoàng đạo hôm nay</h2>
-      <span class="meta">{{ today.luckyHours | length }} trong 12 giờ</span>
-    </header>
-    <ol class="hours" role="list">
-      {% for h in hours %}
-      <li class="hour{% if h.isGood %} good{% endif %}{% if h.isNow %} now{% endif %}"{% if h.isNow %} aria-current="time"{% endif %}>
-        <b>{{ h.name }}</b>
-        <span>{{ h.span }}</span>
-        {% if h.isGood %}<span class="sr-only">, hoàng đạo</span>{% endif %}
-        {% if h.isNow %}<span class="tag">Bây giờ</span>{% endif %}
-      </li>
-      {% endfor %}
-    </ol>
-    <p class="next-hour">
-      {% if next_good and next_good.isNow %}Đang trong giờ hoàng đạo {{ next_good.name }} ({{ next_good.span }}).
-      {% elif next_good %}Giờ hoàng đạo kế tiếp: {{ next_good.name }} ({{ next_good.span }}).
-      {% else %}Hôm nay đã hết giờ hoàng đạo.{% endif %}
-    </p>
-    <p class="hours-key" aria-hidden="true"><span class="key good">Hoàng đạo</span><span class="key">Giờ khác</span><span class="key now">Giờ hiện tại</span></p>
-  </section>
-
 </div>
 
 <div class="grid">
@@ -80,7 +77,7 @@
     <form class="form" action="/lich/hoi" method="get" role="search">
       <div class="field">
         <label class="sr-only" for="home-q">Câu hỏi về lịch</label>
-        <input class="input" type="search" id="home-q" name="q" maxlength="200" placeholder="Rằm tháng 8 là ngày nào" autocomplete="off">
+        <input class="input" type="search" id="home-q" name="q" maxlength="200" placeholder="Ví dụ: rằm tháng 8" autocomplete="off">
         <span class="hint">Ngày tốt, tuổi, sao hạn, đổi ngày - gõ tự nhiên.</span>
       </div>
       <div class="form-actions"><button class="btn primary" type="submit">Tra</button></div>
