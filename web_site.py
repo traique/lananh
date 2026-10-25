@@ -1,5 +1,5 @@
 """Web LCTA: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le), /tu-vi,
-/than-so-hoc (form -> trang kết quả riêng), /thoi-tiet và JSON API /api/v1.
+/than-so-hoc (form -> trang kết quả riêng), /ky-mon, /thoi-tiet và JSON API /api/v1.
 
 Xem nội dung KHÔNG cần đăng nhập: lịch, tử vi, thần số học tính bằng code
 (services/site_data.py), không gọi AI, không đụng DB. /thoi-tiet tra Open-Meteo
@@ -7,7 +7,7 @@ qua services/weather.py (cache có trần), giới hạn số lượt tra song s
 render sẵn ở server nên chạy được cả khi tắt JavaScript.
 
 Cần đăng nhập (tài khoản admin, chung phiên với /admin) cho việc tốn quota hoặc
-đổi dữ liệu chung: nút "AI luận giải" ở kết quả tử vi/thần số học, thêm/xoá địa
+đổi dữ liệu chung: nút "AI luận giải" ở kết quả tử vi/thần số học/kỳ môn, thêm/xoá địa
 điểm thời tiết. Đăng nhập rồi header mới hiện nút "Quản trị".
 
 JSON API (chỉ thêm trường mới, không đổi/bỏ trường cũ):
@@ -20,6 +20,8 @@ JSON API (chỉ thêm trường mới, không đổi/bỏ trường cũ):
                                      "calendar": "solar"|"lunar", "isLeapMonth"?: bool (chỉ lunar),
                                      "hourBranch": 0-11, "gender": "male"|"female",
                                      "isEarlyTy"?: bool (sinh 23h-24h, an theo ngày hôm sau)}
+  POST /api/v1/qimen/charts         {"dateTime"?: "YYYY-MM-DDTHH:MM[+07:00]" (bỏ trống = lúc này;
+                                     không múi giờ = giờ Việt Nam)}
 Ngày sinh/họ tên đi bằng POST để không nằm trong URL và log truy cập.
 Lỗi nhập liệu: HTTP 422 + {"error": {"code": "...", "message": "..."}}; 404/405 dưới
 /api/v1 cũng cùng dạng {"error"} (web.py); body quá 1 MiB bị middleware chặn 413.
@@ -51,6 +53,7 @@ from services import (
     calendar_query,
     concurrency,
     divination_commands,
+    kymon,
     lunar,
     numerology,
     site_data,
@@ -84,6 +87,7 @@ _NAV = [
         [
             ("/thoi-tiet", "Thời tiết", "cloud"),
             ("/tu-vi", "Lá số tử vi", "chart"),
+            ("/ky-mon", "Kỳ Môn Độn Giáp", "compass"),
             ("/than-so-hoc", "Thần số học", "number"),
         ],
     ),
@@ -641,6 +645,65 @@ async def tsh_submit(request: Request) -> HTMLResponse:
     )
 
 
+def _kymon_page(form: dict, *, ai_text: str = "", error: str = "") -> HTMLResponse:
+    """Trang /ky-mon: form ngày/giờ (GET, chia sẻ link được) + bàn 9 cung. Nhập
+    sai thì báo lỗi và hiện bàn lúc này."""
+    is_now = not (form.get("ngay") or form.get("gio"))
+    try:
+        moment = site_data.qimen_moment(form.get("ngay", ""), form.get("gio", ""))
+    except InputError as exc:
+        error, is_now = error or exc.message, True
+        moment = site_data.qimen_moment()
+    chart = kymon.build_chart(moment)
+    data = kymon.chart_data(chart)
+    page = _render(
+        "kymon.html",
+        title="Kỳ Môn Độn Giáp",
+        description="Lập bàn Kỳ Môn Độn Giáp theo giờ (chuyển bàn, chiết bổ): cửu tinh, bát môn, "
+        "bát thần, cách cục - tính bằng thuật toán.",
+        active="/ky-mon",
+        chart=data,
+        rows=[[data["palaces"][p - 1] for p in row] for row in kymon.GRID],
+        good_doors=[f"{d} môn" for d in kymon.CAT_DOORS],
+        texts=kymon.texts(),
+        form={"ngay": moment.date().isoformat(), "gio": moment.strftime("%H:%M")},
+        is_now=is_now,
+        question=form.get("cau_hoi", ""),
+        ai_text=ai_text,
+        error=error,
+    )
+    if is_now:  # bàn "lúc này" đổi theo giờ: trình duyệt phải hỏi lại server
+        page.headers["Cache-Control"] = "no-cache"
+    return page
+
+
+@router.get("/ky-mon", response_class=HTMLResponse)
+async def kymon_page(request: Request) -> HTMLResponse:
+    params = request.query_params
+    return _kymon_page({"ngay": params.get("ngay", "")[:20], "gio": params.get("gio", "")[:10]})
+
+
+@router.post("/ky-mon", response_class=HTMLResponse)
+async def kymon_submit(request: Request) -> HTMLResponse:
+    """AI luận giải bàn cho "việc cần xem" (chỉ khi đã đăng nhập và bấm ai=1).
+    Câu hỏi đi bằng POST để không nằm trong URL/log truy cập."""
+    form = await _form(request)
+    raw = await request.form()  # Starlette giữ sẵn form đã đọc ở _form
+    form["cau_hoi"] = str(raw.get("cau_hoi", "")).strip()[: kymon.MAX_QUESTION_LEN]
+    if form.get("ai") == "1" and _viewer.get()[0] and not form["cau_hoi"]:
+        return _kymon_page(form, error="Nhập việc cần xem để AI luận giải.")
+    try:
+        moment = site_data.qimen_moment(form.get("ngay", ""), form.get("gio", ""))
+    except InputError as exc:
+        return _kymon_page(form, error=exc.message)
+    chart = kymon.build_chart(moment)
+    question = form["cau_hoi"]
+    ai_text = await _ai_reading(
+        form, "kymon_chitiet", lambda: kymon.explain_with_ai(chart, question)
+    )
+    return _kymon_page(form, ai_text=ai_text)
+
+
 @static_router.get("/static/{name}")
 async def static_file(name: str) -> Response:
     media_type = _STATIC_FILES.get(name)
@@ -768,5 +831,18 @@ async def api_tuvi(request: Request) -> JSONResponse:
             early_ty=early,
         )
         return _ok(chart)
+    except InputError as exc:
+        return _error(422, exc.code, exc.message)
+
+
+@api_router.post("/qimen/charts")
+async def api_qimen(request: Request) -> JSONResponse:
+    try:
+        data = await _json_body(request)
+        raw = data.get("dateTime")
+        if raw is not None and not isinstance(raw, str):
+            raise InputError("INVALID_DATETIME", "dateTime phải là chuỗi ISO 8601.")
+        moment = site_data.parse_datetime(raw) if raw else site_data.qimen_moment()
+        return _ok(site_data.qimen_chart(moment))
     except InputError as exc:
         return _error(422, exc.code, exc.message)
