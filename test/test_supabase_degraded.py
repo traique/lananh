@@ -295,3 +295,27 @@ async def test_add_chat_turn_ghi_2_dong_trong_1_transaction(monkeypatch):
     assert executed[0] == "BEGIN" and executed[-1] == "COMMIT"
     insert = executed[1]
     assert insert[0] == "INSERT" and insert[1] == (7, "hỏi", "đáp")
+
+
+@pytest.mark.asyncio
+async def test_lenh_tham_do_bi_huy_khong_ket_breaker(no_pool_reset, monkeypatch):
+    monkeypatch.setattr(db, "_breaker_open_until", 1.0)  # hết hạn, chờ thăm dò
+    started = asyncio.Event()
+
+    @db._with_reconnect
+    async def hanging():
+        started.set()
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(hanging())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert db._breaker_probe_inflight is False
+
+    @db._with_reconnect
+    async def healthy():
+        return "ok"
+
+    assert await healthy() == "ok"

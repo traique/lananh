@@ -58,6 +58,11 @@ def _breaker_enter() -> bool:
     return True
 
 
+def _release_probe() -> None:
+    global _breaker_probe_inflight
+    _breaker_probe_inflight = False
+
+
 def _breaker_trip(exc: BaseException) -> None:
     global _breaker_open_until, _breaker_probe_inflight
     open_sec = config.DB_BREAKER_OPEN_SEC
@@ -174,6 +179,10 @@ def _with_reconnect(func=None, *, idempotent: bool = True):
             finally:
                 _pool_in_use.reset(token)
                 _in_db_call.reset(nested_token)
+                if probe:
+                    # Lệnh thăm dò bị huỷ (CancelledError) giữa chừng: nhả cờ để
+                    # lệnh sau được thăm dò lại, không kẹt breaker mãi mãi.
+                    _release_probe()
             if probe or (_breaker_open_until and not nested):
                 _breaker_ok()
             return result
