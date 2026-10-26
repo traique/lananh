@@ -453,6 +453,11 @@ async def test_zaloxoa_removes_member_data_but_not_owner_data(delivery_db):
         await db.set_summary(owner_or_member, "tóm tắt")
         await db.add_note(owner_or_member, "ghi chú")
         await portfolio.set_holding(owner_or_member, "VCB", 10, 80000)
+        await db.portfolio_add_watch(owner_or_member, ["VCB"], 20)
+        await db.portfolio_add_price_alert(
+            owner_or_member, "VCB", "BELOW", 70000, state="armed", max_per_user=10
+        )
+        await db.portfolio_log_alert(owner_or_member, "price", "1", "2026-10-26")
     reminder = await db.add_reminder(
         uid,
         "nhắc",
@@ -475,6 +480,9 @@ async def test_zaloxoa_removes_member_data_but_not_owner_data(delivery_db):
         "notes",
         "stock_holdings",
         "stock_transactions",
+        "stock_watchlist",
+        "stock_price_alerts",
+        "stock_alert_log",
         "reminders",
     ):
         assert (
