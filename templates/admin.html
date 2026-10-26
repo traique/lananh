@@ -1271,13 +1271,16 @@ const RESTART_LABEL = { first: 'lần đầu', deploy: 'deploy', restart: 'khở
 
 async function loadWatchdog() {
   const d = await api('/admin/api/watchdog');
-  const e = d.errors || {}, r = d.restarts || {}, b = d.backup || {};
+  const e = d.errors || {}, r = d.restarts || {}, b = d.backup || {}, k = d.key_rotation || {};
   const counts = Object.entries(r.counts || {});
   const backupCell = b.error
     ? `<span class="muted">không đọc được (${esc(b.error)})</span>`
     : !b.configured
       ? '<span class="muted">chưa thiết lập - xem docs/backup-restore.md</span>'
       : `${pill(!b.stale, 'đang chạy', `quá ${b.stale_days} ngày`)} ${esc(b.last_backup_at ? fmtAbs(new Date(b.last_backup_at)) : '—')}${b.size_mib == null ? '' : ` <span class="muted small">· ${esc(b.size_mib)} MB đã mã hoá</span>`}`;
+  const keyCell = k.error
+    ? `<span class="muted">không đọc được (${esc(k.error)})</span>`
+    : `${esc(fmtNum(k.total))} giá trị mã hoá · ${k.remaining ? `<span class="pill warn">${esc(k.remaining)} còn khoá cũ</span>` : '<span class="pill ok">đều dùng khoá mới</span>'}${k.unreadable ? ` <span class="pill bad">${esc(k.unreadable)} không giải mã được</span>` : ''}${k.old_keys_configured && !k.remaining && !k.unreadable ? ' <span class="muted small">· xoá SETTINGS_ENC_KEY_OLD được rồi</span>' : ''}${k.remaining ? ' <button class="btn sm" type="button" id="rotate-keys-btn">Xoay khoá ngay</button>' : ''}`;
   const drillCell = b.last_drill_at
     ? `${pill(!b.drill_stale, 'đạt', 'quá hạn')} ${esc(fmtAbs(new Date(b.last_drill_at)))}`
     : '<span class="muted">chưa có (ngày 2 hằng tháng)</span>';
@@ -1289,6 +1292,7 @@ async function loadWatchdog() {
         : '<span class="muted">không có</span>'}</td></tr>
       <tr><th>Sao lưu DB</th><td>${backupCell}</td></tr>
       <tr><th>Diễn tập khôi phục</th><td>${drillCell}</td></tr>
+      <tr><th>Khoá settings</th><td>${keyCell}</td></tr>
       <tr><th>Nhịp tim gần nhất</th><td>${r.enabled ? esc(r.heartbeat_at ? fmtAbs(new Date(r.heartbeat_at)) : '—') : '<span class="muted">chỉ chạy trên Render (WATCHDOG_ENABLED)</span>'} <span class="muted small">· uptime ${esc(r.uptime_min == null ? '—' : r.uptime_min >= 120 ? `${Math.round(r.uptime_min / 60)} giờ` : `${Math.round(r.uptime_min)} phút`)}${r.commit ? ` · commit <span class="mono">${esc(r.commit)}</span>` : ''}</span></td></tr>
     </table>
     <div class="card-head" style="margin:14px 0 6px"><h3>Lỗi hôm nay theo loại</h3></div>
@@ -1299,6 +1303,17 @@ async function loadWatchdog() {
     { label: 'Vị trí', cell: x => `<span class="mono small">${esc(x.where)}:${esc(x.line)}</span><div class="muted small">${esc(x.logger)}</div>` },
     { label: 'Lần cuối', cell: x => esc(x.last_at) },
   ], e.today || [], 'Hôm nay chưa ghi nhận lỗi nào.');
+  const rotateBtn = $('rotate-keys-btn');
+  if (rotateBtn) rotateBtn.addEventListener('click', rotateKeys);
+}
+
+async function rotateKeys() {
+  busy($('rotate-keys-btn'));
+  try {
+    const res = await post('/admin/api/key-rotation/run', {});
+    msg(`Đã xoay ${res.rotated} giá trị; còn ${res.remaining} dùng khoá cũ.`, res.remaining > 0);
+  } catch (e) { msg('Xoay khoá thất bại: ' + e.message, true); }
+  loadWatchdog().catch(() => {});
 }
 
 /* ---------- Làm mới & tự làm mới ---------- */

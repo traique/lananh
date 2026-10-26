@@ -22,6 +22,7 @@ import os
 import secrets
 import time
 from collections import deque
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -43,7 +44,7 @@ from ai.provider_state import provider_state
 from channels import zalo_users
 from core import config, database as db
 from services import db_maintenance, market_page, memory_service, memory_stats
-from services import backup_status, error_digest, watchdog
+from services import backup_status, error_digest, key_rotation, watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -765,7 +766,21 @@ async def admin_watchdog() -> Response:
             "errors": error_digest.summary(),
             "restarts": await _safe_section("khởi động lại", watchdog.restart_summary),
             "backup": await _safe_section("sao lưu", backup_status.status),
+            "key_rotation": await _safe_section("xoay khoá", key_rotation.status),
         }
+    )
+
+
+@api_router.post("/key-rotation/run")
+async def admin_key_rotation_run() -> Response:
+    """Mã hoá lại mọi giá trị settings còn dùng SETTINGS_ENC_KEY_OLD (compare-and-swap,
+    xem services/key_rotation.py). Trả số đã xoay / còn lại; không trả giá trị nào."""
+    try:
+        report = await key_rotation.rotate_all()
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse(
+        {"old_keys_configured": key_rotation.old_keys_configured(), **asdict(report)}
     )
 
 

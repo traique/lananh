@@ -65,3 +65,17 @@ async def test_lenh_loi_tra_plain_text_va_chi_chu_bot(monkeypatch):
     )
     await provider_commands.loi_cmd(stranger, None)
     assert stranger.message.replies == []
+
+
+async def test_nut_xoay_khoa_can_dang_nhap_va_khong_tra_gia_tri(client, monkeypatch):
+    async def rotate_all():
+        return web_admin.key_rotation.RotationReport(2, 2, 0, 0, 0, 0, (), ())
+
+    monkeypatch.setattr(web_admin.key_rotation, "rotate_all", rotate_all)
+    assert (await client.post("/admin/api/key-rotation/run", json={})).status_code == 403
+    await _admin._login(client)
+    body = (await client.post("/admin/api/key-rotation/run", json={})).json()
+    assert body["rotated"] == 2 and body["remaining"] == 0
+    assert not any("enc:" in str(value) for value in body.values())
+    html = (_admin.ROOT / "templates" / "admin.html").read_text(encoding="utf-8")
+    assert "/admin/api/key-rotation/run" in html and 'id="rotate-keys-btn"' in html

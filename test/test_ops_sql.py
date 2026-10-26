@@ -64,3 +64,15 @@ async def test_migration_023_chay_lai_duoc(delivery_db):
     sql = (_delivery_sql.MIGRATIONS / "023_backup_runs.sql").read_text("utf-8")
     await delivery_db.execute(sql)  # đã áp qua migrate(): chạy lại không lỗi
     assert await delivery_db.fetchval("SELECT to_regclass('backup_runs') IS NOT NULL")
+
+
+@pytest.mark.asyncio
+async def test_settings_compare_and_set_va_liet_ke_gia_tri_ma_hoa(delivery_db):
+    await db.set_setting("provider_api_key_groq", "enc:cu")
+    await db.set_setting("router9_model", "gpt")
+    assert await db.list_encrypted_settings() == [("provider_api_key_groq", "enc:cu")]
+    assert await db.compare_and_set_setting("provider_api_key_groq", "enc:cu", "enc:moi")
+    # Giá trị đã đổi (gateway ghi đồng thời): CAS không ghi đè.
+    assert not await db.compare_and_set_setting("provider_api_key_groq", "enc:cu", "enc:khac")
+    assert await db.get_setting("provider_api_key_groq") == "enc:moi"
+    assert not await db.compare_and_set_setting("khong-ton-tai", "a", "b")

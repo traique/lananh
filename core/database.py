@@ -672,6 +672,21 @@ async def set_setting(key: str, value: str) -> None:
     )
 
 
+@_with_reconnect
+async def list_encrypted_settings(limit: int = 500) -> list[tuple[str, str]]:
+    """Các dòng settings đã mã hoá (xoay khoá - services/key_rotation.py)."""
+    from core.repositories import settings as settings_repository
+
+    return await settings_repository.list_encrypted(await get_pool(), limit)
+
+
+@_with_reconnect
+async def compare_and_set_setting(key: str, expected: str, value: str) -> bool:
+    from core.repositories import settings as settings_repository
+
+    return await settings_repository.compare_and_set(await get_pool(), key, expected, value)
+
+
 # ─── Giám sát vận hành / sao lưu (services/watchdog.py, backup_status.py) ───
 # SQL nằm ở core/repositories/ops.py; đây chỉ là wrapper có retry kết nối.
 

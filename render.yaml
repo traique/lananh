@@ -225,3 +225,7 @@ services:
       # Báo khi bản sao lưu DB (GitHub Actions backup.yml) mới nhất quá N ngày; 0 = tắt.
       - key: BACKUP_STALE_DAYS
         value: "3"
+      # Có SETTINGS_ENC_KEY_OLD: tự mã hoá lại giá trị settings còn ở khoá cũ lúc khởi
+      # động rồi báo số còn lại (0 = chỉ báo, bấm nút trên /admin).
+      - key: SETTINGS_AUTO_ROTATE
+        value: "1"

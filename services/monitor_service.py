@@ -17,7 +17,8 @@ nào trả lời được, mọi lệnh AI sẽ lỗi.
 Cùng vòng lặp chạy watchdog vận hành (services/watchdog.py: RAM, dung lượng
 DB, inbox ứ đọng, job quá hạn, nhịp tim), lưu bộ đếm lỗi và gửi bản tổng hợp
 lỗi hằng ngày (services/error_digest.py); lúc khởi động còn phân loại lần
-restart vừa rồi. Tất cả vẫn là luật cố định, không gọi AI.
+restart vừa rồi và hoàn tất xoay khoá settings nếu có SETTINGS_ENC_KEY_OLD
+(services/key_rotation.py). Tất cả vẫn là luật cố định, không gọi AI.
 """
 
 import asyncio
@@ -27,7 +28,7 @@ import time
 import messages
 from ai.provider_state import provider_state, send_alert
 from core import config
-from services import error_digest, watchdog
+from services import error_digest, key_rotation, watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,8 @@ async def _startup_checks() -> None:
     """Chạy 1 lần ở nền lúc khởi động (không chặn bot nhận tin)."""
     await _run_step("gộp bộ đếm lỗi đã lưu", error_digest.load)
     await _run_step("phân loại lần khởi động", watchdog.detect_restart)
+    # Có SETTINGS_ENC_KEY_OLD: mã hoá lại giá trị còn ở khoá cũ, báo số còn lại.
+    await _run_step("xoay khoá settings", key_rotation.on_startup)
 
 
 async def _monitor_loop() -> None:
