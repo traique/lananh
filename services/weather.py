@@ -6,10 +6,17 @@ Chuyển từ gói vn-info (MIT License, Copyright (c) 2026), sửa cho hợp re
 - Timeout ngắn, không retry dài: đây là grounding cho 1 lượt chat còn chịu hạn
   chót CHAT_TURN_TIMEOUT_SEC.
 
-Không nói địa điểm (hoặc nói Sài Gòn/HCM...) -> mặc định TP. Hồ Chí Minh.
+Không nói địa điểm (hoặc nói Sài Gòn/HCM...) -> mặc định TP. Hồ Chí Minh
+(người dùng tự đặt thành phố mặc định riêng qua services/weather_home.py).
 
     data = await get_weather("Hà Nội", days=3)
     describe_weather(data)
+
+Thêm (gọi riêng, chỉ khi cần):
+- ``get_hourly``: khả năng mưa/nhiệt độ theo giờ hôm nay + ngày mai (câu "chiều
+  nay có mưa không", "mấy giờ mưa").
+- ``get_air_quality``: US AQI + PM2.5 từ air-quality-api.open-meteo.com (dữ liệu
+  CAMS toàn cầu ~45 km, 3 giờ/lần -> chỉ là ước tính thô, luôn ghi nguồn).
 """
 
 from __future__ import annotations
@@ -19,6 +26,7 @@ import logging
 import re
 import time
 from collections import OrderedDict
+from typing import NamedTuple
 
 import httpx
 
@@ -51,9 +59,31 @@ _PREFIX_RE = re.compile(r"^\s*(?:thành phố|thanh pho|tp\.?|tỉnh|tinh)\s+", 
 _GEO_CACHE_MAX = 128
 _FORECAST_CACHE_MAX = 32
 _FORECAST_TTL_SEC = 600
+_HOURLY_CACHE_MAX = 16
+_AIR_CACHE_MAX = 16
+_AIR_TTL_SEC = 1800
+_HOURLY_DAYS = 2
 # tên đã chuẩn hoá -> (nhãn, lat, lon) hoặc None (không tìm thấy, tránh gọi lại)
 _geo_cache: OrderedDict[str, tuple[str, float, float] | None] = OrderedDict()
 _forecast_cache: OrderedDict[tuple[float, float, int], tuple[float, dict]] = OrderedDict()
+# (lat, lon) -> (monotonic, list[HourPoint]) / (monotonic, dict AQI)
+_hourly_cache: OrderedDict[tuple[float, float], tuple[float, list]] = OrderedDict()
+_air_cache: OrderedDict[tuple[float, float], tuple[float, dict]] = OrderedDict()
+
+# Ngưỡng cảnh báo bụi mịn: chỉ nhắc khi US AQI > 100 (mức "kém" trở lên).
+AQI_WARN_THRESHOLD = 100
+AIR_SOURCE = "CAMS qua Open-Meteo, ước tính thô ~45 km"
+
+
+class HourPoint(NamedTuple):
+    """1 giờ dự báo (giờ địa phương VN). Tuple gọn để cache 48 giờ tốn ít RAM."""
+
+    time: dt.datetime
+    rain_chance: int | None
+    precip_mm: float | None
+    temperature_c: float | None
+    code: int | None
+
 
 WMO = {
     0: "trời quang",
@@ -100,13 +130,24 @@ _WEATHER_QUESTION_RE = re.compile(
     r"thời tiết|thoi tiet|dự báo mưa|nắng nóng|độ ẩm (?:không khí|hôm nay|ngày mai|ở|tại)|"
     r"nhiệt độ (?:hôm nay|ngày mai|bây giờ|hiện tại|ngoài trời|ở|tại)|"
     r"trời (?:có |sẽ |đang )?(?:mưa|nắng|nóng|lạnh|râm)|"
-    r"(?:có|sẽ|còn|bị|đang) mưa|mưa (?:không|ko|hông|chưa|to|lớn|nhiều)",
+    r"(?:có|sẽ|còn|bị|đang) mưa|mưa (?:không|ko|hông|chưa|to|lớn|nhiều)|"
+    r"mấy giờ (?:thì |sẽ |trời )?mưa|mưa (?:vào |từ )?(?:lúc )?mấy giờ|giờ nào (?:có |trời )?mưa",
+    re.IGNORECASE,
+)
+# Hỏi chất lượng không khí/bụi mịn: trả AQI thật (Open-Meteo air quality).
+_AIR_QUESTION_RE = re.compile(
+    r"chất lượng không khí|chat luong khong khi|bụi mịn|bui min|ô nhiễm không khí|"
+    r"o nhiem khong khi|\baqi\b|pm ?2[.,]?5",
     re.IGNORECASE,
 )
 
 
 def looks_like_weather_question(text: str) -> bool:
     return bool(_WEATHER_QUESTION_RE.search(text or ""))
+
+
+def looks_like_air_question(text: str) -> bool:
+    return bool(_AIR_QUESTION_RE.search(text or ""))
 
 
 def _clean_location(location: str) -> str:
@@ -162,6 +203,23 @@ async def _geocode(name: str) -> tuple[str, float, float] | None:
     return result
 
 
+async def resolve_location(location: str) -> tuple[str, float, float] | None:
+    """(nhãn, lat, lon) của địa điểm; rỗng/tên khác của TP.HCM -> TP.HCM.
+
+    None = geocoding không tìm thấy. Raise WeatherError khi tra toạ độ lỗi."""
+    name = _clean_location(location)
+    if is_default_location(name):
+        return DEFAULT_LABEL, DEFAULT_LAT, DEFAULT_LON
+    try:
+        return await _geocode(name)
+    except (httpx.HTTPError, ValueError) as exc:
+        raise WeatherError(f"tra toạ độ '{name}' lỗi: {exc!r}") from exc
+
+
+def _not_found(location: str) -> dict:
+    return {"error": f"Không tìm thấy địa điểm '{_clean_location(location)}'"}
+
+
 async def get_weather(location: str = "", days: int = 1) -> dict:
     """Thời tiết hiện tại + dự báo ``days`` ngày (1-7) cho ``location``.
 
@@ -172,17 +230,10 @@ async def get_weather(location: str = "", days: int = 1) -> dict:
     except (TypeError, ValueError):
         days = 1
     days = max(1, min(days, _MAX_DAYS))
-    name = _clean_location(location)
-    if is_default_location(name):
-        label, lat, lon = DEFAULT_LABEL, DEFAULT_LAT, DEFAULT_LON
-    else:
-        try:
-            geo = await _geocode(name)
-        except (httpx.HTTPError, ValueError) as exc:
-            raise WeatherError(f"tra toạ độ '{name}' lỗi: {exc!r}") from exc
-        if not geo:
-            return {"error": f"Không tìm thấy địa điểm '{name}'"}
-        label, lat, lon = geo
+    geo = await resolve_location(location)
+    if not geo:
+        return _not_found(location)
+    label, lat, lon = geo
 
     cache_key = (round(lat, 3), round(lon, 3), days)
     cached = _forecast_cache.get(cache_key)
@@ -199,6 +250,123 @@ async def get_weather(location: str = "", days: int = 1) -> dict:
             raise WeatherError(f"Open-Meteo và wttr.in đều lỗi: {exc2!r}") from exc2
     _cache_put(_forecast_cache, cache_key, (time.monotonic(), data), _FORECAST_CACHE_MAX)
     return data
+
+
+async def get_hourly(location: str = "") -> dict:
+    """Dự báo theo giờ hôm nay + ngày mai: {"location", "source", "hours": [HourPoint]}.
+
+    Không tìm thấy địa điểm -> dict có ``error``. Raise WeatherError khi lỗi
+    (không có nguồn dự phòng theo giờ: nơi gọi tự quay về dự báo theo ngày)."""
+    geo = await resolve_location(location)
+    if not geo:
+        return _not_found(location)
+    label, lat, lon = geo
+    key = (round(lat, 3), round(lon, 3))
+    cached = _hourly_cache.get(key)
+    if cached and time.monotonic() - cached[0] < _FORECAST_TTL_SEC:
+        return {"location": label, "source": "Open-Meteo", "hours": cached[1]}
+    try:
+        resp = await _get(
+            "https://api.open-meteo.com/v1/forecast",
+            {
+                "latitude": lat,
+                "longitude": lon,
+                "timezone": _TIMEZONE,
+                "forecast_days": _HOURLY_DAYS,
+                "hourly": "precipitation_probability,precipitation,temperature_2m,weather_code",
+            },
+        )
+        h = resp.json()["hourly"]
+        hours = [
+            HourPoint(
+                time=dt.datetime.fromisoformat(t),
+                rain_chance=h["precipitation_probability"][i],
+                precip_mm=h["precipitation"][i],
+                temperature_c=h["temperature_2m"][i],
+                code=h["weather_code"][i],
+            )
+            for i, t in enumerate(h["time"][: 24 * _HOURLY_DAYS])
+        ]
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+        raise WeatherError(f"dự báo theo giờ lỗi: {exc!r}") from exc
+    if not hours:
+        raise WeatherError("dự báo theo giờ rỗng")
+    _cache_put(_hourly_cache, key, (time.monotonic(), hours), _HOURLY_CACHE_MAX)
+    return {"location": label, "source": "Open-Meteo", "hours": hours}
+
+
+async def get_air_quality(location: str = "") -> dict:
+    """US AQI + PM2.5 hiện tại: {"location", "us_aqi", "pm2_5", "source"}.
+
+    Không tìm thấy địa điểm -> dict có ``error``. Raise WeatherError khi lỗi."""
+    geo = await resolve_location(location)
+    if not geo:
+        return _not_found(location)
+    label, lat, lon = geo
+    key = (round(lat, 3), round(lon, 3))
+    cached = _air_cache.get(key)
+    if cached and time.monotonic() - cached[0] < _AIR_TTL_SEC:
+        return {**cached[1], "location": label}
+    try:
+        resp = await _get(
+            "https://air-quality-api.open-meteo.com/v1/air-quality",
+            {
+                "latitude": lat,
+                "longitude": lon,
+                "timezone": _TIMEZONE,
+                "current": "us_aqi,pm2_5",
+            },
+        )
+        cur = resp.json()["current"]
+        aqi = cur.get("us_aqi")
+        data = {
+            "location": label,
+            "us_aqi": None if aqi is None else round(float(aqi)),
+            "pm2_5": cur.get("pm2_5"),
+            "source": AIR_SOURCE,
+        }
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        raise WeatherError(f"chất lượng không khí lỗi: {exc!r}") from exc
+    if data["us_aqi"] is None:
+        raise WeatherError("Open-Meteo không có US AQI cho điểm này")
+    _cache_put(_air_cache, key, (time.monotonic(), data), _AIR_CACHE_MAX)
+    return data
+
+
+def aqi_level(aqi: int) -> str:
+    """Mức US AQI (thang EPA) bằng tiếng Việt."""
+    for limit, label in (
+        (50, "tốt"),
+        (100, "trung bình"),
+        (150, "kém - không tốt cho nhóm nhạy cảm"),
+        (200, "xấu"),
+        (300, "rất xấu"),
+    ):
+        if aqi <= limit:
+            return label
+    return "nguy hại"
+
+
+def describe_air(air: dict) -> str:
+    """AQI đầy đủ (khi người dùng hỏi thẳng chất lượng không khí)."""
+    if air.get("error"):
+        return air["error"]
+    aqi = int(air["us_aqi"])
+    pm = air.get("pm2_5")
+    pm_text = f", PM2.5 {_n(pm)} µg/m³" if pm is not None else ""
+    return f"US AQI {aqi} ({aqi_level(aqi)}){pm_text}"
+
+
+def air_warning(air: dict | None) -> str | None:
+    """Câu cảnh báo bụi mịn - CHỈ khi US AQI vượt AQI_WARN_THRESHOLD, còn lại None."""
+    if not air or air.get("error") or air.get("us_aqi") is None:
+        return None
+    if int(air["us_aqi"]) <= AQI_WARN_THRESHOLD:
+        return None
+    return (
+        f"😷 Không khí {describe_air(air)} - nhóm nhạy cảm hạn chế ra ngoài, "
+        f"nên đeo khẩu trang. ({AIR_SOURCE})"
+    )
 
 
 async def _open_meteo(label: str, lat: float, lon: float, days: int) -> dict:

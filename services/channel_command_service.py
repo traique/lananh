@@ -18,6 +18,7 @@ from services import (
     translate_service,
     usage_stats,
 )
+from services import daily_commands
 from services.telemetry import telemetry
 
 # /help theo vai trò: thành viên Zalo chỉ thấy lệnh mình dùng được (không có
@@ -38,6 +39,12 @@ _HELP_COMMON = """Lịch, thần số học, tử vi, kỳ môn
 /tuvi_chitiet <như trên> — AI luận giải lá số
 /kymon [ngày] [giờ] — lập bàn Kỳ Môn Độn Giáp (không tốn AI), mặc định lúc này, vd /kymon 25/10/2026 9:00
 /kymon_chitiet [thời điểm] <việc cần xem> — AI luận giải bàn Kỳ Môn cho việc đó
+
+Đời sống (số liệu thật, không tốn AI)
+/vang — giá vàng SJC; /tygia [mã|100 usd] — tỷ giá Vietcombank, đổi tiền
+/xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé] — kết quả xổ số, dò vé
+/thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của riêng anh
+/bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, danh mục, tin)
 
 Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
@@ -390,6 +397,10 @@ async def maybe_handle_command(
     divination = await divination_commands.handle(command, argument, user_id, channel)
     if divination is not None:
         return divination, None
+    # /vang, /tygia, /xoso, /thoitiet, /bantin: số liệu thật tính bằng code.
+    daily = await daily_commands.handle(command, argument, user_id, channel)
+    if daily is not None:
+        return daily, None
     if command == "/prompt":
         return await _prompt(user_id, argument, channel)
     if command == "/gia":

@@ -471,8 +471,14 @@ async def test_zaloxoa_removes_member_data_but_not_owner_data(delivery_db):
     assert reminder is not None
     await zalo_repository.enqueue_reminder(reminder_id, "acc", "z-member", "nhắc")
     await db.set_setting(f"memory_enabled_{uid}", "0")
+    await db.set_setting(f"weather_home:{uid}", "Hà Nội")
+    await db.set_setting(f"brief:zalo:{uid}", '{"on": true}')
+    await db.set_setting("weather_home:999", "Huế")
 
     assert await zalo_users.remove("z-member") is True
+    assert await db.get_setting(f"weather_home:{uid}") is None
+    assert await db.get_setting(f"brief:zalo:{uid}") is None
+    assert await db.get_setting("weather_home:999") == "Huế"
     for table in (
         "chat_messages",
         "user_facts",
@@ -511,6 +517,33 @@ async def test_zalo_address_form_luu_giu_nguyen_va_check_danh_sach(delivery_db):
     assert [u.address_form for u in await zalo_users.list_users()] == ["chị"]
     with pytest.raises((RuntimeError, asyncpg.PostgresError), match="address_form_check"):
         await pool.execute("UPDATE zalo_users SET address_form = 'sếp' WHERE external_id = 'z-me'")
+
+
+@pytest.mark.asyncio
+async def test_brief_sql_prefix_settings_and_reminders_today(delivery_db):
+    await db.set_setting("brief:telegram:42", '{"on": true}')
+    await db.set_setting("brief:zalo:-3", '{"on": false}')
+    await db.set_setting("brief_sent:zalo:-3", "2026-10-26")
+    await db.set_setting("brief%x", "không phải prefix")
+    rows = await db.list_settings_with_prefix("brief:", 10)
+    assert rows == [("brief:telegram:42", '{"on": true}'), ("brief:zalo:-3", '{"on": false}')]
+    assert await db.list_settings_with_prefix("brief:", 1) == [
+        ("brief:telegram:42", '{"on": true}')
+    ]
+
+    start = datetime(2026, 10, 26, 0, 0, tzinfo=timezone.utc)
+    for minutes, uid, text in (
+        (30, 42, "họp"),
+        (90, 42, "gọi mẹ"),
+        (60 * 30, 42, "mai"),
+        (45, 7, "khác"),
+    ):
+        await db.add_reminder(uid, text, start + timedelta(minutes=minutes))
+    sent_id = await db.add_reminder(42, "đã gửi", start + timedelta(minutes=10))
+    assert sent_id is not None
+    await delivery_db.execute("UPDATE reminders SET sent = true WHERE message = 'đã gửi'")
+    rows = await db.list_reminders_between(42, start, start + timedelta(days=1), limit=5)
+    assert [message for _, message in rows] == ["họp", "gọi mẹ"]
 
 
 @pytest.mark.asyncio

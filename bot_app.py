@@ -22,6 +22,7 @@ from core import config, database as db, idempotency
 from handlers import (
     chat_router,
     commands,
+    daily_data_commands,
     media_handler,
     pairing_commands,
     portfolio_commands,
@@ -30,6 +31,7 @@ from handlers import (
     zalo_login,
 )
 from services import channel_chat_service
+from services import morning_brief
 from services import portfolio_alerts, rag_clean_service
 from services import portfolio_events, portfolio_push, price_alerts
 from services import monitor_service
@@ -64,6 +66,11 @@ COMMANDS = [
     BotCommand("tuvi_chitiet", "Lá số tử vi + AI luận giải"),
     BotCommand("kymon", "Lập bàn Kỳ Môn Độn Giáp (mặc định lúc này)"),
     BotCommand("kymon_chitiet", "Bàn Kỳ Môn + AI luận giải việc cần xem"),
+    BotCommand("vang", "Giá vàng SJC"),
+    BotCommand("tygia", "Tỷ giá Vietcombank, đổi tiền"),
+    BotCommand("xoso", "Kết quả xổ số, dò vé"),
+    BotCommand("thoitiet", "Thời tiết; /thoitiet nha <tỉnh> đặt nơi ở"),
+    BotCommand("bantin", "Bản tin sáng cá nhân (on|off|giờ|xem)"),
     BotCommand("prompt", "Viết prompt tạo ảnh"),
     BotCommand("gia", "Tìm giá sản phẩm"),
     BotCommand("dich", "Dịch chat Nhật-Việt"),
@@ -133,6 +140,7 @@ async def _post_init(app):
     portfolio_alerts.start(config.ALLOWED_USER_ID)
     portfolio_events.start()
     price_alerts.start(config.ALLOWED_USER_ID)
+    morning_brief.start()
 
 
 async def _post_shutdown(app):
@@ -146,6 +154,7 @@ async def _post_shutdown(app):
     await run_step("portfolio alerts", portfolio_alerts.stop())
     await run_step("portfolio events", portfolio_events.stop())
     await run_step("price alerts", price_alerts.stop())
+    await run_step("morning brief", morning_brief.stop())
     await run_step("idempotency cleanup task", idempotency.stop_cleanup_task())
     await run_step("provider monitor task", monitor_service.stop())
     await run_step("chat memory tasks", channel_chat_service.stop_background_tasks())
@@ -237,6 +246,11 @@ def build_application():
         ("tuvi_chitiet", commands.tuvi_chitiet_cmd),
         ("kymon", commands.kymon_cmd),
         ("kymon_chitiet", commands.kymon_chitiet_cmd),
+        ("vang", daily_data_commands.vang_cmd),
+        ("tygia", daily_data_commands.tygia_cmd),
+        ("xoso", daily_data_commands.xoso_cmd),
+        ("thoitiet", daily_data_commands.thoitiet_cmd),
+        ("bantin", daily_data_commands.bantin_cmd),
         ("agent", commands.agent_cmd),
         ("rag", commands.rag_cmd),
         ("ragxuly", commands.ragxuly_cmd),
@@ -322,4 +336,5 @@ def build_application():
     scheduler.set_notify_callback(notify)
     portfolio_alerts.set_notify_callback(notify)
     portfolio_push.set_notify_callback(notify)
+    morning_brief.set_notify_callback(notify)
     return app

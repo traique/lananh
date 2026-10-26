@@ -21,6 +21,7 @@ from services import (
     portfolio_service,
     weather_chat,
 )
+from services import vn_daily_chat
 from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -45,8 +46,14 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await common.reply_long_text(update.message, article)
         return
 
-    # Thời tiết và âm lịch: trả lời thẳng bằng code, không tốn lượt AI nào.
-    weather_reply = await weather_chat.maybe_handle(text)
+    # Giá vàng/tỷ giá/xổ số, thời tiết và âm lịch: trả lời thẳng bằng code,
+    # không tốn lượt AI nào.
+    daily_reply = await vn_daily_chat.maybe_handle(text, user_id)
+    if daily_reply is not None:
+        await common.reply_long_text(update.message, daily_reply)
+        return
+
+    weather_reply = await weather_chat.maybe_handle(text, user_id=user_id)
     if weather_reply is not None:
         await common.reply_long_text(update.message, weather_reply)
         return
