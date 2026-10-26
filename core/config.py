@@ -6,6 +6,8 @@ import jinja2
 import yaml
 from dotenv import load_dotenv
 
+from core import address
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -379,8 +381,10 @@ _CHANNEL_STYLE_HINTS = {
 # render nguyên văn sẽ khiến model tưởng tên anh là "...".
 _PROFILE_PLACEHOLDERS = {"", "...", "…"}
 
-# Cache theo biến thể persona (tối đa len(PERSONA_VARIANTS) chuỗi).
-_chat_skill_cache: dict[str, str] = {}
+# Cache theo (biến thể persona, cách xưng hô riêng): cách xưng hô chỉ áp cho
+# biến thể Zalo và nằm trong danh sách đóng core/address.ADDRESS_FORMS, nên tối
+# đa 1 + 2 * (len(ADDRESS_FORMS) + 1) chuỗi (~15 chuỗi x ~15 KB).
+_chat_skill_cache: dict[tuple[str, str | None], str] = {}
 
 
 def _profile_value_filled(value) -> bool:
@@ -399,7 +403,7 @@ def _filled_profile(user_profile: dict | None) -> dict:
     }
 
 
-def _render_chat_skill(variant: str = PERSONA_OWNER) -> str:
+def _render_chat_skill(variant: str = PERSONA_OWNER, address_form: str | None = None) -> str:
     """Đọc + render persona từ đĩa. Không cache — xem load_chat_skill()."""
     try:
         raw = CHAT_SKILL_PATH.read_text(encoding="utf-8")
@@ -428,6 +432,11 @@ def _render_chat_skill(variant: str = PERSONA_OWNER) -> str:
             cm=data["content_modes"],
             variant=variant,
             profile=profile,
+            address=(
+                {"user": address_form, "ai": address.self_word(address_form)}
+                if address_form
+                else None
+            ),
         ).strip()
     except Exception:
         logger.exception("Lỗi parse/render chat_skill.yaml, dùng nội dung thô làm dự phòng.")
@@ -445,6 +454,7 @@ def load_chat_skill(
     variant: str | None = None,
     include_owner_profile: bool = True,
     channel: str | None = None,
+    address_form: str | None = None,
 ) -> str:
     """Nạp persona/rules cho chat tự nhiên. Định dạng mặc định là YAML có
     cấu trúc (chat_skill.yaml), render qua templates/chat_skill_prompt.j2
@@ -466,6 +476,10 @@ def load_chat_skill(
 
     ``channel`` ("telegram" | "zalo" | "zoom"): nối thêm 1 dòng gợi ý trình bày
     theo kênh SAU persona đã cache (cache vẫn chỉ theo biến thể).
+
+    ``address_form`` (core/address.py, vd "chị", "cô"): cách gọi riêng do chủ
+    bot đặt cho 1 thành viên Zalo - chỉ áp cho biến thể Zalo, giá trị ngoài
+    danh sách bị bỏ qua. Biến thể chủ bot luôn giữ address_form của YAML.
     """
     if variant is None:
         variant = PERSONA_OWNER if include_owner_profile else PERSONA_MEMBER
@@ -473,12 +487,14 @@ def load_chat_skill(
         # Giá trị lạ: KHÔNG bao giờ rơi về biến thể chủ bot (lộ hồ sơ).
         logger.warning("Biến thể persona %r không hợp lệ, dùng 'member'.", variant)
         variant = PERSONA_MEMBER
+    form = None if variant == PERSONA_OWNER else address.normalize(address_form)
     if force_reload:
         _chat_skill_cache.clear()
-    cached = _chat_skill_cache.get(variant)
+    key = (variant, form)
+    cached = _chat_skill_cache.get(key)
     if cached is None:
-        cached = _render_chat_skill(variant)
-        _chat_skill_cache[variant] = cached
+        cached = _render_chat_skill(variant, form)
+        _chat_skill_cache[key] = cached
     hint = channel_style_hint(channel)
     return f"{cached}\n\n{hint}" if cached and hint else cached
 

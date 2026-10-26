@@ -39,15 +39,17 @@ class FakePool:
     async def fetchrow(self, query, *args):
         query_lower = query.lower()
         if (
-            "select external_id, internal_user_id, display_name, role, status from zalo_users where"
-            in query_lower
+            "select external_id, internal_user_id, display_name, role, status, address_form "
+            "from zalo_users where" in query_lower
         ):
             return self.rows.get(args[0])
         if "insert into zalo_users" in query_lower:
-            external_id, display_name, role = args
+            external_id, display_name, role, address_form = args
             existing = self.rows.get(external_id)
             if existing and not display_name:
                 display_name = existing["display_name"]
+            if existing and address_form is None:
+                address_form = existing["address_form"]
             internal_user_id = existing["internal_user_id"] if existing else self._next_uid
             if not existing:
                 self._next_uid -= 1
@@ -57,6 +59,7 @@ class FakePool:
                 "display_name": display_name,
                 "role": role,
                 "status": "active",
+                "address_form": address_form,
             }
             self.rows[external_id] = row
             return row
@@ -262,3 +265,23 @@ async def test_notify_unpaired_calls_alert_once():
     assert len(calls) == 1
     assert "zX" in calls[0]
     assert "zX" in zalo_users._notified_unpaired
+
+
+@pytest.mark.asyncio
+async def test_cach_xung_ho_luu_va_giu_nguyen_khi_pair_lai():
+    user = await zalo_users.pair("zm", "Mẹ", address_form="cô")
+    assert user.address_form == "cô"
+    # Pair lại / nâng quyền không truyền cách xưng hô -> giữ nguyên.
+    again = await zalo_users.pair("zm", "")
+    promoted = await zalo_users.pair_as_admin("zm", "")
+    assert again.address_form == "cô" and promoted.address_form == "cô"
+    changed = await zalo_users.pair("zm", "", address_form="Chị")
+    assert changed.address_form == "chị"
+    assert (await zalo_users.resolve("zm")).address_form == "chị"
+    assert (await zalo_users.pair("zn", "")).address_form is None
+
+
+@pytest.mark.asyncio
+async def test_cach_xung_ho_ngoai_danh_sach_bi_tu_choi():
+    with pytest.raises(ValueError):
+        await zalo_users.pair("zq", "", address_form="sếp")

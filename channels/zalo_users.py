@@ -36,7 +36,7 @@ import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
-from core import database as db
+from core import address, database as db
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +118,8 @@ class ZaloUser:
     display_name: str
     role: str  # "admin" | "user"
     status: str  # "active" | "suspended"
+    # Cách gọi người này do chủ bot đặt (core/address.py); None = mặc định persona.
+    address_form: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -139,55 +141,78 @@ def _row_to_user(row) -> ZaloUser:
         display_name=row["display_name"] or "",
         role=row["role"],
         status=row["status"],
+        address_form=address.normalize(row.get("address_form")),
     )
+
+
+_USER_COLUMNS = "external_id, internal_user_id, display_name, role, status, address_form"
 
 
 @db.with_reconnect
 async def resolve(external_id: str) -> Optional[ZaloUser]:
     await ensure_schema()
     row = await (await db.get_pool()).fetchrow(
-        "SELECT external_id, internal_user_id, display_name, role, status "
-        "FROM zalo_users WHERE external_id = $1",
+        f"SELECT {_USER_COLUMNS} FROM zalo_users WHERE external_id = $1",
         external_id,
     )
     return _row_to_user(row) if row else None
 
 
+def _checked_address_form(address_form: str | None) -> str | None:
+    if address_form is None:
+        return None
+    form = address.normalize(address_form)
+    if form is None:
+        raise ValueError(f"cách xưng hô không hợp lệ: {address_form!r}")
+    return form
+
+
 @db.with_reconnect
-async def _upsert(external_id: str, display_name: str, role: str) -> ZaloUser:
+async def _upsert(
+    external_id: str, display_name: str, role: str, address_form: str | None = None
+) -> ZaloUser:
+    """address_form=None giữ nguyên cách xưng hô đã đặt trước đó (nếu có)."""
     await ensure_schema()
     row = await (await db.get_pool()).fetchrow(
-        """
-        INSERT INTO zalo_users (external_id, display_name, role, status)
-        VALUES ($1, $2, $3, 'active')
+        f"""
+        INSERT INTO zalo_users (external_id, display_name, role, status, address_form)
+        VALUES ($1, $2, $3, 'active', $4)
         ON CONFLICT (external_id) DO UPDATE SET
             display_name = CASE WHEN EXCLUDED.display_name <> '' THEN EXCLUDED.display_name
                                  ELSE zalo_users.display_name END,
             role = $3,
             status = 'active',
+            address_form = COALESCE(EXCLUDED.address_form, zalo_users.address_form),
             updated_at = now()
-        RETURNING external_id, internal_user_id, display_name, role, status
+        RETURNING {_USER_COLUMNS}
         """,
         external_id,
         display_name.strip()[:500],
         role,
+        _checked_address_form(address_form),
     )
     return _row_to_user(row)
 
 
-async def pair(external_id: str, display_name: str = "") -> ZaloUser:
+async def pair(
+    external_id: str, display_name: str = "", *, address_form: str | None = None
+) -> ZaloUser:
     """Pair 1 id Zalo với quyền THÀNH VIÊN (chỉ tính năng bình thường). Nếu id
     đã pair sẵn (kể cả admin), gọi lại KHÔNG hạ quyền - dùng /zalohaquyen nếu
-    thật sự muốn hạ quyền admin xuống user."""
+    thật sự muốn hạ quyền admin xuống user.
+
+    ``address_form`` (core/address.py): cách gọi người này; None = giữ nguyên."""
     existing = await resolve(external_id)
     role = existing.role if existing else ROLE_USER
-    return await _upsert(external_id, display_name, role)
+    return await _upsert(external_id, display_name, role, address_form)
 
 
-async def pair_as_admin(external_id: str, display_name: str = "") -> ZaloUser:
+async def pair_as_admin(
+    external_id: str, display_name: str = "", *, address_form: str | None = None
+) -> ZaloUser:
     """Pair (hoặc nâng quyền id đã pair) thành ADMIN — dùng được tính năng
     nhóm. Hỗ trợ NHIỀU admin cùng lúc (không giới hạn 1 admin duy nhất)."""
-    return await _upsert(external_id, display_name, ROLE_ADMIN)
+    return await _upsert(external_id, display_name, ROLE_ADMIN, address_form)
 
 
 @db.with_reconnect
@@ -253,7 +278,7 @@ async def remove(external_id: str) -> bool:
 async def list_users() -> list[ZaloUser]:
     await ensure_schema()
     rows = await (await db.get_pool()).fetch(
-        "SELECT external_id, internal_user_id, display_name, role, status FROM zalo_users "
+        f"SELECT {_USER_COLUMNS} FROM zalo_users "
         "ORDER BY (role = 'admin') DESC, display_name, external_id"
     )
     return [_row_to_user(row) for row in rows]

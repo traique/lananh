@@ -497,6 +497,23 @@ async def test_zaloxoa_removes_member_data_but_not_owner_data(delivery_db):
 
 
 @pytest.mark.asyncio
+async def test_zalo_address_form_luu_giu_nguyen_va_check_danh_sach(delivery_db):
+    """migrations/024: cách xưng hô riêng từng thành viên - pair lại không truyền
+    thì giữ nguyên, CHECK chặn giá trị ngoài danh sách core/address.py."""
+    from channels import zalo_users
+
+    pool = delivery_db
+    member = await zalo_users.pair("z-me", "Mẹ", address_form="cô")
+    assert member.address_form == "cô"
+    assert (await zalo_users.pair_as_admin("z-me", "")).address_form == "cô"
+    assert (await zalo_users.pair("z-me", "", address_form="chị")).address_form == "chị"
+    assert (await zalo_users.resolve("z-me")).address_form == "chị"
+    assert [u.address_form for u in await zalo_users.list_users()] == ["chị"]
+    with pytest.raises((RuntimeError, asyncpg.PostgresError), match="address_form_check"):
+        await pool.execute("UPDATE zalo_users SET address_form = 'sếp' WHERE external_id = 'z-me'")
+
+
+@pytest.mark.asyncio
 async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch):
     from services import db_maintenance
 

@@ -27,7 +27,7 @@ from services import (
     web_search,
 )
 from services.background_tasks import stop_tracked_tasks
-from services import channel_command_service
+from services import channel_command_service, reply_audience
 from services.channel_result import ChannelResult
 from services.telemetry import telemetry
 from stock import analysis as stock_analysis
@@ -104,12 +104,14 @@ async def run_chat_turn(
     grounding: str = "",
     channel: str = "telegram",
     is_admin: bool = False,
+    address_form: str | None = None,
 ) -> ChatTurn:
     """Pipeline chat chung: gom ngữ cảnh -> orchestrator.chat -> lưu lịch sử.
 
     grounding: ngữ cảnh giá cổ phiếu từ nhánh cổ phiếu (nếu có). channel và
     is_admin chọn gợi ý trình bày theo kênh và biến thể persona (admin Zalo
-    khác thành viên thường; chủ bot nhận ra qua user_id). Không raise: lỗi trả
+    khác thành viên thường; chủ bot nhận ra qua user_id); address_form là cách
+    gọi riêng của thành viên Zalo (core/address.py). Không raise: lỗi trả
     ChatTurn(failed=True) sau khi đã log và ghi telemetry."""
     prompt_id = await telemetry.start(user_id, "chat", text, channel=channel)
     try:
@@ -139,6 +141,7 @@ async def run_chat_turn(
                 search_mode=_search_mode(plan, forced, bool(grounding), bool(tool_result)),
                 channel=channel,
                 is_admin=is_admin,
+                address_form=address_form,
             )
         reply = (response.text or "").strip()
         searched = bool(getattr(response, "searched", False))
@@ -380,7 +383,13 @@ async def handle_channel_text(
         if stock_result is not None:
             return stock_result
         turn = await run_chat_turn(
-            user_id, text, grounding=grounding, channel=channel, is_admin=is_admin
+            user_id,
+            text,
+            grounding=grounding,
+            channel=channel,
+            is_admin=is_admin,
+            # Router Zalo gắn cách gọi riêng của người gửi (services/reply_audience.py).
+            address_form=reply_audience.current().address_form,
         )
     if turn.failed:
         return ChannelResult(

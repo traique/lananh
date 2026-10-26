@@ -29,7 +29,7 @@ from channels.group_commands import maybe_handle_group_command
 from channels.zalo_text import to_plain_text
 from core import alerts, idempotency
 from core.envutil import env_on
-from services import channel_dispatch
+from services import channel_dispatch, reply_audience
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.channel_image_service import MAX_ZALO_IMAGE_BYTES, handle_channel_image
 from services import facebook_dedup, facebook_intake_stats
@@ -294,6 +294,24 @@ async def receive(
             return await _receive_text(payload)
 
 
+def _audience(zalo_user: zalo_users.ZaloUser) -> reply_audience.ReplyAudience:
+    """Người nhận của lượt (services/reply_audience.py): cách gọi riêng chủ bot
+    đặt cho người này (/zalopair <id> <tên> chị)."""
+    return reply_audience.ReplyAudience(address_form=getattr(zalo_user, "address_form", None))
+
+
+def _chat_for(zalo_user: zalo_users.ZaloUser):
+    """handle_channel_text chạy trong ngữ cảnh người nhận của zalo_user. Tra tên
+    module-level lúc gọi để test monkeypatch ``router.handle_channel_text`` vẫn có
+    hiệu lực."""
+
+    async def chat(user_id: int, text: str, is_admin: bool = True):
+        with reply_audience.use(_audience(zalo_user)):
+            return await handle_channel_text(user_id, text, is_admin)
+
+    return chat
+
+
 async def _receive_text(payload: ZaloMessageRequest):
     zalo_user = await zalo_users.resolve(payload.sender_id)
     if zalo_user is None:
@@ -327,7 +345,7 @@ async def _receive_text(payload: ZaloMessageRequest):
             command_account_id=payload.account_id,
         ),
         channel_dispatch.DispatchHandlers(
-            chat=handle_channel_text,
+            chat=_chat_for(zalo_user),
             get_cached=idempotency.get_zalo_response,
             save_cached=idempotency.save_zalo_response,
             facebook=maybe_handle_facebook_command,
@@ -374,13 +392,14 @@ async def image_prompt(
         )
         if cached is not None:
             return ZaloMessageResponse.model_validate(cached)
-        messages, provider = await handle_channel_image(
-            zalo_user.internal_user_id,
-            body,
-            request.headers.get("content-type", ""),
-            unquote(x_zalo_caption)[:500],
-            x_zalo_message_id,
-        )
+        with reply_audience.use(_audience(zalo_user)):
+            messages, provider = await handle_channel_image(
+                zalo_user.internal_user_id,
+                body,
+                request.headers.get("content-type", ""),
+                unquote(x_zalo_caption)[:500],
+                x_zalo_message_id,
+            )
         response = ZaloMessageResponse(
             messages=_zalo_chunks(messages),
             provider=provider,

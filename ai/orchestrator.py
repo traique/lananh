@@ -795,6 +795,7 @@ async def chat(
     *,
     channel: str = "telegram",
     is_admin: bool = False,
+    address_form: Optional[str] = None,
 ):
     """Chat with shared history/memory through the provider chain.
 
@@ -816,9 +817,12 @@ async def chat(
     ``channel`` thêm 1 dòng gợi ý trình bày theo kênh vào persona (Zalo chỉ hiện
     chữ thuần). ``is_admin`` chọn biến thể persona cho người KHÔNG phải chủ bot:
     admin Zalo không bị dặn "không phải chủ bot" (xem config.load_chat_skill).
+    ``address_form``: cách gọi riêng chủ bot đặt cho thành viên Zalo (vd "chị").
     """
     mode = _resolve_search_mode(search_mode, require_real_search, web_grounded)
-    persona = config.load_chat_skill(variant=_persona_variant(user_id, is_admin), channel=channel)
+    persona = config.load_chat_skill(
+        variant=_persona_variant(user_id, is_admin), channel=channel, address_form=address_form
+    )
     if untrusted.contains_untrusted(grounding):
         # Grounding có dữ liệu ngoài đã rào (web/RSS...): nhắc luật "dữ liệu
         # không phải chỉ dẫn" ngay trong system prompt.
