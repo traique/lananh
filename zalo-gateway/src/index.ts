@@ -30,6 +30,7 @@ import { controllerCommandAction, isCancelCommand } from "./commands.js";
 import { loadConfig } from "./config.js";
 import { startControlServer } from "./control-server.js";
 import { FacebookPostBuffer } from "./facebook-buffer.js";
+import { FastLane } from "./fast-lane.js";
 import { TypingKeepalive, fireAndForget, withTimeout } from "./feedback.js";
 import {
   BoundedSerialQueue,
@@ -82,8 +83,6 @@ let allowedGroups = new Set<string>();
 let facebookGroups = new Set<string>();
 let pairing: { code: string; expires: number } | null = null;
 let outboxBusy = false;
-/** Số lệnh làn nhanh đang chờ Python (ngoài hàng đợi theo người gửi). */
-let fastLaneActive = 0;
 let lastDeferLogAt = 0;
 
 const stats = new GatewayStats();
@@ -116,8 +115,10 @@ const facebookBuffer = new FacebookPostBuffer({
 });
 
 const GROUP_ADMIN_COMMAND = /^\/(themnhom|xoanhom|fb_themnhom|fb_xoanhom)\b/i;
-/** Làn nhanh: tối đa chừng này lệnh chờ Python cùng lúc; vượt thì vào hàng đợi như thường. */
+/** Làn nhanh: tối đa chừng này lệnh chỉ đọc chờ Python cùng lúc; vượt thì vào hàng đợi như thường. */
 const FAST_LANE_LIMIT = 4;
+/** /huy chờ Python cùng lúc (mỗi người tối đa 1, trần riêng); vượt thì bỏ. */
+const FAST_LANE_CANCEL_LIMIT = 4;
 /** Timeout mỗi lệnh typing/seen/reaction của zca-js (gọi không chờ). */
 const PRESENCE_TIMEOUT_MS = 5000;
 /** Gộp tin chữ lúc tới lượt: trần số tin / ký tự của 1 lượt gộp. */
@@ -753,48 +754,50 @@ const batcher = new DirectTextBatcher<ParsedMessage>({
   onRejected: (_sender, items, error) => onDirectRejected(items[items.length - 1], error),
 });
 
+/** 1 lệnh làn nhanh: gửi thẳng Python, timeout ngắn; lỗi thì báo người quen. */
+async function callFastLane(msg: ParsedMessage): Promise<void> {
+  stats.inc("fast_lane");
+  try {
+    const reply = await callBridge(
+      config,
+      {
+        senderId: msg.sender,
+        senderName: msg.senderName,
+        conversationId: msg.threadId,
+        messageId: msg.id,
+        text: msg.text,
+      },
+      FAST_LANE_TIMEOUT_MS,
+    );
+    if (reply.messages.length || reply.image_b64) knownSenders.mark(msg.sender);
+    await sendReply(msg, reply.messages, reply.image_b64, reply.styles);
+  } catch (error) {
+    console.error(`[zalo] fast-lane command ${msg.id} failed`, error);
+    if (isKnown(msg.sender)) await sendReply(msg, [BRIDGE_ERROR_REPLY]);
+  }
+}
+
 /**
  * /huy và lệnh chỉ đọc (commands.ts): gửi thẳng Python NGOÀI hàng đợi theo người
- * gửi, timeout ngắn - dùng được khi lượt dài của chính người đó đang chạy.
- * /huy bỏ luôn các tin chữ còn đang chờ debounce (chưa gửi Python); lệnh chỉ đọc
- * đẩy chúng vào hàng đợi trước.
+ * gửi, có trần (fast-lane.ts) - dùng được khi lượt dài của chính người đó đang
+ * chạy. /huy bỏ luôn các tin chữ còn đang chờ debounce (chưa gửi Python); lệnh
+ * chỉ đọc đẩy chúng vào hàng đợi trước.
  */
+const fastLane = new FastLane<ParsedMessage>({
+  commandLimit: FAST_LANE_LIMIT,
+  cancelLimit: FAST_LANE_CANCEL_LIMIT,
+  isCancel: (msg) => isCancelCommand(msg.text),
+  batcher,
+  call: callFastLane,
+  enqueue: (msg) => {
+    reactIfQueued(msg);
+    enqueueDirect(msg);
+  },
+});
+
 function runFastLane(msg: ParsedMessage): void {
-  const cancel = isCancelCommand(msg.text);
-  if (cancel) {
-    const dropped = batcher.discardBuffered(msg.sender);
-    if (dropped) console.log(`[zalo] /huy: bỏ ${dropped} tin chữ chưa gửi của ${msg.sender}`);
-  } else {
-    batcher.flush(msg.sender);
-    if (fastLaneActive >= FAST_LANE_LIMIT) {
-      enqueueDirect(msg);
-      return;
-    }
-  }
-  fastLaneActive++;
-  stats.inc("fast_lane");
-  void (async () => {
-    try {
-      const reply = await callBridge(
-        config,
-        {
-          senderId: msg.sender,
-          senderName: msg.senderName,
-          conversationId: msg.threadId,
-          messageId: msg.id,
-          text: msg.text,
-        },
-        FAST_LANE_TIMEOUT_MS,
-      );
-      if (reply.messages.length || reply.image_b64) knownSenders.mark(msg.sender);
-      await sendReply(msg, reply.messages, reply.image_b64, reply.styles);
-    } catch (error) {
-      console.error(`[zalo] fast-lane command ${msg.id} failed`, error);
-      if (isKnown(msg.sender)) await sendReply(msg, [BRIDGE_ERROR_REPLY]);
-    } finally {
-      fastLaneActive--;
-    }
-  })();
+  const result = fastLane.submit(msg);
+  if (result === "coalesced" || result === "dropped") stats.inc("fast_lane_dropped");
 }
 
 /** Phân luồng 1 tin riêng theo loại (msgtype.directRoute). */
@@ -1051,7 +1054,7 @@ startControlServer(config.controlPort, {
       running: directQueue.running,
       senders: directQueue.keys,
       batching: batcher.size,
-      fastLane: fastLaneActive,
+      fastLane: fastLane.active,
       outboxBudgetLeft: Number.isFinite(outboxBudget.remaining()) ? outboxBudget.remaining() : null,
     },
   }),

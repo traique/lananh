@@ -37,7 +37,10 @@ Node adapter dùng `zca-js` cho tài khoản B, chạy cùng container với Fas
 - `/huy` và lệnh chỉ đọc (`/help`, `/start`, `/notes`, `/history`, `/lich`,
   `/tsh`, `/tuvi`, `/kymon`, `/danhgia`, `/memory` và `/nhac` không tham số -
   khớp `services/turn_control.py`) đi "làn nhanh" NGOÀI hàng đợi, timeout 30s,
-  dùng được khi lượt dài đang chạy. `/huy` bỏ luôn tin chữ đang chờ gộp.
+  dùng được khi lượt dài đang chạy. `/huy` bỏ luôn tin chữ đang chờ gộp. Có
+  trần (`src/fast-lane.ts`): tối đa 4 lệnh chỉ đọc chờ Python cùng lúc (vượt
+  thì vào hàng đợi như lệnh thường); `/huy` mỗi người tối đa 1 lần đang chờ,
+  tổng tối đa 4 người - vượt thì bỏ (không xếp hàng sau chính lượt cần huỷ).
 - Trong lúc chờ Python: "đang soạn tin" (làm mới mỗi 6s, tối đa 30 lần), "đã
   xem" đủ tham số zca-js, reaction 👌 khi tin phải chờ lượt trước - chỉ cho người
   quen, gọi không chờ có timeout; tắt bằng `ZALO_PRESENCE_EVENTS=0`.

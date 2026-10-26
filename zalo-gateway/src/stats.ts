@@ -12,6 +12,8 @@ export const STAT_KEYS = [
   "merged_messages",
   /** Lệnh đi làn nhanh (/huy, lệnh chỉ đọc) ngoài hàng đợi. */
   "fast_lane",
+  /** /huy không gửi Python: người đó đã có /huy đang chờ, hoặc quá trần làn nhanh. */
+  "fast_lane_dropped",
   "image_turns",
   "voice_turns",
   "file_turns",
