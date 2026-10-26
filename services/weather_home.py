@@ -44,6 +44,12 @@ def clear_cache() -> None:
     _cache.clear()
 
 
+def forget(user_id: int) -> None:
+    """Bỏ thành phố của 1 người khỏi cache RAM - gọi sau khi dòng DB đã bị xoá
+    (/xoadulieu, /zaloxoa) để không dùng tiếp thành phố cũ tới lần khởi động lại."""
+    _cache.pop(user_id, None)
+
+
 async def get(user_id: int) -> str:
     """Thành phố mặc định của người dùng, "" nếu chưa đặt hoặc đọc DB lỗi."""
     if user_id in _cache:

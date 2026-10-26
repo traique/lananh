@@ -327,15 +327,21 @@ async def remove(external_id: str) -> bool:
     báo zalo-gateway quên người này (best-effort, ngoài transaction và ngoài
     with_reconnect) - không thì gateway vẫn coi họ là người quen tới lần khởi động
     lại và gửi "đã xem"/typing trước khi Python im lặng với họ."""
-    found = await _remove_pairing(external_id)
-    if found:
-        await zalo_gateway_status.forget_sender(external_id)
-    return found
+    internal_user_id = await _remove_pairing(external_id)
+    if internal_user_id is None:
+        return False
+    from services import weather_home
+
+    # Cache RAM thành phố thời tiết của người vừa xoá (dòng DB đã xoá ở trên).
+    weather_home.forget(internal_user_id)
+    await zalo_gateway_status.forget_sender(external_id)
+    return True
 
 
 @db.with_reconnect(idempotent=False)
-async def _remove_pairing(external_id: str) -> bool:
-    """Phần DB của remove(): xoá pairing + dữ liệu cá nhân trong 1 transaction."""
+async def _remove_pairing(external_id: str) -> int | None:
+    """Phần DB của remove(): xoá pairing + dữ liệu cá nhân trong 1 transaction.
+    Trả internal_user_id đã xoá, None nếu chưa pair."""
     await ensure_schema()
     pool = await db.get_pool()
     async with pool.acquire() as conn:
@@ -347,7 +353,7 @@ async def _remove_pairing(external_id: str) -> bool:
             if internal_user_id is not None:
                 await _delete_user_data(conn, int(internal_user_id))
     _notified_unpaired.pop(external_id, None)
-    return internal_user_id is not None
+    return None if internal_user_id is None else int(internal_user_id)
 
 
 @db.with_reconnect

@@ -64,6 +64,15 @@ async def test_dat_dia_danh_quen_khong_can_geocode(store, monkeypatch):
     assert await weather_home.get(-4) == "Hà Nội" and reads == []  # cache sau khi ghi
 
 
+async def test_forget_bo_cache_ram(store):
+    data, reads = store
+    await weather_home.set_home(-4, "hà nội")
+    data.clear()  # dòng DB đã bị xoá (/xoadulieu, /zaloxoa)
+    weather_home.forget(-4)
+    weather_home.forget(-99)  # không có trong cache: không lỗi
+    assert await weather_home.get(-4) == "" and reads == ["weather_home:-4"]
+
+
 async def test_dia_danh_la_phai_tra_duoc_toa_do(store, monkeypatch):
     data, _ = store
 

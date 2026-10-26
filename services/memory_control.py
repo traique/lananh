@@ -623,6 +623,9 @@ async def delete_own_data(user_id: int, argument: str = "") -> str:
             from channels import zalo_users
 
             await zalo_users.delete_own_data(user_id)
+            from services import weather_home
+
+            weather_home.forget(user_id)  # khoá weather_home vừa xoá khỏi DB
         else:
             await db.clear_facts(user_id)
             await db.set_summary(user_id, "")

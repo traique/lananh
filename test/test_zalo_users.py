@@ -180,7 +180,11 @@ async def test_remove_user(patched_db, monkeypatch):
 
     monkeypatch.setattr(zalo_users.zalo_gateway_status, "forget_sender", forget_sender)
     user = await zalo_users.pair("z6", "")
+    from services import weather_home
+
+    weather_home._remember(user.internal_user_id, "Hà Nội")
     assert await zalo_users.remove("z6") is True
+    assert user.internal_user_id not in weather_home._cache  # RAM quên cùng DB
     assert await zalo_users.resolve("z6") is None
     assert await zalo_users.remove("z6") is False
     # Gỡ pairing xong báo gateway quên người này ngay (thôi "đã xem"/typing từ tin kế

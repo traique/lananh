@@ -213,8 +213,15 @@ async def test_xoa_du_lieu_thanh_vien_zalo_goi_xoa_theo_internal_id(mem, monkeyp
         deleted.append(uid)
 
     monkeypatch.setattr(zalo_users, "delete_own_data", delete_own)
+    from services import weather_home
+
+    weather_home._remember(-9, "Hà Nội")  # thành phố riêng còn trong cache RAM
+    weather_home._remember(-8, "Huế")
     reply = await memory_commands.handle("/xoadulieu", "xacnhan", -9, channel="zalo")
     assert reply.messages[0].startswith("🗑️ Đã xoá") and deleted == [-9]
+    # Đã xoá khỏi DB thì RAM cũng phải quên, không dùng tiếp thành phố cũ.
+    assert -9 not in weather_home._cache and weather_home._cache[-8] == "Huế"
+    weather_home.clear_cache()
 
 
 @pytest.mark.asyncio
