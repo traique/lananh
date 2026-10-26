@@ -762,3 +762,78 @@ async def test_cau_tra_loi_agent_vo_hieu_link_mang_du_lieu(monkeypatch):
     assert "https://evil.example" not in text and "hxxps://evil[.]example/?d=" in text
     assert "evil[.]example/x?d=1" in text
     assert saved == [text]
+
+
+@pytest.mark.asyncio
+async def test_agent_doc_du_4_dong_lich_su(monkeypatch):
+    """get_session_messages nhận số DÒNG (không phải số lượt): /agent phải xin
+    đủ _HISTORY_ROWS dòng như docstring hứa."""
+    from services import memory_service
+
+    seen = {}
+
+    async def history(user_id, k, session_timeout_sec):
+        seen["k"] = k
+        rows = [("user", "q1"), ("model", "a1"), ("user", "q2"), ("model", "a2")]
+        return rows[-k:]
+
+    async def memory(user_id, query=""):
+        return ""
+
+    monkeypatch.setattr(db, "get_session_messages", history)
+    monkeypatch.setattr(memory_service, "build_memory_context", memory)
+    turn = await agent_service._build_turn(-7, "còn cái kia thì sao", None)
+
+    assert seen["k"] == agent_service._HISTORY_ROWS == 4
+    assert [content for _, content in turn.history] == ["q1", "a1", "q2", "a2"]
+
+
+@pytest.mark.asyncio
+async def test_agent_bo_qua_router9_dang_cooldown_429(monkeypatch):
+    """router9 đang cooldown 429 (chuỗi chat đã đặt) thì /agent không gọi thêm
+    request nào vào quota đang cạn, xuống thẳng api1."""
+    import time
+
+    called = []
+
+    async def router9_must_not_run(*args, **kwargs):
+        called.append("router9")
+        raise AssertionError("router9 đang cooldown thì không được gọi")
+
+    async def fake_run_one_provider(idx, question):
+        return "trả lời từ api1"
+
+    monkeypatch.setattr(router9_client, "generate_with_tools", router9_must_not_run)
+    monkeypatch.setattr(router9_client, "generate", router9_must_not_run)
+    monkeypatch.setattr(agent_service, "_run_one_provider", fake_run_one_provider)
+    monkeypatch.setitem(provider_state.api_exhausted_until, "router9", time.time() + 600)
+
+    text, provider = await agent_service.ask_agent("câu hỏi")
+
+    assert (text, provider) == ("trả lời từ api1", "api1") and not called
+
+
+@pytest.mark.asyncio
+async def test_agent_router9_429_dat_cooldown_khong_khai_tu(monkeypatch):
+    from ai.openai_compatible import OpenAICompatibleError
+
+    monkeypatch.setattr(agent_service, "_ROUTER9_NATIVE_TOOLS_ENABLED", False)
+
+    async def router9_429(*args, **kwargs):
+        raise router9_client.Router9Error("9Router HTTP 429") from OpenAICompatibleError(
+            "HTTP 429: rate limit", status_code=429, retry_after_sec=30
+        )
+
+    async def fake_run_one_provider(idx, question):
+        return "trả lời từ api1"
+
+    monkeypatch.setattr(router9_client, "generate", router9_429)
+    monkeypatch.setattr(agent_service, "_run_one_provider", fake_run_one_provider)
+    monkeypatch.setitem(provider_state.api_exhausted_until, "router9", 0.0)
+    monkeypatch.setattr(provider_state, "cooldown_reasons", dict(provider_state.cooldown_reasons))
+
+    text, provider = await agent_service.ask_agent("câu hỏi")
+
+    assert provider == "api1"
+    assert provider_state.api_in_cooldown("router9")
+    assert provider_state.router9_dead_since is None

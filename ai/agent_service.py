@@ -35,7 +35,8 @@ có trong câu hỏi/kết quả tim_web, tim_gia).
 Cố ý KHÔNG gọi provider_state.mark_router9_dead() khi router9 lỗi trong agent:
 lỗi có thể do router9 không hỗ trợ tools/JSON đúng ý (đặc thù agent), không
 phải router9 sập hẳn - tránh làm chat chính mất oan router9. Agent thành công
-qua router9 vẫn báo alive và tôn trọng router9_enabled/router9_dead_since.
+qua router9 vẫn báo alive và tôn trọng router9_enabled/router9_dead_since/
+cooldown 429; router9 trả 429 trong agent thì đặt cooldown ngắn như chuỗi chat.
 """
 
 import json
@@ -625,17 +626,28 @@ async def _router9_model() -> str:
 
 
 async def _router9_generate(prompt: str, **kwargs):
-    """1 lượt router9 của nhánh JSON-router: bounded() + ghi provider_calls."""
-    from ai import router9_client
+    """1 lượt router9 của nhánh JSON-router: bounded() + ghi provider_calls. 429
+    -> cooldown ngắn "router9" như provider-chain (KHÔNG khai tử router9), để
+    lượt sau của chat lẫn /agent không gọi thêm vào quota đang cạn."""
+    from ai import cooldown, openai_compatible, router9_client
+    from ai.provider_state import provider_state
 
-    return await call_log.timed(
-        "router9",
-        await _router9_model(),
-        lambda: bounded(
-            lambda: router9_client.generate(prompt, **kwargs), config.ROUTER9_CALL_TIMEOUT_SEC
-        ),
-        stage=_STAGE,
-    )
+    try:
+        return await call_log.timed(
+            "router9",
+            await _router9_model(),
+            lambda: bounded(
+                lambda: router9_client.generate(prompt, **kwargs), config.ROUTER9_CALL_TIMEOUT_SEC
+            ),
+            stage=_STAGE,
+        )
+    except TurnTimeoutError:
+        raise
+    except Exception as exc:
+        if openai_compatible.is_rate_limited(exc):
+            seconds, reason = cooldown.cooldown_for("router9", exc)
+            await provider_state.mark_api_exhausted("router9", seconds, reason)
+        raise
 
 
 async def _tool_provider_usable(name: str) -> bool:
@@ -755,8 +767,9 @@ async def _build_turn(user_id: int | None, question: str, address_form: str | No
     try:
         from core import database as db
 
+        # k là số DÒNG (hỏi và đáp mỗi bên 1 dòng), không phải số lượt.
         rows = await db.get_session_messages(
-            user_id, _HISTORY_ROWS // 2, config.CHAT_SESSION_TIMEOUT_SEC
+            user_id, _HISTORY_ROWS, config.CHAT_SESSION_TIMEOUT_SEC
         )
         history = tuple(
             (role_, content[:_HISTORY_ROW_MAX_CHARS]) for role_, content in rows[-_HISTORY_ROWS:]
@@ -849,7 +862,12 @@ async def _ask_agent(question: str) -> tuple[str, str]:
         from ai.provider_state import provider_state
 
         await provider_state.ensure_loaded()
-        if provider_state.router9_enabled and provider_state.router9_dead_since is None:
+        if (
+            provider_state.router9_enabled
+            and provider_state.router9_dead_since is None
+            # 429 của router9 (chuỗi chat hoặc /agent đặt): không gọi thêm vào quota cạn.
+            and not provider_state.api_in_cooldown("router9")
+        ):
             if _ROUTER9_NATIVE_TOOLS_ENABLED:
                 try:
                     text = await _run_router9(question)
