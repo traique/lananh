@@ -51,3 +51,21 @@ export function isReadonlyCommand(text: string): boolean {
 export function isFastLaneCommand(text: string): boolean {
   return isCancelCommand(text) || isReadonlyCommand(text);
 }
+
+/** Lệnh gateway tự xử lý (không qua Python), CHỈ dành cho chủ bot (controller). */
+export const CONTROLLER_COMMANDS = ["/nhomzalo"];
+
+/**
+ * "run" = chủ bot gửi lệnh riêng của gateway; "ignore" = người khác gửi lệnh đó
+ * (người lạ, thành viên role=user): im lặng hoàn toàn - không lộ lệnh admin hay
+ * luồng /pair, cũng không đẩy sang Python (lệnh lạ thành 1 lượt chat AI);
+ * "none" = không phải lệnh riêng của gateway.
+ */
+export function controllerCommandAction(
+  text: string,
+  sender: string,
+  controllerId: string,
+): "run" | "ignore" | "none" {
+  if (!CONTROLLER_COMMANDS.includes((text || "").toLowerCase())) return "none";
+  return controllerId && sender === controllerId ? "run" : "ignore";
+}

@@ -26,7 +26,7 @@ import {
   type NoticeKind,
 } from "./bridge.js";
 import { DirectTextBatcher } from "./burst.js";
-import { isCancelCommand } from "./commands.js";
+import { controllerCommandAction, isCancelCommand } from "./commands.js";
 import { loadConfig } from "./config.js";
 import { startControlServer } from "./control-server.js";
 import { FacebookPostBuffer } from "./facebook-buffer.js";
@@ -705,11 +705,10 @@ async function handleDirectMessage(msg: ParsedMessage): Promise<void> {
     return;
   }
   if (!msg.text) return;
-  if (msg.text.toLowerCase() === "/nhomzalo") {
-    if (!config.controllerId || msg.sender !== config.controllerId) {
-      await send(msg.threadId, ["Lệnh này chỉ dành cho chủ bot (chưa ghép đôi /pair)."]);
-      return;
-    }
+  const controllerAction = controllerCommandAction(msg.text, msg.sender, config.controllerId);
+  // Người khác chủ bot gửi /nhomzalo: im lặng (commands.controllerCommandAction).
+  if (controllerAction === "ignore") return;
+  if (controllerAction === "run") {
     await listGroups(msg.threadId);
     return;
   }

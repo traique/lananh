@@ -12,6 +12,7 @@ import {
   voiceDurationMs,
 } from "./dist/msgtype.js";
 import {
+  controllerCommandAction,
   isCancelCommand,
   isFastLaneCommand,
   isReadonlyCommand,
@@ -264,4 +265,16 @@ test("câu báo: Python dựng câu; người lạ im lặng kể cả khi Pytho
   );
   // Câu dự phòng không gọi trống "anh".
   for (const text of Object.values(LOCAL_NOTICES)) assert.ok(!/\banh\b/i.test(text), text);
+});
+
+test("/nhomzalo chỉ chủ bot dùng được; người lạ/thành viên gửi thì im lặng, không đẩy sang Python", () => {
+  assert.equal(controllerCommandAction("/nhomzalo", "owner", "owner"), "run");
+  assert.equal(controllerCommandAction("/NhomZalo", "owner", "owner"), "run");
+  // Người lạ chưa pair, thành viên role=user, hoặc chưa ghép đôi chủ bot: im lặng.
+  assert.equal(controllerCommandAction("/nhomzalo", "stranger", "owner"), "ignore");
+  assert.equal(controllerCommandAction("/nhomzalo", "member", "owner"), "ignore");
+  assert.equal(controllerCommandAction("/nhomzalo", "someone", ""), "ignore");
+  // Tin khác: không phải lệnh riêng của gateway.
+  assert.equal(controllerCommandAction("/nhom", "owner", "owner"), "none");
+  assert.equal(controllerCommandAction("nhomzalo", "stranger", "owner"), "none");
 });
