@@ -107,13 +107,21 @@ async def test_get_weather_khong_noi_dia_diem_dung_mac_dinh(monkeypatch):
     async def fake_generate(prompt):
         return {"tool": "get_weather", "args": {"location": "", "days": 2}}
 
+    async def home(user_id):
+        return "Huế" if user_id == -3 else ""  # chỉ user -3 đã đặt thành phố riêng
+
+    from services import weather_home
+
     monkeypatch.setattr(weather, "get_weather", fake_get_weather)
     monkeypatch.setattr(official_client, "generate_utility_json", fake_generate)
+    monkeypatch.setattr(weather_home, "get", home)
 
     result = await tools.maybe_run_tool(1, "mai trời có mưa không em")
 
     assert calls == [("", 2)]
     assert result is not None and "TP. Hồ Chí Minh" in result
+    await tools.maybe_run_tool(-3, "mai trời có mưa không em")
+    assert calls[-1] == ("Huế", 2)
 
 
 @pytest.mark.asyncio

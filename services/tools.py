@@ -139,10 +139,12 @@ _WEATHER_TIMEOUT_SEC = 20
 
 
 async def _tool_get_weather(user_id: int, location: str = "", days: int = 1, **_ignored) -> str:
+    from services import weather_home
+
+    # Không nói địa điểm -> thành phố mặc định riêng của người hỏi (nếu đã đặt).
+    location = str(location or "").strip() or await weather_home.get(user_id)
     try:
-        data = await asyncio.wait_for(
-            weather.get_weather(str(location or ""), days), _WEATHER_TIMEOUT_SEC
-        )
+        data = await asyncio.wait_for(weather.get_weather(location, days), _WEATHER_TIMEOUT_SEC)
     except (weather.WeatherError, TimeoutError):
         logger.warning("Tra thời tiết lỗi (location=%r)", location, exc_info=True)
         return (
