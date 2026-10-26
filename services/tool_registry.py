@@ -115,6 +115,9 @@ class ToolOutcome:
     router_ran: bool = False
     effect_label: str = ""
     untrusted: bool = False
+    # Câu hỏi tra dữ liệu riêng của người dùng ("nhắc việc", "chi tiêu"...) mà router
+    # không chạy được: lượt chat phải nói thật là chưa tra được, không đoán.
+    lookup: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -157,6 +160,17 @@ class ToolOutcome:
             return (
                 f"[HỆ THỐNG] Lượt này không lưu {label} nào - không được nói là đã ghi chú/"
                 "đặt nhắc/ghi chi tiêu."
+            )
+        if self.status == STATUS_FAILED and self.name and not self.side_effect:
+            return (
+                f"[HỆ THỐNG] Không tra được dữ liệu ({self.name}) lúc này - KHÔNG được đoán "
+                "hay nói là không có; nói thật là chưa tra được và mời thử lại sau ít phút."
+            )
+        if self.status in (STATUS_FAILED, STATUS_UNAVAILABLE) and self.lookup:
+            return (
+                f"[HỆ THỐNG] Hệ thống tra cứu đang lỗi: nếu người dùng hỏi {self.lookup} của "
+                "chính họ thì lúc này chưa tra được - KHÔNG được đoán hay nói là không có; "
+                "nói thật là chưa tra được và mời thử lại sau ít phút."
             )
         return ""
 

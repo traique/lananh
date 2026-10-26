@@ -914,6 +914,31 @@ _TOOL_INTENT_KEYWORDS = (
     "tim lai",
     "lịch sử chat",
 )
+# Câu hỏi tra dữ liệu RIÊNG của người dùng (đối tượng + từ hỏi): router hỏng thì
+# lượt chat phải nói thật là chưa tra được. Hẹp hơn bộ lọc từ khoá ở trên - "nhớ"
+# xuất hiện trong chuyện phiếm ("anh nhớ em quá") nên không tính.
+_OWN_DATA = (
+    ("nhắc việc", r"nhắc|lịch nhắc|hẹn giờ", r"nhac|lich nhac|hen gio"),
+    ("ghi chú", r"ghi chú|note", r"ghi chu|note"),
+    ("chi tiêu", r"chi tiêu|tiêu|xài|tiêu hết", r"chi tieu|xai"),
+    ("ngày nhớ", r"ngày nhớ|giỗ|sinh nhật|kỷ niệm", r"ngay nho|sinh nhat|ky niem"),
+)
+_QUESTION = r"\?|\b(?:gì|nào|bao nhiêu|mấy|chưa|không|xem|liệt kê|danh sách)\b"
+_QUESTION_PLAIN = r"\?|\b(?:gi|nao|bao nhieu|may|chua|khong|xem|liet ke|danh sach)\b"
+
+
+def own_data_lookup(user_text: str) -> str:
+    """Nhãn dữ liệu riêng người dùng đang hỏi ("nhắc việc", "chi tiêu"...) hoặc ""."""
+    low = nfc(user_text or "").lower()
+    plain = fold(low) == low
+    if not re.search(_QUESTION_PLAIN if plain else _QUESTION, low):
+        return ""
+    for label, accented, unaccented in _OWN_DATA:
+        if re.search(rf"\b(?:{unaccented if plain else accented})\b", low):
+            return label
+    return ""
+
+
 # Link trong tin chỉ là lý do gọi router khi tool read_link còn dùng được ở lượt này.
 _URL_KEYWORDS = ("http://", "https://")
 
@@ -1030,7 +1055,8 @@ async def execute(
         logger.warning(
             "Tool '%s' lỗi (user_id=%s, args=%s).", spec.name, user_id, args, exc_info=True
         )
-        return reg.ToolOutcome(status=reg.STATUS_FAILED, text="hệ thống lỗi khi lưu", **base)
+        failure = "hệ thống lỗi khi lưu" if spec.side_effect else "hệ thống lỗi khi tra"
+        return reg.ToolOutcome(status=reg.STATUS_FAILED, text=failure, **base)
     if spec.untrusted_output:
         reg.mark_tainted()
     if not isinstance(result, reg.ToolResult):
@@ -1071,7 +1097,8 @@ async def maybe_run_tool(
             return await _route_and_run(user_id, user_text, intent, is_admin, allow_side_effects)
     except Exception:
         logger.warning("Router tool lỗi ngoài dự kiến.", exc_info=True)
-        return reg.ToolOutcome(status=reg.STATUS_FAILED, intent=intent)
+        lookup = "" if intent else own_data_lookup(user_text)
+        return reg.ToolOutcome(status=reg.STATUS_FAILED, intent=intent, lookup=lookup)
     finally:
         _turn_text.reset(token)
 
@@ -1103,7 +1130,8 @@ async def _route_and_run(
             logger.warning("Router tool dự phòng qua provider-chain lỗi.", exc_info=True)
             data = None
     if not data:
-        return reg.ToolOutcome(status=reg.STATUS_UNAVAILABLE, intent=intent)
+        lookup = "" if intent else own_data_lookup(user_text)
+        return reg.ToolOutcome(status=reg.STATUS_UNAVAILABLE, intent=intent, lookup=lookup)
 
     tool_name = str(data.get("tool", "none")).strip()
     spec = reg.get(tool_name)

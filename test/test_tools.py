@@ -391,6 +391,39 @@ async def test_list_notes_khong_bi_coi_la_chua_luu(monkeypatch):
     assert "CHƯA" not in outcome.grounding()
 
 
+@pytest.mark.asyncio
+async def test_tool_doc_loi_thi_bao_khong_tra_duoc_khong_de_model_doan(monkeypatch):
+    async def broken(uid, limit=20):
+        raise RuntimeError("DB lỗi mô phỏng")
+
+    monkeypatch.setattr(db, "reminder_list_pending_once", broken)
+    _router(monkeypatch, {"tool": "list_reminders", "args": {}})
+
+    outcome = await tools.maybe_run_tool(1, "em đặt những nhắc gì rồi")
+
+    assert outcome.status == reg.STATUS_FAILED and not outcome.not_saved_hard
+    assert "lỗi khi tra" in outcome.text  # tool chỉ đọc: không nói "lỗi khi lưu"
+    grounding = outcome.grounding()
+    assert "Không tra được" in grounding and "KHÔNG được đoán" in grounding
+    assert "CHƯA lưu" not in grounding
+
+
+@pytest.mark.asyncio
+async def test_router_hong_khi_hoi_du_lieu_rieng_thi_khong_duoc_doan(monkeypatch):
+    _router(monkeypatch, None)
+
+    outcome = await tools.maybe_run_tool(1, "em đặt những nhắc gì rồi")
+    assert outcome.status == reg.STATUS_UNAVAILABLE and not outcome.not_saved_hard
+    assert "chưa tra được" in outcome.grounding() and "nhắc việc" in outcome.grounding()
+
+    spending = await tools.maybe_run_tool(1, "tháng này anh chi tiêu bao nhiêu rồi")
+    assert "chi tiêu" in spending.grounding()
+
+    # Câu chuyện phiếm có chữ "nhớ": không chèn câu "không tra được".
+    chat = await tools.maybe_run_tool(1, "anh nhớ em quá")
+    assert chat.status == reg.STATUS_UNAVAILABLE and chat.grounding() == ""
+
+
 def test_y_dinh_ghi_so_tren_chu_co_dau():
     assert tools.side_effect_intent("nhắc anh 8h mai họp") == "reminder"
     assert tools.side_effect_intent("Bài nhạc anh gửi hay ghê") == ""  # nhạc != nhắc
