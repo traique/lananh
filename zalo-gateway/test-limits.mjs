@@ -5,6 +5,7 @@ import {
   KeyedRateLimiter,
   KeyedSerialQueue,
   QueueFullError,
+  SlidingWindowBudget,
   readLimitedBody,
 } from "./dist/limits.js";
 test("queue bounds waiting events, preserves order, and recovers after failures", async () => {
@@ -141,4 +142,36 @@ test("KeyedRateLimiter cho phép 1 lần mỗi khoảng và giới hạn số kh
   limiter.allow("c", 1500);
   assert.equal(limiter.size, 2);
   assert.equal(limiter.allow("a", 1600), true, "khoá cũ nhất đã bị đẩy ra");
+});
+
+test("KeyedSerialQueue.isRunning: chỉ true khi khoá đang chạy việc", async () => {
+  const q = new KeyedSerialQueue({ concurrency: 1, perKeyCapacity: 4, capacity: 8 });
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  assert.equal(q.isRunning("a"), false);
+  const job = q.add("a", () => gate);
+  const waiting = q.add("b", async () => undefined);
+  assert.equal(q.isRunning("a"), true);
+  assert.equal(q.isRunning("b"), false, "b đang chờ slot, chưa chạy");
+  release();
+  await job;
+  await waiting;
+  assert.equal(q.isRunning("a"), false);
+});
+
+test("SlidingWindowBudget: trần theo cửa sổ trượt, 0 = không giới hạn", () => {
+  const budget = new SlidingWindowBudget(2, 1000);
+  assert.equal(budget.tryTake(0), true);
+  assert.equal(budget.tryTake(100), true);
+  assert.equal(budget.tryTake(200), false);
+  assert.equal(budget.remaining(500), 0);
+  assert.equal(budget.tryTake(1000), true, "mốc 0 đã ra khỏi cửa sổ");
+  assert.equal(budget.remaining(1050), 0);
+  assert.equal(budget.remaining(1100), 1, "mốc 100 cũng hết hạn");
+  assert.equal(budget.remaining(2200), 2);
+  const unlimited = new SlidingWindowBudget(0, 1000);
+  for (let i = 0; i < 100; i++) assert.equal(unlimited.tryTake(i), true);
+  assert.equal(unlimited.remaining(), Infinity);
 });

@@ -1,10 +1,13 @@
 import type { GatewayConfig } from "./config.js";
+import type { ZaloTextStyle } from "./types.js";
 export type IncomingDirectMessage = {
   senderId: string;
   senderName: string;
   conversationId: string;
   messageId: string;
   text: string;
+  /** Chữ tin được trích dẫn (zca-js data.quote.msg, tối đa 600 ký tự); rỗng = không gửi. */
+  quoteText?: string;
 };
 export type IncomingGroupMessage = {
   groupId: string;
@@ -30,7 +33,17 @@ export type OutboxItem = {
   chunks_sent?: number;
 };
 type GroupRow = { group_id: string | number };
-type BridgeResponse = { messages: string[]; provider?: string | null; image_b64?: string | null };
+/**
+ * Trả lời của Python (channels/contracts.ZaloMessageResponse). `styles[i]` là
+ * định dạng zca-js của `messages[i]` (null/thiếu = chữ thuần) - gateway lọc lại
+ * bằng sender.sanitizeStyles trước khi gửi.
+ */
+export type BridgeResponse = {
+  messages: string[];
+  provider?: string | null;
+  image_b64?: string | null;
+  styles?: (ZaloTextStyle[] | null)[] | null;
+};
 /**
  * Thời gian chờ Python trả lời 1 tin. Phải LỚN HƠN hạn chót mỗi lượt bên Python
  * (CHAT_TURN_TIMEOUT_SEC, mặc định 200s, tối đa 230s) để người dùng nhận được
@@ -39,6 +52,10 @@ type BridgeResponse = { messages: string[]; provider?: string | null; image_b64?
 export const BRIDGE_TIMEOUT_MS = 240000;
 /** Lệnh nhẹ (session, nhóm, outbox): không để 1 request treo chặn cả hàng đợi/vòng poll. */
 const SHORT_TIMEOUT_MS = 30000;
+/** Làn nhanh (/huy, lệnh chỉ đọc không gọi AI): Python trả lời ngay, không chờ khoá lượt. */
+export const FAST_LANE_TIMEOUT_MS = 30000;
+/** Câu báo dựng sẵn (POST /notice): chỉ đọc DB, không được làm chậm lượt. */
+const NOTICE_TIMEOUT_MS = 5000;
 /** Lỗi HTTP từ Python, giữ mã trạng thái để nơi gọi phân loại (4xx bỏ / 5xx thử lại). */
 export class BridgeHttpError extends Error {
   constructor(
@@ -123,7 +140,15 @@ export async function clearController(c: GatewayConfig) {
     "Controller clear",
   );
 }
-export async function callBridge(c: GatewayConfig, m: IncomingDirectMessage) {
+/**
+ * POST /message: 1 lượt chat. `timeoutMs` ngắn cho làn nhanh (FAST_LANE_TIMEOUT_MS).
+ * quote_text chỉ gửi khi có (Python cũ không biết trường này vẫn chạy).
+ */
+export async function callBridge(
+  c: GatewayConfig,
+  m: IncomingDirectMessage,
+  timeoutMs = BRIDGE_TIMEOUT_MS,
+) {
   return (await (
     await ok(
       await fetch(`${c.bridgeBaseUrl}/message`, {
@@ -136,12 +161,36 @@ export async function callBridge(c: GatewayConfig, m: IncomingDirectMessage) {
           conversation_id: m.conversationId,
           message_id: m.messageId,
           text: m.text,
+          ...(m.quoteText ? { quote_text: m.quoteText } : {}),
         }),
-        signal: AbortSignal.timeout(BRIDGE_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       }),
       "Bridge",
     )
   ).json()) as BridgeResponse;
+}
+/** Gửi raw bytes (không base64) kèm header x-zalo-* tới 1 endpoint media của Python. */
+async function callMediaBridge(
+  c: GatewayConfig,
+  path: string,
+  label: string,
+  mime: string,
+  data: Uint8Array,
+  headers: Record<string, string>,
+) {
+  const body = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  const r = await fetch(`${c.bridgeBaseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": mime,
+      "x-zalo-bridge-secret": c.bridgeSecret,
+      "x-zalo-account-id": c.accountId,
+      ...headers,
+    },
+    body,
+    signal: AbortSignal.timeout(BRIDGE_TIMEOUT_MS),
+  });
+  return (await (await ok(r, label)).json()) as BridgeResponse;
 }
 export async function callImageBridge(
   c: GatewayConfig,
@@ -151,24 +200,76 @@ export async function callImageBridge(
   mime: string,
   image: Uint8Array,
 ) {
-  const body = image.buffer.slice(
-    image.byteOffset,
-    image.byteOffset + image.byteLength,
-  ) as ArrayBuffer;
-  const r = await fetch(`${c.bridgeBaseUrl}/image-prompt`, {
-    method: "POST",
-    headers: {
-      "content-type": mime,
-      "x-zalo-bridge-secret": c.bridgeSecret,
-      "x-zalo-account-id": c.accountId,
-      "x-zalo-sender-id": senderId,
-      "x-zalo-message-id": messageId,
-      "x-zalo-caption": encodeURIComponent(caption.slice(0, 500)),
-    },
-    body,
-    signal: AbortSignal.timeout(BRIDGE_TIMEOUT_MS),
+  return callMediaBridge(c, "/image-prompt", "Image bridge", mime, image, {
+    "x-zalo-sender-id": senderId,
+    "x-zalo-message-id": messageId,
+    "x-zalo-caption": encodeURIComponent(caption.slice(0, 500)),
   });
-  return (await (await ok(r, "Image bridge")).json()) as BridgeResponse;
+}
+/** POST /voice (channels/zalo_media.py): messages[0] là câu "Em nghe là: ...". */
+export async function callVoiceBridge(
+  c: GatewayConfig,
+  senderId: string,
+  messageId: string,
+  mime: string,
+  audio: Uint8Array,
+  durationMs: number | null,
+) {
+  return callMediaBridge(c, "/voice", "Voice bridge", mime, audio, {
+    "x-zalo-sender-id": senderId,
+    "x-zalo-message-id": messageId,
+    ...(durationMs ? { "x-zalo-duration-ms": String(durationMs) } : {}),
+  });
+}
+/** POST /file (channels/zalo_media.py): PDF/DOCX/TXT, không caption = tóm tắt. */
+export async function callFileBridge(
+  c: GatewayConfig,
+  senderId: string,
+  messageId: string,
+  fileName: string,
+  caption: string,
+  mime: string,
+  data: Uint8Array,
+) {
+  return callMediaBridge(c, "/file", "File bridge", mime, data, {
+    "x-zalo-sender-id": senderId,
+    "x-zalo-message-id": messageId,
+    "x-zalo-file-name": encodeURIComponent(fileName.slice(0, 200)),
+    ...(caption ? { "x-zalo-caption": encodeURIComponent(caption.slice(0, 500)) } : {}),
+  });
+}
+/**
+ * Loại câu báo gateway xin Python dựng sẵn (channels/zalo_media.py POST /notice):
+ * ảnh đã nhận (trước lượt viết prompt/xem ảnh), tin thoại/file không tải được
+ * hoặc quá lớn, loại tin chưa hỗ trợ.
+ */
+export type NoticeKind =
+  | "image"
+  | "voice_failed"
+  | "voice_too_large"
+  | "file_failed"
+  | "file_too_large"
+  | "file_unsupported"
+  | "video"
+  | "location";
+/**
+ * Câu báo giọng Lan Anh theo đúng cách gọi riêng của người gửi; null = người lạ
+ * chưa pair hoặc bị khoá (gateway im lặng). Lỗi/timeout -> ném (nơi gọi dùng câu
+ * trung tính dự phòng cho người quen).
+ */
+export async function fetchNotice(c: GatewayConfig, senderId: string, kind: NoticeKind) {
+  const r = (await (
+    await ok(
+      await fetch(`${c.bridgeBaseUrl}/notice`, {
+        method: "POST",
+        headers: h(c),
+        body: JSON.stringify({ account_id: c.accountId, sender_id: senderId, kind }),
+        signal: AbortSignal.timeout(NOTICE_TIMEOUT_MS),
+      }),
+      "Notice",
+    )
+  ).json()) as { text?: unknown };
+  return typeof r.text === "string" && r.text.trim() ? r.text : null;
 }
 export async function fetchAllowedGroups(c: GatewayConfig) {
   const g = (await (
