@@ -19,6 +19,7 @@ from ai.timeouts import TurnTimeoutError
 from core import database as db, webhook_inbox
 from handlers import common
 from services import (
+    concurrency,
     conversation_log,
     divination_commands,
     memory_commands,
@@ -29,6 +30,7 @@ from services import (
     rag_clean_service,
     rag_service,
     reply_cache,
+    turn_control,
     usage_stats,
 )
 from services.telemetry import telemetry
@@ -144,6 +146,8 @@ HELP_TEXT = (
     "/fb\\_reset xacnhan — xóa bài Facebook đã lưu, reset ID về #1 khi có thể\n"
     "/fb\\_boloc [reset] — thống kê bộ lọc Zalo→Facebook (bài giữ/bỏ/trùng, số bài chờ)\n"
     "/fb\\_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt\n\n"
+    "/huy — dừng câu trả lời đang chạy dở; trong lúc chờ vẫn dùng được /help, /notes, /lich, "
+    "/tsh, /tuvi, /kymon, /history, /memory (tin phải chờ lượt trước được thả 👀)\n"
     "/start — lời chào; /help — hiển thị hướng dẫn này\n"
     "Trang quản trị: /admin trên URL dịch vụ (thống kê, provider, RAM, DB)."
 )
@@ -180,6 +184,14 @@ def help_chunks(text: str = HELP_TEXT, limit: int = 3500) -> list[str]:
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     for chunk in help_chunks():
         await update.message.reply_text(chunk, parse_mode="Markdown")
+
+
+@common.restricted
+async def huy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/huy - dừng phần việc AI đang chạy. Webhook xử lý /huy ở lối nhanh trước
+    inbox (handlers/turn_feedback.py); handler này cho long polling (main.py)."""
+    if not concurrency.cancel_turn(concurrency.OWNER_TURN_KEY):
+        await update.message.reply_text(turn_control.nothing_to_cancel_text(owner=True))
 
 
 @common.restricted

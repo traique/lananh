@@ -33,7 +33,7 @@ from dataclasses import dataclass
 
 from ai import orchestrator, tavily_client
 from core import config, database as db, untrusted
-from services import weather
+from services import turn_progress, weather
 
 logger = logging.getLogger(__name__)
 
@@ -494,6 +494,7 @@ async def plan_search(text: str, *, user_id: int | None = None) -> SearchPlan:
     ``_rewrite_and_expand_query``."""
     if not looks_like_search_question(text):
         return SearchPlan()
+    turn_progress.report(turn_progress.SEARCH)
     if not await tavily_client.get_enabled():
         return SearchPlan(mode="native")
     try:

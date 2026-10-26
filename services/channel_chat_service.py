@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass
 
 import messages
-from ai import orchestrator
+from ai import drafts, orchestrator
 from ai.timeouts import TurnTimeoutError, turn_deadline
 from core import address, untrusted, urls
 from services import (
@@ -30,6 +30,7 @@ from services import (
     stock_turn,
     tool_registry,
     tools,
+    turn_progress,
     web_search,
 )
 from services import channel_command_service, reply_audience
@@ -264,18 +265,24 @@ async def run_chat_turn(
                 # Đã có nội dung trang (hoặc biết chắc không đọc được): Gemini không
                 # tự tra Google chồng lên.
                 mode = orchestrator.SEARCH_OFF
-            response = await orchestrator.chat(
-                user_id,
-                text,
-                grounding=combined,
-                memory_context=memory.context,
-                require_real_search=forced,
-                search_mode=mode,
-                channel=channel,
-                is_admin=is_admin,
-                address_form=address_form,
-                style_rules=memory.style_rules,
-            )
+            # Kênh báo "em đang tra web/đang soạn..." (services/turn_progress.py).
+            searching = mode in (orchestrator.SEARCH_NATIVE, orchestrator.SEARCH_FORCED)
+            turn_progress.report(turn_progress.SEARCH if searching else turn_progress.THINK)
+            # Bản nháp chữ đang sinh (Telegram) chỉ cho chat thường: lượt có số liệu
+            # cổ phiếu còn qua bước chặn câu nói ngược policy nên không phát nháp.
+            with drafts.drafting(not grounding):
+                response = await orchestrator.chat(
+                    user_id,
+                    text,
+                    grounding=combined,
+                    memory_context=memory.context,
+                    require_real_search=forced,
+                    search_mode=mode,
+                    channel=channel,
+                    is_admin=is_admin,
+                    address_form=address_form,
+                    style_rules=memory.style_rules,
+                )
         reply = conversation_log.guard_stock_reply((response.text or "").strip(), last_row)
         searched = bool(getattr(response, "searched", False))
         untrusted_context = plan.untrusted or untrusted.contains_untrusted(combined)

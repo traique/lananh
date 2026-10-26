@@ -40,7 +40,7 @@ from core import config, urls
 from core import database as db
 from core.text_normalize import fold, nfc
 from core.text_utils import strip_json_fence
-from services import lunar, weather
+from services import lunar, turn_progress, weather
 from services import tool_registry as reg
 from services.reminder_delivery import current_target
 from stock import analysis as stock_analysis
@@ -1039,4 +1039,5 @@ async def _route_and_run(
     args = data.get("args") or {}
     if not isinstance(args, dict):
         args = {}
+    turn_progress.report_tool(tool_name)  # "em đang lục tài liệu..." (Telegram)
     return await execute(spec, user_id, args, allow_side_effects=allow_side_effects, intent=intent)

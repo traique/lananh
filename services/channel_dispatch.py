@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from services import concurrency, turn_control
 from services.channel_result import ChannelResult
 from services.concurrency import assistant_turn
 
@@ -85,6 +86,15 @@ def payload_from_result(result: ChannelResult, chunk, rich_chunk=None) -> dict[s
     return {"messages": messages, **payload, "styles": styles if any(styles) else None}
 
 
+async def _chat(h: DispatchHandlers, req: DispatchRequest, text: str) -> ChannelResult:
+    # Chữ ký như handle_channel_text(user_id, text, is_admin) cũ của Zalo; kênh
+    # khác bọc lambda để truyền channel=. quote_text chỉ thêm khi có (handler
+    # cũ/giả lập không nhận tham số này vẫn chạy).
+    if req.quote_text:
+        return await h.chat(req.user_id, text, req.is_admin, quote_text=req.quote_text)
+    return await h.chat(req.user_id, text, req.is_admin)
+
+
 async def dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]:
     """Trả payload đã cache được: {messages, provider, image_b64, image_url}."""
     cached = await h.get_cached(req.account_id, req.event_id, req.cache_kind)
@@ -99,6 +109,11 @@ async def dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]:
     # MAX_CONCURRENT_TURNS.
     if req.is_admin and req.command_account_id and h.facebook is not None:
         result = await h.facebook(req.command_account_id, text)
+    # Lệnh chỉ đọc, không AI (/help, /notes, /lich...): cũng chạy ngoài khoá lượt
+    # để dùng được trong lúc lượt dài của chính người đó đang chạy
+    # (services/turn_control.py).
+    if result is None and turn_control.is_readonly(text):
+        result = await _chat(h, req, text)
 
     if result is None:
         async with h.turn(req.turn_key):
@@ -110,15 +125,15 @@ async def dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]:
             if req.is_admin and req.command_account_id and h.group is not None:
                 result = await h.group(req.command_account_id, text)
             if result is None:
-                # Chữ ký như handle_channel_text(user_id, text, is_admin) cũ của Zalo;
-                # kênh khác bọc lambda để truyền channel=. quote_text chỉ thêm khi
-                # có (handler cũ/giả lập không nhận tham số này vẫn chạy).
-                if req.quote_text:
-                    result = await h.chat(
-                        req.user_id, text, req.is_admin, quote_text=req.quote_text
+                # Task con huỷ được bằng /huy (services/concurrency.py). Bị huỷ thì
+                # trả câu "em dừng rồi" như 1 kết quả bình thường: cache vẫn ghi để
+                # lượt gửi lại của gateway/inbox không chạy lại lượt đã huỷ.
+                try:
+                    result = await concurrency.run_cancellable(
+                        req.turn_key, lambda: _chat(h, req, text)
                     )
-                else:
-                    result = await h.chat(req.user_id, text, req.is_admin)
+                except concurrency.TurnCancelled:
+                    result = ChannelResult([await turn_control.cancelled_text_for(req.user_id)])
             payload = payload_from_result(result, h.chunk, h.rich_chunk)
             await _save_cached_best_effort(h, req, payload)
             return payload

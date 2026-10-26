@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 COMMANDS = [
     BotCommand("start", "Bắt đầu"),
     BotCommand("help", "Xem hướng dẫn"),
+    BotCommand("huy", "Dừng câu trả lời đang chạy dở"),
     BotCommand("danhmuc", "Xem danh mục cổ phiếu"),
     BotCommand("themcp", "Thêm giao dịch mua"),
     BotCommand("capnhatcp", "Cập nhật vị thế"),
@@ -232,6 +233,7 @@ def build_application():
     command_handlers = [
         ("start", commands.start_cmd),
         ("help", commands.help_cmd),
+        ("huy", commands.huy_cmd),
         ("danhmuc", portfolio_commands.portfolio_cmd),
         ("themcp", portfolio_commands.portfolio_cmd),
         ("capnhatcp", portfolio_commands.portfolio_cmd),

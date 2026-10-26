@@ -562,7 +562,17 @@ TELEGRAM_WRITE_TIMEOUT = float(os.getenv("TELEGRAM_WRITE_TIMEOUT", "90"))
 TELEGRAM_POOL_TIMEOUT = float(os.getenv("TELEGRAM_POOL_TIMEOUT", "30"))
 TELEGRAM_MEDIA_RETRIES = int(os.getenv("TELEGRAM_MEDIA_RETRIES", "3"))
 
-# ─── Định dạng câu trả lời Telegram (tg_format.py) ───────────────────────────
+# ─── Trải nghiệm Telegram (handlers/turn_feedback.py, tg_format.py) ──────────
+# Lượt chat chạy quá chừng này giây thì gửi 1 dòng trạng thái giọng Lan Anh (câu
+# trả lời sửa đè lên đúng dòng đó); 0 = không gửi.
+TELEGRAM_STATUS_DELAY_SEC = max(0, min(60, _env_int("TELEGRAM_STATUS_DELAY_SEC", 7)))
+# Thả 👀 lên tin phải xếp hàng sau lượt đang chạy, xong đổi 👌 (lỗi 😢).
+TELEGRAM_BUSY_REACTIONS = _env_bool("TELEGRAM_BUSY_REACTIONS", True)
+# Nút 👍/👎/🔄 Thử lại/✂️ Ngắn hơn dưới câu trả lời chat (chỉ câu mới nhất giữ nút).
+TELEGRAM_ANSWER_BUTTONS = _env_bool("TELEGRAM_ANSWER_BUTTONS", True)
+# Hiện chữ đang sinh dần bằng bản nháp (sendMessageDraft) cho lượt chat thường;
+# tin cuối vẫn là bản đã lọc link/kiểm policy. Mặc định tắt.
+TELEGRAM_STREAM_DRAFTS = _env_bool("TELEGRAM_STREAM_DRAFTS", False)
 # Gửi câu trả lời bằng tin "rich" gốc (Bot API 10.1: tiêu đề, bảng, khối code do
 # Telegram dựng); bị từ chối thì quay về HTML. Mặc định tắt tới khi chủ bot thấy
 # app của mình hiển thị ổn.

@@ -18,6 +18,8 @@ from typing import Any, Awaitable, Callable, Optional
 
 import httpx
 
+from ai import drafts
+
 logger = logging.getLogger(__name__)
 
 
@@ -360,20 +362,26 @@ async def post_chat_completion(
     if extra_payload:
         payload.update(extra_payload)
     try:
-        response = await client.post(
-            f"{base_url.rstrip('/')}/chat/completions",
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "")
-        if "text/event-stream" in content_type or response.text.lstrip().startswith("data:"):
-            text = parse_sse_content(response.text)
-        else:
-            completion_payload = response.json()
-            text = ((completion_payload.get("choices") or [{}])[0].get("message") or {}).get(
-                "content", ""
+        if drafts.partial_sink() is not None:
+            # Lượt chat có bản nháp Telegram (ai/drafts.py): đọc SSE theo dòng.
+            text = await _post_streaming_text(
+                client, f"{base_url.rstrip('/')}/chat/completions", headers, payload
             )
+        else:
+            response = await client.post(
+                f"{base_url.rstrip('/')}/chat/completions",
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if "text/event-stream" in content_type or response.text.lstrip().startswith("data:"):
+                text = parse_sse_content(response.text)
+            else:
+                completion_payload = response.json()
+                text = ((completion_payload.get("choices") or [{}])[0].get("message") or {}).get(
+                    "content", ""
+                )
     except httpx.HTTPStatusError as exc:
         raise _http_error(provider_label, exc) from exc
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
@@ -381,6 +389,58 @@ async def post_chat_completion(
     if not text:
         raise OpenAICompatibleError(f"{provider_label} trả kết quả rỗng")
     return text.strip()
+
+
+def _delta_text(line: str) -> str:
+    """Chữ delta của 1 dòng SSE "data: {...}" (rỗng nếu không có)."""
+    payload = line[len("data:") :].strip()
+    if not payload or payload == "[DONE]":
+        return ""
+    try:
+        chunk = json.loads(payload)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(chunk, dict):
+        return ""
+    pieces = []
+    for choice in chunk.get("choices") or []:
+        content = (choice.get("delta") or {}).get("content") or (choice.get("message") or {}).get(
+            "content"
+        )
+        if content:
+            pieces.append(str(content))
+    return "".join(pieces)
+
+
+async def _post_streaming_text(
+    client: httpx.AsyncClient, url: str, headers: dict[str, str], payload: dict[str, Any]
+) -> str:
+    """Như nhánh SSE của post_chat_completion nhưng đọc từng dòng và đẩy chữ đã
+    gom vào bản nháp (ai/drafts.push). Chữ trả về gom lại bằng CÙNG hàm
+    _parse_sse_stream để kết quả cuối giống hệt đường đọc 1 lần."""
+    async with client.stream("POST", url, headers=headers, json=payload) as response:
+        if response.status_code >= 400:
+            await response.aread()
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        if "text/event-stream" not in content_type:
+            body = (await response.aread()).decode("utf-8", errors="replace")
+            if body.lstrip().startswith("data:"):
+                return parse_sse_content(body)
+            completion = json.loads(body)
+            return ((completion.get("choices") or [{}])[0].get("message") or {}).get("content", "")
+        lines: list[str] = []
+        pieces: list[str] = []
+        async for raw_line in response.aiter_lines():
+            line = raw_line.strip()
+            if not line.startswith("data:"):
+                continue
+            lines.append(line)
+            delta = _delta_text(line)
+            if delta:
+                pieces.append(delta)
+                drafts.push("".join(pieces))
+    return parse_sse_content("\n".join(lines))
 
 
 def _http_error(provider_label: str, exc: httpx.HTTPStatusError) -> OpenAICompatibleError:

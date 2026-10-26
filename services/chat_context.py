@@ -190,8 +190,9 @@ async def read_link(user_id: int, text: str, *, allowed: bool) -> PageContext:
             return PageContext()
         cached_url, block = cached
         return PageContext(grounding=block, url=cached_url, read_ok=True)
-    from services import web_reader
+    from services import turn_progress, web_reader
 
+    turn_progress.report(turn_progress.READ)
     try:
         page = await asyncio.wait_for(web_reader.read_url(url), _read_timeout())
     except (web_reader.WebReaderError, TimeoutError) as exc:

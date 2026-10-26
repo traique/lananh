@@ -81,6 +81,14 @@ services:
         value: "30"
       - key: TELEGRAM_MEDIA_RETRIES
         value: "3"
+      - key: TELEGRAM_STATUS_DELAY_SEC
+        value: "7"
+      - key: TELEGRAM_BUSY_REACTIONS
+        value: "true"
+      - key: TELEGRAM_ANSWER_BUTTONS
+        value: "true"
+      - key: TELEGRAM_STREAM_DRAFTS
+        value: "false"
       - key: TELEGRAM_RICH_MESSAGES
         value: "false"
       # Fine-grained GitHub token: chỉ cấp repo này + Contents: write.

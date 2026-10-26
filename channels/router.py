@@ -29,13 +29,19 @@ from channels.group_commands import maybe_handle_group_command
 from channels.zalo_text import to_plain_text, zalo_rich_chunks
 from core import alerts, idempotency
 from core.envutil import env_on
-from services import channel_dispatch, reply_audience
+from services import channel_dispatch, reply_audience, turn_control
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.channel_image_service import MAX_ZALO_IMAGE_BYTES, handle_channel_image
 from services import facebook_dedup, facebook_intake_stats
 from services.facebook_caption import skip_reason
 from services.facebook_image import compact_image, image_dhash
-from services.concurrency import assistant_turn, channel_message_turn
+from services.concurrency import (
+    TurnCancelled,
+    assistant_turn,
+    cancel_turn,
+    channel_message_turn,
+    run_cancellable,
+)
 from services.reminder_delivery import NotificationTarget, notification_target
 
 logger = logging.getLogger(__name__)
@@ -339,36 +345,48 @@ async def _receive_text(payload: ZaloMessageRequest):
         return ZaloMessageResponse(messages=[], provider=None)
     if not zalo_user.is_active:
         return ZaloMessageResponse(messages=[messages_module.ZALO_LOCKED_REPLY], provider=None)
+    audience = _audience(zalo_user, payload.sender_id)
+    turn_key = f"zalo:{zalo_user.internal_user_id}"
+    if turn_control.is_cancel(payload.text):
+        # /huy: gateway gửi NGOÀI hàng đợi theo người gửi; huỷ phần việc AI đang
+        # chạy của CHÍNH người này mà không lấy khoá lượt. Lượt bị huỷ tự trả lời
+        # "em dừng rồi" qua response của nó.
+        with reply_audience.use(audience):
+            if cancel_turn(turn_key):
+                return ZaloMessageResponse(messages=[], provider=None)
+            text = await turn_control.nothing_to_cancel_for(zalo_user.internal_user_id)
+        return ZaloMessageResponse(messages=[text], provider=None)
 
     # user_id RIÊNG cho từng external_id (zalo_user.internal_user_id) - KHÔNG
     # dùng config.ALLOWED_USER_ID, để cách ly hoàn toàn ngữ cảnh chat/trí nhớ
     # giữa từng người nhắn Zalo và giữa họ với chủ bot Telegram. Xem docstring
     # channels/zalo_users.py. Chuỗi cache -> /fb_* -> khoá lượt -> lệnh nhóm ->
     # chat dùng chung với Zoom (services/channel_dispatch.py).
-    payload_dict = await channel_dispatch.dispatch(
-        channel_dispatch.DispatchRequest(
-            account_id=payload.account_id,
-            event_id=payload.message_id,
-            cache_kind="text",
-            user_id=zalo_user.internal_user_id,
-            is_admin=zalo_user.is_admin,
-            channel="zalo",
-            text=payload.text,
-            turn_key=f"zalo:{zalo_user.internal_user_id}",
-            command_account_id=payload.account_id,
-            quote_text=payload.quote_text,
-        ),
-        channel_dispatch.DispatchHandlers(
-            chat=_chat_for(zalo_user, payload.sender_id),
-            get_cached=idempotency.get_zalo_response,
-            save_cached=idempotency.save_zalo_response,
-            facebook=maybe_handle_facebook_command,
-            group=maybe_handle_group_command,
-            chunk=_zalo_chunks,
-            rich_chunk=zalo_rich_chunks,
-            turn=assistant_turn,
-        ),
-    )
+    with reply_audience.use(audience):  # câu "em dừng rồi" theo cách gọi riêng
+        payload_dict = await channel_dispatch.dispatch(
+            channel_dispatch.DispatchRequest(
+                account_id=payload.account_id,
+                event_id=payload.message_id,
+                cache_kind="text",
+                user_id=zalo_user.internal_user_id,
+                is_admin=zalo_user.is_admin,
+                channel="zalo",
+                text=payload.text,
+                turn_key=turn_key,
+                command_account_id=payload.account_id,
+                quote_text=payload.quote_text,
+            ),
+            channel_dispatch.DispatchHandlers(
+                chat=_chat_for(zalo_user, payload.sender_id),
+                get_cached=idempotency.get_zalo_response,
+                save_cached=idempotency.save_zalo_response,
+                facebook=maybe_handle_facebook_command,
+                group=maybe_handle_group_command,
+                chunk=_zalo_chunks,
+                rich_chunk=zalo_rich_chunks,
+                turn=assistant_turn,
+            ),
+        )
     return ZaloMessageResponse.model_validate(payload_dict)
 
 
@@ -408,13 +426,20 @@ async def image_prompt(
         if cached is not None:
             return ZaloMessageResponse.model_validate(cached)
         with reply_audience.use(_audience(zalo_user, x_zalo_sender_id)):
-            messages, provider = await handle_channel_image(
-                zalo_user.internal_user_id,
-                body,
-                request.headers.get("content-type", ""),
-                unquote(x_zalo_caption)[:500],
-                x_zalo_message_id,
-            )
+            try:
+                messages, provider = await run_cancellable(
+                    f"zalo:{zalo_user.internal_user_id}",
+                    lambda: handle_channel_image(
+                        zalo_user.internal_user_id,
+                        body,
+                        request.headers.get("content-type", ""),
+                        unquote(x_zalo_caption)[:500],
+                        x_zalo_message_id,
+                    ),
+                )
+            except TurnCancelled:
+                messages = [await turn_control.cancelled_text_for(zalo_user.internal_user_id)]
+                provider = None
         response = ZaloMessageResponse(
             messages=_zalo_chunks(messages),
             provider=provider,

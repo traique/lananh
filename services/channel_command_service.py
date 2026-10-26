@@ -20,7 +20,7 @@ from services import (
     translate_service,
     usage_stats,
 )
-from services import daily_commands, expense_service, reminder_commands
+from services import daily_commands, expense_service, reminder_commands, turn_control
 from services.telemetry import telemetry
 
 # /help theo vai trò: thành viên Zalo chỉ thấy lệnh mình dùng được (không có
@@ -122,7 +122,10 @@ _HELP_FACEBOOK = """📣 Zalo → Facebook Page (tách riêng khỏi /tongket, c
 /fb_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt
 /fb_boloc [reset] — thống kê bộ lọc: bao nhiêu bài vào hàng chờ, bị bỏ/trùng vì sao, số bài đang chờ
 (hàng chờ giữ tối đa 150 bài, bài trùng trong 7 ngày không được đưa vào)"""
-_HELP_FOOTER = "/help — hiển thị hướng dẫn này"
+_HELP_FOOTER = (
+    "/huy — dừng câu trả lời đang chạy dở (trong lúc chờ vẫn dùng được /help, /notes, "
+    "/lich, /tsh, /tuvi, /kymon, /history)\n/help — hiển thị hướng dẫn này"
+)
 
 HELP_MEMBER = "\n\n".join((_HELP_INTRO_MEMBER, _HELP_COMMON, _HELP_FOOTER))
 HELP_ADMIN = "\n\n".join(
@@ -427,6 +430,10 @@ async def maybe_handle_command(
 
     if command in {"/start", "/help"}:
         return [HELP_ADMIN if is_admin else HELP_MEMBER], None
+    if command == "/huy":
+        # /huy thật được xử lý TRƯỚC khoá lượt (bridge Zalo, webhook Zoom); tới
+        # được đây nghĩa là không còn việc gì đang chạy để dừng.
+        return [await turn_control.nothing_to_cancel_for(user_id)], None
     # /lich, /tsh, /tuvi, /kymon: tính bằng code (không AI); *_chitiet mới gọi AI.
     divination = await divination_commands.handle(command, argument, user_id, channel)
     if divination is not None:
