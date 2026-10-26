@@ -279,7 +279,15 @@ def _github_repo_path(path: Path) -> str:
     return (Path("rag") / relative).as_posix()
 
 
-async def _sync_cleaned_to_github(path: Path, cleaned: str) -> tuple[bool, str]:
+async def sync_file_to_github(path: Path, content: str, *, action: str) -> tuple[bool, str]:
+    """Commit 1 file trong rag/ lên GitHub (cùng cơ chế /ragxuly) - dùng cho "lưu
+    vào kho" tài liệu chủ bot gửi (services/document_service.py)."""
+    return await _sync_cleaned_to_github(path, content, message_prefix=action)
+
+
+async def _sync_cleaned_to_github(
+    path: Path, cleaned: str, *, message_prefix: str = "ragxuly"
+) -> tuple[bool, str]:
     """Commit file đã dọn lên GitHub bằng Contents API.
 
     Không sync nếu chưa cấu hình GITHUB_RAG_TOKEN. Khi update file có sẵn,
@@ -315,7 +323,7 @@ async def _sync_cleaned_to_github(path: Path, cleaned: str) -> tuple[bool, str]:
                 return False, f"GitHub GET lỗi HTTP {current.status_code}: {detail}"
 
             body: dict[str, object] = {
-                "message": f"ragxuly: update {repo_path} [skip render]",
+                "message": f"{message_prefix}: update {repo_path} [skip render]",
                 "content": encoded,
                 "branch": branch,
             }

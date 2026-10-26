@@ -24,6 +24,7 @@ from handlers import (
     commands,
     daily_data_commands,
     expense_commands,
+    document_handler,
     media_handler,
     voice_handler,
     pairing_commands,
@@ -330,6 +331,15 @@ def build_application():
     app.add_handler(MessageHandler(filters.PHOTO, media_handler.photo_msg))
     app.add_handler(MessageHandler(filters.Document.IMAGE, media_handler.photo_msg))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, voice_handler.voice_msg))
+    app.add_handler(
+        MessageHandler(
+            filters.Document.PDF
+            | filters.Document.TXT
+            | filters.Document.DOCX
+            | filters.Document.FileExtension("md"),
+            document_handler.document_msg,
+        )
+    )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_router.chat_msg))
     app.add_handler(MessageHandler(filters.COMMAND, commands.unknown_cmd))
     app.add_error_handler(commands.error_handler)

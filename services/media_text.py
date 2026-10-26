@@ -11,7 +11,7 @@ provider hay nội dung exception.
 
 from __future__ import annotations
 
-from core import address
+from core import address, config
 from services import reply_audience
 
 
@@ -48,3 +48,13 @@ async def say_to(template: str, user_id: int, *, detail: str = "", **fields: obj
         detail=detail,
         **fields,
     )
+
+
+def persona_forms(user_id: int) -> tuple[str, str, bool]:
+    """(cách gọi, tự xưng, là chủ bot Telegram/Zoom) cho persona rút gọn của chỉ
+    dẫn ảnh/tài liệu: thành viên Zalo theo cách gọi riêng, chưa đặt thì "anh" như
+    persona mặc định (services/channel_chat_service._forms)."""
+    owner = config.is_owner_user_id(user_id)
+    form = None if owner else address.normalize(reply_audience.current().address_form)
+    you = form or "anh"
+    return you, address.self_word(you), owner

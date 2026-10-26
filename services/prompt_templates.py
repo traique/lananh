@@ -192,6 +192,13 @@ DOCUMENT_TO_MARKDOWN_INSTRUCTION = """Chép lại TOÀN BỘ nội dung chữ c�
 Chỉ trả về Markdown."""
 
 
+_DOCUMENT_STOCK_RULE = (
+    "- Tài liệu có khuyến nghị cổ phiếu (mua/bán, giá mục tiêu...) thì nói rõ đó là ý kiến "
+    "của tài liệu; KHÔNG tự đưa khuyến nghị, vùng mua, điểm cắt lỗ hay tỷ trọng của riêng "
+    'mình - khuyến nghị của hệ thống chỉ có ở báo cáo "phân tích <MÃ>".'
+)
+
+
 def media_persona(you: str, me: str) -> str:
     return MEDIA_PERSONA.format(you=you, me=me)
 
@@ -232,5 +239,6 @@ def build_document_instruction(
         filename=filename,
         question=question,
         document_block=f"\n\n{document_block}" if document_block else "",
-        **_media_rules("tài liệu"),
+        safety_rule=_MEDIA_SAFETY_RULE.format(source="tài liệu"),
+        stock_rule=_DOCUMENT_STOCK_RULE,
     )

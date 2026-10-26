@@ -18,11 +18,25 @@ POST /internal/zalo/voice
     trả:     ZaloMessageResponse {"messages": [...], "provider": null|"api",
              "image_b64": null}; messages[0] là "🎙️ Em nghe là: «...»" (hoặc câu
              báo lỗi giọng Lan Anh), các tin sau là câu trả lời. Cache kind "voice".
+
+POST /internal/zalo/file
+    headers: x-zalo-bridge-secret, x-zalo-sender-id, x-zalo-message-id,
+             x-zalo-account-id (mặc định "zalo-bot"),
+             x-zalo-file-name (encodeURIComponent, vd "hop-dong.pdf"),
+             x-zalo-caption (encodeURIComponent, tuỳ chọn - câu hỏi kèm file),
+             content-type: application/pdf | text/plain | text/markdown |
+             application/vnd.openxmlformats-officedocument.wordprocessingml.document
+    body:    file (nhận theo magic bytes + đuôi), tối đa DOCUMENT_MAX_BYTES (5 MB)
+    trả:     ZaloMessageResponse; messages là câu trả lời về tài liệu (không
+             caption = tóm tắt) hoặc câu báo lỗi/định dạng chưa hỗ trợ. Cache kind
+             "file". "lưu vào kho" từ Zalo luôn bị từ chối (chỉ chủ bot trên
+             Telegram) nhưng vẫn trả lời về tài liệu.
 """
 
 from __future__ import annotations
 
 import logging
+from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
@@ -31,7 +45,7 @@ from channels import zalo_users
 from channels.contracts import ZaloMessageResponse
 from channels.router import _audience, _auth_sender, _require_local_caller, _zalo_chunks
 from core import idempotency
-from services import reply_audience, voice_service
+from services import document_service, reply_audience, voice_service
 from services.concurrency import assistant_turn
 
 logger = logging.getLogger(__name__)
@@ -109,5 +123,41 @@ async def voice(
         response = ZaloMessageResponse(messages=_zalo_chunks(replies), provider=provider)
         await idempotency.save_zalo_response(
             x_zalo_account_id, x_zalo_message_id, "voice", response.model_dump()
+        )
+        return response
+
+
+@router.post("/file", response_model=ZaloMessageResponse)
+async def document_file(
+    request: Request,
+    x_zalo_bridge_secret: str | None = Header(default=None),
+    x_zalo_sender_id: str = Header(),
+    x_zalo_message_id: str = Header(),
+    x_zalo_account_id: str = Header(default="zalo-bot"),
+    x_zalo_file_name: str = Header(default=""),
+    x_zalo_caption: str = Header(default=""),
+):
+    await _auth_sender(x_zalo_bridge_secret, x_zalo_sender_id)
+    body = await _read_capped_body(request, document_service.max_bytes(), "File")
+    zalo_user, early = await _resolve_sender(x_zalo_sender_id)
+    if zalo_user is None:
+        return early
+    async with assistant_turn(f"zalo:{zalo_user.internal_user_id}"):
+        cached = await idempotency.get_zalo_response(x_zalo_account_id, x_zalo_message_id, "file")
+        if cached is not None:
+            return ZaloMessageResponse.model_validate(cached)
+        with reply_audience.use(_audience(zalo_user, x_zalo_sender_id)):
+            replies, provider = await document_service.handle_channel_file(
+                zalo_user.internal_user_id,
+                body,
+                filename=unquote(x_zalo_file_name)[:200],
+                content_type=request.headers.get("content-type", ""),
+                caption=unquote(x_zalo_caption)[:500],
+                message_id=x_zalo_message_id,
+            )
+        del body
+        response = ZaloMessageResponse(messages=_zalo_chunks(replies), provider=provider)
+        await idempotency.save_zalo_response(
+            x_zalo_account_id, x_zalo_message_id, "file", response.model_dump()
         )
         return response

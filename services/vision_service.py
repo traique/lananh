@@ -31,7 +31,6 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 
 from ai import official_client, orchestrator
-from core import address, config
 from core.envutil import env_on
 from core.text_normalize import fold, nfc
 from services import conversation_log, media_text, reply_audience
@@ -204,14 +203,6 @@ class VisionAnswer:
 _DESCRIBE_TIP = '(Muốn {ai} viết prompt tạo ảnh từ ảnh này thì gửi lại kèm chữ "prompt" nha{tail}.)'
 
 
-def _persona_forms(user_id: int) -> tuple[str, str, bool]:
-    """(cách gọi, tự xưng, là chủ bot Telegram/Zoom) cho persona rút gọn."""
-    owner = config.is_owner_user_id(user_id)
-    form = None if owner else address.normalize(reply_audience.current().address_form)
-    you = form or "anh"
-    return you, address.self_word(you), owner
-
-
 async def answer(
     user_id: int,
     image_path: str,
@@ -222,7 +213,7 @@ async def answer(
 ) -> VisionAnswer:
     """Hỏi đáp 1 ảnh, lưu lịch sử. Raise khi provider-chain lỗi (nơi gọi trả câu
     lỗi giọng Lan Anh); câu trả lời rỗng -> VisionAnswer("")."""
-    you, me, owner = _persona_forms(user_id)
+    you, me, owner = media_text.persona_forms(user_id)
     question = intent.question or DEFAULT_DESCRIBE_QUESTION
     instruction = build_vision_instruction(
         question,
