@@ -931,3 +931,53 @@ async def test_purchase_with_unconfirmed_event_records_and_warns(delivery_db, mo
     # Sau lệnh này mốc giá vốn đã qua GDKHQ -> sự kiện không còn được phát hiện:
     # phải báo ngay để anh đối chiếu CTCK.
     assert "GDKHQ 20/10" in reply and "/capnhatcp HPG" in reply
+
+
+@pytest.mark.asyncio
+async def test_grouped_event_notice_counts_one_message_toward_zalo_cap(delivery_db, monkeypatch):
+    """1 tin gộp 5 sự kiện chỉ tính 1/5 trần tin Zalo/ngày - cảnh báo giá của
+    thành viên trong ngày vẫn gửi được; mục đã gộp không bị gửi lại."""
+    from datetime import date
+
+    from channels import zalo_repository
+    from services import portfolio_events as pe
+    from services import portfolio_push
+    from stock import vci_direct
+
+    monkeypatch.setenv("PORTFOLIO_PUSH_ZALO_DAILY_CAP", "5")
+    outbox = []
+
+    async def recipient(user_id):
+        return "z5"
+
+    async def account():
+        return "acc"
+
+    async def enqueue(account_id, to, text):
+        outbox.append(text)
+
+    def ev(symbol, code, day):
+        return vci_direct.UpcomingEvent(symbol, code, "", day, "", "", None)
+
+    events = {
+        "VNM": [ev("VNM", "DIV", "2026-10-27"), ev("VNM", "AGME", "2026-10-28")],
+        "FPT": [ev("FPT", "DIV", "2026-10-27"), ev("FPT", "ISS", "2026-10-28")],
+        "HPG": [ev("HPG", "EGME", "2026-10-27")],
+    }
+
+    async def fetch(symbol):
+        return events.get(symbol, [])
+
+    monkeypatch.setattr(portfolio_push, "_zalo_recipient", recipient)
+    monkeypatch.setattr(zalo_repository, "resolve_active_account_id", account)
+    monkeypatch.setattr(zalo_repository, "enqueue_outbox", enqueue)
+    monkeypatch.setattr(pe, "_fetch_events", fetch)
+    holdings = [portfolio.Holding(-5, s, 100, 50_000) for s in ("VNM", "FPT", "HPG")]
+    today = date(2026, 10, 26)
+    assert await pe.send_event_notices(holdings, today) == 1
+    assert await db.portfolio_count_alerts_on(-5, "2026-10-26") == 1
+    assert await pe.send_event_notices(holdings, today) == 0  # không gửi lại mục đã gộp
+    assert await portfolio_push.deliver(
+        -5, "🔔 HPG chạm 25.000đ", kind="price", ref_key="7", today="2026-10-26"
+    )
+    assert len(outbox) == 2

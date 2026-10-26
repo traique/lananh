@@ -120,7 +120,7 @@ async def test_gom_mot_tin_moi_nguoi_moi_su_kien_mot_lan(monkeypatch):
     assert await pe.send_event_notices(holdings, TODAY) == 1
     (user_id, text) = delivered[0]
     assert user_id == 42 and "VNM" in text and "FPT" in text
-    assert (42, "event", "FPT:AGME:2026-10-27") in logged
+    assert (42, pe.GROUPED_EVENT_KIND, "FPT:AGME:2026-10-27") in logged
     # Lần chạy sau (hôm sau/restart): không gửi lại.
     assert await pe.send_event_notices(holdings, TODAY) == 0
 

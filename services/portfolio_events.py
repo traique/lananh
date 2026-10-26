@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 from core import database as db
 from core import trace
+from core.repositories.portfolio import GROUPED_EVENT_KIND
 from core.envutil import env_int, env_on
 from services import portfolio_push
 from stock import calendar as trading_calendar
@@ -206,6 +207,14 @@ async def _fetch_events(symbol: str) -> list[vci_direct.UpcomingEvent]:
         return []
 
 
+async def _event_sent(user_id: int, ref: str) -> bool:
+    """Sự kiện đã báo chưa - là mục đầu của 1 tin ("event") hoặc mục gộp."""
+    for kind in ("event", GROUPED_EVENT_KIND):
+        if await portfolio_push.already_sent(user_id, kind, ref):
+            return True
+    return False
+
+
 async def send_event_notices(holdings: list[portfolio.Holding], today: date) -> int:
     """Gom sự kiện sắp tới của các mã mỗi người đang giữ thành 1 tin/người; trả
     số tin đã gửi."""
@@ -228,7 +237,7 @@ async def send_event_notices(holdings: list[portfolio.Holding], today: date) -> 
         for holding in user_holdings:
             for event in events_by_symbol.get(holding.symbol, []):
                 ref = event_ref(event)
-                if ref in refs or await portfolio_push.already_sent(user_id, "event", ref):
+                if ref in refs or await _event_sent(user_id, ref):
                     continue
                 lines.append(describe_event(event, today))
                 refs.append(ref)
@@ -245,7 +254,8 @@ async def send_event_notices(holdings: list[portfolio.Holding], today: date) -> 
         ):
             sent += 1
             for ref in refs[1:]:
-                await portfolio_push.mark_sent(user_id, "event", ref, today_iso)
+                # Loại riêng: trần tin Zalo/ngày chỉ đếm tin thật, không đếm mục gộp.
+                await portfolio_push.mark_sent(user_id, GROUPED_EVENT_KIND, ref, today_iso)
     return sent
 
 

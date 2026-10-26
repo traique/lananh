@@ -9,7 +9,8 @@ quyền) tới đúng người sở hữu dữ liệu.
   chủ động qua zca-js làm tăng rủi ro tài khoản bị khoá.
 
 Mỗi lượt gửi thành công được ghi stock_alert_log (kind, ref_key, ngày VN) - vừa
-chống gửi trùng qua restart/redeploy, vừa là bộ đếm trần mỗi ngày cho Zalo.
+chống gửi trùng qua restart/redeploy, vừa là bộ đếm trần mỗi ngày cho Zalo. Mục
+phụ trong 1 tin gộp (mark_sent) ghi loại riêng "event_grouped", không tính trần.
 Không có lời gọi AI nào ở đây (không cần khoá lượt/hạn chót).
 """
 
@@ -48,7 +49,9 @@ async def already_sent(user_id: int, kind: str, ref_key: str, *, on: str | None 
 
 
 async def mark_sent(user_id: int, kind: str, ref_key: str, today: str) -> None:
-    """Ghi nhật ký cho mục đã nằm trong 1 tin gộp vừa gửi (không gửi thêm gì)."""
+    """Ghi nhật ký cho mục đã nằm trong 1 tin gộp vừa gửi (không gửi thêm gì).
+    Caller dùng ``kind`` riêng cho mục gộp (vd "event_grouped") để bộ đếm trần tin
+    Zalo/ngày (count_alerts_on) chỉ đếm tin thật."""
     try:
         await db.portfolio_log_alert(user_id, kind, ref_key[:200], today)
     except Exception:

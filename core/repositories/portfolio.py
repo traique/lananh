@@ -704,13 +704,19 @@ async def log_alert(pool: Any, user_id: int, kind: str, ref_key: str, sent_on: s
     )
 
 
+# Mục nằm trong 1 tin gộp đã gửi (dòng nhật ký thêm, không phải tin riêng).
+GROUPED_EVENT_KIND = "event_grouped"
+
+
 async def count_alerts_on(pool: Any, user_id: int, sent_on: str) -> int:
+    """Số TIN đã gửi cho user trong ngày (trần tin Zalo/ngày) - không đếm mục gộp."""
     return int(
         await pool.fetchval(
             "SELECT COUNT(*) FROM stock_alert_log WHERE telegram_user_id = $1 "
-            "AND sent_on = ($2::text)::date",
+            "AND sent_on = ($2::text)::date AND kind <> $3",
             user_id,
             sent_on,
+            GROUPED_EVENT_KIND,
         )
         or 0
     )
