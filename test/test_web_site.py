@@ -605,3 +605,16 @@ def test_trang_chu_co_dai_12_gio():
         len(re.findall(r'class="hour[ "]', html)) == 12 and html.count('aria-current="time"') == 1
     )
     assert 'href="/" aria-current="page"' in html  # mục Hôm nay trên thanh bên
+
+
+def test_trang_chu_va_admin_co_link_ky_mon():
+    from pathlib import Path
+
+    html = bytes(web_site.home_page().body).decode()
+    assert 'href="/ky-mon"' in html and 'id="kymon-title"' in html
+    assert html.index('id="tuvi-title"') < html.index('id="kymon-title"')  # cạnh Tử vi
+    admin = (Path(__file__).resolve().parent.parent / "templates" / "admin.html").read_text("utf-8")
+    nav = admin[admin.index("Công cụ web") :]
+    assert (
+        nav.index('href="/tu-vi"') < nav.index('href="/ky-mon"') < nav.index('href="/than-so-hoc"')
+    )
