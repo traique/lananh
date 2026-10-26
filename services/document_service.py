@@ -65,6 +65,9 @@ _XML_PROLOG_SCAN_BYTES = 64 * 1024
 # Lưu vào kho: trần chữ của 1 file .md trong rag/ (rag_clean_service dùng 500k).
 RAG_SAVE_MAX_CHARS = 300_000
 RAG_SAVE_SUBDIR = "tailieu"
+# Trần tổng dung lượng rag/tailieu/: kho rag/ được quét và lập chỉ mục trong RAM
+# (rag_service), không để "lưu vào kho" phình vô hạn trên máy 512 MB.
+RAG_SAVE_DIR_MAX_BYTES = 20 * _MB
 
 
 def enabled() -> bool:
@@ -82,7 +85,7 @@ def max_chars() -> int:
 
 
 class DocumentError(Exception):
-    """kind in disabled|too_big|format|broken|empty|failed|kb_denied."""
+    """kind in disabled|too_big|format|broken|empty|failed|kb_denied|kb_full."""
 
     def __init__(self, kind: str, detail: str = "") -> None:
         super().__init__(f"{kind}: {detail}" if detail else kind)
@@ -252,6 +255,9 @@ def _write_rag_file(filename: str, markdown: str) -> Path:
 
     folder = RAG_DIR / RAG_SAVE_SUBDIR
     folder.mkdir(parents=True, exist_ok=True)
+    used = sum(item.stat().st_size for item in folder.glob("*.md") if item.is_file())
+    if used + len(markdown.encode("utf-8")) > RAG_SAVE_DIR_MAX_BYTES:
+        raise DocumentError("kb_full")
     base = _slug(filename)
     path = folder / f"{base}.md"
     for index in range(2, 100):
@@ -307,6 +313,8 @@ async def save_to_kb(user_id: int, path: Path, filename: str, kind: str) -> str:
     )
     if truncated:
         sync += f"\n✂️ Tài liệu dài nên chỉ lưu {RAG_SAVE_MAX_CHARS:,} ký tự đầu.".replace(",", ".")
+    if kind == KIND_PDF:
+        sync += "\nℹ️ Bản này do AI chép lại từ PDF - tài liệu rất dài có thể thiếu phần cuối."
     return media_text.say(
         _SAVED_TEMPLATE,
         owner=True,
@@ -347,6 +355,10 @@ _ERROR_TEMPLATES = {
         "😥 Bên AI đang bận nên {ai} chưa đọc được tài liệu này. Thử lại sau ít phút giúp "
         "{ai} nha{tail}."
     ),
+    "kb_full": (
+        "📚 Kho tài liệu rag/tailieu/ đã đầy (tối đa {kb_mb} MB). Xoá bớt file cũ rồi lưu lại "
+        "giúp {ai} nha{tail}."
+    ),
     "kb_denied": (
         "📚 Lưu vào kho kiến thức chỉ làm được từ Telegram của chủ bot - {ai} chỉ đọc và trả "
         "lời về tài liệu này thôi nha{tail}."
@@ -362,6 +374,7 @@ async def error_text(kind: str, user_id: int, detail: str = "") -> str:
         user_id,
         detail=detail,
         max_mb=max(1, max_bytes() // _MB),
+        kb_mb=RAG_SAVE_DIR_MAX_BYTES // _MB,
     )
 
 

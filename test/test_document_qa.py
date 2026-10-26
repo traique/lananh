@@ -228,6 +228,10 @@ async def test_chu_bot_luu_vao_kho_va_dong_bo_github(tmp_path, monkeypatch, reco
     # Gửi lại cùng tên: không ghi đè file cũ.
     await ds.handle_file(42, doc, filename="Quy trình.docx", caption="lưu kho")
     assert (rag_dir / "tailieu" / "quy-trinh-2.md").exists()
+    # Kho đầy: không ghi thêm.
+    monkeypatch.setattr(ds, "RAG_SAVE_DIR_MAX_BYTES", 10)
+    full = await ds.handle_file(42, doc, filename="Quy trình.docx", caption="lưu kho")
+    assert "đã đầy" in full.text and not (rag_dir / "tailieu" / "quy-trinh-3.md").exists()
 
 
 @pytest.mark.asyncio

@@ -153,18 +153,30 @@ class VoiceError(Exception):
 
 # Câu Whisper hay "nghe" ra từ đoạn ghi âm im lặng/ồn (học từ phụ đề YouTube
 # tiếng Việt) - cả bản chép lời chỉ có vậy thì coi như không nghe ra lời.
+# Chỉ coi là ảo giác khi bỏ các cụm này đi thì gần như không còn chữ nào - câu
+# thật có nhắc "subscribe" ("huỷ subscribe Netflix giúp anh") vẫn giữ nguyên.
 _HALLUCINATION_RE = re.compile(
-    r"subscribe|dang ky kenh|ghien mi go|cam on cac ban da (?:theo doi|xem|lang nghe)|"
-    r"hen gap lai cac ban|video tiep theo|like va share|nhan chuong thong bao"
+    r"hay subscribe cho kenh|subscribe|dang ky kenh|ghien mi go|"
+    r"de khong bo lo nhung video hap dan|cam on cac ban da (?:theo doi|xem|lang nghe)|"
+    r"hen gap lai cac ban trong (?:nhung|cac) video tiep theo|like va share|"
+    r"nhan chuong thong bao"
 )
-_HALLUCINATION_MAX_CHARS = 160
+_HALLUCINATION_MAX_LEFTOVER_WORDS = 2
+
+
+def _is_hallucination(text: str) -> bool:
+    folded = fold(text)
+    if not _HALLUCINATION_RE.search(folded):
+        return False
+    leftover = re.findall(r"[a-z0-9]+", _HALLUCINATION_RE.sub(" ", folded))
+    return len(leftover) <= _HALLUCINATION_MAX_LEFTOVER_WORDS
 
 
 def clean_transcript(text: str) -> str:
     text = unicodedata.normalize("NFC", " ".join((text or "").split())).strip()
     if not text:
         return ""
-    if len(text) <= _HALLUCINATION_MAX_CHARS and _HALLUCINATION_RE.search(fold(text)):
+    if _is_hallucination(text):
         logger.info("Bỏ bản chép lời nghi là ảo giác của Whisper: %r", text[:80])
         return ""
     return text[:TRANSCRIPT_MAX_CHARS]

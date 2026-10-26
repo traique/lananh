@@ -85,7 +85,12 @@ def test_tran_kich_thuoc_va_thoi_luong(monkeypatch):
 
 
 def test_loc_cau_ao_giac_cua_whisper():
-    assert voice_service.clean_transcript("Hãy subscribe cho kênh Ghiền Mì Gõ") == ""
+    classic = "Hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn"
+    assert voice_service.clean_transcript(classic) == ""
+    assert voice_service.clean_transcript("Cảm ơn các bạn đã theo dõi!") == ""
+    # Câu thật có từ trùng vẫn giữ.
+    assert voice_service.clean_transcript("huỷ subscribe Netflix giúp anh") != ""
+    assert voice_service.clean_transcript("gửi anh video tiếp theo nhé") != ""
     assert voice_service.clean_transcript("  mai   Hà Nội mưa không ") == "mai Hà Nội mưa không"
 
 
