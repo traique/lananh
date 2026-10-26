@@ -86,6 +86,7 @@ Chat và tiện ích
 /notes [từ khoá] — xem/tìm ghi chú; /xoaghichu <số> — xoá 1 ghi chú
 /xuatdulieu — xem dữ liệu em đang lưu; /xoadulieu — xoá dữ liệu cá nhân của mình
 /hoithan on|off — em chủ động nhắn hỏi thăm việc sắp tới đã kể (mặc định tắt trên Zalo)
+/hoc [ok|bo] — duyệt cách trả lời em tự rút ra (hoặc nhắn "ghi nhớ"/"bỏ" ngay sau câu em hỏi)
 
 Danh mục cổ phiếu (riêng từng người)
 /danhmuc — xem danh mục, lãi/lỗ, cảnh báo stop/target

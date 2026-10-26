@@ -17,7 +17,9 @@ Lưu trong các bảng (core/database.py, core/repositories/memory.py):
   (đã thay bằng ghi chú phiên), chỉ còn đọc như phần nền cũ ở đầu phiên.
 - "cách trả lời" người dùng dặn ("ngắn thôi em", "đừng chèn emoji") là fact
   nhóm cach_tra_loi, đưa vào system prompt MỌI lượt (orchestrator.chat
-  style_rules) - không đè quy tắc cổ phiếu hay cách xưng hô.
+  style_rules) - không đè quy tắc cổ phiếu hay cách xưng hô. Quy tắc bộ trích
+  xuất TỰ rút ra chỉ thành đề xuất chờ người dùng duyệt (services/
+  style_approval.py, STYLE_RULES_NEED_APPROVAL); lời tự dặn rõ thì áp ngay.
 
 Không embedding/pgvector (đã bỏ, migration 014): tìm theo token bỏ dấu.
 
@@ -68,7 +70,7 @@ from ai.timeouts import TurnTimeoutError, bounded, remaining_turn_seconds, turn_
 from core import config, database as db, trace
 from core.envutil import env_int, env_on
 from core.text_normalize import fold
-from services import conversation_log, memory_guard, personal_settings
+from services import conversation_log, memory_guard, personal_settings, style_approval
 from services.background_tasks import stop_tracked_tasks
 
 logger = logging.getLogger(__name__)
@@ -671,13 +673,21 @@ async def _apply_facts(
             stats.facts += 1
 
 
-async def _apply_style(user_id: int, raw, current: dict | None) -> None:
+async def _apply_style(user_id: int, raw, current: dict | None, *, explicit: bool = False) -> None:
+    """Quy tắc cách trả lời bộ trích xuất trả về. Người dùng tự dặn rõ
+    (``explicit``) hoặc STYLE_RULES_NEED_APPROVAL=0 thì áp ngay; còn lại chỉ thành
+    đề xuất chờ duyệt (services/style_approval.py)."""
     if not isinstance(raw, str) or not raw.strip():
         return
-    rules = memory_guard.safe_memory_text(raw)
-    if not rules:
+    if not memory_guard.safe_memory_text(raw):
         return
+    # Làm sạch TỪNG dòng: giữ gạch đầu dòng mỗi quy tắc 1 dòng (clean gộp mọi
+    # khoảng trắng, kể cả xuống dòng).
+    rules = "\n".join(line for line in map(memory_guard.clean, raw.splitlines()) if line)
     rules = rules[:STYLE_RULES_MAX_CHARS]
+    if style_approval.enabled() and not explicit:
+        await style_approval.propose(user_id, rules, str(current["value"]) if current else "")
+        return
     await db.save_fact(
         user_id,
         STYLE_KEY,
@@ -797,7 +807,12 @@ async def _process_group(
     )
     await db.trim_facts(user_id, MAX_FACTS_PER_USER)
     await _apply_highlights(user_id, data.get("highlights", data.get("highlight")), forget, stats)
-    await _apply_style(user_id, data.get("style_rules"), style_row)
+    await _apply_style(
+        user_id,
+        data.get("style_rules"),
+        style_row,
+        explicit=style_approval.explicit_request(user_texts),
+    )
     started_at = _as_utc(window[0]["created_at"]) if window else datetime.now(timezone.utc)
     await _apply_session(user_id, data.get("session"), session_key, started_at)
     if with_events and isinstance(data.get("events"), list):
@@ -1450,4 +1465,6 @@ async def clear_memory(user_id: int) -> None:
         # Sự kiện hỏi thăm ("phỏng vấn ở công ty X") cũng là điều em nhớ về
         # người dùng: "xoá toàn bộ trí nhớ" thì không còn hỏi thăm theo chúng.
         await db.clear_user_events(user_id)
+        # Đề xuất "cách trả lời" chờ duyệt (services/style_approval.py).
+        await db.set_setting(personal_settings.style_pending_key(user_id), "")
         await _skip_to_latest(user_id)

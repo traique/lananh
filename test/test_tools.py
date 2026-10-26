@@ -703,3 +703,20 @@ def test_chuyen_phiem_khong_ton_luot_router(text):
 )
 def test_y_dinh_ghi_du_lieu(text, intent):
     assert tools.side_effect_intent(text) == intent
+
+
+def test_tool_catalog_budget():
+    """Mô tả tool gọn kiểu EasyTool: prompt router chat và danh sách tool /agent (gửi
+    lại mỗi bước) có trần tổng ký tự để vừa 8K token/phút của Groq gpt-oss-20b.
+    Trước khi rút gọn: router 4221 ký tự (prompt 5470), /agent 4037 + 2714."""
+    from ai import agent_service
+
+    chat = reg.specs(reg.CHAT, reg.ROLE_OWNER)
+    agent = [spec for spec in agent_service._TOOLS.values() if not spec.side_effect]
+    assert len(reg.router_tool_list(chat)) <= 2900
+    assert len(tools._build_router_prompt("nhắc anh 8h tối mai gọi mẹ")) <= 3800
+    assert reg.catalog_chars(agent) <= 5600
+    assert len(agent_service._JSON_ROUTER_INSTRUCTION_TEMPLATE) <= 600
+    for spec in chat + agent:
+        assert len(spec.description) <= 80, spec.name
+        assert len(spec.router_hint) <= 360, spec.name

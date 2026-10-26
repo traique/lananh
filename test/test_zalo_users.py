@@ -228,6 +228,7 @@ async def test_remove_user(patched_db, monkeypatch):
                 f"memory_consolidated:{uid}",
                 f"followup:{uid}",
                 f"followup_sent:{uid}",
+                f"style_pending:{uid}",
                 # Giờ yên lặng riêng (/yenlang, services/notify_hub.py).
                 f"quiet:{uid}",
             ],

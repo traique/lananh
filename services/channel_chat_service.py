@@ -34,7 +34,7 @@ from services import (
     usage_quota,
     web_search,
 )
-from services import channel_command_service, reply_audience
+from services import channel_command_service, reply_audience, style_approval
 from services import attention, vn_daily_chat
 from services.channel_result import ChannelResult
 from services.telemetry import telemetry
@@ -578,6 +578,10 @@ async def _side_effect_paths(
     tắt "hoãn 10p"/"xong" của nhắc việc, ghi chi tiêu "cafe 45k". Câu trả lời nhanh
     cũng vào lịch sử (services/conversation_log) cho câu hỏi nối tiếp."""
     record = conversation_log.record_exchange
+    # "ghi nhớ"/"bỏ" ngay sau câu em hỏi duyệt cách trả lời (services/style_approval).
+    approval = await style_approval.maybe_handle_reply(user_id, text)
+    if approval is not None:
+        return ChannelResult([approval])
     portfolio_command = await portfolio_service.handle_command(user_id, text)
     if portfolio_command is not None:
         return ChannelResult([portfolio_command], market=True)
@@ -708,4 +712,10 @@ async def handle_channel_text(
         if turn.used_fallback and await reply_audience.is_owner(user_id)
         else ""
     )
-    return ChannelResult([turn.text + footnote], "api" if turn.used_fallback else None)
+    outputs = [turn.text + footnote]
+    # Đề xuất cách trả lời chờ duyệt: hỏi bằng tin riêng SAU câu trả lời, tối đa
+    # 1 lần/ngày (services/style_approval) - người dùng nhắn "ghi nhớ"/"bỏ".
+    question = await style_approval.take_question(user_id)
+    if question is not None:
+        outputs.append(question.text)
+    return ChannelResult(outputs, "api" if turn.used_fallback else None)

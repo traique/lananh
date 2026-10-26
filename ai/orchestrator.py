@@ -51,6 +51,10 @@ from ai.timeouts import (
     turn_deadline,
 )
 
+# Che bí mật trong prompt trước khi gửi provider (services/memory_guard chỉ nhập
+# core -> không vòng import).
+from services import prompt_redaction
+
 __all__ = ["TurnTimeoutError", "remaining_turn_seconds", "turn_deadline"]
 
 logger = logging.getLogger(__name__)
@@ -772,6 +776,10 @@ async def ask(
     if require_real_search and providers_override is None:
         providers_override = await _search_only_providers()
     allow_cjk = cjk_output_expected(prompt)
+    # Che bí mật (OTP, mật khẩu, STK...) trước khi gửi provider - services/prompt_redaction.
+    redactor = prompt_redaction.redactor()
+    prompt = redactor.with_note(redactor.text(prompt))
+    redactor.log("ask")
     effective_prompt = f"{_FORCED_SEARCH_DIRECTIVE}\n\n{prompt}" if require_real_search else prompt
     model_name = model or await router9_client.get_preferred_model_name()
 
@@ -916,6 +924,16 @@ async def chat(
     # closure provider tự query -> 3-4 query giống nhau khi fallback), rồi cắt
     # cùng grounding/trí nhớ cho vừa ngân sách prompt.
     raw_history = await _read_history(user_id)
+    # Che bí mật trong câu hỏi, lịch sử, trí nhớ, grounding (DB vẫn giữ nguyên văn)
+    # trước khi cắt ngân sách - services/prompt_redaction.
+    redactor = prompt_redaction.redactor()
+    prompt = redactor.text(prompt)
+    grounding = redactor.text(grounding)
+    memory_context = redactor.text(memory_context)
+    raw_history = redactor.history(raw_history)
+    if redactor.redacted:
+        persona = f"{persona}\n\n{redactor.note()}"
+        redactor.log("chat")
     history, memory_context, grounding = prompt_budget.fit_chat_prompt(
         persona=persona,
         history=raw_history,
@@ -1070,7 +1088,13 @@ async def chat(
 async def utility_json(prompt: str) -> Optional[dict]:
     """Lượt phụ trả JSON (trích trí nhớ, router tool): Groq (json_object, nhanh,
     free, không đụng quota Gemini) trước, Gemini utility làm dự phòng. Không
-    raise - trả None khi mọi đường đều lỗi (caller coi là "bỏ qua lượt này")."""
+    raise - trả None khi mọi đường đều lỗi (caller coi là "bỏ qua lượt này").
+
+    Prompt được che bí mật (services/prompt_redaction); caller cần giá trị gốc
+    trong JSON trả về (router tool) mở prompt_redaction.scope() rồi restore_obj."""
+    redactor = prompt_redaction.redactor()
+    prompt = redactor.with_note(redactor.text(prompt))
+    redactor.log("utility_json")
     if (
         await _GENERIC_PROVIDER_CONFIGURED["groq"]()
         and await provider_overrides.is_enabled("groq")
@@ -1106,6 +1130,11 @@ async def reset_chat() -> None:
 
 
 async def analyze_image(instruction: str, image_path: str):
+    # Che bí mật trong lời dặn/câu hỏi kèm ảnh (ảnh thì không đọc được để che).
+    redactor = prompt_redaction.redactor()
+    instruction = redactor.with_note(redactor.text(instruction))
+    redactor.log("analyze_image")
+
     async def _router9_call():
         return await router9_client.generate_image_prompt(instruction, image_path)
 
@@ -1141,7 +1170,11 @@ async def analyze_document(
     mime_type: str = "application/pdf",
 ):
     """Hỏi đáp 1 tài liệu trên đĩa qua provider-chain (cooldown, telemetry, hạn
-    chót lượt như analyze_image). Raise khi mọi provider đều lỗi."""
+    chót lượt như analyze_image). Raise khi mọi provider đều lỗi. Câu hỏi được che
+    bí mật như mọi prompt (nội dung file gửi nguyên - không đọc được để che)."""
+    redactor = prompt_redaction.redactor()
+    instruction = redactor.with_note(redactor.text(instruction))
+    redactor.log("analyze_document")
 
     async def _router9_call():  # pragma: no cover - router9 không có trong danh sách
         raise RuntimeError("9Router không đọc file tài liệu")

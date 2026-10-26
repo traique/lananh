@@ -151,17 +151,16 @@ async def _tool_search_history(user_id: int, query: str = "", **_ignored) -> reg
 SPEC = reg.register(
     reg.ToolSpec(
         name="search_history",
-        description="Tìm lại điều đã trao đổi trước đây trong lịch sử chat của chính người dùng.",
+        description="Tìm lại điều đã trao đổi trong lịch sử chat của chính người dùng.",
         parameters=reg.object_schema(
-            {"query": reg.string("từ khoá nội dung cần tìm, bỏ từ hỏi")}, ["query"]
+            {"query": reg.string("từ khoá cần tìm, bỏ từ hỏi")}, ["query"]
         ),
         handler=_tool_search_history,
         untrusted_output=True,
         router_hint=(
-            'args: {"query": "từ khoá nội dung cần tìm, vd \\"quỹ ETF\\""}. Dùng khi người dùng '
-            'hỏi lại điều ĐÃ nói/hỏi trước đây ("hôm trước em nói gì về quỹ ETF", "lần trước '
-            'anh hỏi em về bảo hiểm gì nhỉ", "tìm lại chỗ em bảo về thuế"). Câu hỏi kiến thức '
-            "mới (không nhắc chuyện cũ) thì KHÔNG dùng."
+            'args {"query": từ khoá, vd "quỹ ETF"}. Khi hỏi lại điều ĐÃ nói/hỏi ("hôm trước em '
+            'nói gì về quỹ ETF", "lần trước anh hỏi em về bảo hiểm gì"); câu hỏi kiến thức '
+            "mới thì KHÔNG."
         ),
     )
 )

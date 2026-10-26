@@ -28,8 +28,12 @@ Thêm tool mới (vd ``remember_fact`` của gói trí nhớ hội thoại)::
         handler=_remember_fact,
         side_effect=True,
         effect_label="điều cần nhớ",
-        router_hint='Dùng khi người dùng nói "nhớ giúp anh là ...".',
+        router_hint='args {"fact": điều cần nhớ}. Khi nói "nhớ giúp anh là ...".',
     ))
+
+Mô tả viết NGẮN (1 câu + dạng args + khi nào dùng/1 ví dụ): mỗi lượt router và
+mỗi bước /agent gửi lại cả danh bạ, Groq free chỉ 8K token/phút -
+test/test_tools.py::test_tool_catalog_budget đặt trần tổng ký tự.
 
 ``ToolOutcome`` là kết quả 1 lượt router chat: status none|ok|invalid|failed|
 unavailable|blocked - KHÔNG BAO GIỜ trả None im lặng, để lượt chat biết chắc
@@ -39,6 +43,7 @@ việc ghi chú/nhắc việc đã lưu hay chưa (không để model tự "xác
 from __future__ import annotations
 
 import contextvars
+import json
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterable, Iterator
@@ -271,7 +276,8 @@ def object_schema(properties: dict[str, Any], required: Iterable[str] = ()) -> d
 
 
 def router_tool_list(items: Iterable[ToolSpec]) -> str:
-    """Đoạn liệt kê tool cho prompt router JSON (chat và JSON-router của agent)."""
+    """Đoạn liệt kê tool cho prompt router JSON (chat và JSON-router của agent):
+    mỗi tool 1 dòng gọn ``- "tên": mô tả. args {...}. khi nào dùng`` (kiểu EasyTool)."""
     lines = []
     for spec in items:
         if spec.router_hint:
@@ -282,8 +288,17 @@ def router_tool_list(items: Iterable[ToolSpec]) -> str:
             f'"{key}": {prop.get("description") or prop.get("type", "any")}'
             for key, prop in props.items()
         )
-        lines.append(f'- "{spec.name}": {spec.description} args: {{{args_desc}}}')
+        lines.append(f'- "{spec.name}": {spec.description} args {{{args_desc}}}')
     return "\n".join(lines)
+
+
+def catalog_chars(items: Iterable[ToolSpec]) -> int:
+    """Tổng ký tự mô tả tool gửi model (dòng router + JSON tools OpenAI) - đo/đặt
+    trần để prompt router và /agent vừa TPM free của Groq."""
+    specs_list = list(items)
+    return len(router_tool_list(specs_list)) + len(
+        json.dumps(openai_tools(specs_list), ensure_ascii=False)
+    )
 
 
 def openai_tools(items: Iterable[ToolSpec]) -> list[dict[str, Any]]:

@@ -22,6 +22,8 @@ FOLLOWUP_PREFIX = "followup:"
 FOLLOWUP_SENT_PREFIX = "followup_sent:"
 # Giờ yên lặng riêng (services/notify_hub.py, lệnh /yenlang): "on" | "off" | "HH:MM-HH:MM".
 QUIET_PREFIX = "quiet:"
+# "Cách trả lời" bộ trích nhớ đề xuất, chờ người dùng duyệt (services/style_approval.py).
+STYLE_PENDING_PREFIX = "style_pending:"
 
 
 def weather_home_key(user_id: int) -> str:
@@ -62,6 +64,10 @@ def quiet_key(user_id: int) -> str:
     return f"{QUIET_PREFIX}{user_id}"
 
 
+def style_pending_key(user_id: int) -> str:
+    return f"{STYLE_PENDING_PREFIX}{user_id}"
+
+
 def memory_user_keys(user_id: int) -> list[str]:
     """Khoá trí nhớ/hỏi thăm của 1 người (dùng chung cho /zaloxoa và /xoadulieu)."""
     return [
@@ -70,6 +76,7 @@ def memory_user_keys(user_id: int) -> list[str]:
         memory_consolidated_key(user_id),
         followup_key(user_id),
         followup_sent_key(user_id),
+        style_pending_key(user_id),
     ]
 
 

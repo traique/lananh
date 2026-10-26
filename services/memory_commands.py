@@ -1,7 +1,8 @@
 """Lệnh trí nhớ dùng chung Telegram (handlers/commands.py) và Zalo/Zoom
 (services/channel_command_service.py): /memory, /forget, /quen, /nho, /ghim,
-/boghim, /notes, /xoaghichu, /xuatdulieu, /xoadulieu và /hoithan (hỏi thăm chủ
-động, services/proactive_service.py). Handler chỉ parse và gửi; logic nằm ở
+/boghim, /notes, /xoaghichu, /xuatdulieu, /xoadulieu, /hoithan (hỏi thăm chủ
+động, services/proactive_service.py) và /hoc (duyệt cách trả lời em tự rút ra,
+services/style_approval.py). Handler chỉ parse và gửi; logic nằm ở
 services/memory_control.py."""
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ COMMANDS = frozenset(
         "/xuatdulieu",
         "/xoadulieu",
         "/hoithan",
+        "/hoc",
     }
 )
 
@@ -89,5 +91,9 @@ async def handle(
         from services import proactive_service
 
         return CommandReply([await proactive_service.command(user_id, argument)])
+    if command == "/hoc":
+        from services import style_approval
+
+        return CommandReply([await style_approval.handle_command(argument, user_id)])
     # /xoadulieu
     return CommandReply([await memory_control.delete_own_data(user_id, argument)])
