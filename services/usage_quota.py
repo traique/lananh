@@ -243,6 +243,23 @@ async def check(
     return Decision(True, search_allowed=not heavy_out, applied=True)
 
 
+async def turns_exhausted(user_id: int, *, channel: str, is_admin: bool) -> bool:
+    """Chỉ XEM (không cộng dồn, không dựng câu báo): thành viên đã hết trần lượt
+    hôm nay chưa. Dùng cho câu báo trước lượt của gateway (POST /internal/zalo/notice
+    kind "image") để không hứa "đợi em xem xíu" rồi lượt bị chặn. DB lỗi -> False."""
+    if not applies(channel, is_admin):
+        return False
+    try:
+        limits = await caps()
+        if not limits.turns:
+            return False
+        usage = await _usage(user_id)
+    except Exception:
+        logger.warning("Quota thành viên: DB lỗi khi xem số lượt, coi như còn.", exc_info=True)
+        return False
+    return usage.turns >= limits.turns
+
+
 @contextmanager
 def scope(decision: Decision, user_id: int) -> Iterator[None]:
     """Đặt quyết định quota cho lượt đang chạy (task con thừa hưởng) để

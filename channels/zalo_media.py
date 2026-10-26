@@ -41,8 +41,10 @@ POST /internal/zalo/notice
              "voice_failed"/"voice_too_large", "file_failed"/"file_too_large"/
              "file_unsupported", "video", "location")
     trả:     {"text": "..."} câu giọng Lan Anh theo cách gọi riêng của người gửi,
-             hoặc {"text": null} nếu người lạ chưa pair / bị khoá (gateway im
-             lặng). Không gọi AI, không lấy khoá lượt, không báo chủ bot.
+             hoặc {"text": null} nếu người lạ chưa pair / bị khoá, hoặc kind
+             "image" khi thành viên đã hết lượt hôm nay (gateway im lặng, lượt
+             ảnh tự trả câu báo hết lượt). Không gọi AI, không lấy khoá lượt,
+             không báo chủ bot.
 """
 
 from __future__ import annotations
@@ -283,6 +285,13 @@ async def notice(
     _auth(x_zalo_bridge_secret)
     zalo_user = await zalo_users.resolve(payload.sender_id)
     if zalo_user is None or not zalo_user.is_active:
+        return ZaloNoticeResponse(text=None)
+    # Thành viên đã hết lượt hôm nay (services/usage_quota.py): không hứa "đợi em
+    # xem xíu" - lượt ảnh ngay sau đó sẽ bị chặn và tự trả câu báo hết lượt (tối
+    # đa 1 lần/giờ) hoặc im lặng.
+    if payload.kind == "image" and await usage_quota.turns_exhausted(
+        zalo_user.internal_user_id, channel="zalo", is_admin=zalo_user.is_admin
+    ):
         return ZaloNoticeResponse(text=None)
     text = media_text.zalo_notice_text(
         payload.kind,

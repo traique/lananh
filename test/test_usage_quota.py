@@ -10,6 +10,7 @@ import pytest
 
 import test_channel_chat_service as _chat
 import test_web_admin as _admin
+import test_zalo_gateway_contract as _gateway
 import web_admin
 from core import database as db
 from core import settings_cache
@@ -20,6 +21,7 @@ client = _admin.client
 settings_store = _admin.settings_store
 sleeps = _admin.sleeps
 chat_fakes = _chat.chat_fakes
+notice_bridge = _gateway.notice_bridge
 
 
 @pytest.fixture(autouse=True)
@@ -340,6 +342,57 @@ async def test_route_media_chan_thanh_vien_het_luot(quota_db, monkeypatch):
     other = SimpleNamespace(internal_user_id=-8, is_admin=False, address_form=None)
     allowed, decision = await router.media_quota_gate(other, "acc", "m7", "file")
     assert allowed is None and decision.applied and not decision.search_allowed
+
+
+async def test_xem_het_luot_khong_cong_don_va_fail_open(quota_db, monkeypatch):
+    quota_db["counts"][-7] = [39, 0]
+    assert not await usage_quota.turns_exhausted(-7, **_member())
+    assert not await usage_quota.turns_exhausted(-7, **_member())
+    # Xem 2 lần không cộng dồn: lượt thật thứ 40 vẫn được cho qua, rồi mới hết.
+    assert (await usage_quota.check(-7, "ảnh", **_member())).allowed
+    assert await usage_quota.turns_exhausted(-7, **_member())
+    assert not await usage_quota.turns_exhausted(-7, channel="zalo", is_admin=True)
+    assert usage_quota._notices == {}  # chỉ xem, không "tiêu" câu báo hết lượt
+
+    async def boom(*args, **kwargs):
+        raise ConnectionError("db sập")
+
+    usage_quota.reset()
+    monkeypatch.setattr(db, "user_calls_since", boom)
+    assert not await usage_quota.turns_exhausted(-7, **_member())
+
+
+async def test_cau_bao_anh_cua_gateway_im_lang_khi_thanh_vien_het_luot(
+    quota_db, notice_bridge, monkeypatch
+):
+    """Gateway gửi "em nhận được ảnh rồi, đợi em xem xíu" TRƯỚC lượt ảnh (POST
+    /internal/zalo/notice) rồi mới gọi route ảnh - route này bị quota chặn. Thành
+    viên đã hết lượt thì /notice trả null để không hứa rồi im lặng; câu báo hết
+    lượt vẫn do route ảnh trả (1 lần/giờ). Loại báo khác không đổi."""
+    from channels import router
+
+    async def no_cache(*args):
+        return None
+
+    async def save(*args):
+        return None
+
+    monkeypatch.setattr(router.idempotency, "get_zalo_response", no_cache)
+    monkeypatch.setattr(router.idempotency, "save_zalo_response", save)
+    quota_db["counts"][-7] = [39, 0]
+    first = (await _gateway._post_notice({"sender_id": "chi-lan", "kind": "image"})).json()
+    assert first["text"] and "chị" in first["text"]
+    member = SimpleNamespace(internal_user_id=-7, is_admin=False, address_form="chị")
+    allowed, decision = await router.media_quota_gate(member, "acc", "img-1", "image")
+    assert allowed is None and decision.applied  # lượt thứ 40 chạy
+
+    silent = await _gateway._post_notice({"sender_id": "chi-lan", "kind": "image"})
+    assert silent.json() == {"text": None}
+    blocked, decision = await router.media_quota_gate(member, "acc", "img-2", "image")
+    assert blocked is not None and "chị" in blocked.messages[0] and not decision.allowed
+    video = (await _gateway._post_notice({"sender_id": "chi-lan", "kind": "video"})).json()
+    assert video["text"] and video["text"].startswith("🎬")
+    assert notice_bridge == []
 
 
 async def test_anh_ghi_luot_image(quota_db, monkeypatch):
