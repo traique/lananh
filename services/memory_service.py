@@ -381,6 +381,7 @@ _ASSISTANT_SKIPPED = (
     "từ lời User, không lấy thông tin nào từ phía trợ lý)"
 )
 _FOLLOWUP_USER_LABEL = "(trợ lý chủ động nhắn hỏi thăm - không phải lời người dùng)"
+_READONLY_USER_LABEL = "(lượt chỉ đọc - người dùng chưa xác nhận lưu, KHÔNG trích gì từ lượt này)"
 
 
 def _fmt_time(value) -> str:
@@ -395,6 +396,8 @@ def _render_rows(rows: list[dict]) -> str:
         if row["role"] == "user":
             if kind == conversation_log.KIND_FOLLOWUP:
                 content = _FOLLOWUP_USER_LABEL
+            elif kind == conversation_log.KIND_CHAT_READONLY:
+                content = _READONLY_USER_LABEL
             lines.append(f"[{_fmt_time(row['created_at'])}] User: {content}")
         else:
             if kind not in conversation_log.MEMORY_MODEL_KINDS:

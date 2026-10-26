@@ -366,7 +366,15 @@ async def run_chat_turn(
             if (untrusted_context or searched)
             else conversation_log.KIND_CHAT
         )
-        await conversation_log.record_exchange(user_id, text, reply, kind)
+        if not allow_side_effects and (
+            outcome.status == tool_registry.STATUS_BLOCKED or memory_service.wants_remember(text)
+        ):
+            # Lượt chỉ đọc nhờ nhớ/ghi: câu trả lời đã nói "chưa lưu" - bộ trích
+            # nhớ không được lưu thay từ chữ chép (có thể nghe nhầm) của lượt này.
+            kind = conversation_log.KIND_CHAT_READONLY
+        await conversation_log.record_exchange(
+            user_id, text, reply, kind, read_only=not allow_side_effects
+        )
     if searched or plan.untrusted or searching:
         # Lượt có tra web: tính vào trần lượt "nặng" của thành viên Zalo.
         await usage_quota.note_web_search(user_id)

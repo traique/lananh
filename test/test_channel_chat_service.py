@@ -721,7 +721,8 @@ async def test_luot_chi_doc_co_trich_dan_va_link_giu_ca_hai_goi(chat_fakes, monk
     assert "CHƯA lưu được ghi chú" in grounding  # ToolOutcome.grounding()
     assert turn.text.endswith("⚠️ Em chưa lưu ghi chú này: lượt này chỉ đọc.")
     assert chat_fakes["saved"][-1] == ("model", turn.text)
-    assert chat_fakes["kinds"] == ["chat_ext"]  # dữ liệu ngoài -> trích nhớ chỉ đọc lời user
+    # Tool ghi bị chặn ở lượt chỉ đọc: câu trả lời nói chưa lưu -> không trích nhớ lượt này.
+    assert chat_fakes["kinds"] == ["chat_readonly"]
 
 
 @pytest.mark.asyncio
@@ -988,3 +989,39 @@ async def test_khong_phat_ban_nhap_ngay_sau_bao_cao_co_phieu(chat_fakes, monkeyp
         await ccs.run_chat_turn(1, "vậy có nên bán không?")
     await ccs.stop_background_tasks()
     assert seen == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_luot_chi_doc_nho_giup_khong_de_bo_trich_nho_tu_luu(chat_fakes, monkeypatch):
+    """Tin thoại "nhớ giúp anh..." (tool ghi bị chặn): câu trả lời nói chưa lưu thì
+    bộ trích nhớ không được lưu thay - không flush ngay, kind ngoài MEMORY_KINDS."""
+    from services import channel_chat_service as ccs
+    from services import conversation_log
+    from services import tool_registry as reg
+
+    flushes = []
+    monkeypatch.setattr(ccs.memory_service, "after_exchange", lambda uid, **kw: flushes.append(kw))
+
+    async def blocked(user_id, text, **kwargs):
+        return _outcome(
+            status=reg.STATUS_BLOCKED,
+            name="remember_fact",
+            side_effect=True,
+            effect_label="điều cần nhớ",
+            text="lượt này chỉ đọc",
+        )
+
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", blocked)
+    turn = await ccs.run_chat_turn(1, "nhớ giúp anh là sinh nhật vợ 12/5", allow_side_effects=False)
+    assert "chưa lưu" in turn.text
+    assert chat_fakes["kinds"] == [conversation_log.KIND_CHAT_READONLY]
+    assert conversation_log.KIND_CHAT_READONLY not in conversation_log.MEMORY_KINDS
+    assert flushes == []
+
+    async def no_tool(user_id, text, **kwargs):
+        return None
+
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", no_tool)
+    await ccs.run_chat_turn(1, "hôm nay anh mệt quá", allow_side_effects=False)
+    assert chat_fakes["kinds"][-1] == conversation_log.KIND_CHAT
+    assert flushes == [{"explicit": False}]

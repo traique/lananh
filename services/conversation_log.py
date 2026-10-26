@@ -73,6 +73,10 @@ KIND_EXPENSE = "expense"
 # Tin hỏi thăm chủ động (services/proactive_service.py) - dòng "user" là nhãn
 # hệ thống, không phải lời người dùng.
 KIND_FOLLOWUP = "followup"
+# Lượt CHỈ ĐỌC (chữ chép từ tin thoại, 🔄/✂️ làm lại) có ý nhờ nhớ/ghi mà tool
+# ghi bị chặn: câu trả lời đã nói "chưa lưu" -> bộ trích nhớ không được tự lưu
+# từ lượt này (chữ chép có thể nghe nhầm).
+KIND_CHAT_READONLY = "chat_readonly"
 
 # Lượt được trích trí nhớ (lời người dùng) / được đọc cả câu trả lời của bot.
 MEMORY_KINDS = frozenset({KIND_CHAT, KIND_CHAT_EXT, KIND_RAG, KIND_AGENT})
@@ -186,9 +190,11 @@ async def record_exchange(
     *,
     full_access: bool = True,
     stock_outputs: list[str] | None = None,
+    read_only: bool = False,
 ) -> bool:
     """Lưu 1 lượt (lời người dùng + câu trả lời đã rút gọn) rồi báo trí nhớ nếu
-    là lượt cần trích. Không raise; trả True nếu đã lưu."""
+    là lượt cần trích. read_only (lượt chỉ đọc): không bao giờ trích nhớ NGAY vì
+    "nhớ giúp..." - câu trả lời đã nói chưa lưu. Không raise; trả True nếu đã lưu."""
     user_text = (user_text or "").strip()
     if not user_text:
         return False
@@ -211,7 +217,8 @@ async def record_exchange(
     if kind in MEMORY_KINDS:
         from services import memory_service
 
-        memory_service.after_exchange(user_id, explicit=memory_service.wants_remember(user_text))
+        explicit = not read_only and memory_service.wants_remember(user_text)
+        memory_service.after_exchange(user_id, explicit=explicit)
     return True
 
 

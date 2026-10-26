@@ -78,6 +78,19 @@ async def test_toan_luot_tam_thuong_hoac_khong_phai_chat_tien_watermark_khong_go
 
 
 @pytest.mark.asyncio
+async def test_luot_chi_doc_khong_dua_loi_nguoi_dung_cho_bo_trich(mem):
+    """Lượt chỉ đọc "nhớ giúp..." bị chặn ghi: bộ trích chỉ thấy nhãn, không thấy chữ."""
+    from services import conversation_log
+
+    mem.add_turn(UID, "nhớ giúp anh là sinh nhật vợ 12/5", "⚠️ Em chưa lưu", kind="chat_readonly")
+    mem.add_turn(UID, "anh làm kỹ sư phần mềm", "dạ")
+    assert conversation_log.KIND_CHAT_READONLY == "chat_readonly"
+    assert await memory_service.maybe_flush(UID, explicit=True) is True
+    assert len(mem.prompts) == 1
+    assert "sinh nhật vợ" not in mem.prompts[0] and "kỹ sư phần mềm" in mem.prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_ai_loi_giu_watermark_de_lan_sau_thu_lai(mem, monkeypatch):
     async def none(prompt):
         return None
