@@ -13,8 +13,9 @@ migration bị sửa. Module này lo những thứ hỏng từ từ mà không a
 2. Dung lượng DB so với DB_SIZE_LIMIT_MB ở mốc 80% và 90%, 1 lần/mốc/ngày.
 3. webhook_inbox: sự kiện PENDING đã tới hạn quá WATCHDOG_INBOX_STALE_MIN phút
    mà worker chưa nhận.
-4. Job hằng ngày quá hạn chưa chạy xong: digest danh mục, bản tin sáng, cảnh báo
-   danh mục cuối phiên (ngày giao dịch), từng slot Page chứng khoán (đã hết khung
+4. Job hằng ngày quá hạn chưa chạy xong: digest danh mục (ngày giao dịch, trừ khi
+   DIGEST_ON_NON_TRADING_DAYS), bản tin sáng, cảnh báo danh mục cuối phiên và job
+   danh mục buổi sáng (ngày giao dịch), từng slot Page chứng khoán (đã hết khung
    chạy bù). Hạn tính từ cấu hình (giờ chạy + khung bù) và cờ bật; chỉ xét job
    đang chạy trong process này và đã từng chạy ít nhất 1 lần (chưa cấu hình thì
    không báo giả); 1 lần/job/ngày (dedup lưu settings, sống qua restart).
@@ -224,7 +225,7 @@ def daily_job_checks(now: datetime) -> list[JobCheck]:
     """Các job hằng ngày đang được lập lịch trong process này, kèm hạn chót hôm
     nay (giờ chạy + khung chạy bù, đọc từ chính module của job)."""
     import scheduler
-    from services import market_page, morning_news, portfolio_alerts
+    from services import market_page, morning_news, portfolio_alerts, portfolio_events
     from stock import calendar as trading_calendar
 
     today = now.date()
@@ -234,7 +235,11 @@ def daily_job_checks(now: datetime) -> list[JobCheck]:
         return datetime.combine(today, dtime(hour, minute), VN_TZ)
 
     checks: list[JobCheck] = []
-    if config.ENABLE_DAILY_DIGEST and _task_alive(scheduler, "_digest_task"):
+    trading_day = trading_calendar.is_trading_day(today)
+    # Digest bỏ qua ngày không có phiên (scheduler.digest_due) trừ khi bật
+    # DIGEST_ON_NON_TRADING_DAYS: cuối tuần/lễ không coi là quá hạn.
+    digest_today = trading_day or config.DIGEST_ON_NON_TRADING_DAYS
+    if config.ENABLE_DAILY_DIGEST and digest_today and _task_alive(scheduler, "_digest_task"):
         checks.append(
             JobCheck(
                 "digest",
@@ -254,7 +259,6 @@ def daily_job_checks(now: datetime) -> list[JobCheck]:
                 iso,
             )
         )
-    trading_day = trading_calendar.is_trading_day(today)
     if config.ENABLE_PORTFOLIO_ALERTS and trading_day and _task_alive(portfolio_alerts, "_task"):
         checks.append(
             JobCheck(
@@ -263,6 +267,16 @@ def daily_job_checks(now: datetime) -> list[JobCheck]:
                 at(portfolio_alerts.ALERT_HOUR_VN, portfolio_alerts.ALERT_MINUTE_VN)
                 + timedelta(hours=portfolio_alerts.CATCHUP_HOURS),
                 portfolio_alerts._LAST_RUN_KEY,
+                iso,
+            )
+        )
+    if trading_day and _task_alive(portfolio_events, "_task"):
+        checks.append(
+            JobCheck(
+                "portfolio_events",
+                "Job danh mục buổi sáng (quy đổi sự kiện quyền, báo lịch quyền)",
+                at(portfolio_events.run_hour()) + timedelta(hours=portfolio_events.CATCHUP_HOURS),
+                portfolio_events._LAST_RUN_KEY,
                 iso,
             )
         )

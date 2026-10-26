@@ -237,7 +237,7 @@ async def test_slot_page_chung_khoan_dung_key_slot_va_key_tung_chay(monkeypatch,
 @pytest.mark.asyncio
 async def test_daily_job_checks_chi_xet_job_dang_chay_va_tinh_han_tu_cau_hinh(monkeypatch):
     import scheduler
-    from services import market_page, morning_news, portfolio_alerts
+    from services import market_page, morning_news, portfolio_alerts, portfolio_events
 
     async def forever():
         await asyncio.sleep(3600)
@@ -248,7 +248,9 @@ async def test_daily_job_checks_chi_xet_job_dang_chay_va_tinh_han_tu_cau_hinh(mo
         monkeypatch.setattr(morning_news, "_task", None)  # job không chạy: bỏ qua
         monkeypatch.setattr(portfolio_alerts, "_task", task)
         monkeypatch.setattr(market_page, "_task", task)
+        monkeypatch.setattr(portfolio_events, "_task", None)
         monkeypatch.setattr(watchdog.config, "ENABLE_DAILY_DIGEST", True)
+        monkeypatch.setattr(watchdog.config, "DIGEST_ON_NON_TRADING_DAYS", False)
         monkeypatch.setattr(watchdog.config, "ENABLE_PORTFOLIO_ALERTS", True)
         monkeypatch.setattr(watchdog.config, "DAILY_DIGEST_HOUR_VN", 8)
         monkeypatch.setattr(watchdog.config, "MARKET_NEWS_TIMES_VN", "08:30")
@@ -270,6 +272,17 @@ async def test_daily_job_checks_chi_xet_job_dang_chay_va_tinh_han_tu_cau_hinh(mo
         names = {c.name for c in watchdog.daily_job_checks(sunday)}
         assert "portfolio_alerts" not in names and "market:stock:1520" not in names
         assert "market:news:0830" in names
+        # Digest bỏ qua ngày không có phiên (scheduler.digest_due): không báo quá hạn.
+        assert "digest" not in names
+        monkeypatch.setattr(watchdog.config, "DIGEST_ON_NON_TRADING_DAYS", True)
+        assert "digest" in {c.name for c in watchdog.daily_job_checks(sunday)}
+        # Job danh mục buổi sáng: chỉ ngày giao dịch, hạn = giờ chạy + khung bù.
+        monkeypatch.setattr(portfolio_events, "_task", task)
+        monkeypatch.setenv("PORTFOLIO_EVENTS_HOUR_VN", "8")
+        checks = {c.name: c for c in watchdog.daily_job_checks(monday)}
+        assert checks["portfolio_events"].deadline.strftime("%H:%M") == "11:00"
+        assert checks["portfolio_events"].setting_key == "portfolio_events:last_run_date"
+        assert "portfolio_events" not in {c.name for c in watchdog.daily_job_checks(sunday)}
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
