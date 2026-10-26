@@ -92,17 +92,27 @@ class Created:
             )
         return f"Đã đặt nhắc 1 lần lúc {when} (giờ VN): {self.message}"
 
-    @property
-    def key(self) -> str:
+    def confirmation_key(self, now: dt.datetime | None = None) -> str:
         """Các cách viết giờ chấp nhận được trong câu trả lời, nối bằng "|" ("20:00|20h|
-        20 giờ|8h|8 giờ") - không có cách nào thì code nối câu xác nhận chuẩn."""
+        20 giờ|8h|8 giờ") - không có cách nào thì code nối câu xác nhận chuẩn. Nhắc
+        xa hơn ngày mai: thêm nhóm "&15/11|ngày 15" - câu trả lời phải có CẢ ngày
+        (model nói "8h ngày 15" mà giờ thật là 8h ngày khác thì bị sửa)."""
         due = self.due_at.astimezone(VN_TZ)
         hour, minute = due.hour, due.minute
         tail = f"{minute:02d}" if minute else ""
         forms = [f"{hour:02d}:{minute:02d}", f"{hour}h{tail}", f"{hour} giờ"]
         if hour > 12:
             forms += [f"{hour - 12}h{tail}", f"{hour - 12} giờ"]
-        return "|".join(dict.fromkeys(forms))
+        key = "|".join(dict.fromkeys(forms))
+        today = (now or dt.datetime.now(VN_TZ)).astimezone(VN_TZ).date()
+        if due.date() > today + dt.timedelta(days=1):
+            days = [f"{due.day}/{due.month}", f"ngày {due.day}", f"{due:%d/%m}"]
+            key += "&" + "|".join(dict.fromkeys(days))
+        return key
+
+    @property
+    def key(self) -> str:
+        return self.confirmation_key()
 
 
 async def create(

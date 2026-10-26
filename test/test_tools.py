@@ -178,6 +178,37 @@ async def test_set_reminder_gio_da_qua_khong_noi_ngay_thi_sang_mai(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_set_reminder_dung_ngay_router_khi_code_khong_doc_duoc_ngay(
+    monkeypatch, reminders, frozen
+):
+    """Router chép giờ vào "when" nhưng để ngày ở "date" (hoặc "when" có chữ ngày code
+    chưa hiểu): ghép ngày của router, giờ vẫn do code đọc; câu xác nhận phải có ngày."""
+    cases = [
+        ({"when": "8h sáng", "date": "2026-11-15"}, dt.datetime(2026, 11, 15, 8, 0, tzinfo=VN)),
+        ({"when": "tuần sau 9h", "date": "2026-11-02"}, dt.datetime(2026, 11, 2, 9, 0, tzinfo=VN)),
+        # Ngày router = hôm nay nhưng giờ đã qua: code vẫn lăn sang mai như cũ.
+        ({"when": "7h sáng", "date": "2026-10-26"}, dt.datetime(2026, 10, 27, 7, 0, tzinfo=VN)),
+    ]
+    for args, due in cases:
+        _router(monkeypatch, {"tool": "set_reminder", "args": {"message": "họp", **args}})
+        outcome = await tools.maybe_run_tool(1, "nhắc anh họp " + args["when"])
+        assert outcome.saved and reminders["once"][-1][2] == due, args
+    assert outcome.confirmation_key == "07:00|7h|7 giờ"  # nhắc ngày mai: chỉ soát giờ
+
+    _router(monkeypatch, {"tool": "set_reminder", "args": {"message": "họp", **cases[0][0]}})
+    far = await tools.maybe_run_tool(1, "nhắc anh họp 8h sáng ngày 15/11")
+    assert far.confirmation_key.split("&")[1].split("|")[:2] == ["15/11", "ngày 15"]
+
+    # Không có ngày từ router: hỏi lại, không lặng lẽ đặt ngày mai.
+    _router(
+        monkeypatch, {"tool": "set_reminder", "args": {"message": "họp", "when": "tuần sau 9h"}}
+    )
+    unknown = await tools.maybe_run_tool(1, "nhắc anh tuần sau 9h họp")
+    assert unknown.status == reg.STATUS_INVALID and "ngày" in unknown.text
+    assert len(reminders["once"]) == 4
+
+
+@pytest.mark.asyncio
 async def test_set_reminder_phut_am_hoac_ngay_da_qua_thi_hoi_lai(monkeypatch, reminders, frozen):
     for args in (
         {"message": "uống thuốc", "in_minutes": -5},

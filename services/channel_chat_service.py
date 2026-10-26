@@ -151,11 +151,13 @@ def _honesty_suffix(
             )
         return f"{reply}\n\n{note}" if reply else note
     if outcome.saved and outcome.confirmation:
-        # confirmation_key có thể gồm nhiều cách viết nối bằng "|" ("20:00|20h|8h").
-        keys = [k for k in outcome.confirmation_key.split("|") if k]
+        # confirmation_key: các nhóm bắt buộc nối bằng "&", mỗi nhóm gồm nhiều cách
+        # viết nối bằng "|" ("20:00|20h|8h&15/11|ngày 15") - mỗi nhóm phải có 1 cách.
+        groups = [[k for k in g.split("|") if k] for g in outcome.confirmation_key.split("&")]
+        groups = [g for g in groups if g]
         if not reply:
             return f"✅ {outcome.confirmation}"
-        if keys and not any(k in reply for k in keys):
+        if groups and not all(any(k in reply for k in g) for g in groups):
             return f"{reply}\n\n✅ {outcome.confirmation}"
     return reply
 

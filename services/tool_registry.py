@@ -70,8 +70,9 @@ class ToolResult:
 
     confirmation: câu xác nhận CHUẨN do code soạn (vd "Đã đặt nhắc lúc 20:00
     Thứ Bảy 25/10 (giờ VN): gọi mẹ"). confirmation_key: chuỗi câu trả lời phải có
-    (nhiều cách viết nối bằng "|", vd "20:00|20h|8h") - thiếu thì lượt chat tự nối
-    confirmation; rỗng = không kiểm."""
+    (nhiều cách viết nối bằng "|", vd "20:00|20h|8h"; nhiều nhóm bắt buộc nối bằng
+    "&", vd "8h|08:00&15/11|ngày 15") - thiếu thì lượt chat tự nối confirmation;
+    rỗng = không kiểm."""
 
     text: str
     status: str = STATUS_OK

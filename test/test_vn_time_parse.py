@@ -183,3 +183,46 @@ def test_quy_tac_sai_bi_tu_choi():
     assert recurrence.describe({"type": "lunar_monthly", "days": [1, 15], "at": "06:30"}) == (
         "06:30 mùng 1, rằm hằng tháng âm lịch"
     )
+
+
+# ─── Ngày không đọc được thì hỏi lại, không lặng lẽ thành hôm nay/ngày mai ───
+EVENING = at(2026, 10, 26, 21, 30)  # Thứ Hai 21:30
+
+
+@pytest.mark.parametrize(
+    ("text", "now", "due", "message"),
+    [
+        ("nhắc anh ngày 15 8h sáng đóng tiền nhà", EVENING, at(2026, 11, 15, 8), "Đóng tiền nhà"),
+        ("nhắc anh ngày 31 9h họp", EVENING, at(2026, 10, 31, 9), "Họp"),
+        ("nhắc anh ngày 15 9h họp", at(2026, 10, 26, 10), at(2026, 11, 15, 9), "Họp"),
+        ("nhắc anh ngày 15 20:30 họp", EVENING, at(2026, 11, 15, 20, 30), "Họp"),
+        ("nhắc anh 3 ngày nữa 8h sáng đi khám", EVENING, at(2026, 10, 29, 8), "Đi khám"),
+        ("nhắc anh 9h sáng 2 tuần nữa nộp hồ sơ", EVENING, at(2026, 11, 9, 9), "Nộp hồ sơ"),
+        # Chữ ngày là nội dung khi đã có ngày rõ ràng.
+        ("nhắc anh 8h mai mua đồ Tết", EVENING, at(2026, 10, 27, 8), "Mua đồ Tết"),
+        (
+            "nhắc anh 9h sáng mai gửi lịch tuần sau",
+            EVENING,
+            at(2026, 10, 27, 9),
+            "Gửi lịch tuần sau",
+        ),
+    ],
+)
+def test_ngay_noi_lien_gio_va_khoang_ngay(text, now, due, message):
+    when = p.parse(text, now)
+    assert when.due_at == due and not when.error and when.recurrence is None
+    assert p.extract_reminder(text, now)[0] == message
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "nhắc anh tuần sau 9h họp",
+        "nhắc anh 10h sáng ngày 15 tháng sau đi khám",
+        "nhắc anh tối 30 tết 8h cúng",
+        "nhắc anh 1 tháng nữa lúc 9h gia hạn",
+    ],
+)
+def test_ngay_chua_hieu_thi_bao_loi_khong_lan_sang_mai(text):
+    when = p.parse(text, EVENING)
+    assert when.due_at is None and "ngày" in when.error

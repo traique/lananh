@@ -14,6 +14,9 @@ Hiểu các dạng thường gặp:
   12/3 âm, ngày 12 tháng 3 âm (dùng lại bộ đọc ngày của services/calendar_query).
 - Lặp: mỗi ngày/hằng ngày/mỗi sáng, mỗi thứ 2 / thứ 2,4,6 hằng tuần, ngày 5
   hằng tháng, mùng 1 và rằm (âm lịch hằng tháng), 20/11 hằng năm, 12/3 âm hằng năm.
+- "3 ngày nữa 8h sáng", "ngày 15 9h": khoảng theo ngày cộng vào ngày, giờ theo giờ
+  đã nói. Câu có giờ mà còn chữ ngày không đọc được ("tuần sau 9h", "ngày 15
+  tháng sau", "30 tết") thì báo lỗi hỏi lại, KHÔNG lặng lẽ nhắc hôm nay/ngày mai.
 
 Chữ được bỏ dấu để so khớp nhưng GIỮ NGUYÊN độ dài (1 ký tự - 1 ký tự) nên vị
 trí khớp map thẳng về câu gốc: dùng để cắt nội dung nhắc và để soát lại các chữ
@@ -100,7 +103,22 @@ _LUNAR_C = re.compile(
     r"\b(?P<d>\d{1,2})[/-](?P<m>\d{1,2})(?P<leap> ?n(?:huan)?)?(?:[/-](?P<y>\d{4}))?"
     r" (?:am lich|am|al)\b"
 )
-_DAY_OF_MONTH_RE = re.compile(r"\bngay (?P<d>\d{1,2})\b(?! ?(?:thang|[/-]|\d))")
+# "ngày 15" (không phải "ngày 15/11", "ngày 15 tháng"); số đứng sau phải là giờ
+# ("ngày 15 9h", "ngày 15 20:30"), không phải 1 số trần khác.
+_DAY_OF_MONTH_RE = re.compile(
+    r"\bngay (?P<d>\d{1,2})\b(?! ?(?:thang|[/-]|\d{1,2}\b(?! ?(?:h|g|gio|:))))"
+)
+# Chữ ngày còn sót sau khi đọc (không hiểu được): hỏi lại thay vì lặng lẽ nhắc
+# hôm nay/ngày mai. (mẫu bỏ dấu, mẫu còn dấu cùng vị trí để soát chữ trùng.)
+_UNREAD_DATE_RE = re.compile(
+    r"\b(?:ngay \d{1,2}|(?:tuan|thang|nam) (?:sau|toi)|\d+ (?:ngay|tuan|thang|nam) nua"
+    r"|\d{1,2} tet|(?:dau|giua|cuoi) thang)\b"
+)
+_UNREAD_DATE_ACCENTED_RE = re.compile(
+    r"ngày \d{1,2}|(?:tuần|tháng|năm) (?:sau|tới)|\d+ (?:ngày|tuần|tháng|năm) nữa"
+    r"|\d{1,2} tết|(?:đầu|giữa|cuối) tháng"
+)
+UNREAD_DATE_ERROR = "Chưa hiểu ngày nhắc - nói rõ ngày/tháng giúp (vd 15/11 lúc 9h)."
 _TODAY_RE = re.compile(r"\b(?:hom nay|bua nay|(?P<p>sang|trua|chieu|toi|dem) nay)\b")
 _TOMORROW_RE = re.compile(r"\b(?:ngay mai|hom mai|mai)\b")
 _AFTER_TOMORROW_RE = re.compile(r"\b(?:ngay kia|mot)\b")
@@ -415,6 +433,14 @@ def _recurrence_words(scan: _Scan) -> tuple[str | None, str | None]:
     return unit, period
 
 
+def _unread_date(scan: _Scan) -> bool:
+    """Còn chữ ngày chưa đọc được ("tuần sau", "ngày 15 tháng sau", "30 tết")."""
+    for m in _UNREAD_DATE_RE.finditer(scan.work):
+        if not scan.has_dia or _UNREAD_DATE_ACCENTED_RE.fullmatch(scan.low[m.start() : m.end()]):
+            return True
+    return False
+
+
 def _next_lunar(day: int, month: int | None, leap: bool, year: int | None, today: dt.date):
     from services import lunar
 
@@ -504,7 +530,10 @@ def parse(text: str, now: dt.datetime | None = None) -> When:
         return done(due_at=due, has_date=True, recurrence=rule)
 
     # ── Một lần ───────────────────────────────────────────────────────────
-    if delta is not None and not tod:
+    # "3 ngày nữa 8h sáng", "9h sáng 2 tuần nữa": khoảng theo ngày cộng vào NGÀY,
+    # giờ lấy theo giờ đã nói (khoảng phút/giờ thì cộng thẳng vào bây giờ).
+    day_delta = delta is not None and delta >= dt.timedelta(days=1) and has_time
+    if delta is not None and not tod and not day_delta:
         due = now + delta
         if delta < dt.timedelta(minutes=1):
             return done(error="Khoảng thời gian quá ngắn (tối thiểu 1 phút).")
@@ -526,6 +555,9 @@ def parse(text: str, now: dt.datetime | None = None) -> When:
         rolling_weekday = not weekday_shifted
     elif relative is not None:
         date = relative
+    elif day_delta:
+        assert delta is not None
+        date = (now + delta).date()
     elif dom is not None:
         candidate = None
         for shift in range(3):
@@ -544,6 +576,8 @@ def parse(text: str, now: dt.datetime | None = None) -> When:
             return done(has_date=True, error="Cần giờ nhắc cụ thể (vd 8h sáng).")
         return When()
     assert hour is not None and minute is not None
+    if not has_date and _unread_date(scan):
+        return done(error=UNREAD_DATE_ERROR)
 
     def at(day: dt.date, h: int) -> dt.datetime:
         return dt.datetime.combine(day, dt.time(h, minute), tzinfo=VN_TZ)

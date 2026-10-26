@@ -540,6 +540,34 @@ async def test_da_luu_ma_cau_tra_loi_thieu_gio_thi_noi_xac_nhan_cua_code(chat_fa
 
 
 @pytest.mark.asyncio
+async def test_nhac_xa_ngay_cau_tra_loi_phai_co_ca_ngay(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+    from services import tool_registry as reg
+
+    confirmation = "Đã đặt nhắc 1 lần lúc 08:00 Chủ Nhật 15/11 (giờ VN): đóng tiền nhà"
+
+    async def saved(user_id, text):
+        return _outcome(
+            status=reg.STATUS_OK,
+            name="set_reminder",
+            side_effect=True,
+            text=confirmation,
+            confirmation=confirmation,
+            confirmation_key="08:00|8h|8 giờ&15/11|ngày 15",
+        )
+
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", saved)
+    # Đúng giờ nhưng sai ngày -> code nối câu xác nhận chuẩn.
+    chat_fakes["response"] = _FakeResponse("Dạ 8h sáng mai em nhắc anh đóng tiền nhà nha")
+    turn = await ccs.run_chat_turn(1, "nhắc anh ngày 15 8h sáng đóng tiền nhà")
+    assert turn.text.endswith(f"✅ {confirmation}")
+
+    chat_fakes["response"] = _FakeResponse("Dạ 8h sáng ngày 15 em nhắc anh đóng tiền nhà nha")
+    turn = await ccs.run_chat_turn(1, "nhắc anh ngày 15 8h sáng đóng tiền nhà")
+    assert "✅" not in turn.text
+
+
+@pytest.mark.asyncio
 async def test_luot_chi_doc_truyen_allow_side_effects_va_bao_ly_do(chat_fakes, monkeypatch):
     from services import channel_chat_service as ccs
     from services import tool_registry as reg

@@ -176,6 +176,24 @@ def _structured_due(date: str, time: str, in_minutes, now: datetime) -> tuple[da
     return due, ""
 
 
+def _with_router_date(parsed, when_text: str, date: str, now: datetime):
+    """Code đọc được giờ nhưng không có ngày ("8h sáng" + date router đưa riêng) hoặc
+    gặp chữ ngày chưa hiểu ("tuần sau 9h"): ghép ngày YYYY-MM-DD của router vào câu
+    rồi để vn_time_parse tính lại (giờ vẫn do code đọc). Ngày router là hôm nay/
+    ngày mai thì giữ cách code tự tính (giờ đã qua -> mai)."""
+    from services import vn_time_parse
+
+    if parsed.recurrence is not None or parsed.has_date or not parsed.has_time:
+        return parsed
+    day = _parse_solar_date(date) if date else None
+    if day is None or not when_text:
+        return parsed
+    if parsed.due_at is not None and day <= now.date() + timedelta(days=1):
+        return parsed
+    again = vn_time_parse.parse(f"{when_text} {day:%d/%m/%Y}", now)
+    return again if again.has_date and again.found else parsed
+
+
 async def _create_one(
     user_id: int, item: dict, now: datetime, *, parse_turn_text: bool, suffix: str
 ):
@@ -186,7 +204,9 @@ async def _create_one(
     when_text = str(item.get("when") or "").strip()
     parsed = vn_time_parse.parse(when_text, now) if when_text else vn_time_parse.When()
     if not parsed.found and parse_turn_text:
-        parsed = vn_time_parse.parse(_turn_text.get(), now)
+        when_text = _turn_text.get()
+        parsed = vn_time_parse.parse(when_text, now)
+    parsed = _with_router_date(parsed, when_text, str(item.get("date") or ""), now)
     due: datetime | None = parsed.due_at
     rule = parsed.recurrence
     error = parsed.error
@@ -277,7 +297,7 @@ async def _tool_set_reminder(
     return reg.ToolResult(
         "\n".join(lines),
         confirmation="\n".join(c.confirmation(now) for c in created),
-        confirmation_key=created[0].key,
+        confirmation_key=created[0].confirmation_key(now),
     )
 
 
