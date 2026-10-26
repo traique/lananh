@@ -77,3 +77,14 @@ def make_alert_callback(
             logger.warning("Cảnh báo chủ bot không tới được kênh nào (Zoom chưa bật/pair).")
 
     return alert
+
+
+async def mirror_to_zoom(text: str) -> None:
+    """Cảnh báo đã gửi Telegram theo đường riêng (vd tin kèm nút bấm): nhân bản
+    sang Zoom theo đúng luật ALERT_ZOOM_MIRROR như ``alert``. Không raise."""
+    if not _wants_zoom(text, True, mirror_mode()):
+        return
+    try:
+        await _send_zoom(text)
+    except Exception:
+        logger.warning("Không gửi được cảnh báo qua Zoom.", exc_info=True)

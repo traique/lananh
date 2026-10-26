@@ -17,6 +17,7 @@ hẳn Telegram.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import logging
 import re
@@ -27,7 +28,7 @@ from core import address
 from core import database as db
 from core.text_normalize import fold, nfc
 from services import recurrence, reply_audience, vn_time_parse
-from services.reminder_delivery import current_target
+from services.reminder_delivery import current_target, notification_target
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +310,36 @@ async def snooze_pending(user_id: int, target: str, when_text: str) -> tuple[str
     if not await db.reminder_reschedule(user_id, item.reminder_id, due):
         return "Nhắc việc này vừa được gửi hoặc trùng giờ với lần nhắc khác của chuỗi.", False
     return f"⏰ Đã dời sang {vn_time_parse.describe_due(due, now)}: {item.message}", True
+
+
+# ─── Nút hoãn dưới tin nhắc Telegram (handlers/callbacks.py) ───────────────
+
+
+async def snooze_delivered(user_id: int, reminder_id: int, choice: str) -> str:
+    """Nút [+10p] [+1h] [Sáng mai] dưới tin nhắc vừa gửi: đặt 1 nhắc mới cùng nội
+    dung và đánh dấu lần nhắc cũ là xong. event_key "snooze:<id>" - bấm lại (hay
+    inbox thử lại) không đặt thêm nhắc thứ 2."""
+    from services import action_buttons
+
+    when_text = action_buttons.SNOOZE_CHOICES.get(choice)
+    row = await db.reminder_get(user_id, reminder_id)
+    if row is None or when_text is None:
+        return f"{_me().capitalize()} không còn thấy nhắc việc này nữa nha."
+    if row.get("done_at") is not None:
+        return "Nhắc việc này đã hoãn hoặc xong rồi nha."
+    message = row["message"]
+    if row.get("series_id") and message.startswith("🗓"):
+        message = message.removeprefix("🗓").strip()
+    now = dt.datetime.now(VN_TZ)
+    due = vn_time_parse.parse_snooze(when_text, now)
+    if due is None:  # pragma: no cover - 3 lựa chọn cố định đều hiểu được
+        return f"{_me().capitalize()} chưa hoãn được nhắc này, thử /nhac hoan giúp {_me()} nha."
+    target = dataclasses.replace(current_target(user_id), event_key=f"snooze:{reminder_id}")
+    with notification_target(target):
+        created = await create(user_id, message, due)
+    await db.reminder_mark_done(reminder_id)
+    when = vn_time_parse.describe_due(created.due_at, now)
+    return f"⏰ Dạ {_me()} hoãn tới {when} nha: {message}"
 
 
 # ─── "hoãn 10p" / "xong" ngay sau khi nhắc ────────────────────────────────

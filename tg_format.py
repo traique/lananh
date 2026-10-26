@@ -231,24 +231,28 @@ def _split_raw_text(text: str, max_len: int) -> list[str]:
     return _rebalance_fences(chunks)
 
 
-async def _send_chunks(send_fn, text: str, max_len: int, reply_markup: Any = None) -> None:
+async def _send_chunks(send_fn, text: str, max_len: int, reply_markup: Any = None):
     """Gửi text đã convert markdown->HTML qua send_fn(content, parse_mode, markup),
     tự chia đoạn nếu quá dài (chia trên text thô TRƯỚC khi convert, để mỗi đoạn
     tự cân bằng thẻ). Bàn phím nút bấm (reply_markup) chỉ gắn vào đoạn CUỐI.
 
     Telegram từ chối HTML (BadRequest - thẻ lệch, quá dài...) thì gửi lại đoạn đó
     bằng chữ thuần. Lỗi mạng/timeout KHÔNG gửi lại (tránh tin trùng) mà để lỗi đi
-    lên cho caller/inbox xử lý."""
+    lên cho caller/inbox xử lý. Trả kết quả của lần gửi cuối (Message đoạn cuối)."""
+    sent = None
     chunks = _split_raw_text(text, max_len)
     for index, raw_chunk in enumerate(chunks):
         markup = reply_markup if index == len(chunks) - 1 else None
         html_chunk = markdown_to_html(raw_chunk)
         try:
-            await send_fn(html_chunk, "HTML", markup)
+            sent = await send_fn(html_chunk, "HTML", markup)
         except BadRequest as exc:
             logger.info("Telegram từ chối HTML (%s), gửi lại đoạn này bằng chữ thuần.", exc)
             plain = html_to_plain(html_chunk)
-            await send_fn(plain if len(plain) <= max_len else raw_chunk[:max_len], None, markup)
+            sent = await send_fn(
+                plain if len(plain) <= max_len else raw_chunk[:max_len], None, markup
+            )
+    return sent
 
 
 def _markup_kwargs(reply_markup: Any) -> dict:
@@ -296,81 +300,89 @@ async def edit_rich_native(bot, chat_id: int, message_id: int, text: str, *, rep
     return await bot.do_api_request("editMessageText", api_kwargs)
 
 
-async def _try_native(call, label: str) -> bool:
+_NOT_SENT = object()
+
+
+async def _try_native(call, label: str):
+    """Kết quả gửi tin rich, hoặc _NOT_SENT nếu Telegram từ chối (quay về HTML)."""
     try:
-        await call()
-        return True
+        return await call()
     except BadRequest as exc:
         logger.info("Telegram từ chối tin rich (%s: %s), quay về HTML.", label, exc)
-        return False
+        return _NOT_SENT
 
 
-async def reply_rich(message, text: str, *, max_len: int = 4096, reply_markup: Any = None) -> None:
-    """Trả lời trực tiếp 1 tin nhắn (dùng khi đã có object `message`)."""
-    if native_rich_ok(text) and await _try_native(
-        lambda: send_rich_native(
-            message.get_bot(), message.chat_id, text, reply_markup=reply_markup
-        ),
-        "sendRichMessage",
-    ):
-        return
+async def reply_rich(message, text: str, *, max_len: int = 4096, reply_markup: Any = None):
+    """Trả lời trực tiếp 1 tin nhắn (dùng khi đã có object `message`). Trả tin
+    cuối đã gửi (để gỡ nút bấm về sau), có thể None."""
+    if native_rich_ok(text):
+        sent = await _try_native(
+            lambda: send_rich_native(
+                message.get_bot(), message.chat_id, text, reply_markup=reply_markup
+            ),
+            "sendRichMessage",
+        )
+        if sent is not _NOT_SENT:
+            return sent
 
-    async def _send(content: str, parse_mode: Optional[str], markup: Any) -> None:
-        await message.reply_text(content, parse_mode=parse_mode, **_markup_kwargs(markup))
+    async def _send(content: str, parse_mode: Optional[str], markup: Any):
+        return await message.reply_text(content, parse_mode=parse_mode, **_markup_kwargs(markup))
 
-    await _send_chunks(_send, text, max_len, reply_markup)
+    return await _send_chunks(_send, text, max_len, reply_markup)
 
 
 async def reply_rich_edit_first(
     status_message, text: str, *, max_len: int = 4096, reply_markup: Any = None
-) -> None:
+):
     """Giống reply_rich, nhưng đoạn ĐẦU TIÊN sẽ edit trực tiếp vào
     `status_message` (tin nhắn trạng thái "đang tìm..." đã gửi trước đó)
     thay vì gửi tin mới - tránh nhấp nháy xoá + gửi lại. Các đoạn sau (nếu
     nội dung dài hơn 1 tin nhắn) vẫn gửi nối tiếp như bình thường."""
-    if native_rich_ok(text) and await _try_native(
-        lambda: edit_rich_native(
-            status_message.get_bot(),
-            status_message.chat_id,
-            status_message.message_id,
-            text,
-            reply_markup=reply_markup,
-        ),
-        "editMessageText",
-    ):
-        return
+    if native_rich_ok(text):
+        sent = await _try_native(
+            lambda: edit_rich_native(
+                status_message.get_bot(),
+                status_message.chat_id,
+                status_message.message_id,
+                text,
+                reply_markup=reply_markup,
+            ),
+            "editMessageText",
+        )
+        if sent is not _NOT_SENT:
+            return status_message
     is_first = True
 
-    async def _send(content: str, parse_mode, markup: Any) -> None:
+    async def _send(content: str, parse_mode, markup: Any):
         nonlocal is_first
         if is_first:
             # Bản plain fallback của đoạn đầu (HTML bị từ chối) vẫn là edit -
             # edit_text idempotent nên không lo trùng tin.
             await status_message.edit_text(content, parse_mode=parse_mode, **_markup_kwargs(markup))
             is_first = False
-        else:
-            await status_message.reply_text(
-                content, parse_mode=parse_mode, **_markup_kwargs(markup)
-            )
+            return status_message
+        return await status_message.reply_text(
+            content, parse_mode=parse_mode, **_markup_kwargs(markup)
+        )
 
-    await _send_chunks(_send, text, max_len, reply_markup)
+    return await _send_chunks(_send, text, max_len, reply_markup)
 
 
-async def send_rich(
-    bot, chat_id: int, text: str, *, max_len: int = 4096, reply_markup: Any = None
-) -> None:
+async def send_rich(bot, chat_id: int, text: str, *, max_len: int = 4096, reply_markup: Any = None):
     """Gửi chủ động (không phải trả lời 1 tin nhắn có sẵn) tới `chat_id` -
     dùng cho các callback chỉ có bot + chat_id (vd reminder/daily digest của
     scheduler.py), nơi không có object `message` để gọi reply_rich()."""
-    if native_rich_ok(text) and await _try_native(
-        lambda: send_rich_native(bot, chat_id, text, reply_markup=reply_markup),
-        "sendRichMessage",
-    ):
-        return
+    if native_rich_ok(text):
+        sent = await _try_native(
+            lambda: send_rich_native(bot, chat_id, text, reply_markup=reply_markup),
+            "sendRichMessage",
+        )
+        if sent is not _NOT_SENT:
+            return sent
 
-    async def _send(content: str, parse_mode: Optional[str], markup: Any) -> None:
-        await bot.send_message(
+    async def _send(content: str, parse_mode: Optional[str], markup: Any):
+        return await bot.send_message(
             chat_id=chat_id, text=content, parse_mode=parse_mode, **_markup_kwargs(markup)
         )
 
-    await _send_chunks(_send, text, max_len, reply_markup)
+    return await _send_chunks(_send, text, max_len, reply_markup)

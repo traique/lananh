@@ -439,16 +439,72 @@ async def save_result(
     result_type: str,
     content_text: Optional[str] = None,
     file_path: Optional[str] = None,
+    *,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> None:
+    """``provider``/``model`` (migrations/021): ai trả lời lượt này - đánh giá 👍/👎
+    sau đó (services/answer_feedback.py) biết câu trả lời của provider nào."""
     pool = await get_pool()
     await pool.execute(
-        "INSERT INTO results (prompt_id, result_type, content_text, file_path) "
-        "VALUES ($1, $2, $3, $4)",
+        "INSERT INTO results (prompt_id, result_type, content_text, file_path, provider, model) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
         prompt_id,
         result_type,
         content_text,
         file_path,
+        provider,
+        model,
     )
+
+
+# ─── Đánh giá câu trả lời (services/answer_feedback.py, migrations/021) ─────
+# SQL ở core/repositories/feedback.py. Ghi đánh giá là UPSERT theo (người, prompt)
+# nên thử lại an toàn.
+
+
+@_with_reconnect
+async def answer_feedback_upsert(**kw) -> int:
+    from core.repositories import feedback
+
+    return await feedback.upsert(await get_pool(), **kw)
+
+
+@_with_reconnect
+async def answer_feedback_turn(
+    telegram_user_id: int, prompt_id: int, max_chars: int = 2000
+) -> dict | None:
+    from core.repositories import feedback
+
+    return await feedback.turn_snapshot(await get_pool(), telegram_user_id, prompt_id, max_chars)
+
+
+@_with_reconnect
+async def answer_feedback_last_chat(telegram_user_id: int, max_chars: int = 2000) -> dict | None:
+    from core.repositories import feedback
+
+    return await feedback.last_chat_snapshot(await get_pool(), telegram_user_id, max_chars)
+
+
+@_with_reconnect
+async def answer_feedback_stats(days: int) -> list[dict]:
+    from core.repositories import feedback
+
+    return await feedback.stats(await get_pool(), days)
+
+
+@_with_reconnect
+async def answer_feedback_recent_down(telegram_user_id: int, days: int, limit: int = 5) -> list:
+    from core.repositories import feedback
+
+    return await feedback.recent_down(await get_pool(), telegram_user_id, days, limit)
+
+
+@_with_reconnect
+async def answer_feedback_clear(telegram_user_id: int) -> None:
+    from core.repositories import feedback
+
+    await feedback.clear(await get_pool(), telegram_user_id)
 
 
 @_with_reconnect
@@ -524,6 +580,18 @@ async def add_chat_turn(
         model_text,
         retention=CHAT_MESSAGES_RETENTION_LIMIT,
         kind=kind,
+    )
+
+
+@_with_reconnect
+async def delete_last_chat_pair(telegram_user_id: int, user_text: str, model_text: str) -> bool:
+    """Xoá cặp (tin người dùng, câu trả lời) MỚI NHẤT nếu đúng là cặp này - nút
+    🔄 Thử lại/✂️ Ngắn hơn chạy lại lượt mà không để 2 câu trả lời trong lịch sử.
+    Lặp lại an toàn: lần 2 không còn khớp thì không xoá gì."""
+    from core.repositories import chat_history
+
+    return await chat_history.delete_last_pair(
+        await get_pool(), telegram_user_id, user_text, model_text
     )
 
 
@@ -1158,6 +1226,14 @@ async def reminder_last_fired(telegram_user_id: int, within) -> dict | None:
     from core.repositories import reminders
 
     return await reminders.last_fired(await get_pool(), telegram_user_id, within)
+
+
+@_with_reconnect
+async def reminder_get(telegram_user_id: int, reminder_id: int) -> dict | None:
+    """1 nhắc việc của chính người đó (nút hoãn dưới tin nhắc Telegram)."""
+    from core.repositories import reminders
+
+    return await reminders.get_owned(await get_pool(), telegram_user_id, reminder_id)
 
 
 @_with_reconnect

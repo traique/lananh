@@ -27,13 +27,24 @@ from services.facebook_page_service import (
 _ALLOWED_AFFILIATE_SCHEMES = {"http", "https"}
 logger = logging.getLogger(__name__)
 _admin_notification_callback: Callable[[str], Awaitable[None]] | None = None
+# Bản kèm nút [✅ Duyệt][🗑 Bỏ qua] (bot_app gửi Telegram có nút, Zoom chữ thường);
+# đặt rồi thì preview bài chờ đi đường này thay cho callback chữ.
+_admin_buttons_callback: Callable[[str, list], Awaitable[None]] | None = None
 
 
 def set_admin_notification_callback(
     callback: Callable[[str], Awaitable[None]] | None,
 ) -> None:
-    global _admin_notification_callback
+    """Đặt callback chữ; xoá luôn bản kèm nút (đặt lại bằng
+    set_admin_buttons_callback SAU lệnh này nếu muốn có nút duyệt)."""
+    global _admin_notification_callback, _admin_buttons_callback
     _admin_notification_callback = callback
+    _admin_buttons_callback = None
+
+
+def set_admin_buttons_callback(callback: Callable[[str, list], Awaitable[None]] | None) -> None:
+    global _admin_buttons_callback
+    _admin_buttons_callback = callback
 
 
 def _valid_shopee_affiliate_url(value: str) -> bool:
@@ -128,11 +139,15 @@ async def prepare_post(account_id: str, post_id: int, note: str | None = None) -
         preview = f"{preview}\n\n{note}"
     if controller:
         await zalo_repository.enqueue_outbox(account_id, controller, preview)
-    if _admin_notification_callback is not None:
-        try:
+    try:
+        if _admin_buttons_callback is not None:
+            from services import action_buttons
+
+            await _admin_buttons_callback(preview, action_buttons.facebook_review_rows(post_id))
+        elif _admin_notification_callback is not None:
             await _admin_notification_callback(preview)
-        except Exception:
-            logger.warning("Không gửi được preview Facebook tới kênh admin phụ.", exc_info=True)
+    except Exception:
+        logger.warning("Không gửi được preview Facebook tới kênh admin phụ.", exc_info=True)
 
 
 # /fb_reset xoá TOÀN BỘ bài đã lưu, không hoàn tác: lệnh nằm trong menu Telegram

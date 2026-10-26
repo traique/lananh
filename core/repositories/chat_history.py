@@ -39,3 +39,29 @@ async def add_turn(
                 telegram_user_id,
                 retention,
             )
+
+
+async def delete_last_pair(
+    pool: Any, telegram_user_id: int, user_text: str, model_text: str
+) -> bool:
+    """Xoá 2 dòng mới nhất của người dùng nếu đúng là (user=user_text, model=model_text)."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            rows = await conn.fetch(
+                "SELECT id, role, content FROM chat_messages WHERE telegram_user_id = $1 "
+                "ORDER BY id DESC LIMIT 2",
+                telegram_user_id,
+            )
+            if len(rows) != 2:
+                return False
+            model_row, user_row = rows[0], rows[1]
+            if (model_row["role"], model_row["content"]) != ("model", model_text) or (
+                user_row["role"],
+                user_row["content"],
+            ) != ("user", user_text):
+                return False
+            await conn.execute(
+                "DELETE FROM chat_messages WHERE id = ANY($1::bigint[])",
+                [model_row["id"], user_row["id"]],
+            )
+            return True

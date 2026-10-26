@@ -87,6 +87,7 @@ class FakeMemoryDB:
             "get_last_model_row",
             "clear_chat",
             "get_session_messages",
+            "answer_feedback_clear",
         ):
             monkeypatch.setattr(db_module, name, getattr(self, name))
 
@@ -115,6 +116,10 @@ class FakeMemoryDB:
 
     async def clear_chat(self, uid):
         self.chat = [r for r in self.chat if r["uid"] != uid]
+
+    async def answer_feedback_clear(self, uid):
+        # Đánh giá 👍/👎 (migrations/021) - fake không giữ dòng nào.
+        return None
 
     async def get_session_messages(self, uid, k, session_timeout_sec):
         rows = [r for r in self.chat if r["uid"] == uid][-k:]

@@ -270,6 +270,16 @@ async def last_fired(pool: Any, user_id: int, within: timedelta) -> dict | None:
     return dict(row) if row else None
 
 
+async def get_owned(pool: Any, user_id: int, reminder_id: int) -> dict | None:
+    row = await pool.fetchrow(
+        "SELECT id, message, series_id, fired_at, done_at, sent FROM reminders "
+        "WHERE id = $1 AND telegram_user_id = $2",
+        reminder_id,
+        user_id,
+    )
+    return dict(row) if row else None
+
+
 async def mark_done(pool: Any, reminder_id: int) -> None:
     await pool.execute(
         "UPDATE reminders SET done_at = COALESCE(done_at, now()) WHERE id = $1", reminder_id

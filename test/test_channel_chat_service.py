@@ -341,8 +341,10 @@ def telegram_chat(monkeypatch):
     async def route(update, user_id, text):
         return stock_handler.StockRouteResult(handled=False, grounding="GIÁ FPT")
 
-    async def fake_reply_long(message, text):
+    async def fake_reply_long(message, text, **kwargs):
+        # Câu trả lời chat giờ kèm nút 👍/👎 (reply_markup) ở đoạn cuối.
         sent.append(text)
+        seen["reply_markup"] = kwargs.get("reply_markup")
 
     monkeypatch.setattr(
         chat_router.portfolio_service, "maybe_handle_natural_language", no_portfolio
@@ -367,6 +369,7 @@ async def test_telegram_chat_dung_pipeline_chung_va_nhan_api_ngan(telegram_chat,
     update = _TgUpdate("chào em")
     await chat_router.chat_msg(update, _TgContext())
 
+    keyboard = seen.pop("reply_markup")
     assert seen == {
         "user_id": 42,
         "text": "chào em",
@@ -375,6 +378,9 @@ async def test_telegram_chat_dung_pipeline_chung_va_nhan_api_ngan(telegram_chat,
         "quote": None,
     }
     assert sent == ["dạ em đây\n\n⚙️ API"]
+    # Có số liệu cổ phiếu kèm theo: chỉ 👍/👎, không có nút làm lại.
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert labels == ["👍", "👎"]
 
 
 def test_telegram_lay_tin_duoc_tra_loi_hoac_doan_trich():

@@ -64,6 +64,9 @@ class ChatTurn:
     # Tool GHI dữ liệu đã lưu xong trước khi lượt hỏng (vd nhắc việc): câu xác nhận
     # do code soạn, nối vào câu báo lỗi để người dùng khỏi đặt lại lần nữa.
     tool_note: str = ""
+    # Provider/model đã trả lời (ai/orchestrator gắn vào response) - đánh giá 👍/👎.
+    provider: str = ""
+    model: str = ""
 
 
 def failure_message(turn: ChatTurn, *, owner: bool, address_form: str | None = None) -> str:
@@ -170,6 +173,7 @@ async def run_chat_turn(
     address_form: str | None = None,
     quote_text: str | None = None,
     allow_side_effects: bool = True,
+    style_hint: str = "",
 ) -> ChatTurn:
     """Pipeline chat chung: gom ngữ cảnh -> orchestrator.chat -> lưu lịch sử.
 
@@ -180,7 +184,9 @@ async def run_chat_turn(
     đang trả lời/trích dẫn (rào như dữ liệu, không gộp vào lời người dùng).
     allow_side_effects=False (lượt chỉ đọc, vd tin nhắn thoại): tool ghi dữ liệu
     (nhắc việc, ghi chú, chi tiêu, danh mục, điều cần nhớ) không chạy và câu trả
-    lời nói rõ chưa lưu. Không raise: lỗi trả ChatTurn(failed=True) sau khi đã
+    lời nói rõ chưa lưu. style_hint: yêu cầu trình bày riêng của lượt này (nút
+    ✂️ Ngắn hơn/🔄 Thử lại - services/answer_feedback.py), nối sau "cách trả lời"
+    người dùng đã dặn. Không raise: lỗi trả ChatTurn(failed=True) sau khi đã
     log và ghi telemetry."""
     prompt_id = await telemetry.start(user_id, "chat", text, channel=channel)
     outcome = tool_registry.ToolOutcome()
@@ -281,7 +287,7 @@ async def run_chat_turn(
                     channel=channel,
                     is_admin=is_admin,
                     address_form=address_form,
-                    style_rules=memory.style_rules,
+                    style_rules="\n\n".join(p for p in (memory.style_rules, style_hint) if p),
                 )
         reply = conversation_log.guard_stock_reply((response.text or "").strip(), last_row)
         searched = bool(getattr(response, "searched", False))
@@ -315,7 +321,14 @@ async def run_chat_turn(
 
     # Từ đây câu trả lời ĐÃ sinh xong (đã tốn quota): lỗi ghi DB/telemetry chỉ
     # log, không bao giờ biến thành câu báo lỗi và mất câu trả lời.
-    await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
+    provider = str(getattr(response, "provider", "") or "")
+    model = str(getattr(response, "model", "") or "")
+    if provider:
+        await telemetry.success(
+            prompt_id, "chat", reply or "(không có nội dung)", provider=provider, model=model
+        )
+    else:
+        await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
     if reply:
         # Lượt trả lời dựa trên dữ liệu ngoài (Tavily, provider tự tra web, trang
         # người dùng gửi...): câu trả lời có thể mang nội dung bị prompt injection
@@ -327,7 +340,13 @@ async def run_chat_turn(
             else conversation_log.KIND_CHAT
         )
         await conversation_log.record_exchange(user_id, text, reply, kind)
-    return ChatTurn(reply, bool(getattr(response, "used_fallback", False)), prompt_id=prompt_id)
+    return ChatTurn(
+        reply,
+        bool(getattr(response, "used_fallback", False)),
+        prompt_id=prompt_id,
+        provider=provider,
+        model=model,
+    )
 
 
 def _search_mode(

@@ -4,7 +4,14 @@ import asyncio
 import logging
 
 from telegram import BotCommand, LinkPreviewOptions
-from telegram.ext import Application, CommandHandler, Defaults, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    Defaults,
+    MessageHandler,
+    filters,
+)
 from telegram.request import HTTPXRequest
 
 import scheduler
@@ -20,10 +27,12 @@ from ai import (
 from channels import facebook_commands, zalo_users, zoom
 from core import config, database as db, idempotency
 from handlers import (
+    callbacks,
     chat_router,
     commands,
     daily_data_commands,
     expense_commands,
+    feedback_commands,
     media_handler,
     pairing_commands,
     portfolio_commands,
@@ -53,6 +62,7 @@ COMMANDS = [
     BotCommand("start", "Bắt đầu"),
     BotCommand("help", "Xem hướng dẫn"),
     BotCommand("huy", "Dừng câu trả lời đang chạy dở"),
+    BotCommand("sai", "Báo câu trả lời vừa rồi chưa ổn (kèm lý do)"),
     BotCommand("danhmuc", "Xem danh mục cổ phiếu"),
     BotCommand("themcp", "Thêm giao dịch mua"),
     BotCommand("capnhatcp", "Cập nhật vị thế"),
@@ -100,6 +110,7 @@ COMMANDS = [
     BotCommand("status", "Xem provider"),
     BotCommand("loi", "Xem lỗi gom nhóm hôm nay"),
     BotCommand("thongke", "Thống kê lượt gọi theo user/model"),
+    BotCommand("danhgia", "Đánh giá 👍/👎 câu trả lời theo provider"),
     BotCommand("agent", "Hỏi agent tự tra cứu nhiều bước (thử nghiệm)"),
     BotCommand("rag", "Tra cứu kiến thức trong thư mục rag/"),
     BotCommand("ragxuly", "Dọn file md OCR trong rag/ (AI thêm heading)"),
@@ -234,6 +245,8 @@ def build_application():
         ("start", commands.start_cmd),
         ("help", commands.help_cmd),
         ("huy", commands.huy_cmd),
+        ("sai", feedback_commands.sai_cmd),
+        ("danhgia", feedback_commands.danhgia_cmd),
         ("danhmuc", portfolio_commands.portfolio_cmd),
         ("themcp", portfolio_commands.portfolio_cmd),
         ("capnhatcp", portfolio_commands.portfolio_cmd),
@@ -328,6 +341,8 @@ def build_application():
     ]
     for name, handler in command_handlers:
         app.add_handler(CommandHandler(name, handler))
+    # Nút inline (👍/👎, thử lại, duyệt bài Facebook, cấp quyền Zalo, hoãn nhắc).
+    app.add_handler(CallbackQueryHandler(callbacks.on_callback))
     app.add_handler(MessageHandler(filters.PHOTO, media_handler.photo_msg))
     app.add_handler(MessageHandler(filters.Document.IMAGE, media_handler.photo_msg))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_router.chat_msg))
@@ -342,9 +357,21 @@ def build_application():
     orchestrator.set_alert_callback(alert)
     zalo_users.set_alert_callback(alert)
 
-    async def notify_facebook_admins(text):
+    async def send_with_buttons(uid, text, buttons):
+        await tg_format.send_rich(app.bot, uid, text, reply_markup=callbacks.markup(buttons))
+
+    async def zalo_pair_prompt(text, buttons):
+        # Cảnh báo người Zalo lạ kèm nút cấp quyền; Zoom vẫn nhận bản chữ (nhân bản).
+        await send_with_buttons(config.ALLOWED_USER_ID, text, buttons)
+        await owner_alerts.mirror_to_zoom(text)
+
+    zalo_users.set_pair_prompt_callback(zalo_pair_prompt)
+
+    async def notify_facebook_admins(text, buttons=None):
         try:
-            await tg_format.send_rich(app.bot, config.ALLOWED_USER_ID, text)
+            await tg_format.send_rich(
+                app.bot, config.ALLOWED_USER_ID, text, reply_markup=callbacks.markup(buttons)
+            )
         except Exception:
             logger.warning("Không gửi được preview Facebook tới Telegram owner.", exc_info=True)
 
@@ -358,6 +385,7 @@ def build_application():
             logger.warning("Không gửi được preview Facebook tới Zoom admin.", exc_info=True)
 
     facebook_commands.set_admin_notification_callback(notify_facebook_admins)
+    facebook_commands.set_admin_buttons_callback(notify_facebook_admins)
     db_maintenance.set_notifier(notify_facebook_admins)
 
     async def notify(uid, text):
@@ -368,6 +396,15 @@ def build_application():
             raise
 
     scheduler.set_notify_callback(notify)
+
+    async def notify_reminder(uid, text, buttons):
+        try:
+            await send_with_buttons(uid, text, buttons)
+        except Exception:
+            logger.warning("Không gửi được tin nhắc kèm nút.", exc_info=True)
+            raise
+
+    scheduler.set_reminder_notify_callback(notify_reminder)
     portfolio_alerts.set_notify_callback(notify)
     portfolio_push.set_notify_callback(notify)
     morning_brief.set_notify_callback(notify)

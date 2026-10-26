@@ -87,6 +87,23 @@ def _address_note(user: zalo_users.ZaloUser) -> str:
     )
 
 
+def pair_confirmation(result: zalo_onboarding.PairResult, *, admin: bool) -> str:
+    """Câu báo đã cấp quyền (lệnh /zalopair, /zaloadmin và nút trên cảnh báo)."""
+    user = result.user
+    label = f" ({user.display_name})" if user.display_name else ""
+    if admin:
+        head = (
+            f"👑 Đã cấp quyền ADMIN cho Zalo id: {html.escape(user.external_id)}"
+            f"{html.escape(label)} (dùng được lệnh nhóm và /fb_*)."
+        )
+    else:
+        head = (
+            f"✅ Đã cấp quyền THÀNH VIÊN cho Zalo id: {html.escape(user.external_id)}"
+            f"{html.escape(label)}"
+        )
+    return head + _address_note(user) + _welcome_note(result)
+
+
 def _welcome_note(result: zalo_onboarding.PairResult) -> str:
     """Báo chủ bot lời chào (lần pair đầu) / câu báo nâng quyền đã đi đâu."""
     if result.welcome == zalo_onboarding.WELCOME_QUEUED:
@@ -118,13 +135,7 @@ async def zalopair_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     external_id, display_name, form = _parse_pair_arg(arg)
     result = await zalo_onboarding.pair(external_id, display_name, address_form=form)
-    user = result.user
-    label = f" ({user.display_name})" if user.display_name else ""
-    await update.message.reply_text(
-        f"✅ Đã cấp quyền THÀNH VIÊN cho Zalo id: {html.escape(user.external_id)}{html.escape(label)}"
-        + _address_note(user)
-        + _welcome_note(result)
-    )
+    await update.message.reply_text(pair_confirmation(result, admin=False))
 
 
 @common.restricted
@@ -140,12 +151,7 @@ async def zaloadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     external_id, display_name, form = _parse_pair_arg(arg)
     result = await zalo_onboarding.pair(external_id, display_name, admin=True, address_form=form)
-    user = result.user
-    label = f" ({user.display_name})" if user.display_name else ""
-    await update.message.reply_text(
-        f"👑 Đã cấp quyền ADMIN cho Zalo id: {html.escape(user.external_id)}{html.escape(label)} "
-        f"(dùng được lệnh nhóm và /fb_*)." + _address_note(user) + _welcome_note(result)
-    )
+    await update.message.reply_text(pair_confirmation(result, admin=True))
 
 
 @common.restricted

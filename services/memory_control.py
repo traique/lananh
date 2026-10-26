@@ -460,11 +460,16 @@ async def delete_own_data(user_id: int, argument: str = "") -> str:
             await db.clear_notes(user_id)
             await db.clear_chat(user_id)
             await db.clear_user_events(user_id)
+            # Đánh giá 👍/👎 có bản chụp câu hỏi/câu trả lời (migrations/021).
+            await db.answer_feedback_clear(user_id)
             for key in personal_settings.memory_user_keys(user_id):
                 await db.set_setting(key, "")
     from services import chat_context
 
     chat_context.forget_pages(user_id)  # trang vừa đọc giữ trong RAM
+    from services import answer_feedback
+
+    answer_feedback.forget(user_id)
     logger.info("Người dùng user_id=%s tự xoá dữ liệu cá nhân.", user_id)
     return "🗑️ Đã xoá dữ liệu cá nhân em lưu. Từ giờ mình bắt đầu lại từ đầu nhé."
 

@@ -15,8 +15,9 @@ from ai import drafts
 from ai.timeouts import turn_deadline
 from core import config
 from core.text_normalize import nfc
-from handlers import common, stock_handler, turn_feedback
+from handlers import callbacks, common, stock_handler, turn_feedback
 from services import (
+    answer_feedback,
     article_reader,
     channel_chat_service,
     chat_context,
@@ -211,12 +212,20 @@ async def _ai_reply(
     reply_out = turn.text
     if reply_out and turn.used_fallback:
         reply_out += "\n\n⚙️ API"
+    # Nút 👍/👎 (+ 🔄 Thử lại/✂️ Ngắn hơn cho câu chat thường không ghi dữ liệu).
+    quote = quoted_text(update.message)
+    regenerable = not quote and answer_feedback.can_regenerate(text, grounding=route.grounding)
+    keyboard = (
+        callbacks.answer_markup(turn.prompt_id, regenerable=regenerable) if turn.text else None
+    )
     try:
         final_text = reply_out or messages.CHAT_GENERIC_ERROR
         if status_message is not None:
-            await common.reply_long_text_edit_first(status_message, final_text)
+            sent = await _send_answer(
+                common.reply_long_text_edit_first, status_message, final_text, keyboard
+            )
         else:
-            await common.reply_long_text(update.message, final_text)
+            sent = await _send_answer(common.reply_long_text, update.message, final_text, keyboard)
     except Exception as exc:
         # Gửi lỗi (Telegram từ chối/timeout): giữ hành vi cũ - ghi telemetry lỗi
         # và báo 1 câu ngắn thay vì để error handler chung xử lý.
@@ -225,3 +234,34 @@ async def _ai_reply(
         await update.message.reply_text(
             messages.friendly_error("unexpected", owner=True, detail=messages.exception_detail(exc))
         )
+        return
+    if keyboard is not None:
+        await callbacks.remember_keyboard(context.bot, update.effective_chat.id, sent)
+    if turn.prompt_id and turn.text:
+        answer_feedback.remember_answer(
+            answer_feedback.AnswerSnapshot(
+                prompt_id=turn.prompt_id,
+                user_id=user_id,
+                channel="telegram",
+                prompt_text=text,
+                answer_text=turn.text,
+                provider=turn.provider,
+                model=turn.model,
+                regenerable=regenerable,
+                event_key=_event_key(update),
+            )
+        )
+
+
+def _event_key(update) -> str | None:
+    """event_key của tin gốc (như web._process_update) - làm lại câu trả lời dùng
+    lại khoá này nên tool không bao giờ ghi trùng."""
+    update_id = getattr(update, "update_id", None)
+    return f"telegram:{update_id}" if update_id is not None else None
+
+
+async def _send_answer(send, target, text: str, keyboard):
+    """Gửi câu trả lời; có bàn phím thì gắn vào đoạn cuối và trả tin cuối đã gửi."""
+    if keyboard is None:
+        return await send(target, text)
+    return await send(target, text, reply_markup=keyboard)

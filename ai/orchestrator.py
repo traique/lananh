@@ -429,6 +429,22 @@ async def _record_provider_call(
         logger.warning("Không ghi được lượt gọi provider=%s vào DB.", provider, exc_info=True)
 
 
+async def _tag_answer(result, provider: str):
+    """Gắn tên provider + model đã trả lời vào response (``.provider``/``.model``) -
+    lượt chat ghi kèm kết quả để đánh giá 👍/👎 biết câu nào do ai trả lời.
+    Response dạng str (test cũ) thì bỏ qua."""
+    try:
+        model = await _effective_model(provider)
+    except Exception:
+        model = ""
+    for name, value in (("provider", provider), ("model", model)):
+        try:
+            setattr(result, name, value)
+        except (AttributeError, TypeError):
+            return result
+    return result
+
+
 async def _assert_clean_recorded(result, provider: str, allow_cjk: bool, latency_ms: int):
     try:
         _assert_output_clean(result, provider, allow_cjk=allow_cjk)
@@ -513,7 +529,7 @@ async def _run_provider_chain_within_deadline(
         await provider_state.mark_router9_alive()
         await provider_state.set_active_provider("router9")
         await _record_provider_call("router9", latency_ms=latency_ms)
-        return result
+        return await _tag_answer(result, "router9")
 
     async def _attempt_api(idx: int):
         provider_name = f"api{idx}"
@@ -521,14 +537,14 @@ async def _run_provider_chain_within_deadline(
         await _assert_clean_recorded(result, provider_name, allow_cjk, latency_ms)
         await provider_state.set_active_provider(provider_name)
         await _record_provider_call(provider_name, latency_ms=latency_ms)
-        return result
+        return await _tag_answer(result, provider_name)
 
     async def _attempt_generic(name: str):
         result, latency_ms = await _timed(name, lambda: bounded(generic_calls[name]))
         await _assert_clean_recorded(result, name, allow_cjk, latency_ms)
         await provider_state.set_active_provider(name)
         await _record_provider_call(name, latency_ms=latency_ms)
-        return result
+        return await _tag_answer(result, name)
 
     async def _has_any_fallback_configured() -> bool:
         if await official_client.api_key_for(1) or await official_client.api_key_for(2):

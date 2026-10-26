@@ -97,6 +97,7 @@ async def test_retention_deletes_in_bounded_batches_with_configured_windows(monk
         "reminders": 0,
         "user_session_notes": 0,
         "user_events": 0,
+        "answer_feedback": 0,
     }
     labels = [label for label, _, _ in pool.calls]
     assert labels.count("user_calls") == 2 and "provider_calls" not in labels
@@ -106,6 +107,7 @@ async def test_retention_deletes_in_bounded_batches_with_configured_windows(monk
     assert windows["reminders"] == timedelta(days=45)
     assert windows["user_session_notes"] == timedelta(days=365)
     assert windows["user_events"] == timedelta(days=90)
+    assert windows["answer_feedback"] == timedelta(days=180)
 
 
 def test_retention_sql_only_touches_old_sent_rows():

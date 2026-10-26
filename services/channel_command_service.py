@@ -20,7 +20,8 @@ from services import (
     translate_service,
     usage_stats,
 )
-from services import daily_commands, expense_service, reminder_commands, turn_control
+from services import answer_feedback, daily_commands, expense_service, reminder_commands
+from services import turn_control
 from services.telemetry import telemetry
 
 # /help theo vai trò: thành viên Zalo chỉ thấy lệnh mình dùng được (không có
@@ -89,6 +90,7 @@ _HELP_ADMIN_ONLY = """Chỉ admin
 /model [tên|auto] — xem hoặc đổi model
 /status — xem trạng thái provider
 /thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày
+/danhgia [Nd] — số 👍/👎 câu trả lời theo provider/model (chỉ chủ bot), mặc định 30 ngày
 /userouter9 — thử lại 9Router
 /router9 on|off — bật/tắt 9Router thủ công
 /tavily on|off — bật/tắt tra web Tavily (tắt thì dùng web search của provider)
@@ -124,7 +126,9 @@ _HELP_FACEBOOK = """📣 Zalo → Facebook Page (tách riêng khỏi /tongket, c
 (hàng chờ giữ tối đa 150 bài, bài trùng trong 7 ngày không được đưa vào)"""
 _HELP_FOOTER = (
     "/huy — dừng câu trả lời đang chạy dở (trong lúc chờ vẫn dùng được /help, /notes, "
-    "/lich, /tsh, /tuvi, /kymon, /history)\n/help — hiển thị hướng dẫn này"
+    "/lich, /tsh, /tuvi, /kymon, /history)\n"
+    "/sai [lý do] — báo câu trả lời vừa rồi chưa ổn để Lan Anh rút kinh nghiệm\n"
+    "/help — hiển thị hướng dẫn này"
 )
 
 HELP_MEMBER = "\n\n".join((_HELP_INTRO_MEMBER, _HELP_COMMON, _HELP_FOOTER))
@@ -430,6 +434,10 @@ async def maybe_handle_command(
 
     if command in {"/start", "/help"}:
         return [HELP_ADMIN if is_admin else HELP_MEMBER], None
+    # /sai [lý do], /danhgia: đánh giá câu trả lời (services/answer_feedback.py).
+    feedback = await answer_feedback.handle_command(command, argument, user_id, channel)
+    if feedback is not None:
+        return feedback, None
     if command == "/huy":
         # /huy thật được xử lý TRƯỚC khoá lượt (bridge Zalo, webhook Zoom); tới
         # được đây nghĩa là không còn việc gì đang chạy để dừng.

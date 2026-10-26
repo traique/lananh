@@ -50,12 +50,16 @@ VALID_ROLES = {ROLE_ADMIN, ROLE_USER}
 VALID_STATUSES = {STATUS_ACTIVE, STATUS_SUSPENDED}
 
 _alert_callback: Optional[Callable[[str], Awaitable[None]]] = None
+# Cảnh báo kèm nút [Cấp thành viên][Cấp admin] (bot_app gửi Telegram có nút);
+# chưa đặt hoặc gửi lỗi thì dùng cảnh báo chữ như cũ.
+_pair_prompt_callback: Optional[Callable[[str, list], Awaitable[None]]] = None
 _background_tasks: set[asyncio.Task] = set()
 # id chưa pair đã báo owner (dict dùng như set có thứ tự chèn) - có trần để
 # 1 đợt spam từ hàng nghìn id lạ không làm phình RAM; vượt trần thì quên id cũ
 # nhất (cùng lắm owner nhận lại 1 cảnh báo cho id đó).
 _NOTIFIED_UNPAIRED_MAX = 1000
-_notified_unpaired: dict[str, None] = {}
+# external_id -> tên hiển thị lúc nhắn (nút cấp quyền dùng làm tên mặc định).
+_notified_unpaired: dict[str, str] = {}
 
 # Dữ liệu cá nhân khoá theo internal_user_id (cột telegram_user_id) - /zaloxoa
 # xoá sạch cùng lúc với pairing (chat, trí nhớ, ghi chú, lịch sử, danh mục).
@@ -78,13 +82,37 @@ _USER_DATA_TABLES = (
     "stock_price_alerts",
     # migrations/020: chi tiêu cá nhân.
     "expenses",
+    # migrations/021: đánh giá câu trả lời (có bản chụp câu hỏi/câu trả lời).
+    "answer_feedback",
     "stock_alert_log",
 )
 
 
 def set_alert_callback(fn: Callable[[str], Awaitable[None]]) -> None:
-    global _alert_callback
+    """Đặt callback cảnh báo chữ; xoá luôn bản kèm nút (đặt lại bằng
+    set_pair_prompt_callback SAU lệnh này nếu muốn có nút cấp quyền)."""
+    global _alert_callback, _pair_prompt_callback
     _alert_callback = fn
+    _pair_prompt_callback = None
+
+
+def set_pair_prompt_callback(fn: Optional[Callable[[str, list], Awaitable[None]]]) -> None:
+    global _pair_prompt_callback
+    _pair_prompt_callback = fn
+
+
+def pending_name(external_id: str) -> str:
+    """Tên hiển thị của id lạ vừa báo chủ bot ("" nếu không còn nhớ)."""
+    return _notified_unpaired.get(external_id) or ""
+
+
+async def _send_pair_prompt(callback, text: str, buttons: list) -> None:
+    try:
+        await callback(text, buttons)
+    except Exception:
+        logger.warning("Không gửi được cảnh báo có nút cấp quyền; gửi bản chữ.", exc_info=True)
+        if _alert_callback is not None:
+            await _alert_callback(text)
 
 
 def _send_alert(text: str) -> None:
@@ -105,7 +133,7 @@ def notify_unpaired(external_id: str, display_name: str = "") -> None:
     luôn bị chặn ở tầng resolve())."""
     if not external_id or external_id in _notified_unpaired:
         return
-    _notified_unpaired[external_id] = None
+    _notified_unpaired[external_id] = (display_name or "")[:100]
     while len(_notified_unpaired) > _NOTIFIED_UNPAIRED_MAX:
         _notified_unpaired.pop(next(iter(_notified_unpaired)))
     ten = f" ({display_name})" if display_name else ""
@@ -114,6 +142,17 @@ def notify_unpaired(external_id: str, display_name: str = "") -> None:
         f"Dùng /zalopair {external_id} để cấp quyền thành viên, hoặc "
         f"/zaloadmin {external_id} để cấp quyền admin (dùng được lệnh nhóm và /fb_*)."
     )
+    from services import action_buttons
+
+    buttons = action_buttons.zalo_pair_rows(external_id)
+    if buttons and _pair_prompt_callback is not None:
+        try:
+            task = asyncio.create_task(_send_pair_prompt(_pair_prompt_callback, text, buttons))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+            return
+        except Exception:
+            logger.warning("Không tạo được task cảnh báo có nút.", exc_info=True)
     _send_alert(text)
 
 

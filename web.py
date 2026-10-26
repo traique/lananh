@@ -16,7 +16,7 @@ from telegram.ext import Application
 
 import bot_app
 import web_admin
-from handlers import turn_feedback
+from handlers import callbacks, turn_feedback
 import web_site
 import logging_setup
 from channels import (
@@ -31,7 +31,7 @@ from channels.router import router as zalo_router
 from core import config, database as db, idempotency, webhook_inbox
 from diagnose_router9 import main as diagnose_main
 from services import db_maintenance, market_page, morning_news
-from services import channel_dispatch, turn_control
+from services import action_buttons, channel_dispatch, turn_control
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.concurrency import OWNER_TURN_KEY, assistant_turn, cancel_turn, is_busy
 from services.reminder_delivery import NotificationTarget, notification_target
@@ -81,11 +81,17 @@ async def _process_update(update: Update, *, locked: bool = True) -> None:
         ):
             message = getattr(update, "effective_message", None)
             command = (getattr(message, "text", None) or "").strip().lower().split(maxsplit=1)
-            boundary = (
-                nullcontext()
-                if not locked or (command and command[0].startswith("/fb_"))
-                else assistant_turn(OWNER_TURN_KEY)
-            )
+            query = getattr(update, "callback_query", None)
+            if query is not None:
+                # Nút bấm: chỉ "làm lại câu trả lời" mới xếp hàng sau khoá lượt; các
+                # nút khác (đánh giá, duyệt bài, cấp quyền, hoãn nhắc) chạy ngoài khoá
+                # như /fb_*. Trả lời callback TRƯỚC khi chờ khoá để tắt vòng quay.
+                locked = locked and action_buttons.needs_turn_lock(query.data)
+                if locked and is_busy(OWNER_TURN_KEY):
+                    await callbacks.answer_query(query, "⏳ Em làm ngay khi xong việc đang dở nha.")
+            elif command and command[0].startswith("/fb_"):
+                locked = False
+            boundary = assistant_turn(OWNER_TURN_KEY) if locked else nullcontext()
             async with boundary:
                 await application.process_update(update)
         if update_error.get() is not None:
@@ -143,7 +149,8 @@ async def lifespan(_: FastAPI):
         await application.bot.set_webhook(
             url=webhook_url,
             secret_token=config.WEBHOOK_SECRET,
-            allowed_updates=["message"],
+            # callback_query: nút inline (👍/👎, duyệt bài, cấp quyền Zalo, hoãn nhắc).
+            allowed_updates=["message", "callback_query"],
         )
         logger.info("Webhook đã set tới: %s", webhook_url)
         zalo_scheduler.start()

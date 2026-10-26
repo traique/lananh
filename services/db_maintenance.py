@@ -113,6 +113,14 @@ RETENTION_RULES = (
         "DELETE FROM user_events WHERE id IN (SELECT id FROM user_events "
         "WHERE created_at < now() - $1::interval LIMIT $2)",
     ),
+    # Đánh giá 👍/👎 câu trả lời (migrations/021, có bản chụp câu hỏi/câu trả lời).
+    RetentionRule(
+        "answer_feedback",
+        "RETENTION_ANSWER_FEEDBACK_DAYS",
+        180,
+        "DELETE FROM answer_feedback WHERE id IN (SELECT id FROM answer_feedback "
+        "WHERE created_at < now() - $1::interval LIMIT $2)",
+    ),
 )
 
 _task: asyncio.Task | None = None

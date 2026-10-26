@@ -13,13 +13,39 @@ from core import idempotency
 logger = logging.getLogger(__name__)
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _notify_callback: Optional[Callable[[int, str], Awaitable[None]]] = None
+# Tin nhắc Telegram kèm nút hoãn [+10p][+1h][Sáng mai] (bot_app dựng bàn phím);
+# chưa đặt thì gửi chữ qua _notify_callback như cũ.
+_reminder_notify_callback: Optional[Callable[[int, str, list], Awaitable[None]]] = None
 _reminder_task: Optional[asyncio.Task] = None
 _digest_task: Optional[asyncio.Task] = None
 
 
 def set_notify_callback(fn: Callable[[int, str], Awaitable[None]]) -> None:
-    global _notify_callback
+    """Đặt callback gửi chữ; xoá luôn bản kèm nút (đặt lại bằng
+    set_reminder_notify_callback SAU lệnh này nếu muốn có nút hoãn)."""
+    global _notify_callback, _reminder_notify_callback
     _notify_callback = fn
+    _reminder_notify_callback = None
+
+
+def set_reminder_notify_callback(fn: Optional[Callable[[int, str, list], Awaitable[None]]]) -> None:
+    global _reminder_notify_callback
+    _reminder_notify_callback = fn
+
+
+async def _notify_reminder(user_id: int, text: str, reminder_id: int) -> bool:
+    if _reminder_notify_callback is None:
+        return await _notify(user_id, text)
+    from services import action_buttons
+
+    try:
+        await _reminder_notify_callback(
+            user_id, text, action_buttons.reminder_snooze_rows(reminder_id)
+        )
+        return True
+    except Exception:
+        logger.warning("scheduler: gửi tin nhắc kèm nút lỗi.", exc_info=True)
+        return False
 
 
 async def _notify(user_id: int, text: str) -> bool:
@@ -91,7 +117,9 @@ async def _process_due_reminders(due: list[tuple]) -> None:
                 or int(reminder.recipient_id or reminder.user_id) <= 0
             ):
                 raise ValueError("Reminder has no valid channel recipient")
-            elif not await _notify(int(reminder.recipient_id or reminder.user_id), text):
+            elif not await _notify_reminder(
+                int(reminder.recipient_id or reminder.user_id), text, reminder.id
+            ):
                 await idempotency.release_reminder_claim(reminder.id)
                 continue
             await db.mark_reminder_sent(reminder.id)
