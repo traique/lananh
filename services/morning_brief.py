@@ -41,7 +41,7 @@ from zoneinfo import ZoneInfo
 
 from core import address, config, trace
 from core import database as db
-from services import personal_settings, weather_home
+from services import personal_settings, reply_audience, weather_home
 
 logger = logging.getLogger(__name__)
 
@@ -153,9 +153,10 @@ async def set_enabled(channel: str, user_id: int, on: bool, hour: int | None = N
             return "Chủ bot chưa mở bản tin sáng cho thành viên Zalo."
         others = [t for t in await list_targets() if t.channel == "zalo"]
         if len(others) >= config.MORNING_BRIEF_MAX_MEMBERS:
+            you, me = reply_audience.forms()
             return (
                 f"Bản tin sáng đã đủ {config.MORNING_BRIEF_MAX_MEMBERS} người nhận, "
-                "anh nhờ chủ bot nới giới hạn giúp em nha."
+                f"{you} nhờ chủ bot nới giới hạn giúp {me} nha."
             )
     updated = replace(current, on=on, hour=current.hour if hour is None else hour)
     await save_settings(channel, user_id, updated)

@@ -389,6 +389,16 @@ async def test_zalo_tat_thi_khong_gui_zalo(world, monkeypatch):
     assert world["outbox"] == [] and world["zoom"][0][0] == "jid-owner"
 
 
+async def test_set_enabled_bao_day_theo_cach_xung_ho(world, monkeypatch):
+    from services import reply_audience
+
+    monkeypatch.setattr(config, "MORNING_BRIEF_MAX_MEMBERS", 1)
+    assert await mb.set_enabled("zalo", -5, True) is None
+    with reply_audience.use(reply_audience.ReplyAudience(address_form="cô")):
+        error = await mb.set_enabled("zalo", -7, True)
+    assert "cô nhờ chủ bot nới giới hạn giúp cháu nha" in error
+
+
 async def test_set_enabled_tran_thanh_vien_va_chi_chu_bot(world):
     assert await mb.set_enabled("zalo", -5, True) is None
     assert await mb.set_enabled("zalo", -6, True) is None

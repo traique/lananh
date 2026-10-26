@@ -24,25 +24,22 @@ XOSO_USAGE = (
     "/xoso mb · /xoso mt hôm qua · /xoso tiền giang · /xoso mn 25/10\n"
     "/xoso 123456 (dò vé miền Nam) · /xoso mb 12345 (dò vé miền Bắc)"
 )
-_GOLD_DOWN = (
-    "❌ Em chưa lấy được giá vàng SJC lúc này (nguồn sjc.com.vn lỗi). Anh nhắn "
-    '"giá vàng hôm nay" để em tra web tham khảo nha.'
-)
-_FX_DOWN = (
-    "❌ Em chưa lấy được tỷ giá Vietcombank lúc này. Anh nhắn "
-    '"tỷ giá hôm nay" để em tra web tham khảo nha.'
-)
-_LOTTERY_DOWN = (
-    "❌ Em chưa lấy được kết quả xổ số lúc này (nguồn xskt.com.vn lỗi). Em không "
-    "đoán số đâu ạ - anh thử lại sau ít phút nha."
-)
+
+
+# Câu do code viết dựng theo từng lượt: xưng hô theo người nhận (reply_audience).
+def _source_down(what: str, source: str, example: str) -> str:
+    you, me = reply_audience.forms()
+    return (
+        f"❌ {me.capitalize()} chưa lấy được {what} lúc này{source}. {you.capitalize()} nhắn "
+        f'"{example}" để {me} tra web tham khảo nha.'
+    )
 
 
 async def vang() -> str:
     try:
         return await vn_daily_chat.gold_text()
     except market.MarketDataError:
-        return _GOLD_DOWN
+        return _source_down("giá vàng SJC", " (nguồn sjc.com.vn lỗi)", "giá vàng hôm nay")
 
 
 async def tygia(argument: str) -> str:
@@ -50,7 +47,7 @@ async def tygia(argument: str) -> str:
     try:
         return await vn_daily_chat.fx_text(query or vn_daily_chat.FxQuery())
     except market.MarketDataError:
-        return _FX_DOWN
+        return _source_down("tỷ giá Vietcombank", "", "tỷ giá hôm nay")
 
 
 async def xoso(argument: str) -> str:
@@ -62,7 +59,7 @@ async def xoso(argument: str) -> str:
     try:
         return await vn_daily_chat.lottery_text(query, argument)
     except market.MarketDataError:
-        return _LOTTERY_DOWN
+        return vn_daily_chat.lottery_down()
 
 
 _HOME_CLEAR = {"xoa", "off", "bo", "huy", "tat"}
@@ -72,15 +69,16 @@ _HOME_SHOW = {"", "xem", "?"}
 async def thoitiet(user_id: int, argument: str) -> str:
     argument = " ".join(argument.split())
     folded = fold(argument)
+    you, me = reply_audience.forms()
     # "/thoitiet nha <tỉnh>" đặt thành phố riêng; "/thoitiet nha trang" vẫn là địa danh.
     if (folded == "nha" or folded.startswith("nha ")) and not re.match(r"nha trang\b", folded):
         rest = argument[3:].strip()
         if fold(rest) in _HOME_SHOW:
             home = await weather_home.get(user_id)
             return (
-                f"📍 Thành phố mặc định của anh: {home}."
+                f"📍 Thành phố mặc định của {you}: {home}."
                 if home
-                else "📍 Anh chưa đặt thành phố riêng, em đang dùng TP.HCM. "
+                else f"📍 {you.capitalize()} chưa đặt thành phố riêng, {me} đang dùng TP.HCM. "
                 "Đặt bằng /thoitiet nha <tỉnh>, vd /thoitiet nha Hà Nội."
             )
         if fold(rest) in _HOME_CLEAR:
@@ -88,19 +86,22 @@ async def thoitiet(user_id: int, argument: str) -> str:
                 await weather_home.clear_home(user_id)
             except weather_home.HomeError as exc:
                 return f"❌ {exc}"
-            return "🗑️ Đã xoá thành phố riêng, em quay về dùng TP.HCM nha."
+            return f"🗑️ Đã xoá thành phố riêng, {me} quay về dùng TP.HCM nha."
         try:
             stored = await weather_home.set_home(user_id, rest)
         except weather_home.HomeError as exc:
             return f"❌ {exc}"
         return (
-            f'📍 Dạ em nhớ rồi: thời tiết mặc định của anh là {stored}. Hỏi "mai có mưa '
-            'không", "chiều nay mấy giờ mưa" là em xem đúng nơi anh ở.'
+            f'📍 Dạ {me} nhớ rồi: thời tiết mặc định của {you} là {stored}. Hỏi "mai có mưa '
+            f'không", "chiều nay mấy giờ mưa" là {me} xem đúng nơi {you} ở.'
         )
     question = f"thời tiết ở {argument}" if argument else "thời tiết hôm nay"
     reply = await weather_chat.answer(question, user_id=user_id)
     if reply is None:
-        return f"Em không tìm thấy địa điểm '{argument}', anh gõ rõ tên tỉnh/thành giúp em nha."
+        return (
+            f"{me.capitalize()} không tìm thấy địa điểm '{argument}', {you} gõ rõ tên "
+            f"tỉnh/thành giúp {me} nha."
+        )
     return reply
 
 
@@ -143,7 +144,11 @@ async def bantin(user_id: int, argument: str, channel: str) -> str:
     elif hour_match:
         hour = int(hour_match.group(1))
         if not morning_brief.MIN_HOUR <= hour <= morning_brief.MAX_HOUR:
-            return f"Giờ gửi bản tin từ {morning_brief.MIN_HOUR}h tới {morning_brief.MAX_HOUR}h anh nha."
+            you = reply_audience.forms()[0]
+            return (
+                f"Giờ gửi bản tin từ {morning_brief.MIN_HOUR}h tới {morning_brief.MAX_HOUR}h "
+                f"{you} nha."
+            )
         error = await morning_brief.set_enabled(channel, user_id, True, hour)
     elif news_match and parse_on_off(news_match.group(1)) is not None:
         await morning_brief.set_news(channel, user_id, bool(parse_on_off(news_match.group(1))))

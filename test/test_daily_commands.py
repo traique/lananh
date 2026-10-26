@@ -1,6 +1,7 @@
 """Test lệnh /vang, /tygia, /xoso, /thoitiet, /bantin (services/daily_commands.py)."""
 
 import datetime as dt
+import re
 
 import pytest
 
@@ -101,6 +102,30 @@ async def test_thoitiet_dat_xem_xoa_thanh_pho(env):
     assert env["settings"]["weather_home:-5"] == ""
     # Zalo của chủ bot (-5) và Telegram (42) tách biệt: Telegram chưa đặt gì.
     assert "weather_home:42" not in env["settings"]
+
+
+async def test_lenh_doi_song_theo_cach_xung_ho_rieng(env):
+    from services import reply_audience
+
+    # "cô" -> Lan Anh xưng "cháu" (core/address.py).
+    with reply_audience.use(reply_audience.ReplyAudience(address_form="cô")):
+        assert "Cô chưa đặt thành phố riêng, cháu đang dùng" in await daily_commands.thoitiet(
+            -5, "nha xem"
+        )
+        saved = await daily_commands.thoitiet(-5, "nha Hà Nội")
+        assert "Dạ cháu nhớ rồi: thời tiết mặc định của cô là Hà Nội" in saved
+        assert "cháu xem đúng nơi cô ở" in saved
+        assert "của cô: Hà Nội" in await daily_commands.thoitiet(-5, "nha xem")
+        assert "tới 12h cô nha" in await daily_commands.bantin(-5, "20", "zalo")
+        assert "cô gõ rõ tên" in await daily_commands.thoitiet(-5, "Xyz")
+        env["down"].update({"gold", "fx", "xs"})
+        for reply in (
+            await daily_commands.vang(),
+            await daily_commands.tygia(""),
+            await daily_commands.xoso("123456"),
+        ):
+            assert reply.startswith("❌ Cháu chưa lấy được") and re.search(r"\b[Cc]ô\b", reply)
+            assert not re.search(r"\b(?:anh|em)\b", reply, re.IGNORECASE)
 
 
 async def test_thoitiet_tra_cuu(env):

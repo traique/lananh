@@ -168,6 +168,14 @@ async def test_chieu_nay_tra_theo_gio(hourly, calls):
     assert hourly == [""] and calls == []  # không cần gọi dự báo theo ngày
 
 
+async def test_theo_gio_goi_dung_cach_xung_ho(hourly, calls):
+    from services import reply_audience
+
+    with reply_audience.use(reply_audience.ReplyAudience(address_form="chú")):
+        reply = await weather_chat.answer("chiều nay có mưa không", TODAY)
+    assert "Nhớ mang áo mưa nha chú ☔" in reply and "nha anh" not in reply
+
+
 async def test_toi_mai_va_buoi_dang_dien_ra(hourly, calls):
     reply = await weather_chat.answer("tối mai trời có mưa không", TODAY)
     assert "Tối mai (18h-22h)" in reply and "khoảng 19h-20h" in reply

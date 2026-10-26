@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import messages
 from ai import drafts, orchestrator
 from ai.timeouts import TurnTimeoutError, turn_deadline
-from core import address, config, trace, untrusted, urls
+from core import config, trace, untrusted, urls
 from services import (
     article_reader,
     chat_context,
@@ -133,8 +133,7 @@ def _tool_outcome(value) -> tuple[tool_registry.ToolOutcome, str]:
 
 def _forms(address_form: str | None) -> tuple[str, str]:
     """(cách gọi người dùng, Lan Anh tự xưng) cho câu do code viết."""
-    you = address.normalize(address_form or reply_audience.current().address_form) or "anh"
-    return you, address.self_word(you)
+    return reply_audience.forms(address_form)
 
 
 def _honesty_suffix(

@@ -24,8 +24,8 @@ from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
 from core.text_normalize import fold
+from services import reply_audience, weather_home
 from services import vn_market_data as market
-from services import weather_home
 
 logger = logging.getLogger(__name__)
 
@@ -377,8 +377,9 @@ def _missing_day_text(query: LotteryQuery, draws: list[market.LotteryDraw]) -> s
             f"{market.DRAW_TIMES[query.region]}, nguồn cập nhật sau đó ít phút)."
         )
     day = query.day.strftime("%d/%m/%Y") if query.day else ""
+    me = reply_audience.forms()[1]
     return (
-        f"Em chưa có kết quả xổ số {region} ngày {day} (nguồn chỉ giữ khoảng "
+        f"{me.capitalize()} chưa có kết quả xổ số {region} ngày {day} (nguồn chỉ giữ khoảng "
         f"{len(draws)} kỳ gần nhất)."
     )
 
@@ -406,6 +407,7 @@ def _province_text(
     """Kết quả/dò vé của ĐÚNG đài người dùng nhắc. Kỳ được chọn không có đài đó
     thì nói rõ, không bao giờ dò sang đài khác rồi phán "chưa trúng"."""
     region = market.REGION_NAMES[query.region]
+    me = reply_audience.forms()[1]
     if query.day is None:
         # Mỗi đài quay 1 lần/tuần: lấy kỳ mới nhất CÓ đài đó, không phải kỳ mới nhất.
         hit = next(
@@ -413,8 +415,8 @@ def _province_text(
         )
         if hit is None:
             note = (
-                f"Em chưa thấy kết quả đài {label} trong {len(draws)} kỳ xổ số {region} "
-                "gần nhất nguồn còn giữ"
+                f"{me.capitalize()} chưa thấy kết quả đài {label} trong {len(draws)} kỳ xổ số "
+                f"{region} gần nhất nguồn còn giữ"
             )
             return note + (" nên chưa dò vé này được nha." if query.ticket else ".")
         draw, province = hit
@@ -435,7 +437,7 @@ def _province_text(
                 msg = _missing_day_text(query, draws)
             else:
                 msg = f"Ngày {day} đài {label} không quay thưởng (kỳ đó có: {have})."
-            return msg + (" Em chưa dò vé này được nha." if query.ticket else "")
+            return msg + (f" {me.capitalize()} chưa dò vé này được nha." if query.ticket else "")
         draw = found
     one = market.LotteryDraw(draw.region, draw.date, (province,), draw.link)
     if query.ticket:
@@ -455,7 +457,8 @@ async def lottery_text(query: LotteryQuery, text: str = "") -> str:
         missing = _missing_day_text(query, draws)
         if query.ticket:
             # Dò vé đúng 1 ngày chưa có kết quả: không dò nhầm sang kỳ khác.
-            return f"{missing} Có kết quả rồi anh nhắn em dò lại nha."
+            you, me = reply_audience.forms()
+            return f"{missing} Có kết quả rồi {you} nhắn {me} dò lại nha."
         draw = draws[0]
         prefix = f"{missing} Kết quả gần nhất ngày {draw.date:%d/%m}:\n\n"
     coverage = market.coverage(draw, draws, _today())
@@ -472,10 +475,13 @@ async def lottery_text(query: LotteryQuery, text: str = "") -> str:
     return prefix + market.format_draw(draw)
 
 
-_LOTTERY_DOWN = (
-    "❌ Em chưa lấy được kết quả xổ số lúc này (nguồn xskt.com.vn lỗi) nên chưa dò vé được. "
-    "Em không đoán số đâu ạ - anh thử lại sau ít phút nha."
-)
+def lottery_down() -> str:
+    """Báo nguồn xổ số lỗi (dò vé không bao giờ đoán), xưng hô theo người nhận."""
+    you, me = reply_audience.forms()
+    return (
+        f"❌ {me.capitalize()} chưa lấy được kết quả xổ số lúc này (nguồn xskt.com.vn lỗi) nên "
+        f"chưa dò vé được. {me.capitalize()} không đoán số đâu ạ - {you} thử lại sau ít phút nha."
+    )
 
 
 async def maybe_handle(text: str, user_id: int | None = None) -> str | None:
@@ -492,7 +498,7 @@ async def maybe_handle(text: str, user_id: int | None = None) -> str | None:
             return await lottery_text(lottery, text)
         except market.MarketDataError:
             # Dò vé phải bằng code -> báo lỗi thẳng; hỏi kết quả -> tra web thật.
-            return _LOTTERY_DOWN if lottery.ticket else None
+            return lottery_down() if lottery.ticket else None
     gold = wants_gold(text)
     fx = parse_fx(text)
     if not (gold or fx) or not _is_narrow_price_question(text):

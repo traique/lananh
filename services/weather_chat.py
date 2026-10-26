@@ -29,7 +29,7 @@ import time
 from collections import OrderedDict
 from zoneinfo import ZoneInfo
 
-from services import weather, weather_home
+from services import reply_audience, weather, weather_home
 
 logger = logging.getLogger(__name__)
 
@@ -254,9 +254,10 @@ def _format_hours(
         f"🌦 {label[:1].upper()}{label[1:]} ({span}) ở {data.get('location')}",
         rain_line(points),
     ]
+    you, me = reply_audience.forms()
     if cut_short:
         stop = f"{end_h % 24 or 24}h"
-        lines.append(f"(Nguồn mới có tới {stop}, sau {stop} em chưa có dự báo theo giờ.)")
+        lines.append(f"(Nguồn mới có tới {stop}, sau {stop} {me} chưa có dự báo theo giờ.)")
     temps = [p.temperature_c for p in points if p.temperature_c is not None]
     rain_mm = sum(p.precip_mm or 0 for p in points)
     if temps:
@@ -269,7 +270,7 @@ def _format_hours(
         "Từng giờ: " + " · ".join(f"{_hour_label(p)} {n(p.rain_chance)}%" for p in points[::step])
     )
     if any((p.rain_chance or 0) >= 60 for p in points):
-        lines.append("Nhớ mang áo mưa nha anh ☔")
+        lines.append(f"Nhớ mang áo mưa nha {you} ☔")
     lines.append(f"(Nguồn {data.get('source')}, dự báo theo giờ)")
     return "\n".join(lines)
 

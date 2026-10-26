@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from core.text_normalize import fold
-from services import http_client
+from services import http_client, reply_audience
 
 logger = logging.getLogger(__name__)
 
@@ -619,12 +619,14 @@ def format_ticket(
     incomplete: tuple[int, int] | None = None,
 ) -> str:
     """Dò vé trong 1 kỳ. ``incomplete`` = coverage(): kỳ hôm nay còn đài chưa có
-    kết quả -> không kết luận "chưa trúng" cho cả kỳ."""
+    kết quả -> không kết luận "chưa trúng" cho cả kỳ. Xưng hô theo người nhận của
+    lượt (reply_audience)."""
+    you, me = reply_audience.forms()
     digits = ticket_digits(draw.region)
     if len(ticket) != digits:
         return (
-            f"Vé xổ số {REGION_NAMES.get(draw.region)} có {digits} chữ số, anh gửi lại đủ "
-            f"{digits} số giúp em nha (vd /xoso {'mb 12345' if digits == 5 else 'mn 123456'})."
+            f"Vé xổ số {REGION_NAMES.get(draw.region)} có {digits} chữ số, {you} gửi lại đủ "
+            f"{digits} số giúp {me} nha (vd /xoso {'mb 12345' if digits == 5 else 'mn 123456'})."
         )
     target = find_province(draw, province_hint) if province_hint else None
     provinces = [target] if target else list(draw.provinces)
@@ -649,15 +651,15 @@ def format_ticket(
         lines.append(f"• {province.name}: 🎉 TRÚNG {', '.join(parts)}")
     if any_win:
         lines.append(
-            "Số tiền là cơ cấu vé 10.000đ để tham khảo - anh đối chiếu vé gốc với đại lý "
+            f"Số tiền là cơ cấu vé 10.000đ để tham khảo - {you} đối chiếu vé gốc với đại lý "
             "hoặc công ty xổ số trước khi lĩnh thưởng nha."
         )
     elif incomplete is None:
-        lines.append("Tiếc ghê, lần này vé chưa trúng rồi anh 😅")
+        lines.append(f"Tiếc ghê, lần này vé chưa trúng rồi {you} 😅")
     if incomplete is not None:
         lines.append(
             f"⏳ Kỳ hôm nay nguồn mới có kết quả {incomplete[0]}/{incomplete[1]} đài - đài còn "
-            "lại chưa có kết quả, anh nhắn em dò lại sau ít phút nha."
+            f"lại chưa có kết quả, {you} nhắn {me} dò lại sau ít phút nha."
         )
-    lines.append("(Nguồn xskt.com.vn, em dò bằng code chứ không đoán)")
+    lines.append(f"(Nguồn xskt.com.vn, {me} dò bằng code chứ không đoán)")
     return "\n".join(lines)

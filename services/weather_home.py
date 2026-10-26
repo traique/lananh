@@ -18,7 +18,7 @@ from collections import OrderedDict
 
 from core import database as db
 from core.text_normalize import fold
-from services import personal_settings, weather
+from services import personal_settings, reply_audience, weather
 
 logger = logging.getLogger(__name__)
 
@@ -87,24 +87,27 @@ def clean_name(raw: str) -> str:
 async def set_home(user_id: int, raw: str) -> str:
     """Lưu thành phố mặc định, trả tên đã lưu. Tên lạ phải tra được toạ độ."""
     name = clean_name(raw)
+    you, me = reply_audience.forms()
     canonical = known_place(name)
     if canonical is None:
         try:
             geo = await asyncio.wait_for(weather.resolve_location(name), _GEOCODE_TIMEOUT_SEC)
         except (weather.WeatherError, TimeoutError) as exc:
             raise HomeError(
-                f"Em chưa kiểm tra được địa điểm '{name}' lúc này, anh thử lại sau nha."
+                f"{me.capitalize()} chưa kiểm tra được địa điểm '{name}' lúc này, {you} thử "
+                "lại sau nha."
             ) from exc
         if not geo:
             raise HomeError(
-                f"Em không tìm thấy địa điểm '{name}', anh gõ tên tỉnh/thành rõ hơn nha."
+                f"{me.capitalize()} không tìm thấy địa điểm '{name}', {you} gõ tên tỉnh/thành "
+                "rõ hơn nha."
             )
     stored = canonical or name
     try:
         await db.set_setting(personal_settings.weather_home_key(user_id), stored)
     except Exception as exc:
         logger.warning("Không lưu được thành phố mặc định.", exc_info=True)
-        raise HomeError("Em chưa lưu được, anh thử lại sau nha.") from exc
+        raise HomeError(f"{me.capitalize()} chưa lưu được, {you} thử lại sau nha.") from exc
     _remember(user_id, stored)
     return stored
 
@@ -114,7 +117,8 @@ async def clear_home(user_id: int) -> None:
         await db.set_setting(personal_settings.weather_home_key(user_id), "")
     except Exception as exc:
         logger.warning("Không xoá được thành phố mặc định.", exc_info=True)
-        raise HomeError("Em chưa xoá được, anh thử lại sau nha.") from exc
+        you, me = reply_audience.forms()
+        raise HomeError(f"{me.capitalize()} chưa xoá được, {you} thử lại sau nha.") from exc
     _remember(user_id, "")
 
 
@@ -155,7 +159,8 @@ async def maybe_handle_statement(user_id: int, text: str) -> str | None:
         stored = await set_home(user_id, place)
     except HomeError as exc:
         return f"❌ {exc}"
+    you, me = reply_audience.forms()
     return (
-        f"📍 Dạ em nhớ rồi: thời tiết mặc định của anh là {stored}. "
+        f"📍 Dạ {me} nhớ rồi: thời tiết mặc định của {you} là {stored}. "
         "Đổi bằng /thoitiet nha <tỉnh>, xoá bằng /thoitiet nha xoa."
     )

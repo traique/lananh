@@ -20,7 +20,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 
 import messages
-from core import config
+from core import address, config
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,14 @@ def use(audience: ReplyAudience) -> Iterator[None]:
         yield
     finally:
         _current.reset(token)
+
+
+def forms(address_form: str | None = None) -> tuple[str, str]:
+    """(cách gọi người nhận, Lan Anh tự xưng) cho câu do CODE viết: ``address_form``
+    nếu có, không thì cách xưng hô riêng của lượt (Zalo /zalopair), mặc định
+    "anh"/"em". Viết hoa đầu câu bằng ``.capitalize()``."""
+    you = address.normalize(address_form or current().address_form) or "anh"
+    return you, address.self_word(you)
 
 
 async def is_owner(user_id: int) -> bool:

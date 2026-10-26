@@ -235,7 +235,7 @@ async def test_ky_hom_nay_chua_du_dai_thi_khong_ket_luan_truot(sources, monkeypa
 
 async def test_do_ve_nguon_loi_bao_that_khong_doan(sources):
     sources["down"].add("xs")
-    assert await daily.maybe_handle("dò vé 729510") == daily._LOTTERY_DOWN
+    assert await daily.maybe_handle("dò vé 729510") == daily.lottery_down()
     # Hỏi kết quả (không dò vé) -> None để đi tra web thật.
     assert await daily.maybe_handle("xổ số miền bắc hôm qua") is None
 
@@ -258,6 +258,26 @@ async def test_cau_khai_bao_noi_o_luu_thanh_pho(monkeypatch, sources):
     reply = await daily.maybe_handle("nhà anh ở Hà Nội nha", user_id=-3)
     assert reply.startswith("📍 Dạ em nhớ rồi: thời tiết mặc định của anh là Hà Nội")
     assert saved == {"weather_home:-3": "Hà Nội"}
+    weather_home.clear_cache()
+
+
+async def test_cau_code_viet_theo_cach_xung_ho_rieng(sources, monkeypatch):
+    from services import reply_audience, weather_home
+
+    async def fake_set(key, value):
+        return None
+
+    weather_home.clear_cache()
+    monkeypatch.setattr(weather_home.db, "set_setting", fake_set)
+    with reply_audience.use(reply_audience.ReplyAudience(address_form="cô")):
+        reply = await daily.maybe_handle("dò vé 123456")
+        assert "vé chưa trúng rồi cô" in reply and "cháu dò bằng code" in reply
+        assert " anh" not in reply and " em " not in reply
+        home = await daily.maybe_handle("mình ở Hà Nội", user_id=-3)
+        assert home.startswith("📍 Dạ cháu nhớ rồi: thời tiết mặc định của cô là Hà Nội")
+        sources["down"].add("xs")
+        down = await daily.maybe_handle("dò vé 123456")
+        assert "cô thử lại" in down and " anh" not in down and "Cháu không đoán" in down
     weather_home.clear_cache()
 
 
