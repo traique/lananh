@@ -217,6 +217,11 @@ async def _build_status_text() -> str:
     router9_until = state.get("router9_exhausted_until", 0.0)
     if router9_until > now:
         router9_line += _cooldown_suffix(router9_until, reasons.get("router9"), now)
+    router9_search_until = state.get("router9_search_exhausted_until", 0.0)
+    if router9_search_until > now:
+        router9_line += "\n   🔎 tra web (ROUTER9_WEB_SEARCH):" + _cooldown_suffix(
+            router9_search_until, reasons.get("router9_search"), now
+        ).replace("\n   ⥅", "", 1)
 
     def _provider_line(label, key, status, exhausted_until, reason=None):
         if not key:

@@ -391,3 +391,134 @@ async def test_groq_429_luc_tra_web_chi_khoa_groq_tra_web_khong_khoa_groq_chat(m
         router9_call=None, api_call=api_call, groq_call=groq_chat
     )
     assert result == "groq-chat-ok"
+
+
+# ─── router9: lỗi upstream gói trong SSE 200, lỗi model tra web ──────────────
+
+
+def _sse_error(error: dict) -> str:
+    import json as _json
+
+    return f"data: {_json.dumps({'error': error})}\n\ndata: [DONE]\n"
+
+
+def test_sse_error_chunk_giu_ma_loi_upstream():
+    with pytest.raises(openai_compatible.OpenAICompatibleError) as info:
+        openai_compatible.parse_sse_content(
+            _sse_error({"message": "Rate limit reached for model", "code": 429})
+        )
+    assert info.value.status_code == 429
+    assert openai_compatible.is_rate_limited(info.value)
+    with pytest.raises(openai_compatible.OpenAICompatibleError) as info:
+        openai_compatible.parse_sse_content(_sse_error({"message": "x", "status": "503"}))
+    assert info.value.status_code == 503
+    with pytest.raises(openai_compatible.OpenAICompatibleError) as info:
+        openai_compatible.parse_sse_content(_sse_error({"message": "x", "code": "invalid_request"}))
+    assert info.value.status_code is None
+
+
+@pytest.mark.parametrize(
+    "message, kind",
+    [
+        ("Rate limit reached for gpt-4o", "rate_limited"),
+        ("You exceeded your current quota", "rate_limited"),
+        ("This model's maximum context length is 8192 tokens", "request"),
+        ("Prompt is too long", "request"),
+        ("Response blocked by content filter", "request"),
+        ("internal server error", "health"),
+    ],
+)
+def test_router9_phan_loai_loi_sse_theo_thong_diep(message, kind):
+    from ai import router9_client
+
+    try:
+        try:
+            openai_compatible.parse_sse_content(_sse_error({"message": message}))
+        except openai_compatible.OpenAICompatibleError as exc:
+            raise router9_client.Router9Error(str(exc)) from exc
+    except router9_client.Router9Error as wrapped:
+        assert orchestrator._router9_failure_kind(wrapped) == kind
+
+
+@pytest.mark.asyncio
+async def test_router9_429_trong_sse_200_chi_cooldown_khong_khai_tu():
+    from ai import router9_client
+
+    attempts = []
+
+    async def router9_call():
+        attempts.append(1)
+        try:
+            openai_compatible.parse_sse_content(
+                _sse_error({"message": "Rate limit reached", "code": 429})
+            )
+        except openai_compatible.OpenAICompatibleError as exc:
+            raise router9_client.Router9Error(str(exc)) from exc
+
+    async def api_call(idx):
+        return "api1-ok"
+
+    assert await orchestrator._run_provider_chain(router9_call=router9_call, api_call=api_call) == (
+        "api1-ok"
+    )
+    assert attempts == [1]
+    assert provider_state.router9_dead_since is None
+    assert provider_state.api_in_cooldown("router9")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [404, 500, 502, 401])
+async def test_router9_loi_model_tra_web_khong_lam_chet_router9_chat(status):
+    """ROUTER9_WEB_SEARCH_MODEL gateway không phục vụ (404) hay lỗi 5xx ở lượt tự
+    tra web: chỉ chuyển provider, không tính strike sức khoẻ, không khai tử."""
+    attempts = []
+
+    async def router9_search_call():
+        attempts.append(1)
+        raise _http_error(status, "model not found", label="9Router web search")
+
+    async def api_call(idx):
+        return "api1-ok"
+
+    for _ in range(2):
+        with orchestrator.call_stage("search"):
+            assert (
+                await orchestrator._run_provider_chain(
+                    router9_call=router9_search_call, api_call=api_call
+                )
+                == "api1-ok"
+            )
+    assert attempts == [1, 1]
+    assert provider_state.router9_dead_since is None
+    assert provider_state._router9_strikes == []
+
+    async def router9_chat_call():
+        return "router9-chat-ok"
+
+    assert (
+        await orchestrator._run_provider_chain(router9_call=router9_chat_call, api_call=api_call)
+        == "router9-chat-ok"
+    )
+
+
+@pytest.mark.asyncio
+async def test_router9_429_luc_tra_web_chi_khoa_router9_tra_web():
+    async def router9_rate_limited():
+        raise _http_error(429, "slow", {"retry-after": "60"}, label="9Router web search")
+
+    async def api_call(idx):
+        return "api1-ok"
+
+    with orchestrator.call_stage("search"):
+        await orchestrator._run_provider_chain(router9_call=router9_rate_limited, api_call=api_call)
+    assert provider_state.api_in_cooldown("router9_search")
+    assert not provider_state.api_in_cooldown("router9")
+    assert provider_state.router9_dead_since is None
+
+    async def router9_chat():
+        return "router9-chat-ok"
+
+    assert (
+        await orchestrator._run_provider_chain(router9_call=router9_chat, api_call=api_call)
+        == "router9-chat-ok"
+    )

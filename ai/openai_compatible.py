@@ -303,6 +303,7 @@ def _parse_sse_stream(raw: str) -> tuple[str, list[dict[str, Any]]]:
     thay vì "trả kết quả rỗng"."""
     pieces: list[str] = []
     error_msg: Optional[str] = None
+    error_status: Optional[int] = None
     calls_by_index: dict[int, dict[str, Any]] = {}
     for line in raw.splitlines():
         line = line.strip()
@@ -320,6 +321,8 @@ def _parse_sse_stream(raw: str) -> tuple[str, list[dict[str, Any]]]:
             error_msg = (
                 str(error.get("message") or error) if isinstance(error, dict) else str(error)
             )
+            if isinstance(error, dict):
+                error_status = _sse_error_status(error)
             continue
         for choice in chunk.get("choices", []):
             delta = choice.get("delta") or {}
@@ -356,8 +359,29 @@ def _parse_sse_stream(raw: str) -> tuple[str, list[dict[str, Any]]]:
     if not text and error_msg:
         # Ném ở đây thay vì để caller nhận text rỗng: giữ nguyên thông điệp
         # lỗi upstream (gateway đã gói trong chunk {"error": ...}).
-        raise OpenAICompatibleError(f"SSE upstream error: {error_msg[:500]}")
+        raise OpenAICompatibleError(
+            f"SSE upstream error: {error_msg[:500]}",
+            status_code=error_status,
+            retry_after_sec=_seconds_from_body(error_msg) if error_status == 429 else None,
+        )
     return text, tool_calls
+
+
+def _sse_error_status(error: dict[str, Any]) -> Optional[int]:
+    """Mã HTTP upstream trong chunk {"error": {"code"|"status": 429}} (số hoặc chuỗi
+    số) - để lỗi 429/400 gateway gói trong stream 200 được phân loại như lỗi HTTP
+    thật. Mã chữ ("invalid_request", "RESOURCE_EXHAUSTED") -> None."""
+    for key in ("code", "status", "status_code"):
+        value = error.get(key)
+        if isinstance(value, bool):
+            continue
+        try:
+            status = int(str(value).strip())
+        except (TypeError, ValueError):
+            continue
+        if 100 <= status <= 599:
+            return status
+    return None
 
 
 async def post_chat_completion(

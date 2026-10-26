@@ -18,7 +18,9 @@ tự core.config.PROVIDER_ORDER (mặc định router9 -> groq -> openrouter -> 
 - router9 chỉ bị khai tử vì lỗi sức khoẻ thật: timeout, 401/403, hoặc 2 lỗi
   5xx/mất kết nối trong 5 phút. Lỗi theo request (400/413/422, nội dung bị
   lọc, output lẫn CJK, không tra được web) chỉ chuyển provider; 429 chỉ
-  cooldown ngắn.
+  cooldown ngắn. Lỗi upstream gateway gói trong stream SSE 200 được phân loại
+  theo mã/thông điệp của nó; lỗi ở lượt tự tra web (model ROUTER9_WEB_SEARCH_MODEL)
+  không bao giờ tính vào sức khoẻ router9 (429 -> cooldown riêng router9_search).
 - groq/openrouter/api1/api2/router9 hết quota (429) -> cooldown theo gợi ý của
   provider (Retry-After..., xem ai/cooldown.py; hết quota NGÀY thì tới
   API_QUOTA_COOLDOWN_SEC) rồi tự thử lại; trong lúc đó dùng provider kế tiếp.
@@ -357,10 +359,11 @@ call_stage = call_log.call_stage
 
 
 def _cooldown_key(provider: str) -> str:
-    """Groq ở lượt tự tra web dùng model riêng (GROQ_REALTIME_MODEL) với bucket
-    rate-limit riêng -> cooldown riêng "groq_search", không khoá Groq chat."""
-    if provider == "groq" and _call_stage.get() == "search":
-        return "groq_search"
+    """Groq/9Router ở lượt tự tra web dùng model riêng (GROQ_REALTIME_MODEL,
+    ROUTER9_WEB_SEARCH_MODEL) với bucket rate-limit riêng -> cooldown riêng
+    "groq_search"/"router9_search", không khoá chat của provider đó."""
+    if provider in ("groq", "router9") and _call_stage.get() == "search":
+        return f"{provider}_search"
     return provider
 
 
@@ -384,21 +387,40 @@ def _classify_outcome(exc: BaseException) -> str:
 # hỗ trợ...). 404 (model không có) KHÔNG nằm đây - lặp lại mọi lượt nên coi là
 # lỗi sức khoẻ.
 _ROUTER9_REQUEST_ERROR_STATUSES = frozenset({400, 413, 415, 422})
+# Gateway (chatgpt-gateway...) forward lỗi upstream trong stream SSE 200, có khi
+# không kèm mã: đọc thông điệp để 429/quota không thành "lỗi sức khoẻ".
+_RATE_LIMIT_MESSAGE_RE = re.compile(
+    r"rate[ _-]?limit|\b429\b|quota|too many requests|resource[ _]exhausted", re.IGNORECASE
+)
+_REQUEST_ERROR_MESSAGE_RE = re.compile(
+    r"context[ _-]?length|maximum context|too long|content[ _-]?filter", re.IGNORECASE
+)
 
 
 def _router9_failure_kind(exc: BaseException) -> str:
     """timeout | auth | rate_limited | request | health (xem
-    _run_provider_chain_within_deadline._attempt_router9_with_health)."""
-    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
-        return "timeout"
+    _run_provider_chain_within_deadline._attempt_router9_with_health).
+
+    Lượt tự tra web (call_stage "search", model ROUTER9_WEB_SEARCH_MODEL): lỗi của
+    model tra web không nói gì về sức khoẻ router9 cho chat -> chỉ "rate_limited"
+    (cooldown riêng router9_search) hoặc "request", không bao giờ khai tử."""
     if isinstance(exc, OutputContaminatedError) or _is_no_search_evidence(exc):
         return "request"
-    status = openai_compatible.http_status(exc)
+    timed_out = isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+    status = None if timed_out else openai_compatible.http_status(exc)
+    # Chỉ đọc thông điệp khi lỗi không mang mã rõ ràng (lỗi SSE/mạng) hoặc là 5xx
+    # bọc lỗi upstream - mã 4xx cụ thể đã đủ để phân loại.
+    reads_message = not timed_out and (status is None or status >= 500)
+    message = openai_compatible.error_text(exc) if reads_message else ""
+    if status == 429 or _RATE_LIMIT_MESSAGE_RE.search(message):
+        return "rate_limited"
+    if _call_stage.get() == "search":
+        return "request"
+    if timed_out:
+        return "timeout"
     if status in (401, 403):
         return "auth"
-    if status == 429:
-        return "rate_limited"
-    if status in _ROUTER9_REQUEST_ERROR_STATUSES:
+    if status in _ROUTER9_REQUEST_ERROR_STATUSES or _REQUEST_ERROR_MESSAGE_RE.search(message):
         return "request"
     return "health"
 
@@ -604,7 +626,9 @@ async def _run_provider_chain_within_deadline(
                     raise
                 if kind == "rate_limited":
                     seconds, reason = cooldown.cooldown_for("router9", exc)
-                    await provider_state.mark_api_exhausted("router9", seconds, reason)
+                    await provider_state.mark_api_exhausted(
+                        _cooldown_key("router9"), seconds, reason
+                    )
                     raise
                 if kind in ("timeout", "auth"):
                     if not has_fallback:
@@ -640,10 +664,11 @@ async def _run_provider_chain_within_deadline(
             if provider_state.router9_dead_since is not None:
                 known_bad_skipped.append("router9")
                 continue
-            if provider_state.api_in_cooldown("router9"):
+            router9_cooldown = _cooldown_key("router9")
+            if provider_state.api_in_cooldown(router9_cooldown):
                 # 429 của router9 chỉ là cooldown ngắn (Retry-After), không phải
                 # chết - không gọi lại kể cả ở lượt cứu cánh cuối.
-                cooling_skipped.append("router9")
+                cooling_skipped.append(router9_cooldown)
                 continue
             has_fallback = await _has_any_fallback_configured()
             try:

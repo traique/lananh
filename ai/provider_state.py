@@ -28,10 +28,18 @@ _STATE_COOLDOWN_REASON_PREFIX = "provider_cooldown_reason_"
 # Provider có cooldown-on-quota. router9 dùng cơ chế dead/probe riêng (xem
 # mark_router9_dead/alive bên dưới) nhưng lỗi 429 của router9 chỉ là cooldown
 # ngắn theo Retry-After, KHÔNG khai tử.
-# "groq_search": cooldown RIÊNG của model Groq tự tra web (GROQ_REALTIME_MODEL,
-# bucket rate-limit theo model khác model chat) - 429 lúc tra web không khoá
-# luôn Groq chat/utility, và ngược lại.
-_COOLDOWN_PROVIDERS = ("groq", "openrouter", "api1", "api2", "router9", "groq_search")
+# "groq_search"/"router9_search": cooldown RIÊNG của model tự tra web
+# (GROQ_REALTIME_MODEL, ROUTER9_WEB_SEARCH_MODEL - bucket rate-limit khác model
+# chat) - 429 lúc tra web không khoá luôn chat/utility, và ngược lại.
+_COOLDOWN_PROVIDERS = (
+    "groq",
+    "openrouter",
+    "api1",
+    "api2",
+    "router9",
+    "groq_search",
+    "router9_search",
+)
 # router9 lỗi 5xx/mất kết nối: chỉ khai tử khi đủ ROUTER9_HEALTH_STRIKES lỗi
 # trong ROUTER9_HEALTH_WINDOW_SEC (timeout và 401/403 vẫn khai tử ngay).
 ROUTER9_HEALTH_STRIKES = 2
@@ -48,6 +56,7 @@ class ProviderStateSnapshot(TypedDict):
     api2_exhausted_until: float
     router9_exhausted_until: float
     groq_search_exhausted_until: float
+    router9_search_exhausted_until: float
     cooldown_reasons: dict[str, str]
 
 
@@ -229,6 +238,7 @@ class ProviderChainState:
             api2_exhausted_until=self.api_exhausted_until.get("api2", 0.0),
             router9_exhausted_until=self.api_exhausted_until.get("router9", 0.0),
             groq_search_exhausted_until=self.api_exhausted_until.get("groq_search", 0.0),
+            router9_search_exhausted_until=self.api_exhausted_until.get("router9_search", 0.0),
             cooldown_reasons=dict(self.cooldown_reasons),
         )
 
