@@ -351,3 +351,26 @@ def test_trang_admin_co_bang_quota_va_luot():
         assert endpoint in html
     for box in ('id="outcomes-table"', 'id="burn-table"', 'id="turns-table"'):
         assert box in html
+
+
+async def test_groq_tat_xin_usage_bang_env(monkeypatch):
+    from ai import groq_client
+
+    seen = {}
+
+    async def fake_post(client, **kwargs):
+        seen.update(kwargs)
+        return "dạ"
+
+    async def key():
+        return "gk"
+
+    async def model():
+        return "gpt-oss-test"
+
+    monkeypatch.setattr(groq_client, "_INCLUDE_USAGE", False)
+    monkeypatch.setattr(groq_client, "_api_key", key)
+    monkeypatch.setattr(groq_client, "_model", model)
+    monkeypatch.setattr(groq_client.openai_compatible, "post_chat_completion", fake_post)
+    await groq_client.generate("chào")
+    assert seen["include_usage"] is False

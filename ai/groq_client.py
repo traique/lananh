@@ -16,9 +16,14 @@ from typing import Optional
 from ai import openai_compatible, provider_overrides
 from ai.openai_compatible import Response
 from core import config
+from core.envutil import env_on
 from core.text_utils import strip_json_fence
 
 logger = logging.getLogger(__name__)
+
+# Xin token (stream_options.include_usage) cho provider_calls/quota (ai/call_log.py);
+# GROQ_STREAM_USAGE=0 để tắt nếu Groq từ chối tham số này.
+_INCLUDE_USAGE = env_on("GROQ_STREAM_USAGE")
 
 _pool = openai_compatible.ClientPool(
     config.GROQ_CALL_TIMEOUT_SEC, config.GROQ_MAX_CONCURRENCY, config.GROQ_TOTAL_TIMEOUT_SEC
@@ -70,7 +75,7 @@ async def generate(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 provider_label="Groq",
-                include_usage=True,
+                include_usage=_INCLUDE_USAGE,
             )
 
     return Response(await _pool.bounded("Groq", _call))
@@ -104,7 +109,7 @@ async def generate_json(prompt: str, *, max_tokens: int = 1024) -> Optional[dict
                 max_tokens=max_tokens,
                 provider_label="Groq JSON",
                 extra_payload={"response_format": {"type": "json_object"}},
-                include_usage=True,
+                include_usage=_INCLUDE_USAGE,
             )
 
     raw = await _pool.bounded("Groq JSON", _call)
@@ -149,7 +154,7 @@ async def generate_with_tools(
                 max_tokens=max_tokens,
                 provider_label="Groq tools",
                 extra_payload={"parallel_tool_calls": False},
-                include_usage=True,
+                include_usage=_INCLUDE_USAGE,
             )
 
     return await _pool.bounded("Groq tools", _call)
@@ -167,7 +172,7 @@ async def generate_image_prompt(instruction: str, image_path: str) -> Response:
         provider_label="Groq vision",
         instruction=instruction,
         image_path=image_path,
-        include_usage=True,
+        include_usage=_INCLUDE_USAGE,
     )
 
 

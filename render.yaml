@@ -388,6 +388,9 @@ services:
         value: "50"
       - key: FREE_TIER_TAVILY_MONTHLY
         value: "1000"
+      # Groq stream kèm token (stream_options.include_usage) cho thống kê; 0 = tắt.
+      - key: GROQ_STREAM_USAGE
+        value: "1"
       # Số đo từng lượt trả lời (bảng turn_metrics, /admin → Thống kê AI) giữ N ngày.
       - key: RETENTION_TURN_METRICS_DAYS
         value: "14"

@@ -56,7 +56,7 @@ from channels.router import (
     media_turn,
 )
 from core import idempotency
-from services import document_service, reply_audience, turn_control, voice_service
+from services import document_service, reply_audience, turn_control, usage_quota, voice_service
 from services.concurrency import TurnCancelled, assistant_turn, run_cancellable
 
 logger = logging.getLogger(__name__)
@@ -131,10 +131,15 @@ async def voice(
     zalo_user, early = await _resolve_sender(x_zalo_sender_id)
     if zalo_user is None:
         return early
-    blocked = await media_quota_gate(zalo_user, x_zalo_account_id, x_zalo_message_id, "voice")
+    blocked, decision = await media_quota_gate(
+        zalo_user, x_zalo_account_id, x_zalo_message_id, "voice"
+    )
     if blocked is not None:
         return blocked
-    with media_turn(x_zalo_account_id, x_zalo_message_id, zalo_user):
+    with (
+        media_turn(x_zalo_account_id, x_zalo_message_id, zalo_user),
+        usage_quota.scope(decision, zalo_user.internal_user_id),
+    ):
         return await _voice_turn(
             body,
             zalo_user,
@@ -191,10 +196,15 @@ async def document_file(
     zalo_user, early = await _resolve_sender(x_zalo_sender_id)
     if zalo_user is None:
         return early
-    blocked = await media_quota_gate(zalo_user, x_zalo_account_id, x_zalo_message_id, "file")
+    blocked, decision = await media_quota_gate(
+        zalo_user, x_zalo_account_id, x_zalo_message_id, "file"
+    )
     if blocked is not None:
         return blocked
-    with media_turn(x_zalo_account_id, x_zalo_message_id, zalo_user):
+    with (
+        media_turn(x_zalo_account_id, x_zalo_message_id, zalo_user),
+        usage_quota.scope(decision, zalo_user.internal_user_id),
+    ):
         return await _file_turn(
             request,
             body,

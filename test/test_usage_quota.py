@@ -166,7 +166,10 @@ async def test_cache_va_nhat_ky_cau_bao_co_tran(quota_db):
 
 async def test_tra_web_chi_danh_dau_trong_pham_vi_cua_dung_nguoi(quota_db):
     await usage_quota.note_web_search(-1)  # ngoài phạm vi quota: bỏ qua
-    with usage_quota.scope(usage_quota.Decision(True), -1):
+    with usage_quota.scope(usage_quota.ALLOW, -1):  # chủ bot/admin: không đặt phạm vi
+        await usage_quota.note_web_search(-1)
+    assert quota_db["relabel"] == []
+    with usage_quota.scope(usage_quota.Decision(True, applied=True), -1):
         await usage_quota.note_web_search(-2)  # người khác: bỏ qua
         await usage_quota.note_web_search(-1)
     assert quota_db["relabel"] == [(-1, "chat", "chat_search")]
@@ -286,7 +289,7 @@ async def test_het_luot_nang_chat_khong_tra_web_va_kem_ghi_chu(chat_fakes, monke
     monkeypatch.setattr(ccs.web_search, "plan_search", plan_forbidden)
     monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
     monkeypatch.setattr(ccs.vn_daily_chat, "grounding_for", daily_needs_search)
-    with usage_quota.scope(usage_quota.Decision(True, search_allowed=False), -9):
+    with usage_quota.scope(usage_quota.Decision(True, search_allowed=False, applied=True), -9):
         await ccs.run_chat_turn(-9, "tin tức mới nhất hôm nay về giá vàng", channel="zalo")
     await ccs.stop_background_tasks()
     assert "hết lượt tra web" in seen["grounding"]
@@ -301,7 +304,7 @@ async def test_luot_tra_web_cua_thanh_vien_duoc_danh_dau(chat_fakes, monkeypatch
         return SearchPlan("<<<web>>>", "off", True)
 
     monkeypatch.setattr(ccs.web_search, "plan_search", tavily_plan)
-    with usage_quota.scope(usage_quota.Decision(True), -9):
+    with usage_quota.scope(usage_quota.Decision(True, applied=True), -9):
         await ccs.run_chat_turn(-9, "tin mới về bão", channel="zalo")
     await ccs.stop_background_tasks()
     assert quota_db["relabel"] == [(-9, "chat", "chat_search")]
@@ -325,11 +328,18 @@ async def test_route_media_chan_thanh_vien_het_luot(quota_db, monkeypatch):
     monkeypatch.setattr(router.idempotency, "save_zalo_response", save)
     quota_db["counts"][-7] = [40, 0]
     member = SimpleNamespace(internal_user_id=-7, is_admin=False, address_form="cô")
-    blocked = await router.media_quota_gate(member, "acc", "m5", "voice")
+    blocked, decision = await router.media_quota_gate(member, "acc", "m5", "voice")
     assert blocked is not None and "cháu" in blocked.messages[0]
-    assert saved[0][0] == "voice"
+    assert saved[0][0] == "voice" and not decision.allowed
     admin = SimpleNamespace(internal_user_id=-7, is_admin=True, address_form=None)
-    assert await router.media_quota_gate(admin, "acc", "m6", "file") is None
+    assert await router.media_quota_gate(admin, "acc", "m6", "file") == (
+        None,
+        usage_quota.ALLOW,
+    )
+    quota_db["counts"][-8] = [1, 5]
+    other = SimpleNamespace(internal_user_id=-8, is_admin=False, address_form=None)
+    allowed, decision = await router.media_quota_gate(other, "acc", "m7", "file")
+    assert allowed is None and decision.applied and not decision.search_allowed
 
 
 async def test_anh_ghi_luot_image(quota_db, monkeypatch):

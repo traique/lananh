@@ -86,6 +86,8 @@ class Decision:
     notice: str | None = None  # câu báo hết lượt (None = im lặng)
     search_allowed: bool = True
     reason: str = ""  # "" | "turns" | "heavy"
+    # True = lượt của thành viên đã qua kiểm quota (scope() chỉ áp cho lượt này).
+    applied: bool = False
 
 
 ALLOW = Decision(True)
@@ -238,13 +240,17 @@ async def check(
     usage.turns += 1
     if kind:
         usage.heavy += 1
-    return Decision(True, search_allowed=not heavy_out)
+    return Decision(True, search_allowed=not heavy_out, applied=True)
 
 
 @contextmanager
 def scope(decision: Decision, user_id: int) -> Iterator[None]:
     """Đặt quyết định quota cho lượt đang chạy (task con thừa hưởng) để
-    run_chat_turn biết có được tra web không và ghi lượt tra web."""
+    run_chat_turn biết có được tra web không và ghi lượt tra web. Lượt không bị
+    tính quota (chủ bot, admin, DB lỗi -> ALLOW) thì không đặt gì."""
+    if not decision.applied:
+        yield
+        return
     token = _scope.set(_Scope(user_id, decision.search_allowed))
     try:
         yield

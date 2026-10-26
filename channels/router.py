@@ -329,15 +329,16 @@ def media_turn(account_id: str, message_id: str, zalo_user: zalo_users.ZaloUser)
 
 async def media_quota_gate(
     zalo_user: zalo_users.ZaloUser, account_id: str, message_id: str, kind: str
-) -> ZaloMessageResponse | None:
+) -> tuple[ZaloMessageResponse | None, usage_quota.Decision]:
     """Quota ngày của thành viên cho ảnh/tin thoại/tài liệu (services/usage_quota.py):
-    như tin chữ - SAU kiểm cache idempotency, TRƯỚC khoá lượt. None = cho qua; bị
-    chặn thì trả (và cache) câu báo hết lượt hoặc phản hồi rỗng."""
+    như tin chữ - SAU kiểm cache idempotency, TRƯỚC khoá lượt. (None, quyết định) =
+    cho qua (chạy lượt trong usage_quota.scope); bị chặn thì trả (và cache) câu báo
+    hết lượt hoặc phản hồi rỗng."""
     if not usage_quota.applies("zalo", zalo_user.is_admin):
-        return None
+        return None, usage_quota.ALLOW
     cached = await idempotency.get_zalo_response(account_id, message_id, kind)
     if cached is not None:
-        return ZaloMessageResponse.model_validate(cached)
+        return ZaloMessageResponse.model_validate(cached), usage_quota.ALLOW
     decision = await usage_quota.check(
         zalo_user.internal_user_id,
         channel="zalo",
@@ -345,7 +346,7 @@ async def media_quota_gate(
         address_form=getattr(zalo_user, "address_form", None),
     )
     if decision.allowed:
-        return None
+        return None, decision
     response = ZaloMessageResponse(
         messages=[decision.notice] if decision.notice else [], provider=None
     )
@@ -353,7 +354,7 @@ async def media_quota_gate(
         await idempotency.save_zalo_response(account_id, message_id, kind, response.model_dump())
     except Exception:
         logger.warning("Không lưu được cache câu báo hết lượt (%s/%s).", kind, message_id)
-    return response
+    return response, decision
 
 
 def _chat_for(zalo_user: zalo_users.ZaloUser, sender_id: str):
@@ -456,12 +457,15 @@ async def image_prompt(
     if not zalo_user.is_active:
         return ZaloMessageResponse(messages=[messages_module.ZALO_LOCKED_REPLY], provider=None)
 
-    blocked = await media_quota_gate(
+    blocked, decision = await media_quota_gate(
         zalo_user, x_zalo_account_id, x_zalo_message_id, "image-prompt"
     )
     if blocked is not None:
         return blocked
-    with media_turn(x_zalo_account_id, x_zalo_message_id, zalo_user):
+    with (
+        media_turn(x_zalo_account_id, x_zalo_message_id, zalo_user),
+        usage_quota.scope(decision, zalo_user.internal_user_id),
+    ):
         return await _image_prompt_turn(
             request,
             body,
