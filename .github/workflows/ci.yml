@@ -154,7 +154,7 @@ jobs:
 
       # Build image (multi-stage Node 22 + Python 3.12), không push; load vào
       # docker local để chạy thử bước dưới.
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           push: false
