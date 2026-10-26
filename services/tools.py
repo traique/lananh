@@ -55,7 +55,10 @@ fence, không thêm chữ nào khác) đúng định dạng:
 Danh sách tool khả dụng:
 - "save_note": lưu 1 ghi chú tự do. args: {"content": "nội dung cần ghi nhớ"}.
   Dùng khi người dùng RÕ RÀNG yêu cầu ghi/ghi chú/note lại điều gì đó (vd
-  "ghi chú giúp anh...", "note lại...", "nhớ giúp anh là...").
+  "ghi chú giúp anh...", "note lại...").
+- "remember_fact": ghim LÂU DÀI 1 điều về người dùng vào trí nhớ. args:
+  {"content": "điều cần nhớ, giữ nguyên ý người dùng"}. Dùng khi người dùng
+  bảo "nhớ giúp anh là...", "em nhớ nhé: ...", "ghi nhớ giúp: ...".
 - "list_notes": xem lại các ghi chú gần đây. args: {} (rỗng). Dùng khi người
   dùng hỏi "em ghi chú gì rồi", "xem lại note của anh"...
 - "set_reminder": đặt nhắc việc. args: {"message": "nội dung cần nhắc",
@@ -218,8 +221,16 @@ async def _tool_get_portfolio(user_id: int) -> str:
     return "Danh mục đầu tư đã ghi nhận trong trí nhớ:\n" + "\n".join(portfolio_facts)
 
 
+async def _tool_remember_fact(user_id: int, content: str = "", **_ignored) -> str:
+    """Ghim 1 điều vào trí nhớ (logic + chặn bí mật ở services/memory_control.remember)."""
+    from services import memory_control
+
+    return await memory_control.remember(user_id, str(content or ""))
+
+
 _HANDLERS = {
     "save_note": _tool_save_note,
+    "remember_fact": _tool_remember_fact,
     "list_notes": _tool_list_notes,
     "set_reminder": _tool_set_reminder,
     "get_portfolio": _tool_get_portfolio,

@@ -43,7 +43,7 @@ from ai import (
 from ai.provider_state import provider_state
 from channels import zalo_users
 from core import config, database as db
-from services import db_maintenance, market_page, memory_service, memory_stats
+from services import db_maintenance, market_page, memory_control, memory_service, memory_stats
 from services import backup_status, error_digest, key_rotation, watchdog
 
 logger = logging.getLogger(__name__)
@@ -647,6 +647,40 @@ async def admin_memory_update(request: Request) -> Response:
         return Response(status_code=400)
     await memory_service.set_enabled(user_id, bool(body.get("enabled", True)))
     return JSONResponse({"user_id": user_id, "enabled": await memory_service.is_enabled(user_id)})
+
+
+def _int_param(raw) -> int | None:
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+@api_router.get("/memory/items")
+async def admin_memory_items(request: Request) -> Response:
+    """Fact + highlight của 1 người (?user_id=) để xem/quên/ghim từ trang admin."""
+    user_id = _int_param(request.query_params.get("user_id"))
+    if user_id is None:
+        return Response(status_code=400)
+    return JSONResponse(await memory_control.admin_items(user_id))
+
+
+@api_router.post("/memory/item")
+async def admin_memory_item(request: Request) -> Response:
+    """Body: {"user_id": int, "kind": "fact"|"highlight", "id": int,
+    "action": "forget"|"pin"|"unpin"}. Quên = xoá hẳn + không học lại."""
+    body = await request.json()
+    user_id, item_id = body.get("user_id"), body.get("id")
+    action, kind = body.get("action"), body.get("kind")
+    if (
+        not isinstance(user_id, int)
+        or not isinstance(item_id, int)
+        or action not in ("forget", "pin", "unpin")
+        or kind not in ("fact", "highlight")
+    ):
+        return Response(status_code=400)
+    changed = await memory_control.admin_edit(user_id, action, kind, item_id)
+    return JSONResponse({"changed": changed}, status_code=200 if changed else 404)
 
 
 @api_router.get("/usage")

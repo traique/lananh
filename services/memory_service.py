@@ -212,6 +212,16 @@ def is_trivial(text: str) -> bool:
     return bool(_TRIVIAL_RE.match(folded) or _EMOJI_ONLY_RE.match(folded))
 
 
+_REMEMBER_INTENT_RE = re.compile(
+    r"\b(?:nho giup|nho dum|nho ho|ghi nho|em nho nhe|nho nhe|nho nha|nho cho (?:anh|em|minh))\b"
+)
+
+
+def wants_remember(text: str) -> bool:
+    """Người dùng chủ động nhờ nhớ ("nhớ giúp anh là...") -> trích nhớ ngay."""
+    return bool(_REMEMBER_INTENT_RE.search(fold(text or "")))
+
+
 def _forget_intent(text: str) -> bool:
     return bool(_FORGET_INTENT_RE.search(fold(text or "")))
 

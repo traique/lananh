@@ -266,6 +266,18 @@ async def _delete_user_data(conn, internal_user_id: int) -> None:
     )
 
 
+@db.with_reconnect
+async def delete_own_data(internal_user_id: int) -> None:
+    """Thành viên tự xoá dữ liệu cá nhân (/xoadulieu xacnhan): như /zaloxoa nhưng
+    GIỮ pairing để vẫn nhắn tiếp được. Chỉ nhận id ÂM (dải Zalo) - id chủ bot bị
+    _delete_user_data từ chối."""
+    await ensure_schema()
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _delete_user_data(conn, internal_user_id)
+
+
 @db.with_reconnect(idempotent=False)
 async def remove(external_id: str) -> bool:
     """Gỡ pairing VÀ xoá toàn bộ dữ liệu cá nhân của user đó (1 transaction)."""

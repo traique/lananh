@@ -189,7 +189,7 @@ async def record_exchange(
     if kind in MEMORY_KINDS:
         from services import memory_service
 
-        memory_service.after_exchange(user_id)
+        memory_service.after_exchange(user_id, explicit=memory_service.wants_remember(user_text))
     return True
 
 

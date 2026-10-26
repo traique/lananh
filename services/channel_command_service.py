@@ -11,6 +11,7 @@ from core.text_utils import parse_on_off
 from services import (
     conversation_log,
     divination_commands,
+    memory_commands,
     memory_service,
     price_search,
     prompt_templates,
@@ -55,9 +56,11 @@ Chat và tiện ích
 /dich [ja>vi|vi>ja] <nội dung> — dịch chat công việc Nhật-Việt
 /reset — xoá ngữ cảnh chat
 /history — xem 10 lượt gần nhất
-/memory [on|off] — xem, bật hoặc tắt trí nhớ dài hạn
-/forget — xoá trí nhớ dài hạn
-/notes — xem ghi chú
+/memory [on|off] — xem trí nhớ dài hạn (đánh số), bật hoặc tắt
+/quen <số|từ khoá> — quên 1 mục; /nho <điều cần nhớ> — ghim 1 điều; /ghim, /boghim <số>
+/forget — xoá hết trí nhớ dài hạn
+/notes [từ khoá] — xem/tìm ghi chú; /xoaghichu <số> — xoá 1 ghi chú
+/xuatdulieu — xem dữ liệu em đang lưu; /xoadulieu — xoá dữ liệu cá nhân của mình
 
 Danh mục cổ phiếu (riêng từng người)
 /danhmuc — xem danh mục, lãi/lỗ, cảnh báo stop/target
@@ -144,6 +147,14 @@ def take_pending_image_url() -> str | None:
     if url is not None:
         _pending_image_url.set(None)
     return url
+
+
+def _about(user_id: int) -> str:
+    """Cách gọi người gõ lệnh trong câu trả lời: chủ bot "anh", thành viên Zalo
+    theo cách xưng hô riêng (core/address.py), chưa đặt thì trung tính."""
+    if config.is_owner_user_id(user_id):
+        return "anh"
+    return reply_audience.current().address_form or ""
 
 
 def _arg(text: str) -> str:
@@ -425,40 +436,13 @@ async def maybe_handle_command(
         await orchestrator.reset_chat()
         await db.clear_chat(user_id)
         return ["🔄 Đã xoá ngữ cảnh hội thoại."], None
-    if command == "/memory":
-        toggle = parse_on_off(argument)
-        if toggle is True:
-            await memory_service.set_enabled(user_id, True)
-            return ["✅ Đã bật trí nhớ dài hạn."], None
-        if toggle is False:
-            await memory_service.set_enabled(user_id, False)
-            return ["🔴 Đã tắt trí nhớ dài hạn. Dùng /memory on để bật lại."], None
-        facts, summary = await db.get_facts(user_id), await db.get_summary(user_id)
-        enabled = await memory_service.is_enabled(user_id)
-        status_line = f"\nTrạng thái: {'BẬT' if enabled else 'TẮT'} (/memory on|off để đổi)"
-        if not facts and not summary:
-            return [f"🧠 Chưa có trí nhớ dài hạn.{status_line}"], None
-        lines = ["🧠 Trí nhớ dài hạn:"]
-        if summary:
-            lines.append(f"\nTóm tắt: {summary}")
-        lines.extend(f"• {key}: {value}" for key, value in facts)
-        lines.append(status_line)
-        return ["\n".join(lines)], None
-    if command == "/forget":
-        await memory_service.clear_memory(user_id)
-        return ["🗑️ Đã xoá toàn bộ trí nhớ dài hạn."], None
-    if command == "/notes":
-        notes = await db.get_notes(user_id, limit=10)
-        return (
-            ["📝 Chưa có ghi chú nào."]
-            if not notes
-            else [
-                "📝 Ghi chú gần đây:\n"
-                + "\n".join(
-                    f"• {content} ({created.strftime('%H:%M %d/%m')})" for content, created in notes
-                )
-            ]
-        ), None
+    # /memory, /forget, /quen, /nho, /ghim, /notes, /xoaghichu, /xuatdulieu,
+    # /xoadulieu: trí nhớ/dữ liệu của CHÍNH người gõ (services/memory_commands.py).
+    memory_reply = await memory_commands.handle(
+        command, argument, user_id, channel=channel, about=_about(user_id)
+    )
+    if memory_reply is not None:
+        return memory_reply.messages, None
     if command == "/history":
         rows = await db.get_history(user_id, limit=10)
         return (

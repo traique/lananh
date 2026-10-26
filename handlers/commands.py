@@ -17,11 +17,12 @@ import messages
 from ai import orchestrator
 from ai.timeouts import TurnTimeoutError
 from core import database as db, webhook_inbox
-from core.text_utils import parse_on_off
 from handlers import common
 from services import (
     conversation_log,
     divination_commands,
+    memory_commands,
+    memory_control,
     memory_service,
     price_search,
     prompt_templates,
@@ -69,9 +70,12 @@ HELP_TEXT = (
     "/dich [ja>vi|vi>ja] <nội dung> — dịch chat công việc Nhật-Việt\n"
     "/reset — xoá ngữ cảnh chat\n"
     "/history — xem 10 lượt gần nhất\n"
-    "/memory [on|off] — xem, bật hoặc tắt trí nhớ dài hạn\n"
-    "/forget — xoá trí nhớ dài hạn\n"
-    "/notes — xem ghi chú đã lưu\n"
+    "/memory [on|off] — xem trí nhớ dài hạn (đánh số), bật hoặc tắt\n"
+    "/quen <số|từ khoá> — quên 1 mục; /nho <điều cần nhớ> — ghim 1 điều "
+    '("nhớ giúp anh là..." cũng được); /ghim, /boghim <số>\n'
+    "/forget — xoá hết trí nhớ dài hạn\n"
+    "/notes [từ khoá] — xem/tìm ghi chú; /xoaghichu <số> — xoá 1 ghi chú\n"
+    "/xuatdulieu — tải file dữ liệu em đang lưu; /xoadulieu — xoá trí nhớ, ghi chú, lịch sử chat\n"
     "/agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm)\n"
     "/rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/\n"
     "/ragxuly <file> — dọn file md OCR trong rag/ ở nền (AI thêm heading, backup bản gốc)\n\n"
@@ -318,19 +322,6 @@ async def dich_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 @common.restricted
-async def notes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    notes = await db.get_notes(user_id, limit=10)
-    if not notes:
-        await update.message.reply_text("📝 Chưa có ghi chú nào.")
-        return
-    lines = ["📝 *Ghi chú gần đây:*"]
-    for content, created_at in notes:
-        lines.append(f"• {content} _(đặt lúc {created_at.strftime('%H:%M %d/%m')})_")
-    await common.reply_long_text(update.message, "\n".join(lines))
-
-
-@common.restricted
 async def reset_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     # Trích nốt trí nhớ từ các lượt chưa xử lý trước khi xoá lịch sử phiên.
@@ -341,49 +332,31 @@ async def reset_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 @common.restricted
-async def memory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    if context.args:
-        toggle = parse_on_off(context.args[0])
-        if toggle is True:
-            await memory_service.set_enabled(user_id, True)
-            await update.message.reply_text("✅ Đã bật trí nhớ dài hạn.")
-            return
-        if toggle is False:
-            await memory_service.set_enabled(user_id, False)
-            await update.message.reply_text(
-                "🔴 Đã tắt trí nhớ dài hạn. Bot sẽ không trích xuất/nhớ thêm gì mới cho tới khi bật lại bằng /memory on."
-            )
-            return
-
-    facts = await db.get_facts(user_id)
-    summary = await db.get_summary(user_id)
-    enabled = await memory_service.is_enabled(user_id)
-    status_line = (
-        f"\nTrạng thái: {'BẬT' if enabled else 'TẮT'} (dùng /memory on hoặc /memory off để đổi)"
+async def memory_family_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/memory, /forget, /quen, /nho, /ghim, /boghim, /notes, /xoaghichu,
+    /xuatdulieu, /xoadulieu - logic ở services/memory_commands.py."""
+    text = (update.message.text or "").strip()
+    command = text.split(maxsplit=1)[0].lower().split("@", 1)[0] if text else ""
+    reply = await memory_commands.handle(
+        command,
+        common.extract_arg(context),
+        update.effective_user.id,
+        channel="telegram",
+        about="anh",  # Telegram chỉ phục vụ chủ bot
     )
-
-    if not facts and not summary:
-        await update.message.reply_text(f"🧠 Em chưa nhớ gì dài hạn về anh cả.{status_line}")
+    if reply is None:
         return
-
-    lines = ["🧠 *Trí nhớ dài hạn về anh:*"]
-    if summary:
-        lines.append(f"\n_Tóm tắt:_ {summary}")
-    if facts:
-        lines.append("\n*Các thông tin đã biết:*")
-        for key, value in facts:
-            lines.append(f"• `{key}`: {value}")
-    lines.append(status_line)
-    lines.append("\nGõ /forget nếu anh muốn em xoá hết trí nhớ này.")
-    await common.reply_long_text(update.message, "\n".join(lines))
+    for message in reply.messages:
+        await common.reply_long_text(update.message, message)
+    if reply.file is not None:
+        raw, name = reply.file
+        await update.message.reply_document(
+            document=memory_control.export_buffer(raw), filename=name
+        )
 
 
-@common.restricted
-async def forget_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    await memory_service.clear_memory(user_id)
-    await update.message.reply_text("🗑️ Đã xoá toàn bộ trí nhớ dài hạn.")
+# Tên cũ bot_app/test đang dùng.
+memory_cmd = forget_cmd = notes_cmd = memory_family_cmd
 
 
 @common.restricted

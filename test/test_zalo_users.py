@@ -305,3 +305,14 @@ async def test_cach_xung_ho_luu_va_giu_nguyen_khi_pair_lai():
 async def test_cach_xung_ho_ngoai_danh_sach_bi_tu_choi():
     with pytest.raises(ValueError):
         await zalo_users.pair("zq", "", address_form="sếp")
+
+
+@pytest.mark.asyncio
+async def test_thanh_vien_tu_xoa_du_lieu_giu_pairing(patched_db):
+    user = await zalo_users.pair("z8", "")
+    await zalo_users.delete_own_data(user.internal_user_id)
+    assert await zalo_users.resolve("z8") is not None  # vẫn chat tiếp được
+    tables = {q.split()[2] for q, _ in patched_db.data_deletes}
+    assert {"user_facts", "notes", "chat_messages", "user_session_notes"} <= tables
+    with pytest.raises(ValueError):
+        await zalo_users.delete_own_data(42)  # id chủ bot (dương) bị từ chối

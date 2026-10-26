@@ -506,8 +506,9 @@
           </div>
           <div class="card">
             <div class="card-head"><h3>Trí nhớ dài hạn</h3></div>
-            <p class="note">Mỗi tin nhắn khi trí nhớ đang bật tốn thêm 2–3 lượt gọi Google AI Studio (trích xuất fact, tóm tắt, lưu/nhớ lại). Tắt cho người không cần cá nhân hoá để giảm lượt gọi.</p>
+            <p class="note">Trí nhớ trích theo lô (khoảng 1 lượt gọi AI phụ cho mỗi 3 lượt chat, bỏ qua câu "ok/cảm ơn"). Tắt cho người không cần cá nhân hoá để giảm lượt gọi. Bấm "Xem" để xem, ghim hoặc xoá từng mục - mục đã xoá không bị học lại.</p>
             <div id="memory-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+            <div id="memory-items" hidden></div>
           </div>
         </div>
       </section>
@@ -1022,7 +1023,11 @@ async function loadMemory() {
   renderTable($('memory-table'), [
     { label: 'User', cell: u => `${esc(u.label)}<div class="muted small mono">${esc(u.user_id)}</div>` },
     { label: 'Trí nhớ', cell: u => toggle(Boolean(u.enabled), 'Trí nhớ của ' + u.label, { cls: 'memory-toggle', extra: ` data-user="${esc(u.user_id)}" data-enabled="${u.enabled ? 'true' : 'false'}"` }) },
+    { label: '', cls: 'act', cell: u => `<button class="btn sm memory-view" type="button" data-user="${esc(u.user_id)}" data-label="${esc(u.label)}">Xem</button>` },
   ], users, 'Chưa có user nào.');
+  $('memory-table').querySelectorAll('.memory-view').forEach(btn => {
+    btn.addEventListener('click', () => loadMemoryItems(parseInt(btn.dataset.user, 10), btn.dataset.label));
+  });
   $('memory-table').querySelectorAll('.memory-toggle').forEach(btn => {
     btn.addEventListener('click', async () => {
       const userId = parseInt(btn.dataset.user, 10);
@@ -1036,6 +1041,37 @@ async function loadMemory() {
     });
   });
   renderZalo();
+}
+
+// Trình sửa trí nhớ: fact (ghim/bỏ ghim/quên) + chi tiết đáng nhớ (quên).
+async function loadMemoryItems(userId, label) {
+  const box = $('memory-items');
+  box.hidden = false;
+  skeleton(box);
+  let data;
+  try {
+    data = await api('/admin/api/memory/items?user_id=' + encodeURIComponent(userId));
+  } catch (e) { setState(box, 'error', 'Không tải được trí nhớ: ' + e.message); return; }
+  const factRows = data.facts.map(f => `<tr><td data-label="Thông tin">${f.pinned ? '📌 ' : ''}<b>${esc(f.key)}</b>: ${esc(f.value)}<div class="muted small">quan trọng ${esc(f.importance)} · ${f.source === 'user' ? 'người dùng nhập' : 'tự trích'}</div></td>`
+    + `<td class="act" data-label=""><button class="btn sm memory-act" type="button" data-kind="fact" data-id="${esc(f.id)}" data-action="${f.pinned ? 'unpin' : 'pin'}">${f.pinned ? 'Bỏ ghim' : 'Ghim'}</button> `
+    + `<button class="btn sm memory-act" type="button" data-kind="fact" data-id="${esc(f.id)}" data-action="forget">Quên</button></td></tr>`).join('');
+  const hlRows = data.highlights.map(h => `<tr><td data-label="Chi tiết">${esc(h.content)}</td>`
+    + `<td class="act" data-label=""><button class="btn sm memory-act" type="button" data-kind="highlight" data-id="${esc(h.id)}" data-action="forget">Quên</button></td></tr>`).join('');
+  box.innerHTML = `<h4>Trí nhớ của ${esc(label)}</h4>`
+    + (factRows || hlRows
+      ? `<table class="tbl responsive"><tbody>${factRows}${hlRows}</tbody></table>`
+      : '<div class="empty">Chưa nhớ gì.</div>');
+  box.querySelectorAll('.memory-act').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (btn.dataset.action === 'forget' && !window.confirm('Xoá hẳn mục này khỏi trí nhớ?')) return;
+      busy(btn);
+      try {
+        await post('/admin/api/memory/item', { user_id: userId, kind: btn.dataset.kind, id: parseInt(btn.dataset.id, 10), action: btn.dataset.action });
+        msg('Đã cập nhật trí nhớ.');
+        loadMemoryItems(userId, label);
+      } catch (e) { msg('Thao tác thất bại: ' + e.message, true); idle(btn); }
+    });
+  });
 }
 
 // Zalo: user_id âm = tài khoản Zalo đã ghép (xem channels/zalo_users.py);
