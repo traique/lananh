@@ -61,7 +61,7 @@ jobs:
             echo "skip=1" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: steps.keys.outputs.skip != '1'
         with:
           python-version: "3.12"
