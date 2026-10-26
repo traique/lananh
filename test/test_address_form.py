@@ -107,11 +107,14 @@ async def test_zalopair_luu_cach_goi_va_bao_lai_chu_bot(monkeypatch):
     monkeypatch.setattr(config, "ALLOWED_USER_ID", 42)
     seen = {}
 
-    async def fake_pair(external_id, display_name="", *, address_form=None):
-        seen.update(id=external_id, name=display_name, form=address_form)
-        return zalo_users.ZaloUser(external_id, -7, display_name, "user", "active", address_form)
+    async def fake_pair(external_id, display_name="", *, admin=False, address_form=None):
+        from channels import zalo_onboarding
 
-    monkeypatch.setattr(pairing_commands.zalo_users, "pair", fake_pair)
+        seen.update(id=external_id, name=display_name, form=address_form)
+        user = zalo_users.ZaloUser(external_id, -7, display_name, "user", "active", address_form)
+        return zalo_onboarding.PairResult(user, False, False, zalo_onboarding.WELCOME_NONE)
+
+    monkeypatch.setattr(pairing_commands.zalo_onboarding, "pair", fake_pair)
     update = _Update()
     await pairing_commands.zalopair_cmd(update, _Context(["123", "Mẹ", "cô"]))
 

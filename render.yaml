@@ -69,6 +69,8 @@ services:
         value: "30"
       - key: ZALO_DAILY_SUMMARY_HOUR
         value: "9"
+      - key: ZALO_WELCOME_ON_PAIR
+        value: "1"
       - key: TELEGRAM_CONNECT_TIMEOUT
         value: "30"
       - key: TELEGRAM_READ_TIMEOUT

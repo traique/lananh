@@ -129,6 +129,12 @@ HELP_TEXT = (
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Chào anh, em Lan Anh nè - trợ lý cá nhân của anh đây! 💕\n"
+        "Anh cứ nhắn tự nhiên như nhắn tin, vd:\n"
+        "• mai Hà Nội mưa không\n"
+        "• nhắc anh 8h tối gọi mẹ\n"
+        "• giá vàng hôm nay\n"
+        "• phân tích FPT\n"
+        "Gửi 1 ảnh là em viết prompt tạo ảnh từ ảnh đó. "
         "Gõ /help xem đầy đủ lệnh nha anh."
     )
 

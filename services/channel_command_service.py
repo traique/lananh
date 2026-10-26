@@ -18,11 +18,15 @@ from services import (
 )
 from services.telemetry import telemetry
 
-HELP = """📖 Lệnh trên Zalo/Zoom
+# /help theo vai trò: thành viên Zalo chỉ thấy lệnh mình dùng được (không có
+# mục "Chỉ admin" và /fb_*); admin Zalo và Zoom (chủ bot) thấy đủ.
+_HELP_INTRO_ADMIN = """📖 Lệnh trên Zalo/Zoom
 💬 Nhắn bình thường để trò chuyện. Nhắc tới 1 mã cổ phiếu là có giá realtime; nói "phân tích FPT" để xem báo cáo
-(thành viên nhận bản tham khảo, admin nhận bản đầy đủ). Nói "đã mua FPT 100 giá 120" để ghi danh mục.
-
-Lịch, thần số học, tử vi, kỳ môn
+(thành viên nhận bản tham khảo, admin nhận bản đầy đủ). Nói "đã mua FPT 100 giá 120" để ghi danh mục."""
+_HELP_INTRO_MEMBER = """📖 Lệnh dùng được
+💬 Nhắn bình thường để trò chuyện. Nhắc tới 1 mã cổ phiếu là có giá realtime; nói "phân tích FPT" để xem
+báo cáo tham khảo. Nói "đã mua FPT 100 giá 120" để ghi danh mục."""
+_HELP_COMMON = """Lịch, thần số học, tử vi, kỳ môn
 /lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8,
   /lich tháng này, /lich trung thu, /lich ngày tốt tháng này, /lich tuổi 15/3/1990,
   /lich sao hạn 1990 nam năm 2027 (gõ /lich help để xem thêm ví dụ)
@@ -36,6 +40,7 @@ Lịch, thần số học, tử vi, kỳ môn
 Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
 /anh <mô tả> — tạo ảnh thật (Agnes AI)
+🖼️ Gửi 1 ảnh (Zalo) — nhận prompt tạo ảnh viết dựa trên ảnh đó
 /gia <sản phẩm> — tìm và so sánh giá
 /dich [ja>vi|vi>ja] <nội dung> — dịch chat công việc Nhật-Việt
 /reset — xoá ngữ cảnh chat
@@ -53,9 +58,8 @@ Danh mục cổ phiếu (riêng từng người)
 /lichsucp [MÃ] — sổ giao dịch; /laicp [THÁNG] — lãi/lỗ đã chốt sau phí, thuế
 /giaban <MÃ> <GIÁ> — bổ sung giá cho lệnh bán chưa có giá
 /theodoi [MÃ...] — danh sách theo dõi; /botheodoi <MÃ> — bỏ theo dõi
-/canhbaogia <MÃ> [về|lên] <GIÁ> — báo khi giá chạm ngưỡng anh đặt; /xoacanhbao <MÃ> [GIÁ]
-
-Chỉ admin
+/canhbaogia <MÃ> [về|lên] <GIÁ> — báo khi giá chạm ngưỡng đã đặt; /xoacanhbao <MÃ> [GIÁ]"""
+_HELP_ADMIN_ONLY = """Chỉ admin
 /model [tên|auto] — xem hoặc đổi model
 /status — xem trạng thái provider
 /thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày
@@ -71,9 +75,8 @@ Chỉ admin
 /nhom, /themnhom <group_id> <tên>, /xoanhom <group_id|tên> — nhóm Zalo đang theo dõi
 /tongket <tên> [24h|7d|homnay|homqua] — tổng kết nhóm bằng AI; /dangnoi <tên> — xem nguyên văn hôm nay
 /tongket on|off [tên] — bật/tắt tổng kết tự động hằng ngày (bỏ trống tên = mọi nhóm)
-  (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom)
-
-📣 Zalo → Facebook Page (tách riêng khỏi /tongket, chỉ admin):
+  (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom)"""
+_HELP_FACEBOOK = """📣 Zalo → Facebook Page (tách riêng khỏi /tongket, chỉ admin):
 /fb_nhom — xem nhóm nguồn Facebook
 /fb_themnhom <group_id> <tên> — thêm nhóm Zalo làm nguồn đăng Facebook
 /fb_xoanhom <group_id|tên> — bỏ nhóm khỏi luồng Facebook
@@ -92,9 +95,15 @@ Chỉ admin
 /fb_reset — xóa toàn bộ bài Facebook đã lưu của tài khoản, reset ID về #1 khi có thể
 /fb_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt
 /fb_boloc [reset] — thống kê bộ lọc: bao nhiêu bài vào hàng chờ, bị bỏ/trùng vì sao, số bài đang chờ
-(hàng chờ giữ tối đa 150 bài, bài trùng trong 7 ngày không được đưa vào)
+(hàng chờ giữ tối đa 150 bài, bài trùng trong 7 ngày không được đưa vào)"""
+_HELP_FOOTER = "/help — hiển thị hướng dẫn này"
 
-/help — hiển thị hướng dẫn này"""
+HELP_MEMBER = "\n\n".join((_HELP_INTRO_MEMBER, _HELP_COMMON, _HELP_FOOTER))
+HELP_ADMIN = "\n\n".join(
+    (_HELP_INTRO_ADMIN, _HELP_COMMON, _HELP_ADMIN_ONLY, _HELP_FACEBOOK, _HELP_FOOTER)
+)
+# Tên cũ (bản đầy đủ) - giữ cho nơi khác/test đang import.
+HELP = HELP_ADMIN
 
 # Ảnh do lệnh /anh tạo ra được "gửi kèm" bằng ContextVar thay vì đổi kiểu trả
 # về của maybe_handle_command() (đang là tuple[list[str], str|None] và có
@@ -370,7 +379,7 @@ async def maybe_handle_command(
     argument = _arg(text)
 
     if command in {"/start", "/help"}:
-        return [HELP], None
+        return [HELP_ADMIN if is_admin else HELP_MEMBER], None
     # /lich, /tsh, /tuvi, /kymon: tính bằng code (không AI); *_chitiet mới gọi AI.
     divination = await divination_commands.handle(command, argument, user_id, channel)
     if divination is not None:

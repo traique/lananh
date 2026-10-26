@@ -7,7 +7,7 @@ import html
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from channels import zalo_users
+from channels import zalo_onboarding, zalo_users
 from core import address, config, database as db
 from handlers import common
 
@@ -87,6 +87,21 @@ def _address_note(user: zalo_users.ZaloUser) -> str:
     )
 
 
+def _welcome_note(result: zalo_onboarding.PairResult) -> str:
+    """Báo chủ bot lời chào (lần pair đầu) / câu báo nâng quyền đã đi đâu."""
+    if result.welcome == zalo_onboarding.WELCOME_QUEUED:
+        sent = "câu báo nâng quyền" if result.promoted else "lời chào kèm vài câu thử"
+        return f"\n💌 Đã xếp {sent} gửi tới người này qua Zalo."
+    if result.welcome == zalo_onboarding.WELCOME_NO_ACCOUNT:
+        return (
+            "\n⚠️ Chưa gửi được lời chào: Zalo bot chưa đăng nhập (/zalo). Anh nhắn người "
+            "này biết là đã dùng được bot nhé."
+        )
+    if result.welcome == zalo_onboarding.WELCOME_FAILED:
+        return "\n⚠️ Không xếp được lời chào qua Zalo (xem log)."
+    return ""
+
+
 @common.restricted
 async def zalopair_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/zalopair <id_zalo> [tên] [anh|chị|cô|chú|bạn|em] — cấp quyền THÀNH VIÊN
@@ -102,11 +117,13 @@ async def zalopair_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
     external_id, display_name, form = _parse_pair_arg(arg)
-    user = await zalo_users.pair(external_id, display_name, address_form=form)
+    result = await zalo_onboarding.pair(external_id, display_name, address_form=form)
+    user = result.user
     label = f" ({user.display_name})" if user.display_name else ""
     await update.message.reply_text(
         f"✅ Đã cấp quyền THÀNH VIÊN cho Zalo id: {html.escape(user.external_id)}{html.escape(label)}"
         + _address_note(user)
+        + _welcome_note(result)
     )
 
 
@@ -122,11 +139,12 @@ async def zaloadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
     external_id, display_name, form = _parse_pair_arg(arg)
-    user = await zalo_users.pair_as_admin(external_id, display_name, address_form=form)
+    result = await zalo_onboarding.pair(external_id, display_name, admin=True, address_form=form)
+    user = result.user
     label = f" ({user.display_name})" if user.display_name else ""
     await update.message.reply_text(
         f"👑 Đã cấp quyền ADMIN cho Zalo id: {html.escape(user.external_id)}{html.escape(label)} "
-        f"(dùng được lệnh nhóm và /fb_*)." + _address_note(user)
+        f"(dùng được lệnh nhóm và /fb_*)." + _address_note(user) + _welcome_note(result)
     )
 
 
