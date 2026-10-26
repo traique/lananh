@@ -463,3 +463,23 @@ async def test_ai_intro_mot_luot_chi_chu_bot(world, monkeypatch):
     assert "\nChúc anh ngày mới thật vui nha!\n" in text and "thừa" not in text
     await mb.build(-5, "zalo", now=MONDAY, settings=mb.BriefSettings(on=True))
     assert len(asked) == 1
+
+
+async def test_ai_intro_rao_noi_dung_ban_tin(world, monkeypatch):
+    from ai import orchestrator
+    from core import untrusted
+
+    asked = []
+
+    async def ask(prompt, **kw):
+        asked.append(prompt)
+        return SimpleNamespace(text="Chào anh!")
+
+    monkeypatch.setattr(orchestrator, "ask", ask)
+    monkeypatch.setattr(config, "MORNING_BRIEF_AI_INTRO", True)
+    await mb.build(OWNER, "telegram", now=MONDAY, settings=mb.BriefSettings(on=True, news=True))
+    # Tiêu đề RSS/nhắc việc là dữ liệu ngoài: phải nằm TRONG khối rào, sau chỉ dẫn.
+    prompt = asked[0]
+    assert untrusted.contains_untrusted(prompt)
+    opened = prompt.index("<<<" + untrusted.OPEN_TAG)
+    assert prompt.index("Tin A") > opened and prompt.index("Viết ĐÚNG 1 câu") < opened

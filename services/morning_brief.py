@@ -52,6 +52,7 @@ MIN_HOUR, MAX_HOUR = 4, 12
 _POLL_SEC = 15 * 60
 _LIST_LIMIT = 200
 _AI_INTRO_TIMEOUT_SEC = 45
+_AI_INTRO_MAX_CHARS = 1500
 _notify_callback: Callable[[int, str], Awaitable[None]] | None = None
 _task: asyncio.Task | None = None
 
@@ -416,11 +417,19 @@ async def _ai_intro(parts: list[str]) -> str:
     """1 câu chào giọng Lan Anh (1 lượt AI có hạn chót); lỗi thì bỏ."""
     from ai import orchestrator
     from ai.timeouts import turn_deadline
+    from core import untrusted
 
+    # Tiêu đề RSS, nội dung nhắc việc... là dữ liệu ngoài: rào lại (như
+    # morning_news._build_prompt) để không lái được câu chào. Mỗi mục 1 phần
+    # ngân sách để mục tin đứng cuối không bị cắt mất hẳn.
+    share = max(200, _AI_INTRO_MAX_CHARS // len(parts))
+    brief = untrusted.wrap_untrusted(
+        "\n\n".join(p[:share] for p in parts), "bản tin", max_chars=_AI_INTRO_MAX_CHARS
+    )
     prompt = (
         "Bạn là Lan Anh, trợ lý cá nhân, xưng em gọi anh. Viết ĐÚNG 1 câu chào buổi "
         "sáng ngắn (dưới 30 từ), ấm áp, dựa trên bản tin bên dưới. KHÔNG nêu con số, "
-        "không thêm thông tin ngoài bản tin, không markdown.\n\n" + "\n\n".join(parts)[:1500]
+        "không thêm thông tin ngoài bản tin, không markdown.\n\n" + brief
     )
     try:
         with turn_deadline(_AI_INTRO_TIMEOUT_SEC):
