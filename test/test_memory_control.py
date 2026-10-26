@@ -213,7 +213,7 @@ def test_lenh_tri_nho_co_trong_help_va_menu():
     from handlers import commands
 
     menu = {c.command for c in bot_app.COMMANDS}
-    for cmd in ("quen", "nho", "ghim", "boghim", "xoaghichu", "xuatdulieu", "xoadulieu"):
+    for cmd in ("quen", "nho", "ghim", "boghim", "xoaghichu", "xuatdulieu", "xoadulieu", "hoithan"):
         assert f"/{cmd}" in commands.HELP_TEXT
         assert f"/{cmd}" in channel_command_service.HELP_MEMBER
         assert f"/{cmd}" in channel_command_service.HELP_ADMIN

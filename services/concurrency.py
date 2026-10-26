@@ -61,3 +61,9 @@ async def assistant_turn(key: str = OWNER_TURN_KEY) -> AsyncIterator[None]:
             del _turn_locks[key]
         else:
             _turn_locks[key] = (lock, users - 1)
+
+
+def is_busy(key: str = OWNER_TURN_KEY) -> bool:
+    """Có lượt nào của người này đang chạy/chờ không (không chặn, không lấy khoá) -
+    tin chủ động (services/proactive_service) bỏ qua lượt đó thay vì chen vào."""
+    return key in _turn_locks

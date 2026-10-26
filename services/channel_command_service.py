@@ -61,6 +61,7 @@ Chat và tiện ích
 /forget — xoá hết trí nhớ dài hạn
 /notes [từ khoá] — xem/tìm ghi chú; /xoaghichu <số> — xoá 1 ghi chú
 /xuatdulieu — xem dữ liệu em đang lưu; /xoadulieu — xoá dữ liệu cá nhân của mình
+/hoithan on|off — em chủ động nhắn hỏi thăm việc sắp tới đã kể (mặc định tắt trên Zalo)
 
 Danh mục cổ phiếu (riêng từng người)
 /danhmuc — xem danh mục, lãi/lỗ, cảnh báo stop/target

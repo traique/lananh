@@ -499,3 +499,33 @@ def test_loi_xung_ho_khong_con_keo_tri_nho_giua_phien():
     assert memory_service.select_relevant_memory("anh trai anh ở đâu", facts, [])[0] == [
         ("anh_trai", "anh Tuấn ở Đà Nẵng")
     ]
+
+
+@pytest.mark.asyncio
+async def test_su_kien_hoi_tham_chi_trich_cho_nguoi_duoc_phep(mem, monkeypatch):
+    from services import proactive_service
+
+    captured = []
+    allowed = {"value": False}
+
+    async def enabled(user_id, **kwargs):
+        return allowed["value"]
+
+    async def add(user_id, events, user_rows):
+        captured.append((user_id, events, [r["content"] for r in user_rows]))
+        return len(events)
+
+    monkeypatch.setattr(proactive_service, "events_enabled", enabled)
+    monkeypatch.setattr(proactive_service, "add_extracted_events", add)
+    mem.add_turn(UID, "mai anh đi phỏng vấn", "chúc anh may mắn")
+    mem.responses.append({"events": [{"title": "phỏng vấn", "when_text": "mai"}]})
+    await memory_service.maybe_flush(UID, explicit=True)
+    assert "events: luôn trả []" in mem.prompts[-1] and captured == []
+    allowed["value"] = True
+    mem.add_turn(UID, "thứ 6 anh đi khám răng", "dạ")
+    mem.responses.append({"events": [{"title": "khám răng", "when_text": "thứ 6"}]})
+    await memory_service.maybe_flush(UID, explicit=True)
+    assert "CHÉP NGUYÊN VĂN" in mem.prompts[-1]
+    assert captured == [
+        (UID, [{"title": "khám răng", "when_text": "thứ 6"}], ["thứ 6 anh đi khám răng"])
+    ]

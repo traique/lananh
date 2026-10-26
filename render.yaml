@@ -106,6 +106,13 @@ services:
         value: "0"
       - key: CHAT_AUTO_RAG
         value: "1"
+      # Hỏi thăm chủ động theo trí nhớ (chủ bot Telegram mặc định; Zalo tự /hoithan on).
+      - key: PROACTIVE_FOLLOWUPS
+        value: "1"
+      - key: PROACTIVE_ACTIVE_HOURS
+        value: "08:00-21:30"
+      - key: PROACTIVE_DAILY_CAP
+        value: "2"
       # Bản tin sáng cá nhân (/bantin): chỉ gửi cho người tự bật trên kênh của mình.
       - key: MORNING_BRIEF_ENABLED
         value: "true"

@@ -76,6 +76,7 @@ HELP_TEXT = (
     "/forget — xoá hết trí nhớ dài hạn\n"
     "/notes [từ khoá] — xem/tìm ghi chú; /xoaghichu <số> — xoá 1 ghi chú\n"
     "/xuatdulieu — tải file dữ liệu em đang lưu; /xoadulieu — xoá trí nhớ, ghi chú, lịch sử chat\n"
+    "/hoithan on|off — em chủ động hỏi thăm việc anh kể sắp làm (phỏng vấn, đi khám...)\n"
     "/agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm)\n"
     "/rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/\n"
     "/ragxuly <file> — dọn file md OCR trong rag/ ở nền (AI thêm heading, backup bản gốc)\n\n"
@@ -334,7 +335,7 @@ async def reset_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 @common.restricted
 async def memory_family_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/memory, /forget, /quen, /nho, /ghim, /boghim, /notes, /xoaghichu,
-    /xuatdulieu, /xoadulieu - logic ở services/memory_commands.py."""
+    /xuatdulieu, /xoadulieu, /hoithan - logic ở services/memory_commands.py."""
     text = (update.message.text or "").strip()
     command = text.split(maxsplit=1)[0].lower().split("@", 1)[0] if text else ""
     reply = await memory_commands.handle(

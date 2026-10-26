@@ -82,6 +82,21 @@ async def _empty_text() -> str:
     return ""
 
 
+async def _maybe_opt_out(user_id: int, text: str, last_row: dict | None) -> str:
+    from services import proactive_service
+
+    if (last_row or {}).get("kind") != conversation_log.KIND_FOLLOWUP:
+        return ""
+    if not proactive_service.is_opt_out(text):
+        return ""
+    try:
+        await proactive_service.opt_out(user_id)
+    except Exception:
+        logger.warning("Không tắt được hỏi thăm chủ động user_id=%s.", user_id, exc_info=True)
+        return ""
+    return proactive_service.OPT_OUT_NOTE
+
+
 async def _skip_search_plan() -> web_search.SearchPlan:
     """Số liệu code (vàng/tỷ giá/xổ số) đã đủ: không tra Tavily, provider cũng
     không tự tra web chồng lên (dễ lẫn giá web khác giá nguồn chính thức)."""
@@ -145,10 +160,13 @@ async def run_chat_turn(
                 chat_context.kb_grounding(text) if use_kb else _empty_text(),
             )
             quote = chat_context.quote_grounding(quote_text)
+            # "Đừng hỏi/nhắc nữa" ngay sau tin hỏi thăm chủ động: tắt tạm hỏi thăm.
+            followup_note = await _maybe_opt_out(user_id, text, last_row)
             # Kho rag/ đặt CUỐI: cắt giữa (prompt_budget) không cắt vào kết quả tra web.
             combined = "\n\n".join(
                 part
                 for part in (
+                    followup_note,
                     quote,
                     grounding,
                     daily.text,

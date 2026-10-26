@@ -208,6 +208,18 @@ def _relative_day(t: str, today: dt.date) -> tuple[dt.date, str] | None:
     return None
 
 
+def relative_day(text: str, today: dt.date) -> dt.date | None:
+    """Ngày của cụm thời gian tương đối ("mai", "ngày kia", "thứ 6 tuần sau"...)
+    tính từ ``today`` - dùng chung cho hỏi thăm chủ động (proactive_service)."""
+    found = _relative_day(_norm(text), today)
+    return found[0] if found else None
+
+
+def solar_dates(text: str, today: dt.date) -> list[dt.date]:
+    """Các ngày dương dd/mm(/yyyy) trong câu (năm mặc định = năm của today)."""
+    return _solar_dates(_norm(text), today)
+
+
 def _solar_dates(t: str, today: dt.date) -> list[dt.date]:
     out = []
     for m in _SOLAR_DATE_RE.finditer(t):

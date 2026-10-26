@@ -30,7 +30,7 @@ from handlers import (
     zalo_bridge_commands,
     zalo_login,
 )
-from services import channel_chat_service, memory_service
+from services import channel_chat_service, memory_service, proactive_service
 from services import morning_brief
 from services import portfolio_alerts, rag_clean_service
 from services import portfolio_events, portfolio_push, price_alerts
@@ -86,6 +86,7 @@ COMMANDS = [
     BotCommand("xoaghichu", "Xoá 1 ghi chú theo số"),
     BotCommand("xuatdulieu", "Tải file dữ liệu em đang lưu"),
     BotCommand("xoadulieu", "Xoá trí nhớ, ghi chú, lịch sử chat"),
+    BotCommand("hoithan", "Bật/tắt em chủ động hỏi thăm việc anh kể (on|off)"),
     BotCommand("model", "Xem/đổi model"),
     BotCommand("status", "Xem provider"),
     BotCommand("loi", "Xem lỗi gom nhóm hôm nay"),
@@ -149,6 +150,7 @@ async def _post_init(app):
     price_alerts.start(config.ALLOWED_USER_ID)
     morning_brief.start()
     memory_service.start()
+    proactive_service.start()
 
 
 async def _post_shutdown(app):
@@ -165,6 +167,7 @@ async def _post_shutdown(app):
     await run_step("morning brief", morning_brief.stop())
     await run_step("idempotency cleanup task", idempotency.stop_cleanup_task())
     await run_step("provider monitor task", monitor_service.stop())
+    await run_step("proactive follow-ups", proactive_service.stop())
     await run_step("memory sweep", memory_service.stop())
     await run_step("chat memory tasks", channel_chat_service.stop_background_tasks())
     await run_step("ragxuly tasks", rag_clean_service.stop_background_tasks())
@@ -250,6 +253,7 @@ def build_application():
         ("xoaghichu", commands.memory_family_cmd),
         ("xuatdulieu", commands.memory_family_cmd),
         ("xoadulieu", commands.memory_family_cmd),
+        ("hoithan", commands.memory_family_cmd),
         ("model", provider_commands.model_cmd),
         ("status", provider_commands.status_cmd),
         ("loi", provider_commands.loi_cmd),
@@ -353,4 +357,5 @@ def build_application():
     portfolio_alerts.set_notify_callback(notify)
     portfolio_push.set_notify_callback(notify)
     morning_brief.set_notify_callback(notify)
+    proactive_service.set_notify_callback(notify)
     return app
