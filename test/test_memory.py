@@ -529,3 +529,20 @@ async def test_su_kien_hoi_tham_chi_trich_cho_nguoi_duoc_phep(mem, monkeypatch):
     assert captured == [
         (UID, [{"title": "khám răng", "when_text": "thứ 6"}], ["thứ 6 anh đi khám răng"])
     ]
+
+
+@pytest.mark.asyncio
+async def test_task_trich_nho_nen_khong_thua_huong_han_chot_cua_luot_chat(mem, monkeypatch):
+    from ai import timeouts
+
+    seen = []
+
+    async def probe(user_id, **kwargs):
+        seen.append(timeouts.remaining_turn_seconds())
+        return True
+
+    monkeypatch.setattr(memory_service, "maybe_flush", probe)
+    with timeouts.turn_deadline(5):
+        memory_service.after_exchange(UID)
+    await memory_service.stop_background_tasks()
+    assert seen == [None]

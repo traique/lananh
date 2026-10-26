@@ -53,6 +53,7 @@ Semaphore(2) chung cho mọi lượt trích nhớ nền.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -826,7 +827,12 @@ def after_exchange(user_id: int, *, explicit: bool = False) -> None:
     if len(_pending) >= _MAX_PENDING_TASKS:
         return
     try:
-        task = asyncio.get_running_loop().create_task(maybe_flush(user_id, explicit=explicit))
+        # Context RỖNG: task không thừa hưởng hạn chót của lượt chat đang chạy
+        # (handle_channel_text/chat_router bọc cả lượt trong turn_deadline) -
+        # maybe_flush tự đặt hạn chót MEMORY_UPDATE_TIMEOUT_SEC riêng.
+        task = asyncio.get_running_loop().create_task(
+            maybe_flush(user_id, explicit=explicit), context=contextvars.Context()
+        )
     except RuntimeError:
         return
     _pending[user_id] = task
@@ -1146,10 +1152,13 @@ async def _build_turn_memory(user_id: int, query: str) -> TurnMemory:
         return TurnMemory()
     recent = await db.get_recent_chat_rows(user_id, _SCAN_ROWS, 0)
     new_session = _session_expired(recent)
+    # Ghi chú chỉ cần khi câu hỏi có token nội dung (tìm ghi chú liên quan).
     fact_rows, highlight_rows, notes = await asyncio.gather(
         db.get_fact_rows(user_id),
         db.get_highlight_rows(user_id, MAX_HIGHLIGHTS_PER_USER),
-        db.get_recent_notes(user_id, _NOTES_SCAN, _NOTES_MAX_CHARS),
+        db.get_recent_notes(user_id, _NOTES_SCAN, _NOTES_MAX_CHARS)
+        if _tokens(query)
+        else _no_rows(),
     )
     style = _style_text(fact_rows)
     facts = [r for r in fact_rows if r["key"] != STYLE_KEY]
@@ -1159,6 +1168,10 @@ async def _build_turn_memory(user_id: int, query: str) -> TurnMemory:
     else:
         context = await _mid_block(user_id, query, recent, facts, highlight_rows, notes, total)
     return TurnMemory(context=context, style_rules=style)
+
+
+async def _no_rows() -> list[dict]:
+    return []
 
 
 def _memory_max_chars() -> int:
