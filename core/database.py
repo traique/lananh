@@ -396,7 +396,9 @@ async def record_user_call(channel: str, telegram_user_id: int, kind: str) -> No
     await quota.insert(await get_pool(), channel, telegram_user_id, kind)
 
 
-@_with_reconnect
+# Không idempotent: UPDATE chọn lượt from_kind MỚI NHẤT, chạy lại sau khi đã commit
+# sẽ đổi luôn lượt trước đó (lượt nặng +2) - chỉ retry khi lệnh chưa gửi đi.
+@_with_reconnect(idempotent=False)
 async def relabel_last_user_call(
     channel: str, telegram_user_id: int, from_kind: str, to_kind: str, since: datetime
 ) -> bool:

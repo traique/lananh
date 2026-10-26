@@ -45,7 +45,8 @@ async def relabel_latest(
 ) -> bool:
     """Đổi loại của lượt ``from_kind`` MỚI NHẤT (lượt đang chạy - khoá lượt theo
     người bảo đảm tuần tự) sang ``to_kind``, vd chat -> chat_search khi lượt chat
-    có tra web. Chạy lại không đổi gì thêm (idempotent theo kết quả)."""
+    có tra web. KHÔNG idempotent: chạy lại sau khi đã commit sẽ đổi luôn lượt
+    ``from_kind`` trước đó (core.database bọc bằng idempotent=False)."""
     status = await pool.execute(
         """
         UPDATE user_calls SET kind = $4

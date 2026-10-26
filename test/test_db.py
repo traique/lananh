@@ -146,6 +146,35 @@ async def test_bo_sung_gia_ban_khong_retry_khi_co_the_da_commit(monkeypatch):
     assert calls["n"] == 1
 
 
+@pytest.mark.asyncio
+async def test_doi_loai_luot_quota_khong_retry_khi_co_the_da_commit(monkeypatch):
+    """relabel chọn "lượt chat MỚI NHẤT hôm nay": chạy lại sau khi đã commit sẽ đổi
+    cả lượt TRƯỚC đó thành chat_search (lượt nặng +2) -> không retry khi mất kết nối
+    giữa chừng; lỗi trước khi gửi lệnh vẫn retry như cũ."""
+    from datetime import datetime
+
+    from core.repositories import quota as repo
+
+    calls = {"n": 0}
+
+    async def fake_reset_pool(failed_pool):
+        return None
+
+    async def fake_pool():
+        return object()
+
+    async def relabel(pool, *args):
+        calls["n"] += 1
+        raise asyncpg.ConnectionDoesNotExistError("closed in the middle of operation")
+
+    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+    monkeypatch.setattr(db, "get_pool", fake_pool)
+    monkeypatch.setattr(repo, "relabel_latest", relabel)
+    with pytest.raises(asyncpg.ConnectionDoesNotExistError):
+        await db.relabel_last_user_call("zalo", -9, "chat", "chat_search", datetime(2026, 10, 26))
+    assert calls["n"] == 1
+
+
 # ─── get_pool: singleton ─────────────────────────────────────────────────────
 
 
