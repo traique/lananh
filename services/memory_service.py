@@ -614,13 +614,42 @@ async def _apply_session(user_id: int, raw, session_key: int, started_at: dateti
     )
 
 
+_HIGHLIGHT_MIN_OVERLAP_CHARS = 8
+
+
+def _highlight_norm(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", fold(text)).split())
+
+
+def _duplicate_highlight(norm: str, seen: list[str]) -> bool:
+    """Trùng (hoặc chứa/nằm trong) 1 highlight đã có - bỏ dấu, dấu câu, hoa thường."""
+    for other in seen:
+        if norm == other:
+            return True
+        shorter, longer = (norm, other) if len(norm) <= len(other) else (other, norm)
+        if len(shorter) >= _HIGHLIGHT_MIN_OVERLAP_CHARS and shorter in longer:
+            return True
+    return False
+
+
 async def _apply_highlights(user_id: int, raw, forget: list[dict], stats: _FlushStats) -> None:
     items = raw if isinstance(raw, list) else [raw] if isinstance(raw, str) else []
+    if not items:
+        return
+    # Chạy lại cùng cửa sổ (ghi watermark lỗi, làm lại câu trả lời, AI trích lại
+    # từ dòng "ĐÃ xử lý") không được làm đầy FIFO 25 dòng bằng bản trùng.
+    existing = await db.get_highlight_rows(user_id, MAX_HIGHLIGHTS_PER_USER)
+    seen = [_highlight_norm(str(row.get("content") or "")) for row in existing]
     for item in items[:2]:
         text = memory_guard.safe_memory_text(str(item or ""))
         if not text or _forgotten("", text, forget):
             continue
-        await db.add_highlight(user_id, text[:_MAX_HIGHLIGHT_LEN], MAX_HIGHLIGHTS_PER_USER)
+        text = text[:_MAX_HIGHLIGHT_LEN]
+        norm = _highlight_norm(text)
+        if not norm or _duplicate_highlight(norm, seen):
+            continue
+        await db.add_highlight(user_id, text, MAX_HIGHLIGHTS_PER_USER)
+        seen.append(norm)
         stats.highlights += 1
 
 

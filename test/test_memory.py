@@ -91,6 +91,31 @@ async def test_luot_chi_doc_khong_dua_loi_nguoi_dung_cho_bo_trich(mem):
 
 
 @pytest.mark.asyncio
+async def test_highlight_trung_khong_chen_lai(mem):
+    """Chạy lại cùng cửa sổ (watermark ghi lỗi, làm lại câu trả lời...) không làm
+    đầy 25 highlight bằng bản trùng."""
+    await db.add_highlight(UID, "Anh tập chạy bộ buổi sáng", 25)
+    mem.add_turn(UID, "anh thích chạy bộ buổi sáng", "hay quá")
+    mem.responses.append(
+        {
+            "highlights": [
+                "anh tập chạy bộ buổi sáng.",
+                "Anh tập chạy bộ buổi sáng ở hồ Tây",
+            ],
+            "facts": [],
+        }
+    )
+    assert await memory_service.maybe_flush(UID, explicit=True) is True
+    mem.add_turn(UID, "vợ anh sắp sinh em bé", "chúc mừng anh")
+    mem.responses.append({"highlights": ["Vợ anh sắp sinh", "Vợ anh sắp sinh"], "facts": []})
+    assert await memory_service.maybe_flush(UID, explicit=True) is True
+    assert [h["content"] for h in mem.highlights] == [
+        "Anh tập chạy bộ buổi sáng",
+        "Vợ anh sắp sinh",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ai_loi_giu_watermark_de_lan_sau_thu_lai(mem, monkeypatch):
     async def none(prompt):
         return None
