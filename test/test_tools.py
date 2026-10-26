@@ -304,6 +304,51 @@ async def test_set_reminder_lap_lai_va_nhieu_muc(monkeypatch, reminders, frozen)
 
 
 @pytest.mark.asyncio
+async def test_repeat_tach_rieng_khoi_when_van_doc_thu_trong_when(monkeypatch, reminders, frozen):
+    """Router để "repeat" riêng: quy tắc lấy các thứ/ngày code đọc được trong "when",
+    lần đầu luôn khớp quy tắc (Thứ Hai 26/10 lúc 8h30)."""
+    cases = [
+        (
+            {"when": "6h sáng thứ 2, 4, 6", "repeat": "weekly"},
+            {"type": "weekly", "at": "06:00", "days": [0, 2, 4]},
+            dt.datetime(2026, 10, 28, 6, 0, tzinfo=VN),
+        ),
+        (
+            {"when": "7h sáng", "repeat": "weekly", "weekdays": [0]},
+            {"type": "weekly", "at": "07:00", "days": [0]},
+            dt.datetime(2026, 11, 2, 7, 0, tzinfo=VN),
+        ),
+        (
+            {"when": "7h sáng", "repeat": "weekly", "weekdays": [2]},  # Thứ Tư
+            {"type": "weekly", "at": "07:00", "days": [2]},
+            dt.datetime(2026, 10, 28, 7, 0, tzinfo=VN),
+        ),
+        (
+            {"when": "9h ngày 5", "repeat": "monthly"},
+            {"type": "monthly", "at": "09:00", "day": 5},
+            dt.datetime(2026, 11, 5, 9, 0, tzinfo=VN),
+        ),
+        (
+            {"when": "7h sang", "repeat": "daily"},  # gõ không dấu
+            {"type": "daily", "at": "07:00"},
+            dt.datetime(2026, 10, 27, 7, 0, tzinfo=VN),
+        ),
+    ]
+    for args, rule, first in cases:
+        _router(monkeypatch, {"tool": "set_reminder", "args": {"message": "tập gym", **args}})
+        outcome = await tools.maybe_run_tool(1, "nhắc anh tập gym " + args["when"])
+        assert outcome.saved, args
+        kw = reminders["series"][-1][2]
+        assert kw["recurrence"] == rule and kw["first"][0][0] == first, args
+
+
+def test_router_hint_noi_ro_quy_uoc_weekdays():
+    prompt = tools._build_router_prompt("nhắc anh tập gym 6h sáng thứ 2, 4, 6")
+    line = next(line for line in prompt.splitlines() if '"set_reminder"' in line)
+    assert "0=Thứ Hai" in line
+
+
+@pytest.mark.asyncio
 async def test_add_reminder_loi_db_thi_failed(monkeypatch, reminders):
     async def broken(*args, **kwargs):
         raise ValueError("Thiếu tài khoản Zalo nhận nhắc việc.")

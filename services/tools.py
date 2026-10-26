@@ -125,9 +125,38 @@ _REPEAT_TYPES = {
 }
 
 
+# Chữ lặp ghép vào "when" khi router để "repeat" riêng (còn dấu, không dấu) - để
+# vn_time_parse tự đọc các thứ/ngày trong câu và tính lần đầu khớp quy tắc.
+_REPEAT_WORDS = {
+    "daily": ("mỗi ngày", "moi ngay"),
+    "weekly": ("hằng tuần", "hang tuan"),
+    "monthly": ("hằng tháng", "hang thang"),
+    "yearly": ("hằng năm", "hang nam"),
+    "lunar_monthly": ("hằng tháng", "hang thang"),
+    "lunar_yearly": ("hằng năm", "hang nam"),
+}
+
+
+def _repeat_kind(repeat) -> str | None:
+    return _REPEAT_TYPES.get(fold(str(repeat or "")).strip())
+
+
+def _parse_with_repeat(when_text: str, kind: str, now: datetime):
+    """parse("<when> hằng tuần"...) nếu ra đúng loại lặp và có lần nhắc; None nếu không."""
+    from services import vn_time_parse
+
+    accented, plain = _REPEAT_WORDS[kind]
+    low = nfc(when_text).lower()
+    again = vn_time_parse.parse(f"{when_text} {plain if fold(low) == low else accented}", now)
+    rule = again.recurrence
+    if rule is None or rule.get("type") != kind or again.due_at is None:
+        return None
+    return again
+
+
 def _rule_from_args(repeat: str, due: datetime, weekdays, day, lunar_days) -> dict | None:
     """Quy tắc lặp từ trường "repeat" của router (khi code không tự đọc được)."""
-    kind = _REPEAT_TYPES.get(fold(str(repeat or "")).strip())
+    kind = _repeat_kind(repeat)
     if kind is None:
         return None
     rule: dict[str, Any] = {"type": kind, "at": f"{due:%H:%M}"}
@@ -207,6 +236,13 @@ async def _create_one(
         when_text = _turn_text.get()
         parsed = vn_time_parse.parse(when_text, now)
     parsed = _with_router_date(parsed, when_text, str(item.get("date") or ""), now)
+    kind = _repeat_kind(item.get("repeat"))
+    field = {"weekly": "weekdays", "monthly": "day", "lunar_monthly": "lunar_days"}.get(kind or "")
+    # "6h sáng thứ 2, 4, 6" + repeat weekly: code đọc các thứ/ngày trong câu. Câu
+    # không nói thứ/ngày mà router đưa weekdays/day riêng thì theo router.
+    from_args = field is not None and bool(item.get(field)) and not parsed.has_date
+    if kind is not None and parsed.recurrence is None and when_text and not from_args:
+        parsed = _parse_with_repeat(when_text, kind, now) or parsed
     due: datetime | None = parsed.due_at
     rule = parsed.recurrence
     error = parsed.error
@@ -219,7 +255,7 @@ async def _create_one(
         )
     if due is None:
         return None, error or "Chưa rõ thời điểm nhắc - cần hỏi lại giờ."
-    if rule is None and item.get("repeat"):
+    if rule is None and kind is not None:
         rule = _rule_from_args(
             str(item.get("repeat")),
             due,
@@ -227,6 +263,15 @@ async def _create_one(
             item.get("day"),
             item.get("lunar_days"),
         )
+        if rule is not None:
+            # Lần đầu phải khớp quy tắc (weekdays [0] mà giờ "7h sáng" rơi Thứ Ba).
+            try:
+                rule = recurrence.normalize(rule)
+                due = recurrence.next_occurrence(rule, now)
+            except recurrence.RecurrenceError as exc:
+                return None, str(exc)
+            if due is None:
+                return None, "Không tìm được lần nhắc kế tiếp."
     try:
         created = await reminder_service.create(
             user_id, message or "(không có nội dung cụ thể)", due, rule, key_suffix=suffix
@@ -564,7 +609,11 @@ _CHAT_TOOLS = (
                 "time": reg.string("HH:MM (24h) hoặc rỗng"),
                 "in_minutes": reg.number("số phút nữa (chỉ khi người dùng nói 'N phút/tiếng nữa')"),
                 "repeat": reg.string("none|daily|weekly|monthly|yearly|lunar_monthly|lunar_yearly"),
-                "weekdays": {"type": "array", "items": {"type": "integer"}},
+                "weekdays": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "lặp hằng tuần: 0=Thứ Hai, 1=Thứ Ba ... 5=Thứ Bảy, 6=Chủ nhật",
+                },
                 "day": reg.integer("ngày trong tháng (lặp hằng tháng)"),
                 "lunar_days": {"type": "array", "items": {"type": "integer"}},
                 "items": {"type": "array", "items": {"type": "object"}},
@@ -577,7 +626,9 @@ _CHAT_TOOLS = (
         router_hint=(
             'args: {"message": "nội dung cần nhắc", "when": "cụm thời gian NGUYÊN VĂN người '
             'dùng nói, vd \\"8h tối mai\\", \\"30 phút nữa\\", \\"7h sáng mỗi ngày\\"", '
-            '"repeat": "none|daily|weekly|monthly|yearly|lunar_monthly|lunar_yearly"}. '
+            '"repeat": "none|daily|weekly|monthly|yearly|lunar_monthly|lunar_yearly"}; chép cả '
+            'các thứ/ngày vào "when" (vd \\"6h sáng thứ 2, 4, 6\\"), nếu dùng "weekdays" thì '
+            "0=Thứ Hai ... 6=Chủ nhật. "
             "Nhiều việc trong 1 tin: "
             '{"items": [{"message": ..., "when": ...}, ...]} (tối đa 5). Dùng khi người dùng '
             'RÕ RÀNG yêu cầu nhắc việc (vd "nhắc anh 30 phút nữa uống thuốc", "8 giờ tối nay '
