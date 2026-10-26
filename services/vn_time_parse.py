@@ -281,6 +281,8 @@ def _apply_period(hour: int, period: str | None) -> tuple[int, bool]:
     """(giờ 24h, còn mơ hồ sáng/chiều không)."""
     if period is None:
         return hour, 1 <= hour <= 11
+    if period in ("dem", "khuya") and hour in (0, 12):
+        return 0, False  # 12h đêm = 0h (của ngày hôm sau - parse() cộng ngày)
     if period in ("chieu", "toi") and hour < 12:
         return hour + 12, False
     if period == "trua" and hour < 11:
@@ -478,9 +480,14 @@ def parse(text: str, now: dt.datetime | None = None) -> When:
 
     hour = minute = None
     ambiguous = approx = False
+    # "12h đêm nay" = 0h NGÀY MAI; "1h đêm nay" = 1h sáng ngày mai.
+    after_midnight = False
     if tod:
         hour, ambiguous = _apply_period(tod[0], period)
         minute = tod[1]
+        after_midnight = period in ("dem", "khuya") and (
+            hour == 0 or (hour < 5 and relative == today)
+        )
     elif period:
         hour, minute, approx = PERIOD_HOUR[period], 0, True
     has_time = hour is not None
@@ -586,6 +593,8 @@ def parse(text: str, now: dt.datetime | None = None) -> When:
         assert date is not None
         base = hour + 12 if ambiguous and hour < 7 else hour
         due = at(date, base)
+        if after_midnight:
+            due += dt.timedelta(days=1)
         if due <= now + MIN_AHEAD and rolling_weekday:
             due += dt.timedelta(days=7)
     else:

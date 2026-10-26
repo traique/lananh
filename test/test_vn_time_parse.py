@@ -226,3 +226,27 @@ def test_ngay_noi_lien_gio_va_khoang_ngay(text, now, due, message):
 def test_ngay_chua_hieu_thi_bao_loi_khong_lan_sang_mai(text):
     when = p.parse(text, EVENING)
     assert when.due_at is None and "ngày" in when.error
+
+
+@pytest.mark.parametrize(
+    ("text", "now", "due"),
+    [
+        ("nhắc anh 12h đêm nay khoá cửa", at(2026, 10, 26, 10), at(2026, 10, 27, 0)),
+        ("nhắc anh 12h khuya tắt máy", at(2026, 10, 26, 10), at(2026, 10, 27, 0)),
+        ("nhắc anh 12 giờ đêm tắt máy", EVENING, at(2026, 10, 27, 0)),
+        ("nhắc anh 12h đêm nay khoá cửa", EVENING, at(2026, 10, 27, 0)),
+        ("nhắc anh 12h đêm mai khoá cửa", EVENING, at(2026, 10, 28, 0)),
+        ("nhắc anh 0h đêm nay khoá cửa", EVENING, at(2026, 10, 27, 0)),
+        ("nhắc anh 1h đêm nay xem bóng đá", EVENING, at(2026, 10, 27, 1)),
+    ],
+)
+def test_12h_dem_la_nua_dem_khong_phai_buoi_trua(text, now, due):
+    when = p.parse(text, now)
+    assert when.due_at == due and not when.error
+
+
+def test_12h_dem_lap_hang_ngay_va_ngay_nho():
+    when = p.parse("nhắc anh 12h đêm mỗi ngày tắt wifi", EVENING)
+    assert when.recurrence == {"type": "daily", "at": "00:00"}
+    assert when.due_at == at(2026, 10, 27, 0)
+    assert p.find_time_of_day("lúc 12h đêm")[:2] == (0, 0)
