@@ -71,7 +71,7 @@ async def recent_turns(pool: Any, since_hours: int, limit: int) -> list[dict]:
                send_ms, total_ms, llm_calls, final_provider, fallback_used, outcome, created_at
         FROM turn_metrics
         WHERE created_at >= now() - make_interval(hours => $1)
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT $2
         """,
         since_hours,
