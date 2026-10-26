@@ -200,3 +200,15 @@ services:
       # Zoom làm kênh phụ cho cảnh báo chủ bot (critical|fallback|all|off).
       - key: ALERT_ZOOM_MIRROR
         value: critical
+      # Watchdog luật cố định: RAM working set, dung lượng DB, inbox ứ đọng, job quá hạn,
+      # nhịp tim/khởi động lại (services/watchdog.py). 0 = tắt.
+      - key: WATCHDOG_ENABLED
+        value: "1"
+      - key: WATCHDOG_MEMORY_PCT
+        value: "85"
+      - key: WATCHDOG_INBOX_STALE_MIN
+        value: "10"
+      - key: WATCHDOG_RESTART_GAP_MIN
+        value: "20"
+      - key: WATCHDOG_RESTART_BURST
+        value: "3"

@@ -672,6 +672,24 @@ async def set_setting(key: str, value: str) -> None:
     )
 
 
+# ─── Giám sát vận hành (services/watchdog.py) ───────────────────────────────
+# SQL nằm ở core/repositories/ops.py; đây chỉ là wrapper có retry kết nối.
+
+
+@_with_reconnect
+async def database_bytes() -> int:
+    from core.repositories import ops
+
+    return await ops.database_bytes(await get_pool())
+
+
+@_with_reconnect
+async def webhook_backlog(stale_after) -> tuple[int, float | None]:
+    from core.repositories import ops
+
+    return await ops.webhook_backlog(await get_pool(), stale_after)
+
+
 async def close_pool() -> None:
     global _pool
     if _pool is not None:
