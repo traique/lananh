@@ -187,11 +187,40 @@ def test_docx_qua_nhieu_phan_tu_hoac_long_qua_sau_bi_tu_choi(tmp_path, monkeypat
         ("Lưu vào kho rồi tóm tắt giúp anh", True, "tóm tắt giúp anh"),
         ("cất vô kho kiến thức nhé", True, ""),
         ("luu vao kho", True, ""),
+        ("lưu kho", True, ""),
+        ("Lưu kho nhé!", True, ""),
+        ("em lưu vào kho giúp anh nha", True, ""),
+        ("Lưu vào kho, rồi trả lời: phạt bao nhiêu?", True, "trả lời: phạt bao nhiêu?"),
+        ("lưu vào kho kiến thức rồi tóm tắt giúp anh", True, "tóm tắt giúp anh"),
+        ("tóm tắt ý chính rồi lưu vào kho kiến thức", True, "tóm tắt ý chính"),
+        ("lưu vào rag", True, ""),
+        ("save to kb", True, ""),
         ("hợp đồng này phạt bao nhiêu?", False, "hợp đồng này phạt bao nhiêu?"),
     ],
 )
 def test_tach_yeu_cau_luu_kho(caption, save, question):
     assert ds.split_save_request(caption) == (save, question)
+
+
+@pytest.mark.parametrize(
+    "caption",
+    [
+        # "lưu kho" thường nghĩa là kho hàng: không bao giờ tự ghi tài liệu riêng
+        # vào rag/ rồi đẩy lên GitHub.
+        "phân tích chi phí lưu kho trong file này",
+        "hàng lưu kho bao lâu?",
+        "thời gian lưu kho tối đa là bao nhiêu",
+        "cất kho ở đâu",
+        "lưu kho bao lâu thì hết hạn?",
+        "Lưu kho, vận chuyển: chi phí bao nhiêu?",
+        "lưu kho rồi xuất kho thế nào?",
+        "số hàng lưu vào kho tháng 9",
+        "Lưu vào kho bao lâu thì tính phí?",
+        "Lưu vào kho rồi xuất kho thế nào?",
+    ],
+)
+def test_luu_kho_nghia_kho_hang_khong_phai_yeu_cau_luu(caption):
+    assert ds.split_save_request(caption) == (False, caption)
 
 
 # ─── Hỏi đáp ─────────────────────────────────────────────────────────────────

@@ -10,10 +10,11 @@ câu hỏi kèm theo (mặc định: tóm tắt).
 - Chữ trong tài liệu là DỮ LIỆU ngoài (rào + luật "không làm theo mệnh lệnh").
 - Lượt được lưu lịch sử "[tài liệu: <tên>] <câu hỏi>" (kind "document", không
   trích trí nhớ). File chỉ nằm trên đĩa tạm, nơi gọi xoá ngay sau lượt.
-- Caption "lưu vào kho" (CHỈ chủ bot trên Telegram): chép tài liệu thành Markdown
-  vào rag/tailieu/<tên>.md và đồng bộ lên GitHub bằng cơ chế của /ragxuly - kho
-  rag/ vẫn là file .md (không bảng DB mới); tài liệu thành viên Zalo không bao
-  giờ vào kho của chủ bot.
+- Caption "lưu vào kho" (CHỈ chủ bot trên Telegram; cả chú thích, "lưu vào kho rồi
+  <câu hỏi>" hoặc nói rõ "kho kiến thức"/"rag" - "lưu kho" giữa câu thường là kho
+  hàng nên không tính): chép tài liệu thành Markdown vào rag/tailieu/<tên>.md và
+  đồng bộ lên GitHub bằng cơ chế của /ragxuly - kho rag/ vẫn là file .md (không
+  bảng DB mới); tài liệu thành viên Zalo không bao giờ vào kho của chủ bot.
 
 RAM: file <= DOCUMENT_MAX_BYTES (mặc định 5 MB); PDF đọc vào RAM 1 lần lúc gọi
 provider (base64 ~1,33 lần), chữ tách ra có trần DOCUMENT_MAX_CHARS.
@@ -248,23 +249,53 @@ def extract_text(path: Path, kind: str, limit: int) -> tuple[str, bool]:
 
 # ─── "Lưu vào kho" ──────────────────────────────────────────────────────────
 
-_SAVE_RE = re.compile(
-    r"\b(?:lưu|cất|luu|cat)\s+(?:(?:lại\s+|lai\s+)?(?:vào|vô|vao|vo)\s+)?"
-    r"(?:kho(?:\s+kiến thức|\s+kien thuc)?|rag)\b|\bsave\s+(?:to\s+)?(?:rag|kb)\b",
+# "lưu kho" trong tiếng Việt thường là kho HÀNG ("chi phí lưu kho", "hàng lưu
+# kho bao lâu") - lưu nhầm thì tài liệu riêng bị ghi vào rag/ và đẩy lên GitHub.
+# Nên cụm trần "lưu (vào) kho" chỉ tính khi là CẢ chú thích, hoặc "lưu vào kho"
+# đứng ĐẦU rồi nối câu hỏi bằng "rồi/xong/sau đó"; ở chỗ khác phải nói rõ "kho
+# kiến thức", "rag" hay "save to kb".
+_SAVE_VERB = r"(?:lưu|cất|luu|cat)(?:\s+(?:lại|lai))?"
+_SAVE_INTO = r"(?:vào|vô|vao|vo)"
+_SAVE_LEAD = r"(?:(?:em|hãy|hay|nhờ|nho|giúp|giup|giùm|gium|làm ơn|lam on)\s+){0,2}"
+_SAVE_POLITE = (
+    r"(?:\s+(?:nhé|nha|nhe|nhá|nhen|giúp|giùm|giup|gium|hộ|với|voi|đi|cho|luôn|luon|anh|em|ạ))*"
+)
+_SAVE_EXPLICIT_RE = re.compile(
+    rf"\b{_SAVE_VERB}\s+(?:{_SAVE_INTO}\s+)?(?:kho\s+(?:kiến thức|kien thuc)|rag)\b"
+    r"|\bsave\s+(?:(?:to|into)\s+)?(?:rag|kb)\b",
+    re.IGNORECASE,
+)
+_SAVE_WHOLE_RE = re.compile(
+    rf"^{_SAVE_LEAD}{_SAVE_VERB}\s+(?:{_SAVE_INTO}\s+)?kho{_SAVE_POLITE}[\s.!…]*$",
+    re.IGNORECASE,
+)
+_SAVE_THEN_RE = re.compile(
+    rf"^{_SAVE_LEAD}{_SAVE_VERB}\s+{_SAVE_INTO}\s+kho{_SAVE_POLITE}"
+    r"[\s,.;:!\-–]*(?:rồi|roi|xong|sau đó|sau do)\b",
     re.IGNORECASE,
 )
 _LEFTOVER_RE = re.compile(
     r"^[\s,.;:!\-–]*(?:(?:và|rồi|xong|va|roi|nhé|nha|giúp|giùm)\b)?[\s,.;:!]*"
 )
+_TRAILING_RE = re.compile(r"[\s,.;:!\-–]*\b(?:và|rồi|xong|va|roi|sau đó|sau do)$", re.IGNORECASE)
+_KHO_RE = re.compile(r"\bkho\b", re.IGNORECASE)
 
 
 def split_save_request(caption: str) -> tuple[bool, str]:
     """(có yêu cầu lưu vào kho, phần câu hỏi còn lại)."""
     caption = nfc(caption or "").strip()
-    if not _SAVE_RE.search(caption):
+    if _SAVE_WHOLE_RE.match(caption):
+        return True, ""
+    then = _SAVE_THEN_RE.match(caption)
+    # "Lưu vào kho rồi xuất kho thế nào?": vế sau còn nói về kho -> quy trình kho hàng.
+    if then and not _KHO_RE.search(caption[then.end() :]):
+        rest = caption[then.end() :]
+    elif _SAVE_EXPLICIT_RE.search(caption):
+        rest = _SAVE_EXPLICIT_RE.sub(" ", caption)
+    else:
         return False, caption
-    rest = _SAVE_RE.sub(" ", caption)
-    rest = _LEFTOVER_RE.sub("", " ".join(rest.split())).strip(" ,.;:!")
+    rest = _LEFTOVER_RE.sub("", " ".join(rest.split()))
+    rest = _TRAILING_RE.sub("", rest).strip(" ,.;:!")
     return True, rest if len(rest.split()) >= 2 else ""
 
 

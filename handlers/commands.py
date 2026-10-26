@@ -53,7 +53,8 @@ HELP_TEXT = (
     "🎙️ *Tin thoại*: em nghe rồi trả lời như tin chữ (tin thoại không tự ghi danh mục, chi tiêu, "
     "nhắc việc - muốn ghi thì gõ chữ).\n\n"
     "📄 *File PDF, TXT/MD, Word (.docx)*: em tóm tắt hoặc trả lời câu hỏi ở chú thích; chú thích "
-    '"lưu vào kho" để em lưu tài liệu vào kho kiến thức rag/.\n\n'
+    '"lưu vào kho" (cả chú thích, hoặc "lưu vào kho rồi <câu hỏi>") để em lưu tài liệu vào '
+    "kho kiến thức rag/.\n\n"
     "📍 *Gửi vị trí*: em báo thời tiết hôm nay và ngày mai tại chỗ đó.\n\n"
     "*Lịch, thần số học, tử vi, kỳ môn*\n"
     "/lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8, "
