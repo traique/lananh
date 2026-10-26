@@ -277,6 +277,10 @@ async def test_add_chat_turn_ghi_2_dong_trong_1_transaction(monkeypatch):
         async def execute(self, query, *args):
             executed.append((query.split()[0], args))
 
+        async def fetch(self, query, *args):  # INSERT ... RETURNING id
+            executed.append((query.split()[0], args))
+            return [{"id": 31}, {"id": 32}]
+
     class _Acquire:
         async def __aenter__(self):
             return _Conn()
@@ -292,7 +296,7 @@ async def test_add_chat_turn_ghi_2_dong_trong_1_transaction(monkeypatch):
         return _Pool()
 
     monkeypatch.setattr(db, "get_pool", get_pool)
-    await db.add_chat_turn(7, "hỏi", "đáp")
+    assert await db.add_chat_turn(7, "hỏi", "đáp") == [31, 32]
     await asyncio.sleep(0)
     assert executed[0] == "BEGIN" and executed[-1] == "COMMIT"
     insert = executed[1]

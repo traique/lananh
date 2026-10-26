@@ -279,6 +279,7 @@ async def _ai_reply(
                 model=turn.model,
                 regenerable=regenerable,
                 event_key=_event_key(update),
+                history_ids=turn.history_ids,
             )
         )
 

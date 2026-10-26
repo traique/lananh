@@ -21,15 +21,15 @@ async def add_turn(
     *,
     retention: int,
     kind: str = "chat",
-) -> None:
+) -> list[int]:
     """INSERT tin người dùng + câu trả lời của bot trong CÙNG 1 transaction rồi
     cắt bảng về ``retention`` dòng gần nhất của người dùng đó. ``kind`` (cột của
-    migrations/017) ghi cho cả 2 dòng."""
+    migrations/017) ghi cho cả 2 dòng. Trả id 2 dòng vừa lưu."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
+            inserted = await conn.fetch(
                 "INSERT INTO chat_messages (telegram_user_id, role, content, kind) "
-                "VALUES ($1, 'user', $2, $4), ($1, 'model', $3, $4)",
+                "VALUES ($1, 'user', $2, $4), ($1, 'model', $3, $4) RETURNING id",
                 telegram_user_id,
                 user_text,
                 model_text,
@@ -49,32 +49,23 @@ async def add_turn(
                 telegram_user_id,
                 retention,
             )
+    return [int(row["id"]) for row in inserted]
 
 
-async def delete_last_pair(
-    pool: Any, telegram_user_id: int, user_text: str, model_text: str
-) -> bool:
-    """Xoá 2 dòng mới nhất của người dùng nếu đúng là (user=user_text, model=model_text)."""
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            rows = await conn.fetch(
-                "SELECT id, role, content FROM chat_messages WHERE telegram_user_id = $1 "
-                "ORDER BY id DESC LIMIT 2",
-                telegram_user_id,
-            )
-            if len(rows) != 2:
-                return False
-            model_row, user_row = rows[0], rows[1]
-            if (model_row["role"], model_row["content"]) != ("model", model_text) or (
-                user_row["role"],
-                user_row["content"],
-            ) != ("user", user_text):
-                return False
-            await conn.execute(
-                "DELETE FROM chat_messages WHERE id = ANY($1::bigint[])",
-                [model_row["id"], user_row["id"]],
-            )
-            return True
+async def delete_rows(pool: Any, telegram_user_id: int, ids: list[int]) -> int:
+    """Xoá các dòng ``ids`` CỦA ``telegram_user_id`` (id lạ/của người khác bỏ qua);
+    trả số dòng đã xoá."""
+    if not ids:
+        return 0
+    status = await pool.execute(
+        "DELETE FROM chat_messages WHERE telegram_user_id = $1 AND id = ANY($2::bigint[])",
+        telegram_user_id,
+        [int(row_id) for row_id in ids],
+    )
+    try:
+        return int(str(status).rsplit(" ", 1)[-1])  # "DELETE 2"
+    except ValueError:
+        return 0
 
 
 async def search(

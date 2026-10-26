@@ -69,15 +69,20 @@ async def test_danh_gia_upsert_snapshot_va_thong_ke(delivery_db):
 
 
 @pytest.mark.asyncio
-async def test_xoa_cap_lich_su_moi_nhat_chi_khi_khop(delivery_db):
-    await db.add_chat_turn(42, "câu 1", "đáp 1")
-    await db.add_chat_turn(42, "câu 2", "đáp 2")
-    assert not await db.delete_last_chat_pair(42, "câu 1", "đáp 1")  # không phải cặp mới nhất
-    assert not await db.delete_last_chat_pair(42, "câu 2", "đáp khác")
-    assert await db.delete_last_chat_pair(42, "câu 2", "đáp 2")
-    assert not await db.delete_last_chat_pair(42, "câu 2", "đáp 2")  # lặp lại: không xoá thêm
+async def test_luu_luot_tra_id_va_xoa_dung_cac_dong_do(delivery_db):
+    """🔄/✂️: add_chat_turn trả id 2 dòng vừa lưu; delete_chat_rows xoá đúng các
+    dòng đó của chính người dùng (kể cả khi cặp mới đã được lưu sau nó)."""
+    first = await db.add_chat_turn(42, "câu 1", "đáp 1")
+    second = await db.add_chat_turn(42, "câu 2", "đáp 2")
+    other = await db.add_chat_turn(-5, "câu khác", "đáp khác")
+    assert len(first) == len(second) == 2 and len(set(first + second + other)) == 6
+    assert await db.delete_chat_rows(-5, first) == 0  # không xoá dòng của người khác
+    assert await db.delete_chat_rows(42, first) == 2
+    assert await db.delete_chat_rows(42, first) == 0  # lặp lại: không xoá thêm
+    assert await db.delete_chat_rows(42, []) == 0
     rows = await db.get_recent_chat_rows(42)
-    assert [r["content"] for r in rows] == ["đáp 1", "câu 1"]
+    assert [r["content"] for r in rows] == ["đáp 2", "câu 2"]
+    assert [r["content"] for r in await db.get_recent_chat_rows(-5)] == ["đáp khác", "câu khác"]
 
 
 @pytest.mark.asyncio

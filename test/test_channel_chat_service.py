@@ -107,6 +107,19 @@ async def test_run_chat_turn_gop_ngu_canh_va_luu_lich_su(chat_fakes):
 
 
 @pytest.mark.asyncio
+async def test_run_chat_turn_tra_id_cap_lich_su_vua_luu(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+
+    async def add_turn(user_id, user_text, model_text, kind="chat"):
+        return [21, 22]
+
+    monkeypatch.setattr(ccs.conversation_log.db, "add_chat_turn", add_turn)
+    turn = await ccs.run_chat_turn(1, "hỏi")
+    await ccs.stop_background_tasks()
+    assert turn.text == "trả lời" and turn.history_ids == (21, 22)
+
+
+@pytest.mark.asyncio
 async def test_run_chat_turn_loi_tra_failed_khong_raise(chat_fakes, monkeypatch):
     from services import channel_chat_service as ccs
 

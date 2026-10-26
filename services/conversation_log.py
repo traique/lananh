@@ -196,10 +196,13 @@ async def record_exchange(
     full_access: bool = True,
     stock_outputs: list[str] | None = None,
     read_only: bool = False,
+    saved_ids: list[int] | None = None,
 ) -> bool:
     """Lưu 1 lượt (lời người dùng + câu trả lời đã rút gọn) rồi báo trí nhớ nếu
     là lượt cần trích. read_only (lượt chỉ đọc): không bao giờ trích nhớ NGAY vì
-    "nhớ giúp..." - câu trả lời đã nói chưa lưu. Không raise; trả True nếu đã lưu."""
+    "nhớ giúp..." - câu trả lời đã nói chưa lưu. saved_ids: nhận id 2 dòng
+    chat_messages vừa lưu (🔄/✂️ xoá đúng cặp này khi làm lại). Không raise; trả
+    True nếu đã lưu."""
     user_text = (user_text or "").strip()
     if not user_text:
         return False
@@ -210,7 +213,7 @@ async def record_exchange(
     if not stored:
         return False
     try:
-        await db.add_chat_turn(user_id, stored_user_text(user_text), stored, kind=kind)
+        ids = await db.add_chat_turn(user_id, stored_user_text(user_text), stored, kind=kind)
     except Exception:
         logger.warning(
             "Không lưu được lịch sử chat user_id=%s kind=%s (DB lỗi) - vẫn gửi câu trả lời.",
@@ -219,6 +222,8 @@ async def record_exchange(
             exc_info=True,
         )
         return False
+    if saved_ids is not None and ids:
+        saved_ids.extend(ids)
     if kind in MEMORY_KINDS:
         from services import memory_service
 

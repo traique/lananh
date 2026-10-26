@@ -675,14 +675,15 @@ async def add_chat_message(telegram_user_id: int, role: str, content: str) -> No
 @_with_reconnect(idempotent=False)
 async def add_chat_turn(
     telegram_user_id: int, user_text: str, model_text: str, *, kind: str = "chat"
-) -> None:
+) -> list[int]:
     """Lưu CẢ lượt (tin người dùng + câu trả lời) trong 1 transaction - không
     bao giờ còn nửa lượt (chỉ có câu hỏi) khi DB lỗi giữa 2 lệnh INSERT.
     ``kind``: loại lượt (services/conversation_log.py) - trích nhớ chỉ đọc lượt
-    chat/rag/agent, lượt "stock" giúp chặn câu chat sau mâu thuẫn policy."""
+    chat/rag/agent, lượt "stock" giúp chặn câu chat sau mâu thuẫn policy. Trả
+    id 2 dòng vừa lưu (🔄/✂️ xoá đúng cặp này sau khi làm lại)."""
     from core.repositories import chat_history
 
-    await chat_history.add_turn(
+    return await chat_history.add_turn(
         await get_pool(),
         telegram_user_id,
         user_text,
@@ -693,15 +694,13 @@ async def add_chat_turn(
 
 
 @_with_reconnect
-async def delete_last_chat_pair(telegram_user_id: int, user_text: str, model_text: str) -> bool:
-    """Xoá cặp (tin người dùng, câu trả lời) MỚI NHẤT nếu đúng là cặp này - nút
-    🔄 Thử lại/✂️ Ngắn hơn chạy lại lượt mà không để 2 câu trả lời trong lịch sử.
-    Lặp lại an toàn: lần 2 không còn khớp thì không xoá gì."""
+async def delete_chat_rows(telegram_user_id: int, ids: list[int] | tuple[int, ...]) -> int:
+    """Xoá các dòng lịch sử theo id (của chính người dùng) - nút 🔄 Thử lại/✂️
+    Ngắn hơn bỏ cặp cũ SAU khi lượt làm lại đã lưu cặp mới, không để 2 câu trả
+    lời trong lịch sử. Lặp lại an toàn: lần 2 không còn dòng nào để xoá."""
     from core.repositories import chat_history
 
-    return await chat_history.delete_last_pair(
-        await get_pool(), telegram_user_id, user_text, model_text
-    )
+    return await chat_history.delete_rows(await get_pool(), telegram_user_id, list(ids))
 
 
 @_with_reconnect

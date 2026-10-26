@@ -9,10 +9,13 @@
   chủ bot (không hiện câu hỏi của thành viên Zalo).
 - 🔄 Thử lại / ✂️ Ngắn hơn: chỉ câu trả lời chat MỚI NHẤT, câu không có ý định
   ghi dữ liệu (nhắc việc, ghi chú, chi tiêu...) và không kèm số liệu cổ phiếu.
-  Xoá cặp lịch sử cũ rồi chạy lại run_chat_turn với tool ghi dữ liệu bị chặn và
-  event_key của tin gốc - không bao giờ đặt trùng nhắc việc/ghi chú.
+  Chạy lại run_chat_turn (câu hỏi đầy đủ) với tool ghi dữ liệu bị chặn và
+  event_key của tin gốc - không bao giờ đặt trùng nhắc việc/ghi chú; lượt mới
+  lưu xong cặp lịch sử của nó thì mới xoá cặp cũ THEO ID (lượt hỏng/bị /huy giữ
+  nguyên cặp cũ đang hiện trong chat).
 
-RAM: bản chụp gần đây giữ tối đa SNAPSHOT_MAX lượt (OrderedDict có trần).
+RAM: bản chụp gần đây giữ tối đa SNAPSHOT_MAX lượt (OrderedDict có trần), câu
+hỏi tối đa PROMPT_MAX ký tự.
 """
 
 from __future__ import annotations
@@ -33,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 SNAPSHOT_MAX = 64
 TEXT_MAX = 2000
+# Câu hỏi giữ để làm lại: tin Telegram dài tối đa 4096 ký tự.
+PROMPT_MAX = 4096
 DEFAULT_DAYS = 30
 SHORTER_HINT = (
     "YÊU CẦU LẦN NÀY: người dùng bấm “Ngắn hơn” - trả lời lại câu hỏi vừa rồi NGẮN GỌN "
@@ -56,11 +61,15 @@ class AnswerSnapshot:
     regenerable: bool = False
     quote_text: str | None = None
     event_key: str | None = None
-    # Cặp ĐÚNG như chat_messages đang lưu (conversation_log rút gọn câu hỏi 2000,
-    # câu trả lời 1500 ký tự) - tính từ bản đầy đủ trước khi cắt TEXT_MAX, để
-    # 🔄/✂️ xoá được cặp cũ của câu trả lời dài.
-    history_prompt: str = ""
-    history_answer: str = ""
+    # id 2 dòng chat_messages của lượt (ChatTurn.history_ids): 🔄/✂️ xoá đúng cặp
+    # này - chat_messages lưu bản rút gọn nên không so được theo nội dung.
+    history_ids: tuple[int, ...] = ()
+    # Câu hỏi đầy đủ (tối đa PROMPT_MAX) để làm lại; prompt_text bị cắt TEXT_MAX.
+    full_prompt: str = ""
+
+    @property
+    def question(self) -> str:
+        return self.full_prompt or self.prompt_text
 
 
 _recent: OrderedDict[int, AnswerSnapshot] = OrderedDict()
@@ -77,24 +86,12 @@ def can_regenerate(text: str, *, grounding: str = "") -> bool:
     return not tools.side_effect_intent(text)
 
 
-def _history_pair(snapshot: AnswerSnapshot) -> tuple[str, str]:
-    from services import conversation_log
-
-    return (
-        snapshot.history_prompt or conversation_log.stored_user_text(snapshot.prompt_text),
-        snapshot.history_answer
-        or conversation_log.compact_reply(snapshot.answer_text, conversation_log.KIND_CHAT),
-    )
-
-
 def remember_answer(snapshot: AnswerSnapshot) -> None:
-    history_prompt, history_answer = _history_pair(snapshot)
     snapshot = dataclasses.replace(
         snapshot,
         prompt_text=snapshot.prompt_text[:TEXT_MAX],
         answer_text=snapshot.answer_text[:TEXT_MAX],
-        history_prompt=history_prompt,
-        history_answer=history_answer,
+        full_prompt=snapshot.question[:PROMPT_MAX],
     )
     _recent[snapshot.prompt_id] = snapshot
     _recent.move_to_end(snapshot.prompt_id)
@@ -244,20 +241,11 @@ async def handle_command(
 
 async def regenerate(snapshot: AnswerSnapshot, *, shorter: bool):
     """Chạy lại câu hỏi của câu trả lời mới nhất (🔄 Thử lại / ✂️ Ngắn hơn) - gọi
-    trong khoá lượt của người đó. Trả ChatTurn."""
+    trong khoá lượt của người đó. Trả ChatTurn. Cặp lịch sử cũ chỉ bị xoá khi
+    lượt mới đã lưu cặp của nó; lượt hỏng, không có chữ hay bị /huy (CancelledError
+    đi thẳng ra ngoài) giữ nguyên cặp cũ."""
     from services import channel_chat_service
 
-    history_prompt, history_answer = _history_pair(snapshot)
-    try:
-        deleted = await db.delete_last_chat_pair(snapshot.user_id, history_prompt, history_answer)
-    except Exception:
-        logger.warning("Không xoá được cặp lịch sử cũ trước khi làm lại.", exc_info=True)
-    else:
-        if not deleted:
-            logger.info(
-                "Làm lại câu trả lời user_id=%s: cặp lịch sử cũ không còn là cặp mới nhất.",
-                snapshot.user_id,
-            )
     target = (
         notification_target(
             dataclasses.replace(current_target(snapshot.user_id), event_key=snapshot.event_key)
@@ -266,11 +254,19 @@ async def regenerate(snapshot: AnswerSnapshot, *, shorter: bool):
         else nullcontext()
     )
     with target:
-        return await channel_chat_service.run_chat_turn(
+        turn = await channel_chat_service.run_chat_turn(
             snapshot.user_id,
-            snapshot.prompt_text,
+            snapshot.question,
             channel=snapshot.channel,
             quote_text=snapshot.quote_text,
             allow_side_effects=False,
             style_hint=SHORTER_HINT if shorter else RETRY_HINT,
         )
+    if turn.failed or not turn.history_ids or not snapshot.history_ids:
+        # Lượt mới không lưu được cặp lịch sử (hỏng/không có chữ/DB lỗi): giữ cặp cũ.
+        return turn
+    try:
+        await db.delete_chat_rows(snapshot.user_id, snapshot.history_ids)
+    except Exception:
+        logger.warning("Không xoá được cặp lịch sử cũ sau khi làm lại.", exc_info=True)
+    return turn

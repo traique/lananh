@@ -263,6 +263,26 @@ async def test_luot_lau_gui_trang_thai_roi_sua_thanh_cau_tra_loi(tg_chat, monkey
     assert len(log) == 2
 
 
+async def test_ban_chup_cau_tra_loi_giu_id_cap_lich_su_va_cau_hoi_day_du(tg_chat, monkeypatch):
+    """🔄/✂️ cần id cặp chat_messages của lượt (xoá đúng cặp sau khi làm lại) và
+    câu hỏi đầy đủ (> 2000 ký tự vẫn hỏi lại nguyên văn)."""
+    from services import answer_feedback
+    from services import channel_chat_service as ccs
+
+    async def turn(user_id, text, **kwargs):
+        return ccs.ChatTurn("Dạ đây ạ", prompt_id=77, history_ids=(3, 4))
+
+    monkeypatch.setattr(config, "TELEGRAM_ANSWER_BUTTONS", False)
+    monkeypatch.setattr(tg_chat.channel_chat_service, "run_chat_turn", turn)
+    monkeypatch.setattr(answer_feedback, "_recent", type(answer_feedback._recent)())
+    monkeypatch.setattr(answer_feedback, "_latest", type(answer_feedback._latest)())
+    question = ("giải thích giúp anh " + "lạm phát " * 230).strip()
+    await tg_chat.chat_msg(_Update(question), _Context())
+    snapshot = answer_feedback.latest_regenerable(42, 77)
+    assert snapshot is not None
+    assert snapshot.history_ids == (3, 4) and snapshot.question == question
+
+
 async def test_huy_giua_luot_tra_loi_em_dung_va_khong_luu_lich_su(tg_chat, monkeypatch):
     started = asyncio.Event()
     recorded = []

@@ -185,13 +185,14 @@ async def _regen(update, context, query, action: action_buttons.Action) -> None:
                 prompt_id=turn.prompt_id,
                 user_id=user_id,
                 channel="telegram",
-                prompt_text=snapshot.prompt_text,
+                prompt_text=snapshot.question,
                 answer_text=turn.text,
                 provider=turn.provider,
                 model=turn.model,
                 regenerable=True,
                 quote_text=snapshot.quote_text,
                 event_key=snapshot.event_key,
+                history_ids=turn.history_ids,
             )
         )
 

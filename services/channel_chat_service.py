@@ -68,6 +68,9 @@ class ChatTurn:
     # Provider/model đã trả lời (ai/orchestrator gắn vào response) - đánh giá 👍/👎.
     provider: str = ""
     model: str = ""
+    # id 2 dòng chat_messages của lượt (rỗng = chưa lưu lịch sử) - 🔄/✂️ xoá
+    # đúng cặp này sau khi làm lại xong (services/answer_feedback.py).
+    history_ids: tuple[int, ...] = ()
 
 
 def failure_message(turn: ChatTurn, *, owner: bool, address_form: str | None = None) -> str:
@@ -350,6 +353,7 @@ async def run_chat_turn(
 
     # Từ đây câu trả lời ĐÃ sinh xong (đã tốn quota): lỗi ghi DB/telemetry chỉ
     # log, không bao giờ biến thành câu báo lỗi và mất câu trả lời.
+    history_ids: list[int] = []
     provider = str(getattr(response, "provider", "") or "")
     model = str(getattr(response, "model", "") or "")
     if provider:
@@ -375,7 +379,7 @@ async def run_chat_turn(
             # nhớ không được lưu thay từ chữ chép (có thể nghe nhầm) của lượt này.
             kind = conversation_log.KIND_CHAT_READONLY
         await conversation_log.record_exchange(
-            user_id, text, reply, kind, read_only=not allow_side_effects
+            user_id, text, reply, kind, read_only=not allow_side_effects, saved_ids=history_ids
         )
     if searched or plan.untrusted or searching:
         # Lượt có tra web: tính vào trần lượt "nặng" của thành viên Zalo.
@@ -386,6 +390,7 @@ async def run_chat_turn(
         prompt_id=prompt_id,
         provider=provider,
         model=model,
+        history_ids=tuple(history_ids),
     )
 
 

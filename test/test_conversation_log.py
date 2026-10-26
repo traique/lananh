@@ -73,6 +73,23 @@ async def test_record_exchange_luu_kind_va_chi_bao_tri_nho_cho_luot_can_trich(mo
 
 
 @pytest.mark.asyncio
+async def test_record_exchange_tra_id_cap_vua_luu(monkeypatch):
+    """saved_ids nhận id 2 dòng chat_messages vừa lưu (🔄/✂️ xoá đúng cặp sau này)."""
+
+    async def fake_add(uid, user_text, model_text, *, kind="chat"):
+        return [7, 8]
+
+    monkeypatch.setattr(db, "add_chat_turn", fake_add)
+    monkeypatch.setattr(memory_service, "after_exchange", lambda uid, **kw: None)
+    ids: list[int] = []
+    assert await clog.record_exchange(1, "hỏi", "đáp", saved_ids=ids)
+    assert ids == [7, 8]
+    untouched: list[int] = []
+    assert not await clog.record_exchange(1, "  ", "đáp", saved_ids=untouched)
+    assert untouched == []
+
+
+@pytest.mark.asyncio
 async def test_record_exchange_db_loi_khong_raise(monkeypatch):
     async def broken(*args, **kwargs):
         raise ConnectionError("db down")

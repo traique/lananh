@@ -149,51 +149,88 @@ def test_chi_cau_chat_thuong_moi_lam_lai_duoc():
     assert answer_feedback.latest_regenerable(42, 6) is None  # câu có ghi dữ liệu
 
 
-async def test_lam_lai_xoa_cap_cu_va_chan_tool_ghi(monkeypatch):
+async def test_lam_lai_xoa_cap_cu_sau_khi_luu_cap_moi_va_chan_tool_ghi(monkeypatch):
     from services import channel_chat_service as ccs
     from services.reminder_delivery import current_event_key
 
-    deleted = AsyncMock(return_value=True)
-    monkeypatch.setattr(db, "delete_last_chat_pair", deleted)
+    order = []
+
+    async def delete_rows(uid, ids):
+        order.append(("delete", uid, tuple(ids)))
+        return len(ids)
+
+    monkeypatch.setattr(db, "delete_chat_rows", delete_rows)
     seen = {}
 
     async def fake_turn(user_id, text, **kwargs):
+        order.append(("turn", text))
         seen.update(kwargs, user_id=user_id, text=text, event_key=current_event_key())
-        return ccs.ChatTurn("ngắn thôi", prompt_id=6)
+        return ccs.ChatTurn("ngắn thôi", prompt_id=6, history_ids=(13, 14))
 
     monkeypatch.setattr(ccs, "run_chat_turn", fake_turn)
-    turn = await answer_feedback.regenerate(_snapshot(), shorter=True)
+    turn = await answer_feedback.regenerate(_snapshot(history_ids=(11, 12)), shorter=True)
     assert turn.text == "ngắn thôi"
-    deleted.assert_awaited_once_with(42, "hỏi gì đó", "trả lời")
+    # Cặp cũ chỉ bị xoá (theo id) SAU khi lượt mới đã lưu cặp của nó.
+    assert order == [("turn", "hỏi gì đó"), ("delete", 42, (11, 12))]
     assert seen["allow_side_effects"] is False
     assert seen["style_hint"] == answer_feedback.SHORTER_HINT
     assert seen["event_key"] == "telegram:100"  # tool (nếu có) không ghi trùng
 
 
-async def test_lam_lai_cau_tra_loi_dai_xoa_dung_cap_da_luu(monkeypatch):
+@pytest.mark.parametrize("outcome", ["failed", "empty", "cancelled"])
+async def test_lam_lai_hong_hoac_bi_huy_giu_nguyen_cap_cu(monkeypatch, outcome):
+    """Lượt làm lại hỏng/không có chữ (không lưu cặp mới) hay bị /huy: cặp cũ
+    (vẫn đang hiện trong chat Telegram) phải còn nguyên trong lịch sử."""
+    from services import channel_chat_service as ccs
+
+    deleted = AsyncMock(return_value=2)
+    monkeypatch.setattr(db, "delete_chat_rows", deleted)
+
+    async def fake_turn(user_id, text, **kwargs):
+        if outcome == "cancelled":
+            raise asyncio.CancelledError
+        if outcome == "failed":
+            return ccs.ChatTurn(failed=True, prompt_id=6)
+        return ccs.ChatTurn("", prompt_id=6)
+
+    monkeypatch.setattr(ccs, "run_chat_turn", fake_turn)
+    snapshot = _snapshot(history_ids=(11, 12))
+    if outcome == "cancelled":
+        with pytest.raises(asyncio.CancelledError):
+            await answer_feedback.regenerate(snapshot, shorter=False)
+    else:
+        await answer_feedback.regenerate(snapshot, shorter=False)
+    deleted.assert_not_awaited()
+
+
+async def test_lam_lai_cau_tra_loi_dai_xoa_dung_cap_cu_va_hoi_lai_cau_day_du(monkeypatch):
     """Lịch sử lưu bản rút gọn (_clip 1500 / 2000): làm lại câu trả lời dài vẫn xoá
-    đúng cặp cũ, không để câu hỏi + câu trả lời cũ nằm trùng trong lịch sử."""
+    đúng cặp cũ (theo id lúc lưu), không để câu hỏi + câu trả lời cũ nằm trùng
+    trong lịch sử; câu hỏi > 2000 ký tự được hỏi lại NGUYÊN VĂN."""
     from services import channel_chat_service as ccs
     from services import conversation_log, memory_service
 
-    rows: list[tuple[str, str]] = []
+    rows: dict[int, tuple[str, str]] = {}
+    ids = iter(range(1, 100))
 
     async def add_turn(uid, user_text, model_text, *, kind="chat"):
-        rows.extend([("user", user_text), ("model", model_text)])
+        new = [next(ids), next(ids)]
+        rows[new[0]], rows[new[1]] = ("user", user_text), ("model", model_text)
+        return new
 
-    async def delete_pair(uid, user_text, model_text):
-        # Cùng ngữ nghĩa core/repositories/chat_history.delete_last_pair: khớp NGUYÊN VĂN.
-        if rows[-2:] == [("user", user_text), ("model", model_text)]:
-            del rows[-2:]
-            return True
-        return False
+    async def delete_rows(uid, row_ids):
+        return sum(rows.pop(row_id, None) is not None for row_id in row_ids)
 
     monkeypatch.setattr(db, "add_chat_turn", add_turn)
-    monkeypatch.setattr(db, "delete_last_chat_pair", delete_pair)
+    monkeypatch.setattr(db, "delete_chat_rows", delete_rows)
     monkeypatch.setattr(memory_service, "after_exchange", lambda uid, **kw: None)
-    question = "giải thích giúp anh " + "lạm phát " * 300  # > 2000 ký tự
-    answer = "Lạm phát là " + "giá cả tăng. " * 150  # > 1500 ký tự
-    await conversation_log.record_exchange(42, question, answer, conversation_log.KIND_CHAT)
+    question = "giải thích giúp anh " + "lạm phát " * 230  # ~2100 ký tự
+    answer = "Lạm phát là " + "giá cả tăng. " * 192  # ~2500 ký tự
+    assert 2000 < len(question.strip()) < 4096 and len(answer) > 2400
+    saved: list[int] = []
+    await conversation_log.record_exchange(
+        42, question, answer, conversation_log.KIND_CHAT, saved_ids=saved
+    )
     answer_feedback.remember_answer(
         answer_feedback.AnswerSnapshot(
             prompt_id=9,
@@ -202,17 +239,29 @@ async def test_lam_lai_cau_tra_loi_dai_xoa_dung_cap_da_luu(monkeypatch):
             prompt_text=question,
             answer_text=answer,
             regenerable=True,
+            history_ids=tuple(saved),
         )
     )
     snapshot = answer_feedback.latest_regenerable(42, 9)
-    assert snapshot is not None
+    assert snapshot is not None and len(snapshot.prompt_text) == answer_feedback.TEXT_MAX
+    asked = []
 
     async def fake_turn(user_id, text, **kwargs):
-        return ccs.ChatTurn("ngắn thôi", prompt_id=10)
+        # Như run_chat_turn thật: lưu cặp mới rồi trả id của nó.
+        asked.append(text)
+        new: list[int] = []
+        await conversation_log.record_exchange(
+            user_id, text, "ngắn thôi", conversation_log.KIND_CHAT, saved_ids=new
+        )
+        return ccs.ChatTurn("ngắn thôi", prompt_id=10, history_ids=tuple(new))
 
     monkeypatch.setattr(ccs, "run_chat_turn", fake_turn)
     await answer_feedback.regenerate(snapshot, shorter=True)
-    assert rows == []
+    assert asked == [question]
+    assert list(rows.values()) == [
+        ("user", conversation_log.stored_user_text(question)),
+        ("model", "ngắn thôi"),
+    ]
 
 
 # ─── handlers.callbacks ──────────────────────────────────────────────────────
@@ -299,18 +348,21 @@ async def test_lam_lai_cau_moi_nhat_gui_cau_moi_kem_nut(monkeypatch):
 
     async def regenerate(snapshot, *, shorter):
         assert shorter is True
-        return ccs.ChatTurn("bản gọn", prompt_id=6, provider="groq", model="m")
+        return ccs.ChatTurn("bản gọn", prompt_id=6, provider="groq", model="m", history_ids=(7, 8))
 
     monkeypatch.setattr(answer_feedback, "regenerate", regenerate)
-    answer_feedback.remember_answer(_snapshot(5))
+    long_prompt = "giải thích giúp anh " + "lạm phát " * 230
+    answer_feedback.remember_answer(_snapshot(5, prompt_text=long_prompt))
     bot = _Bot()
     callbacks._keyboards[42] = 50  # câu trả lời cũ đang mang nút
     update, query = _cb_update("regen:5:s")
     await callbacks.on_callback(update, SimpleNamespace(bot=bot))
     text, markup = query.message.replies[-1]
     assert text == "bản gọn" and _labels(markup) == ["👍", "👎", "🔄 Thử lại", "✂️ Ngắn hơn"]
-    assert answer_feedback.latest_regenerable(42, 6) is not None
-    assert answer_feedback.latest_regenerable(42, 6).provider == "groq"
+    latest = answer_feedback.latest_regenerable(42, 6)
+    assert latest is not None and latest.provider == "groq"
+    # Bấm làm lại lần nữa: xoá đúng cặp vừa sinh, hỏi lại câu đầy đủ (không cắt 2000).
+    assert latest.history_ids == (7, 8) and latest.question == long_prompt
     # Nút làm lại của câu cũ bị bỏ ngay khi bấm (chống bấm 2 lần).
     assert _labels(query.markups[0]) == ["👍", "👎"]
     assert bot.edits == [(42, 50, None)]
