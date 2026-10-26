@@ -410,6 +410,7 @@ async def maybe_handle_command(
     if command == "/anh":
         return await _generate_image(argument, is_admin, channel)
     if command == "/reset":
+        await memory_service.flush_before_reset(user_id)
         await orchestrator.reset_chat()
         await db.clear_chat(user_id)
         return ["🔄 Đã xoá ngữ cảnh hội thoại."], None

@@ -229,7 +229,10 @@ WEB_READER_MAX_BYTES = max(64 * 1024, _env_int("WEB_READER_MAX_BYTES", 2 * 1024 
 # tin, chỉ có background probe + /userouter9 + đổi env mới kích hoạt thử lại
 # router9). Groq/OpenRouter/API hết quota (429) -> cooldown cố định rồi tự
 # thử lại (xem ai/provider_state.py).
-CHAT_HISTORY_TURNS = _env_int("CHAT_HISTORY_TURNS", 8)
+# Số LƯỢT hỏi-đáp gần nhất của phiên đưa vào prompt (mỗi lượt = 2 dòng lịch sử;
+# trước đây là số DÒNG nên 8 chỉ còn ~4 lượt). prompt_budget vẫn cắt tin cũ nhất
+# khi vượt ngân sách.
+CHAT_HISTORY_TURNS = _env_int("CHAT_HISTORY_TURNS", 10)
 CHAT_SESSION_TIMEOUT_SEC = _env_int("CHAT_SESSION_TIMEOUT_SEC", 21600)  # 6 giờ
 ROUTER9_PROBE_INTERVAL_SEC = _env_int(
     "ROUTER9_PROBE_INTERVAL_SEC", _env_int("COOKIE_PROBE_INTERVAL_SEC", 900)

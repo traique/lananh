@@ -85,10 +85,20 @@ services:
       # /ragxuly dùng token này để commit rag/*.md với [skip render].
       - key: GITHUB_RAG_TOKEN
         sync: false
+      # Số LƯỢT hỏi-đáp (mỗi lượt 2 dòng lịch sử) đưa vào prompt.
       - key: CHAT_HISTORY_TURNS
-        value: "8"
+        value: "10"
       - key: CHAT_SESSION_TIMEOUT_SEC
         value: "21600"
+      # Trí nhớ: trích theo lô (>= 3 lượt chưa xử lý hoặc rảnh 30 phút), gộp fact khi gần đầy.
+      - key: MEMORY_FLUSH_EXCHANGES
+        value: "3"
+      - key: MEMORY_IDLE_FLUSH_SEC
+        value: "1800"
+      - key: MEMORY_CONSOLIDATION
+        value: "1"
+      - key: GROQ_HISTORY_MAX_CHARS
+        value: "3500"
       # Bản tin sáng cá nhân (/bantin): chỉ gửi cho người tự bật trên kênh của mình.
       - key: MORNING_BRIEF_ENABLED
         value: "true"

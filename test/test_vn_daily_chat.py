@@ -208,6 +208,9 @@ def chat_spy(monkeypatch):
     async def noop(*args, **kwargs):
         return None
 
+    async def empty_memory(*args, **kwargs):
+        return ccs.memory_service.TurnMemory()
+
     async def fake_plan(text, user_id=None):
         seen["search"] += 1
         return ccs.web_search.SearchPlan("WEB", ccs.orchestrator.SEARCH_OFF, True)
@@ -220,10 +223,10 @@ def chat_spy(monkeypatch):
     monkeypatch.setattr(ccs.telemetry, "success", noop)
     monkeypatch.setattr(ccs.tools, "maybe_run_tool", noop)
     monkeypatch.setattr(ccs.web_search, "plan_search", fake_plan)
-    monkeypatch.setattr(ccs.memory_service, "build_memory_context", noop)
-    monkeypatch.setattr(ccs.memory_service, "update_memory", noop)
+    monkeypatch.setattr(ccs.memory_service, "build_turn_memory", empty_memory)
+    monkeypatch.setattr(ccs.memory_service, "after_exchange", lambda *a, **k: None)
     monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
-    monkeypatch.setattr(ccs.db, "add_chat_turn", noop)
+    monkeypatch.setattr(ccs.conversation_log.db, "add_chat_turn", noop)
     return ccs, seen
 
 

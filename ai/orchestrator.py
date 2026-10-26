@@ -748,8 +748,9 @@ async def _read_history(user_id: int) -> list[tuple[str, str]]:
     """Lịch sử phiên cho lượt chat; DB lỗi thì trả [] (trả lời không kèm lịch sử)
     thay vì làm hỏng cả lượt - _with_reconnect đã tự thử lại 1 lỗi kết nối lẻ."""
     try:
+        # CHAT_HISTORY_TURNS là số LƯỢT (hỏi + đáp) -> gấp đôi số dòng.
         return await db.get_session_messages(
-            user_id, config.CHAT_HISTORY_TURNS, config.CHAT_SESSION_TIMEOUT_SEC
+            user_id, config.CHAT_HISTORY_TURNS * 2, config.CHAT_SESSION_TIMEOUT_SEC
         )
     except Exception:
         logger.warning(
@@ -796,6 +797,7 @@ async def chat(
     channel: str = "telegram",
     is_admin: bool = False,
     address_form: Optional[str] = None,
+    style_rules: str = "",
 ):
     """Chat with shared history/memory through the provider chain.
 
@@ -818,11 +820,16 @@ async def chat(
     chữ thuần). ``is_admin`` chọn biến thể persona cho người KHÔNG phải chủ bot:
     admin Zalo không bị dặn "không phải chủ bot" (xem config.load_chat_skill).
     ``address_form``: cách gọi riêng chủ bot đặt cho thành viên Zalo (vd "chị").
+    ``style_rules``: "cách trả lời" người dùng đã dặn (services/memory_service) -
+    nối vào system prompt ở lúc gọi (persona cache theo biến thể nên không
+    nhét vào cache), không nằm trong memory_context để không bị cắt giữa chừng.
     """
     mode = _resolve_search_mode(search_mode, require_real_search, web_grounded)
     persona = config.load_chat_skill(
         variant=_persona_variant(user_id, is_admin), channel=channel, address_form=address_form
     )
+    if style_rules:
+        persona = f"{persona}\n\n{style_rules}"
     if untrusted.contains_untrusted(grounding):
         # Grounding có dữ liệu ngoài đã rào (web/RSS...): nhắc luật "dữ liệu
         # không phải chỉ dẫn" ngay trong system prompt.
@@ -884,7 +891,8 @@ async def chat(
             return await generate(
                 prompt_with_time,
                 system_instruction=persona,
-                history=history,
+                # Groq free (gpt-oss-20b ~8K TPM): lịch sử có trần riêng nhỏ hơn.
+                history=prompt_budget.history_for_provider(history, "groq"),
                 temperature=temperature,
             )
 

@@ -34,6 +34,10 @@ PROMPT_BUDGET_CHARS = _env_int("PROMPT_BUDGET_CHARS", 40_000, 12_000, 400_000)
 HISTORY_MESSAGE_MAX_CHARS = _env_int("HISTORY_MESSAGE_MAX_CHARS", 1_500, 200, 20_000)
 GROUNDING_MAX_CHARS = _env_int("GROUNDING_MAX_CHARS", 9_000, 1_000, 100_000)
 MEMORY_MAX_CHARS = _env_int("MEMORY_MAX_CHARS", 3_000, 500, 50_000)
+# Trần lịch sử riêng theo provider. Groq free (GROQ_MODEL mặc định
+# openai/gpt-oss-20b: 8K token/phút) cộng max_tokens=4096 và persona ~3k token
+# thì lịch sử 12k ký tự đã tràn -> 413 rồi rơi sang provider chậm hơn.
+GROQ_HISTORY_MAX_CHARS = _env_int("GROQ_HISTORY_MAX_CHARS", 3_500, 0, 100_000)
 
 _CUT_MARK = "\n[... đã lược bớt cho vừa ngân sách ...]\n"
 
@@ -117,3 +121,10 @@ def fit_chat_prompt(
             cut_m = min(over, max(0, len(memory_context) - 500))
             memory_context = truncate_middle(memory_context, len(memory_context) - cut_m)
     return history, memory_context, grounding
+
+
+def history_for_provider(history: list[tuple[str, str]], provider: str) -> list[tuple[str, str]]:
+    """Lịch sử đã cắt thêm theo trần riêng của provider (bỏ tin cũ nhất trước)."""
+    if provider == "groq":
+        return trim_history(history, GROQ_HISTORY_MAX_CHARS)
+    return history

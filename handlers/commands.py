@@ -326,6 +326,8 @@ async def notes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @common.restricted
 async def reset_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    # Trích nốt trí nhớ từ các lượt chưa xử lý trước khi xoá lịch sử phiên.
+    await memory_service.flush_before_reset(user_id)
     await orchestrator.reset_chat()
     await db.clear_chat(user_id)
     await update.message.reply_text("🔄 Đã xoá ngữ cảnh hội thoại. Bắt đầu chat mới nhé!")

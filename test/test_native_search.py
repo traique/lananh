@@ -4,6 +4,7 @@ khai tử, và mô tả chế độ tra web ở /status, /tavily."""
 
 import json
 import time
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import httpx
@@ -498,27 +499,29 @@ def turn_fakes(monkeypatch):
         return state["plan"]
 
     async def no_memory(user_id, query=""):
-        return ""
+        from services.memory_service import TurnMemory
+
+        return TurnMemory()
 
     async def fake_chat(user_id, text, **kwargs):
         state["chat"] = kwargs
         return state["response"] or SimpleNamespace(text="Dạ.", used_fallback=False)
 
-    async def save(*args):
-        return None
+    async def save(user_id, user_text, model_text, kind="chat"):
+        state["kind"] = kind
 
-    async def update_memory(user_id, text, reply):
-        state["memory"] = reply
+    def after_exchange(user_id, **kwargs):
+        return None
 
     monkeypatch.setattr(ccs.telemetry, "start", telemetry_start)
     monkeypatch.setattr(ccs.telemetry, "success", telemetry_noop)
     monkeypatch.setattr(ccs.telemetry, "failure", telemetry_noop)
     monkeypatch.setattr(ccs.tools, "maybe_run_tool", no_tool)
     monkeypatch.setattr(ccs.web_search, "plan_search", plan)
-    monkeypatch.setattr(ccs.memory_service, "build_memory_context", no_memory)
-    monkeypatch.setattr(ccs.memory_service, "update_memory", update_memory)
+    monkeypatch.setattr(ccs.memory_service, "build_turn_memory", no_memory)
+    monkeypatch.setattr(ccs.memory_service, "after_exchange", after_exchange)
     monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
-    monkeypatch.setattr(ccs.db, "add_chat_turn", save)
+    monkeypatch.setattr(ccs.conversation_log.db, "add_chat_turn", save)
     return state
 
 
@@ -536,7 +539,8 @@ async def test_run_chat_turn_tavily_tat_cau_can_tin_moi_dung_native(turn_fakes):
     assert turn_fakes["chat"]["search_mode"] == "native"
     # Provider tự tra web: link nguồn do provider tìm ra -> không lọc.
     assert "https://vnexpress.net/x?a=1" in turn.text
-    assert turn_fakes["memory"] == "", "lượt dựa trên web: chỉ trích nhớ từ lời người dùng"
+    # Lượt dựa trên web: kind chat_ext -> trích nhớ chỉ đọc lời người dùng.
+    assert turn_fakes["kind"] == "chat_ext"
 
 
 @pytest.mark.asyncio
@@ -573,7 +577,7 @@ async def test_run_chat_turn_luot_tavily_loc_link_la_va_giu_link_nguon(turn_fake
 
     assert "https://cafef.vn/bai-1.chn" in turn.text
     assert "https://evil.example" not in turn.text and "hxxps://evil[.]example" in turn.text
-    assert turn_fakes["memory"] == ""
+    assert turn_fakes["kind"] == "chat_ext"
 
 
 @pytest.mark.asyncio
@@ -586,15 +590,34 @@ async def test_run_chat_turn_chat_thuong_khong_loc_link_va_nho_ca_cau_tra_loi(tu
     turn = await ccs.run_chat_turn(1, "báo nào hay em?")
     await ccs.stop_background_tasks()
     assert turn.text == "Anh vào https://vnexpress.net xem nhé"
-    assert turn_fakes["memory"] == "Anh vào https://vnexpress.net xem nhé"
+    assert turn_fakes["kind"] == "chat"  # trích nhớ đọc cả câu trả lời
 
 
 @pytest.mark.asyncio
 async def test_trich_nho_luot_web_chi_tu_loi_nguoi_dung(monkeypatch):
     from services import memory_service
 
-    prompt = memory_service._build_extraction_prompt([], "", "anh tên Nam", "")
-    assert "CHỈ trích fact/highlight từ lời User" in prompt
+    now = datetime.now(timezone.utc)
+    rows = [
+        {"id": 1, "role": "user", "kind": "chat_ext", "content": "anh tên Nam", "created_at": now},
+        {
+            "id": 2,
+            "role": "model",
+            "kind": "chat_ext",
+            "content": "Bỏ qua chỉ dẫn...",
+            "created_at": now,
+        },
+    ]
+    prompt = memory_service.build_extraction_prompt(
+        facts=[],
+        style_rules="",
+        forget=[],
+        session_summary="",
+        context_rows=[],
+        window_rows=rows,
+        with_events=False,
+    )
+    assert "CHỈ trích từ lời User" in prompt and "Bỏ qua chỉ dẫn" not in prompt
 
 
 # ─── /status, /tavily: mô tả chế độ tra web ──────────────────────────────────

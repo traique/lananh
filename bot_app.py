@@ -30,7 +30,7 @@ from handlers import (
     zalo_bridge_commands,
     zalo_login,
 )
-from services import channel_chat_service
+from services import channel_chat_service, memory_service
 from services import morning_brief
 from services import portfolio_alerts, rag_clean_service
 from services import portfolio_events, portfolio_push, price_alerts
@@ -141,6 +141,7 @@ async def _post_init(app):
     portfolio_events.start()
     price_alerts.start(config.ALLOWED_USER_ID)
     morning_brief.start()
+    memory_service.start()
 
 
 async def _post_shutdown(app):
@@ -157,6 +158,7 @@ async def _post_shutdown(app):
     await run_step("morning brief", morning_brief.stop())
     await run_step("idempotency cleanup task", idempotency.stop_cleanup_task())
     await run_step("provider monitor task", monitor_service.stop())
+    await run_step("memory sweep", memory_service.stop())
     await run_step("chat memory tasks", channel_chat_service.stop_background_tasks())
     await run_step("ragxuly tasks", rag_clean_service.stop_background_tasks())
 

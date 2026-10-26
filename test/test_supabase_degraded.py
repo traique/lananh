@@ -127,7 +127,9 @@ async def test_luu_lich_su_loi_van_tra_cau_tra_loi(monkeypatch):
         return None
 
     async def no_memory(user_id, query=""):
-        return ""
+        from services.memory_service import TurnMemory
+
+        return TurnMemory()
 
     async def plan(text, *, user_id=None):
         return ccs.web_search.SearchPlan()
@@ -135,10 +137,10 @@ async def test_luu_lich_su_loi_van_tra_cau_tra_loi(monkeypatch):
     async def fake_chat(*args, **kwargs):
         return SimpleNamespace(text="Dạ em đây.", used_fallback=False)
 
-    async def broken_save(*args):
+    async def broken_save(*args, **kwargs):
         raise ConnectionError("supabase down")
 
-    async def no_update(*args):
+    def no_update(*args, **kwargs):
         return None
 
     monkeypatch.setattr(ccs.telemetry, "start", telemetry_start)
@@ -146,10 +148,10 @@ async def test_luu_lich_su_loi_van_tra_cau_tra_loi(monkeypatch):
     monkeypatch.setattr(ccs.telemetry, "failure", telemetry_noop)
     monkeypatch.setattr(ccs.tools, "maybe_run_tool", no_tool)
     monkeypatch.setattr(ccs.web_search, "plan_search", plan)
-    monkeypatch.setattr(ccs.memory_service, "build_memory_context", no_memory)
-    monkeypatch.setattr(ccs.memory_service, "update_memory", no_update)
+    monkeypatch.setattr(ccs.memory_service, "build_turn_memory", no_memory)
+    monkeypatch.setattr(ccs.memory_service, "after_exchange", no_update)
     monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
-    monkeypatch.setattr(ccs.db, "add_chat_turn", broken_save)
+    monkeypatch.setattr(ccs.conversation_log.db, "add_chat_turn", broken_save)
 
     turn = await ccs.run_chat_turn(1, "chào em")
     await ccs.stop_background_tasks()

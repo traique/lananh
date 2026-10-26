@@ -15,9 +15,10 @@ from dataclasses import dataclass
 import messages
 from ai import orchestrator
 from ai.timeouts import TurnTimeoutError, turn_deadline
-from core import database as db, untrusted, urls
+from core import untrusted, urls
 from services import (
     article_reader,
+    conversation_log,
     lunar_chat,
     weather_chat,
     memory_service,
@@ -26,7 +27,6 @@ from services import (
     tools,
     web_search,
 )
-from services.background_tasks import stop_tracked_tasks
 from services import channel_command_service, reply_audience
 from services import vn_daily_chat
 from services.channel_result import ChannelResult
@@ -36,53 +36,10 @@ from stock import analysis as stock_analysis
 logger = logging.getLogger(__name__)
 
 
-_background_tasks: set[asyncio.Task] = set()
-
-
-def _track_background_task(task: asyncio.Task) -> None:
-    _background_tasks.add(task)
-
-    def _done(completed: asyncio.Task) -> None:
-        _background_tasks.discard(completed)
-        if completed.cancelled():
-            return
-        try:
-            completed.result()
-        except Exception:
-            logger.exception("Tác vụ cập nhật trí nhớ chạy nền bị lỗi")
-
-    task.add_done_callback(_done)
-
-
 async def stop_background_tasks() -> None:
-    """Drain các lượt cập nhật memory (mọi kênh) trước khi đóng database."""
-    await stop_tracked_tasks(
-        _background_tasks,
-        timeout=15.0,
-        logger=logger,
-        label="chat memory",
-    )
-
-
-# Tối đa 2 lượt cập nhật trí nhớ chạy nền cùng lúc: mỗi lượt là 1 lời gọi
-# Gemini utility ngoài semaphore MAX_CONCURRENT_TURNS (RAM 512 MB).
-_memory_update_slots = asyncio.Semaphore(2)
-
-
-async def _update_memory_bounded(user_id: int, text: str, reply: str) -> None:
-    """Cập nhật trí nhớ nền với hạn chót riêng (MEMORY_UPDATE_TIMEOUT_SEC).
-
-    Task được tạo SAU khi ``turn_deadline()`` của lượt đã thoát nên không thừa
-    hưởng hạn chót nào - đặt lại ở đây để official_client.generate_utility_json
-    (đi qua ai.timeouts.bounded) không treo vô hạn."""
-    from core import config
-
-    async with _memory_update_slots:
-        with turn_deadline(config.MEMORY_UPDATE_TIMEOUT_SEC):
-            try:
-                await memory_service.update_memory(user_id, text, reply)
-            except TurnTimeoutError as exc:
-                logger.warning("Cập nhật trí nhớ nền hết hạn chót: %s", exc)
+    """Drain các lượt trích trí nhớ nền (mọi kênh) trước khi đóng database
+    (task do services/memory_service.after_exchange tạo)."""
+    await memory_service.stop_background_tasks()
 
 
 @dataclass(frozen=True)
@@ -165,7 +122,7 @@ async def run_chat_turn(
             tool_result, plan, memory = await asyncio.gather(
                 tools.maybe_run_tool(user_id, text),
                 search,
-                memory_service.build_memory_context(user_id, text),
+                memory_service.build_turn_memory(user_id, text),
             )
             combined = "\n\n".join(
                 part for part in (grounding, daily.text, tool_result, plan.grounding) if part
@@ -177,18 +134,22 @@ async def run_chat_turn(
                 user_id,
                 text,
                 grounding=combined,
-                memory_context=memory,
+                memory_context=memory.context,
                 require_real_search=forced,
                 search_mode=_search_mode(plan, forced, bool(grounding), bool(tool_result)),
                 channel=channel,
                 is_admin=is_admin,
                 address_form=address_form,
+                style_rules=memory.style_rules,
             )
         reply = (response.text or "").strip()
         searched = bool(getattr(response, "searched", False))
         untrusted_context = plan.untrusted or untrusted.contains_untrusted(combined)
         reply = _filter_reply_links(
-            reply, (text, combined, memory), untrusted_context=untrusted_context, searched=searched
+            reply,
+            (text, combined, memory.context),
+            untrusted_context=untrusted_context,
+            searched=searched,
         )
     except TurnTimeoutError as exc:
         logger.warning("Lượt chat hết hạn chót (kênh %s): %s", channel, exc)
@@ -205,14 +166,16 @@ async def run_chat_turn(
     # log, không bao giờ biến thành câu báo lỗi và mất câu trả lời.
     await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
     if reply:
-        await _save_turn_best_effort(user_id, text, reply)
-        # Lượt trả lời dựa trên dữ liệu web ngoài (Tavily, provider tự tra web):
-        # câu trả lời có thể mang nội dung bị prompt injection -> chỉ trích nhớ
-        # từ lời người dùng (reply rỗng, xem memory_service._ASSISTANT_SKIPPED).
-        memory_reply = "" if (untrusted_context or searched) else reply
-        _track_background_task(
-            asyncio.create_task(_update_memory_bounded(user_id, text, memory_reply))
+        # Lượt trả lời dựa trên dữ liệu ngoài (Tavily, provider tự tra web, trang
+        # người dùng gửi...): câu trả lời có thể mang nội dung bị prompt injection
+        # -> kind chat_ext, trích nhớ chỉ đọc lời người dùng. Lưu lịch sử (1
+        # transaction) rồi trích nhớ theo lô chạy nền (services/memory_service).
+        kind = (
+            conversation_log.KIND_CHAT_EXT
+            if (untrusted_context or searched)
+            else conversation_log.KIND_CHAT
         )
+        await conversation_log.record_exchange(user_id, text, reply, kind)
     return ChatTurn(reply, bool(getattr(response, "used_fallback", False)), prompt_id=prompt_id)
 
 
@@ -249,21 +212,6 @@ def _filter_reply_links(
     if removed:
         logger.warning("Đã vô hiệu hoá %d link lạ trong câu trả lời chat.", removed)
     return filtered
-
-
-async def _save_turn_best_effort(user_id: int, text: str, reply: str) -> None:
-    """Lưu cả lượt vào lịch sử (1 transaction, core.database.add_chat_turn); lỗi
-    thì lượt sau chỉ thiếu ngữ cảnh lượt này - không chặn việc gửi câu trả lời.
-    Không giữ hàng đợi ghi bù: dòng ghi muộn mang id/created_at mới sẽ làm lộn
-    thứ tự lịch sử phiên."""
-    try:
-        await db.add_chat_turn(user_id, text, reply)
-    except Exception:
-        logger.warning(
-            "Không lưu được lịch sử chat user_id=%s (DB lỗi) - vẫn gửi câu trả lời.",
-            user_id,
-            exc_info=True,
-        )
 
 
 def split_for_zalo(text: str, limit: int = 1800) -> list[str]:

@@ -57,28 +57,29 @@ def chat_fakes(monkeypatch):
         return SearchPlan()
 
     async def fake_memory(user_id, query=""):
-        return "MEM"
+        return ccs.memory_service.TurnMemory(context="MEM")
 
     async def fake_chat(user_id, text, *, grounding, memory_context, require_real_search, **kw):
         calls["chat"] = (grounding, memory_context)
         return calls.get("response", _FakeResponse("trả lời", used_fallback=True))
 
-    async def fake_add_turn(user_id, user_text, model_text):
+    async def fake_add_turn(user_id, user_text, model_text, kind="chat"):
         # 1 transaction cho cả lượt (core.database.add_chat_turn).
         calls["saved"].extend([("user", user_text), ("model", model_text)])
+        calls.setdefault("kinds", []).append(kind)
 
-    async def fake_update_memory(user_id, text, reply):
-        return None
+    def fake_after_exchange(user_id, **kwargs):
+        calls.setdefault("flush", []).append(user_id)
 
     monkeypatch.setattr(ccs.telemetry, "start", fake_start)
     monkeypatch.setattr(ccs.telemetry, "success", fake_success)
     monkeypatch.setattr(ccs.telemetry, "failure", fake_failure)
     monkeypatch.setattr(ccs.tools, "maybe_run_tool", fake_tool)
     monkeypatch.setattr(ccs.web_search, "plan_search", fake_plan)
-    monkeypatch.setattr(ccs.memory_service, "build_memory_context", fake_memory)
-    monkeypatch.setattr(ccs.memory_service, "update_memory", fake_update_memory)
+    monkeypatch.setattr(ccs.memory_service, "build_turn_memory", fake_memory)
+    monkeypatch.setattr(ccs.memory_service, "after_exchange", fake_after_exchange)
     monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
-    monkeypatch.setattr(ccs.db, "add_chat_turn", fake_add_turn)
+    monkeypatch.setattr(ccs.conversation_log.db, "add_chat_turn", fake_add_turn)
     return calls
 
 
@@ -326,7 +327,9 @@ async def test_run_chat_turn_shares_one_deadline_across_search_and_chat(monkeypa
         return ""
 
     async def no_memory(user_id, query=""):
-        return ""
+        from services.memory_service import TurnMemory
+
+        return TurnMemory()
 
     async def slow_chat(user_id, text, **kwargs):
         async def call():
@@ -340,7 +343,7 @@ async def test_run_chat_turn_shares_one_deadline_across_search_and_chat(monkeypa
 
     monkeypatch.setattr(svc.web_search, "plan_search", slow_search)
     monkeypatch.setattr(svc.tools, "maybe_run_tool", no_tool)
-    monkeypatch.setattr(svc.memory_service, "build_memory_context", no_memory)
+    monkeypatch.setattr(svc.memory_service, "build_turn_memory", no_memory)
     monkeypatch.setattr(svc.orchestrator, "chat", slow_chat)
     monkeypatch.setattr(svc.telemetry, "start", telemetry_noop)
     monkeypatch.setattr(svc.telemetry, "failure", telemetry_noop)
