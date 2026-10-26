@@ -1,6 +1,8 @@
 """Xử lý ảnh gửi tới bot: phân tích ảnh -> viết prompt tiếng Anh dán sang
 app Gemini. Ảnh có caption "hoá đơn"/"bill"/"chi tiêu" thì đọc hoá đơn và ghi
-khoản chi nháp (services/expense_service.py) thay vì viết prompt.
+khoản chi nháp (services/expense_service.py) thay vì viết prompt. Caption là câu
+hỏi/yêu cầu rõ về ảnh ("ảnh này là gì?", "dịch giúp anh chữ trong ảnh") thì trả
+lời về ảnh (services/vision_service.py); không caption vẫn viết prompt.
 
 Template prompt và lý do mỗi dạng (không caption / "cô gái 20" / "mặt tôi")
 tả chủ thể khác nhau: xem services/prompt_templates.py.
@@ -22,7 +24,7 @@ from core import config
 from core.text_normalize import nfc
 from ai import orchestrator
 from handlers import common
-from services import conversation_log, expense_service
+from services import conversation_log, expense_service, vision_service
 from services.prompt_identity import resolve_prompt_identity
 from services.prompt_templates import build_image_instruction
 from services.telemetry import telemetry
@@ -64,6 +66,36 @@ async def _receipt_msg(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
     await common.reply_long_text(update.message, text)
 
 
+async def _vision_msg(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, file_obj, caption: str, intent
+) -> None:
+    """Hỏi đáp về ảnh: tải về, gọi vision_service (đã lưu lịch sử), trả lời dạng
+    chữ thường (không phải khối prompt)."""
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    local_path = config.MEDIA_DIR / f"vision_{update.message.message_id}.jpg"
+    try:
+        await common.download_telegram_photo_with_retry(file_obj, local_path)
+        result = await vision_service.answer(
+            update.effective_user.id, str(local_path), caption, intent
+        )
+    except (TimedOut, NetworkError):
+        logger.exception("Lỗi tải ảnh hỏi đáp từ Telegram")
+        await update.message.reply_text(messages.PHOTO_TIMEOUT_ERROR)
+        return
+    except Exception as e:
+        logger.exception("Lỗi hỏi đáp về ảnh (provider-chain)")
+        await update.message.reply_text(
+            messages.friendly_error("image", owner=True, detail=_short_error(e))
+        )
+        return
+    finally:
+        await common.safe_delete(local_path)
+    text = result.text or messages.friendly_error("empty", owner=True)
+    if result.text and result.used_fallback:
+        text += "\n\n⚙️ API"
+    await common.reply_long_text(update.message, text)
+
+
 @common.restricted
 async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -72,6 +104,12 @@ async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         file_obj = update.message.photo[-1] if update.message.photo else update.message.document
         if file_obj is not None:
             await _receipt_msg(update, context, file_obj)
+            return
+    intent = vision_service.classify_caption(caption)
+    if intent.mode == vision_service.MODE_QA:
+        file_obj = update.message.photo[-1] if update.message.photo else update.message.document
+        if file_obj is not None:
+            await _vision_msg(update, context, file_obj, caption, intent)
             return
     prompt_label = caption or "(gửi ảnh, không có caption)"
     prompt_id = await telemetry.start(user_id, "promptify", prompt_label)

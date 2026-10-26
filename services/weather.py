@@ -225,16 +225,21 @@ async def get_weather(location: str = "", days: int = 1) -> dict:
 
     ``location`` rỗng hoặc là tên khác của TP.HCM -> TP.HCM. Không tìm thấy
     địa điểm -> dict có khoá ``error``. Raise WeatherError khi mọi nguồn lỗi."""
+    geo = await resolve_location(location)
+    if not geo:
+        return _not_found(location)
+    label, lat, lon = geo
+    return await get_weather_at(lat, lon, label, days)
+
+
+async def get_weather_at(lat: float, lon: float, label: str, days: int = 1) -> dict:
+    """Như get_weather nhưng theo TOẠ ĐỘ có sẵn (tin nhắn vị trí Telegram) - không
+    geocoding; dùng chung cache dự báo có trần. Raise WeatherError khi mọi nguồn lỗi."""
     try:
         days = int(days or 1)
     except (TypeError, ValueError):
         days = 1
     days = max(1, min(days, _MAX_DAYS))
-    geo = await resolve_location(location)
-    if not geo:
-        return _not_found(location)
-    label, lat, lon = geo
-
     cache_key = (round(lat, 3), round(lon, 3), days)
     cached = _forecast_cache.get(cache_key)
     if cached and time.monotonic() - cached[0] < _FORECAST_TTL_SEC:
@@ -303,6 +308,11 @@ async def get_air_quality(location: str = "") -> dict:
     if not geo:
         return _not_found(location)
     label, lat, lon = geo
+    return await get_air_quality_at(lat, lon, label)
+
+
+async def get_air_quality_at(lat: float, lon: float, label: str) -> dict:
+    """AQI theo toạ độ có sẵn (không geocoding). Raise WeatherError khi lỗi."""
     key = (round(lat, 3), round(lon, 3))
     cached = _air_cache.get(key)
     if cached and time.monotonic() - cached[0] < _AIR_TTL_SEC:

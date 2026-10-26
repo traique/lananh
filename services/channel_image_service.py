@@ -1,7 +1,9 @@
 """Channel-neutral image-to-prompt pipeline used by the Zalo bridge.
 
 Ảnh có caption "hoá đơn"/"bill"/"chi tiêu": đọc hoá đơn, ghi khoản chi nháp
-(services/expense_service.py) thay vì viết prompt."""
+(services/expense_service.py) thay vì viết prompt. Caption là câu hỏi/yêu cầu rõ
+về ảnh: trả lời về ảnh (services/vision_service.py) theo cách gọi riêng của
+thành viên; không caption vẫn viết prompt."""
 
 import os
 from pathlib import Path
@@ -10,7 +12,7 @@ import messages
 from ai import orchestrator
 from core import config
 from core.fileutil import safe_delete
-from services import conversation_log, expense_service, reply_audience
+from services import conversation_log, expense_service, reply_audience, vision_service
 from services.prompt_identity import resolve_prompt_identity
 from services.prompt_templates import build_image_instruction
 from services.telemetry import telemetry
@@ -48,6 +50,9 @@ async def handle_channel_image(
             return [reply], None
         finally:
             await safe_delete(receipt)
+    intent = vision_service.classify_caption(caption)
+    if intent.mode == vision_service.MODE_QA:
+        return await _vision_reply(user_id, image, caption, intent, safe_id, mime)
     path: Path = config.MEDIA_DIR / f"zalo_prompt_{safe_id}{_ALLOWED_TYPES[mime]}"
     prompt_id = await telemetry.start(
         user_id, "promptify", caption or "(ảnh Zalo không caption)", channel="zalo"
@@ -74,3 +79,21 @@ async def handle_channel_image(
         return [await reply_audience.error_text("image", user_id, detail)], None
     finally:
         await safe_delete(path)
+
+
+async def _vision_reply(
+    user_id: int, image: bytes, caption: str, intent, safe_id: str, mime: str
+) -> tuple[list[str], str | None]:
+    """Hỏi đáp về ảnh (vision_service đã lưu lịch sử); lỗi -> câu giọng Lan Anh."""
+    path: Path = config.MEDIA_DIR / f"zalo_vision_{safe_id}{_ALLOWED_TYPES[mime]}"
+    try:
+        path.write_bytes(image)
+        result = await vision_service.answer(user_id, str(path), caption, intent, channel="zalo")
+    except Exception as exc:
+        detail = messages.exception_detail(exc, limit=250)
+        return [await reply_audience.error_text("image", user_id, detail)], None
+    finally:
+        await safe_delete(path)
+    if not result.text:
+        return [await reply_audience.error_text("empty", user_id)], None
+    return [result.text], "api" if result.used_fallback else None

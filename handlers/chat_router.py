@@ -56,33 +56,56 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = nfc((update.message.text or "").strip())
     if not text:
         return
+    await route_text(update, context, text)
+
+
+async def route_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    *,
+    allow_side_effects: bool = True,
+) -> None:
+    """Định tuyến 1 câu chữ như tin nhắn thường. allow_side_effects=False (chữ
+    chép từ tin nhắn thoại - handlers/voice_handler.py): bỏ lối tắt nhắc việc,
+    ghi danh mục/chi tiêu bằng lời và tool ghi dữ liệu - chỉ trả lời."""
     user_id = update.effective_user.id
     # "Đang nhập..." suốt lượt (1 lần send_chat_action chỉ sống ~5 giây).
     async with common.typing_keepalive(context.bot, update.effective_chat.id):
-        if await _quick_reply(update, user_id, text):
+        if await _quick_reply(update, user_id, text, allow_side_effects=allow_side_effects):
             return
-        await _ai_reply(update, context, user_id, text)
+        await _ai_reply(update, context, user_id, text, allow_side_effects=allow_side_effects)
 
 
-async def _quick_reply(update: Update, user_id: int, text: str) -> bool:
+async def _quick_reply(
+    update: Update, user_id: int, text: str, *, allow_side_effects: bool = True
+) -> bool:
     """Các nhánh trả lời bằng code (không tốn lượt AI). True nếu đã trả lời."""
     # Câu trả lời nhanh cũng vào lịch sử để câu hỏi nối tiếp có ngữ cảnh.
     record = conversation_log.record_exchange
 
     # "hoãn 10p" / "xong" ngay sau tin nhắc việc: code xử lý, không tốn lượt AI.
-    shortcut = await reminder_service.maybe_handle_shortcut(user_id, text)
+    shortcut = (
+        await reminder_service.maybe_handle_shortcut(user_id, text) if allow_side_effects else None
+    )
     if shortcut is not None:
         await record(user_id, text, shortcut, conversation_log.KIND_REMINDER)
         await common.reply_long_text(update.message, shortcut)
         return True
 
-    portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
+    portfolio_result = (
+        await portfolio_service.maybe_handle_natural_language(user_id, text)
+        if allow_side_effects
+        else None
+    )
     if portfolio_result is not None:
         await record(user_id, text, portfolio_result, conversation_log.KIND_PORTFOLIO)
         await common.reply_long_text(update.message, portfolio_result)
         return True
 
-    expense_reply = await expense_service.maybe_handle_chat(user_id, text)
+    expense_reply = (
+        await expense_service.maybe_handle_chat(user_id, text) if allow_side_effects else None
+    )
     if expense_reply is not None:
         await record(user_id, text, expense_reply, conversation_log.KIND_EXPENSE)
         await common.reply_long_text(update.message, expense_reply)
@@ -129,7 +152,12 @@ async def _reply_or_edit(message, status_message, text: str) -> None:
 
 
 async def _ai_reply(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, text: str
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    text: str,
+    *,
+    allow_side_effects: bool = True,
 ) -> None:
     record = conversation_log.record_exchange
     tracker = turn_progress.Tracker()
@@ -164,6 +192,7 @@ async def _ai_reply(
                 grounding=route.grounding,
                 channel="telegram",
                 quote_text=quoted_text(update.message),
+                **({} if allow_side_effects else {"allow_side_effects": False}),
             )
             return route, turn
 

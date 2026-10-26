@@ -532,8 +532,10 @@ async def get_history(telegram_user_id: int, limit: int = 10):
 
 # Giữ tối đa N tin nhắn gần nhất / user trong chat_messages, để bảng không
 # phình vô hạn (prompt chỉ cần CHAT_HISTORY_TURNS*2 dòng - CHAT_HISTORY_TURNS là
-# số LƯỢT; phần dư là bộ đệm cho trích trí nhớ theo lô, services/memory_service).
-CHAT_MESSAGES_RETENTION_LIMIT = 200
+# số LƯỢT; phần dư là bộ đệm cho trích trí nhớ theo lô, services/memory_service,
+# và cho tool search_history tìm lại câu đã trao đổi). Mặc định 1000, env
+# CHAT_MESSAGES_RETENTION_LIMIT (kẹp 200-2000).
+CHAT_MESSAGES_RETENTION_LIMIT = config.CHAT_MESSAGES_RETENTION_LIMIT
 
 
 @_with_reconnect(idempotent=False)
@@ -616,6 +618,28 @@ async def get_recent_chat_rows(
     from core.repositories import memory
 
     rows = await memory.recent_chat_rows(await get_pool(), telegram_user_id, limit, max_chars)
+    return [dict(row) for row in rows]
+
+
+@_with_reconnect
+async def search_chat_history(
+    telegram_user_id: int, terms: list[str], *, scan_limit: int = 300, max_chars: int = 600
+) -> list[dict]:
+    """Tìm trong lịch sử chat CỦA CHÍNH người này (tool search_history): dòng
+    chứa ít nhất 1 từ trong ``terms`` (đã bỏ dấu, chữ thường; từ không phải
+    a-z0-9 bị bỏ - không có ký tự đại diện LIKE), kèm câu cùng lượt; mới -> cũ."""
+    from core.repositories import chat_history
+
+    patterns = [f"%{term}%" for term in terms if term.isascii() and term.isalnum()]
+    if not patterns:
+        return []
+    rows = await chat_history.search(
+        await get_pool(),
+        telegram_user_id,
+        patterns,
+        scan_limit=scan_limit,
+        max_chars=max_chars,
+    )
     return [dict(row) for row in rows]
 
 

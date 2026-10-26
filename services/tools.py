@@ -40,6 +40,7 @@ from core import config, urls
 from core import database as db
 from core.text_normalize import fold, nfc
 from core.text_utils import strip_json_fence
+from services import history_search  # noqa: F401 - đăng ký tool search_history
 from services import lunar, turn_progress, weather
 from services import tool_registry as reg
 from services.reminder_delivery import current_target
@@ -861,6 +862,22 @@ _TOOL_INTENT_KEYWORDS = (
     "tài liệu",
     "tai lieu",
     "kho kiến thức",
+    # Hỏi lại chuyện cũ -> tool search_history (services/history_search.py).
+    "hôm trước",
+    "hom truoc",
+    "lần trước",
+    "lan truoc",
+    "bữa trước",
+    "hôm bữa",
+    "em đã nói",
+    "em nói gì",
+    "em có nói",
+    "anh đã hỏi",
+    "anh có hỏi",
+    "đã trao đổi",
+    "tìm lại",
+    "tim lai",
+    "lịch sử chat",
 )
 # Link trong tin chỉ là lý do gọi router khi tool read_link còn dùng được ở lượt này.
 _URL_KEYWORDS = ("http://", "https://")

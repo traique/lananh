@@ -32,12 +32,15 @@ from handlers import (
     commands,
     daily_data_commands,
     expense_commands,
+    document_handler,
     feedback_commands,
     media_handler,
+    voice_handler,
     pairing_commands,
     portfolio_commands,
     provider_commands,
     reminder_commands,
+    unsupported,
     zalo_bridge_commands,
     zalo_login,
 )
@@ -343,10 +346,33 @@ def build_application():
         app.add_handler(CommandHandler(name, handler))
     # Nút inline (👍/👎, thử lại, duyệt bài Facebook, cấp quyền Zalo, hoãn nhắc).
     app.add_handler(CallbackQueryHandler(callbacks.on_callback))
+    # Thứ tự: lệnh -> nút -> vị trí -> thoại -> tài liệu -> ảnh -> chữ -> lệnh lạ -> catch-all.
+    # Vị trí -> thời tiết tại toạ độ; UpdateType.MESSAGE: bỏ qua cập nhật live location.
+    app.add_handler(
+        MessageHandler(filters.LOCATION & filters.UpdateType.MESSAGE, unsupported.location_msg)
+    )
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, voice_handler.voice_msg))
+    app.add_handler(
+        MessageHandler(
+            filters.Document.PDF
+            | filters.Document.TXT
+            | filters.Document.DOCX
+            | filters.Document.FileExtension("md"),
+            document_handler.document_msg,
+        )
+    )
     app.add_handler(MessageHandler(filters.PHOTO, media_handler.photo_msg))
     app.add_handler(MessageHandler(filters.Document.IMAGE, media_handler.photo_msg))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_router.chat_msg))
     app.add_handler(MessageHandler(filters.COMMAND, commands.unknown_cmd))
+    # Đăng ký CUỐI: tin loại chưa hỗ trợ (sticker, video, file lạ...) nhận 1 câu giọng
+    # Lan Anh thay vì im lặng; tin dịch vụ (vào nhóm, ghim...) và tin sửa bị bỏ qua.
+    app.add_handler(
+        MessageHandler(
+            filters.UpdateType.MESSAGE & ~filters.COMMAND & ~filters.StatusUpdate.ALL,
+            unsupported.unsupported_msg,
+        )
+    )
     app.add_error_handler(commands.error_handler)
 
     async def send_telegram_alert(text):

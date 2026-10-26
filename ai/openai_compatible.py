@@ -636,6 +636,48 @@ async def post_chat_completion_with_tools(
     return ToolCallResponse(text, tool_calls)
 
 
+async def post_audio_transcription(
+    client: httpx.AsyncClient,
+    *,
+    base_url: str,
+    api_key: str,
+    audio: bytes,
+    filename: str,
+    mime_type: str,
+    model: str,
+    provider_label: str,
+    language: str = "",
+    prompt: str = "",
+) -> str:
+    """POST multipart ``/audio/transcriptions`` (chuẩn OpenAI - Groq Whisper).
+
+    Trả lời đã strip, có thể RỖNG (đoạn ghi âm im lặng) - caller tự quyết. Lỗi
+    HTTP chuẩn hoá thành OpenAICompatibleError (kèm status_code/Retry-After như
+    post_chat_completion) để provider-chain đặt cooldown đúng khi 429."""
+    data = {"model": model, "response_format": "json", "temperature": "0"}
+    if language:
+        data["language"] = language
+    if prompt:
+        data["prompt"] = prompt
+    try:
+        response = await client.post(
+            f"{base_url.rstrip('/')}/audio/transcriptions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            data=data,
+            files={"file": (filename, audio, mime_type)},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        raise _http_error(provider_label, exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise OpenAICompatibleError(f"{provider_label}: {type(exc).__name__}: {exc}") from exc
+    text = payload.get("text") if isinstance(payload, dict) else None
+    if not isinstance(text, str):
+        raise OpenAICompatibleError(f"{provider_label}: response thiếu trường text")
+    return text.strip()
+
+
 def is_rate_limited(exc: BaseException) -> bool:
     """True nếu lỗi là HTTP 429 (hết quota/rate-limit) - theo status_code mang
     theo lỗi, hoặc message do post_chat_completion() tự dựng (f"{label} HTTP

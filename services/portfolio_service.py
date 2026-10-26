@@ -431,6 +431,18 @@ _BUY_DECLARATIVE_RE = re.compile(
 )
 
 
+def looks_like_write_statement(text: str) -> bool:
+    """Câu kể mua/bán mà maybe_handle_natural_language SẼ ghi vào danh mục - chỉ
+    nhận dạng, không ghi gì. Lượt chỉ đọc (chữ chép từ tin nhắn thoại, có thể nghe
+    nhầm số) dùng để nhắc người dùng gõ lại bằng chữ thay vì im lặng bỏ qua."""
+    stripped = (text or "").strip()
+    if not stripped or _is_question_or_advice(stripped):
+        return False
+    if any(pattern.search(stripped) for pattern in _BUY_PATTERNS):
+        return True
+    return bool(_SELL_DONE_RE.search(stripped) or _SELL_ROI_RE.search(stripped))
+
+
 async def maybe_handle_natural_language(user_id: int, text: str) -> str | None:
     stripped = text.strip()
     lower = stripped.lower()

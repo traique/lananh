@@ -241,6 +241,46 @@ async def generate_image_prompt(idx: int, instruction: str, image_path: str) -> 
     return FallbackResponse((response.text or "").strip())
 
 
+async def generate_from_bytes(
+    idx: int, instruction: str, data: bytes, mime_type: str, *, label: str
+) -> FallbackResponse:
+    """1 lượt Gemini nhận file inline (Part.from_bytes) + chỉ dẫn: nghe audio, đọc
+    PDF. Gemini giới hạn cả request inline 20 MB - caller đã chặn kích thước
+    file nhỏ hơn nhiều (VOICE_MAX_BYTES, DOCUMENT_MAX_BYTES)."""
+    from google.genai import types
+
+    client = await _get_official_client(idx)
+    response = await with_timeout(
+        client.aio.models.generate_content(
+            model=await _model_for(idx),
+            contents=[types.Part.from_bytes(data=data, mime_type=mime_type), instruction],
+        ),
+        OFFICIAL_VISION_TIMEOUT_SEC,
+        f"api{idx} {label}",
+    )
+    return FallbackResponse((response.text or "").strip())
+
+
+async def transcribe_audio(
+    idx: int, audio: bytes, mime_type: str, instruction: str
+) -> FallbackResponse:
+    """Gemini nghe audio inline (audio/ogg, audio/m4a, audio/aac...) và chép lời."""
+    return await generate_from_bytes(idx, instruction, audio, mime_type, label="audio")
+
+
+async def analyze_document(
+    idx: int, instruction: str, path: str, mime_type: str = "application/pdf"
+) -> FallbackResponse:
+    """Gemini đọc tài liệu (PDF) từ file tạm trên đĩa - chỉ đọc vào RAM lúc gọi."""
+
+    def _read_bytes() -> bytes:
+        with open(path, "rb") as file:
+            return file.read()
+
+    data = await asyncio.to_thread(_read_bytes)
+    return await generate_from_bytes(idx, instruction, data, mime_type, label="document")
+
+
 async def generate_utility_json(prompt: str) -> Optional[dict]:
     if not config.HAS_ANY_AI_STUDIO_KEY:
         return None

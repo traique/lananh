@@ -300,6 +300,38 @@ async def optional_air(place: str) -> dict | None:
         return None
 
 
+async def answer_coordinates(
+    lat: float, lon: float, label: str, today: dt.date | None = None
+) -> str:
+    """Thời tiết hôm nay + ngày mai tại toạ độ người dùng gửi (tin nhắn vị trí
+    Telegram) - bằng code, không geocoding, không gọi AI; kèm cảnh báo AQI > 100."""
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return "❌ Vị trí này không hợp lệ, gửi lại vị trí khác giúp em nha."
+    today = today or dt.datetime.now(_VN_TZ).date()
+
+    async def optional_air_at() -> dict | None:
+        try:
+            return await asyncio.wait_for(
+                weather.get_air_quality_at(lat, lon, label), _AIR_TIMEOUT_SEC
+            )
+        except Exception as exc:  # dữ liệu phụ: lỗi kiểu gì cũng bỏ qua
+            logger.info("Không lấy được AQI theo toạ độ: %r", exc)
+            return None
+
+    try:
+        data, air = await asyncio.gather(
+            asyncio.wait_for(weather.get_weather_at(lat, lon, label, 2), _TIMEOUT_SEC),
+            optional_air_at(),
+        )
+    except (weather.WeatherError, TimeoutError):
+        logger.warning("Tra thời tiết theo toạ độ lỗi (%.3f, %.3f)", lat, lon, exc_info=True)
+        return (
+            "❌ Chưa lấy được dữ liệu thời tiết lúc này (Open-Meteo và wttr.in đều lỗi), "
+            "thử lại sau nhé."
+        )
+    return _format(data, 0, 2, today, air)
+
+
 async def _air_answer(place: str) -> str | None:
     try:
         air = await asyncio.wait_for(weather.get_air_quality(place), _TIMEOUT_SEC)

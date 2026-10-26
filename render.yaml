@@ -139,6 +139,34 @@ services:
       # Chi tiêu: "cafe 45k" ghi bằng code (false = chỉ khi nói rõ hoặc /chitieu).
       - key: EXPENSE_CHAT_CAPTURE
         value: "true"
+      # Lịch sử chat mỗi người (tool search_history "hôm trước em nói gì...").
+      - key: CHAT_MESSAGES_RETENTION_LIMIT
+        value: "1000"
+      # Tin thoại (Groq Whisper -> Gemini), lượt chỉ đọc; ảnh kèm câu hỏi -> trả lời về
+      # ảnh (không caption vẫn viết prompt); file PDF/TXT/DOCX -> tóm tắt/hỏi đáp.
+      - key: VOICE_STT_ENABLED
+        value: "1"
+      - key: GROQ_STT_MODEL
+        value: "whisper-large-v3-turbo"
+      - key: VOICE_STT_LANGUAGE
+        value: "vi"
+      - key: VOICE_MAX_BYTES
+        value: "5242880"
+      - key: VOICE_MAX_SECONDS
+        value: "180"
+      - key: VISION_QA_ENABLED
+        value: "1"
+      - key: PHOTO_NO_CAPTION_MODE
+        value: "prompt"
+      - key: DOCUMENT_QA_ENABLED
+        value: "1"
+      - key: DOCUMENT_MAX_BYTES
+        value: "5242880"
+      - key: DOCUMENT_MAX_CHARS
+        value: "40000"
+      # Chỉ engine miễn phí; mistral-ocr/native (tính tiền) bị coi như tắt.
+      - key: OPENROUTER_PDF_ENGINE
+        value: "cloudflare-ai"
       # Heavy research jobs must never share the free web-service process.
       - key: STOCK_BACKTEST_ALLOW_ON_RENDER
         value: "false"
