@@ -6,7 +6,7 @@ Kênh (handlers/turn_feedback.py cho Telegram) đặt 1 ``Tracker`` cho lượt 
 web, đọc trang, lục kho rag/, số liệu cổ phiếu). ContextVar: task con của
 asyncio.gather thừa hưởng CÙNG tracker (object dùng chung) nên report từ task
 con vẫn tới được kênh. Không có tracker (Zalo/Zoom, job nền) -> report no-op.
-Service không bao giờ import handlers/.
+Tầng service không bao giờ phụ thuộc vào gói handlers/.
 """
 
 from __future__ import annotations
