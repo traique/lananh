@@ -43,6 +43,7 @@ from ai.provider_state import provider_state
 from channels import zalo_users
 from core import config, database as db
 from services import db_maintenance, market_page, memory_service, memory_stats
+from services import error_digest, watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -743,6 +744,15 @@ async def admin_memory_usage() -> Response:
     """RAM của container (giới hạn Render free 512 MB), từng tiến trình và các
     thư viện nặng đã nạp. Mở trực tiếp trên trình duyệt khi đã đăng nhập /admin."""
     return JSONResponse(await asyncio.to_thread(memory_stats.snapshot))
+
+
+@api_router.get("/watchdog")
+async def admin_watchdog() -> Response:
+    """Giám sát vận hành: lỗi gom theo loại hôm nay (chỉ loại + vị trí code) và
+    số lần khởi động lại 7 ngày qua (services/watchdog.py, error_digest.py)."""
+    return JSONResponse(
+        {"errors": error_digest.summary(), "restarts": await watchdog.restart_summary()}
+    )
 
 
 @api_router.get("/db-usage")

@@ -121,6 +121,7 @@ def _report_mismatches(mismatches: list[str]) -> None:
         "Migration đã áp nhưng file bị sửa sau đó (KHÔNG áp lại): %s. "
         "Thay đổi schema phải nằm trong file migration MỚI.",
         listed,
+        extra={"alerted": True},  # đã báo chủ bot ngay dưới: error digest không báo lần 2
     )
     alerts.send(
         f"⚠️ Migration DB đã áp nhưng file bị sửa sau đó: {listed}. "

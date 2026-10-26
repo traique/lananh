@@ -212,3 +212,13 @@ services:
         value: "20"
       - key: WATCHDOG_RESTART_BURST
         value: "3"
+      # Gom lỗi theo loại + vị trí code, báo lỗi mới (tối đa N/giờ), tổng hợp hôm qua
+      # lúc ERROR_DIGEST_HOUR_VN giờ VN (-1 = tắt); lệnh /loi.
+      - key: ERROR_DIGEST_ENABLED
+        value: "1"
+      - key: ERROR_ALERT_IMMEDIATE
+        value: "1"
+      - key: ERROR_ALERT_MAX_PER_HOUR
+        value: "4"
+      - key: ERROR_DIGEST_HOUR_VN
+        value: "7"

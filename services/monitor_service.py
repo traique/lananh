@@ -15,7 +15,8 @@ config.PROVIDER_ORDER đều đang exhausted cùng lúc - nghĩa là KHÔNG prov
 nào trả lời được, mọi lệnh AI sẽ lỗi.
 
 Cùng vòng lặp chạy watchdog vận hành (services/watchdog.py: RAM, dung lượng
-DB, inbox ứ đọng, job quá hạn, nhịp tim); lúc khởi động còn phân loại lần
+DB, inbox ứ đọng, job quá hạn, nhịp tim), lưu bộ đếm lỗi và gửi bản tổng hợp
+lỗi hằng ngày (services/error_digest.py); lúc khởi động còn phân loại lần
 restart vừa rồi. Tất cả vẫn là luật cố định, không gọi AI.
 """
 
@@ -26,7 +27,7 @@ import time
 import messages
 from ai.provider_state import provider_state, send_alert
 from core import config
-from services import watchdog
+from services import error_digest, watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -74,14 +75,19 @@ async def _check_all_providers_down() -> None:
         send_alert(messages.ALL_PROVIDERS_RECOVERED_ALERT)
 
 
-async def _startup_checks() -> None:
-    """Chạy 1 lần ở nền lúc khởi động (không chặn bot nhận tin)."""
+async def _run_step(label: str, step) -> None:
     try:
-        await watchdog.detect_restart()
+        await step()
     except asyncio.CancelledError:
         raise
     except Exception:
-        logger.warning("watchdog: không phân loại được lần khởi động.", exc_info=True)
+        logger.warning("monitor: bước %s lỗi.", label, exc_info=True)
+
+
+async def _startup_checks() -> None:
+    """Chạy 1 lần ở nền lúc khởi động (không chặn bot nhận tin)."""
+    await _run_step("gộp bộ đếm lỗi đã lưu", error_digest.load)
+    await _run_step("phân loại lần khởi động", watchdog.detect_restart)
 
 
 async def _monitor_loop() -> None:
@@ -91,16 +97,14 @@ async def _monitor_loop() -> None:
             await _check_all_providers_down()
         except Exception:
             logger.warning("Lỗi trong vòng giám sát provider-chain.", exc_info=True)
-        try:
-            await watchdog.run_checks()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning("Lỗi trong vòng watchdog.", exc_info=True)
+        await _run_step("watchdog", watchdog.run_checks)
+        await _run_step("lưu bộ đếm lỗi", error_digest.persist)
+        await _run_step("tổng hợp lỗi hằng ngày", error_digest.send_daily_digest_if_due)
 
 
 def start() -> None:
     global _monitor_task, _startup_task
+    error_digest.bind_loop()
     if _monitor_task is None or _monitor_task.done():
         _monitor_task = asyncio.create_task(_monitor_loop())
     if _startup_task is None:
@@ -122,7 +126,11 @@ async def stop() -> None:
     await _cancel(_startup_task)
     _monitor_task = None
     _startup_task = None
-    try:
-        await asyncio.wait_for(watchdog.write_heartbeat(clean=True), _SHUTDOWN_STEP_SEC)
-    except Exception:
-        logger.warning("Không ghi được nhịp tim lúc tắt.", exc_info=True)
+    for label, step in (
+        ("ghi nhịp tim", lambda: watchdog.write_heartbeat(clean=True)),
+        ("lưu bộ đếm lỗi", error_digest.persist),
+    ):
+        try:
+            await asyncio.wait_for(step(), _SHUTDOWN_STEP_SEC)
+        except Exception:
+            logger.warning("Không %s được lúc tắt.", label, exc_info=True)

@@ -77,6 +77,13 @@ async def test_start_chay_kiem_tra_khoi_dong_va_vong_watchdog(monkeypatch):
     async def heartbeat(*, clean=False):
         calls.append(f"heartbeat:{clean}")
 
+    async def digest_step(*args):
+        calls.append("digest")
+
+    monkeypatch.setattr(monitor_service.error_digest, "_loop", None)  # start() bind loop test
+    monkeypatch.setattr(monitor_service.error_digest, "load", digest_step)
+    monkeypatch.setattr(monitor_service.error_digest, "persist", digest_step)
+    monkeypatch.setattr(monitor_service.error_digest, "send_daily_digest_if_due", digest_step)
     monkeypatch.setattr(monitor_service.watchdog, "detect_restart", detect_restart)
     monkeypatch.setattr(monitor_service.watchdog, "run_checks", run_checks)
     monkeypatch.setattr(monitor_service.watchdog, "write_heartbeat", heartbeat)
@@ -89,5 +96,6 @@ async def test_start_chay_kiem_tra_khoi_dong_va_vong_watchdog(monkeypatch):
         await asyncio.sleep(0)
     await monitor_service.stop()
     assert "detect" in calls and "providers" in calls and "checks" in calls
-    assert calls[-1] == "heartbeat:True"
+    assert calls.count("digest") >= 3  # load lúc khởi động + persist/tổng hợp mỗi vòng
+    assert calls[-2:] == ["heartbeat:True", "digest"]  # tắt: nhịp tim rồi lưu bộ đếm lỗi
     assert monitor_service._monitor_task is None and monitor_service._startup_task is None

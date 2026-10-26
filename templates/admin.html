@@ -541,6 +541,10 @@
             <div id="db-box"><div class="skeleton"><i></i><i></i><i></i></div></div>
           </div>
         </div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-head"><h3>Giám sát &amp; lỗi</h3><span class="hint">chỉ lưu loại lỗi + vị trí code · /loi trên Telegram</span></div>
+          <div id="watchdog-box"><div class="skeleton"><i></i><i></i><i></i></div></div>
+        </div>
       </section>
     </main>
   </div>
@@ -1213,6 +1217,7 @@ function meterClass(percent) {
 async function loadMemoryUsage() {
   const s = await api('/admin/api/memory-usage');
   const c = s.container || {}, py = s.python || {};
+  const ws = c.working_set || {}, ev = c.events || {};
   const pct = c.used_percent;
   $('kpi-ram').textContent = c.used_mib == null ? (py.rss_mib == null ? '—' : fmtMib(py.rss_mib)) : fmtMib(c.used_mib);
   const meter = $('kpi-ram-meter');
@@ -1231,6 +1236,8 @@ async function loadMemoryUsage() {
       <tr><th>Đỉnh container</th><td>${esc(fmtMib(c.peak_mib))}</td></tr>
       <tr><th>Python RSS / đỉnh</th><td>${esc(fmtMib(py.rss_mib))} / ${esc(fmtMib(py.peak_rss_mib))}</td></tr>
       <tr><th>Thread · GC chờ</th><td>${esc(py.threads ?? '—')} · <span class="mono">${esc((py.gc_pending || []).join('/'))}</span></td></tr>
+      <tr><th>Working set</th><td>${ws.working_set_mib == null ? '<span class="muted">không đọc được</span>' : `${esc(fmtMib(ws.working_set_mib))}${ws.percent == null ? '' : ` <span class="pill ${ws.percent >= 85 ? 'bad' : ws.percent >= 75 ? 'warn' : 'ok'}">${esc(ws.percent)}%</span>`} <span class="muted small">(không tính page cache)</span>`}</td></tr>
+      <tr><th>Chạm trần · OOM kill</th><td><span class="mono">${esc(ev.max ?? '—')} · ${esc(ev.oom_kill ?? '—')}</span> <span class="muted small">(memory.events từ lúc container chạy)</span></td></tr>
     </table>
     <div class="card-head" style="margin:14px 0 6px"><h3>Tiến trình</h3></div>
     <div id="proc-table"></div>
@@ -1260,6 +1267,30 @@ async function loadDbUsage() {
     </table>`;
 }
 
+const RESTART_LABEL = { first: 'lần đầu', deploy: 'deploy', restart: 'khởi động lại', sleep: 'gián đoạn lâu', crash: 'tiến trình chết', oom: 'hết RAM (OOM)' };
+
+async function loadWatchdog() {
+  const d = await api('/admin/api/watchdog');
+  const e = d.errors || {}, r = d.restarts || {};
+  const counts = Object.entries(r.counts || {});
+  $('watchdog-box').innerHTML = `
+    <table class="tbl kv">
+      <tr><th>Lỗi hôm nay</th><td><b>${esc(fmtNum(e.today_total))}</b> lần · ${esc(fmtNum(e.signatures_today))} loại <span class="muted small">(hôm qua ${esc(fmtNum(e.yesterday_total))} lần)</span></td></tr>
+      <tr><th>Khởi động lại ${esc(r.days ?? 7)} ngày</th><td>${counts.length
+        ? counts.map(([kind, n]) => `<span class="pill ${['crash', 'oom', 'sleep'].includes(kind) ? 'bad' : 'neutral'}">${esc(RESTART_LABEL[kind] || kind)}: ${esc(n)}</span>`).join(' ')
+        : '<span class="muted">không có</span>'}</td></tr>
+      <tr><th>Nhịp tim gần nhất</th><td>${r.enabled ? esc(r.heartbeat_at ? fmtAbs(new Date(r.heartbeat_at)) : '—') : '<span class="muted">chỉ chạy trên Render (WATCHDOG_ENABLED)</span>'} <span class="muted small">· uptime ${esc(r.uptime_min == null ? '—' : r.uptime_min >= 120 ? `${Math.round(r.uptime_min / 60)} giờ` : `${Math.round(r.uptime_min)} phút`)}${r.commit ? ` · commit <span class="mono">${esc(r.commit)}</span>` : ''}</span></td></tr>
+    </table>
+    <div class="card-head" style="margin:14px 0 6px"><h3>Lỗi hôm nay theo loại</h3></div>
+    <div id="error-table"></div>`;
+  renderTable($('error-table'), [
+    { label: 'Số lần', cls: 'num', cell: x => `${esc(fmtNum(x.count))}${x.level === 'WARNING' ? ' <span class="pill neutral">cảnh báo</span>' : ''}` },
+    { label: 'Loại', cell: x => `<span class="mono">${esc(x.exc_type)}</span>` },
+    { label: 'Vị trí', cell: x => `<span class="mono small">${esc(x.where)}:${esc(x.line)}</span><div class="muted small">${esc(x.logger)}</div>` },
+    { label: 'Lần cuối', cell: x => esc(x.last_at) },
+  ], e.today || [], 'Hôm nay chưa ghi nhận lỗi nào.');
+}
+
 /* ---------- Làm mới & tự làm mới ---------- */
 const LIVE_LOADERS = [
   ['state', loadState, 'cooldown-table'],
@@ -1269,6 +1300,7 @@ const LIVE_LOADERS = [
   ['daily', loadDaily, 'chart'],
   ['ram', loadMemoryUsage, 'ram-box'],
   ['db', loadDbUsage, 'db-box'],
+  ['watchdog', loadWatchdog, 'watchdog-box'],
 ];
 const CONFIG_LOADERS = [
   ['providers', loadProviders, 'providers-list'],

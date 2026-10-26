@@ -215,7 +215,12 @@ async def _end_publish(job: str) -> None:
 
 
 def _alert_uncertain(job: str, key: str) -> None:
-    logger.error("market_page: lượt đăng %s (%s) chưa rõ kết quả - không tự đăng lại.", job, key)
+    logger.error(
+        "market_page: lượt đăng %s (%s) chưa rõ kết quả - không tự đăng lại.",
+        job,
+        key,
+        extra={"alerted": True},  # cảnh báo riêng ngay dưới; error digest không báo lần 2
+    )
     alerts.send(messages.MARKET_PAGE_UNCERTAIN_ALERT.format(job=job, key=key))
 
 
@@ -1274,7 +1279,11 @@ async def run_once(job: str, when: datetime, *, force: bool = False) -> bool:
     try:
         done = bool(await _execute(job))
     except FacebookPublicationUncertain:
-        logger.error("market_page: %s chưa rõ Facebook đã tạo bài chưa, không tự đăng lại.", job)
+        logger.error(
+            "market_page: %s chưa rõ Facebook đã tạo bài chưa, không tự đăng lại.",
+            job,
+            extra={"alerted": True},  # _guarded_publish đã báo chủ bot
+        )
         done = True
     except MarketSkip as skip:
         logger.info("market_page: %s bỏ qua - %s.", job, skip)

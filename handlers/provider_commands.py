@@ -1,5 +1,5 @@
 """Lệnh Telegram đổi cấu hình AI toàn cục: /model, /status, /userouter9,
-/router9, /tavily và /anh (tạo ảnh Agnes AI + bật/tắt)."""
+/router9, /tavily và /anh (tạo ảnh Agnes AI + bật/tắt); /loi xem lỗi gom nhóm."""
 
 import asyncio
 import html
@@ -14,6 +14,7 @@ from ai import agnes_client, orchestrator, router9_client, tavily_client
 from core import config
 from core.text_utils import parse_on_off
 from handlers import common
+from services import error_digest
 
 
 @common.restricted
@@ -268,3 +269,11 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"{text}\n\n<i>⏱️ Kiểm tra lúc {_fmt_epoch_vn(checked_at)}</i>",
         parse_mode="HTML",
     )
+
+
+@common.restricted
+async def loi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/loi - lỗi gom theo loại hôm nay/hôm qua + số lần khởi động lại 7 ngày.
+    Gửi plain text: đường dẫn code có dấu "_" sẽ bị Markdown hiểu nhầm."""
+    text = await error_digest.build_report()
+    await update.message.reply_text(text[: common.TELEGRAM_TEXT_MAX])
