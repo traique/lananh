@@ -61,6 +61,8 @@ def _mask(text: str) -> str:
             "seed phrase: abandon ability able about above absent absorb abstract",
             "seed phrase: [đã ẩn: khoá bí mật]",
         ),
+        ("mật khẩu wi-fi: Abc12345", "mật khẩu wi-fi: [đã ẩn: mật khẩu]"),
+        ("mật khẩu của Lan123 là gì", "mật khẩu của Lan123 là gì"),
         # Ký tự vô hình không giấu được từ khoá.
         ("O​TP 482913", "OTP [đã ẩn: mã OTP]"),
     ],

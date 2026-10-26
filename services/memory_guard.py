@@ -172,7 +172,8 @@ def safe_memory_text(text: str) -> str | None:
 # nhầm làm hỏng câu hỏi bình thường, nên mỗi luật khoanh đúng nhóm giá trị "v"
 # (giữ từ khoá cho model hiểu câu) và có bộ kiểm giá trị riêng.
 
-_PROMPT_SEP = r"[ \t]*(?:là|la|:|=|-)[ \t]*"
+# "là"/"-" phải đứng riêng ("wi-fi", "Lan123" không phải dấu tách); ":"/"=" thì không cần.
+_PROMPT_SEP = r"(?:[ \t]*[:=][ \t]*|[ \t]+(?:là|la|-)[ \t]+)"
 # Đuôi số tiền/đơn vị ngay sau giá trị: "pass - 15tr", "stk có 1500000 đồng".
 _UNIT_TAIL_RE = re.compile(
     r"[ \t]*(?:k|tr|triệu|trieu|tỷ|ty|nghìn|nghin|ngàn|ngan|đ|đồng|dong|vnd|vnđ|usd|"
