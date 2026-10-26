@@ -135,3 +135,20 @@ def configure_logging() -> None:
             # secret cho chắc nếu sau này có trường nào đọc message.
             digest.addFilter(_active_filter)
             root.addHandler(digest)
+        # uvicorn CLI áp LOGGING_CONFIG (logger "uvicorn" propagate=False) TRƯỚC khi
+        # import web.py, nên "Exception in ASGI application" (route HTTP lỗi không
+        # bắt) từ uvicorn.error không bao giờ tới root. Chỉ gắn thêm khi chuỗi đó
+        # không tới root - chạy uvicorn với log_config=None thì không đếm 2 lần.
+        uv_error = logging.getLogger("uvicorn.error")
+        if not _reaches_root(uv_error) and digest not in uv_error.handlers:
+            uv_error.addHandler(digest)
+
+
+def _reaches_root(logger: logging.Logger) -> bool:
+    """Record của ``logger`` có lan tới handler của root không (mọi tầng propagate)."""
+    current: Optional[logging.Logger] = logger
+    while current is not None and current is not logging.getLogger():
+        if not current.propagate:
+            return False
+        current = current.parent
+    return True

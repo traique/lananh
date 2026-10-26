@@ -268,3 +268,46 @@ def test_thread_safe_dem_dong_thoi():
     for t in threads:
         t.join()
     assert store.entries("2026-10-26")[0].count == 800
+
+
+def _raise_record(name: str) -> logging.LogRecord:
+    try:
+        raise KeyError("x")
+    except KeyError:
+        import sys
+
+        return logging.getLogger(name).makeRecord(
+            name, logging.ERROR, __file__, 1, "Exception in ASGI application", (), sys.exc_info()
+        )
+
+
+@pytest.mark.parametrize("uvicorn_propagate", [False, True])
+def test_loi_uvicorn_error_duoc_dem_dung_1_lan(monkeypatch, uvicorn_propagate):
+    """uvicorn CLI áp LOGGING_CONFIG (logger "uvicorn" propagate=False) trước khi import
+    web.py: "Exception in ASGI application" từ uvicorn.error không tới root - handler
+    phải gắn thêm vào uvicorn.error; còn khi chuỗi đã tới root thì không đếm 2 lần."""
+    import logging_setup
+
+    store = ed.DigestStore()
+    monkeypatch.setattr(ed, "store", store)
+    monkeypatch.setattr(ed, "_handler", None)
+    monkeypatch.setattr(ed, "_loop", None)
+    monkeypatch.delenv("ERROR_DIGEST_ENABLED", raising=False)
+    root = logging.getLogger()
+    uv = logging.getLogger("uvicorn")
+    uv_error = logging.getLogger("uvicorn.error")
+    monkeypatch.setattr(root, "handlers", [])
+    monkeypatch.setattr(uv, "handlers", [logging.NullHandler()])
+    monkeypatch.setattr(uv, "propagate", uvicorn_propagate)
+    monkeypatch.setattr(uv_error, "handlers", [])
+    monkeypatch.setattr(uv_error, "disabled", False)
+    logging_setup.configure_logging()
+    logging_setup.configure_logging()
+    uv_error.handle(_raise_record("uvicorn.error"))
+    entries = store.entries(_today_vn())
+    assert [(e.logger, e.exc_type, e.count) for e in entries] == [("uvicorn.error", "KeyError", 1)]
+    assert entries[0].where.startswith("test/test_error_digest.py:")
+
+
+def _today_vn() -> str:
+    return datetime.now(VN).date().isoformat()
