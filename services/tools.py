@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo
 
 from core import config, urls
 from core import database as db
-from core.text_normalize import fold
+from core.text_normalize import fold, nfc
 from core.text_utils import strip_json_fence
 from services import history_search  # noqa: F401 - đăng ký tool search_history
 from services import lunar, turn_progress, weather
@@ -892,12 +892,34 @@ async def _route_with_chain(prompt: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+# Câu có chữ "nhắc" nhưng KHÔNG phải đặt nhắc mới: huỷ/dừng nhắc, kể chuyện đã qua.
+# Đường code tất định bỏ qua (router qua provider-chain quyết định, hỏng thì báo
+# chưa lưu được) - không đặt nhắc "Bỏ uống thuốc" mỗi ngày.
+_NOT_NEW_REMINDER_RE = re.compile(
+    r"\b(?:huỷ|hủy|xoá|xóa|bỏ|dừng|tắt|thôi|đừng|khỏi|không cần)\s+(?:cái\s+)?nhắc\b"
+    r"|\b(?:hôm qua|hôm kia|hôm trước|bữa trước|lúc nãy|đã nhắc|rồi mà)\b"
+    r"|\bnhắc (?:(?:anh|em|tôi|mình|chị) )?rồi\b"
+)
+_NOT_NEW_REMINDER_PLAIN_RE = re.compile(
+    r"\b(?:huy|xoa|bo|dung|tat|thoi|khoi|khong can) (?:cai )?nhac\b"
+    r"|\b(?:hom qua|hom kia|hom truoc|bua truoc|da nhac|roi ma)\b"
+    r"|\bnhac (?:(?:anh|em|toi|minh|chi) )?roi\b"
+)
+
+
+def _not_new_reminder(user_text: str) -> bool:
+    low = re.sub(r"\s+", " ", nfc(user_text or "")).strip().lower()
+    plain = fold(low) == low
+    return bool((_NOT_NEW_REMINDER_PLAIN_RE if plain else _NOT_NEW_REMINDER_RE).search(low))
+
+
 async def _deterministic(user_id: int, user_text: str, intent: str) -> reg.ToolOutcome | None:
     """Đường code tất định khi router AI hỏng: nhắc việc / ghi chú / khoản chi đọc
-    được bằng code thì vẫn lưu được - không bắt người dùng gửi lại."""
+    được bằng code thì vẫn lưu được - không bắt người dùng gửi lại. Câu huỷ nhắc /
+    kể chuyện đã qua không đi đường này (không tự đặt nhắc mới)."""
     from services import expense_service, vn_time_parse
 
-    if intent == "reminder":
+    if intent == "reminder" and not _not_new_reminder(user_text):
         extracted = vn_time_parse.extract_reminder(user_text)
         if extracted and extracted[1].due_at and not extracted[1].error:
             message = extracted[0] or "(không có nội dung cụ thể)"

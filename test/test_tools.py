@@ -145,6 +145,31 @@ async def test_router_hong_van_dat_duoc_nhac_bang_code(monkeypatch, reminders, f
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("router_data", [None, {}])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "bỏ nhắc uống thuốc 7h sáng mỗi ngày",
+        "huỷ nhắc 8h tối mai gọi mẹ",
+        "hôm qua em nhắc anh 8h rồi mà",
+        "đừng nhắc anh 8h tối mai nữa",
+        "huy nhac 8h toi mai goi me",  # gõ không dấu
+    ],
+)
+async def test_router_hong_khong_dat_nhac_cho_cau_huy_hoac_ke_chuyen(
+    monkeypatch, reminders, frozen, router_data, text
+):
+    """Đường code tất định chỉ dành cho câu ĐẶT nhắc: câu huỷ/kể chuyện đã qua không
+    được thành nhắc mới khi router hỏng (chain cũng hỏng -> báo chưa lưu được)."""
+    _router(monkeypatch, router_data)
+
+    outcome = await tools.maybe_run_tool(1, text)
+
+    assert reminders["once"] == [] and reminders["series"] == []
+    assert outcome.status == reg.STATUS_UNAVAILABLE and not outcome.saved
+
+
+@pytest.mark.asyncio
 async def test_router_provider_chain_du_phong(monkeypatch, reminders, frozen):
     _router(monkeypatch, None)
 
