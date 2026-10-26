@@ -250,3 +250,28 @@ def test_12h_dem_lap_hang_ngay_va_ngay_nho():
     assert when.recurrence == {"type": "daily", "at": "00:00"}
     assert when.due_at == at(2026, 10, 27, 0)
     assert p.find_time_of_day("lúc 12h đêm")[:2] == (0, 0)
+
+
+@pytest.mark.parametrize(
+    ("text", "due"),
+    [
+        # "mới" (new) bỏ dấu trùng "mỗi": không được thành nhắc lặp.
+        ("nhắc anh mai 9h đi nhận hàng mới tháng này", at(2026, 10, 27, 9)),
+        ("nhắc anh 3h chiều mai họp với khách mới năm nay", at(2026, 10, 27, 15)),
+        ("8h tối mai nhắc anh gửi quà cho người mới tuần trước gặp", at(2026, 10, 27, 20)),
+        ("nhắc anh 8h sáng đón nhân viên mới thứ 2", at(2026, 11, 2, 8)),
+    ],
+)
+def test_moi_khac_moi_khong_thanh_nhac_lap(text, due):
+    when = p.parse(text, NOW)
+    assert when.recurrence is None and when.due_at == due and not when.error
+    assert "mới" in p.extract_reminder(text, NOW)[0]  # chữ "mới" vẫn trong nội dung
+
+
+def test_moi_ngay_go_khong_dau_van_la_nhac_lap():
+    when = p.parse("nhac anh 7h sang moi ngay uong thuoc", NOW)
+    assert when.recurrence == {"type": "daily", "at": "07:00"}
+    weekly = p.parse("nhắc anh mỗi thứ 2 lúc 7h họp giao ban", NOW)
+    assert weekly.recurrence == {"type": "weekly", "at": "07:00", "days": [0]}
+    monthly = p.parse("nhắc anh 9h ngày 5 hàng tháng đóng tiền", NOW)
+    assert monthly.recurrence == {"type": "monthly", "at": "09:00", "day": 5}

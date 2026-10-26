@@ -376,14 +376,23 @@ def _weekdays(scan: _Scan, today: dt.date) -> tuple[list[int], dt.date | None, b
                     found.append(6)
                 else:
                     found.append(int(raw) - 2 if raw.isdigit() else _WEEKDAY[raw])
-        every = every or bool(m.group("moi") or m.group("moi2"))
+        span_start = m.start()
+        every_group = "moi" if m.group("moi") else "moi2" if m.group("moi2") else None
+        if every_group is not None:
+            # "vao cac" -> soát chữ "các"; "mới thứ 2" không phải "mỗi thứ 2" (chữ
+            # "mới" giữ lại trong nội dung nhắc).
+            word = m.group(every_group).split()[-1]
+            if _every_word_ok(scan, m.start(every_group) + m.group(every_group).rfind(word)):
+                every = True
+            else:
+                span_start = m.end(every_group)
         shifted = shifted or bool(m.group("shift"))
         if first is None:
-            folded = scan.work[m.start() : m.end()].strip()
+            folded = scan.work[span_start : m.end()].strip()
             rel = calendar_query.relative_day_folded(re.sub(r"\s+", " ", folded), today)
             first = rel[0] if rel else None
         days.extend(d for d in found if d not in days)
-        scan.mask(m.start(), m.end())
+        scan.mask(span_start, m.end())
     return days, first, every, shifted
 
 
@@ -423,10 +432,24 @@ def _relative(scan: _Scan, today: dt.date) -> dt.date | None:
     return None
 
 
+_EVERY_ACCENTED = {"moi": ("mỗi",), "hang": ("hằng", "hàng"), "cac": ("các",)}
+
+
+def _every_word_ok(scan: _Scan, start: int) -> bool:
+    """Chữ "mỗi/hằng/hàng/các" ở ``start`` (nếu có) phải đúng dấu khi câu có dấu:
+    "mới", "mời", "hãng" bỏ dấu cũng thành moi/hang."""
+    word = re.match(r"moi|hang|cac", scan.work[start:])
+    if word is None:
+        return True
+    return scan.accented(start, start + word.end(), *_EVERY_ACCENTED[word.group(0)])
+
+
 def _recurrence_words(scan: _Scan) -> tuple[str | None, str | None]:
     """(đơn vị lặp "ngay|tuan|thang|nam" | None, buổi trong "mỗi sáng")."""
     unit = period = None
     for m in _RECUR_RE.finditer(scan.work):
+        if not _every_word_ok(scan, m.start()):
+            continue  # "hàng mới tháng này", "khách mới năm nay": mới != mỗi
         unit = unit or m.group("unit") or m.group("unit2")
         if m.group("period"):
             unit = unit or "ngay"
