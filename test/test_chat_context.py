@@ -200,3 +200,17 @@ async def test_tra_kho_rag_chi_chu_bot_admin_va_khong_o_luot_co_phieu(turn, monk
     monkeypatch.setenv("CHAT_AUTO_RAG", "0")
     await ccs.run_chat_turn(OWNER, "vòng lặp ReAct là gì")
     assert looked == ["vòng lặp ReAct là gì"]
+
+
+@pytest.mark.asyncio
+async def test_bai_bao_vua_doc_nguyen_van_duoc_nho_cho_cau_hoi_noi_tiep():
+    chat_context._pages.clear()
+    chat_context.remember_article(
+        OWNER, "https://vnexpress.net/bai-1.html", "Giá xăng giảm 500 đồng."
+    )
+    page = await chat_context.read_link(
+        OWNER, "trong bài có nói giá xăng giảm bao nhiêu?", allowed=True
+    )
+    assert page.read_ok and "Giá xăng giảm 500 đồng." in page.grounding
+    assert (await chat_context.read_link(OWNER, "bài này nói gì", allowed=False)).grounding == ""
+    chat_context._pages.clear()
