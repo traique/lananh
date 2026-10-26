@@ -25,6 +25,9 @@ migration bị sửa. Module này lo những thứ hỏng từ từ mà không a
    động trước process này) / ngủ-gián đoạn lâu. Chỉ báo ngay OOM, crash, gián
    đoạn > WATCHDOG_RESTART_GAP_MIN; restart thường chỉ báo khi dồn dập
    (>= WATCHDOG_RESTART_BURST lần/24h - dấu hiệu Render kill instance vì hết RAM).
+   Restart mà instance trước tắt êm (sửa env, Manual Deploy, Restart service: Render
+   gửi SIGTERM) không tính; vì instance cũ chỉ tắt SAU khi instance mới healthy, phần
+   đếm dồn dập chạy ở chu kỳ sau (_BURST_SETTLE_SEC), báo tối đa 1 lần/24 giờ.
 
 Watchdog trong process không báo được khi chính process đã chết: cần thêm 1
 monitor UptimeRobot trỏ /healthz có liên hệ cảnh báo và bật email thông báo của
@@ -58,6 +61,13 @@ VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 MIB = 1024 * 1024
 HEARTBEAT_KEY = "runtime:heartbeat"
 RESTARTS_KEY = "runtime:restarts"
+# Instance đã tắt êm (SIGTERM -> monitor_service.stop): restart sau nó là có chủ ý.
+CLEAN_EXITS_KEY = "runtime:clean_exits"
+MAX_CLEAN_EXITS = 20
+_BURST_KEY = "watchdog:restart_burst"
+# Đếm restart dồn dập sau ngần này giây kể từ khi process khởi động: Render chạy chồng
+# instance cũ tới khi instance mới healthy rồi mới SIGTERM (chờ tắt tối đa 300 s).
+_BURST_SETTLE_SEC = 600
 _MISSED_KEY = "watchdog:missed"
 _DB_LEVEL_KEY = "watchdog:db_level"
 MAX_RESTART_LOG = 50
@@ -407,11 +417,29 @@ def _heartbeat_payload(*, clean: bool) -> dict:
     }
 
 
+def _clean_exits(raw: str | None) -> list[dict]:
+    items = _load_json(raw)
+    if not isinstance(items, list):
+        return []
+    return [i for i in items if isinstance(i, dict) and isinstance(i.get("inst"), str)]
+
+
+async def _record_clean_exit() -> None:
+    exits = [
+        i for i in _clean_exits(await db.get_setting(CLEAN_EXITS_KEY)) if i["inst"] != _INSTANCE
+    ]
+    exits.append({"inst": _INSTANCE, "ts": round(time.time())})
+    await db.set_setting(CLEAN_EXITS_KEY, json.dumps(exits[-MAX_CLEAN_EXITS:]))
+
+
 async def write_heartbeat(*, clean: bool = False) -> None:
     """Ghi nhịp tim (mỗi chu kỳ; ``clean=True`` lúc tắt êm)."""
     if not enabled() or not _on_render():
         return
     if clean:
+        # Ghi nhận tắt êm TRƯỚC (kể cả khi nhịp tim đã thuộc instance mới): restart
+        # sau instance này là có chủ ý, không tính vào cảnh báo dồn dập.
+        await _record_clean_exit()
         # Deploy: instance mới đã ghi nhịp tim trước khi instance cũ tắt - không ghi đè.
         current = _load_json(await db.get_setting(HEARTBEAT_KEY)) or {}
         if current.get("inst") not in (None, _INSTANCE):
@@ -491,9 +519,14 @@ def _restart_log(raw: str | None, now: float) -> list[dict]:
     ][-MAX_RESTART_LOG:]
 
 
+_burst_pending = False
+
+
 async def detect_restart(now: float | None = None) -> RestartInfo | None:
     """Gọi 1 lần lúc khởi động: phân loại, ghi nhật ký restart (có trần), báo
-    chủ bot nếu đáng báo, rồi ghi nhịp tim mới."""
+    chủ bot nếu đáng báo, rồi ghi nhịp tim mới. Restart thường thì chỉ đánh dấu
+    để check_restart_burst xét sau (instance cũ có thể chưa tắt)."""
+    global _burst_pending
     if not enabled() or not _on_render():
         return None
     now = now or time.time()
@@ -508,29 +541,62 @@ async def detect_restart(now: float | None = None) -> RestartInfo | None:
     )
     log = _restart_log(await db.get_setting(RESTARTS_KEY), now)
     if info.kind != "first":
-        log.append({"ts": round(now), "kind": info.kind, "gap_min": round(info.gap_min or 0, 1)})
+        entry: dict = {"ts": round(now), "kind": info.kind, "gap_min": round(info.gap_min or 0, 1)}
+        prev_inst = prev.get("inst") if isinstance(prev, dict) else None
+        if isinstance(prev_inst, str):
+            entry["prev"] = prev_inst
+        log.append(entry)
         log = log[-MAX_RESTART_LOG:]
         await db.set_setting(RESTARTS_KEY, json.dumps(log))
     await write_heartbeat()
     logger.info("watchdog: khởi động (%s, gián đoạn %s phút).", info.kind, info.gap_min)
-    text = None
     if info.alert and isinstance(prev, dict):
-        text = restart_alert_text(info, prev)
-    elif info.kind == "restart":
-        burst = sum(
-            1
-            for item in log
-            if now - item["ts"] < 86400 and item.get("kind") in ("restart", "crash", "oom")
+        alerts.send(
+            restart_alert_text(info, prev), key=f"watchdog:restart:{info.kind}", cooldown=600
         )
-        if burst >= env_int("WATCHDOG_RESTART_BURST", 3, 2, 50):
-            text = (
-                f"⚠️ Bot đã khởi động lại {burst} lần trong 24 giờ qua mà không có deploy mới "
-                "- thường do hết RAM (Render kill cả instance) hoặc nền tảng chập chờn. Xem "
-                "Events trên dashboard Render và RAM ở /admin."
-            )
-    if text:
-        alerts.send(text, key=f"watchdog:restart:{info.kind}", cooldown=600)
+    elif info.kind == "restart":
+        _burst_pending = True
     return info
+
+
+def _unplanned(item: dict, clean_ids: set[str]) -> bool:
+    """Restart không chủ ý: crash/OOM, hoặc restart mà instance trước KHÔNG tắt êm
+    (bản ghi cũ chưa có ``prev`` coi như không tắt êm)."""
+    kind = item.get("kind")
+    if kind in ("crash", "oom"):
+        return True
+    return kind == "restart" and item.get("prev") not in clean_ids
+
+
+async def check_restart_burst(now: float | None = None) -> None:
+    """Chạy trong vòng watchdog: 1 lần cho mỗi lần khởi động kiểu "restart", sau
+    _BURST_SETTLE_SEC (instance cũ đã tắt hẳn, kịp ghi bản ghi tắt êm). Báo khi số
+    restart không chủ ý trong 24 giờ >= WATCHDOG_RESTART_BURST, tối đa 1 lần/24 giờ
+    (dedup lưu settings - cooldown của alerts mất theo mỗi restart)."""
+    global _burst_pending
+    if not _burst_pending or not enabled() or not _on_render():
+        return
+    now = now or time.time()
+    if now - _PROCESS_STARTED < _BURST_SETTLE_SEC:
+        return
+    log = _restart_log(await db.get_setting(RESTARTS_KEY), now)
+    clean_ids = {i["inst"] for i in _clean_exits(await db.get_setting(CLEAN_EXITS_KEY))}
+    burst = sum(1 for item in log if now - item["ts"] < 86400 and _unplanned(item, clean_ids))
+    if burst < env_int("WATCHDOG_RESTART_BURST", 3, 2, 50):
+        _burst_pending = False
+        return
+    last = _load_json(await db.get_setting(_BURST_KEY))
+    _burst_pending = False
+    if isinstance(last, (int, float)) and now - last < 86400:
+        return
+    text = (
+        f"⚠️ Bot đã khởi động lại {burst} lần trong 24 giờ qua mà không có deploy mới và "
+        "không phải tắt êm (sửa env/Restart service không tính) - thường do hết RAM "
+        "(Render kill cả instance) hoặc nền tảng chập chờn. Xem Events trên dashboard "
+        "Render và RAM ở /admin."
+    )
+    if alerts.send(text, key="watchdog:restart:burst", cooldown=600):
+        await db.set_setting(_BURST_KEY, json.dumps(round(now)))
 
 
 async def restart_summary(days: int = 7) -> dict:
@@ -572,6 +638,7 @@ async def run_checks(now: datetime | None = None) -> None:
         ("dung lượng DB", lambda: check_db_size(now)),
         ("webhook inbox", check_inbox),
         ("job hằng ngày", lambda: check_missed_jobs(now)),
+        ("restart dồn dập", check_restart_burst),
         ("nhịp tim", write_heartbeat),
     )
     for label, step in steps:

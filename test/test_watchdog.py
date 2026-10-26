@@ -45,6 +45,7 @@ def _reset(monkeypatch):
     monkeypatch.setattr(watchdog, "_high_cycles", 0)
     monkeypatch.setattr(watchdog, "_last_events", None)
     monkeypatch.setattr(watchdog, "_settled", set())
+    monkeypatch.setattr(watchdog, "_burst_pending", False)
     monkeypatch.delenv("WATCHDOG_ENABLED", raising=False)
     monkeypatch.setenv("RENDER", "true")
 
@@ -342,13 +343,82 @@ async def test_restart_don_dap_thi_bao(monkeypatch, store, sent):
     monkeypatch.setattr(watchdog, "container_start_offset", lambda: 0.5)
     monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
     now = time.time()
-    store[watchdog.HEARTBEAT_KEY] = json.dumps({"ts": now - 60})
+    monkeypatch.setattr(watchdog, "_PROCESS_STARTED", now)
+    store[watchdog.HEARTBEAT_KEY] = json.dumps({"ts": now - 60, "inst": "cu"})
     store[watchdog.RESTARTS_KEY] = json.dumps(
         [{"ts": now - 7200, "kind": "restart"}, {"ts": now - 3600, "kind": "restart"}]
     )
     info = await watchdog.detect_restart(now)
     assert info is not None and info.kind == "restart"
-    assert sent and "3 lần trong 24 giờ" in sent[0][0]
+    assert json.loads(store[watchdog.RESTARTS_KEY])[-1]["prev"] == "cu"
+    # Lúc khởi động instance cũ (Render chạy chồng) có thể chưa tắt: chưa kết luận.
+    assert sent == []
+    await watchdog.check_restart_burst(now + 60)
+    assert sent == []
+    later = now + watchdog._BURST_SETTLE_SEC
+    await watchdog.check_restart_burst(later)
+    assert len(sent) == 1 and "3 lần trong 24 giờ" in sent[0][0]
+    # Chỉ xét 1 lần cho lần khởi động này.
+    await watchdog.check_restart_burst(later + 600)
+    assert len(sent) == 1
+
+
+async def _restart_cycle(monkeypatch, store, now, *, clean_exit: bool) -> None:
+    """1 lần Render thay container (cùng commit): instance mới khởi động khi instance
+    cũ còn chạy; instance cũ tắt (êm hoặc bị kill) rồi instance mới chạy chu kỳ sau."""
+    old = watchdog._INSTANCE
+    # Nhịp tim định kỳ cuối của instance cũ ngay trước khi Render thay container.
+    beat = json.loads(store[watchdog.HEARTBEAT_KEY])
+    store[watchdog.HEARTBEAT_KEY] = json.dumps({**beat, "ts": now - 120})
+    monkeypatch.setattr(watchdog, "_INSTANCE", f"moi-{now}")
+    monkeypatch.setattr(watchdog, "_PROCESS_STARTED", now)
+    monkeypatch.setattr(watchdog, "_burst_pending", False)
+    await watchdog.detect_restart(now)
+    if clean_exit:
+        monkeypatch.setattr(watchdog, "_INSTANCE", old)
+        await watchdog.write_heartbeat(clean=True)
+        monkeypatch.setattr(watchdog, "_INSTANCE", f"moi-{now}")
+    await watchdog.check_restart_burst(now + watchdog._BURST_SETTLE_SEC)
+
+
+@pytest.mark.asyncio
+async def test_sua_env_restart_service_tat_em_khong_tinh_la_restart_bat_thuong(
+    monkeypatch, store, sent
+):
+    _memory(monkeypatch, 50, {})
+    monkeypatch.setattr(watchdog, "container_start_offset", lambda: 0.5)
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "abcdef123456")
+    base = time.time()
+    monkeypatch.setattr(watchdog, "_INSTANCE", "goc")
+    await watchdog.write_heartbeat()
+    # Chủ bot sửa env 5 lần liền (mỗi lần Render redeploy cùng commit, tắt êm).
+    for n in range(5):
+        await _restart_cycle(monkeypatch, store, base + 300 * (n + 1), clean_exit=True)
+    assert sent == []
+    exits = json.loads(store[watchdog.CLEAN_EXITS_KEY])
+    assert [e["inst"] for e in exits][:2] == ["goc", f"moi-{base + 300}"]
+    # Bị kill (OOM của Render, SIGKILL) thì không có bản ghi tắt êm: vẫn đếm.
+    for n in range(5, 8):
+        await _restart_cycle(monkeypatch, store, base + 300 * (n + 1), clean_exit=False)
+    assert len(sent) == 1 and "3 lần trong 24 giờ" in sent[0][0]
+    # Lần thứ 4 trong cùng 24 giờ: không báo lại (dedup lưu DB, sống qua restart).
+    await _restart_cycle(monkeypatch, store, base + 300 * 9, clean_exit=False)
+    assert len(sent) == 1
+    # Sang cửa sổ 24 giờ mới mà vẫn dồn dập: báo lại.
+    day = base + 86400 + 3000
+    for n in range(3):
+        await _restart_cycle(monkeypatch, store, day + 300 * n, clean_exit=False)
+    assert len(sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_danh_sach_tat_em_co_tran(monkeypatch, store):
+    _memory(monkeypatch, 50, {})
+    store[watchdog.CLEAN_EXITS_KEY] = json.dumps([{"inst": f"i{n}", "ts": n} for n in range(30)])
+    store[watchdog.HEARTBEAT_KEY] = json.dumps({"ts": 1, "inst": "instance-moi"})
+    await watchdog.write_heartbeat(clean=True)
+    exits = json.loads(store[watchdog.CLEAN_EXITS_KEY])
+    assert len(exits) == watchdog.MAX_CLEAN_EXITS and exits[-1]["inst"] == watchdog._INSTANCE
 
 
 @pytest.mark.asyncio
@@ -368,6 +438,9 @@ async def test_nhip_tim_luc_tat_khong_ghi_de_instance_moi(monkeypatch, store):
     store[watchdog.HEARTBEAT_KEY] = json.dumps({"ts": 1, "inst": "instance-moi"})
     await watchdog.write_heartbeat(clean=True)
     assert json.loads(store[watchdog.HEARTBEAT_KEY])["inst"] == "instance-moi"
+    # Nhịp tim không ghi đè nhưng vẫn ghi nhận instance này tắt êm.
+    exits = json.loads(store[watchdog.CLEAN_EXITS_KEY])
+    assert [e["inst"] for e in exits] == [watchdog._INSTANCE]
     store[watchdog.HEARTBEAT_KEY] = json.dumps({"ts": 1, "inst": watchdog._INSTANCE})
     await watchdog.write_heartbeat(clean=True)
     assert json.loads(store[watchdog.HEARTBEAT_KEY])["clean"] is True
@@ -401,8 +474,9 @@ async def test_run_checks_mot_luat_loi_khong_chan_luat_khac(monkeypatch, caplog)
     monkeypatch.setattr(watchdog, "check_inbox", ok)
     monkeypatch.setattr(watchdog, "check_missed_jobs", ok)
     monkeypatch.setattr(watchdog, "write_heartbeat", ok)
+    monkeypatch.setattr(watchdog, "check_restart_burst", ok)
     await watchdog.run_checks(datetime(2026, 10, 26, 9, 0, tzinfo=VN))
-    assert len(ran) == 4
+    assert len(ran) == 5
     assert any("RAM" in r.getMessage() and r.levelname == "WARNING" for r in caplog.records)
     monkeypatch.setenv("WATCHDOG_ENABLED", "0")
     ran.clear()
