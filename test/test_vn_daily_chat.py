@@ -234,6 +234,31 @@ async def test_grounding_con_hoi_thu_khac_van_tra_web(sources):
     assert not g.skip_search
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "tin tức thủ đô hôm nay có gì",  # "đô" trong "thủ đô" không phải USD
+        "giá nhà ở thủ đô bao nhiêu",
+        "đô thị bây giờ đông quá",
+        "bánh kinh đô bao nhiêu",
+    ],
+)
+async def test_thu_do_do_thi_khong_phai_ty_gia(sources, text):
+    assert daily.parse_fx(text) is None
+    assert await daily.grounding_for(text) == daily.DailyGrounding()
+
+
+async def test_grounding_cau_hon_hop_van_tra_web(sources):
+    # Phần bão không có trong số liệu code -> giữ tra web, vẫn kèm giá SJC thật.
+    g = await daily.grounding_for("giá vàng hôm nay và tình hình bão ở miền Trung thế nào")
+    assert not g.skip_search and "Giá vàng SJC thật" in g.text
+    # Câu chỉ hỏi ý kiến/xu hướng quanh con số đã có -> bỏ tra web như cũ.
+    g = await daily.grounding_for("tỷ giá usd hôm nay tăng hay giảm")
+    assert g.skip_search and "Tỷ giá Vietcombank thật" in g.text
+    g = await daily.grounding_for("vàng nhẫn bây giờ có nên đầu tư tiếp không")
+    assert g.skip_search
+
+
 async def test_grounding_nguon_loi_ghi_tham_khao(sources):
     sources["down"].add("fx")
     g = await daily.grounding_for("tỷ giá usd hôm nay tăng hay giảm")

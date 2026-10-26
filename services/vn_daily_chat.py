@@ -104,6 +104,8 @@ def _alias_map(table: dict[str, tuple[str, ...]]) -> tuple[dict[str, str], str]:
     return by_alias, pattern
 
 
+# "đô" trong các từ này không phải đô la ("tin tức thủ đô hôm nay", "đô thị").
+_NOT_CURRENCY_DO_RE = re.compile(r"\b(?:thủ|kinh|cố) đô\b|\bđô (?:thị|vật|đốc|hộ)\b")
 _ACC_BY_ALIAS, _ACC_ALIAS = _alias_map(_ACCENTED_ALIASES)
 _FOLD_BY_ALIAS, _FOLD_ALIAS = _alias_map(_FOLDED_ALIASES)
 _NUM = r"(?P<amt>\d+(?:[.,]\d+)*)\s*(?P<scale>k|nghìn|ngàn|nghin|ngan|triệu|trieu|tr|củ|cu|tỷ|ty)?"
@@ -189,6 +191,24 @@ _PRICE_FILLER = [
 _PRICE_FILLER_RE = re.compile(
     r"\b(?:" + "|".join(sorted(_PRICE_FILLER, key=len, reverse=True)) + r")\b"
 )
+# Chữ hỏi ý kiến/xu hướng quanh đúng con số code đã có ("có nên mua", "tăng hay
+# giảm") - còn lại thêm chữ khác (bão, giá nhà...) thì lượt đó vẫn phải tra web.
+_OPINION_FILLER = [
+    r"co nen", r"nen", r"tang", r"giam", r"len", r"xuong", r"dau tu", r"xu huong",
+    r"du bao", r"tiep", r"nua", r"luc nao", r"hay", r"chua", r"ngay mai", r"mai", r"sap toi",
+    r"tuan toi", r"tuan sau",
+]  # fmt: skip
+_LOTTERY_FILLER = [
+    r"xo so", r"so xo", r"xs\w*", r"kqxs", r"ket qua", r"mien", r"bac", r"nam", r"trung",
+    r"mb", r"mn", r"mt", r"ve", r"do", r"so", r"dai", r"giai", r"hom qua", r"hom kia",
+    r"toi nay", r"chieu nay", r"ngay", r"kiem tra",
+]  # fmt: skip
+_OPINION_FILLER_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(_OPINION_FILLER, key=len, reverse=True)) + r")\b"
+)
+_LOTTERY_FILLER_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(_LOTTERY_FILLER, key=len, reverse=True)) + r")\b"
+)
 
 
 @dataclass(frozen=True)
@@ -239,7 +259,7 @@ def wants_gold(text: str) -> bool:
 
 def parse_fx(text: str) -> FxQuery | None:
     """Câu hỏi tỷ giá/đổi tiền, hoặc None."""
-    low = _low(text)
+    low = _NOT_CURRENCY_DO_RE.sub(" ", _low(text))
     folded = fold(low)
     if _NOT_FX_RE.search(folded):
         return None
@@ -503,10 +523,23 @@ async def _build_grounding(text: str) -> DailyGrounding:
     from stock import analysis as stock_analysis
 
     # Còn hỏi thứ khác ngoài phần code đã có (bitcoin, giá vàng thế giới, lãi
-    # suất...) thì vẫn phải tra web cho phần đó.
+    # suất, tin bão...) thì vẫn phải tra web cho phần đó.
     rest = _GOLD_FX_TERMS_RE.sub(" ", _low(text))
-    partial = stock_analysis.wants_external_market_data(rest) or bool(
-        gold and _WORLD_GOLD_RE.search(fold(_low(text)))
+    partial = (
+        stock_analysis.wants_external_market_data(rest)
+        or bool(gold and _WORLD_GOLD_RE.search(fold(_low(text))))
+        or bool(_uncovered_words(text, lottery=lottery is not None))
     )
     skip = all_ok and not partial and (lottery is None or lottery.narrow)
     return DailyGrounding("\n\n".join(parts), skip_search=skip, force_real_search=force)
+
+
+def _uncovered_words(text: str, *, lottery: bool) -> list[str]:
+    """Chữ còn lại sau khi bỏ tên tiền/vàng/xổ số, con số, chữ đệm và chữ hỏi ý
+    kiến. Rỗng = câu chỉ xoay quanh số liệu code đã tra, bỏ tra web được."""
+    rest = fold(re.sub(rf"\b(?:{_ACC_ALIAS})\b", " ", _low(text)))
+    rest = re.sub(rf"\b(?:{_FOLD_ALIAS})\b|\d+(?:[.,/-]\d+)*", " ", rest)
+    if lottery:
+        rest = _LOTTERY_FILLER_RE.sub(" ", _PROVINCE_RE.sub(" ", rest))
+    rest = _PRICE_FILLER_RE.sub(" ", _OPINION_FILLER_RE.sub(" ", rest))
+    return rest.split()
