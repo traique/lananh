@@ -599,3 +599,91 @@ async def test_utility_json_uu_tien_groq_roi_fallback_gemini(fake_store, monkeyp
 
     monkeypatch.setattr(orchestrator.groq_client, "generate_json", fake_groq_forbidden)
     assert await orchestrator.utility_json("trả JSON") == {"from": "gemini"}
+
+
+# ─── Key Groq/OpenRouter đặt ở trang admin (provider_overrides) ──────────────
+
+
+@pytest.fixture
+def admin_keys(monkeypatch):
+    from ai import provider_overrides
+
+    cache: dict[str, str | None] = {}
+    monkeypatch.setattr(provider_overrides, "_api_key_cache", cache)
+    monkeypatch.setattr(provider_overrides, "_enabled_cache", {})
+    monkeypatch.setattr(config, "GROQ_API_KEY", "")
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", "")
+    provider_state._loaded = True
+    return cache
+
+
+@pytest.mark.asyncio
+async def test_chuoi_dung_groq_openrouter_co_key_chi_o_trang_admin(admin_keys):
+    """Key chỉ đặt ở /admin (không có env) vẫn là "đã cấu hình" - cùng cách
+    provider_can_search, /status và /agent đọc key (client.api_key())."""
+    admin_keys.update(groq="admin-groq", openrouter="admin-openrouter")
+    called = []
+
+    async def groq_call():
+        called.append("groq")
+        return "groq-response"
+
+    async def openrouter_call():
+        called.append("openrouter")
+        return "openrouter-response"
+
+    async def api_call(idx):
+        raise AssertionError("Groq có key ở trang admin -> không xuống api")
+
+    result = await orchestrator._run_provider_chain(
+        router9_call=_failing_router9_call(),
+        api_call=api_call,
+        groq_call=groq_call,
+        openrouter_call=openrouter_call,
+        providers_override=["groq", "openrouter", "api1"],
+    )
+    assert result == "groq-response" and called == ["groq"]
+
+    admin_keys.update(groq=None)
+    result = await orchestrator._run_provider_chain(
+        router9_call=_failing_router9_call(),
+        api_call=api_call,
+        groq_call=groq_call,
+        openrouter_call=openrouter_call,
+        providers_override=["groq", "openrouter", "api1"],
+    )
+    assert result == "openrouter-response" and called == ["groq", "openrouter"]
+
+
+@pytest.mark.asyncio
+async def test_doc_key_admin_loi_thi_chi_xet_key_env(admin_keys, monkeypatch):
+    from ai import groq_client
+
+    async def broken_key():
+        raise RuntimeError("DB lỗi")
+
+    monkeypatch.setattr(groq_client, "api_key", broken_key)
+    assert await orchestrator._GENERIC_PROVIDER_CONFIGURED["groq"]() is False
+    monkeypatch.setattr(config, "GROQ_API_KEY", "env-key")
+    assert await orchestrator._GENERIC_PROVIDER_CONFIGURED["groq"]() is True
+
+
+@pytest.mark.asyncio
+async def test_utility_json_dung_groq_key_trang_admin(admin_keys, monkeypatch):
+    from ai import groq_client
+
+    admin_keys.update(groq="admin-groq")
+    seen = []
+
+    async def fake_json(prompt):
+        seen.append(prompt)
+        return {"ok": True}
+
+    async def no_record(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(groq_client, "generate_json", fake_json)
+    monkeypatch.setattr(orchestrator, "_record_provider_call", no_record)
+    monkeypatch.setattr(orchestrator.call_log, "record", no_record)
+
+    assert await orchestrator.utility_json("{}") == {"ok": True} and seen == ["{}"]

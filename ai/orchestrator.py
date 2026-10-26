@@ -309,9 +309,24 @@ _FREE_CHAT_TEMPERATURE = 0.95
 _GROUNDED_TEMPERATURE = 0.55
 
 
-_GENERIC_PROVIDER_CONFIGURED: dict[str, Callable[[], bool]] = {
-    "groq": lambda: bool(config.GROQ_API_KEY),
-    "openrouter": lambda: bool(config.OPENROUTER_API_KEY),
+async def _key_configured(provider: str, get_key: Callable[[], Awaitable], env_key: str) -> bool:
+    """Có key (env HOẶC trang admin qua provider_overrides - cùng nguồn với
+    provider_can_search, /status và /agent). Lỗi đọc key admin (DB, giải mã)
+    -> chỉ xét key env, không làm hỏng chuỗi provider."""
+    try:
+        return bool(await get_key())
+    except Exception:
+        logger.warning(
+            "Không đọc được key %s ở trang admin, chỉ xét key env.", provider, exc_info=True
+        )
+        return bool(env_key)
+
+
+_GENERIC_PROVIDER_CONFIGURED: dict[str, Callable[[], Awaitable[bool]]] = {
+    "groq": lambda: _key_configured("groq", groq_client.api_key, config.GROQ_API_KEY),
+    "openrouter": lambda: _key_configured(
+        "openrouter", openrouter_client.api_key, config.OPENROUTER_API_KEY
+    ),
 }
 
 
@@ -560,10 +575,10 @@ async def _run_provider_chain_within_deadline(
     async def _has_any_fallback_configured() -> bool:
         if await official_client.api_key_for(1) or await official_client.api_key_for(2):
             return True
-        return any(
-            generic_calls.get(name) is not None and is_configured()
-            for name, is_configured in _GENERIC_PROVIDER_CONFIGURED.items()
-        )
+        for name, is_configured in _GENERIC_PROVIDER_CONFIGURED.items():
+            if generic_calls.get(name) is not None and await is_configured():
+                return True
+        return False
 
     async def _attempt_router9_with_health(has_fallback: bool):
         """Gọi router9 và phân loại lỗi (xem _router9_failure_kind):
@@ -661,7 +676,7 @@ async def _run_provider_chain_within_deadline(
         else:
             call = generic_calls.get(provider)
             is_configured = _GENERIC_PROVIDER_CONFIGURED.get(provider)
-            if call is None or (is_configured and not is_configured()):
+            if call is None or (is_configured is not None and not await is_configured()):
                 continue
             if not await provider_overrides.is_enabled(provider):
                 continue
@@ -1025,7 +1040,7 @@ async def utility_json(prompt: str) -> Optional[dict]:
     free, không đụng quota Gemini) trước, Gemini utility làm dự phòng. Không
     raise - trả None khi mọi đường đều lỗi (caller coi là "bỏ qua lượt này")."""
     if (
-        _GENERIC_PROVIDER_CONFIGURED["groq"]()
+        await _GENERIC_PROVIDER_CONFIGURED["groq"]()
         and await provider_overrides.is_enabled("groq")
         and not provider_state.api_in_cooldown("groq")
     ):
@@ -1174,7 +1189,7 @@ async def transcribe_audio(
     last_exc: Optional[BaseException] = None
     if (
         groq_mime
-        and _GENERIC_PROVIDER_CONFIGURED["groq"]()
+        and await _GENERIC_PROVIDER_CONFIGURED["groq"]()
         and await provider_overrides.is_enabled("groq")
         and not provider_state.api_in_cooldown(STT_COOLDOWN_KEY)
     ):
