@@ -37,6 +37,7 @@ from zoneinfo import ZoneInfo
 import messages
 from core import database as db
 from core import settings_cache
+from services import divination_commands
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +59,9 @@ KIND_IMAGE = "image"
 KIND_STOCK = "stock"
 # Loại lượt tính vào trần "nặng" (user_calls.kind).
 HEAVY_KINDS = ("image", "tuvi_chitiet", "kymon_chitiet", "tsh_chitiet", KIND_CHAT_SEARCH)
-_HEAVY_COMMANDS = {
-    "/tuvi_chitiet": "tuvi_chitiet",
-    "/kymon_chitiet": "kymon_chitiet",
-    "/tsh_chitiet": "tsh_chitiet",
-}
+# Lệnh huyền học gọi AI, gồm alias (/ths_chitiet): cùng bảng định tuyến của
+# divination_commands.handle nên không alias nào lọt trần nặng.
+_HEAVY_COMMANDS = dict(divination_commands.AI_COMMAND_KINDS)
 _ANH_SWITCHES = frozenset({"on", "off", "bật", "tắt", "bat", "tat"})
 
 

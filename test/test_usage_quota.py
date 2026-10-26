@@ -118,6 +118,33 @@ def test_phan_loai_lenh_nang():
     assert usage_quota.heavy_kind("/tsh_chitiet 1/1/1990") == "tsh_chitiet"
     assert usage_quota.heavy_kind("/tuvi 1/1/1990") is None
     assert usage_quota.heavy_kind("vẽ giúp em con mèo") is None
+    # Alias /ths_chitiet chạy đúng lượt AI của /tsh_chitiet: phải tính vào trần nặng.
+    assert usage_quota.heavy_kind("/ths_chitiet 12/3/1990 A") == "tsh_chitiet"
+
+
+async def test_moi_lenh_huyen_hoc_goi_ai_deu_tinh_vao_tran_nang(monkeypatch):
+    """Lệnh nào divination_commands.handle cho gọi AI thì heavy_kind phải trả đúng
+    loại đó - alias mới không được lọt trần ZALO_MEMBER_DAILY_HEAVY."""
+    from services import divination_commands
+
+    called: list[str] = []
+
+    async def ai_text(user_id, kind, channel, explain):
+        called.append(kind)
+        return "luận giải"
+
+    monkeypatch.setattr(divination_commands, "ai_text", ai_text)
+    args = {"tsh": "12/3/1990 Nguyễn Văn A", "tuvi": "15/3/1990 9h30 nam", "kymon": "đi xa"}
+    commands = {"/lich", "/tsh", "/tuvi", "/kymon", *divination_commands.AI_COMMAND_KINDS}
+    for base in ("tsh", "ths", "tuvi", "kymon"):
+        commands |= {f"/{base}_chitiet", f"/{base}chitiet"}
+    for command in sorted(commands):
+        called.clear()
+        name = command.lstrip("/").replace("ths", "tsh").split("_")[0].removesuffix("chitiet")
+        argument = args.get(name, "hôm nay")
+        await divination_commands.handle(command, argument, 1, "zalo")
+        expected = called[0] if called else None
+        assert usage_quota.heavy_kind(f"{command} {argument}") == expected, command
 
 
 async def test_db_loi_thi_cho_qua(quota_db, monkeypatch):
