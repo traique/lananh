@@ -52,6 +52,8 @@ _POLL_SEC = 10 * 60
 LOSS_ALERT_PCT = -8.0
 _LOSS_STEP_PCT = 3.0
 _LOSS_REPEAT_DAYS = 7
+# Job nền: chờ lịch quyền lâu hơn lệnh tương tác (cache VCI nguội lúc 15h05).
+_CORPORATE_TIMEOUT_SEC = 45.0
 _task: asyncio.Task | None = None
 _notify = None
 
@@ -302,41 +304,42 @@ async def scan_portfolio(user_id: int, today: date) -> PortfolioScan:
     if not holdings:
         return PortfolioScan()
     symbols = [h.symbol for h in holdings]
-    quotes, series_list, index_date = await asyncio.gather(
+    quotes, index_date = await asyncio.gather(
         asyncio.gather(*(providers.fetch_quote(s) for s in symbols), return_exceptions=True),
-        asyncio.gather(
-            *(providers.fetch_ohlcv(s, days=90) for s in symbols), return_exceptions=True
-        ),
         _index_last_date(),
     )
+    quotes = [None if isinstance(q, BaseException) else q for q in quotes]
     today_iso = today.isoformat()
+    if any(getattr(q, "is_realtime", False) for q in quotes) or index_date == today_iso:
+        session: bool | None = True
+    elif index_date is not None:
+        session = False
+    else:
+        session = None
+    if session is False:
+        # Không có phiên hôm nay: không tốn thêm request chuỗi giá/lịch quyền.
+        return PortfolioScan(
+            [HoldingScan(h, q) for h, q in zip(holdings, quotes, strict=True)], False
+        )
+    series_list = await asyncio.gather(
+        *(providers.fetch_ohlcv(s, days=90) for s in symbols), return_exceptions=True
+    )
     clean_series = [
         None if isinstance(series, BaseException) or not getattr(series, "closes", None) else series
         for series in series_list
     ]
     # Sự kiện quyền: so giá với vị thế ĐÃ quy đổi (không báo "thủng stop" giả ngày
     # GDKHQ cổ tức cổ phiếu); sự kiện chưa được giá xác nhận chỉ được ghi chú.
-    views = await portfolio.corporate_views(holdings, clean_series)
-    items: list[HoldingScan] = []
-    for view, quote, series in zip(views, quotes, clean_series, strict=False):
-        if isinstance(quote, BaseException):
-            quote = None
-        items.append(
-            HoldingScan(
-                view.effective,
-                quote,
-                await _adjusted_series(view.raw.symbol, series),
-                _is_fresh(quote, today_iso),
-                view,
-            )
-        )
-    any_realtime = any(getattr(item.quote, "is_realtime", False) for item in items)
-    if any_realtime or index_date == today_iso:
-        session: bool | None = True
-    elif index_date is not None:
-        session = False
-    else:
-        session = None
+    views, adjusted = await asyncio.gather(
+        portfolio.corporate_views(holdings, clean_series, limit_sec=_CORPORATE_TIMEOUT_SEC),
+        asyncio.gather(
+            *(_adjusted_series(s, ser) for s, ser in zip(symbols, clean_series, strict=True))
+        ),
+    )
+    items = [
+        HoldingScan(view.effective, quote, series, _is_fresh(quote, today_iso), view)
+        for view, quote, series in zip(views, quotes, adjusted, strict=True)
+    ]
     return PortfolioScan(items, session)
 
 

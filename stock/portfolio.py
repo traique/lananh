@@ -138,6 +138,7 @@ def _transaction(row) -> Transaction:
 # sau mốc giá vốn VÀ được gap giá xác nhận (stock/corporate_actions.py). Sự kiện
 # chưa xác nhận chỉ được GHI CHÚ, không bao giờ làm tắt cảnh báo stop thật.
 _CORPORATE_LOOKUP_TIMEOUT_SEC = 8.0
+_BACKGROUND_LOOKUP_TIMEOUT_SEC = 45.0
 # Ghi chú GDKHQ cổ tức tiền chỉ trong vài ngày gần đây (giải thích nhịp giảm mới).
 _CASH_DIVIDEND_NOTE_DAYS = 7
 
@@ -255,8 +256,6 @@ async def corporate_view(holding: Holding, *, series=None) -> CorporateView:
     if not basis or basis >= today:
         return plain
     try:
-        if series is None or not getattr(series, "closes", None):
-            series = await providers.fetch_ohlcv(holding.symbol, days=90)
         dividends, stock_events = await corporate_actions.fetch_corporate_events_cached(
             holding.symbol
         )
@@ -271,6 +270,12 @@ async def corporate_view(holding: Holding, *, series=None) -> CorporateView:
     )
     if not relevant:
         return CorporateView(holding, holding, cash_dividends=cash)
+    # Chỉ khi có sự kiện cổ phiếu sau mốc giá vốn mới cần chuỗi giá để xác nhận gap.
+    try:
+        if series is None or not getattr(series, "closes", None):
+            series = await providers.fetch_ohlcv(holding.symbol, days=90)
+    except Exception:
+        return CorporateView(holding, holding, (), tuple(relevant), cash, checked=False)
     applied: list = []
     closes = list(getattr(series, "closes", None) or [])
     if len(closes) >= 2:
@@ -294,8 +299,11 @@ async def corporate_view(holding: Holding, *, series=None) -> CorporateView:
     )
 
 
-async def corporate_views(holdings: list[Holding], series_list=None) -> list[CorporateView]:
-    """corporate_view cho nhiều mã, có trần thời gian chung (lỗi/quá giờ -> vị thế thô)."""
+async def corporate_views(
+    holdings: list[Holding], series_list=None, *, limit_sec: float = _CORPORATE_LOOKUP_TIMEOUT_SEC
+) -> list[CorporateView]:
+    """corporate_view cho nhiều mã, có trần thời gian chung (lỗi/quá giờ -> vị thế
+    thô). Lệnh tương tác giữ trần ngắn; job nền truyền ``limit_sec`` dài hơn."""
     series_list = series_list or [None] * len(holdings)
     try:
         return list(
@@ -306,7 +314,7 @@ async def corporate_views(holdings: list[Holding], series_list=None) -> list[Cor
                         for h, s in zip(holdings, series_list, strict=False)
                     )
                 ),
-                timeout=_CORPORATE_LOOKUP_TIMEOUT_SEC,
+                timeout=limit_sec,
             )
         )
     except Exception:
@@ -332,7 +340,7 @@ async def apply_confirmed_corporate_actions(
     """Lưu hẳn quy đổi quyền đã xác nhận (job nền hằng ngày) - chuỗi 90 phiên chỉ
     còn xác nhận được sự kiện trong ~4 tháng, sau đó quy đổi tạm tính sẽ mất.
     Trả (trước, sau, quy đổi) hoặc None. Chạy lại an toàn (mốc giá vốn đã qua)."""
-    (view,) = await corporate_views([holding])
+    (view,) = await corporate_views([holding], limit_sec=_BACKGROUND_LOOKUP_TIMEOUT_SEC)
     rebase = view.rebase()
     if rebase is None:
         return None

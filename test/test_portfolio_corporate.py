@@ -164,3 +164,18 @@ async def test_job_hang_ngay_luu_quy_doi_va_bao_nguoi_so_huu(monkeypatch):
     (user_id, kind, ref_key, text) = sent[0]
     assert (user_id, kind, ref_key) == (1, "corp", f"VNM:{EX_DATE}")
     assert "1.005 → 1.206 cp" in text and "/capnhatcp" in text
+
+
+@pytest.mark.asyncio
+async def test_khong_co_su_kien_sau_moc_thi_khong_tai_chuoi_gia(events, monkeypatch):
+    events["stock"] = []
+    calls = []
+
+    async def counting_ohlcv(symbol, days=90):
+        calls.append(symbol)
+        return _series()
+
+    monkeypatch.setattr(portfolio.providers, "fetch_ohlcv", counting_ohlcv)
+    view = await portfolio.corporate_view(_holding())
+    assert view.effective == view.raw and view.checked
+    assert calls == []  # /danhmuc không tốn thêm request DNSE khi không có sự kiện
