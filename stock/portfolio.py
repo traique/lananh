@@ -427,6 +427,7 @@ async def update_alerts(
     stop_price: float | None,
     target_price: float | None,
 ) -> Holding | None:
+    """Đặt SL/TP (None = giữ mức đang có, đã quy đổi quyền); None nếu không có vị thế."""
     await ensure_schema()
     symbol = symbol.strip().upper()
     row = await db.portfolio_update_alerts(

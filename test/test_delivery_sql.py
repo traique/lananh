@@ -840,3 +840,31 @@ async def test_sl_tp_and_partial_sale_keep_cost_basis_purchase_rebases_first(
 
 async def _no_rebase(user_id, symbol):
     return None
+
+
+@pytest.mark.asyncio
+async def test_nl_target_only_keeps_rebased_stop(delivery_db, monkeypatch):
+    """Chỉ đặt target khi còn quy đổi quyền treo: stop KHÔNG được ghi đè bằng mức
+    thô trước GDKHQ (đọc trước khi quy đổi) - phải là stop cũ / factor."""
+    from core.repositories.portfolio import CorporateRebase
+    from services import portfolio_service
+
+    pool = delivery_db
+    await portfolio.set_holding(1, "HPG", 1000, 25000, stop_price=20000)
+    await pool.execute("UPDATE stock_holdings SET cost_basis_as_of = '2026-01-05'")
+
+    async def pending(user_id, symbol):
+        return CorporateRebase(1.2, "2026-02-10", "cổ phiếu 20% GDKHQ 10/02")
+
+    monkeypatch.setattr(portfolio, "_pending_rebase", pending)
+    reply = await portfolio_service.maybe_handle_natural_language(1, "đặt HPG target 30")
+    assert reply is not None and reply.startswith("✅")
+    holding = await portfolio.get_holding(1, "HPG")
+    assert holding.quantity == 1200 and holding.cost_basis_as_of == "2026-02-10"
+    assert holding.target_price == 30000
+    assert holding.stop_price == pytest.approx(20000 / 1.2, abs=0.01)
+
+    monkeypatch.setattr(portfolio, "_pending_rebase", _no_rebase)
+    await portfolio_service.maybe_handle_natural_language(1, "đặt HPG stop 16")
+    holding = await portfolio.get_holding(1, "HPG")
+    assert holding.stop_price == 16000 and holding.target_price == 30000

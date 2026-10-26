@@ -393,8 +393,11 @@ async def update_alerts(
     target_price: float | None,
     rebase: CorporateRebase | None = None,
 ):
-    """Đặt SL/TP. Quy đổi quyền còn treo trước: mức anh nhập là giá hiện hành,
-    không được bị chia thêm factor của sự kiện cũ. Không đổi mốc giá vốn."""
+    """Đặt SL/TP; None = giữ mức đang có. Quy đổi quyền còn treo trước: mức anh
+    nhập là giá hiện hành, không được bị chia thêm factor của sự kiện cũ, còn mức
+    giữ nguyên là mức ĐÃ quy đổi (COALESCE chạy sau _apply_rebase trong cùng
+    transaction - caller không được truyền lại mức thô đọc trước khi quy đổi).
+    Không đổi mốc giá vốn."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             row = await _apply_rebase(conn, await _lock_holding(conn, user_id, symbol), rebase)
@@ -403,7 +406,9 @@ async def update_alerts(
             return await conn.fetchrow(
                 f"""
                 UPDATE stock_holdings
-                SET stop_price = $3, target_price = $4, updated_at = now()
+                SET stop_price = COALESCE($3, stop_price),
+                    target_price = COALESCE($4, target_price),
+                    updated_at = now()
                 WHERE telegram_user_id = $1 AND symbol = $2
                 RETURNING {HOLDING_COLUMNS}
                 """,

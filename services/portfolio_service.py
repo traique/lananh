@@ -542,19 +542,17 @@ async def maybe_handle_natural_language(user_id: int, text: str) -> str | None:
         stop_price, target_price = _extract_alerts(stripped)
         if stop_price is None and target_price is None:
             return None
-        current = await portfolio.get_holding(user_id, symbol)
-        if current is None:
-            return f"❌ {symbol} không có trong danh mục."
+        # None = giữ mức đang có, đọc TRONG transaction sau khi quy đổi quyền còn
+        # treo (đọc trước rồi truyền lại thì mức không nhắc tới bị trả về mức thô).
         updated = await portfolio.update_alerts(
-            user_id,
-            symbol,
-            stop_price=stop_price if stop_price is not None else current.stop_price,
-            target_price=(target_price if target_price is not None else current.target_price),
+            user_id, symbol, stop_price=stop_price, target_price=target_price
         )
+        if updated is None:
+            return f"❌ {symbol} không có trong danh mục."
         return (
             f"✅ Đã cập nhật mức theo dõi {symbol}: "
-            f"SL {_fmt(updated.stop_price) if updated and updated.stop_price else '-'} | "
-            f"TP {_fmt(updated.target_price) if updated and updated.target_price else '-'}"
+            f"SL {_fmt(updated.stop_price) if updated.stop_price else '-'} | "
+            f"TP {_fmt(updated.target_price) if updated.target_price else '-'}"
         )
 
     return await _handle_sell_statement(user_id, stripped)
