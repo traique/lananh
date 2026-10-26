@@ -136,6 +136,12 @@ services:
         value: "1800"
       - key: MEMORY_CONSOLIDATION
         value: "1"
+      # "Cách trả lời" bộ trích nhớ tự rút ra chờ người dùng duyệt; 0 = áp ngay.
+      - key: STYLE_RULES_NEED_APPROVAL
+        value: "1"
+      # Che OTP/mật khẩu/STK/CCCD/số thẻ/API key trước khi gửi provider AI.
+      - key: PROMPT_REDACTION
+        value: "1"
       # Vòng quét nền trích nhớ khi rảnh (cả lúc khởi động); 0 = tắt vòng quét.
       - key: MEMORY_SWEEP_ENABLED
         value: "1"

@@ -92,6 +92,12 @@ ALERT_INTERVAL_SEC = 3600
 _last_alert_at = 0.0
 
 
+def strip_invisible(text: str) -> str:
+    """Chỉ bỏ ký tự vô hình (zero-width, điều khiển hướng chữ) - không đụng marker
+    rào thật như sanitize (dùng cho prompt đã ráp xong, services/prompt_redaction)."""
+    return _INVISIBLE_RE.sub("", text or "")
+
+
 def sanitize(text: str) -> str:
     """Bỏ ký tự vô hình, gấp homoglyph và vô hiệu marker giả trong nội dung ngoài."""
     text = _INVISIBLE_RE.sub("", text or "").translate(_HOMOGLYPHS)

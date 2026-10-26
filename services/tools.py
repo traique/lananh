@@ -41,7 +41,7 @@ from core import database as db
 from core.text_normalize import fold, nfc
 from core.text_utils import strip_json_fence
 from services import history_search  # noqa: F401 - đăng ký tool search_history
-from services import lunar, turn_progress, weather
+from services import lunar, prompt_redaction, turn_progress, weather
 from services import tool_registry as reg
 from services import write_intent
 from services.reminder_delivery import current_target
@@ -1114,21 +1114,26 @@ async def _route_and_run(
     prompt = _build_router_prompt(user_text, history, role)
     from ai import orchestrator
 
-    try:
-        data = await orchestrator.utility_json(prompt)
-    except Exception:
-        logger.warning("Router tool: utility_json lỗi.", exc_info=True)
-        data = None
-    if not data and intent:
-        if allow_side_effects:
-            handled = await _deterministic(user_id, user_text, intent)
-            if handled is not None:
-                return handled
+    # Provider chỉ thấy nhãn "[đã ẩn: mật khẩu]"; tham số tool (chạy trong bot, ghi DB
+    # của chính người dùng) được đổi lại giá trị gốc - services/prompt_redaction.
+    with prompt_redaction.scope() as redactor:
         try:
-            data = await _route_with_chain(prompt)
+            data = await orchestrator.utility_json(prompt)
         except Exception:
-            logger.warning("Router tool dự phòng qua provider-chain lỗi.", exc_info=True)
+            logger.warning("Router tool: utility_json lỗi.", exc_info=True)
             data = None
+        if not data and intent:
+            if allow_side_effects:
+                handled = await _deterministic(user_id, user_text, intent)
+                if handled is not None:
+                    return handled
+            try:
+                data = await _route_with_chain(prompt)
+            except Exception:
+                logger.warning("Router tool dự phòng qua provider-chain lỗi.", exc_info=True)
+                data = None
+    if isinstance(data, dict):
+        data = redactor.restore_obj(data)
     if not data:
         lookup = "" if intent else own_data_lookup(user_text)
         return reg.ToolOutcome(status=reg.STATUS_UNAVAILABLE, intent=intent, lookup=lookup)

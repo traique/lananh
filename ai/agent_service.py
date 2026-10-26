@@ -46,7 +46,7 @@ import json
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable, Iterator, Optional
 
 from ai import call_log, official_client, prompt_budget
@@ -60,6 +60,7 @@ from ai.timeouts import (
 )
 from core import address, config, untrusted, urls
 from core.text_utils import strip_json_fence
+from services import prompt_redaction
 from services import tool_registry as reg
 
 logger = logging.getLogger(__name__)
@@ -200,6 +201,8 @@ class _Turn:
     history: tuple[tuple[str, str], ...] = ()
     seen: dict = field(default_factory=dict)
     budget: _CallBudget = field(default_factory=_CallBudget)
+    # Che bí mật trong câu hỏi/lịch sử/trí nhớ/kết quả tool trước khi gửi provider.
+    redactor: prompt_redaction.Redactor = field(default_factory=prompt_redaction.Redactor)
 
 
 _turn: ContextVar[_Turn | None] = ContextVar("agent_turn", default=None)
@@ -485,7 +488,8 @@ async def _call_tool(name: str, args: dict) -> str:
             result = _cap(result)
         if len(seen) < _MAX_SEEN_CALLS:
             seen[key] = True
-        return result
+        # Ghi chú/chi tiêu... có thể chứa mật khẩu, STK: provider chỉ thấy nhãn đã ẩn.
+        return _current().redactor.text(result)
     except TurnTimeoutError:
         raise
     except Exception as exc:
@@ -799,8 +803,9 @@ async def _build_turn(user_id: int | None, question: str, address_form: str | No
     nhất của ĐÚNG user_id người hỏi (Zalo, kể cả Zalo của chủ bot, tách hẳn
     Telegram). Lỗi DB -> lượt chạy không có ngữ cảnh, không chặn /agent."""
     system = _persona(address_form)
+    redactor = prompt_redaction.Redactor()
     if not user_id:
-        return _Turn(system=system)
+        return _Turn(system=system, redactor=redactor)
     role = reg.ROLE_OWNER if config.is_owner_user_id(user_id) else reg.ROLE_ADMIN
     history: tuple[tuple[str, str], ...] = ()
     try:
@@ -811,7 +816,8 @@ async def _build_turn(user_id: int | None, question: str, address_form: str | No
             user_id, _HISTORY_ROWS, config.CHAT_SESSION_TIMEOUT_SEC
         )
         history = tuple(
-            (role_, content[:_HISTORY_ROW_MAX_CHARS]) for role_, content in rows[-_HISTORY_ROWS:]
+            (role_, redactor.text(content[:_HISTORY_ROW_MAX_CHARS]))
+            for role_, content in rows[-_HISTORY_ROWS:]
         )
     except Exception:
         logger.warning("Agent: không đọc được lịch sử hội thoại.", exc_info=True)
@@ -819,7 +825,7 @@ async def _build_turn(user_id: int | None, question: str, address_form: str | No
         from services import memory_service
 
         turn_memory = await memory_service.build_turn_memory(user_id, question)
-        memory = (turn_memory.context or "").strip()
+        memory = redactor.text((turn_memory.context or "").strip())
         if memory:
             system += (
                 "\n\nĐiều đã biết về người dùng (trí nhớ dài hạn):\n" + memory[:_MEMORY_MAX_CHARS]
@@ -831,7 +837,7 @@ async def _build_turn(user_id: int | None, question: str, address_form: str | No
             system += "\n\n" + style[:_STYLE_MAX_CHARS]
     except Exception:
         logger.warning("Agent: không đọc được trí nhớ dài hạn.", exc_info=True)
-    return _Turn(user_id=user_id, role=role, system=system, history=history)
+    return _Turn(user_id=user_id, role=role, system=system, history=history, redactor=redactor)
 
 
 async def _save_turn(user_id: int | None, question: str, answer: str) -> None:
@@ -869,9 +875,14 @@ async def ask_agent(
     tool ghi dữ liệu không bao giờ chạy trong /agent."""
     with turn_deadline(), agent_url_scope(question) as allowed_urls, reg.taint_scope():
         turn = await _build_turn(user_id, question, address_form)
+        # Model chỉ thấy bản đã che; link được phép đọc, lưu lịch sử vẫn theo câu gốc.
+        masked = turn.redactor.text(question)
+        if turn.redactor.redacted:
+            turn = replace(turn, system=f"{turn.system}\n\n{turn.redactor.note()}")
+            turn.redactor.log("agent")
         token = _turn.set(turn)
         try:
-            text, provider = await _ask_agent(question)
+            text, provider = await _ask_agent(masked)
         finally:
             _turn.reset(token)
     text = _filter_answer_links(text, question, allowed_urls)
