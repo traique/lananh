@@ -16,6 +16,8 @@ Câu trả lời được rút gọn theo loại:
 - article, translate, image: chỉ lưu dòng tóm tắt ngắn (bài báo dài, bản dịch
   và prompt tiếng Anh sẽ chiếm hết ngân sách lịch sử, kéo câu trả lời sang
   tiếng Anh).
+- vision, document (hỏi đáp về ảnh/tài liệu): nhãn + ~1200 ký tự đã làm sạch
+  (core.untrusted.sanitize) để câu hỏi nối tiếp còn ngữ cảnh.
 - còn lại: cắt ~1500 ký tự đầu.
 
 ``guard_stock_reply``: lượt chat ngay sau báo cáo cổ phiếu không được nói
@@ -52,6 +54,12 @@ KIND_RAG = "rag"
 KIND_AGENT = "agent"
 KIND_TRANSLATE = "translate"
 KIND_IMAGE = "image"
+# Hỏi đáp về ảnh (services/vision_service.py) và tài liệu người dùng gửi
+# (services/document_service.py): câu trả lời có thể chép chữ trong ảnh/file
+# (nội dung ngoài) -> lưu bản đã làm sạch, KHÔNG trích trí nhớ dài hạn (số giấy
+# tờ, hoá đơn, hợp đồng không tự vào trí nhớ).
+KIND_VISION = "vision"
+KIND_DOCUMENT = "document"
 # Câu trả lời bằng code của nhắc việc ("hoãn 10p"/"xong") và ghi chi tiêu
 # ("cafe 45k"): vào lịch sử cho câu hỏi nối tiếp, không trích trí nhớ.
 KIND_REMINDER = "reminder"
@@ -157,6 +165,10 @@ def compact_reply(reply: str, kind: str, user_text: str = "") -> str:
         return f"[Đã dịch giúp đoạn: «{_clip(user_text, _STUB_SOURCE_CHARS)}» - bản dịch không lưu]"
     if kind == KIND_IMAGE:
         return "[Đã viết prompt tạo ảnh từ ảnh người dùng gửi - nội dung tiếng Anh không lưu]"
+    if kind == KIND_VISION:
+        return "[Đã trả lời về ảnh người dùng gửi] " + _clip(untrusted.sanitize(reply), 1200)
+    if kind == KIND_DOCUMENT:
+        return "[Đã trả lời về tài liệu người dùng gửi] " + _clip(untrusted.sanitize(reply), 1200)
     return _clip(reply, REPLY_MAX_CHARS)
 
 
