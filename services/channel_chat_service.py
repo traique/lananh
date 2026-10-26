@@ -168,10 +168,11 @@ def _honesty_suffix(
             )
         return f"{reply}\n\n{note}" if reply else note
     if outcome.saved and outcome.confirmation:
-        key = outcome.confirmation_key
+        # confirmation_key có thể gồm nhiều cách viết nối bằng "|" ("20:00|20h|8h").
+        keys = [k for k in outcome.confirmation_key.split("|") if k]
         if not reply:
             return f"✅ {outcome.confirmation}"
-        if key and key not in reply:
+        if keys and not any(k in reply for k in keys):
             return f"{reply}\n\n✅ {outcome.confirmation}"
     return reply
 
@@ -455,13 +456,11 @@ async def _handle_stock(
     return None, await stock_analysis.build_price_grounding(symbols)
 
 
-async def handle_channel_text(
-    user_id: int, text: str, is_admin: bool = True, channel: str = "zalo"
-) -> ChannelResult:
-    text = (text or "").strip()
-    if not text:
-        return ChannelResult([])
-
+async def _side_effect_paths(
+    user_id: int, text: str, is_admin: bool, channel: str
+) -> ChannelResult | None:
+    """Các nhánh có thể GHI dữ liệu trước chat AI: lệnh /, danh mục bằng lời, lối
+    tắt "hoãn 10p"/"xong" của nhắc việc, ghi chi tiêu "cafe 45k"."""
     portfolio_command = await portfolio_service.handle_command(user_id, text)
     if portfolio_command is not None:
         return ChannelResult([portfolio_command])
@@ -487,6 +486,28 @@ async def handle_channel_text(
     expense_reply = await expense_service.maybe_handle_chat(user_id, text)
     if expense_reply is not None:
         return ChannelResult([expense_reply])
+    return None
+
+
+async def handle_channel_text(
+    user_id: int,
+    text: str,
+    is_admin: bool = True,
+    channel: str = "zalo",
+    *,
+    allow_side_effects: bool = True,
+) -> ChannelResult:
+    """allow_side_effects=False (lượt chỉ đọc, vd chữ chép từ tin nhắn thoại): bỏ
+    qua lệnh /, ghi danh mục bằng lời, lối tắt "hoãn/xong", ghi chi tiêu, và tool
+    ghi dữ liệu của lượt chat AI - chỉ trả lời, không ghi gì."""
+    text = (text or "").strip()
+    if not text:
+        return ChannelResult([])
+
+    if allow_side_effects:
+        side_effect_result = await _side_effect_paths(user_id, text, is_admin, channel)
+        if side_effect_result is not None:
+            return side_effect_result
     article = await article_reader.maybe_handle(text)
     if article is not None:
         return ChannelResult([article])
@@ -523,6 +544,7 @@ async def handle_channel_text(
             is_admin=is_admin,
             # Router Zalo gắn cách gọi riêng của người gửi (services/reply_audience.py).
             address_form=reply_audience.current().address_form,
+            **({} if allow_side_effects else {"allow_side_effects": False}),
         )
     if turn.failed:
         return ChannelResult([await failure_text(turn, user_id)])

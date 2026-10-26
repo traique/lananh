@@ -409,7 +409,7 @@ async def test_da_luu_ma_cau_tra_loi_thieu_gio_thi_noi_xac_nhan_cua_code(chat_fa
             side_effect=True,
             text=confirmation,
             confirmation=confirmation,
-            confirmation_key="08:00",
+            confirmation_key="08:00|8h|8 giờ",
         )
 
     monkeypatch.setattr(ccs.tools, "maybe_run_tool", saved)
@@ -418,9 +418,9 @@ async def test_da_luu_ma_cau_tra_loi_thieu_gio_thi_noi_xac_nhan_cua_code(chat_fa
     assert turn.text.endswith(f"✅ {confirmation}")
     assert "dùng ĐÚNG thông tin" in chat_fakes["chat"][0]
 
-    chat_fakes["response"] = _FakeResponse("Dạ 08:00 sáng mai em nhắc anh uống thuốc nha")
+    chat_fakes["response"] = _FakeResponse("Dạ 8h sáng mai em nhắc anh uống thuốc nha")
     turn = await ccs.run_chat_turn(1, "nhắc anh 8h sáng mai uống thuốc")
-    assert "✅" not in turn.text  # đã đúng giờ chuẩn -> không lặp xác nhận
+    assert "✅" not in turn.text  # đã đúng giờ (1 trong các cách viết) -> không lặp xác nhận
 
 
 @pytest.mark.asyncio
@@ -504,3 +504,46 @@ async def test_loi_tat_hoan_xong_chay_truoc_chat(monkeypatch):
     result = await ccs.handle_channel_text(-5, "xong", is_admin=False, channel="zalo")
 
     assert result.messages == ["✅ Dạ em ghi nhận xong: uống thuốc"]
+
+
+@pytest.mark.asyncio
+async def test_luot_chi_doc_bo_qua_moi_nhanh_ghi_du_lieu(monkeypatch):
+    """handle_channel_text(allow_side_effects=False): không lệnh /, không ghi danh mục/
+    chi tiêu/lối tắt nhắc việc; lượt chat AI nhận allow_side_effects=False."""
+    from services import channel_chat_service as ccs
+
+    async def must_not_run(*args, **kwargs):
+        raise AssertionError("lượt chỉ đọc không được chạy nhánh ghi dữ liệu")
+
+    async def no_stock(user_id, text, is_admin=True):
+        return None, ""
+
+    async def none(*args, **kwargs):
+        return None
+
+    seen = {}
+
+    async def fake_turn(user_id, text, **kwargs):
+        seen.update(kwargs)
+        return ccs.ChatTurn("dạ")
+
+    for target, name in (
+        (ccs.portfolio_service, "handle_command"),
+        (ccs.portfolio_service, "maybe_handle_natural_language"),
+        (ccs.channel_command_service, "maybe_handle_command"),
+        (ccs.reminder_service, "maybe_handle_shortcut"),
+        (ccs.expense_service, "maybe_handle_chat"),
+    ):
+        monkeypatch.setattr(target, name, must_not_run)
+    monkeypatch.setattr(ccs.vn_daily_chat, "maybe_handle", none)
+    monkeypatch.setattr(ccs.weather_chat, "maybe_handle", none)
+    monkeypatch.setattr(ccs.lunar_chat, "maybe_handle", none)
+    monkeypatch.setattr(ccs.article_reader, "maybe_handle", none)
+    monkeypatch.setattr(ccs, "_handle_stock", no_stock)
+    monkeypatch.setattr(ccs, "run_chat_turn", fake_turn)
+
+    result = await ccs.handle_channel_text(
+        -5, "cafe 45k", is_admin=False, channel="zalo", allow_side_effects=False
+    )
+
+    assert result.messages == ["dạ"] and seen["allow_side_effects"] is False

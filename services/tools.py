@@ -209,7 +209,7 @@ async def _create_one(
     user_id: int, item: dict, now: datetime, *, parse_turn_text: bool, suffix: str
 ):
     """Đặt 1 nhắc việc; trả (Created | None, câu lỗi)."""
-    from services import reminder_service, vn_time_parse
+    from services import recurrence, reminder_service, vn_time_parse
 
     message = str(item.get("message") or "").strip()
     when_text = str(item.get("when") or "").strip()
@@ -240,7 +240,7 @@ async def _create_one(
         created = await reminder_service.create(
             user_id, message or "(không có nội dung cụ thể)", due, rule, key_suffix=suffix
         )
-    except reminder_service.ReminderError as exc:
+    except (reminder_service.ReminderError, recurrence.RecurrenceError) as exc:
         return None, str(exc)
     return created, ""
 
@@ -327,7 +327,7 @@ async def _tool_cancel_reminder(user_id: int, target: str = "", **_ignored) -> r
     text, ok = await reminder_service.cancel(user_id, str(target))
     if not ok:
         return reg.ToolResult(text, status=reg.STATUS_INVALID)
-    return reg.ToolResult(text, confirmation=text, confirmation_key="huỷ")
+    return reg.ToolResult(text, confirmation=text)
 
 
 async def _tool_save_special_date(user_id: int, text: str = "", **_ignored) -> reg.ToolResult:

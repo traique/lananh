@@ -56,12 +56,18 @@ class ReminderError(ValueError):
     """Câu báo tiếng Việt cho người dùng (vượt trần, không tìm thấy...)."""
 
 
-def _you() -> str:
+def you_word() -> str:
+    """Cách gọi người nhận của lượt (core/address.py), mặc định "anh"."""
     return address.normalize(reply_audience.current().address_form) or "anh"
 
 
-def _me() -> str:
-    return address.self_word(_you())
+def me_word() -> str:
+    """Lan Anh tự xưng tương ứng ("em", "cháu", "mình", "chị")."""
+    return address.self_word(you_word())
+
+
+_you = you_word
+_me = me_word
 
 
 def clean_message(message: str) -> str:
@@ -87,8 +93,15 @@ class Created:
 
     @property
     def key(self) -> str:
-        """Chuỗi câu trả lời phải có (giờ HH:MM) - thiếu thì code nối câu xác nhận."""
-        return f"{self.due_at.astimezone(VN_TZ):%H:%M}"
+        """Các cách viết giờ chấp nhận được trong câu trả lời, nối bằng "|" ("20:00|20h|
+        20 giờ|8h|8 giờ") - không có cách nào thì code nối câu xác nhận chuẩn."""
+        due = self.due_at.astimezone(VN_TZ)
+        hour, minute = due.hour, due.minute
+        tail = f"{minute:02d}" if minute else ""
+        forms = [f"{hour:02d}:{minute:02d}", f"{hour}h{tail}", f"{hour} giờ"]
+        if hour > 12:
+            forms += [f"{hour - 12}h{tail}", f"{hour - 12} giờ"]
+        return "|".join(dict.fromkeys(forms))
 
 
 async def create(
@@ -241,6 +254,13 @@ def _match(items: list[Item], target: str) -> list[Item]:
     return [i for i in items if key in fold(i.message)]
 
 
+def _not_found() -> str:
+    return (
+        f"{_me().capitalize()} không thấy nhắc việc đó - gõ /nhac để xem danh sách và số "
+        "thứ tự nha."
+    )
+
+
 def _ambiguous(items: list[Item], matches: list[Item]) -> str:
     names = "; ".join(f"{items.index(i) + 1}. {i.message}" for i in matches[:5])
     return f"Có {len(matches)} nhắc việc khớp ({names}) - chọn theo số giúp {_me()} nha."
@@ -251,7 +271,7 @@ async def cancel(user_id: int, target: str) -> tuple[str, bool]:
     items = await pending_items(user_id)
     matches = _match(items, target)
     if not matches:
-        return "Em không thấy nhắc việc đó - gõ /nhac để xem danh sách và số thứ tự nha.", False
+        return _not_found(), False
     if len(matches) > 1:
         return _ambiguous(items, matches), False
     item = matches[0]
@@ -271,16 +291,17 @@ async def snooze_pending(user_id: int, target: str, when_text: str) -> tuple[str
     items = await pending_items(user_id)
     matches = _match(items, target)
     if not matches:
-        return "Em không thấy nhắc việc đó - gõ /nhac để xem danh sách và số thứ tự nha.", False
+        return _not_found(), False
     if len(matches) > 1:
         return _ambiguous(items, matches), False
     item = matches[0]
     now = dt.datetime.now(VN_TZ)
     base = item.due_at if item.due_at and item.due_at > now else now
-    due = vn_time_parse.parse_snooze(when_text, base)
+    due = vn_time_parse.parse_snooze(when_text, now, base=base)
     if due is None or item.reminder_id is None:
         return (
-            'Em chưa hiểu hoãn tới khi nào - ví dụ "/nhac hoan 2 30p", "/nhac hoan 2 sáng mai".',
+            f"{_me().capitalize()} chưa hiểu hoãn tới khi nào - ví dụ "
+            '"/nhac hoan 2 30p", "/nhac hoan 2 sáng mai".',
             False,
         )
     if due - now > vn_time_parse.MAX_AHEAD:

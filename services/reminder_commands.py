@@ -18,7 +18,7 @@ import datetime as dt
 import re
 
 from core.text_normalize import fold
-from services import ngay_nho, reminder_service, reply_audience, vn_time_parse
+from services import ngay_nho, reminder_service, vn_time_parse
 
 NHAC_USAGE = (
     "⏰ /nhac — xem nhắc việc đang chờ\n"
@@ -64,7 +64,8 @@ async def nhac(user_id: int, argument: str) -> str:
     now = dt.datetime.now(vn_time_parse.VN_TZ)
     extracted = vn_time_parse.extract_reminder(argument, now)
     if extracted is None:
-        return "Em chưa thấy thời điểm nhắc trong lệnh.\n\n" + NHAC_USAGE
+        me = reminder_service.me_word().capitalize()
+        return f"{me} chưa thấy thời điểm nhắc trong lệnh.\n\n" + NHAC_USAGE
     message, when = extracted
     if when.error or when.due_at is None:
         return f"Chưa đặt nhắc: {when.error or 'chưa rõ thời điểm'}\n\n{NHAC_USAGE}"
@@ -81,7 +82,7 @@ async def nhac(user_id: int, argument: str) -> str:
 async def ngaynho(user_id: int, argument: str) -> str:
     argument = " ".join(argument.split())
     head, rest = _split(argument)
-    you = reply_audience.current().address_form or "anh"
+    you = reminder_service.you_word()
     if fold(argument) in _LIST_WORDS:
         today = dt.datetime.now(vn_time_parse.VN_TZ).date()
         return ngay_nho.format_items(await ngay_nho.items(user_id, today), today, you=you)

@@ -172,7 +172,7 @@ async def test_set_reminder_gio_da_qua_khong_noi_ngay_thi_sang_mai(monkeypatch, 
     outcome = await tools.maybe_run_tool(1, "nhắc anh 7h sáng uống thuốc")
 
     assert reminders["once"][0][2] == dt.datetime(2026, 10, 27, 7, 0, tzinfo=VN)
-    assert outcome.confirmation_key == "07:00"
+    assert outcome.confirmation_key == "07:00|7h|7 giờ"  # các cách viết giờ chấp nhận
     assert "Thứ Ba 27/10" in outcome.confirmation
     assert "1 lần" in outcome.text and "KHÔNG nói là sẽ nhắc mỗi ngày" in outcome.text
 

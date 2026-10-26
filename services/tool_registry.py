@@ -69,8 +69,9 @@ class ToolResult:
     """Kết quả có cấu trúc của 1 handler (handler trả str = ToolResult(text)).
 
     confirmation: câu xác nhận CHUẨN do code soạn (vd "Đã đặt nhắc lúc 20:00
-    Thứ Bảy 25/10 (giờ VN): gọi mẹ"). confirmation_key: chuỗi bắt buộc phải có
-    trong câu trả lời (vd "20:00") - thiếu thì lượt chat tự nối confirmation."""
+    Thứ Bảy 25/10 (giờ VN): gọi mẹ"). confirmation_key: chuỗi câu trả lời phải có
+    (nhiều cách viết nối bằng "|", vd "20:00|20h|8h") - thiếu thì lượt chat tự nối
+    confirmation; rỗng = không kiểm."""
 
     text: str
     status: str = STATUS_OK

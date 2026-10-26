@@ -572,22 +572,27 @@ def parse(text: str, now: dt.datetime | None = None) -> When:
     return done(due_at=due, has_date=has_date)
 
 
-def parse_snooze(text: str, now: dt.datetime | None = None) -> dt.datetime | None:
+def parse_snooze(
+    text: str, now: dt.datetime | None = None, *, base: dt.datetime | None = None
+) -> dt.datetime | None:
     """Thời điểm hoãn: "10p", "10 phút", "1 tiếng", "30" (phút), "sáng mai",
-    "tới 8h tối". Trống = 10 phút. None nếu không hiểu."""
+    "tới 8h tối". Trống = 10 phút. None nếu không hiểu. Khoảng thời gian cộng vào
+    ``base`` (mặc định bây giờ - vd giờ hẹn cũ khi dời 1 nhắc chưa tới giờ); giờ
+    tuyệt đối ("sáng mai") luôn tính theo bây giờ."""
     now = (now or dt.datetime.now(VN_TZ)).astimezone(VN_TZ)
+    start = (base or now).astimezone(VN_TZ)
     raw = re.sub(
         r"^(?:toi|den|luc|thanh)\s+", "", "".join(_fold_char(c) for c in nfc(text).strip())
     )
     if not raw:
-        return now + dt.timedelta(minutes=10)
+        return start + dt.timedelta(minutes=10)
     if re.fullmatch(r"\d{1,4}", raw):
         minutes = int(raw)
-        return now + dt.timedelta(minutes=minutes) if 1 <= minutes <= 7 * 1440 else None
+        return start + dt.timedelta(minutes=minutes) if 1 <= minutes <= 7 * 1440 else None
     scan = _Scan(text)
     delta = _duration(scan, require_marker=False)
     if delta is not None and not scan.work.strip(" ,.") and delta >= dt.timedelta(minutes=1):
-        return now + delta if delta <= dt.timedelta(days=7) else None
+        return start + delta if delta <= dt.timedelta(days=7) else None
     when = parse(text, now)
     return when.due_at if when.due_at is not None and when.recurrence is None else None
 

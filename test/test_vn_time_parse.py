@@ -128,6 +128,13 @@ def test_hoan_bao_lau():
     assert p.parse_snooze("abc", NOW) is None
 
 
+def test_doi_nhac_chua_toi_gio_cong_tu_gio_hen_cu():
+    later = at(2026, 10, 27, 20)  # nhắc cũ hẹn 20h mai
+    assert p.parse_snooze("30p", NOW, base=later) == at(2026, 10, 27, 20, 30)
+    # Giờ tuyệt đối vẫn tính theo bây giờ, không theo giờ hẹn cũ.
+    assert p.parse_snooze("sáng mai", NOW, base=later) == at(2026, 10, 27, 8)
+
+
 def test_ngay_trong_nam_cho_ngay_nho():
     lunar_date = p.parse_calendar_date("giỗ ông nội 12/3 âm trước 3 ngày")
     assert (lunar_date.day, lunar_date.month, lunar_date.lunar) == (12, 3, True)

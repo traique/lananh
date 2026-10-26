@@ -88,7 +88,7 @@ def parse(text: str) -> SpecialDate:
     date = vn_time_parse.parse_calendar_date(clean)
     if date is None:
         raise NgayNhoError(
-            "Em chưa thấy ngày-tháng. Ví dụ: giỗ ông nội 12/3 âm trước 3 ngày, sinh nhật vợ 20/11."
+            "Chưa thấy ngày-tháng. Ví dụ: giỗ ông nội 12/3 âm trước 3 ngày, sinh nhật vợ 20/11."
         )
     folded = vn_time_parse.fold_keep(clean)
     spans = list(date.spans)
@@ -232,7 +232,7 @@ async def add(user_id: int, spec: SpecialDate, *, key_suffix: str = "") -> tuple
     if spec.rule.get("type") == "lunar_yearly" and spec.rule.get("leap") == "regular":
         note = " (âm lịch, năm có tháng nhuận vẫn theo tháng thường)"
     text = f"Đã lưu ngày nhớ: {spec.title} - {label}{when}{lead}, nhắc lúc {spec.rule['at']}{note}."
-    return text, label
+    return text, label.split(" ")[0]  # "12/3 âm lịch" -> câu trả lời chỉ cần có "12/3"
 
 
 @dataclass(frozen=True)
@@ -300,7 +300,7 @@ async def remove(user_id: int, target: str) -> str:
         key = fold(target)
         chosen = [i for i in rows if key and key in fold(i.title)]
     if not chosen:
-        return "Em không thấy ngày nhớ đó - gõ /ngaynho để xem danh sách và số thứ tự nha."
+        return "Không thấy ngày nhớ đó - gõ /ngaynho để xem danh sách và số thứ tự nha."
     if len(chosen) > 1:
         names = "; ".join(f"{rows.index(i) + 1}. {i.title}" for i in chosen[:5])
         return f"Có {len(chosen)} ngày nhớ khớp ({names}) - xoá theo số giúp em nha."
