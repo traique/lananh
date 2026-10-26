@@ -805,6 +805,8 @@ _TOOL_INTENT_KEYWORDS = (
     "tiêu hết",
     "đã tiêu",
     "xài hết",
+    "tiêu bao nhiêu",
+    "xài bao nhiêu",
     "tài liệu",
     "tai lieu",
     "kho kiến thức",

@@ -113,6 +113,7 @@ def _brief_status(settings: morning_brief.BriefSettings, channel: str, home: str
         "nhắc việc hôm nay",
         "vàng/tỷ giá",
         "danh mục (ngày giao dịch)",
+        "chi tiêu tháng (nếu có ghi)",
     ]
     if settings.news_enabled(channel):
         sections.append("tin đáng chú ý")
