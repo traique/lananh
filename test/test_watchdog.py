@@ -201,6 +201,19 @@ async def test_job_da_chay_hoac_chua_tung_chay_thi_khong_bao(monkeypatch, store,
 
 
 @pytest.mark.asyncio
+async def test_job_bo_lau_roi_thi_thoi_nhac(monkeypatch, store, sent):
+    """Bản tin sáng không gửi được từ 10 ngày trước (đã bỏ pair Zalo/Zoom): không
+    nhắc mỗi ngày mãi."""
+    deadline = datetime(2026, 10, 26, 11, 0, tzinfo=VN)
+    _jobs(monkeypatch, _check("morning_news", deadline, "morning_news:last_sent_date"))
+    store["morning_news:last_sent_date"] = "2026-10-16"
+    assert await watchdog.check_missed_jobs(deadline + timedelta(hours=1)) == []
+    store["morning_news:last_sent_date"] = "2026-10-20"
+    watchdog._settled.clear()
+    assert await watchdog.check_missed_jobs(deadline + timedelta(hours=1)) == ["morning_news"]
+
+
+@pytest.mark.asyncio
 async def test_slot_page_chung_khoan_dung_key_slot_va_key_tung_chay(monkeypatch, store, sent):
     deadline = datetime(2026, 10, 26, 17, 20, tzinfo=VN)
     check = _check(

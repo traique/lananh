@@ -285,6 +285,19 @@ def daily_job_checks(now: datetime) -> list[JobCheck]:
     return checks
 
 
+# Job ghi ngày chạy (digest, bản tin, cảnh báo danh mục) mà lần được gần nhất đã
+# quá ngần này ngày thì coi như cố ý bỏ (vd không còn pair Zalo/Zoom): chỉ nhắc
+# trong 1 tuần đầu rồi thôi, không báo mỗi ngày mãi.
+_ABANDONED_DAYS = 7
+
+
+def _days_since(value: str, now: datetime) -> int:
+    try:
+        return (now.date() - datetime.fromisoformat(value).date()).days
+    except ValueError:
+        return 0
+
+
 # (ngày, tên job) đã xác nhận xong/đã báo hôm nay - đỡ đọc settings mỗi chu kỳ.
 # Chỉ giữ ngày hiện tại nên luôn nhỏ (vài phần tử).
 _settled: set[tuple[str, str]] = set()
@@ -319,6 +332,8 @@ async def check_missed_jobs(now: datetime) -> list[str]:
         ever = value if check.ever_key is None else await db.get_setting(check.ever_key)
         if not ever:
             continue  # job chưa từng chạy (chưa cấu hình/chưa pair): không báo giả
+        if check.done_value is not None and _days_since(ever, now) > _ABANDONED_DAYS:
+            continue  # lần chạy được gần nhất đã lâu (vd đã bỏ pair kênh): thôi nhắc
         missed.append(check)
     if not missed:
         return []
