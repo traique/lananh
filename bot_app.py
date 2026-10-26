@@ -31,6 +31,7 @@ from handlers import (
 )
 from services import channel_chat_service
 from services import portfolio_alerts, rag_clean_service
+from services import portfolio_events, portfolio_push
 from services import monitor_service
 from services import db_maintenance
 from services import http_client
@@ -126,6 +127,7 @@ async def _post_init(app):
     monitor_service.start()
     scheduler.start(config.ALLOWED_USER_ID)
     portfolio_alerts.start(config.ALLOWED_USER_ID)
+    portfolio_events.start()
 
 
 async def _post_shutdown(app):
@@ -137,6 +139,7 @@ async def _post_shutdown(app):
 
     await run_step("Telegram scheduler", scheduler.stop())
     await run_step("portfolio alerts", portfolio_alerts.stop())
+    await run_step("portfolio events", portfolio_events.stop())
     await run_step("idempotency cleanup task", idempotency.stop_cleanup_task())
     await run_step("provider monitor task", monitor_service.stop())
     await run_step("chat memory tasks", channel_chat_service.stop_background_tasks())
@@ -308,4 +311,5 @@ def build_application():
 
     scheduler.set_notify_callback(notify)
     portfolio_alerts.set_notify_callback(notify)
+    portfolio_push.set_notify_callback(notify)
     return app

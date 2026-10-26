@@ -135,3 +135,19 @@ async def test_adjust_with_corporate_actions_bo_qua_chuoi_ngan(monkeypatch):
     closes = [10_000.0] * 20
     outcome = await ca.adjust_with_corporate_actions("ABC", closes, closes, closes, _dates(20))
     assert outcome.events_applied == 0
+
+
+def test_outcome_tra_dung_danh_sach_su_kien_da_xac_nhan():
+    # Cổ tức CP 20% khớp gap (60.000 -> 50.000) + cổ tức tiền 1.000 khớp; sự kiện
+    # cổ phiếu tỷ lệ sai (100%) không được xác nhận nên không nằm trong danh sách.
+    closes = [60_000.0] * 20 + [50_000.0] * 10 + [49_000.0] * 5
+    dates = _dates(len(closes))
+    good = ca.StockEvent(ex_date=dates[20], ratio=0.2)
+    wrong = ca.StockEvent(ex_date=dates[25], ratio=1.0)
+    cash = ca.DividendEvent(ex_date=dates[30], cash_value=1000)
+    outcome = ca.apply_corporate_adjustment(
+        closes, closes, closes, dates, [cash], [good, wrong], [1.0] * len(closes)
+    )
+    assert outcome.applied_stock_events == [good]
+    assert outcome.applied_dividends == [cash]
+    assert outcome.events_applied == 2

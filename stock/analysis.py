@@ -974,18 +974,27 @@ async def _position_line(user_id: int | None, symbol: str, price: float | None) 
         return None
     try:
         from stock import portfolio
-        holding = await portfolio.get_holding(user_id, symbol)
+        raw = await portfolio.get_holding(user_id, symbol)
+        # Vị thế ĐÃ quy đổi theo sự kiện quyền được giá xác nhận (cổ tức CP, thưởng,
+        # chia tách) - không thì ngày GDKHQ dòng này báo lỗ giả ~1/(1+r).
+        view = (await portfolio.corporate_views([raw]))[0] if raw is not None else None
     except Exception:
         return None
+    holding = view.effective if view is not None else None
     if holding is None or holding.quantity <= 0 or holding.average_price <= 0:
         return None
     pnl = (price - holding.average_price) * holding.quantity
     pnl_pct = (price / holding.average_price - 1) * 100
     sign = "+" if pnl > 0 else ""
-    return (
+    line = (
         f"Vị thế đang ghi nhận (hệ thống đã tính sẵn): {_fmt_price(holding.quantity)} cp, giá vốn {_fmt_price(holding.average_price)} VND"
         f" -> lãi/lỗ tạm tính {sign}{_fmt_price(pnl)} VND ({rfmt.fmt_signed_pct(pnl_pct)}) theo giá {_fmt_price(price)} VND."
     )
+    if view.applied:
+        line += " (Đã quy đổi theo " + ", ".join(portfolio.stock_event_label(e) for e in view.applied) + ".)"
+    if view.unconfirmed:
+        line += " Lưu ý: lịch quyền có sự kiện GDKHQ chưa được giá xác nhận nên lãi/lỗ này có thể lệch."
+    return line
 
 
 _STALE_NOTE = "\n\n⏱️ _Lưu ý: dữ liệu/thời điểm bên trên là của lần phân tích gần nhất_"

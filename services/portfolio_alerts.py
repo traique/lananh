@@ -36,6 +36,7 @@ from zoneinfo import ZoneInfo
 
 from core import alerts, config, database as db
 from stock import calendar as trading_calendar
+from stock import corporate_actions
 from stock import features as feat
 from stock import portfolio, providers
 
@@ -221,10 +222,11 @@ def apply_repeat_rules(
 
 @dataclass
 class HoldingScan:
-    holding: portfolio.Holding
+    holding: portfolio.Holding  # đã quy đổi theo sự kiện quyền đã được giá xác nhận
     quote: object | None = None
-    series: object | None = None
+    series: object | None = None  # chuỗi đã điều chỉnh quyền (cho Donchian)
     fresh: bool = False
+    view: portfolio.CorporateView | None = None
 
 
 @dataclass
@@ -255,6 +257,32 @@ async def _index_last_date() -> str | None:
     return str(dates[-1])[:10] if dates else None
 
 
+async def _adjusted_series(symbol: str, series):
+    """Chuỗi 90 phiên đã điều chỉnh sự kiện quyền được gap xác nhận - breakout
+    Donchian không bị gap GDKHQ làm giả. Lỗi/thiếu dữ liệu -> chuỗi thô."""
+    if series is None or len(series.closes) < corporate_actions.MIN_BARS_FOR_EVENT_LOOKUP:
+        return series
+    try:
+        outcome = await corporate_actions.adjust_with_corporate_actions(
+            symbol, series.closes, series.highs, series.lows, series.dates, series.volumes
+        )
+    except Exception:
+        logger.warning("portfolio_alerts: lỗi điều chỉnh quyền %s.", symbol, exc_info=True)
+        return series
+    if not outcome.events_applied:
+        return series
+    return providers.OhlcvSeries(
+        symbol=series.symbol,
+        closes=outcome.closes,
+        highs=outcome.highs,
+        lows=outcome.lows,
+        volumes=outcome.volumes or series.volumes,
+        dates=series.dates,
+        source=series.source,
+        is_adjusted=True,
+    )
+
+
 async def scan_portfolio(user_id: int, today: date) -> PortfolioScan:
     holdings = await portfolio.list_holdings(user_id)
     if not holdings:
@@ -268,13 +296,26 @@ async def scan_portfolio(user_id: int, today: date) -> PortfolioScan:
         _index_last_date(),
     )
     today_iso = today.isoformat()
+    clean_series = [
+        None if isinstance(series, BaseException) or not getattr(series, "closes", None) else series
+        for series in series_list
+    ]
+    # Sự kiện quyền: so giá với vị thế ĐÃ quy đổi (không báo "thủng stop" giả ngày
+    # GDKHQ cổ tức cổ phiếu); sự kiện chưa được giá xác nhận chỉ được ghi chú.
+    views = await portfolio.corporate_views(holdings, clean_series)
     items: list[HoldingScan] = []
-    for holding, quote, series in zip(holdings, quotes, series_list, strict=False):
+    for view, quote, series in zip(views, quotes, clean_series, strict=False):
         if isinstance(quote, BaseException):
             quote = None
-        if isinstance(series, BaseException) or not getattr(series, "closes", None):
-            series = None
-        items.append(HoldingScan(holding, quote, series, _is_fresh(quote, today_iso)))
+        items.append(
+            HoldingScan(
+                view.effective,
+                quote,
+                await _adjusted_series(view.raw.symbol, series),
+                _is_fresh(quote, today_iso),
+                view,
+            )
+        )
     any_realtime = any(getattr(item.quote, "is_realtime", False) for item in items)
     if any_realtime or index_date == today_iso:
         session: bool | None = True
@@ -304,6 +345,10 @@ def compose_alert(
             new_state[symbol] = symbol_state
         if shown:
             lines.append(f"• *{symbol}*: " + "; ".join(shown))
+            # Ghi chú sự kiện quyền (đã quy đổi / chưa xác nhận / cổ tức tiền)
+            # ngay dưới mã - không bao giờ tắt dòng stop vì sự kiện chưa xác nhận.
+            if item.view is not None:
+                lines.extend(f"  {note}" for note in item.view.notes())
     missing = scan.missing
     notes: list[str] = []
     if outage:

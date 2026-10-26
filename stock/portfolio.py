@@ -14,7 +14,8 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from core import database as db
-from stock import providers
+from core.repositories.portfolio import CorporateRebase, rebased_values
+from stock import corporate_actions, providers
 
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -129,6 +130,220 @@ def _transaction(row) -> Transaction:
     )
 
 
+# ─── Sự kiện quyền: thưởng / cổ tức bằng cổ phiếu / chia tách ────────────────
+# Ngày GDKHQ của sự kiện cổ phiếu tỷ lệ r, giá tham chiếu giảm còn 1/(1+r) (cổ
+# tức CP 20% -> -16,7%): so giá thô với giá vốn/stop thô là báo "thủng stop", "lỗ"
+# giả mỗi ngày tới khi anh /capnhatcp. Vị thế được QUY ĐỔI (số cp x (1+r) làm
+# tròn xuống, giữ tổng giá vốn, stop/target chia (1+r)) CHỈ với sự kiện có GDKHQ
+# sau mốc giá vốn VÀ được gap giá xác nhận (stock/corporate_actions.py). Sự kiện
+# chưa xác nhận chỉ được GHI CHÚ, không bao giờ làm tắt cảnh báo stop thật.
+_CORPORATE_LOOKUP_TIMEOUT_SEC = 8.0
+# Ghi chú GDKHQ cổ tức tiền chỉ trong vài ngày gần đây (giải thích nhịp giảm mới).
+_CASH_DIVIDEND_NOTE_DAYS = 7
+
+
+def _event_day(raw: str) -> str:
+    return str(raw or "")[:10]
+
+
+def _vn_day(raw: str) -> str:
+    try:
+        return f"{date.fromisoformat(_event_day(raw)):%d/%m}"
+    except ValueError:
+        return _event_day(raw)
+
+
+def _ratio_pct(ratio: float) -> str:
+    return f"{ratio * 100:.4g}%".replace(".", ",")
+
+
+def stock_event_label(event) -> str:
+    return f"cổ phiếu {_ratio_pct(event.ratio)} GDKHQ {_vn_day(event.ex_date)}"
+
+
+def _factor(events) -> float:
+    factor = 1.0
+    for event in events:
+        factor *= 1 + event.ratio
+    return factor
+
+
+def effective_holding(holding: Holding, events) -> Holding:
+    """Vị thế sau khi quy đổi các sự kiện cổ phiếu ``events`` - hàm thuần."""
+    if not events:
+        return holding
+    quantity, average, stop, target = rebased_values(
+        holding.quantity,
+        holding.average_price,
+        holding.stop_price,
+        holding.target_price,
+        _factor(events),
+    )
+    latest = max(_event_day(event.ex_date) for event in events)
+    return Holding(
+        user_id=holding.user_id,
+        symbol=holding.symbol,
+        quantity=quantity,
+        average_price=average,
+        stop_price=stop,
+        target_price=target,
+        note=holding.note,
+        cost_basis_as_of=max(holding.cost_basis_as_of or latest, latest),
+    )
+
+
+@dataclass(frozen=True)
+class CorporateView:
+    """Vị thế thô + vị thế đã quy đổi theo sự kiện quyền đã được giá xác nhận."""
+
+    raw: Holding
+    effective: Holding
+    applied: tuple = ()  # StockEvent đã xác nhận, GDKHQ sau mốc giá vốn
+    unconfirmed: tuple = ()  # StockEvent GDKHQ sau mốc, giá CHƯA xác nhận
+    cash_dividends: tuple = ()  # DividendEvent GDKHQ gần đây (chỉ ghi chú)
+    checked: bool = True  # False: chưa kiểm tra được lịch quyền (lỗi/timeout)
+
+    def rebase(self) -> CorporateRebase | None:
+        if not self.applied:
+            return None
+        return CorporateRebase(
+            factor=_factor(self.applied),
+            as_of=max(_event_day(event.ex_date) for event in self.applied),
+            note="; ".join(stock_event_label(event) for event in self.applied)[:300],
+        )
+
+    def ex_date_factor(self, day: str) -> float:
+        """Factor của sự kiện đã xác nhận có GDKHQ đúng ngày ``day`` (để quy đổi
+        giá đóng cửa phiên trước khi tính lãi/lỗ trong ngày GDKHQ)."""
+        return _factor(e for e in self.applied if _event_day(e.ex_date) == _event_day(day))
+
+    def notes(self) -> list[str]:
+        """Dòng ghi chú (đã quy đổi / sự kiện chưa xác nhận / cổ tức tiền)."""
+        lines: list[str] = []
+        raw, eff = self.raw, self.effective
+        if self.applied:
+            lines.append(
+                f"🔁 Đã quy đổi theo {', '.join(stock_event_label(e) for e in self.applied)}: "
+                f"{_fmt_number(raw.quantity)} → {_fmt_number(eff.quantity)} cp, giá vốn "
+                f"{_fmt_number(raw.average_price)} → {_fmt_number(eff.average_price)}đ"
+            )
+        if self.unconfirmed:
+            estimate = raw.average_price / _factor(self.applied + self.unconfirmed)
+            labels = ", ".join(stock_event_label(e) for e in self.unconfirmed)
+            lines.append(
+                f"ℹ️ Có thể do GDKHQ {labels} (giá chưa xác nhận) - lãi/lỗ, stop có thể lệch; "
+                f"nếu đúng, giá vốn quy đổi ≈ {_fmt_number(estimate)}đ, gõ /capnhatcp để lưu"
+            )
+        for dividend in self.cash_dividends:
+            dps = corporate_actions.normalize_dps(dividend.cash_value)
+            if dps:
+                lines.append(
+                    f"ℹ️ GDKHQ cổ tức tiền {_fmt_number(dps)}đ/cp ngày {_vn_day(dividend.ex_date)}"
+                    " - giá giảm tương ứng, không phải lỗ thật"
+                )
+        return lines
+
+
+async def corporate_view(holding: Holding, *, series=None) -> CorporateView:
+    """Quy đổi vị thế theo sự kiện quyền đã được giá xác nhận (không raise).
+
+    Vị thế không có mốc giá vốn (dữ liệu test cũ) hoặc mốc là hôm nay thì không
+    tra cứu gì. ``series``: OhlcvSeries thô 90 phiên nếu caller đã có sẵn."""
+    plain = CorporateView(holding, holding)
+    basis = holding.cost_basis_as_of
+    today = today_vn()
+    if not basis or basis >= today:
+        return plain
+    try:
+        if series is None or not getattr(series, "closes", None):
+            series = await providers.fetch_ohlcv(holding.symbol, days=90)
+        dividends, stock_events = await corporate_actions.fetch_corporate_events_cached(
+            holding.symbol
+        )
+    except Exception:
+        return CorporateView(holding, holding, checked=False)
+    relevant = [e for e in stock_events if basis < _event_day(e.ex_date) <= today]
+    recent_from = (date.fromisoformat(today) - timedelta(days=_CASH_DIVIDEND_NOTE_DAYS)).isoformat()
+    cash = tuple(
+        d
+        for d in dividends
+        if basis < _event_day(d.ex_date) <= today and _event_day(d.ex_date) >= recent_from
+    )
+    if not relevant:
+        return CorporateView(holding, holding, cash_dividends=cash)
+    applied: list = []
+    closes = list(getattr(series, "closes", None) or [])
+    if len(closes) >= 2:
+        outcome = corporate_actions.apply_corporate_adjustment(
+            closes,
+            list(series.highs),
+            list(series.lows),
+            list(series.dates),
+            [],
+            relevant,
+            list(series.volumes),
+        )
+        applied = list(outcome.applied_stock_events)
+    unconfirmed = tuple(e for e in relevant if e not in applied)
+    return CorporateView(
+        holding,
+        effective_holding(holding, applied),
+        tuple(applied),
+        unconfirmed,
+        cash,
+    )
+
+
+async def corporate_views(holdings: list[Holding], series_list=None) -> list[CorporateView]:
+    """corporate_view cho nhiều mã, có trần thời gian chung (lỗi/quá giờ -> vị thế thô)."""
+    series_list = series_list or [None] * len(holdings)
+    try:
+        return list(
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *(
+                        corporate_view(h, series=s)
+                        for h, s in zip(holdings, series_list, strict=False)
+                    )
+                ),
+                timeout=_CORPORATE_LOOKUP_TIMEOUT_SEC,
+            )
+        )
+    except Exception:
+        return [CorporateView(h, h, checked=False) for h in holdings]
+
+
+async def _pending_rebase(user_id: int, symbol: str) -> CorporateRebase | None:
+    """Quy đổi quyền còn treo của 1 vị thế, áp TRƯỚC mọi thao tác ghi (mua thêm,
+    bán, đặt SL/TP) để số anh nhập không bị trộn với số trước GDKHQ."""
+    try:
+        holding = await get_holding(user_id, symbol)
+        if holding is None:
+            return None
+        (view,) = await corporate_views([holding])
+    except Exception:
+        return None
+    return view.rebase()
+
+
+async def apply_confirmed_corporate_actions(
+    holding: Holding,
+) -> tuple[Holding, Holding, CorporateRebase] | None:
+    """Lưu hẳn quy đổi quyền đã xác nhận (job nền hằng ngày) - chuỗi 90 phiên chỉ
+    còn xác nhận được sự kiện trong ~4 tháng, sau đó quy đổi tạm tính sẽ mất.
+    Trả (trước, sau, quy đổi) hoặc None. Chạy lại an toàn (mốc giá vốn đã qua)."""
+    (view,) = await corporate_views([holding])
+    rebase = view.rebase()
+    if rebase is None:
+        return None
+    await ensure_schema()
+    result = await db.portfolio_rebase_holding(holding.user_id, holding.symbol, rebase)
+    if result is None:
+        return None
+    before, after = result
+    return _holding(before), _holding(after), rebase
+
+
 async def list_holdings(user_id: int) -> list[Holding]:
     await ensure_schema()
     return [_holding(row) for row in await db.portfolio_list_holdings(user_id)]
@@ -182,15 +397,17 @@ async def add_purchase(
 ) -> Holding:
     """Ghi lệnh mua (bình quân giá trong 1 transaction) + dòng BUY kèm phí mua."""
     await ensure_schema()
+    symbol = symbol.strip().upper()
     row = await db.portfolio_record_purchase(
         user_id,
-        symbol.strip().upper(),
+        symbol,
         quantity,
         price,
         stop_price=stop_price,
         target_price=target_price,
         fee=round(quantity * price * fee_rate()),
         basis_date=today_vn(),
+        rebase=await _pending_rebase(user_id, symbol),
     )
     return _holding(row)
 
@@ -203,8 +420,13 @@ async def update_alerts(
     target_price: float | None,
 ) -> Holding | None:
     await ensure_schema()
+    symbol = symbol.strip().upper()
     row = await db.portfolio_update_alerts(
-        user_id, symbol.strip().upper(), stop_price=stop_price, target_price=target_price
+        user_id,
+        symbol,
+        stop_price=stop_price,
+        target_price=target_price,
+        rebase=await _pending_rebase(user_id, symbol),
     )
     return _holding(row) if row else None
 
@@ -219,13 +441,15 @@ async def record_sale(
     if price is not None and price <= 0:
         raise ValueError("price must be positive")
     await ensure_schema()
+    symbol = symbol.strip().upper()
     result = await db.portfolio_record_sale(
         user_id,
-        symbol.strip().upper(),
+        symbol,
         quantity,
         price,
         fee_rate=fee_rate(),
         tax_rate=sell_tax_rate(),
+        rebase=await _pending_rebase(user_id, symbol),
     )
     if result is None:
         return None
@@ -393,24 +617,49 @@ def _session_label(quotes) -> str:
         return "Phiên gần nhất"
 
 
+def _effective_quote(quote, view: CorporateView | None):
+    """Quote với giá đóng cửa phiên trước đã quy đổi nếu hôm nay là ngày GDKHQ của
+    sự kiện đã xác nhận (không thì "giảm 16,7% trong ngày" giả)."""
+    if quote is None or view is None or not quote.prev_close:
+        return quote
+    factor = view.ex_date_factor(str(getattr(quote, "date", "") or ""))
+    if factor == 1.0:
+        return quote
+    prev_close = quote.prev_close / factor
+    change = quote.price - prev_close
+    return providers.Quote(
+        symbol=quote.symbol,
+        price=quote.price,
+        prev_close=prev_close,
+        change=round(change, 2),
+        change_pct=round(change / prev_close * 100, 2) if prev_close else 0.0,
+        date=quote.date,
+        is_realtime=quote.is_realtime,
+    )
+
+
 async def build_report(user_id: int, *, digest: bool = False) -> str:
-    holdings = await list_holdings(user_id)
-    if not holdings:
+    raw_holdings = await list_holdings(user_id)
+    if not raw_holdings:
         return "📭 Chưa có cổ phiếu nào trong danh mục đang nắm giữ."
 
-    quotes = await asyncio.gather(
-        *(providers.fetch_quote(item.symbol) for item in holdings),
-        return_exceptions=True,
+    quotes, views = await asyncio.gather(
+        asyncio.gather(
+            *(providers.fetch_quote(item.symbol) for item in raw_holdings),
+            return_exceptions=True,
+        ),
+        corporate_views(raw_holdings),
     )
     priced = []
-    for holding, quote in zip(holdings, quotes, strict=False):
-        valid_quote = None if isinstance(quote, BaseException) else quote
+    for view, quote in zip(views, quotes, strict=False):
+        holding = view.effective
+        valid_quote = None if isinstance(quote, BaseException) else _effective_quote(quote, view)
         market_value = holding.quantity * valid_quote.price if valid_quote else 0.0
-        priced.append((holding, valid_quote, market_value))
+        priced.append((holding, valid_quote, market_value, view))
     total_market_value = sum(item[2] for item in priced)
     total_cost = sum(
         holding.quantity * holding.average_price
-        for holding, quote, _ in priced
+        for holding, quote, _, _ in priced
         if quote is not None
     )
     total_pnl = total_market_value - total_cost if total_market_value else 0.0
@@ -419,20 +668,20 @@ async def build_report(user_id: int, *, digest: bool = False) -> str:
     # có prev_close hợp lệ; % so với giá trị danh mục theo giá phiên trước.
     day_pnl = sum(
         (quote.price - quote.prev_close) * holding.quantity
-        for holding, quote, _ in priced
+        for holding, quote, _, _ in priced
         if quote is not None and quote.prev_close and quote.prev_close > 0
     )
     prev_value = sum(
         quote.prev_close * holding.quantity
-        for holding, quote, _ in priced
+        for holding, quote, _, _ in priced
         if quote is not None and quote.prev_close and quote.prev_close > 0
     )
     day_pnl_pct = day_pnl / prev_value * 100 if prev_value else 0.0
-    day_label = _session_label([quote for _, quote, _ in priced if quote is not None])
+    day_label = _session_label([quote for _, quote, _, _ in priced if quote is not None])
 
     title = "📊 *Digest danh mục đang nắm giữ:*" if digest else "📊 *Danh mục đang nắm giữ:*"
     lines = [title]
-    for holding, quote, market_value in priced:
+    for holding, quote, market_value, view in priced:
         quantity = _fmt_number(holding.quantity)
         average = _fmt_number(holding.average_price)
         if quote is None:
@@ -440,6 +689,7 @@ async def build_report(user_id: int, *, digest: bool = False) -> str:
                 f"\n• *{holding.symbol}* — {quantity} cp | Giá vốn {average}đ"
                 "\n  ⚠️ Chưa lấy được giá hiện tại; không tính vào tổng lãi/lỗ"
             )
+            lines.extend(f"  {note}" for note in view.notes())
             continue
         pnl = (quote.price - holding.average_price) * holding.quantity
         pnl_pct = (quote.price / holding.average_price - 1) * 100
@@ -462,6 +712,7 @@ async def build_report(user_id: int, *, digest: bool = False) -> str:
                 alerts.append("🎯 đã đạt/vượt mục tiêu")
         if alerts:
             lines.append("  " + " | ".join(alerts))
+        lines.extend(f"  {note}" for note in view.notes())
 
     if total_market_value:
         total_icon = "🟢" if total_pnl >= 0 else "🔴"

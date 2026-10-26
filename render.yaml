@@ -92,6 +92,15 @@ services:
         value: "0.0015"
       - key: STOCK_SELL_TAX_RATE
         value: "0.001"
+      # Job danh mục hằng ngày + trần tin chủ động qua Zalo.
+      - key: PORTFOLIO_EVENTS_ENABLED
+        value: "1"
+      - key: PORTFOLIO_EVENTS_HOUR_VN
+        value: "8"
+      - key: PORTFOLIO_EVENTS_MAX_HOLDINGS
+        value: "60"
+      - key: PORTFOLIO_PUSH_ZALO_DAILY_CAP
+        value: "5"
       - key: ROUTER9_PROBE_INTERVAL_SEC
         value: "900"
       - key: API_QUOTA_COOLDOWN_SEC

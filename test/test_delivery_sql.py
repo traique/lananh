@@ -726,3 +726,36 @@ async def test_price_alerts_watchlist_and_alert_log(delivery_db):
     assert not await db.portfolio_alert_logged(1, "event", "VNM:DIV:2026-11-02", "2026-10-31")
     assert await db.portfolio_count_alerts_on(1, "2026-10-30") == 1
     assert await db.portfolio_prune_alert_log(0) == 1
+
+
+@pytest.mark.asyncio
+async def test_sl_tp_and_partial_sale_keep_cost_basis_purchase_rebases_first(
+    delivery_db, monkeypatch
+):
+    from core.repositories.portfolio import CorporateRebase
+
+    pool = delivery_db
+    await portfolio.set_holding(1, "VNM", 1000, 60000)
+    await pool.execute("UPDATE stock_holdings SET cost_basis_as_of = '2026-01-05'")
+    monkeypatch.setattr(portfolio, "_pending_rebase", _no_rebase)
+    await portfolio.update_alerts(1, "VNM", stop_price=55000, target_price=None)
+    await portfolio.sell(1, "VNM", 100)
+    # Sửa SL/TP và bán bớt KHÔNG dời mốc giá vốn (khác updated_at).
+    assert (await portfolio.get_holding(1, "VNM")).cost_basis_as_of == "2026-01-05"
+
+    async def pending(user_id, symbol):
+        return CorporateRebase(1.2, "2026-02-10", "cổ phiếu 20% GDKHQ 10/02")
+
+    monkeypatch.setattr(portfolio, "_pending_rebase", pending)
+    holding = await portfolio.add_purchase(1, "VNM", 120, 50000)
+    # 900 cp x 1,2 = 1.080 cp giá 50.000 (quy đổi TRƯỚC) + 120 cp giá 50.000.
+    assert holding.quantity == 1200
+    assert holding.average_price == pytest.approx(50000)
+    assert holding.stop_price == pytest.approx(55000 / 1.2, abs=0.01)
+    assert holding.cost_basis_as_of == portfolio.today_vn()
+    sides = await pool.fetch("SELECT side FROM stock_transactions WHERE symbol='VNM' ORDER BY id")
+    assert [r["side"] for r in sides] == ["ADJUST", "SELL", "CORP", "BUY"]
+
+
+async def _no_rebase(user_id, symbol):
+    return None
