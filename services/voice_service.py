@@ -314,19 +314,25 @@ _WRITE_BLOCKED_TEMPLATE = (
     "🎙️ Câu này là lệnh ghi {what} - tin thoại có thể nghe nhầm số nên {ai} không tự ghi. "
     "Gõ lại bằng chữ giúp {ai} nha{tail}."
 )
-_WRITE_KINDS = {"portfolio": "danh mục cổ phiếu", "expense": "chi tiêu"}
+_WRITE_KINDS = {
+    "portfolio": "danh mục cổ phiếu",
+    "expense": "chi tiêu",
+    "weather_home": "thành phố thời tiết mặc định",
+}
 
 
 def write_statement_kind(text: str) -> str | None:
-    """ "portfolio" | "expense" | None: chữ chép từ tin thoại là câu mà nhánh nhanh
-    SẼ ghi dữ liệu (lượt chỉ đọc bỏ qua nhánh đó - phải nói rõ là chưa ghi, không
-    để chat AI tự "xác nhận" bừa)."""
-    from services import expense_service, portfolio_service
+    """ "portfolio" | "expense" | "weather_home" | None: chữ chép từ tin thoại là câu
+    mà nhánh nhanh SẼ ghi dữ liệu (lượt chỉ đọc bỏ qua nhánh đó - phải nói rõ là
+    chưa ghi, không để chat AI tự "xác nhận" bừa)."""
+    from services import expense_service, portfolio_service, weather_home
 
     if portfolio_service.looks_like_write_statement(text):
         return "portfolio"
     if expense_service.chat_capture_enabled() and expense_service.parse_expense(text) is not None:
         return "expense"
+    if weather_home.parse_statement(text) is not None:
+        return "weather_home"
     return None
 
 
@@ -341,7 +347,10 @@ def write_blocked_reply(kind: str, *, owner: bool = False, address_form: str | N
 
 def write_record_kind(kind: str) -> str:
     """Loại lượt lưu lịch sử cho câu báo "chưa ghi" (services/conversation_log.py)."""
-    return conversation_log.KIND_PORTFOLIO if kind == "portfolio" else conversation_log.KIND_EXPENSE
+    return {
+        "portfolio": conversation_log.KIND_PORTFOLIO,
+        "weather_home": conversation_log.KIND_DAILY,
+    }.get(kind, conversation_log.KIND_EXPENSE)
 
 
 async def handle_channel_voice(

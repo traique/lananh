@@ -638,7 +638,8 @@ async def handle_channel_text(
     # Giá vàng/tỷ giá/xổ số, thời tiết (Open-Meteo) và âm lịch (offline): trả
     # lời thẳng, không tốn lượt AI nào; câu không chắc trả None và đi tiếp
     # xuống chat AI như cũ.
-    daily_reply = await vn_daily_chat.maybe_handle(text, user_id)
+    # Lượt chỉ đọc: không lưu thành phố thời tiết mặc định ("anh ở Đà Nẵng").
+    daily_reply = await vn_daily_chat.maybe_handle(text, user_id if allow_side_effects else None)
     if daily_reply is not None:
         await record(user_id, text, daily_reply, conversation_log.KIND_DAILY)
         return ChannelResult([daily_reply])

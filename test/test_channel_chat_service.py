@@ -679,7 +679,12 @@ async def test_luot_chi_doc_bo_qua_moi_nhanh_ghi_du_lieu(monkeypatch):
         (ccs.expense_service, "maybe_handle_chat"),
     ):
         monkeypatch.setattr(target, name, must_not_run)
-    monkeypatch.setattr(ccs.vn_daily_chat, "maybe_handle", none)
+
+    async def daily(text, user_id=None):
+        seen["daily_user_id"] = user_id  # None = không lưu thành phố thời tiết mặc định
+        return None
+
+    monkeypatch.setattr(ccs.vn_daily_chat, "maybe_handle", daily)
     monkeypatch.setattr(ccs.weather_chat, "maybe_handle", none)
     monkeypatch.setattr(ccs.lunar_chat, "maybe_handle", none)
     monkeypatch.setattr(ccs.article_reader, "maybe_handle", none)
@@ -691,6 +696,7 @@ async def test_luot_chi_doc_bo_qua_moi_nhanh_ghi_du_lieu(monkeypatch):
     )
 
     assert result.messages == ["dạ"] and seen["allow_side_effects"] is False
+    assert seen["daily_user_id"] is None
 
 
 # ─── Tích hợp: trí nhớ/lịch sử (conversation-memory) + tool trung thực ─────────

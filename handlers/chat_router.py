@@ -120,7 +120,8 @@ async def _quick_reply(
 
     # Giá vàng/tỷ giá/xổ số, thời tiết và âm lịch: trả lời thẳng bằng code,
     # không tốn lượt AI nào.
-    daily_reply = await vn_daily_chat.maybe_handle(text, user_id)
+    # Lượt chỉ đọc: không lưu thành phố thời tiết mặc định ("anh ở Đà Nẵng").
+    daily_reply = await vn_daily_chat.maybe_handle(text, user_id if allow_side_effects else None)
     if daily_reply is not None:
         await record(user_id, text, daily_reply, conversation_log.KIND_DAILY)
         await common.reply_long_text(update.message, daily_reply)

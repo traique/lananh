@@ -162,6 +162,10 @@ def test_nhan_dien_cau_ghi_du_lieu_tu_tin_thoai():
     # Câu nhắc việc có số tiền: không phải "khoản chi bị chặn" - để lượt chỉ đọc báo
     # đúng là chưa đặt nhắc (router tool, outcome blocked).
     assert voice_service.write_statement_kind("nhắc anh 9h mai trả 500k") is None
+    # Khai báo thành phố thời tiết mặc định cũng là câu ghi dữ liệu.
+    assert voice_service.write_statement_kind("anh ở Đà Nẵng") == "weather_home"
+    reply = voice_service.write_blocked_reply("weather_home", owner=True)
+    assert "thành phố thời tiết" in reply and "không tự ghi" in reply
 
 
 # ─── Zalo: handle_channel_voice ──────────────────────────────────────────────
@@ -592,8 +596,14 @@ async def test_route_text_chi_doc_bo_qua_nhanh_ghi(monkeypatch):
         chat_router.portfolio_service, "maybe_handle_natural_language", must_not_write
     )
     monkeypatch.setattr(chat_router.expense_service, "maybe_handle_chat", must_not_write)
-    for name in ("article_reader", "vn_daily_chat", "lunar_chat"):
+
+    async def daily(text, user_id=None):
+        seen["daily_user_id"] = user_id  # None = không lưu thành phố thời tiết mặc định
+        return None
+
+    for name in ("article_reader", "lunar_chat"):
         monkeypatch.setattr(getattr(chat_router, name), "maybe_handle", none)
+    monkeypatch.setattr(chat_router.vn_daily_chat, "maybe_handle", daily)
     monkeypatch.setattr(chat_router.weather_chat, "maybe_handle", none)
     monkeypatch.setattr(chat_router.stock_handler, "maybe_handle", route)
     monkeypatch.setattr(chat_router.channel_chat_service, "run_chat_turn", fake_turn)
@@ -601,6 +611,7 @@ async def test_route_text_chi_doc_bo_qua_nhanh_ghi(monkeypatch):
     update = _Update(_Voice())
     await chat_router.route_text(update, _Context(), "nhắc anh 8h họp", allow_side_effects=False)
     assert seen["allow_side_effects"] is False and seen["sent"] == "dạ"
+    assert seen["daily_user_id"] is None
 
 
 def test_bot_app_dang_ky_voice_audio():
