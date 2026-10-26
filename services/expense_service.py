@@ -352,15 +352,17 @@ class ParsedExpense:
     spent_on: dt.date
 
 
-def _spent_on(low: str, today: dt.date) -> tuple[dt.date, str]:
+def _spent_on(text: str, today: dt.date) -> tuple[dt.date, str]:
+    """(ngày chi, câu đã bỏ chữ ngày) - không phân biệt hoa thường ("Hôm qua ăn phở
+    50k" do bàn phím tự viết hoa), phần còn lại giữ nguyên chữ hoa/thường."""
     for pattern, days in ((r"\bhôm kia\b|\bhom kia\b", 2), (r"\bhôm qua\b|\bhom qua\b", 1)):
-        m = re.search(pattern, low)
+        m = re.search(pattern, text, re.IGNORECASE)
         if m:
-            return today - dt.timedelta(days=days), low[: m.start()] + low[m.end() :]
-    m = re.search(r"\b(?:hôm nay|hom nay|nay)\b", low)
+            return today - dt.timedelta(days=days), text[: m.start()] + text[m.end() :]
+    m = re.search(r"\b(?:hôm nay|hom nay|nay)\b", text, re.IGNORECASE)
     if m:
-        return today, low[: m.start()] + low[m.end() :]
-    return today, low
+        return today, text[: m.start()] + text[m.end() :]
+    return today, text
 
 
 def parse_expense(

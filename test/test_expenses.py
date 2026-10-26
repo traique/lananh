@@ -268,3 +268,12 @@ async def test_khoan_chi_thuong_van_ghi_sau_khi_chan_cau_nhac(fake):
     # "ghi lại chi tiêu ..." vẫn là khoản chi (không phải ghi chú).
     assert ex.parse_expense("ghi lại chi tiêu ăn trưa 60k", today=TODAY).amount == 60_000
     assert ex.parse_expense("nhạc cụ 500k", today=TODAY).amount == 500_000  # nhạc != nhắc
+
+
+def test_hom_qua_viet_hoa_dau_cau_van_tinh_dung_ngay():
+    # Bàn phím điện thoại tự viết hoa chữ đầu câu.
+    parsed = ex.parse_expense("Hôm qua ăn phở 50k", today=TODAY)
+    assert parsed == ex.ParsedExpense(50_000, "Ăn phở", "an_uong", TODAY - dt.timedelta(1))
+    kia = ex.parse_expense("Hôm kia đổ xăng 80k", today=TODAY)
+    assert kia is not None and kia.spent_on == TODAY - dt.timedelta(2) and kia.note == "Đổ xăng"
+    assert ex.parse_expense("Hôm nay cafe 45k", today=TODAY).note == "Cafe"
