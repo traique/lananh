@@ -131,6 +131,47 @@ export class KeyedSerialQueue {
   }
 }
 
+const noop = () => undefined;
+
+/** Chờ `promise` (không bao giờ reject) tối đa `ms`; ms <= 0 = chờ tới khi xong. */
+function waitAtMost(promise: Promise<void>, ms: number): Promise<void> {
+  if (ms <= 0) return promise;
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Khoá theo khoá (người nhận): việc cùng khoá chạy lần lượt, không chồng nhau -
+ * dùng quanh việc GỬI tin để các đoạn của 1 câu trả lời không xen với câu trả lời
+ * khác cho cùng người. Khác khoá chạy song song. Map chỉ giữ khoá đang có việc
+ * (xoá khi việc cuối xong). Việc trước treo (zca-js không trả lời) thì việc sau
+ * chỉ chờ tối đa `maxWaitMs` rồi chạy tiếp - không kẹt người nhận đó mãi.
+ */
+export class KeyedMutex {
+  private readonly tails = new Map<string, Promise<void>>();
+  constructor(private readonly maxWaitMs = 60000) {}
+
+  /** Số khoá đang có việc (đang chạy hoặc chờ). */
+  get size(): number {
+    return this.tails.size;
+  }
+
+  run<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.tails.get(key);
+    const ready = previous ? waitAtMost(previous, this.maxWaitMs) : Promise.resolve();
+    const result = ready.then(work);
+    const tail = result.then(noop, noop);
+    this.tails.set(key, tail);
+    void tail.then(() => {
+      if (this.tails.get(key) === tail) this.tails.delete(key);
+    });
+    return result;
+  }
+}
+
 /** Cho phép mỗi khoá tối đa 1 lần / `intervalMs`; nhớ tối đa `capacity` khoá gần nhất. */
 export class KeyedRateLimiter {
   private readonly last = new Map<string, number>();

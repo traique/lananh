@@ -51,6 +51,9 @@ Node adapter dùng `zca-js` cho tài khoản B, chạy cùng container với Fas
 - Nghỉ ngẫu nhiên `ZALO_SEND_GAP_MIN_MS`..`MAX_MS` giữa các đoạn và giữa các tin
   outbox; outbox có ngân sách `ZALO_OUTBOX_MAX_PER_HOUR` tin/giờ - vượt thì hoãn
   sang lượt poll sau (tin vẫn chờ trong DB), không bỏ tin nào.
+- Việc gửi tin tuần tự theo người nhận (`KeyedMutex` trong `src/limits.ts`):
+  trả lời làn nhanh, câu báo, outbox không chen vào giữa các đoạn của 1 câu trả
+  lời dài cho cùng người (câu trước treo thì câu sau chờ tối đa 60s).
 - Bộ đếm hoạt động (tin nhận, tin gộp, làn nhanh, đoạn gửi, rơi về chữ thuần,
   typing/đã xem/reaction, outbox gửi/lỗi/hoãn) trả trong `GET /status` của control
   server; Python hiện ở mục "Giám sát" trên `/admin`.

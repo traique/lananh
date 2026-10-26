@@ -34,6 +34,7 @@ import { FastLane } from "./fast-lane.js";
 import { TypingKeepalive, fireAndForget, withTimeout } from "./feedback.js";
 import {
   BoundedSerialQueue,
+  KeyedMutex,
   KeyedRateLimiter,
   KeyedSerialQueue,
   QueueFullError,
@@ -73,6 +74,8 @@ import {
 } from "./types.js";
 
 const config = loadConfig();
+/** Câu trả lời trước cho cùng người nhận treo: câu sau chờ tối đa chừng này rồi gửi. */
+const SEND_LOCK_MAX_WAIT_MS = 60000;
 const zalo = new Zalo({ selfListen: false, checkUpdate: false, logging: false });
 
 let api: ZaloApi | null = null;
@@ -105,6 +108,10 @@ const unsupportedNotices = new KeyedRateLimiter(60000, 512);
 const imageNotices = new KeyedRateLimiter(60000, 256);
 // Reaction "đang chờ lượt trước": tối đa 1 lần/15s mỗi người.
 const queuedReactions = new KeyedRateLimiter(15000, 256);
+// Gửi tin tuần tự theo người nhận: đoạn của 1 câu trả lời (nghỉ 0.6-1.5s giữa
+// đoạn) không xen với câu trả lời làn nhanh/câu báo/outbox cho cùng người. Chỉ
+// bọc việc gửi, không bao giờ giữ khoá qua lúc gọi Python hay tải media.
+const sendLock = new KeyedMutex(SEND_LOCK_MAX_WAIT_MS);
 // Ngân sách tin outbox của tài khoản theo giờ: vượt thì hoãn sang lượt poll sau.
 const outboxBudget = new SlidingWindowBudget(config.outboxMaxPerHour, 3600000);
 const groupQueue = new BoundedSerialQueue(128);
@@ -202,36 +209,41 @@ function sendOptions(client: ZaloApi): SendChunksOptions {
  * Gửi từng đoạn (kèm styles zca-js nếu Python gửi), nghỉ ngẫu nhiên giữa các
  * đoạn; mỗi đoạn thử lại theo SEND_RETRY_DELAYS_MS (1s, 3s, 8s) để không gửi
  * trùng đoạn đã tới nơi, Zalo từ chối định dạng thì gửi lại 1 lần chữ thuần
- * (sender.ts). Mất đăng nhập giữa chừng thì dừng ngay.
+ * (sender.ts). Mất đăng nhập giữa chừng thì dừng ngay. Giữ sendLock của người
+ * nhận suốt cả câu trả lời (mọi đoạn + ảnh).
  */
-async function send(
+function send(
   target: string,
   chunks: string[],
   imageB64?: string | null,
   styles?: unknown,
 ): Promise<void> {
-  const client = api;
-  if (!client) throw new Error("Zalo is not connected");
-  const sent = await sendChunks(client, target, chunks, styles, sendOptions(client));
-  if (imageB64) {
-    const gap = sent > 0 ? sendGap() : 0;
-    if (gap > 0) await sleep(gap);
-    await sendImage(client, target, imageB64);
-  }
+  return sendLock.run(target, async () => {
+    const client = api;
+    if (!client) throw new Error("Zalo is not connected");
+    const sent = await sendChunks(client, target, chunks, styles, sendOptions(client));
+    if (imageB64) {
+      const gap = sent > 0 ? sendGap() : 0;
+      if (gap > 0) await sleep(gap);
+      await sendImage(client, target, imageB64);
+    }
+  });
 }
 
 /** Gửi 1 câu báo ngắn đúng 1 lần (không thử lại, timeout ngắn); lỗi chỉ log. */
-async function sendOnce(target: string, text: string): Promise<boolean> {
-  const client = api;
-  if (!client) return false;
-  try {
-    await withTimeout(client.sendMessage({ msg: text }, target, ThreadType.User), 15000);
-    stats.inc("chunks_sent");
-    return true;
-  } catch (error) {
-    console.warn(`[zalo] gửi câu báo tới ${target} lỗi: ${errorMessage(error, String(error))}`);
-    return false;
-  }
+function sendOnce(target: string, text: string): Promise<boolean> {
+  return sendLock.run(target, async () => {
+    const client = api;
+    if (!client) return false;
+    try {
+      await withTimeout(client.sendMessage({ msg: text }, target, ThreadType.User), 15000);
+      stats.inc("chunks_sent");
+      return true;
+    } catch (error) {
+      console.warn(`[zalo] gửi câu báo tới ${target} lỗi: ${errorMessage(error, String(error))}`);
+      return false;
+    }
+  });
 }
 
 /** Báo trạng thái gateway về Python, không chờ; lỗi chỉ log. */
@@ -364,12 +376,13 @@ async function refreshGroups(): Promise<void> {
 
 const outbox = new OutboxDelivery({
   fetch: () => fetchOutbox(config),
-  sendChunk: async (recipientId, chunk) => {
-    const client = api;
-    if (!client) throw new Error("Zalo is not connected");
-    await client.sendMessage({ msg: chunk }, recipientId, ThreadType.User);
-    stats.inc("chunks_sent");
-  },
+  sendChunk: (recipientId, chunk) =>
+    sendLock.run(recipientId, async () => {
+      const client = api;
+      if (!client) throw new Error("Zalo is not connected");
+      await client.sendMessage({ msg: chunk }, recipientId, ThreadType.User);
+      stats.inc("chunks_sent");
+    }),
   ack: (id) => ackOutbox(config, id),
   fail: (id, error, chunksSent) => reportOutboxFailure(config, id, error, chunksSent),
   connected: () => !!api,
