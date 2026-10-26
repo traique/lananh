@@ -15,6 +15,7 @@ from telegram.ext import ContextTypes
 
 import messages
 from ai import orchestrator
+from ai.timeouts import TurnTimeoutError
 from core import database as db, webhook_inbox
 from core.text_utils import parse_on_off
 from handlers import common
@@ -231,6 +232,10 @@ async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         suffix = "\n\n⚙️ API" if used_fallback else ""
 
         await common.reply_long_text_edit_first(status, result_text + suffix)
+    except TurnTimeoutError as e:
+        logger.warning("Tìm giá %r hết hạn chót lượt: %s", product_name, e)
+        await telemetry.failure(prompt_id, "price_search", e)
+        await status.edit_text(f"⏱️ {e}")
     except Exception as e:
         logger.exception("Lỗi tìm giá sản phẩm")
         await telemetry.failure(prompt_id, "price_search", e)

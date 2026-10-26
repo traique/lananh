@@ -11,6 +11,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import messages
+from ai.timeouts import turn_deadline
 from core.text_normalize import nfc
 from handlers import common, stock_handler
 from services import (
@@ -57,14 +58,19 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await common.reply_long_text(update.message, lunar_reply)
         return
 
-    route = await stock_handler.maybe_handle(update, user_id, text)
-    if route.handled:
-        return
+    # MỘT hạn chót cho cả nhánh cổ phiếu (debate nhiều lượt gọi AI cho tới 3 mã)
+    # LẪN lượt chat theo sau, như handle_channel_text của Zalo/Zoom: không có hạn
+    # ngoài thì mỗi lượt gọi AI tự mở 200s mới và khoá chủ bot (dùng chung
+    # Telegram/Zoom/web) bị giữ gấp nhiều lần CHAT_TURN_TIMEOUT_SEC.
+    with turn_deadline():
+        route = await stock_handler.maybe_handle(update, user_id, text)
+        if route.handled:
+            return
 
-    # Telegram chỉ phục vụ chủ bot (@common.restricted) -> kênh "telegram".
-    turn = await channel_chat_service.run_chat_turn(
-        user_id, text, grounding=route.grounding, channel="telegram"
-    )
+        # Telegram chỉ phục vụ chủ bot (@common.restricted) -> kênh "telegram".
+        turn = await channel_chat_service.run_chat_turn(
+            user_id, text, grounding=route.grounding, channel="telegram"
+        )
     if turn.failed:
         await update.message.reply_text(turn.error_text or _CHAT_ERROR)
         return

@@ -22,6 +22,7 @@ from services import (
     weather_chat,
     memory_service,
     portfolio_service,
+    stock_turn,
     tools,
     web_search,
 )
@@ -269,12 +270,21 @@ async def _handle_stock(
             except Exception:
                 logger.exception("Channel persona view failed for %s", symbol)
                 outputs.append(messages.STOCK_ANALYZE_FAILED.format(symbol=symbol))
-        return ChannelResult(outputs), ""
+        # Mã lỗi/hết hạn chót lượt gom thành 1 dòng (services/stock_turn.py).
+        kept, failed = stock_turn.split_persona_results(symbols, outputs)
+        if failed:
+            kept.append(stock_turn.persona_failure_note(failed))
+        return ChannelResult(kept), ""
     if stock_analysis.wants_full_analysis(text, symbols):
         outputs: list[str] = []
+        # Mã có bản số liệu nhưng không có phần diễn giải AI (LLM lỗi/hết hạn chót
+        # lượt): 1 câu báo cuối thay cho lời hứa "⏳ ... sẽ gửi tiếp" rồi im lặng.
+        skipped: list[str] = []
         for symbol in symbols:
             # Giống Telegram: bản số liệu rule-based (nguồn số chuẩn) luôn là
             # tin đầu tiên, bản diễn giải LLM (đã kiểm hợp đồng policy) theo sau.
+            reports_before = len(outputs)
+
             async def collect_rule_report(report: str) -> None:
                 outputs.append(report)
 
@@ -288,9 +298,13 @@ async def _handle_stock(
                 )
                 if result:
                     outputs.append(result)
+                elif len(outputs) > reports_before:
+                    skipped.append(symbol)
             except Exception:
                 logger.exception("Channel stock analysis failed for %s", symbol)
                 outputs.append(messages.STOCK_ANALYZE_FAILED.format(symbol=symbol))
+        if skipped:
+            outputs.append(stock_turn.commentary_skipped_note(skipped))
         return ChannelResult(outputs), ""
     if stock_analysis.wants_price_quote(text, symbols):
         results = await asyncio.gather(

@@ -5,6 +5,7 @@ from typing import NamedTuple
 import messages
 import tg_format
 from handlers import common
+from services import stock_turn
 from services.telemetry import telemetry
 from stock import analysis as stock_analysis
 
@@ -69,13 +70,20 @@ async def _handle_portfolio_analysis(
 
 
 async def _handle_full_analysis(update, user_id: int, symbols: list[str], user_text: str) -> None:
+    # Mã đã gửi bản số liệu rule-based nhưng không có phần diễn giải AI (LLM lỗi
+    # hoặc hết hạn chót lượt): báo 1 câu sau vòng lặp. KHÔNG dừng vòng lặp khi
+    # hết giờ - các mã sau vẫn gửi bản số liệu (không tốn lượt AI nào).
+    skipped: list[str] = []
     for symbol in symbols:
         prompt_id = await telemetry.start(user_id, "stock_analysis", symbol)
         status = await update.message.reply_text(f"🔍 Đang phân tích {symbol}...")
         try:
+            rule_report_sent = False
 
             async def send_rule_report(text: str) -> None:
+                nonlocal rule_report_sent
                 await common.reply_long_text(update.message, text)
+                rule_report_sent = True
 
             result_text = await stock_analysis.analyze_symbol(
                 symbol,
@@ -91,6 +99,8 @@ async def _handle_full_analysis(update, user_id: int, symbols: list[str], user_t
                 # Bản rule-based đã gửi làm tin nhắn đầu, LLM không trả thêm
                 # được gì mới - telemetry ghi nhận để vẫn có số liệu theo dõi.
                 await telemetry.success(prompt_id, "stock_analysis", "(đã gửi bản rule-based)")
+                if rule_report_sent:
+                    skipped.append(symbol)
         except Exception as exc:
             logger.exception("Lỗi phân tích %s", symbol)
             await telemetry.failure(prompt_id, "stock_analysis", exc)
@@ -100,6 +110,8 @@ async def _handle_full_analysis(update, user_id: int, symbols: list[str], user_t
                 await status.delete()
             except Exception:
                 logger.debug("Không xóa được status phân tích %s", symbol, exc_info=True)
+    if skipped:
+        await update.message.reply_text(stock_turn.commentary_skipped_note(skipped))
 
 
 async def _handle_persona_view(
@@ -113,15 +125,17 @@ async def _handle_persona_view(
             )
             for symbol in symbols
         ]
-        text = "\n\n".join(r for r in results if r)
+        # Mã lỗi/hết hạn chót lượt gom thành 1 dòng, không lặp N câu lỗi.
+        kept, failed = stock_turn.split_persona_results(symbols, results)
+        text = "\n\n".join(kept)
         if text:
+            if failed:
+                text += "\n\n" + stock_turn.persona_failure_note(failed)
             await telemetry.success(prompt_id, "persona_view", text)
             await common.reply_long_text(update.message, text)
         else:
             await telemetry.failure(prompt_id, "persona_view", RuntimeError("empty persona view"))
-            await update.message.reply_text(
-                messages.STOCK_ANALYZE_FAILED.format(symbol=", ".join(symbols))
-            )
+            await update.message.reply_text(stock_turn.persona_failure_note(failed or symbols))
     except Exception as exc:
         logger.exception("Lỗi góc nhìn persona %s", ", ".join(symbols))
         await telemetry.failure(prompt_id, "persona_view", exc)

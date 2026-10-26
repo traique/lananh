@@ -11,6 +11,7 @@ import time
 import httpx
 
 from ai import orchestrator, tavily_client
+from ai.timeouts import turn_deadline
 from services import web_search
 from services.public_http import public_status
 
@@ -188,7 +189,18 @@ async def search_price(product_name: str) -> tuple[str, bool]:
 
     Trả về (text, used_fallback); caller giữ contract cũ để gắn nhãn API khi
     response provider có đánh dấu fallback.
+
+    MỘT hạn chót CHAT_TURN_TIMEOUT_SEC cho cả lượt (Tavily rồi tối đa 2 lượt hỏi
+    AI): trước đây mỗi orchestrator.ask tự mở 200s riêng nên /gia có thể giữ khoá
+    lượt gấp đôi. Hết hạn -> TurnTimeoutError (caller báo "⏱️ ..."). Gọi lồng
+    trong lượt khác (tool tim_gia của /agent) thì giữ hạn SỚM hơn của lượt ngoài.
+    verify_links() chạy sau, ngoài hạn này (mỗi link có timeout riêng).
     """
+    with turn_deadline():
+        return await _search_price(product_name)
+
+
+async def _search_price(product_name: str) -> tuple[str, bool]:
     search_results: str | None = None
     try:
         tavily_response = await tavily_client.search_results(

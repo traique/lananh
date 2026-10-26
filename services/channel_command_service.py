@@ -4,6 +4,7 @@ import base64
 import contextvars
 
 from ai import agnes_client, orchestrator, router9_client, tavily_client
+from ai.timeouts import TurnTimeoutError
 from core import config, database as db
 from core.text_utils import parse_on_off
 from services import (
@@ -160,6 +161,9 @@ async def _price(user_id: int, product: str, channel: str = "zalo") -> tuple[lis
             price_search.set_cached_price(product, output)
         await telemetry.success(prompt_id, "price_search", output or "(không có nội dung)")
         return [output or "Không tìm được giá lúc này."], ("api" if used_fallback else None)
+    except TurnTimeoutError as exc:
+        await telemetry.failure(prompt_id, "price_search", exc)
+        return [f"⏱️ {exc}"], None
     except Exception as exc:
         await telemetry.failure(prompt_id, "price_search", exc)
         return ["❌ Có lỗi khi tìm giá sản phẩm."], None
