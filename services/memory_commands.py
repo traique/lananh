@@ -62,8 +62,7 @@ async def handle(
                     "bật lại bằng /memory on."
                 ]
             )
-        items = await memory_control.list_items(user_id)
-        return CommandReply([memory_control.format_listing(items, about=about)])
+        return CommandReply([await memory_control.listing_text(user_id, about=about)])
     if command == "/forget":
         try:
             await memory_service.clear_memory(user_id)

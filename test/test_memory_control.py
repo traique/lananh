@@ -24,6 +24,8 @@ UID = 42
 def mem(monkeypatch):
     fake = FakeMemoryDB()
     fake.install(monkeypatch, db)
+    # Danh sách /memory vừa xem giữ trong RAM theo user_id - không lẫn giữa các test.
+    memory_control._listings.clear()
     return fake
 
 
@@ -64,7 +66,8 @@ async def test_quen_theo_so_tu_khoa_va_tu_choi_khi_mo_ho(mem):
     assert [h["content"] for h in mem.highlights] == ["Ngày 15/8 bàn chốt lời HPG quanh 28"]
     forget = await memory_service.get_forget_list(UID)
     assert forget[-1]["k"] == "so_thich"
-    done = (await _cmd("/quen", "3")).messages[0]  # giờ số 3 là highlight HPG
+    await _cmd("/memory")  # xem lại danh sách: giờ số 3 là highlight HPG
+    done = (await _cmd("/quen", "3")).messages[0]
     assert "HPG" in done and mem.highlights == []
     assert "không thấy" in (await _cmd("/quen", "xe máy")).messages[0]
 
@@ -298,3 +301,41 @@ async def test_lenh_tri_nho_khong_cho_vo_han_khi_trich_nho_nen_giu_khoa(mem, mon
     # Đếm khoá đúng: không rò lock sau các lần chờ hết giờ.
     assert UID not in memory_service._user_locks and UID not in memory_service._lock_users
     assert (await memory_control.remember(UID, "size giày của vợ là 38")).startswith("📌")
+
+
+@pytest.mark.asyncio
+async def test_quen_theo_so_dung_danh_sach_vua_xem_du_trich_nho_nen_chen_them(mem):
+    """/memory rồi flush nền thêm highlight (dời số) trước khi /quen: số vẫn trỏ đúng
+    mục người dùng đã thấy."""
+    await _seed(mem)
+    listing = (await _cmd("/memory")).messages[0]
+    assert "4. Anh hay uống cà phê muối buổi sáng" in listing
+    await db.add_highlight(UID, "Vợ anh sinh nhật 12/5", 25)  # flush nền chen vào
+    done = (await _cmd("/quen", "4")).messages[0]
+    assert "Anh hay uống cà phê muối" in done
+    assert [h["content"] for h in mem.highlights] == [
+        "Ngày 15/8 bàn chốt lời HPG quanh 28",
+        "Vợ anh sinh nhật 12/5",
+    ]
+    # Mục đã đổi (fact được cập nhật -> dòng mới) từ lúc xem: không xoá nhầm.
+    await db.save_fact(UID, "cong_viec", "PM ở công ty mới")  # số 3 trong danh sách đã xem
+    changed = (await _cmd("/quen", "3")).messages[0]
+    assert "đã thay đổi" in changed and "/memory" in changed
+    assert any(r["key"] == "cong_viec" for r in mem.current(UID))
+    # /ghim theo số cũng theo danh sách đã xem.
+    assert "ten: Trai" in (await _cmd("/ghim", "1")).messages[0]
+
+
+@pytest.mark.asyncio
+async def test_quen_theo_so_khi_chua_xem_danh_sach_thi_hoi_xac_nhan(mem, monkeypatch):
+    await _seed(mem)
+    asked = (await _cmd("/quen", "3")).messages[0]
+    assert "cong viec: PM ở Nắng Decor" in asked and "/quen 3 xacnhan" in asked
+    assert len(mem.current(UID)) == 3  # chưa xoá gì
+    done = (await _cmd("/quen", "3 xacnhan")).messages[0]
+    assert done.startswith("🗑️ Em quên rồi: cong viec")
+    # Danh sách đã xem quá hạn: hỏi lại thay vì xoá ngay.
+    await _cmd("/memory")
+    monkeypatch.setattr(memory_control, "LISTING_TTL_SEC", -1.0)
+    again = (await _cmd("/quen", "1")).messages[0]
+    assert "/quen 1 xacnhan" in again and len(mem.current(UID)) == 2

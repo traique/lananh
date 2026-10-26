@@ -15,6 +15,8 @@ import io
 import json
 import logging
 import re
+import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -179,6 +181,73 @@ def format_listing(items: MemoryItems, *, about: str = "") -> str:
     return "\n".join(lines)
 
 
+# ─── Số thứ tự ổn định cho /quen, /ghim <số> ─────────────────────────────────
+# Số trong /memory tính lại mỗi lần đọc (fact xếp theo updated_at, highlight mới
+# nhất trước) nên trích nhớ nền chen giữa /memory và /quen <số> có thể dời số ->
+# xoá nhầm mục. Giữ bản đồ số -> (loại, id) của danh sách người dùng VỪA XEM (có
+# trần người + hạn); số không có bản đồ còn hạn thì hỏi xác nhận trước khi xoá.
+LISTING_TTL_SEC = 600.0
+_LISTING_MAX_USERS = 256
+_listings: OrderedDict[int, tuple[float, dict[int, tuple[str, int]]]] = OrderedDict()
+_NUMBER_SELECTOR_RE = re.compile(r"^(\d{1,4})(?:\s+(xacnhan|xác nhận|xac nhan))?$", re.IGNORECASE)
+
+
+def remember_listing(user_id: int, items: MemoryItems) -> None:
+    """Ghi lại số thứ tự vừa hiện cho người dùng (/memory, danh sách khớp)."""
+    mapping = {n: (kind, int(row["id"])) for n, kind, row in items.numbered() if "id" in row}
+    _listings[user_id] = (time.monotonic(), mapping)
+    _listings.move_to_end(user_id)
+    while len(_listings) > _LISTING_MAX_USERS:
+        _listings.popitem(last=False)
+
+
+def forget_listing(user_id: int) -> None:
+    _listings.pop(user_id, None)
+
+
+def _shown_listing(user_id: int) -> dict[int, tuple[str, int]] | None:
+    entry = _listings.get(user_id)
+    if entry is None:
+        return None
+    stamp, mapping = entry
+    if time.monotonic() - stamp > LISTING_TTL_SEC:
+        _listings.pop(user_id, None)
+        return None
+    return mapping
+
+
+def _row_by_id(items: MemoryItems, kind: str, row_id: int) -> dict | None:
+    rows = items.facts if kind == "fact" else items.highlights
+    return next((row for row in rows if int(row.get("id") or 0) == row_id), None)
+
+
+def _changed_text(index: int) -> str:
+    return (
+        f"Mục số {index} đã thay đổi từ lúc xem /memory (em vừa cập nhật trí nhớ) - "
+        "gõ /memory xem lại rồi chọn số nhé."
+    )
+
+
+def _resolve_shown(
+    items: MemoryItems, shown: dict[int, tuple[str, int]], index: int
+) -> tuple[int, str, dict] | str:
+    """(số, loại, dòng) theo danh sách đã xem, hoặc câu báo lỗi."""
+    target = shown.get(index)
+    if target is None:
+        return f"Không có mục số {index} trong danh sách vừa xem - gõ /memory để xem lại."
+    row = _row_by_id(items, *target)
+    if row is None:
+        return _changed_text(index)
+    return index, target[0], row
+
+
+async def listing_text(user_id: int, *, about: str = "") -> str:
+    """/memory: danh sách đánh số + ghi lại số thứ tự cho /quen, /ghim <số>."""
+    items = await list_items(user_id)
+    remember_listing(user_id, items)
+    return format_listing(items, about=about)
+
+
 def _match(items: MemoryItems, selector: str) -> list[tuple[int, str, dict]]:
     numbered = items.numbered()
     selector = selector.strip()
@@ -202,12 +271,34 @@ async def forget_item(user_id: int, selector: str) -> str:
     selector = (selector or "").strip()
     if not selector:
         return "Cú pháp: /quen <số|từ khoá> - xem số thứ tự bằng /memory."
+    numeric = _NUMBER_SELECTOR_RE.match(selector)
     async with memory_service.interactive_lock(user_id):
         items = await list_items(user_id)
-        found = _match(items, selector)
+        if numeric:
+            index = int(numeric.group(1))
+            shown = _shown_listing(user_id)
+            if shown is None:
+                # Chưa xem /memory (hoặc đã lâu): số có thể đã dời - hiện mục
+                # đang mang số này và hỏi xác nhận, không xoá ngay.
+                current = _match(items, str(index))
+                if not current:
+                    return f"Không có mục số {index} - gõ /memory để xem danh sách."
+                remember_listing(user_id, items)
+                _, kind, row = current[0]
+                return (
+                    f"Mục số {index} hiện là: {_item_text(kind, row)}\n"
+                    f"Đúng mục cần quên thì gõ: /quen {index} xacnhan"
+                )
+            resolved = _resolve_shown(items, shown, index)
+            if isinstance(resolved, str):
+                return resolved
+            found = [resolved]
+        else:
+            found = _match(items, selector)
         if not found:
             return f"Em không thấy mục nào khớp «{selector}». Gõ /memory để xem danh sách."
         if len(found) > 1:
+            remember_listing(user_id, items)  # số trong câu hỏi lại dùng được ngay
             shown = "\n".join(
                 f"{n}. {_item_text(kind, row)}" for n, kind, row in found[:_MAX_AMBIGUOUS_SHOWN]
             )
@@ -333,7 +424,15 @@ async def pin_item(user_id: int, selector: str, pinned: bool = True) -> str:
         return f"Cú pháp: {command} <số> - xem số thứ tự bằng /memory."
     async with memory_service.interactive_lock(user_id):
         items = await list_items(user_id)
-        found = _match(items, selector)
+        shown = _shown_listing(user_id)
+        if shown is not None:
+            # Theo danh sách người dùng vừa xem (/memory) - không theo số đã dời.
+            resolved = _resolve_shown(items, shown, int(selector))
+            if isinstance(resolved, str):
+                return resolved
+            found = [resolved]
+        else:
+            found = _match(items, selector)
         if not found or found[0][1] != "fact":
             return (
                 "Số này không phải 1 thông tin trong /memory (chi tiết đáng nhớ không ghim được)."
@@ -542,6 +641,7 @@ async def delete_own_data(user_id: int, argument: str = "") -> str:
     from services import chat_context
 
     chat_context.forget_pages(user_id)  # trang vừa đọc giữ trong RAM
+    forget_listing(user_id)
     from services import answer_feedback
 
     answer_feedback.forget(user_id)
