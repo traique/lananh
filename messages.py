@@ -4,6 +4,8 @@ Gom về 1 chỗ để dễ sửa văn phong / dịch đa ngôn ngữ sau này, 
 literal string trong logic nghiệp vụ.
 """
 
+from core import address
+
 # ─── Provider-chain (router9 <-> api1/api2) ─────────────────────────────────
 ROUTER9_DEAD_ALERT = (
     "⚠️ 9Router vừa lỗi, đã chuyển hẳn sang Google AI Studio API. "
@@ -50,7 +52,6 @@ STOCK_SYMBOL_UNRESOLVED = (
 
 # ─── Chat & lệnh chung ───────────────────────────────────────────────────────
 INVALID_COMMAND = "Lệnh không hợp lệ. Gõ /help để xem danh sách lệnh."
-CHAT_GENERIC_ERROR = "Gemini không phản hồi gì, thử lại nhé."
 PHOTO_TIMEOUT_ERROR = "❌ Tải ảnh từ Telegram bị timeout. Anh gửi lại ảnh hoặc thử ảnh nhỏ hơn nhé."
 
 # --- runtime ---
@@ -58,6 +59,8 @@ WEBHOOK_DEAD_ALERT = (
     "⚠️ Sự kiện {channel}/{event_id} lỗi {attempts} lần liên tiếp ({error}) - "
     "đã ngừng thử lại (DEAD). Xem log server nếu cần xử lý tay."
 )
+# Thông điệp của TurnTimeoutError (ai/timeouts.py) - dùng cho log và làm chi tiết
+# kỹ thuật cho chủ bot; người dùng nhận câu friendly_error("timeout").
 CHAT_TURN_TIMEOUT_ERROR = "Hết {seconds}s chờ AI trả lời (mọi provider đều chậm/lỗi)."
 # core/untrusted.py - dữ liệu ngoài (web/RSS/nhóm Zalo) có câu giống prompt
 # injection. Chỉ báo (giãn cách 1 giờ), không chặn gì.
@@ -82,3 +85,80 @@ ZALO_OUTBOX_FAILED_ALERT = (
     "⚠️ Tin Zalo #{item_id} gửi tới {recipient} lỗi {attempts} lần liên tiếp ({error}) - "
     "đã ngừng thử lại để không chặn các tin sau."
 )
+
+# ─── Câu báo lỗi giọng Lan Anh ───────────────────────────────────────────────
+# Mỗi câu nêu 1 lý do ngắn (AI đang bận / chậm / ảnh không đọc được) và việc nên
+# làm tiếp. KHÔNG bao giờ có tên provider (lỗi có thể từ 9Router, Groq,
+# OpenRouter... chứ không riêng Gemini) hay nội dung exception - thân response
+# upstream có thể lọt vào thông điệp lỗi. Chỉ chủ bot (Telegram/Zoom, Zalo
+# controller) được thêm chi tiết kỹ thuật + gợi ý /status để khỏi mò log Render.
+# {ai}/{Ai}: Lan Anh tự xưng; {tail}: " <cách gọi người nhận>" hoặc rỗng khi
+# thành viên chưa được đặt cách gọi (câu không gọi trống "anh").
+_ERROR_TEMPLATES = {
+    "chat": (
+        "😥 Bên AI đang bận nên {ai} chưa trả lời được tin vừa rồi. "
+        "Gửi lại giúp {ai} sau khoảng 1 phút nha{tail}."
+    ),
+    "timeout": (
+        "⏱️ AI trả lời chậm quá nên {ai} đành dừng lượt này. "
+        "Gửi lại giúp {ai} sau ít phút nha{tail}."
+    ),
+    "empty": "{Ai} chưa nghĩ ra câu trả lời cho tin này. Hỏi lại theo cách khác giúp {ai} nha{tail}.",
+    "image": (
+        "😥 {Ai} chưa đọc được ảnh này (AI đang bận hoặc ảnh không xem được). "
+        "Thử lại sau ít phút hoặc gửi ảnh khác giúp {ai} nha{tail}."
+    ),
+    "image_empty": "{Ai} xem ảnh rồi mà chưa viết ra được prompt. Thử ảnh khác giúp {ai} nha{tail}.",
+    "image_download": (
+        "📥 {Ai} chưa tải được ảnh về (mạng chập chờn hoặc ảnh lỗi). "
+        "Gửi lại ảnh giúp {ai} nha{tail}."
+    ),
+    "prompt": (
+        "😥 Bên AI đang bận nên {ai} chưa viết được prompt. Thử lại giúp {ai} sau ít phút nha{tail}."
+    ),
+    "prompt_empty": (
+        "{Ai} chưa viết ra được prompt cho mô tả này. Tả kỹ hơn một chút giúp {ai} nha{tail}."
+    ),
+    "price": "😥 {Ai} chưa tìm được giá lúc này. Thử lại giúp {ai} sau ít phút nha{tail}.",
+    "unexpected": (
+        "😥 Có trục trặc ngoài ý muốn nên {ai} chưa làm xong việc vừa rồi. "
+        "Thử lại giúp {ai} sau ít phút nha{tail}."
+    ),
+}
+# Lỗi phía provider: chủ bot được nhắc xem /status.
+_OWNER_STATUS_HINT_KINDS = frozenset({"chat", "timeout", "image", "prompt"})
+OWNER_STATUS_HINT = "Anh gõ /status xem provider nào đang sống nhé."
+
+
+def friendly_error(
+    kind: str, *, owner: bool = False, address_form: str | None = None, detail: str = ""
+) -> str:
+    """Câu báo lỗi giọng Lan Anh cho người dùng.
+
+    owner=True: gọi "anh", thêm chi tiết kỹ thuật ``detail`` (nếu có) và gợi ý
+    /status. Người khác: theo cách gọi riêng ``address_form`` (core/address.py)
+    hoặc câu trung tính; ``detail`` bị bỏ qua - không lộ exception/provider."""
+    template = _ERROR_TEMPLATES.get(kind, _ERROR_TEMPLATES["unexpected"])
+    if owner:
+        you, me = "anh", "em"
+    else:
+        form = address.normalize(address_form)
+        you, me = (form, address.self_word(form)) if form else ("", "em")
+    text = template.format(ai=me, Ai=me.capitalize(), tail=f" {you}" if you else "")
+    if not owner:
+        return text
+    if detail:
+        text += f"\n🔎 {detail}"
+    if kind in _OWNER_STATUS_HINT_KINDS:
+        text += f"\n{OWNER_STATUS_HINT}"
+    return text
+
+
+def exception_detail(exc: BaseException, limit: int = 300) -> str:
+    """ "<Loại lỗi>: <thông điệp>" rút gọn - chi tiết cho friendly_error(owner=True)."""
+    detail = f"{type(exc).__name__}: {exc}"
+    return detail if len(detail) <= limit else detail[:limit] + "…"
+
+
+# Model trả về rỗng (chủ bot - Telegram/Zoom).
+CHAT_GENERIC_ERROR = friendly_error("empty", owner=True)

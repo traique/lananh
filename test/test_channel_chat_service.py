@@ -142,7 +142,8 @@ async def test_zalo_chat_truyen_kenh_va_quyen_admin_xuong_persona(chat_fakes, mo
 
 
 @pytest.mark.asyncio
-async def test_zalo_chat_giu_nguyen_nhan_api_du_phong(chat_fakes, monkeypatch):
+async def test_nhan_api_du_phong_chi_hien_cho_chu_bot(chat_fakes, monkeypatch):
+    from core import config
     from services import channel_chat_service as ccs
 
     async def no_command(*args, **kwargs):
@@ -155,11 +156,15 @@ async def test_zalo_chat_giu_nguyen_nhan_api_du_phong(chat_fakes, monkeypatch):
     monkeypatch.setattr(ccs.portfolio_service, "maybe_handle_natural_language", no_command)
     monkeypatch.setattr(ccs, "_handle_stock", no_stock)
 
-    result = await ccs.handle_channel_text(1, "xin chào", channel="zalo")
+    # Thành viên Zalo: chỉ câu trả lời, nhãn dự phòng là chẩn đoán của chủ bot.
+    member = await ccs.handle_channel_text(-1, "xin chào", channel="zalo")
+    monkeypatch.setattr(config, "ALLOWED_USER_ID", 1)
+    owner = await ccs.handle_channel_text(1, "xin chào", channel="zoom")
     await ccs.stop_background_tasks()
 
-    assert result.provider == "api"
-    assert result.messages == [
+    assert member.provider == owner.provider == "api"
+    assert member.messages == ["trả lời"]
+    assert owner.messages == [
         "trả lời\n\n⚙️ _Câu trả lời do API dự phòng trả về, ngôn ngữ có thể khác thường ngày._"
     ]
 
@@ -294,9 +299,8 @@ async def test_telegram_chat_loi_va_rong_giu_thong_bao_cu(telegram_chat, monkeyp
     await chat_router.chat_msg(update, _TgContext())
     await chat_router.chat_msg(update, _TgContext())
 
-    assert update.message.replies == [
-        "❌ Có lỗi khi trò chuyện với Gemini. Hãy thử lại sau giây lát."
-    ]
+    assert update.message.replies == [messages.friendly_error("chat", owner=True)]
+    assert "Gemini" not in update.message.replies[0]
     assert sent == [messages.CHAT_GENERIC_ERROR]
 
 
@@ -343,5 +347,5 @@ async def test_run_chat_turn_shares_one_deadline_across_search_and_chat(monkeypa
     monkeypatch.setattr(svc.telemetry, "success", telemetry_noop)
 
     turn = await svc.run_chat_turn(1, "xin chào", channel="zalo")
-    assert turn.failed
-    assert turn.error_text.startswith("⏱️")
+    assert turn.failed and turn.timed_out
+    assert turn.error_detail.startswith("Hết")

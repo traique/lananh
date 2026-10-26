@@ -294,19 +294,30 @@ async def receive(
             return await _receive_text(payload)
 
 
-def _audience(zalo_user: zalo_users.ZaloUser) -> reply_audience.ReplyAudience:
+async def _is_controller(external_id: str) -> bool:
+    """Người gửi là tài khoản Zalo của chủ bot (controller ghép đôi qua /pair) -
+    KHÁC role admin: /zaloadmin cấp được admin cho người khác."""
+    controller = await _controller()
+    return bool(controller) and external_id == controller
+
+
+def _audience(zalo_user: zalo_users.ZaloUser, sender_id: str) -> reply_audience.ReplyAudience:
     """Người nhận của lượt (services/reply_audience.py): cách gọi riêng chủ bot
-    đặt cho người này (/zalopair <id> <tên> chị)."""
-    return reply_audience.ReplyAudience(address_form=getattr(zalo_user, "address_form", None))
+    đặt cho người này (/zalopair <id> <tên> chị) và cách kiểm (lười) có phải
+    chủ bot không - chỉ chủ bot thấy chi tiết lỗi kỹ thuật, nhãn ⚙️ API."""
+    return reply_audience.ReplyAudience(
+        address_form=getattr(zalo_user, "address_form", None),
+        owner_check=functools.partial(_is_controller, sender_id),
+    )
 
 
-def _chat_for(zalo_user: zalo_users.ZaloUser):
+def _chat_for(zalo_user: zalo_users.ZaloUser, sender_id: str):
     """handle_channel_text chạy trong ngữ cảnh người nhận của zalo_user. Tra tên
     module-level lúc gọi để test monkeypatch ``router.handle_channel_text`` vẫn có
     hiệu lực."""
 
     async def chat(user_id: int, text: str, is_admin: bool = True):
-        with reply_audience.use(_audience(zalo_user)):
+        with reply_audience.use(_audience(zalo_user, sender_id)):
             return await handle_channel_text(user_id, text, is_admin)
 
     return chat
@@ -345,7 +356,7 @@ async def _receive_text(payload: ZaloMessageRequest):
             command_account_id=payload.account_id,
         ),
         channel_dispatch.DispatchHandlers(
-            chat=_chat_for(zalo_user),
+            chat=_chat_for(zalo_user, payload.sender_id),
             get_cached=idempotency.get_zalo_response,
             save_cached=idempotency.save_zalo_response,
             facebook=maybe_handle_facebook_command,
@@ -392,7 +403,7 @@ async def image_prompt(
         )
         if cached is not None:
             return ZaloMessageResponse.model_validate(cached)
-        with reply_audience.use(_audience(zalo_user)):
+        with reply_audience.use(_audience(zalo_user, x_zalo_sender_id)):
             messages, provider = await handle_channel_image(
                 zalo_user.internal_user_id,
                 body,

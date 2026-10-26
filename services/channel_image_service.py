@@ -3,9 +3,11 @@
 import os
 from pathlib import Path
 
+import messages
 from ai import orchestrator
 from core import config
 from core.fileutil import safe_delete
+from services import reply_audience
 from services.prompt_identity import resolve_prompt_identity
 from services.prompt_templates import build_image_instruction
 from services.telemetry import telemetry
@@ -43,11 +45,14 @@ async def handle_channel_image(
         output = (getattr(response, "text", None) or "").strip()
         await telemetry.success(prompt_id, "promptify", output or "(không có nội dung)")
         if not output:
-            return ["Gemini không trả về prompt. Hãy thử ảnh khác."], None
+            return [await reply_audience.error_text("image_empty", user_id)], None
         fallback = bool(getattr(response, "used_fallback", False))
         return [f"📝 Prompt gợi ý\n{hint}\n\n{output}"], "api" if fallback else None
     except Exception as exc:
         await telemetry.failure(prompt_id, "promptify", exc)
-        return [f"❌ Gemini không phân tích được ảnh: {type(exc).__name__}: {str(exc)[:220]}"], None
+        # Thông điệp lỗi có thể mang thân response upstream: chỉ chủ bot (Zalo
+        # controller) được xem, thành viên nhận câu giọng Lan Anh không chi tiết.
+        detail = messages.exception_detail(exc, limit=250)
+        return [await reply_audience.error_text("image", user_id, detail)], None
     finally:
         await safe_delete(path)

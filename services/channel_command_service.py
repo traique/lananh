@@ -7,11 +7,13 @@ from ai import agnes_client, orchestrator, router9_client, tavily_client
 from ai.timeouts import TurnTimeoutError
 from core import config, database as db
 from core.text_utils import parse_on_off
+import messages
 from services import (
     divination_commands,
     memory_service,
     price_search,
     prompt_templates,
+    reply_audience,
     search_status,
     translate_service,
     usage_stats,
@@ -152,12 +154,15 @@ async def _prompt(
         response = await orchestrator.ask(instruction)
         output = (response.text or "").strip()
         await telemetry.success(prompt_id, "prompt_generator", output or "(không có nội dung)")
-        return (
-            [f"{hint}\n\n{output}"] if output else ["Gemini không trả về prompt, hãy thử lại."]
-        ), ("api" if getattr(response, "used_fallback", False) else None)
+        if not output:
+            return [await reply_audience.error_text("prompt_empty", user_id)], None
+        return [f"{hint}\n\n{output}"], (
+            "api" if getattr(response, "used_fallback", False) else None
+        )
     except Exception as exc:
         await telemetry.failure(prompt_id, "prompt_generator", exc)
-        return ["❌ Có lỗi khi tạo prompt. Hãy thử lại sau."], None
+        detail = messages.exception_detail(exc)
+        return [await reply_audience.error_text("prompt", user_id, detail)], None
 
 
 async def _price(user_id: int, product: str, channel: str = "zalo") -> tuple[list[str], str | None]:
@@ -176,10 +181,11 @@ async def _price(user_id: int, product: str, channel: str = "zalo") -> tuple[lis
         return [output or "Không tìm được giá lúc này."], ("api" if used_fallback else None)
     except TurnTimeoutError as exc:
         await telemetry.failure(prompt_id, "price_search", exc)
-        return [f"⏱️ {exc}"], None
+        return [await reply_audience.error_text("timeout", user_id, str(exc))], None
     except Exception as exc:
         await telemetry.failure(prompt_id, "price_search", exc)
-        return ["❌ Có lỗi khi tìm giá sản phẩm."], None
+        detail = messages.exception_detail(exc)
+        return [await reply_audience.error_text("price", user_id, detail)], None
 
 
 async def _translate(

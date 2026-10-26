@@ -40,6 +40,7 @@ import {
   isTransientNetworkError,
   sleep,
   splitForZalo,
+  userErrorReply,
 } from "./text.js";
 import type { MediaItem, ZaloApi, ZaloMessage } from "./types.js";
 
@@ -79,6 +80,11 @@ const BUSY_REPLY =
   "⏳ Bot đang trả lời nhiều tin cùng lúc nên chưa nhận được tin vừa rồi. Bạn gửi lại sau ít phút nhé.";
 const BRIDGE_ERROR_REPLY =
   "⚠️ Bot đang gặp sự cố nên chưa trả lời được tin vừa rồi. Bạn thử gửi lại sau ít phút nhé.";
+// Lỗi ảnh: người gửi chỉ thấy câu cố định, chủ bot thấy thêm chi tiết (userErrorReply).
+const IMAGE_ERROR_REPLY =
+  "⚠️ Bot chưa xử lý được ảnh vừa rồi (AI đang bận hoặc ảnh không tải được). Bạn thử gửi lại sau ít phút nhé.";
+const IMAGE_SEND_ERROR_REPLY =
+  "⚠️ Ảnh đã tạo xong nhưng gửi qua Zalo bị lỗi. Bạn thử lại lệnh sau ít phút nhé.";
 
 // ─── Gửi tin ────────────────────────────────────────────────────────────────
 
@@ -113,8 +119,9 @@ async function sendImage(client: ZaloApi, target: string, imageB64: string): Pro
       if (!isTransientNetworkError(error)) break;
     }
   }
+  // Tin riêng: target (thread) chính là id người gửi.
   await client.sendMessage(
-    { msg: `❌ Tạo ảnh xong nhưng gửi thất bại: ${errorMessage(lastError)}` },
+    { msg: userErrorReply(lastError, target, config.controllerId, IMAGE_SEND_ERROR_REPLY) },
     target,
     ThreadType.User,
   );
@@ -368,7 +375,9 @@ async function handleDirectMessage(msg: ParsedMessage): Promise<void> {
       console.error(`[zalo] image bridge failed for message ${msg.id}`, error);
       // Người lạ chưa pair: im lặng như phía Python.
       if (knownSenders.has(msg.sender)) {
-        await sendReply(msg, [`❌ Không xử lý được ảnh: ${errorMessage(error)}`]);
+        await sendReply(msg, [
+          userErrorReply(error, msg.sender, config.controllerId, IMAGE_ERROR_REPLY),
+        ]);
       }
     }
     return;

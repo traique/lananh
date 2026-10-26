@@ -25,8 +25,6 @@ from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
 
-_CHAT_ERROR = "❌ Có lỗi khi trò chuyện với Gemini. Hãy thử lại sau giây lát."
-
 
 @common.restricted
 async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -72,7 +70,8 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             user_id, text, grounding=route.grounding, channel="telegram"
         )
     if turn.failed:
-        await update.message.reply_text(turn.error_text or _CHAT_ERROR)
+        # Telegram chỉ phục vụ chủ bot: giọng Lan Anh + chi tiết kỹ thuật.
+        await update.message.reply_text(channel_chat_service.failure_message(turn, owner=True))
         return
     reply_out = turn.text
     if reply_out and turn.used_fallback:
@@ -84,4 +83,6 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # và báo 1 câu ngắn thay vì để error handler chung xử lý.
         logger.exception("Lỗi gửi câu trả lời chat về Telegram")
         await telemetry.failure(turn.prompt_id, "chat", exc)
-        await update.message.reply_text(_CHAT_ERROR)
+        await update.message.reply_text(
+            messages.friendly_error("unexpected", owner=True, detail=messages.exception_detail(exc))
+        )

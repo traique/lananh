@@ -78,7 +78,7 @@ async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("Lỗi không xác định khi tải ảnh")
         await telemetry.failure(prompt_id, "promptify", e)
         await update.message.reply_text(
-            f"❌ Không tải được ảnh. Anh thử gửi lại nhé.\n🔎 {_short_error(e)}"
+            messages.friendly_error("image_download", owner=True, detail=_short_error(e))
         )
         return
 
@@ -98,20 +98,18 @@ async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # chính sách nội dung. In thẳng loại lỗi để khỏi phải mò log Render.
         logger.exception("Lỗi phân tích ảnh (provider-chain)")
         await telemetry.failure(prompt_id, "promptify", e)
+        # Giọng Lan Anh, không đổ lỗi riêng "Gemini" (có thể là 9Router/Groq...);
+        # chi tiết lỗi + gợi ý /status vẫn hiện cho chủ bot.
         await update.message.reply_text(
-            "❌ Gemini không phân tích được ảnh lúc này.\n"
-            f"🔎 {_short_error(e)}\n"
-            "Anh gõ /status xem provider nào đang sống nhé."
+            messages.friendly_error("image", owner=True, detail=_short_error(e))
         )
         return
     finally:
         await common.safe_delete(local_path)
 
     if not result_text:
-        await telemetry.success(prompt_id, "promptify", "(Gemini không trả về nội dung)")
-        await update.message.reply_text(
-            "Gemini không trả về nội dung phân tích. Thử gửi lại ảnh hoặc ảnh khác nhé."
-        )
+        await telemetry.success(prompt_id, "promptify", "(AI không trả về nội dung)")
+        await update.message.reply_text(messages.friendly_error("image_empty", owner=True))
         return
 
     await telemetry.success(prompt_id, "promptify", result_text)

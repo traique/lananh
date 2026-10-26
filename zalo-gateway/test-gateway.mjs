@@ -7,7 +7,13 @@ import {
   linkHref,
   sniffImage,
 } from "./dist/media.js";
-import { KnownSenders, SeenIds, isTransientNetworkError, splitForZalo } from "./dist/text.js";
+import {
+  KnownSenders,
+  SeenIds,
+  isTransientNetworkError,
+  splitForZalo,
+  userErrorReply,
+} from "./dist/text.js";
 import {
   FacebookPostBuffer,
   MAX_BUFFERED_MEDIA_BYTES,
@@ -320,4 +326,14 @@ test("linkHref chỉ nhận tin chia sẻ link có href http(s)", () => {
   assert.equal(linkHref("chat.photo", content), "");
   assert.equal(linkHref("chat.recommended", { href: "javascript:alert(1)" }), "");
   assert.equal(linkHref("chat.recommended", "text"), "");
+});
+
+test("userErrorReply: chỉ chủ bot thấy chi tiết lỗi, người khác nhận câu cố định", () => {
+  const error = new Error("Image prompt returned 500: {secret body} photo-stal.zadn.vn");
+  const reply = "⚠️ Bot chưa xử lý được ảnh.";
+  assert.equal(userErrorReply(error, "member", "owner", reply), reply);
+  assert.equal(userErrorReply(error, "owner", "", reply), reply);
+  const owner = userErrorReply(error, "owner", "owner", reply);
+  assert.ok(owner.startsWith(reply) && owner.includes("Image prompt returned 500"));
+  assert.ok(userErrorReply("lạ", "owner", "owner", reply).endsWith("🔎 lạ"));
 });

@@ -86,15 +86,37 @@ async def _update_memory_bounded(user_id: int, text: str, reply: str) -> None:
 
 @dataclass(frozen=True)
 class ChatTurn:
-    """Kết quả 1 lượt chat AI; mỗi kênh tự định dạng câu trả lời/lỗi."""
+    """Kết quả 1 lượt chat AI; mỗi kênh tự định dạng câu trả lời/lỗi
+    (failure_message / failure_text)."""
 
     text: str = ""  # rỗng khi model không trả nội dung
     used_fallback: bool = False
     failed: bool = False  # lỗi đã được log + ghi telemetry
     prompt_id: int | None = None
-    # Thông báo lỗi cụ thể cho người dùng (vd hết hạn chót lượt); rỗng thì kênh
-    # dùng câu lỗi chung của mình.
-    error_text: str = ""
+    # Hết hạn chót lượt (TurnTimeoutError): báo "AI chậm quá" thay câu lỗi chung.
+    timed_out: bool = False
+    # Chi tiết kỹ thuật (loại lỗi + thông điệp) - CHỈ chủ bot được xem.
+    error_detail: str = ""
+
+
+def failure_message(turn: ChatTurn, *, owner: bool, address_form: str | None = None) -> str:
+    """Câu báo lượt chat hỏng, giọng Lan Anh (messages.friendly_error): không tên
+    provider; chi tiết kỹ thuật + gợi ý /status chỉ dành cho chủ bot."""
+    return messages.friendly_error(
+        "timeout" if turn.timed_out else "chat",
+        owner=owner,
+        address_form=address_form,
+        detail=turn.error_detail,
+    )
+
+
+async def failure_text(turn: ChatTurn, user_id: int) -> str:
+    """failure_message cho người nhận của lượt hiện tại (services/reply_audience.py)."""
+    return failure_message(
+        turn,
+        owner=await reply_audience.is_owner(user_id),
+        address_form=reply_audience.current().address_form,
+    )
 
 
 async def run_chat_turn(
@@ -152,14 +174,16 @@ async def run_chat_turn(
     except TurnTimeoutError as exc:
         logger.warning("Lượt chat hết hạn chót (kênh %s): %s", channel, exc)
         await telemetry.failure(prompt_id, "chat", exc)
-        return ChatTurn(failed=True, prompt_id=prompt_id, error_text=f"⏱️ {exc}")
+        return ChatTurn(failed=True, prompt_id=prompt_id, timed_out=True, error_detail=str(exc))
     except Exception as exc:
         logger.exception("Lỗi lượt chat (kênh %s)", channel)
         await telemetry.failure(prompt_id, "chat", exc)
-        return ChatTurn(failed=True, prompt_id=prompt_id)
+        return ChatTurn(
+            failed=True, prompt_id=prompt_id, error_detail=messages.exception_detail(exc)
+        )
 
     # Từ đây câu trả lời ĐÃ sinh xong (đã tốn quota): lỗi ghi DB/telemetry chỉ
-    # log, không bao giờ biến thành "❌ Có lỗi khi trò chuyện" và mất câu trả lời.
+    # log, không bao giờ biến thành câu báo lỗi và mất câu trả lời.
     await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
     if reply:
         await _save_turn_best_effort(user_id, text, reply)
@@ -379,7 +403,7 @@ async def handle_channel_text(
             stock_result, grounding = await _handle_stock(user_id, text, is_admin)
         except TurnTimeoutError as exc:
             logger.warning("Nhánh cổ phiếu hết hạn chót lượt: %s", exc)
-            return ChannelResult([f"⏱️ {exc}"])
+            return ChannelResult([await reply_audience.error_text("timeout", user_id, str(exc))])
         if stock_result is not None:
             return stock_result
         turn = await run_chat_turn(
@@ -392,19 +416,14 @@ async def handle_channel_text(
             address_form=reply_audience.current().address_form,
         )
     if turn.failed:
-        return ChannelResult(
-            [turn.error_text or "❌ Có lỗi khi trò chuyện với Gemini. Hãy thử lại sau."]
-        )
+        return ChannelResult([await failure_text(turn, user_id)])
     if not turn.text:
-        return ChannelResult([messages.CHAT_GENERIC_ERROR])
-    return ChannelResult(
-        [
-            turn.text
-            + (
-                "\n\n⚙️ _Câu trả lời do API dự phòng trả về, ngôn ngữ có thể khác thường ngày._"
-                if turn.used_fallback
-                else ""
-            )
-        ],
-        "api" if turn.used_fallback else None,
+        return ChannelResult([await reply_audience.error_text("empty", user_id)])
+    # Nhãn câu trả lời dự phòng là chẩn đoán cho chủ bot (Zoom, Zalo controller);
+    # thành viên chỉ cần câu trả lời.
+    footnote = (
+        "\n\n⚙️ _Câu trả lời do API dự phòng trả về, ngôn ngữ có thể khác thường ngày._"
+        if turn.used_fallback and await reply_audience.is_owner(user_id)
+        else ""
     )
+    return ChannelResult([turn.text + footnote], "api" if turn.used_fallback else None)

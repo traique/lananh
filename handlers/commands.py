@@ -44,7 +44,7 @@ HELP_TEXT = (
     '📊 *Cổ phiếu Việt Nam*: nhắc tới 1 mã là em báo giá realtime; nói rõ "phân tích FPT" để có báo cáo đầy đủ '
     '(action do hệ thống quyết, AI chỉ diễn giải). "Soi danh mục" để xem cả rổ. Thêm "theo Buffett/Minervini/'
     'Đoàn Vĩnh Bình" (hoặc "3 huyền thoại") để nghe góc nhìn định tính.\n\n'
-    "🖼️ *Gửi 1 ảnh chân dung* để Gemini viết lại prompt giữ nguyên khuôn mặt.\n\n"
+    "🖼️ *Gửi 1 ảnh chân dung* để em viết prompt (dán sang app Gemini) giữ nguyên khuôn mặt.\n\n"
     "*Lịch, thần số học, tử vi, kỳ môn*\n"
     "/lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8, "
     "/lich tháng này, /lich trung thu, /lich ngày tốt tháng này, /lich tuổi 15/3/1990, "
@@ -183,8 +183,8 @@ async def prompt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         result_text = (response.text or "").strip()
 
         if not result_text:
-            await telemetry.success(prompt_id, "prompt_generator", "(Gemini không trả về nội dung)")
-            await update.message.reply_text("Gemini không trả lời được, anh thử lại nha.")
+            await telemetry.success(prompt_id, "prompt_generator", "(AI không trả về nội dung)")
+            await update.message.reply_text(messages.friendly_error("prompt_empty", owner=True))
             return
 
         await telemetry.success(prompt_id, "prompt_generator", result_text)
@@ -200,7 +200,9 @@ async def prompt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     except Exception as e:
         logger.exception("Lỗi tạo prompt")
         await telemetry.failure(prompt_id, "prompt_generator", e)
-        await update.message.reply_text("❌ Có lỗi khi tạo prompt. Hãy thử lại sau giây lát.")
+        await update.message.reply_text(
+            messages.friendly_error("prompt", owner=True, detail=messages.exception_detail(e))
+        )
 
 
 @common.restricted
@@ -234,7 +236,7 @@ async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         result_text, used_fallback = await price_search.search_price(product_name)
 
         if not result_text:
-            await telemetry.success(prompt_id, "price_search", "(Gemini không trả về nội dung)")
+            await telemetry.success(prompt_id, "price_search", "(AI không trả về nội dung)")
             await status.edit_text("Em không tìm được giá lúc này, anh thử lại sau nha.")
             return
 
@@ -247,7 +249,7 @@ async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except TurnTimeoutError as e:
         logger.warning("Tìm giá %r hết hạn chót lượt: %s", product_name, e)
         await telemetry.failure(prompt_id, "price_search", e)
-        await status.edit_text(f"⏱️ {e}")
+        await status.edit_text(messages.friendly_error("timeout", owner=True, detail=str(e)))
     except Exception as e:
         logger.exception("Lỗi tìm giá sản phẩm")
         await telemetry.failure(prompt_id, "price_search", e)
@@ -651,8 +653,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     if isinstance(update, Update) and update.effective_message:
         try:
+            # Bot chỉ phục vụ chủ bot (@common.restricted): giọng Lan Anh + loại lỗi.
+            detail = messages.exception_detail(context.error) if context.error else ""
             await update.effective_message.reply_text(
-                "❌ Đã có lỗi không mong muốn xảy ra. Vui lòng thử lại."
+                messages.friendly_error("unexpected", owner=True, detail=detail)
             )
         except Exception:
             logger.exception("Không gửi được thông báo lỗi cho user")

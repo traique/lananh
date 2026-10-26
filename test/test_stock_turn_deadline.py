@@ -236,5 +236,10 @@ async def test_lenh_gia_kenh_chat_bao_het_gio(monkeypatch, no_telemetry):
 
     monkeypatch.setattr(ccs_cmd.price_search, "get_cached_price", lambda p: None)
     monkeypatch.setattr(ccs_cmd.price_search, "search_price", timeout)
-    outputs, provider = await ccs_cmd._price(1, "iPhone 16")
-    assert outputs == ["⏱️ Hết 200s chờ AI trả lời"] and provider is None
+    outputs, provider = await ccs_cmd._price(-1, "iPhone 16")
+    # Thành viên: câu giọng Lan Anh, không lộ chi tiết kỹ thuật.
+    assert outputs == [messages.friendly_error("timeout")] and provider is None
+    assert "Hết 200s" not in outputs[0]
+    monkeypatch.setattr(ccs_cmd.config, "ALLOWED_USER_ID", 7)
+    outputs, _ = await ccs_cmd._price(7, "iPhone 16")
+    assert outputs[0].startswith("⏱️ AI trả lời chậm quá") and "🔎 Hết 200s" in outputs[0]
