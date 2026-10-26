@@ -518,7 +518,8 @@ async def fill_sale_price(
     pool: Any, user_id: int, symbol: str, price: float, *, fee_rate: float, tax_rate: float
 ):
     """Bổ sung giá cho lệnh bán GẦN NHẤT chưa có giá của 1 mã; trả dòng đã cập
-    nhật hoặc None. Chạy lại không đổi gì (chỉ đụng dòng price IS NULL)."""
+    nhật hoặc None. KHÔNG idempotent: có từ 2 lệnh bán thiếu giá thì chạy lại sau
+    khi đã commit sẽ điền cùng giá cho lệnh cũ hơn -> wrapper idempotent=False."""
     return await pool.fetchrow(
         f"""
         UPDATE stock_transactions AS t

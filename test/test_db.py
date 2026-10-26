@@ -120,6 +120,32 @@ async def test_with_reconnect_van_retry_insert_khi_chua_gui_lenh(monkeypatch):
     assert calls["n"] == 2
 
 
+@pytest.mark.asyncio
+async def test_bo_sung_gia_ban_khong_retry_khi_co_the_da_commit(monkeypatch):
+    """UPDATE chọn "lệnh bán gần nhất chưa có giá": chạy lại sau khi đã commit sẽ
+    điền giá cho lệnh bán CŨ HƠN -> không được retry khi mất kết nối giữa chừng."""
+    from core.repositories import portfolio as repo
+
+    calls = {"n": 0}
+
+    async def fake_reset_pool(failed_pool):
+        return None
+
+    async def fake_pool():
+        return object()
+
+    async def fill(pool, user_id, symbol, price, **kw):
+        calls["n"] += 1
+        raise asyncpg.ConnectionDoesNotExistError("closed in the middle of operation")
+
+    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+    monkeypatch.setattr(db, "get_pool", fake_pool)
+    monkeypatch.setattr(repo, "fill_sale_price", fill)
+    with pytest.raises(asyncpg.ConnectionDoesNotExistError):
+        await db.portfolio_fill_sale_price(1, "HPG", 27000, fee_rate=0.0015, tax_rate=0.001)
+    assert calls["n"] == 1
+
+
 # ─── get_pool: singleton ─────────────────────────────────────────────────────
 
 

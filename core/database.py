@@ -1602,7 +1602,8 @@ async def portfolio_transactions_between(user_id: int, start, end, *, limit: int
     return await portfolio.transactions_between(await get_pool(), user_id, start, end, limit=limit)
 
 
-@_with_reconnect
+# Không idempotent: chạy lại sau khi đã commit sẽ điền giá cho lệnh bán CŨ HƠN.
+@_with_reconnect(idempotent=False)
 async def portfolio_fill_sale_price(user_id: int, symbol: str, price: float, **kw):
     from core.repositories import portfolio
 
