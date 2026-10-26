@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from core import config, database as db
+from core import alerts, config, database as db
 from stock import calendar as trading_calendar
 from stock import features as feat
 from stock import portfolio, providers
@@ -133,8 +133,41 @@ async def run_once(user_id: int, *, force: bool = False) -> bool:
     return True
 
 
+# Nhắc chủ bot cập nhật bảng ngày lễ năm sau (stock/calendar.py) từ 1/11, tối
+# đa 1 lần/tuần cho tới khi bảng có năm đó.
+_CALENDAR_REMINDER_KEY = "trading_calendar:reminded_on"
+_CALENDAR_REMINDER_EVERY_DAYS = 7
+
+
+async def maybe_remind_calendar(now: datetime) -> bool:
+    year = trading_calendar.missing_next_year(now.date())
+    if year is None:
+        return False
+    last = await db.get_setting(_CALENDAR_REMINDER_KEY)
+    try:
+        last_day = date.fromisoformat(last) if last else None
+    except ValueError:
+        last_day = None
+    if last_day is not None and (now.date() - last_day).days < _CALENDAR_REMINDER_EVERY_DAYS:
+        return False
+    sent = alerts.send(
+        f"📅 Lịch giao dịch chưa có ngày nghỉ Tết/Giỗ Tổ năm {year}. Em đang tạm dùng bản dự phòng "
+        "tính từ âm lịch (chỉ giao thừa - mùng 3 và Giỗ Tổ); khi Sở công bố lịch nghỉ, anh cập "
+        "nhật _LUNAR_HOLIDAYS trong stock/calendar.py (hoặc env STOCK_EXTRA_HOLIDAYS) giúp em nhé."
+    )
+    if sent:
+        await db.set_setting(_CALENDAR_REMINDER_KEY, now.date().isoformat())
+    return sent
+
+
 async def _loop(user_id: int) -> None:
     while True:
+        try:
+            await maybe_remind_calendar(datetime.now(_VN_TZ))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("portfolio_alerts: lỗi nhắc cập nhật lịch giao dịch.", exc_info=True)
         try:
             await run_once(user_id)
         except asyncio.CancelledError:

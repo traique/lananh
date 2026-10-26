@@ -86,3 +86,27 @@ async def test_run_once_guard_ngay_va_chi_gui_khi_co_su_kien(monkeypatch):
     assert await pa.run_once(1) is True
     assert sent == ["🔔 cảnh báo"]
     assert await pa.run_once(1) is False  # cùng ngày: guard chặn
+
+
+@pytest.mark.asyncio
+async def test_nhac_cap_nhat_lich_giao_dich_toi_da_moi_tuan(monkeypatch):
+    saved = {}
+
+    async def get_setting(key):
+        return saved.get(key)
+
+    async def set_setting(key, value):
+        saved[key] = value
+
+    sent = []
+    monkeypatch.setattr(pa.db, "get_setting", get_setting)
+    monkeypatch.setattr(pa.db, "set_setting", set_setting)
+    monkeypatch.setattr(pa.alerts, "send", lambda text: sent.append(text) or True)
+    tz = pa._VN_TZ
+
+    assert await pa.maybe_remind_calendar(datetime(2026, 11, 3, 9, tzinfo=tz)) is False  # có 2027
+    assert await pa.maybe_remind_calendar(datetime(2027, 11, 1, 9, tzinfo=tz)) is True
+    assert "2028" in sent[0]
+    assert await pa.maybe_remind_calendar(datetime(2027, 11, 5, 9, tzinfo=tz)) is False
+    assert await pa.maybe_remind_calendar(datetime(2027, 11, 8, 9, tzinfo=tz)) is True
+    assert len(sent) == 2
