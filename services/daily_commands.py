@@ -16,7 +16,7 @@ import re
 
 from core.text_normalize import fold
 from core.text_utils import parse_on_off
-from services import morning_brief, vn_daily_chat, weather_chat, weather_home
+from services import morning_brief, reply_audience, vn_daily_chat, weather_chat, weather_home
 from services import vn_market_data as market
 
 XOSO_USAGE = (
@@ -129,7 +129,9 @@ def _brief_status(settings: morning_brief.BriefSettings, channel: str, home: str
 async def bantin(user_id: int, argument: str, channel: str) -> str:
     arg = fold(" ".join(argument.split()))
     if arg in {"xem", "thu", "xem thu", "test"}:
-        return await morning_brief.build(user_id, channel, preview=True)
+        return await morning_brief.build(
+            user_id, channel, preview=True, address_form=reply_audience.current().address_form
+        )
     toggle = parse_on_off(arg)
     hour_match = re.fullmatch(r"(\d{1,2})\s*(?:h|g|gio|:00)?", arg)
     news_match = re.fullmatch(r"tin\s+(\S+)", arg)

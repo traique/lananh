@@ -124,8 +124,15 @@ def world(monkeypatch):
 
     async def users():
         return [
-            SimpleNamespace(internal_user_id=-5, external_id="z-5", is_active=True),
-            SimpleNamespace(internal_user_id=-6, external_id="z-6", is_active=False),
+            SimpleNamespace(
+                internal_user_id=-5,
+                external_id="z-5",
+                is_active=True,
+                address_form=state.get("form_-5"),
+            ),
+            SimpleNamespace(
+                internal_user_id=-6, external_id="z-6", is_active=False, address_form=None
+            ),
         ]
 
     async def controller():
@@ -303,6 +310,30 @@ async def test_run_due_gui_dung_kenh_mot_lan_moi_ngay(world):
 
     assert await mb.run_due(MONDAY + dt.timedelta(minutes=15)) == 0  # 1 tin/ngày
     assert await mb.run_due(MONDAY + dt.timedelta(hours=4)) == 0  # quá khung gửi bù
+
+
+async def test_zalo_ban_tin_goi_dung_cach_xung_ho_rieng(world):
+    """Cách gọi riêng (/zalopair <id> <tên> cô, migrations/024) áp cả cho bản tin
+    sáng - chạy nền ngoài lượt chat nên không có reply_audience."""
+    world["form_-5"] = "cô"
+    await mb.save_settings("zalo", -5, mb.BriefSettings(on=True, hour=7))
+    assert await mb.run_due(MONDAY) == 1
+    content = world["outbox"][0][2]
+    assert content.startswith("☀️ Chào buổi sáng cô! Bản tin Thứ Hai 26/10/2026")
+    assert "để cháu xem đúng nơi cô ở" in content
+    assert " anh" not in content
+
+
+async def test_ban_tin_xem_thu_tren_zalo_theo_nguoi_nhan(world):
+    from services import daily_commands, reply_audience
+
+    await mb.save_settings("zalo", -5, mb.BriefSettings(on=True, hour=7))
+    with reply_audience.use(reply_audience.ReplyAudience(address_form="chị")):
+        text = await daily_commands.bantin(-5, "xem", "zalo")
+    assert text.startswith("☀️ Chào buổi sáng chị!")
+    assert (await daily_commands.bantin(OWNER, "xem", "telegram")).startswith(
+        "☀️ Chào buổi sáng anh!"
+    )
 
 
 async def test_nhieu_dong_zalo_da_tat_khong_che_chu_bot(world):

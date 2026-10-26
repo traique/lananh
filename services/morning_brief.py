@@ -39,7 +39,7 @@ from dataclasses import dataclass, replace
 from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
-from core import config
+from core import address, config
 from core import database as db
 from services import personal_settings, weather_home
 
@@ -227,6 +227,8 @@ class BriefContext:
     is_owner: bool
     absorb_news: bool = False  # mục tin = bản tin RSS đầy đủ
     preview: bool = False  # /bantin xem: không gọi AI tổng hợp tin
+    # Cách gọi người nhận (core/address.py; Zalo đặt qua /zalopair), mặc định "anh".
+    address_form: str = "anh"
 
     @property
     def today(self) -> dt.date:
@@ -293,7 +295,8 @@ async def _weather_section(ctx: BriefContext) -> str | None:
     if warning:
         lines.append(warning)
     if not place:
-        lines.append("(Mặc định TP.HCM - nhắn /thoitiet nha <tỉnh> để em xem đúng nơi anh ở.)")
+        me, you = address.self_word(ctx.address_form), ctx.address_form
+        lines.append(f"(Mặc định TP.HCM - nhắn /thoitiet nha <tỉnh> để {me} xem đúng nơi {you} ở.)")
     return "\n".join(lines)
 
 
@@ -433,8 +436,10 @@ async def build(
     now: dt.datetime | None = None,
     settings: BriefSettings | None = None,
     preview: bool = False,
+    address_form: str | None = None,
 ) -> str:
-    """Soạn bản tin của 1 người (mục nào lỗi thì bỏ mục đó)."""
+    """Soạn bản tin của 1 người (mục nào lỗi thì bỏ mục đó). ``address_form``:
+    cách gọi riêng của thành viên Zalo (zalo_users.address_form), None = "anh"."""
     from services import lunar
 
     now = now or dt.datetime.now(_VN_TZ)
@@ -452,10 +457,11 @@ async def build(
         is_owner=config.is_owner_user_id(user_id),
         absorb_news=absorb,
         preview=preview,
+        address_form=address.normalize(address_form) or "anh",
     )
     results = await asyncio.gather(*(_run_section(s, ctx) for s in sections()))
     parts = [r for r in results if r]
-    header = f"☀️ Chào buổi sáng anh! Bản tin {lunar.WEEKDAYS[now.weekday()]} {now:%d/%m/%Y}"
+    header = f"☀️ Chào buổi sáng {ctx.address_form}! Bản tin {lunar.WEEKDAYS[now.weekday()]} {now:%d/%m/%Y}"
     if config.MORNING_BRIEF_AI_INTRO and ctx.is_owner and not preview and parts:
         intro = await _ai_intro(parts)
         if intro:
@@ -527,7 +533,15 @@ async def _deliver(target: BriefTarget, now: dt.datetime, zalo_map: dict) -> boo
         user = zalo_map.get(user_id)
         if user is None or not user.is_active:
             return False  # đã gỡ pairing hoặc đang bị khoá: không gửi
-        text = to_plain_text(await build(user_id, channel, now=now, settings=target.settings))
+        text = to_plain_text(
+            await build(
+                user_id,
+                channel,
+                now=now,
+                settings=target.settings,
+                address_form=user.address_form,
+            )
+        )
         # Đánh dấu TRƯỚC khi đưa vào outbox (INSERT không idempotent): sập giữa
         # chừng thì mất 1 bản tin, không bao giờ gửi đôi qua Zalo.
         await _mark_sent(channel, user_id, now)
