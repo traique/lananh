@@ -277,3 +277,23 @@ def test_hom_qua_viet_hoa_dau_cau_van_tinh_dung_ngay():
     kia = ex.parse_expense("Hôm kia đổ xăng 80k", today=TODAY)
     assert kia is not None and kia.spent_on == TODAY - dt.timedelta(2) and kia.note == "Đổ xăng"
     assert ex.parse_expense("Hôm nay cafe 45k", today=TODAY).note == "Cafe"
+
+
+@pytest.mark.parametrize(
+    ("raw", "amount"),
+    [
+        (125000, 125_000),
+        (125000.0, 125_000),  # JSON số thực: không được nhân 10
+        ('"125.000"', 125_000),
+        ('"125,000.00"', 125_000),  # không được nhân 100
+        ('"125.000,00"', 125_000),
+        ('"125.000đ"', 125_000),
+        ('"125000"', 125_000),
+        ("true", None),
+        ('"abc"', None),
+        ("0", None),
+    ],
+)
+def test_hoa_don_doc_tong_tien_dung_kieu_so(raw, amount):
+    parsed = ex.parse_receipt_json(f'{{"amount_vnd": {raw}}}', TODAY)
+    assert (parsed.amount if parsed else None) == amount

@@ -23,6 +23,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
@@ -655,6 +656,20 @@ _RECEIPT_INSTRUCTION = (
 )
 
 
+def _receipt_amount(value) -> int | None:
+    """Tổng tiền model đọc ảnh trả về: số JSON (125000, 125000.0) hoặc chuỗi
+    ("125.000", "125,000.00", "125.000đ"); kiểu khác/không đọc được -> None."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(round(value)) if math.isfinite(value) else None
+    raw = re.sub(r"\s+|vnđ|vnd|đ", "", str(value).strip().lower())
+    raw = re.sub(r"[.,]\d{1,2}$", "", raw)  # phần lẻ ",00" / ".00"
+    if re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", raw):
+        return int(re.sub(r"[.,]", "", raw))  # dấu phân cách hàng nghìn
+    return int(raw) if re.fullmatch(r"\d{1,12}", raw) else None
+
+
 def parse_receipt_json(raw: str, today: dt.date) -> ParsedExpense | None:
     try:
         data = json.loads(strip_json_fence(raw))
@@ -668,11 +683,8 @@ def parse_receipt_json(raw: str, today: dt.date) -> ParsedExpense | None:
             return None
     if not isinstance(data, dict):
         return None
-    try:
-        amount = int(float(str(data.get("amount_vnd") or 0).replace(".", "").replace(",", "")))
-    except ValueError:
-        return None
-    if not MIN_AMOUNT <= amount <= MAX_AMOUNT:
+    amount = _receipt_amount(data.get("amount_vnd"))
+    if amount is None or not MIN_AMOUNT <= amount <= MAX_AMOUNT:
         return None
     spent_on = today
     try:
