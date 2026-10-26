@@ -233,6 +233,14 @@ def _solar_dates(t: str, today: dt.date) -> list[dt.date]:
     return out
 
 
+# Bộ đọc ngày dùng lại cho giờ nhắc việc (services/vn_time_parse.py): nhận chữ
+# ĐÃ bỏ dấu/chuẩn hoá, relative_day_folded trả (ngày, nhãn). Khác relative_day/
+# solar_dates công khai ở trên (tự chuẩn hoá, trả ngày) mà proactive_service dùng.
+SOLAR_DATE_RE = _SOLAR_DATE_RE
+relative_day_folded = _relative_day
+solar_dates_folded = _solar_dates
+
+
 def _gender(text: str) -> bool | None:
     low = text.lower()
     if re.search(r"\b(nữ|nu|gái|gai|con gái)\b", low):

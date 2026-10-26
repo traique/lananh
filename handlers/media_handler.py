@@ -1,5 +1,6 @@
 """Xử lý ảnh gửi tới bot: phân tích ảnh -> viết prompt tiếng Anh dán sang
-app Gemini.
+app Gemini. Ảnh có caption "hoá đơn"/"bill"/"chi tiêu" thì đọc hoá đơn và ghi
+khoản chi nháp (services/expense_service.py) thay vì viết prompt.
 
 Template prompt và lý do mỗi dạng (không caption / "cô gái 20" / "mặt tôi")
 tả chủ thể khác nhau: xem services/prompt_templates.py.
@@ -21,7 +22,7 @@ from core import config
 from core.text_normalize import nfc
 from ai import orchestrator
 from handlers import common
-from services import conversation_log
+from services import conversation_log, expense_service
 from services.prompt_identity import resolve_prompt_identity
 from services.prompt_templates import build_image_instruction
 from services.telemetry import telemetry
@@ -41,10 +42,30 @@ def _short_error(exc: BaseException) -> str:
     return detail
 
 
+async def _receipt_msg(update: Update, context: ContextTypes.DEFAULT_TYPE, file_obj) -> None:
+    """Ảnh hoá đơn: tải về, AI đọc tổng tiền, code kiểm rồi lưu khoản chi NHÁP."""
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    local_path = config.MEDIA_DIR / f"receipt_{update.message.message_id}.jpg"
+    try:
+        await common.download_telegram_photo_with_retry(file_obj, local_path)
+        text = await expense_service.analyze_receipt(update.effective_user.id, str(local_path))
+    except (TimedOut, NetworkError):
+        logger.exception("Lỗi tải ảnh hoá đơn từ Telegram")
+        text = messages.PHOTO_TIMEOUT_ERROR
+    finally:
+        await common.safe_delete(local_path)
+    await common.reply_long_text(update.message, text)
+
+
 @common.restricted
 async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     caption = nfc((update.message.caption or "").strip())
+    if expense_service.is_receipt_caption(caption):
+        file_obj = update.message.photo[-1] if update.message.photo else update.message.document
+        if file_obj is not None:
+            await _receipt_msg(update, context, file_obj)
+            return
     prompt_label = caption or "(gửi ảnh, không có caption)"
     prompt_id = await telemetry.start(user_id, "promptify", prompt_label)
 

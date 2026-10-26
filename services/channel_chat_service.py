@@ -15,16 +15,19 @@ from dataclasses import dataclass
 import messages
 from ai import orchestrator
 from ai.timeouts import TurnTimeoutError, turn_deadline
-from core import untrusted, urls
+from core import address, untrusted, urls
 from services import (
     article_reader,
     chat_context,
     conversation_log,
+    expense_service,
     lunar_chat,
     weather_chat,
     memory_service,
     portfolio_service,
+    reminder_service,
     stock_turn,
+    tool_registry,
     tools,
     web_search,
 )
@@ -56,17 +59,21 @@ class ChatTurn:
     timed_out: bool = False
     # Chi tiết kỹ thuật (loại lỗi + thông điệp) - CHỈ chủ bot được xem.
     error_detail: str = ""
+    # Tool GHI dữ liệu đã lưu xong trước khi lượt hỏng (vd nhắc việc): câu xác nhận
+    # do code soạn, nối vào câu báo lỗi để người dùng khỏi đặt lại lần nữa.
+    tool_note: str = ""
 
 
 def failure_message(turn: ChatTurn, *, owner: bool, address_form: str | None = None) -> str:
     """Câu báo lượt chat hỏng, giọng Lan Anh (messages.friendly_error): không tên
     provider; chi tiết kỹ thuật + gợi ý /status chỉ dành cho chủ bot."""
-    return messages.friendly_error(
+    text = messages.friendly_error(
         "timeout" if turn.timed_out else "chat",
         owner=owner,
         address_form=address_form,
         detail=turn.error_detail,
     )
+    return f"{text}\n\n✅ {turn.tool_note}" if turn.tool_note else text
 
 
 async def failure_text(turn: ChatTurn, user_id: int) -> str:
@@ -103,6 +110,54 @@ async def _skip_search_plan() -> web_search.SearchPlan:
     return web_search.SearchPlan(mode=orchestrator.SEARCH_OFF)
 
 
+def _tool_outcome(value) -> tuple[tool_registry.ToolOutcome, str]:
+    """(outcome, khối grounding) từ kết quả tools.maybe_run_tool. Chuỗi thường (bản
+    cũ/giả lập trong test) giữ nguyên văn làm grounding."""
+    if isinstance(value, tool_registry.ToolOutcome):
+        return value, value.grounding()
+    if value:
+        return tool_registry.ToolOutcome(status=tool_registry.STATUS_OK, text=str(value)), str(
+            value
+        )
+    return tool_registry.ToolOutcome(), ""
+
+
+def _forms(address_form: str | None) -> tuple[str, str]:
+    """(cách gọi người dùng, Lan Anh tự xưng) cho câu do code viết."""
+    you = address.normalize(address_form or reply_audience.current().address_form) or "anh"
+    return you, address.self_word(you)
+
+
+def _honesty_suffix(
+    reply: str, outcome: tool_registry.ToolOutcome, address_form: str | None
+) -> str:
+    """Câu do CODE nối thêm, không trông vào model: chưa lưu được thì nói rõ; đã
+    lưu mà câu trả lời thiếu giờ/nội dung chuẩn thì nối câu xác nhận của code."""
+    you, me = _forms(address_form)
+    label = outcome.effect_label or tool_registry.intent_label(outcome.intent) or "yêu cầu"
+    if outcome.not_saved_hard:
+        if outcome.status == tool_registry.STATUS_BLOCKED:
+            note = f"⚠️ {me.capitalize()} chưa lưu {label} này: {outcome.text}."
+        else:
+            note = (
+                f"⚠️ {me.capitalize()} chưa lưu được {label} này - {you} nhắn lại giúp "
+                f"{me} sau ít phút nha."
+            )
+        return f"{reply}\n\n{note}" if reply else note
+    if outcome.saved and outcome.confirmation:
+        # confirmation_key có thể gồm nhiều cách viết nối bằng "|" ("20:00|20h|8h").
+        keys = [k for k in outcome.confirmation_key.split("|") if k]
+        if not reply:
+            return f"✅ {outcome.confirmation}"
+        if keys and not any(k in reply for k in keys):
+            return f"{reply}\n\n✅ {outcome.confirmation}"
+    return reply
+
+
+def _saved_note(outcome: tool_registry.ToolOutcome) -> str:
+    return outcome.confirmation if outcome.saved else ""
+
+
 async def run_chat_turn(
     user_id: int,
     text: str,
@@ -112,6 +167,7 @@ async def run_chat_turn(
     is_admin: bool = False,
     address_form: str | None = None,
     quote_text: str | None = None,
+    allow_side_effects: bool = True,
 ) -> ChatTurn:
     """Pipeline chat chung: gom ngữ cảnh -> orchestrator.chat -> lưu lịch sử.
 
@@ -120,8 +176,15 @@ async def run_chat_turn(
     khác thành viên thường; chủ bot nhận ra qua user_id); address_form là cách
     gọi riêng của thành viên Zalo (core/address.py). quote_text: tin người dùng
     đang trả lời/trích dẫn (rào như dữ liệu, không gộp vào lời người dùng).
-    Không raise: lỗi trả ChatTurn(failed=True) sau khi đã log và ghi telemetry."""
+    allow_side_effects=False (lượt chỉ đọc, vd tin nhắn thoại): tool ghi dữ liệu
+    (nhắc việc, ghi chú, chi tiêu, danh mục, điều cần nhớ) không chạy và câu trả
+    lời nói rõ chưa lưu. Không raise: lỗi trả ChatTurn(failed=True) sau khi đã
+    log và ghi telemetry."""
     prompt_id = await telemetry.start(user_id, "chat", text, channel=channel)
+    outcome = tool_registry.ToolOutcome()
+    # Chỉ truyền tham số khác mặc định: chỗ giả lập maybe_run_tool(user_id, text) cũ vẫn
+    # chạy; vai trò admin Zalo đi qua tools.admin_scope().
+    tool_kwargs: dict = {} if allow_side_effects else {"allow_side_effects": False}
     try:
         # Hạn chót CHAT_TURN_TIMEOUT_SEC áp cho CẢ lượt (web search có thể tự gọi
         # AI 2-3 lần + orchestrator.chat), không phải từng lượt gọi AI riêng lẻ -
@@ -150,15 +213,25 @@ async def run_chat_turn(
             # Các nguồn ngữ cảnh độc lập nhau - chạy song song thay vì tuần tự
             # (trước đây Tavily + memory nối tiếp, thêm vài trăm ms - vài giây
             # độ trễ cho mọi tin nhắn).
-            tool_result, plan, memory, last_row, page, kb = await asyncio.gather(
-                tools.maybe_run_tool(user_id, text),
-                search,
-                memory_service.build_turn_memory(user_id, text),
-                # Câu trả lời ngay trước (báo cáo cổ phiếu?) - chặn câu chat nói ngược policy.
-                conversation_log.last_model_row(user_id),
-                chat_context.read_link(user_id, text, allowed=links_ok),
-                chat_context.kb_grounding(text) if use_kb else _empty_text(),
-            )
+            # Đọc link đã do chat_context.read_link lo (theo quyền links_allowed của
+            # chủ bot/admin/thành viên): router không được chọn tool read_link đọc
+            # lại lần 2, hay đọc giúp người không được phép đọc link.
+            excluded = ("read_link",) if (page_turn or not links_ok) else ()
+            with tools.admin_scope(is_admin), tools.exclude_scope(excluded):
+                tool_result, plan, memory, last_row, page, kb = await asyncio.gather(
+                    tools.maybe_run_tool(user_id, text, **tool_kwargs),
+                    search,
+                    memory_service.build_turn_memory(user_id, text),
+                    # Câu trả lời ngay trước (báo cáo cổ phiếu?) - chặn câu chat nói
+                    # ngược policy.
+                    conversation_log.last_model_row(user_id),
+                    chat_context.read_link(user_id, text, allowed=links_ok),
+                    chat_context.kb_grounding(text) if use_kb else _empty_text(),
+                )
+            outcome, tool_text = _tool_outcome(tool_result)
+            if outcome.name == "rag_search" and outcome.status == tool_registry.STATUS_OK:
+                # Router đã tra kho rag/ theo yêu cầu rõ: không chèn đoạn tự tra trùng.
+                kb = ""
             quote = chat_context.quote_grounding(quote_text)
             # "Đừng hỏi/nhắc nữa" ngay sau tin hỏi thăm chủ động: tắt tạm hỏi thăm.
             followup_note = await _maybe_opt_out(user_id, text, last_row)
@@ -170,7 +243,7 @@ async def run_chat_turn(
                     quote,
                     grounding,
                     daily.text,
-                    tool_result,
+                    tool_text,
                     page.grounding,
                     plan.grounding,
                     kb,
@@ -180,7 +253,12 @@ async def run_chat_turn(
             forced = daily.force_real_search or (
                 not skip_search and stock_analysis.wants_external_market_data(text)
             )
-            mode = _search_mode(plan, forced, bool(grounding), bool(tool_result))
+            mode = _search_mode(
+                plan,
+                forced,
+                bool(grounding),
+                bool(tool_text) and outcome.status == tool_registry.STATUS_OK,
+            )
             if page.grounding and not (forced or compare) and mode == orchestrator.SEARCH_AUTO:
                 # Đã có nội dung trang (hoặc biết chắc không đọc được): Gemini không
                 # tự tra Google chồng lên.
@@ -206,15 +284,25 @@ async def run_chat_turn(
             untrusted_context=untrusted_context,
             searched=searched,
         )
+        reply = _honesty_suffix(reply, outcome, address_form)
     except TurnTimeoutError as exc:
         logger.warning("Lượt chat hết hạn chót (kênh %s): %s", channel, exc)
         await telemetry.failure(prompt_id, "chat", exc)
-        return ChatTurn(failed=True, prompt_id=prompt_id, timed_out=True, error_detail=str(exc))
+        return ChatTurn(
+            failed=True,
+            prompt_id=prompt_id,
+            timed_out=True,
+            error_detail=str(exc),
+            tool_note=_saved_note(outcome),
+        )
     except Exception as exc:
         logger.exception("Lỗi lượt chat (kênh %s)", channel)
         await telemetry.failure(prompt_id, "chat", exc)
         return ChatTurn(
-            failed=True, prompt_id=prompt_id, error_detail=messages.exception_detail(exc)
+            failed=True,
+            prompt_id=prompt_id,
+            error_detail=messages.exception_detail(exc),
+            tool_note=_saved_note(outcome),
         )
 
     # Từ đây câu trả lời ĐÃ sinh xong (đã tốn quota): lỗi ghi DB/telemetry chỉ
@@ -380,20 +468,13 @@ async def _handle_stock(
     return None, await stock_analysis.build_price_grounding(symbols)
 
 
-async def handle_channel_text(
-    user_id: int,
-    text: str,
-    is_admin: bool = True,
-    channel: str = "zalo",
-    *,
-    quote_text: str | None = None,
-) -> ChannelResult:
-    """quote_text: tin người dùng đang trả lời trên Zalo (ZaloMessageRequest.quote_text)."""
-    text = (text or "").strip()
-    if not text:
-        return ChannelResult([])
+async def _side_effect_paths(
+    user_id: int, text: str, is_admin: bool, channel: str
+) -> ChannelResult | None:
+    """Các nhánh có thể GHI dữ liệu trước chat AI: lệnh /, danh mục bằng lời, lối
+    tắt "hoãn 10p"/"xong" của nhắc việc, ghi chi tiêu "cafe 45k". Câu trả lời nhanh
+    cũng vào lịch sử (services/conversation_log) cho câu hỏi nối tiếp."""
     record = conversation_log.record_exchange
-
     portfolio_command = await portfolio_service.handle_command(user_id, text)
     if portfolio_command is not None:
         return ChannelResult([portfolio_command])
@@ -410,10 +491,43 @@ async def handle_channel_text(
         )
     # Mọi câu trả lời nhanh bên dưới cũng vào lịch sử (services/conversation_log):
     # câu hỏi nối tiếp ("thế còn ngày mai?", "sao em bảo giữ?") mới có ngữ cảnh.
+    # "hoãn 10p" / "xong" ngay sau tin nhắc việc: code xử lý, không tốn lượt AI.
+    shortcut = await reminder_service.maybe_handle_shortcut(user_id, text)
+    if shortcut is not None:
+        return ChannelResult([shortcut])
     portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
     if portfolio_result is not None:
         await record(user_id, text, portfolio_result, conversation_log.KIND_PORTFOLIO)
         return ChannelResult([portfolio_result])
+    # "cafe 45k", "đổ xăng 1tr2" (hoặc "huỷ" ngay sau đó): ghi chi tiêu bằng code.
+    expense_reply = await expense_service.maybe_handle_chat(user_id, text)
+    if expense_reply is not None:
+        return ChannelResult([expense_reply])
+    return None
+
+
+async def handle_channel_text(
+    user_id: int,
+    text: str,
+    is_admin: bool = True,
+    channel: str = "zalo",
+    *,
+    quote_text: str | None = None,
+    allow_side_effects: bool = True,
+) -> ChannelResult:
+    """quote_text: tin người dùng đang trả lời trên Zalo (ZaloMessageRequest.quote_text).
+    allow_side_effects=False (lượt chỉ đọc, vd chữ chép từ tin nhắn thoại): bỏ
+    qua lệnh /, ghi danh mục bằng lời, lối tắt "hoãn/xong", ghi chi tiêu, và tool
+    ghi dữ liệu của lượt chat AI - chỉ trả lời, không ghi gì."""
+    text = (text or "").strip()
+    if not text:
+        return ChannelResult([])
+    record = conversation_log.record_exchange
+
+    if allow_side_effects:
+        side_effect_result = await _side_effect_paths(user_id, text, is_admin, channel)
+        if side_effect_result is not None:
+            return side_effect_result
     article = await article_reader.maybe_handle(text)
     if article is not None:
         await record(user_id, text, article, conversation_log.KIND_ARTICLE)
@@ -466,6 +580,7 @@ async def handle_channel_text(
             # Router Zalo gắn cách gọi riêng của người gửi (services/reply_audience.py).
             address_form=reply_audience.current().address_form,
             quote_text=quote_text,
+            **({} if allow_side_effects else {"allow_side_effects": False}),
         )
     if turn.failed:
         return ChannelResult([await failure_text(turn, user_id)])

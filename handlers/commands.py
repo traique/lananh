@@ -63,6 +63,18 @@ HELP_TEXT = (
     "/thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của anh\n"
     "/bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, "
     "danh mục; bật thì thay digest danh mục 8h)\n\n"
+    "*Nhắc việc và ngày nhớ (giờ tính bằng code)*\n"
+    "/nhac — xem nhắc việc đang chờ; /nhac 8h tối mai gọi mẹ — đặt nhắc; "
+    "/nhac 7h sáng mỗi ngày uống thuốc, /nhac mùng 1 và rằm 6h thắp hương — nhắc lặp\n"
+    "/nhac huy <số> — huỷ; /nhac hoan <số> 30p — dời; vừa nhận tin nhắc thì trả lời "
+    '"hoãn 10p" hoặc "xong"\n'
+    "/ngaynho — giỗ, sinh nhật, kỷ niệm (âm/dương, báo trước); "
+    "/ngaynho giỗ ông nội 12/3 âm trước 3 ngày; /ngaynho xoa <số>\n\n"
+    "*Chi tiêu (cộng bằng code)*\n"
+    'Nhắn "cafe 45k", "đổ xăng 1tr2", "2 củ tiền điện" là em ghi luôn (nhắn "huỷ" trong 10 phút '
+    'nếu nhầm); gửi ảnh kèm chữ "hoá đơn" để em đọc hoá đơn (lưu nháp)\n'
+    "/chitieu [hôm nay|tuần này|tháng trước|tháng 10] — tổng theo danh mục; /chitieu ds — khoản "
+    "gần nhất; /chitieu cafe 45k — ghi 1 khoản; /chitieu\\_xoa <số> — xoá\n\n"
     "*Chat và tiện ích*\n"
     "/prompt <mô tả> — viết prompt tạo ảnh từ mô tả cơ bản\n"
     "/anh <mô tả> — tạo ảnh thật (Agnes AI); /anh on|off — bật/tắt\n"
@@ -368,10 +380,9 @@ async def thongke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 # /agent - AI agent thật (xem ai/agent_service.py): model tự quyết định gọi
-# tool nào (tim_gia, xem_thong_ke...) bao nhiêu lần để trả lời, khác mọi lệnh
-# khác trong file này (pipeline cố định). Thử nghiệm - chỉ bật ở Telegram,
-# chỉ admin, vì mỗi câu hỏi có thể tốn tới MAX_AGENT_STEPS lượt gọi api1/api2
-# (quota thấp nhất trong provider-chain).
+# tool nào (tim_gia, xem_thong_ke, nhắc việc/ghi chú chỉ đọc...) bao nhiêu lần để
+# trả lời, khác mọi lệnh khác trong file này (pipeline cố định). Chỉ chủ bot/admin:
+# mỗi câu hỏi có thể tốn tới MAX_AGENT_STEPS lượt gọi (Groq/OpenRouter trước).
 @common.restricted
 async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     question = common.extract_arg(context)
@@ -387,14 +398,9 @@ async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from ai import agent_service
 
+        # user_id: persona + trí nhớ + lịch sử của chính chủ bot, Q&A lưu vào lịch sử.
         text, provider = await reply_cache.generate_once(
-            "agent",
-            lambda: conversation_log.run_and_record(
-                user_id,
-                f"/agent {question}",
-                conversation_log.KIND_AGENT,
-                lambda: agent_service.ask_agent(question),
-            ),
+            "agent", lambda: agent_service.ask_agent(question, user_id=user_id)
         )
         await telemetry.success(prompt_id, "agent", text)
     except Exception as exc:

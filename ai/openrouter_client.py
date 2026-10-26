@@ -63,6 +63,45 @@ async def generate(
     return Response(await _pool.bounded("OpenRouter", _call))
 
 
+# /agent nhiều bước (ai/agent_service.py): free tier 20 RPM, 50 request/ngày dùng
+# chung với chat dự phòng -> max_tokens thấp; require_parameters để chỉ đi tới nhà
+# cung cấp thật sự hỗ trợ tools (không âm thầm bỏ qua).
+AGENT_MAX_TOKENS = 1024
+
+
+async def generate_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.3,
+    max_tokens: int = AGENT_MAX_TOKENS,
+) -> openai_compatible.ToolCallResponse:
+    """1 bước function-calling chuẩn OpenAI cho agent. KHÔNG đánh dấu cooldown khi
+    lỗi (429...): agent tự chuyển provider kế, utility_json của chat không bị vạ lây."""
+    api_key = await _api_key()
+    if not api_key:
+        raise openai_compatible.OpenAICompatibleError("Chưa cấu hình OPENROUTER_API_KEY")
+    model_name = model or await _model()
+
+    async def _call() -> openai_compatible.ToolCallResponse:
+        async with _pool.get_semaphore():
+            return await openai_compatible.post_chat_completion_with_tools(
+                _pool.get_client(),
+                base_url=config.OPENROUTER_BASE_URL,
+                api_key=api_key,
+                messages=messages,
+                tools=tools,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider_label="OpenRouter tools",
+                extra_payload={"provider": {"require_parameters": True}},
+            )
+
+    return await _pool.bounded("OpenRouter tools", _call)
+
+
 def supports_web_search() -> bool:
     return config.OPENROUTER_WEB_SEARCH
 

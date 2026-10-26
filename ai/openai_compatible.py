@@ -507,6 +507,7 @@ async def post_chat_completion_with_tools(
     temperature: float,
     max_tokens: int,
     provider_label: str,
+    extra_payload: Optional[dict[str, Any]] = None,
 ) -> ToolCallResponse:
     """Giống post_chat_completion() nhưng gửi kèm `tools` (function-calling
     chuẩn OpenAI) và trả về ToolCallResponse (text + tool_calls) thay vì chỉ
@@ -544,6 +545,10 @@ async def post_chat_completion_with_tools(
         "stream": True,
         "tools": tools,
     }
+    # Groq: parallel_tool_calls=false (gpt-oss không gọi song song); OpenRouter:
+    # provider.require_parameters=true (chỉ đi tới nhà cung cấp hỗ trợ tools).
+    if extra_payload:
+        payload.update(extra_payload)
     try:
         response = await client.post(
             f"{base_url.rstrip('/')}/chat/completions",

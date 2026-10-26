@@ -124,6 +124,11 @@ services:
         value: "true"
       - key: MORNING_BRIEF_AI_INTRO
         value: "false"
+      - key: MORNING_BRIEF_EXPENSES
+        value: "true"
+      # Chi tiêu: "cafe 45k" ghi bằng code (false = chỉ khi nói rõ hoặc /chitieu).
+      - key: EXPENSE_CHAT_CAPTURE
+        value: "true"
       # Heavy research jobs must never share the free web-service process.
       - key: STOCK_BACKTEST_ALLOW_ON_RENDER
         value: "false"

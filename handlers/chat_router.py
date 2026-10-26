@@ -19,8 +19,10 @@ from services import (
     channel_chat_service,
     chat_context,
     conversation_log,
+    expense_service,
     lunar_chat,
     portfolio_service,
+    reminder_service,
     weather_chat,
 )
 from services import vn_daily_chat
@@ -52,10 +54,21 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Câu trả lời nhanh cũng vào lịch sử để câu hỏi nối tiếp có ngữ cảnh.
     record = conversation_log.record_exchange
 
+    # "hoãn 10p" / "xong" ngay sau tin nhắc việc: code xử lý, không tốn lượt AI.
+    shortcut = await reminder_service.maybe_handle_shortcut(user_id, text)
+    if shortcut is not None:
+        await common.reply_long_text(update.message, shortcut)
+        return
+
     portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
     if portfolio_result is not None:
         await record(user_id, text, portfolio_result, conversation_log.KIND_PORTFOLIO)
         await common.reply_long_text(update.message, portfolio_result)
+        return
+
+    expense_reply = await expense_service.maybe_handle_chat(user_id, text)
+    if expense_reply is not None:
+        await common.reply_long_text(update.message, expense_reply)
         return
 
     article = await article_reader.maybe_handle(text)

@@ -20,7 +20,7 @@ from services import (
     translate_service,
     usage_stats,
 )
-from services import daily_commands
+from services import daily_commands, expense_service, reminder_commands
 from services.telemetry import telemetry
 
 # /help theo vai trò: thành viên Zalo chỉ thấy lệnh mình dùng được (không có
@@ -47,6 +47,18 @@ _HELP_COMMON = """Lịch, thần số học, tử vi, kỳ môn
 /xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé] — kết quả xổ số, dò vé
 /thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của riêng mình
 /bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, danh mục, tin)
+
+Nhắc việc và ngày nhớ (giờ tính bằng code)
+/nhac — xem nhắc việc đang chờ; /nhac 8h tối mai gọi mẹ — đặt nhắc;
+  /nhac 7h sáng mỗi ngày uống thuốc, /nhac mùng 1 và rằm 6h thắp hương — nhắc lặp
+/nhac huy <số> — huỷ; /nhac hoan <số> 30p — dời; vừa nhận tin nhắc thì trả lời "hoãn 10p" hoặc "xong"
+/ngaynho — giỗ, sinh nhật, kỷ niệm; /ngaynho giỗ ông nội 12/3 âm trước 3 ngày; /ngaynho xoa <số>
+
+Chi tiêu (cộng bằng code, riêng từng người)
+Nhắn "cafe 45k", "đổ xăng 1tr2", "2 củ tiền điện" là Lan Anh ghi luôn (nhắn "huỷ" trong 10 phút nếu nhầm);
+  gửi ảnh kèm chữ "hoá đơn" để đọc hoá đơn (lưu nháp)
+/chitieu [hôm nay|tuần này|tháng trước|tháng 10] — tổng theo danh mục; /chitieu ds — khoản gần nhất
+/chitieu cafe 45k — ghi 1 khoản; /chitieu xoa <số> — xoá
 
 Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
@@ -272,11 +284,10 @@ async def _agent(
 
     prompt_id = await telemetry.start(user_id, "agent", question, channel=channel)
     try:
-        text, provider = await conversation_log.run_and_record(
-            user_id,
-            f"/agent {question}",
-            conversation_log.KIND_AGENT,
-            lambda: agent_service.ask_agent(question),
+        # user_id của chính người hỏi (Zalo tách Telegram): persona, trí nhớ, lịch sử;
+        # ask_agent tự lưu Q&A (kind agent) qua conversation_log.record_exchange.
+        text, provider = await agent_service.ask_agent(
+            question, user_id=user_id, address_form=reply_audience.current().address_form
         )
         await telemetry.success(prompt_id, "agent", text)
         return [f"{text}\n\n⚙️ {provider}"], None
@@ -424,6 +435,14 @@ async def maybe_handle_command(
     daily = await daily_commands.handle(command, argument, user_id, channel)
     if daily is not None:
         return daily, None
+    # /nhac, /ngaynho: nhắc việc + ngày nhớ (giờ tính bằng code).
+    reminder = await reminder_commands.handle(command, argument, user_id, channel)
+    if reminder is not None:
+        return reminder, None
+    # /chitieu, /chitieu_xoa: chi tiêu cá nhân (cộng bằng SQL).
+    expense = await expense_service.handle_command(command, argument, user_id)
+    if expense is not None:
+        return expense, None
     if command == "/prompt":
         return await _prompt(user_id, argument, channel)
     if command == "/gia":

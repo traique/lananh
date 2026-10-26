@@ -34,11 +34,34 @@ async def _notify(user_id: int, text: str) -> bool:
         return False
 
 
-async def _process_due_reminders(due: list[tuple[int, int, str]]) -> None:
+async def _schedule_next(reminder: idempotency.DueReminder, now: datetime) -> None:
+    """Lần của chuỗi lặp/ngày nhớ: chèn lần kế tiếp NGAY lúc claim (giao lỗi vẫn
+    không làm đứt chuỗi). Lỗi chỉ log - lần claim sau (lease 5 phút) thử lại."""
+    from services import reminder_service
+
+    try:
+        await reminder_service.schedule_next(int(reminder.series_id or 0), reminder.due_at, now)
+    except Exception:
+        logger.warning(
+            "scheduler: không chèn được lần kế của chuỗi nhắc %s.",
+            reminder.series_id,
+            exc_info=True,
+        )
+
+
+async def _process_due_reminders(due: list[tuple]) -> None:
+    from services import reminder_service
+
     for item in due:
         reminder = idempotency.DueReminder(*item)
         try:
-            text = f"⏰ Nhắc việc: {reminder.message}"
+            now = datetime.now(_VN_TZ)
+            if reminder.series_id:
+                await _schedule_next(reminder, now)
+            # Nhãn "(nhắc trễ, lịch gốc HH:MM)" khi trễ quá 10 phút + gợi ý "hoãn/xong".
+            text = reminder_service.delivery_text(
+                reminder.message, reminder.kind, reminder.due_at, now
+            )
             if reminder.channel == "zalo":
                 from channels import zalo_repository, zalo_session
 
@@ -50,7 +73,9 @@ async def _process_due_reminders(due: list[tuple[int, int, str]]) -> None:
                 await zalo_repository.enqueue_reminder(
                     reminder.id, account_id, reminder.recipient_id, text
                 )
-                # The gateway acknowledgement marks sent; enqueuing is not delivery.
+                # Ack của gateway mới đánh dấu sent; fired_at (lối tắt "hoãn/xong") tính từ
+                # lúc đưa vào outbox - gateway gửi ngay sau đó.
+                await db.reminder_mark_fired(reminder.id)
                 continue
             if reminder.channel == "zoom":
                 from channels import zoom

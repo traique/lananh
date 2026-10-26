@@ -207,16 +207,20 @@ def _recency_params(text: str) -> tuple[str | None, str | None]:
     return topic, time_range
 
 
-async def _recent_history_text(user_id: int, turns: int = 3) -> str:
+async def recent_history_text(user_id: int, turns: int = 3) -> str:
     """Vài lượt hội thoại gần nhất, dạng text ngắn cho prompt viết lại truy
-    vấn - CHỈ để hiểu ngữ cảnh đại từ ("nó", "cái đó", "còn X thì sao"...),
-    không dùng để trả lời. Lỗi DB thì trả rỗng, không chặn search."""
+    vấn và router tool (services/tools.py) - CHỈ để hiểu ngữ cảnh đại từ ("nó",
+    "cái đó", "việc đó"...), không dùng để trả lời. Lỗi DB thì trả rỗng."""
     try:
         rows = await db.get_session_messages(user_id, turns, config.CHAT_SESSION_TIMEOUT_SEC)
     except Exception:
         logger.warning("Không lấy được lịch sử hội thoại để viết lại truy vấn.", exc_info=True)
         return ""
     return "\n".join(f"{role}: {content}" for role, content in rows)
+
+
+# Tên cũ (test monkeypatch theo tên này).
+_recent_history_text = recent_history_text
 
 
 async def _rewrite_and_expand_query(query: str, history_text: str) -> list[str]:

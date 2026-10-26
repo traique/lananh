@@ -87,9 +87,18 @@ async def test_nho_ghim_fact_nguoi_dung_va_chan_bi_mat(mem):
 
 @pytest.mark.asyncio
 async def test_remember_fact_tool_bo_tien_to_nho_giup(mem):
+    from services import tool_registry as reg
+
     result = await tools._HANDLERS["remember_fact"](UID, content="nhớ giúp anh là sinh nhật mẹ 2/9")
-    assert result.startswith("📌 Em nhớ rồi") and "2/9" in result
+    # ToolSpec của danh bạ (services/tool_registry): đã lưu -> status ok + câu xác nhận.
+    assert result.status == reg.STATUS_OK
+    assert result.text.startswith("📌 Em nhớ rồi") and "2/9" in result.text
+    assert result.confirmation == result.text
     assert mem.current(UID)[0]["pinned"] is True
+    # Bí mật bị từ chối -> CHƯA lưu (status invalid), lượt chat không được nói "đã nhớ".
+    refused = await tools._HANDLERS["remember_fact"](UID, content="mật khẩu wifi là abc12345")
+    assert refused.status == reg.STATUS_INVALID and "không lưu" in refused.text
+    assert len(mem.current(UID)) == 1
 
 
 @pytest.mark.asyncio

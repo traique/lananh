@@ -68,3 +68,19 @@ def test_lich_khong_bao_gio_goi_ai(monkeypatch):
     monkeypatch.setattr(official_client, "generate_utility_json", boom)
     for query, _ in CASES:
         assert calendar_query.answer(query, TODAY)
+
+
+def test_relative_day_cong_khai_va_ban_bo_dau_cho_nhac_viec_cung_ton_tai():
+    """proactive_service dùng relative_day/solar_dates công khai (tự chuẩn hoá, trả
+    ngày); vn_time_parse dùng bản *_folded (chữ đã bỏ dấu, trả (ngày, nhãn))."""
+    import datetime as dt
+
+    from services import proactive_service
+
+    today = dt.date(2026, 10, 26)
+    assert calendar_query.relative_day("Mai", today) == dt.date(2026, 10, 27)
+    assert calendar_query.solar_dates("ngày 15/11", today) == [dt.date(2026, 11, 15)]
+    folded = calendar_query.relative_day_folded("mai", today)
+    assert folded is not None and folded[0] == dt.date(2026, 10, 27)
+    assert calendar_query.solar_dates_folded("15/11", today) == [dt.date(2026, 11, 15)]
+    assert proactive_service.resolve_when("mai", today) == dt.date(2026, 10, 27)

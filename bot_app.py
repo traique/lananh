@@ -23,15 +23,19 @@ from handlers import (
     chat_router,
     commands,
     daily_data_commands,
+    expense_commands,
     media_handler,
     pairing_commands,
     portfolio_commands,
     provider_commands,
+    reminder_commands,
     zalo_bridge_commands,
     zalo_login,
 )
 from services import channel_chat_service, memory_service, proactive_service
 from services import morning_brief
+from services import expense_service  # noqa: F401 - đăng ký mục "expenses" của bản tin sáng
+from services import ngay_nho  # noqa: F401 - đăng ký mục "ngay_nho" của bản tin sáng
 from services import portfolio_alerts, rag_clean_service
 from services import portfolio_events, portfolio_push, price_alerts
 from services import monitor_service
@@ -71,6 +75,10 @@ COMMANDS = [
     BotCommand("xoso", "Kết quả xổ số, dò vé"),
     BotCommand("thoitiet", "Thời tiết; /thoitiet nha <tỉnh> đặt nơi ở"),
     BotCommand("bantin", "Bản tin sáng cá nhân (on|off|giờ|xem)"),
+    BotCommand("nhac", "Nhắc việc: xem, đặt, huỷ, hoãn"),
+    BotCommand("ngaynho", "Ngày nhớ: giỗ, sinh nhật, kỷ niệm"),
+    BotCommand("chitieu", "Chi tiêu: tổng theo danh mục, ghi khoản"),
+    BotCommand("chitieu_xoa", "Xoá 1 khoản chi theo số #"),
     BotCommand("prompt", "Viết prompt tạo ảnh"),
     BotCommand("gia", "Tìm giá sản phẩm"),
     BotCommand("dich", "Dịch chat Nhật-Việt"),
@@ -271,6 +279,10 @@ def build_application():
         ("xoso", daily_data_commands.xoso_cmd),
         ("thoitiet", daily_data_commands.thoitiet_cmd),
         ("bantin", daily_data_commands.bantin_cmd),
+        ("nhac", reminder_commands.nhac_cmd),
+        ("ngaynho", reminder_commands.ngaynho_cmd),
+        ("chitieu", expense_commands.chitieu_cmd),
+        ("chitieu_xoa", expense_commands.chitieu_xoa_cmd),
         ("agent", commands.agent_cmd),
         ("rag", commands.rag_cmd),
         ("ragxuly", commands.ragxuly_cmd),

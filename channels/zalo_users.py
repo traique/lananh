@@ -76,6 +76,8 @@ _USER_DATA_TABLES = (
     "stock_transactions",
     "stock_watchlist",
     "stock_price_alerts",
+    # migrations/020: chi tiêu cá nhân.
+    "expenses",
     "stock_alert_log",
 )
 
@@ -256,6 +258,8 @@ async def _delete_user_data(conn, internal_user_id: int) -> None:
         internal_user_id,
     )
     await conn.execute("DELETE FROM reminders WHERE telegram_user_id = $1", internal_user_id)
+    # Chuỗi nhắc lặp + ngày nhớ (migrations/019) - xoá SAU reminders vì FK cascade.
+    await conn.execute("DELETE FROM reminder_series WHERE telegram_user_id = $1", internal_user_id)
     for table in _USER_DATA_TABLES:
         await conn.execute(f"DELETE FROM {table} WHERE telegram_user_id = $1", internal_user_id)
     await conn.execute("DELETE FROM settings WHERE key = $1", f"memory_enabled_{internal_user_id}")

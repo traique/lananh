@@ -109,9 +109,11 @@ def _brief_status(settings: morning_brief.BriefSettings, channel: str, home: str
     sections = [
         f"thời tiết {home or 'TP.HCM (mặc định)'}",
         "âm lịch & ngày lễ",
+        "ngày nhớ 7 ngày tới",
         "nhắc việc hôm nay",
         "vàng/tỷ giá",
         "danh mục (ngày giao dịch)",
+        "chi tiêu tháng (nếu có ghi)",
     ]
     if settings.news_enabled(channel):
         sections.append("tin đáng chú ý")
