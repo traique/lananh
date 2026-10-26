@@ -64,7 +64,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from ai.timeouts import TurnTimeoutError, bounded, turn_deadline
+from ai.timeouts import TurnTimeoutError, bounded, remaining_turn_seconds, turn_deadline
 from core import config, database as db, trace
 from core.envutil import env_int, env_on
 from core.text_normalize import fold
@@ -125,15 +125,52 @@ def _release_lock(user_id: int) -> None:
     _user_locks.pop(user_id, None)
 
 
+class MemoryBusy(Exception):
+    """Chờ khoá trí nhớ quá ``timeout`` (lượt trích nhớ nền đang giữ khoá trong
+    lúc gọi AI) - lệnh tương tác báo bận thay vì treo cả lượt trả lời."""
+
+
+# Lệnh tương tác (/nho, /quen, /ghim, /forget, /xoadulieu, tool remember_fact
+# trong lượt chat) chờ khoá tối đa chừng này - flush nền giữ khoá suốt lượt gọi
+# AI trích nhớ (tới MEMORY_UPDATE_TIMEOUT_SEC), trong khi lượt chat đang giữ
+# khoá lượt của người dùng và 1 suất MAX_CONCURRENT_TURNS.
+INTERACTIVE_LOCK_WAIT_SEC = 15.0
+MEMORY_BUSY_TEXT = "⏳ Em đang cập nhật trí nhớ, thử lại sau ít giây nhé."
+
+
+def interactive_lock_timeout() -> float:
+    """Trần chờ khoá cho lệnh tương tác: INTERACTIVE_LOCK_WAIT_SEC, không vượt
+    thời gian còn lại của lượt (ai.timeouts.turn_deadline)."""
+    remaining = remaining_turn_seconds()
+    if remaining is None:
+        return INTERACTIVE_LOCK_WAIT_SEC
+    return max(0.0, min(remaining, INTERACTIVE_LOCK_WAIT_SEC))
+
+
 @asynccontextmanager
-async def user_lock(user_id: int) -> AsyncIterator[None]:
-    """``async with user_lock(uid):`` - khoá đọc-rồi-ghi trí nhớ của 1 người."""
+async def user_lock(user_id: int, wait_sec: float | None = None) -> AsyncIterator[None]:
+    """``async with user_lock(uid):`` - khoá đọc-rồi-ghi trí nhớ của 1 người.
+    ``wait_sec``: chờ khoá lâu hơn thì raise MemoryBusy (None = chờ tới khi có)."""
     lock = _lock_for(user_id)
     try:
-        async with lock:
+        if wait_sec is None:
+            await lock.acquire()
+        else:
+            try:
+                await asyncio.wait_for(lock.acquire(), max(0.0, wait_sec))
+            except TimeoutError:
+                raise MemoryBusy(f"user_id={user_id}") from None
+        try:
             yield
+        finally:
+            lock.release()
     finally:
         _release_lock(user_id)
+
+
+def interactive_lock(user_id: int):
+    """user_lock có trần chờ cho lệnh tương tác (raise MemoryBusy)."""
+    return user_lock(user_id, wait_sec=interactive_lock_timeout())
 
 
 # ─── Giới hạn ────────────────────────────────────────────────────────────────
@@ -1333,8 +1370,9 @@ async def _mid_block(
 async def clear_memory(user_id: int) -> None:
     """Xoá sạch trí nhớ dài hạn (facts + summary + highlights + ghi chú phiên).
     Lịch sử phiên (chat_messages) KHÔNG bị ảnh hưởng - dùng /reset cho việc đó;
-    watermark nhảy tới tin mới nhất để lịch sử cũ không bị trích lại."""
-    async with user_lock(user_id):
+    watermark nhảy tới tin mới nhất để lịch sử cũ không bị trích lại. Chờ khoá
+    có trần (lệnh tương tác): raise MemoryBusy."""
+    async with interactive_lock(user_id):
         await db.clear_facts(user_id)
         await db.set_summary(user_id, "")
         await db.clear_highlights(user_id)

@@ -2,18 +2,23 @@
 /notes, /xoaghichu, /xuatdulieu, /xoadulieu - xem services/memory_commands.py).
 
 Mọi thao tác sửa chạy dưới memory_service.user_lock(user_id) để không giẫm lên
-lượt trích nhớ nền đang đọc-rồi-ghi. Chỉ đụng dữ liệu của CHÍNH user_id đó
-(Zalo: internal_user_id riêng, tách hẳn Telegram).
+lượt trích nhớ nền đang đọc-rồi-ghi; lệnh người dùng chờ khoá có trần
+(memory_service.interactive_lock) rồi báo bận thay vì treo cả lượt trả lời.
+Chỉ đụng dữ liệu của CHÍNH user_id đó (Zalo: internal_user_id riêng, tách hẳn
+Telegram).
 """
 
 from __future__ import annotations
 
+import functools
 import io
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import ParamSpec
 from zoneinfo import ZoneInfo
 
 from core import database as db
@@ -21,6 +26,7 @@ from core.text_normalize import fold
 from services import memory_guard, memory_service, personal_settings
 
 logger = logging.getLogger(__name__)
+P = ParamSpec("P")
 
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _MAX_AMBIGUOUS_SHOWN = 8
@@ -68,6 +74,21 @@ _SECRET_REFUSAL = (
     "Cái này có vẻ là {label} nên em không lưu vào trí nhớ để giữ an toàn. "
     "Nên cất ở trình quản lý mật khẩu nhé."
 )
+
+
+def _busy_safe(func: Callable[P, Awaitable[str]]) -> Callable[P, Awaitable[str]]:
+    """Lệnh tương tác chờ khoá trí nhớ có trần: quá trần thì báo bận (không treo
+    lượt trả lời khi trích nhớ nền đang giữ khoá trong lúc gọi AI)."""
+
+    @functools.wraps(func)
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> str:
+        try:
+            return await func(*args, **kwargs)
+        except memory_service.MemoryBusy:
+            logger.info("Lệnh trí nhớ %s: khoá đang bận, báo người dùng thử lại.", func.__name__)
+            return memory_service.MEMORY_BUSY_TEXT
+
+    return wrapper
 
 
 @dataclass
@@ -174,13 +195,14 @@ def _match(items: MemoryItems, selector: str) -> list[tuple[int, str, dict]]:
     return [item for item in numbered if needle in fold(_item_text(item[1], item[2]))]
 
 
+@_busy_safe
 async def forget_item(user_id: int, selector: str) -> str:
     """/quen <số|key|đoạn chữ>: khớp DUY NHẤT 1 mục thì xoá hẳn (cả giá trị cũ
     và highlight nhắc tới nó) và đưa vào danh sách "đừng học lại"."""
     selector = (selector or "").strip()
     if not selector:
         return "Cú pháp: /quen <số|từ khoá> - xem số thứ tự bằng /memory."
-    async with memory_service.user_lock(user_id):
+    async with memory_service.interactive_lock(user_id):
         items = await list_items(user_id)
         found = _match(items, selector)
         if not found:
@@ -230,6 +252,7 @@ def _secret_label(key: str, value: str) -> str | None:
     return None
 
 
+@_busy_safe
 async def remember(user_id: int, text: str) -> str:
     """/nho <điều cần nhớ> hoặc "nhớ giúp anh là...": fact GHIM do người dùng tự
     nhập (bộ trích xuất không sửa/xoá được). Bí mật (mật khẩu, OTP...) thì từ chối."""
@@ -251,7 +274,7 @@ async def remember(user_id: int, text: str) -> str:
         secret = _secret_label(key, value) or _secret_label(key, clean)
     if secret:
         return _SECRET_REFUSAL.format(label=secret)
-    async with memory_service.user_lock(user_id):
+    async with memory_service.interactive_lock(user_id):
         rows = await db.get_fact_rows(user_id)
         if rule:
             current = next((r for r in rows if r["key"] == memory_service.STYLE_KEY), None)
@@ -303,11 +326,12 @@ async def remember(user_id: int, text: str) -> str:
     return f"📌 Em nhớ rồi: {_label(key)}: {value}"
 
 
+@_busy_safe
 async def pin_item(user_id: int, selector: str, pinned: bool = True) -> str:
     command = "/ghim" if pinned else "/boghim"
     if not (selector or "").strip().isdigit():
         return f"Cú pháp: {command} <số> - xem số thứ tự bằng /memory."
-    async with memory_service.user_lock(user_id):
+    async with memory_service.interactive_lock(user_id):
         items = await list_items(user_id)
         found = _match(items, selector)
         if not found or found[0][1] != "fact":
@@ -482,6 +506,7 @@ async def export_text(user_id: int) -> str:
     return text
 
 
+@_busy_safe
 async def delete_own_data(user_id: int, argument: str = "") -> str:
     """/xoadulieu xacnhan. Zalo (id âm): xoá MỌI dữ liệu cá nhân của chính người
     đó (giữ pairing để vẫn chat tiếp). Chủ bot: chỉ trí nhớ, ghi chú, lịch sử
@@ -497,7 +522,7 @@ async def delete_own_data(user_id: int, argument: str = "") -> str:
         return (
             f"⚠️ Lệnh này xoá {scope} và KHÔNG khôi phục được. Chắc chắn thì gõ: /xoadulieu xacnhan"
         )
-    async with memory_service.user_lock(user_id):
+    async with memory_service.interactive_lock(user_id):
         if user_id < 0:
             from channels import zalo_users
 

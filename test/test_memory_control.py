@@ -262,3 +262,39 @@ def test_lenh_tri_nho_co_trong_help_va_menu():
         assert f"/{cmd}" in channel_command_service.HELP_MEMBER
         assert f"/{cmd}" in channel_command_service.HELP_ADMIN
         assert cmd in menu
+
+
+@pytest.mark.asyncio
+async def test_lenh_tri_nho_khong_cho_vo_han_khi_trich_nho_nen_giu_khoa(mem, monkeypatch):
+    """Trích nhớ nền giữ user_lock suốt lượt gọi AI (tới 90s): /nho, /quen, /ghim,
+    /forget và tool remember_fact trong lượt chat chỉ chờ có trần rồi báo bận."""
+    import asyncio
+
+    monkeypatch.setattr(memory_service, "INTERACTIVE_LOCK_WAIT_SEC", 0.05)
+    await _seed(mem)
+    held = asyncio.Event()
+    release = asyncio.Event()
+
+    async def background_flush():
+        async with memory_service.user_lock(UID):
+            held.set()
+            await release.wait()
+
+    task = asyncio.create_task(background_flush())
+    await held.wait()
+    replies = [
+        await memory_control.remember(UID, "size giày của vợ là 38"),
+        (await _cmd("/memory")).messages[0],
+        (await _cmd("/quen", "so thich")).messages[0],
+        (await _cmd("/ghim", "1")).messages[0],
+        (await _cmd("/forget")).messages[0],
+        await memory_control.delete_own_data(UID, "xacnhan"),
+    ]
+    assert all(r == memory_service.MEMORY_BUSY_TEXT for r in replies[2:]), replies
+    assert replies[0] == memory_service.MEMORY_BUSY_TEXT
+    assert len(mem.current(UID)) == 3  # chưa đổi gì
+    release.set()
+    await task
+    # Đếm khoá đúng: không rò lock sau các lần chờ hết giờ.
+    assert UID not in memory_service._user_locks and UID not in memory_service._lock_users
+    assert (await memory_control.remember(UID, "size giày của vợ là 38")).startswith("📌")

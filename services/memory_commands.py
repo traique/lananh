@@ -65,7 +65,10 @@ async def handle(
         items = await memory_control.list_items(user_id)
         return CommandReply([memory_control.format_listing(items, about=about)])
     if command == "/forget":
-        await memory_service.clear_memory(user_id)
+        try:
+            await memory_service.clear_memory(user_id)
+        except memory_service.MemoryBusy:
+            return CommandReply([memory_service.MEMORY_BUSY_TEXT])
         return CommandReply(["🗑️ Đã xoá toàn bộ trí nhớ dài hạn."])
     if command == "/quen":
         return CommandReply([await memory_control.forget_item(user_id, argument)])
