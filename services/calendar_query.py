@@ -221,6 +221,12 @@ def _solar_dates(t: str, today: dt.date) -> list[dt.date]:
     return out
 
 
+# Bộ đọc ngày dùng lại cho giờ nhắc việc (services/vn_time_parse.py).
+SOLAR_DATE_RE = _SOLAR_DATE_RE
+relative_day = _relative_day
+solar_dates = _solar_dates
+
+
 def _gender(text: str) -> bool | None:
     low = text.lower()
     if re.search(r"\b(nữ|nu|gái|gai|con gái)\b", low):

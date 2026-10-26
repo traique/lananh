@@ -61,6 +61,13 @@ HELP_TEXT = (
     "/thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của anh\n"
     "/bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, "
     "danh mục; bật thì thay digest danh mục 8h)\n\n"
+    "*Nhắc việc và ngày nhớ (giờ tính bằng code)*\n"
+    "/nhac — xem nhắc việc đang chờ; /nhac 8h tối mai gọi mẹ — đặt nhắc; "
+    "/nhac 7h sáng mỗi ngày uống thuốc, /nhac mùng 1 và rằm 6h thắp hương — nhắc lặp\n"
+    "/nhac huy <số> — huỷ; /nhac hoan <số> 30p — dời; vừa nhận tin nhắc thì trả lời "
+    '"hoãn 10p" hoặc "xong"\n'
+    "/ngaynho — giỗ, sinh nhật, kỷ niệm (âm/dương, báo trước); "
+    "/ngaynho giỗ ông nội 12/3 âm trước 3 ngày; /ngaynho xoa <số>\n\n"
     "*Chat và tiện ích*\n"
     "/prompt <mô tả> — viết prompt tạo ảnh từ mô tả cơ bản\n"
     "/anh <mô tả> — tạo ảnh thật (Agnes AI); /anh on|off — bật/tắt\n"

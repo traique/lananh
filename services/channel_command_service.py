@@ -18,7 +18,7 @@ from services import (
     translate_service,
     usage_stats,
 )
-from services import daily_commands
+from services import daily_commands, reminder_commands
 from services.telemetry import telemetry
 
 # /help theo vai trò: thành viên Zalo chỉ thấy lệnh mình dùng được (không có
@@ -45,6 +45,12 @@ _HELP_COMMON = """Lịch, thần số học, tử vi, kỳ môn
 /xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé] — kết quả xổ số, dò vé
 /thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của riêng mình
 /bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, danh mục, tin)
+
+Nhắc việc và ngày nhớ (giờ tính bằng code)
+/nhac — xem nhắc việc đang chờ; /nhac 8h tối mai gọi mẹ — đặt nhắc;
+  /nhac 7h sáng mỗi ngày uống thuốc, /nhac mùng 1 và rằm 6h thắp hương — nhắc lặp
+/nhac huy <số> — huỷ; /nhac hoan <số> 30p — dời; vừa nhận tin nhắc thì trả lời "hoãn 10p" hoặc "xong"
+/ngaynho — giỗ, sinh nhật, kỷ niệm; /ngaynho giỗ ông nội 12/3 âm trước 3 ngày; /ngaynho xoa <số>
 
 Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
@@ -401,6 +407,10 @@ async def maybe_handle_command(
     daily = await daily_commands.handle(command, argument, user_id, channel)
     if daily is not None:
         return daily, None
+    # /nhac, /ngaynho: nhắc việc + ngày nhớ (giờ tính bằng code).
+    reminder = await reminder_commands.handle(command, argument, user_id, channel)
+    if reminder is not None:
+        return reminder, None
     if command == "/prompt":
         return await _prompt(user_id, argument, channel)
     if command == "/gia":

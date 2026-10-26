@@ -781,7 +781,109 @@ async def add_reminder(
 @_with_reconnect
 async def mark_reminder_sent(reminder_id: int) -> None:
     pool = await get_pool()
-    await pool.execute("UPDATE reminders SET sent = true WHERE id = $1", reminder_id)
+    # fired_at: lúc nhắc thật - "hoãn 10p"/"xong" trong 30 phút tìm theo cột này.
+    await pool.execute(
+        "UPDATE reminders SET sent = true, fired_at = COALESCE(fired_at, now()) WHERE id = $1",
+        reminder_id,
+    )
+
+
+# ─── Nhắc việc v2: lặp lại, ngày nhớ, huỷ/hoãn (services/reminder_service.py) ──
+# SQL ở core/repositories/reminders.py. Tạo chuỗi INSERT nhiều dòng trong 1
+# transaction -> idempotent=False; chèn lần kế tiếp dùng ON CONFLICT nên thử lại an toàn.
+
+
+@_with_reconnect
+async def reminder_count_pending_once(telegram_user_id: int) -> int:
+    from core.repositories import reminders
+
+    return await reminders.count_pending_once(await get_pool(), telegram_user_id)
+
+
+@_with_reconnect
+async def reminder_count_series(telegram_user_id: int) -> int:
+    from core.repositories import reminders
+
+    return await reminders.count_series(await get_pool(), telegram_user_id)
+
+
+@_with_reconnect(idempotent=False)
+async def reminder_create_series(telegram_user_id: int, message: str, **kw) -> tuple[int, bool]:
+    from core.repositories import reminders
+
+    return await reminders.create_series(await get_pool(), telegram_user_id, message, **kw)
+
+
+@_with_reconnect
+async def reminder_get_series(series_id: int) -> dict | None:
+    from core.repositories import reminders
+
+    return await reminders.get_series(await get_pool(), series_id)
+
+
+@_with_reconnect
+async def reminder_add_occurrence(series: dict, due_at, message: str) -> bool:
+    from core.repositories import reminders
+
+    return await reminders.add_occurrence(await get_pool(), series, due_at, message)
+
+
+@_with_reconnect
+async def reminder_list_pending_once(telegram_user_id: int, limit: int = 20) -> list[dict]:
+    from core.repositories import reminders
+
+    return await reminders.list_pending_once(await get_pool(), telegram_user_id, limit)
+
+
+@_with_reconnect
+async def reminder_list_series(
+    telegram_user_id: int, kind: str = "reminder", limit: int = 50
+) -> list[dict]:
+    from core.repositories import reminders
+
+    return await reminders.list_series(await get_pool(), telegram_user_id, kind, limit)
+
+
+@_with_reconnect
+async def reminder_delete(telegram_user_id: int, reminder_id: int) -> bool:
+    from core.repositories import reminders
+
+    return await reminders.delete_reminder(await get_pool(), telegram_user_id, reminder_id)
+
+
+@_with_reconnect
+async def reminder_delete_series(telegram_user_id: int, series_id: int) -> bool:
+    from core.repositories import reminders
+
+    return await reminders.delete_series(await get_pool(), telegram_user_id, series_id)
+
+
+@_with_reconnect
+async def reminder_reschedule(telegram_user_id: int, reminder_id: int, due_at) -> bool:
+    from core.repositories import reminders
+
+    return await reminders.reschedule(await get_pool(), telegram_user_id, reminder_id, due_at)
+
+
+@_with_reconnect
+async def reminder_last_fired(telegram_user_id: int, within) -> dict | None:
+    from core.repositories import reminders
+
+    return await reminders.last_fired(await get_pool(), telegram_user_id, within)
+
+
+@_with_reconnect
+async def reminder_mark_done(reminder_id: int) -> None:
+    from core.repositories import reminders
+
+    await reminders.mark_done(await get_pool(), reminder_id)
+
+
+@_with_reconnect
+async def reminder_mark_fired(reminder_id: int) -> None:
+    from core.repositories import reminders
+
+    await reminders.mark_fired(await get_pool(), reminder_id)
 
 
 @_with_reconnect

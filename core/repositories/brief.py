@@ -23,12 +23,17 @@ async def list_settings_with_prefix(pool: Any, prefix: str, limit: int) -> list[
 async def list_reminders_between(
     pool: Any, user_id: int, start: datetime, end: datetime, limit: int
 ) -> list[tuple[datetime, str]]:
-    """Nhắc việc CHƯA gửi của 1 người, đến hạn trong [start, end)."""
+    """Nhắc việc CHƯA gửi của 1 người, đến hạn trong [start, end). Lần nhắc của
+    ngày nhớ không tính - bản tin đã có mục "ngay_nho" riêng (services/ngay_nho.py)."""
     rows = await pool.fetch(
         """
         SELECT due_at, message FROM reminders
         WHERE telegram_user_id = $1 AND sent = false
           AND due_at >= $2 AND due_at < $3
+          AND NOT EXISTS (
+              SELECT 1 FROM reminder_series s
+              WHERE s.id = reminders.series_id AND s.kind = 'ngay_nho'
+          )
         ORDER BY due_at
         LIMIT $4
         """,

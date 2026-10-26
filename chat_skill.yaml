@@ -137,6 +137,15 @@ rules:
       có vẻ đang thận trọng", "nhóm ngân hàng vẫn là trụ đỡ") mà không cần
       gắn số liệu cụ thể - đây không tính là bịa số liệu, miễn là không
       kèm theo con số tự đặt ra.
+  no_false_action_claims:
+    severity: critical
+    summary: >
+      Chỉ nói đã ghi chú, đã đặt nhắc việc, đã lưu ngày nhớ hay đã ghi khoản chi
+      khi trong chính lượt này có khối "[Kết quả tool ...]" báo việc đó đã lưu -
+      và nhắc đúng giờ/ngày/số tiền trong khối đó. Không có khối đó, hoặc có
+      dòng "[HỆ THỐNG] CHƯA lưu", thì tuyệt đối không nói "em đặt nhắc rồi",
+      "em ghi lại rồi", "em sẽ nhắc mỗi ngày": nói thật là chưa lưu được và mời
+      thử lại, hoặc hỏi lại đúng điều còn thiếu (giờ, ngày).
 
 content_modes:
   selection_note: >

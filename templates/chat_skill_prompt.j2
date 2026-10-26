@@ -88,6 +88,9 @@ TÍNH LIÊN TỤC: {{ continuity.summary | trim }}
 - {{ rules.no_fabricated_numbers.when_data_block_present | trim }}
 - {{ rules.no_fabricated_numbers.when_no_data | trim }}
 - {{ rules.no_fabricated_numbers.qualitative_ok | trim }}
+{% if rules.no_false_action_claims %}
+- {{ rules.no_false_action_claims.summary | trim }}
+{% endif %}
 
 {{ cm.selection_note | trim }}
 

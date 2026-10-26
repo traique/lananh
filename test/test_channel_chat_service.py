@@ -349,3 +349,158 @@ async def test_run_chat_turn_shares_one_deadline_across_search_and_chat(monkeypa
     turn = await svc.run_chat_turn(1, "xin chào", channel="zalo")
     assert turn.failed and turn.timed_out
     assert turn.error_detail.startswith("Hết")
+
+
+# ─── Trung thực về nhắc việc/ghi chú (ToolOutcome -> câu do code nối) ──────
+
+
+def _outcome(**kw):
+    from services import tool_registry as reg
+
+    return reg.ToolOutcome(**kw)
+
+
+@pytest.mark.asyncio
+async def test_router_hong_co_y_dinh_nhac_thi_noi_canh_bao_chua_luu(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+    from services import tool_registry as reg
+
+    async def unavailable(user_id, text):
+        return _outcome(status=reg.STATUS_UNAVAILABLE, intent="reminder")
+
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", unavailable)
+    chat_fakes["response"] = _FakeResponse("Dạ em đặt nhắc rồi ạ")
+
+    turn = await ccs.run_chat_turn(1, "nhắc anh 8h sáng mai uống thuốc")
+    await ccs.stop_background_tasks()
+
+    assert "⚠️ Em chưa lưu được nhắc việc này" in turn.text
+    assert "CHƯA lưu được nhắc việc" in chat_fakes["chat"][0]
+    assert chat_fakes["saved"][-1] == ("model", turn.text)  # lịch sử lưu đúng câu đã gửi
+
+
+@pytest.mark.asyncio
+async def test_router_none_cho_cau_nhac_ve_nhac_khong_noi_canh_bao(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+    from services import tool_registry as reg
+
+    async def none(user_id, text):
+        return _outcome(status=reg.STATUS_NONE, router_ran=True)
+
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", none)
+    chat_fakes["response"] = _FakeResponse("Hay thật anh ạ")
+
+    turn = await ccs.run_chat_turn(1, "bài nhạc anh gửi hay ghê")
+
+    assert turn.text == "Hay thật anh ạ"
+
+
+@pytest.mark.asyncio
+async def test_da_luu_ma_cau_tra_loi_thieu_gio_thi_noi_xac_nhan_cua_code(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+    from services import tool_registry as reg
+
+    confirmation = "Đã đặt nhắc 1 lần lúc 08:00 Thứ Ba 27/10 (giờ VN): uống thuốc"
+
+    async def saved(user_id, text):
+        return _outcome(
+            status=reg.STATUS_OK,
+            name="set_reminder",
+            side_effect=True,
+            text=confirmation,
+            confirmation=confirmation,
+            confirmation_key="08:00",
+        )
+
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", saved)
+    chat_fakes["response"] = _FakeResponse("Dạ em nhớ rồi nha anh")
+    turn = await ccs.run_chat_turn(1, "nhắc anh 8h sáng mai uống thuốc")
+    assert turn.text.endswith(f"✅ {confirmation}")
+    assert "dùng ĐÚNG thông tin" in chat_fakes["chat"][0]
+
+    chat_fakes["response"] = _FakeResponse("Dạ 08:00 sáng mai em nhắc anh uống thuốc nha")
+    turn = await ccs.run_chat_turn(1, "nhắc anh 8h sáng mai uống thuốc")
+    assert "✅" not in turn.text  # đã đúng giờ chuẩn -> không lặp xác nhận
+
+
+@pytest.mark.asyncio
+async def test_luot_chi_doc_truyen_allow_side_effects_va_bao_ly_do(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+    from services import tool_registry as reg
+
+    seen = {}
+
+    async def blocked(user_id, text, **kwargs):
+        seen.update(kwargs)
+        return _outcome(
+            status=reg.STATUS_BLOCKED,
+            name="set_reminder",
+            side_effect=True,
+            effect_label="nhắc việc",
+            text="lượt này chỉ đọc",
+        )
+
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", blocked)
+    turn = await ccs.run_chat_turn(1, "nhắc anh 8h uống thuốc", allow_side_effects=False)
+
+    assert seen == {"allow_side_effects": False}
+    assert "⚠️ Em chưa lưu nhắc việc này: lượt này chỉ đọc." in turn.text
+
+
+@pytest.mark.asyncio
+async def test_canh_bao_chua_luu_dung_cach_xung_ho_thanh_vien(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+    from services import tool_registry as reg
+
+    async def failed(user_id, text):
+        return _outcome(status=reg.STATUS_FAILED, intent="note", name="save_note")
+
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", failed)
+    turn = await ccs.run_chat_turn(
+        -5, "ghi chú giúp chị mua sữa", channel="zalo", address_form="chị"
+    )
+
+    assert "⚠️ Em chưa lưu được ghi chú này - chị nhắn lại giúp em" in turn.text
+
+
+@pytest.mark.asyncio
+async def test_luot_hong_sau_khi_da_luu_nhac_van_bao_da_luu(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+    from services import tool_registry as reg
+
+    async def saved(user_id, text):
+        return _outcome(
+            status=reg.STATUS_OK, side_effect=True, confirmation="Đã đặt nhắc lúc 08:00"
+        )
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("provider chết")
+
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", saved)
+    monkeypatch.setattr(ccs.orchestrator, "chat", boom)
+    turn = await ccs.run_chat_turn(1, "nhắc anh 8h uống thuốc")
+
+    assert turn.failed and turn.tool_note == "Đã đặt nhắc lúc 08:00"
+    assert ccs.failure_message(turn, owner=True).endswith("✅ Đã đặt nhắc lúc 08:00")
+
+
+@pytest.mark.asyncio
+async def test_loi_tat_hoan_xong_chay_truoc_chat(monkeypatch):
+    from services import channel_chat_service as ccs
+
+    async def shortcut(user_id, text):
+        return "✅ Dạ em ghi nhận xong: uống thuốc" if text == "xong" else None
+
+    async def no_command(*args, **kwargs):
+        return None
+
+    async def chat_must_not_run(*args, **kwargs):
+        raise AssertionError("lối tắt không được gọi AI")
+
+    monkeypatch.setattr(ccs.portfolio_service, "handle_command", no_command)
+    monkeypatch.setattr(ccs.reminder_service, "maybe_handle_shortcut", shortcut)
+    monkeypatch.setattr(ccs, "run_chat_turn", chat_must_not_run)
+
+    result = await ccs.handle_channel_text(-5, "xong", is_admin=False, channel="zalo")
+
+    assert result.messages == ["✅ Dạ em ghi nhận xong: uống thuốc"]
