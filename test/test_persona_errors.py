@@ -142,6 +142,29 @@ async def test_nhanh_co_phieu_het_gio_cau_than_thien(chat_stubs, monkeypatch):
     assert result.messages == [messages.friendly_error("timeout")]
 
 
+@pytest.mark.asyncio
+async def test_khong_tra_ra_ma_co_phieu_khong_goi_thanh_vien_la_anh(monkeypatch):
+    """Câu "chưa tra ra mã" trên Zalo theo cách gọi riêng; chưa đặt thì trung tính."""
+    from services import channel_chat_service as ccs
+
+    async def no_symbols(text):
+        return []
+
+    monkeypatch.setattr(ccs.stock_analysis, "find_valid_symbols", no_symbols)
+    monkeypatch.setattr(ccs.stock_analysis, "looks_like_price_question", lambda text: True)
+    neutral, _ = await ccs._handle_stock(-3, "giá mã đó bao nhiêu", is_admin=False)
+    assert "anh" not in neutral.messages[0].lower().replace("lan anh", "")
+    with reply_audience.use(reply_audience.ReplyAudience(address_form="cô")):
+        aunt, _ = await ccs._handle_stock(-3, "giá mã đó bao nhiêu", is_admin=False)
+    assert aunt.messages[0].startswith("Cô ơi cháu chưa tra ra mã")
+    assert messages.stock_symbol_unresolved(owner=True) == messages.STOCK_SYMBOL_UNRESOLVED
+
+
+def test_loi_lay_gia_co_phieu_khong_xung_ho():
+    text = messages.STOCK_FETCH_ERROR.format(symbol="FPT")
+    assert "FPT" in text and " anh" not in text and not text.startswith("Em")
+
+
 # ─── Ảnh Zalo -> prompt ─────────────────────────────────────────────────────
 
 

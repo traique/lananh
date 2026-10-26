@@ -37,9 +37,9 @@ ZOOM_UNPAIRED_ALERT = (
 )
 
 # ─── Phân tích cổ phiếu ──────────────────────────────────────────────────────
-STOCK_FETCH_ERROR = (
-    "Em không lấy được dữ liệu giá cho mã {symbol} lúc này, anh thử lại sau ít phút nhé."
-)
+# Câu trung tính (không "anh"/"em"): stock/analysis.py dùng chung cho chủ bot
+# Telegram lẫn thành viên Zalo - tầng stock/ không biết người nhận là ai.
+STOCK_FETCH_ERROR = "Chưa lấy được dữ liệu giá mã {symbol} lúc này, thử lại sau ít phút nha."
 STOCK_ANALYZE_FAILED = "❌ Lỗi khi phân tích {symbol}, bỏ qua mã này."
 STOCK_QUOTE_FAILED = "❌ Lỗi khi lấy giá {symbol}, bỏ qua mã này."
 # Dùng khi tin nhắn rõ ràng đang hỏi giá nhưng hệ thống không nhận ra mã nào.
@@ -49,6 +49,26 @@ STOCK_SYMBOL_UNRESOLVED = (
     "Anh ơi em chưa tra ra mã cổ phiếu nào trong câu này nên không dám đọc giá đại đâu ạ. "
     'Anh gõ lại mã in HOA giúp em nha (vd: GVR), hoặc thêm chữ "cổ phiếu" phía trước.'
 )
+
+
+def stock_symbol_unresolved(address_form: str | None = None, *, owner: bool = False) -> str:
+    """STOCK_SYMBOL_UNRESOLVED theo người nhận: chủ bot giữ câu gọi "anh"; thành
+    viên Zalo theo cách gọi riêng (core/address.py), chưa đặt thì câu trung tính."""
+    form = "anh" if owner else address.normalize(address_form)
+    if form == "anh":
+        return STOCK_SYMBOL_UNRESOLVED
+    if not form:
+        return (
+            "Em chưa tra ra mã cổ phiếu nào trong câu này nên không dám đọc giá đại đâu ạ. "
+            'Gõ lại mã in HOA giúp em nha (vd: GVR), hoặc thêm chữ "cổ phiếu" phía trước.'
+        )
+    me = address.self_word(form)
+    return (
+        f"{form.capitalize()} ơi {me} chưa tra ra mã cổ phiếu nào trong câu này nên không dám "
+        f"đọc giá đại đâu ạ. {form.capitalize()} gõ lại mã in HOA giúp {me} nha (vd: GVR), "
+        'hoặc thêm chữ "cổ phiếu" phía trước.'
+    )
+
 
 # ─── Chat & lệnh chung ───────────────────────────────────────────────────────
 INVALID_COMMAND = "Lệnh không hợp lệ. Gõ /help để xem danh sách lệnh."

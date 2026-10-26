@@ -13,7 +13,7 @@ import datetime as dt
 import logging
 
 from ai.timeouts import TurnTimeoutError
-from services import calendar_query, kymon, numerology, tuvi
+from services import calendar_query, kymon, numerology, reply_audience, tuvi
 from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,8 @@ async def ai_text(user_id: int, kind: str, channel: str, explain) -> str:
     except TurnTimeoutError as exc:
         logger.warning("%s hết hạn chót lượt: %s", kind, exc)
         await telemetry.failure(prompt_id, kind, exc)
-        return f"⏱️ {exc}"
+        # Câu giọng Lan Anh theo người nhận (chi tiết kỹ thuật chỉ chủ bot thấy).
+        return await reply_audience.error_text("timeout", user_id, str(exc))
     except Exception as exc:
         logger.warning("%s lỗi: %r", kind, exc)
         await telemetry.failure(prompt_id, kind, exc)

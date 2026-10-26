@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from core import config
+from messages import friendly_error
 from services import channel_command_service as ccs
 from services import divination_commands, kymon
 
@@ -98,8 +100,15 @@ async def test_kymon_chitiet_het_han_chot_bao_ro(monkeypatch, telemetry_log):
         raise TurnTimeoutError("Hết thời gian trả lời")
 
     monkeypatch.setattr(kymon, "explain_with_ai", slow)
-    messages = await divination_commands.kymon_chitiet(1, "đi xa", "zalo")
-    assert messages[1] == "⏱️ Hết thời gian trả lời"
+    monkeypatch.setattr(config, "ALLOWED_USER_ID", 42)
+    # Thành viên Zalo: câu giọng Lan Anh, không lộ thông điệp lỗi kỹ thuật.
+    messages = await divination_commands.kymon_chitiet(-1, "đi xa", "zalo")
+    assert messages[1] == friendly_error("timeout")
+    assert "Hết thời gian trả lời" not in messages[1]
+    # Chủ bot: cùng câu đó kèm chi tiết kỹ thuật.
+    messages = await divination_commands.kymon_chitiet(42, "đi xa", "telegram")
+    assert messages[1].startswith(friendly_error("timeout", owner=True).split("\n")[0])
+    assert "Hết thời gian trả lời" in messages[1]
 
 
 async def test_kymon_chitiet_thieu_viec_khong_goi_ai(no_ai, telemetry_log):

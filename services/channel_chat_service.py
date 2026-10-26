@@ -389,7 +389,14 @@ async def _handle_stock(
     symbols = await stock_analysis.find_valid_symbols(text)
     if not symbols:
         if stock_analysis.looks_like_price_question(text):
-            return ChannelResult([messages.STOCK_SYMBOL_UNRESOLVED]), ""
+            return ChannelResult(
+                [
+                    messages.stock_symbol_unresolved(
+                        reply_audience.current().address_form,
+                        owner=await reply_audience.is_owner(user_id),
+                    )
+                ]
+            ), ""
         return None, ""
     if stock_analysis.wants_portfolio_analysis(text, symbols):
         try:
