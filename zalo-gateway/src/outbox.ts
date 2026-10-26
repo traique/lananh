@@ -10,9 +10,17 @@ export type OutboxDeps = {
   /** Zalo còn đăng nhập không (mất kết nối giữa chừng không phải lỗi của tin). */
   connected(): boolean;
   log?(message: string, error?: unknown): void;
+  /** Nghỉ giữa 2 lần gửi liên tiếp (giữa các đoạn và giữa các tin) - nhịp không giống máy. */
+  pace?(): Promise<void>;
+  /**
+   * Lấy 1 lượt từ ngân sách gửi của tài khoản trước khi gửi 1 tin; false = hết
+   * ngân sách: tin còn lại HOÃN sang lượt poll sau (vẫn chờ trong DB), không bỏ.
+   */
+  takeBudget?(): boolean;
 };
 
-export type OutboxRunResult = { sent: number; failed: number };
+/** `deferred` chỉ có khi hết ngân sách gửi: số tin để dành cho lượt sau. */
+export type OutboxRunResult = { sent: number; failed: number; deferred?: number };
 
 const MAX_TRACKED_ITEMS = 256;
 const MAX_ERROR_CHARS = 300;
@@ -44,15 +52,26 @@ export class OutboxDelivery {
     if (!this.deps.connected()) return result;
     const items = await this.deps.fetch();
     const blocked = new Set<string>();
-    for (const item of items) {
+    let sentAny = false;
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
       if (!this.deps.connected()) break;
       if (blocked.has(item.recipient_id)) continue;
       const chunks = splitForZalo(item.content);
       let done = Math.max(Number(item.chunks_sent) || 0, this.progress.get(item.id) ?? 0);
+      if (done < chunks.length && this.deps.takeBudget && !this.deps.takeBudget()) {
+        // Hết ngân sách: tin này và các tin sau chờ lượt poll kế (không ack, không báo lỗi).
+        result.deferred = items.length - index;
+        break;
+      }
       try {
         while (done < chunks.length) {
           const chunk = chunks[done];
-          if (chunk.trim()) await this.deps.sendChunk(item.recipient_id, chunk);
+          if (chunk.trim()) {
+            if (sentAny && this.deps.pace) await this.deps.pace();
+            await this.deps.sendChunk(item.recipient_id, chunk);
+            sentAny = true;
+          }
           done++;
           this.remember(item.id, done);
         }

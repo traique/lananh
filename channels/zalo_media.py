@@ -33,6 +33,16 @@ POST /internal/zalo/file
              caption = tóm tắt) hoặc câu báo lỗi/định dạng chưa hỗ trợ. Cache kind
              "file". "lưu vào kho" từ Zalo luôn bị từ chối (chỉ chủ bot trên
              Telegram) nhưng vẫn trả lời về tài liệu.
+
+POST /internal/zalo/notice
+    headers: x-zalo-bridge-secret
+    body:    JSON {"account_id", "sender_id", "kind"} - kind là 1 trong
+             channels/contracts.ZaloNoticeKind ("image" trước khi xem ảnh,
+             "voice_failed"/"voice_too_large", "file_failed"/"file_too_large"/
+             "file_unsupported", "video", "location")
+    trả:     {"text": "..."} câu giọng Lan Anh theo cách gọi riêng của người gửi,
+             hoặc {"text": null} nếu người lạ chưa pair / bị khoá (gateway im
+             lặng). Không gọi AI, không lấy khoá lượt, không báo chủ bot.
 """
 
 from __future__ import annotations
@@ -46,17 +56,26 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 import messages as messages_module
 from channels import zalo_users
-from channels.contracts import ZaloMessageResponse
+from channels.contracts import ZaloMessageResponse, ZaloNoticeRequest, ZaloNoticeResponse
 from channels.router import (
     _audience,
+    _auth,
     _auth_sender,
+    _is_controller,
     _require_local_caller,
     _zalo_chunks,
     media_quota_gate,
     media_turn,
 )
 from core import idempotency
-from services import document_service, reply_audience, turn_control, usage_quota, voice_service
+from services import (
+    document_service,
+    media_text,
+    reply_audience,
+    turn_control,
+    usage_quota,
+    voice_service,
+)
 from services.concurrency import TurnCancelled, assistant_turn, run_cancellable
 
 logger = logging.getLogger(__name__)
@@ -250,3 +269,25 @@ async def _file_turn(
             x_zalo_account_id, x_zalo_message_id, "file", response.model_dump()
         )
         return response
+
+
+@router.post("/notice", response_model=ZaloNoticeResponse)
+async def notice(
+    payload: ZaloNoticeRequest,
+    x_zalo_bridge_secret: str | None = Header(default=None),
+):
+    """Câu báo ngắn gateway gửi KHÔNG qua lượt AI (đã nhận ảnh, tin thoại/file lỗi,
+    loại tin chưa hỗ trợ) - dựng ở đây để đúng giọng Lan Anh và cách gọi riêng
+    của từng thành viên, và để chính Python quyết định người gửi đã pair chưa
+    (danh sách người quen của gateway trống sau mỗi lần khởi động lại)."""
+    _auth(x_zalo_bridge_secret)
+    zalo_user = await zalo_users.resolve(payload.sender_id)
+    if zalo_user is None or not zalo_user.is_active:
+        return ZaloNoticeResponse(text=None)
+    text = media_text.zalo_notice_text(
+        payload.kind,
+        owner=await _is_controller(payload.sender_id),
+        address_form=getattr(zalo_user, "address_form", None),
+        mb=max(1, document_service.max_bytes() // (1024 * 1024)),
+    )
+    return ZaloNoticeResponse(text=text)

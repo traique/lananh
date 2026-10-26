@@ -1,6 +1,7 @@
 """Câu do CODE viết, giọng Lan Anh, cho tin thoại, ảnh hỏi đáp, tài liệu và tin
 nhắn loại chưa hỗ trợ (services/voice_service.py, vision_service.py,
-document_service.py, handlers/unsupported.py).
+document_service.py, handlers/unsupported.py, câu báo của gateway Zalo -
+channels/zalo_media.py POST /notice).
 
 Cùng quy ước với messages.friendly_error: ``{ai}``/``{Ai}`` là Lan Anh tự xưng,
 ``{tail}`` là " <cách gọi người nhận>" hoặc rỗng khi thành viên Zalo chưa được
@@ -80,3 +81,36 @@ def unsupported_text(kind: str, *, owner: bool = False, address_form: str | None
     return say(
         _UNSUPPORTED.get(kind, _UNSUPPORTED["other"]), owner=owner, address_form=address_form
     )
+
+
+# ─── Câu báo của gateway Zalo (channels/zalo_media.py POST /notice) ──────────
+# Gateway gửi các câu này mà không qua lượt AI: "đã nhận ảnh" TRƯỚC khi xem ảnh,
+# tin thoại/file không tải được hoặc quá lớn, loại tin Zalo chưa hỗ trợ. Ngắn,
+# 1 câu - khác _UNSUPPORTED của Telegram (Zalo chưa đọc được vị trí).
+_ZALO_NOTICES = {
+    "image": "🖼️ {Ai} nhận được ảnh rồi, đợi {ai} xem xíu nha{tail}…",
+    "voice_failed": "🎙️ {Ai} chưa nghe được tin thoại này, gõ giúp {ai} nha{tail}.",
+    "voice_too_large": (
+        "🎙️ Tin thoại này dài quá, {ai} chưa nghe hết được. Nhắn ngắn hơn hoặc gõ giúp "
+        "{ai} nha{tail}."
+    ),
+    "file_failed": "📎 {Ai} chưa tải được file này từ Zalo, gửi lại giúp {ai} nha{tail}.",
+    "file_too_large": "📎 File này lớn quá, {ai} chỉ đọc được file tới {mb} MB thôi nha{tail}.",
+    "file_unsupported": "📎 {Ai} mới đọc được file PDF, Word (.docx) và TXT/MD thôi nha{tail}.",
+    "video": (
+        "🎬 {Ai} chưa xem được video nha{tail}. Gửi ảnh chụp màn hình hoặc kể {ai} nghe "
+        "bằng chữ nhé."
+    ),
+    "location": (
+        '📍 {Ai} chưa đọc được vị trí gửi qua Zalo nha{tail}. Nhắn tên nơi (vd "thời tiết '
+        'Đà Lạt") là {ai} xem giúp liền.'
+    ),
+}
+ZALO_NOTICE_KINDS = frozenset(_ZALO_NOTICES)
+
+
+def zalo_notice_text(
+    kind: str, *, owner: bool = False, address_form: str | None = None, mb: int = 5
+) -> str:
+    """Câu báo ngắn gateway Zalo gửi không qua AI, theo cách gọi riêng của người nhận."""
+    return say(_ZALO_NOTICES[kind], owner=owner, address_form=address_form, mb=mb)

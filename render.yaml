@@ -84,6 +84,22 @@ services:
         value: "9"
       - key: ZALO_WELCOME_ON_PAIR
         value: "1"
+      # Gateway: gộp tin chữ liên tiếp (ms), nghỉ giữa các tin gửi (ms), ngân sách
+      # outbox/giờ (vượt thì hoãn), typing/đã xem/reaction.
+      - key: ZALO_DIRECT_DEBOUNCE_MS
+        value: "2000"
+      - key: ZALO_DIRECT_DEBOUNCE_MAX_MS
+        value: "6000"
+      - key: ZALO_DIRECT_DEBOUNCE_MAX_MESSAGES
+        value: "4"
+      - key: ZALO_SEND_GAP_MIN_MS
+        value: "600"
+      - key: ZALO_SEND_GAP_MAX_MS
+        value: "1500"
+      - key: ZALO_OUTBOX_MAX_PER_HOUR
+        value: "60"
+      - key: ZALO_PRESENCE_EVENTS
+        value: "1"
       - key: TELEGRAM_CONNECT_TIMEOUT
         value: "30"
       - key: TELEGRAM_READ_TIMEOUT
