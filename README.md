@@ -113,7 +113,8 @@ Repository được thiết kế cho **một chủ sở hữu**:
   `ZALO_OUTBOX_MAX_ATTEMPTS` = 5 lần rồi bỏ cuộc và báo chủ bot), nên 1 người nhận
   chặn bot không làm kẹt tin của người khác; tin dài gửi dở được gửi tiếp từ đoạn kế.
 - Tin riêng xử lý tuần tự theo TỪNG người gửi, song song giữa người khác nhau
-  (`ZALO_DIRECT_CONCURRENCY`, mặc định 2; mỗi người chờ tối đa
+  (`ZALO_DIRECT_CONCURRENCY`, mặc định 1 = số chỗ thành viên
+  `MAX_CONCURRENT_TURNS - OWNER_RESERVED_SLOTS`; mỗi người chờ tối đa
   `ZALO_DIRECT_SENDER_BACKLOG` = 8 tin).
 - Endpoint nội bộ `/internal/zalo/*` chỉ nhận request từ loopback
   (`ZALO_BRIDGE_ALLOWED_HOSTS`, mặc định `127.0.0.1,::1`) kèm `ZALO_BRIDGE_SECRET`;
@@ -226,7 +227,7 @@ bền/bảo mật (đều có mặc định an toàn, chỉ đặt khi cần đ�
 | `ADMIN_TRUSTED_PROXY_HOPS` | 1 | Số proxy tin cậy nối IP vào `X-Forwarded-For` (Render = 1) |
 | `ADMIN_CLIENT_IP_HEADER` | (trống) | Header IP do proxy tin cậy ghi đè (vd `true-client-ip`) - chỉ đặt khi đã kiểm tra |
 | `ZALO_OUTBOX_MAX_ATTEMPTS` | 5 | Số lần thử 1 tin outbox Zalo trước khi bỏ cuộc |
-| `ZALO_DIRECT_CONCURRENCY` / `ZALO_DIRECT_SENDER_BACKLOG` | 2 / 8 | Gateway: số tin riêng xử lý song song; số tin chờ tối đa mỗi người |
+| `ZALO_DIRECT_CONCURRENCY` / `ZALO_DIRECT_SENDER_BACKLOG` | 1 / 8 | Gateway: số tin riêng xử lý song song (= `MAX_CONCURRENT_TURNS - OWNER_RESERVED_SLOTS`); số tin chờ tối đa mỗi người |
 | `ZALO_BRIDGE_ALLOWED_HOSTS` / `ZALO_BRIDGE_ALLOW_FORWARDED` | `127.0.0.1,::1` / 0 | Ai được gọi `/internal/zalo/*`; đổi khi gateway chạy ở máy khác |
 
 ## Chạy local

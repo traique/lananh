@@ -26,7 +26,9 @@ Node adapter dùng `zca-js` cho tài khoản B, chạy cùng container với Fas
   (`POST /internal/zalo/outbox/{id}/failed`), thử lại theo backoff và bỏ cuộc sau
   `ZALO_OUTBOX_MAX_ATTEMPTS` lần (báo chủ bot) - không chặn các tin phía sau.
 - Tin riêng xử lý tuần tự theo từng người gửi, song song tối đa
-  `ZALO_DIRECT_CONCURRENCY` người; hàng đợi đầy thì báo "đang bận" cho người gửi.
+  `ZALO_DIRECT_CONCURRENCY` người (mặc định 1 = số chỗ thành viên bên Python,
+  `MAX_CONCURRENT_TURNS - OWNER_RESERVED_SLOTS`); hàng đợi đầy thì báo "đang bận"
+  cho người gửi.
 - Tin chữ liên tiếp của 1 người gộp thành 1 lượt (`src/burst.ts`): chờ
   `ZALO_DIRECT_DEBOUNCE_MS` sau tin cuối (tối đa `..._MAX_MS` / `..._MAX_MESSAGES`
   tin), và tin gõ trong lúc lượt trước còn chạy được gộp vào 1 lượt kế tiếp
@@ -68,7 +70,7 @@ ZALO_OUTBOX_POLL_MS=15000
 ZALO_GROUP_RETENTION_DAYS=30
 ZALO_DAILY_SUMMARY_HOUR=9
 ZALO_IMAGE_MAX_BYTES=8388608
-ZALO_DIRECT_CONCURRENCY=2
+ZALO_DIRECT_CONCURRENCY=1
 ZALO_DIRECT_SENDER_BACKLOG=8
 ZALO_DIRECT_DEBOUNCE_MS=2000
 ZALO_DIRECT_DEBOUNCE_MAX_MS=6000

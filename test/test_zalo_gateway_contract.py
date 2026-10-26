@@ -74,6 +74,25 @@ def test_gateway_gui_quote_text_dung_ten_truong():
     assert request.quote_text == "x" * contracts.QUOTE_TEXT_MAX_CHARS
 
 
+def test_so_luot_song_song_cua_gateway_khop_so_cho_thanh_vien(monkeypatch):
+    """Gateway xếp tin riêng song song ZALO_DIRECT_CONCURRENCY = số chỗ thành viên
+    bên Python (MAX_CONCURRENT_TURNS - OWNER_RESERVED_SLOTS, services/concurrency.py)
+    để tin chờ ở gateway, không chờ trong Python quá BRIDGE_TIMEOUT_MS."""
+    from services import concurrency
+
+    monkeypatch.delenv("MAX_CONCURRENT_TURNS", raising=False)
+    monkeypatch.delenv("OWNER_RESERVED_SLOTS", raising=False)
+    max_turns = concurrency._max_concurrent_turns()
+    member_slots = max_turns - concurrency._owner_reserved_slots(max_turns)
+    config = (GATEWAY_SRC / "config.ts").read_text(encoding="utf-8")
+    match = re.search(r'number\("ZALO_DIRECT_CONCURRENCY", (\d+),', config)
+    assert match and int(match.group(1)) == member_slots
+    render = (GATEWAY_SRC.parent.parent / "render.yaml").read_text(encoding="utf-8")
+    env = dict(re.findall(r'- key: (\w+)\s+value: "([^"]*)"', render))
+    rendered_slots = int(env["MAX_CONCURRENT_TURNS"]) - int(env["OWNER_RESERVED_SLOTS"])
+    assert int(env["ZALO_DIRECT_CONCURRENCY"]) == rendered_slots
+
+
 @pytest.mark.parametrize("kind", sorted(media_text.ZALO_NOTICE_KINDS))
 def test_cau_bao_zalo_theo_cach_goi(kind):
     member = media_text.zalo_notice_text(kind, address_form="chị", mb=5)

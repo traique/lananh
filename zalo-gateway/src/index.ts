@@ -91,7 +91,8 @@ const seen = new SeenIds(5000);
 // Người gửi Python đã trả lời (đã pair): chỉ họ nhận câu báo bận/sự cố.
 const knownSenders = new KnownSenders(2000);
 // Tin riêng: tuần tự theo từng người gửi, song song giữa người gửi khác nhau
-// (tối đa directConcurrency lượt, khớp MAX_CONCURRENT_TURNS bên Python).
+// (tối đa directConcurrency lượt, khớp số chỗ thành viên bên Python =
+// MAX_CONCURRENT_TURNS - OWNER_RESERVED_SLOTS, xem services/concurrency.py).
 const directQueue = new KeyedSerialQueue({
   concurrency: config.directConcurrency,
   perKeyCapacity: config.directPerSenderBacklog,
