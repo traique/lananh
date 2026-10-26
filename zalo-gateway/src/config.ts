@@ -84,8 +84,9 @@ export function loadConfig(): GatewayConfig {
     controlPort: number("ZALO_CONTROL_PORT", 9901, 1024),
     // Chờ tối đa bao lâu (tính từ tin cuối) để gộp ảnh + caption cùng người gửi.
     facebookMergeWindowMs: Math.min(120000, number("ZALO_FB_MERGE_WINDOW_MS", 30000, 3000)),
-    // Số tin riêng xử lý song song (khác người gửi); nên bằng MAX_CONCURRENT_TURNS
-    // bên Python. Cùng 1 người gửi luôn tuần tự đúng thứ tự.
+    // Số tin riêng xử lý song song (khác người gửi); nên bằng số chỗ thành viên bên
+    // Python (MAX_CONCURRENT_TURNS - OWNER_RESERVED_SLOTS). Cùng 1 người gửi luôn tuần
+    // tự đúng thứ tự.
     directConcurrency: Math.floor(Math.min(8, number("ZALO_DIRECT_CONCURRENCY", 1, 1))),
     // Số tin tối đa của 1 người đang chờ/đang xử lý; vượt thì báo bận thay vì im lặng bỏ.
     directPerSenderBacklog: Math.floor(Math.min(50, number("ZALO_DIRECT_SENDER_BACKLOG", 8, 1))),

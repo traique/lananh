@@ -136,6 +136,11 @@ services:
         value: "1800"
       - key: MEMORY_CONSOLIDATION
         value: "1"
+      # Vòng quét nền trích nhớ khi rảnh (cả lúc khởi động); 0 = tắt vòng quét.
+      - key: MEMORY_SWEEP_ENABLED
+        value: "1"
+      - key: MEMORY_SWEEP_SEC
+        value: "600"
       - key: GROQ_HISTORY_MAX_CHARS
         value: "3500"
       # Đọc link trong chat (chủ bot/admin; thành viên khi =1) và tra tự động kho rag/.
@@ -152,6 +157,12 @@ services:
         value: "08:00-21:30"
       - key: PROACTIVE_DAILY_CAP
         value: "2"
+      - key: PROACTIVE_FOLLOWUP_HOUR
+        value: "18"
+      - key: PROACTIVE_IDLE_MIN
+        value: "20"
+      - key: PROACTIVE_TICK_SEC
+        value: "1800"
       # Bản tin sáng cá nhân (/bantin): chỉ gửi cho người tự bật trên kênh của mình.
       - key: MORNING_BRIEF_ENABLED
         value: "true"
@@ -253,6 +264,9 @@ services:
         value: "8"
       - key: DB_BREAKER_OPEN_SEC
         value: "30"
+      # Header HSTS cho web/admin (0 khi dùng tên miền riêng chưa có HTTPS).
+      - key: SECURITY_HSTS
+        value: "1"
       - key: ROUTER9_CALL_TIMEOUT_SEC
         value: "120"
       - key: ROUTER9_STEP_DELAY_SEC
@@ -410,3 +424,10 @@ services:
       # Số đo từng lượt trả lời (bảng turn_metrics, /admin → Thống kê AI) giữ N ngày.
       - key: RETENTION_TURN_METRICS_DAYS
         value: "14"
+      # Dọn ghi chú phiên, sự kiện hỏi thăm và đánh giá 👍/👎 cũ hằng ngày (0 = tắt).
+      - key: RETENTION_SESSION_NOTES_DAYS
+        value: "365"
+      - key: RETENTION_USER_EVENTS_DAYS
+        value: "90"
+      - key: RETENTION_ANSWER_FEEDBACK_DAYS
+        value: "180"
