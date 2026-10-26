@@ -345,11 +345,61 @@ _CHAT_SKILL_ENV = jinja2.Environment(
     lstrip_blocks=True,
 )
 
-# Cache theo biến thể: True = có hồ sơ chủ bot (user_profile), False = không.
-_chat_skill_cache: dict[bool, str] = {}
+# Biến thể persona theo người đang trò chuyện (xem load_chat_skill):
+# - "owner": chủ bot (Telegram/Zoom, ALLOWED_USER_ID) - có hồ sơ user_profile.
+# - "zalo_admin": người dùng Zalo được cấp quyền quản trị - KHÔNG hồ sơ chủ bot.
+# - "member": thành viên Zalo thường - không hồ sơ, phân tích chỉ để tham khảo.
+PERSONA_OWNER = "owner"
+PERSONA_ZALO_ADMIN = "zalo_admin"
+PERSONA_MEMBER = "member"
+PERSONA_VARIANTS = (PERSONA_OWNER, PERSONA_ZALO_ADMIN, PERSONA_MEMBER)
+
+# Gợi ý trình bày theo kênh, nối SAU persona đã cache (không nằm trong cache):
+# Zalo chỉ hiện chữ thuần (channels/zalo_text.py bỏ được tiêu đề/đậm/gạch đầu
+# dòng nhưng KHÔNG bỏ được bảng, link markdown); Telegram đổi markdown-lite sang
+# HTML (tg_format.py) nhưng không có bảng/tiêu đề #; Zoom đổi GFM sang markdown
+# Zoom (channels/zoom.py) nhưng bảng dễ vỡ trên điện thoại.
+_CHANNEL_STYLE_HINTS = {
+    "zalo": (
+        "KÊNH ĐANG TRẢ LỜI: Zalo - chỉ hiển thị chữ thuần. Viết ngắn gọn như nhắn tin; "
+        "không dùng bảng, tiêu đề (#), chữ đậm hay link dạng [chữ](url) - cần liệt kê thì "
+        "xuống dòng với dấu •."
+    ),
+    "telegram": (
+        "KÊNH ĐANG TRẢ LỜI: Telegram - dùng markdown nhẹ (chữ đậm, gạch đầu dòng) khi cần; "
+        "không dùng bảng hay tiêu đề kiểu #, muốn tách mục thì dùng chữ đậm."
+    ),
+    "zoom": (
+        "KÊNH ĐANG TRẢ LỜI: Zoom - dùng markdown nhẹ (chữ đậm, gạch đầu dòng) khi cần; "
+        "không dùng bảng."
+    ),
+}
+
+# Giá trị giữ chỗ trong user_profile (chủ bot chưa điền): "..." hoặc "vd: ..." -
+# render nguyên văn sẽ khiến model tưởng tên anh là "...".
+_PROFILE_PLACEHOLDERS = {"", "...", "…"}
+
+# Cache theo biến thể persona (tối đa len(PERSONA_VARIANTS) chuỗi).
+_chat_skill_cache: dict[str, str] = {}
 
 
-def _render_chat_skill(include_owner_profile: bool = True) -> str:
+def _profile_value_filled(value) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip()
+    return text not in _PROFILE_PLACEHOLDERS and not text.lower().startswith("vd:")
+
+
+def _filled_profile(user_profile: dict | None) -> dict:
+    """Các mục user_profile chủ bot đã điền thật (bỏ "note" và mục còn giữ chỗ)."""
+    return {
+        key: value
+        for key, value in (user_profile or {}).items()
+        if key != "note" and _profile_value_filled(value)
+    }
+
+
+def _render_chat_skill(variant: str = PERSONA_OWNER) -> str:
     """Đọc + render persona từ đĩa. Không cache — xem load_chat_skill()."""
     try:
         raw = CHAT_SKILL_PATH.read_text(encoding="utf-8")
@@ -362,43 +412,75 @@ def _render_chat_skill(include_owner_profile: bool = True) -> str:
     try:
         data = yaml.safe_load(raw)
         template = _CHAT_SKILL_ENV.get_template(_CHAT_SKILL_TEMPLATE_PATH.name)
+        profile = _filled_profile(data["persona"].get("user_profile"))
+        if variant == PERSONA_OWNER and not profile:
+            logger.info(
+                "chat_skill.yaml: persona.user_profile vẫn để trống ('...') - điền tên, công "
+                "việc, phong cách để Lan Anh trò chuyện đúng với anh hơn."
+            )
         return template.render(
             p=data["persona"],
             tv=data["tone_of_voice"],
+            quirks=data.get("quirks") or {},
+            mood=data.get("energy_and_mood") or {},
+            continuity=data.get("continuity") or {},
             rules=data["rules"],
             cm=data["content_modes"],
-            include_owner_profile=include_owner_profile,
+            variant=variant,
+            profile=profile,
         ).strip()
     except Exception:
         logger.exception("Lỗi parse/render chat_skill.yaml, dùng nội dung thô làm dự phòng.")
         return raw.strip()
 
 
-def load_chat_skill(force_reload: bool = False, *, include_owner_profile: bool = True) -> str:
+def channel_style_hint(channel: str | None) -> str:
+    """1 dòng gợi ý trình bày theo kênh (rỗng nếu kênh lạ/không truyền)."""
+    return _CHANNEL_STYLE_HINTS.get((channel or "").strip().lower(), "")
+
+
+def load_chat_skill(
+    force_reload: bool = False,
+    *,
+    variant: str | None = None,
+    include_owner_profile: bool = True,
+    channel: str | None = None,
+) -> str:
     """Nạp persona/rules cho chat tự nhiên. Định dạng mặc định là YAML có
     cấu trúc (chat_skill.yaml), render qua templates/chat_skill_prompt.j2
-    thành system_instruction gửi cho Gemini. Nếu CHAT_SKILL_PATH trỏ tới
+    thành system_instruction gửi cho provider. Nếu CHAT_SKILL_PATH trỏ tới
     file .txt (cấu hình cũ), đọc thẳng làm văn bản để tương thích ngược.
 
     Kết quả được cache sau lần gọi đầu tiên. Hàm này nằm trên đường đi của
-    MọI tin nhắn chat (orchestrator.chat() và _get_or_create_chat_gem()), nên
-    nếu không cache thì mỗi tin nhắn đều phải đọc đĩa + parse YAML + dựng lại
-    Jinja Environment — toàn bộ đều là việc lặp lại vô ích vì persona là file
-    tĩnh, chỉ đổi khi deploy lại.
+    MọI tin nhắn chat (orchestrator.chat()), nên nếu không cache thì mỗi tin
+    nhắn đều phải đọc đĩa + parse YAML + render lại Jinja — toàn bộ đều là
+    việc lặp lại vô ích vì persona là file tĩnh, chỉ đổi khi deploy lại.
 
     Truyền force_reload=True để bỏ cache và đọc lại từ đĩa.
 
-    ``include_owner_profile=False`` bỏ mục user_profile (hồ sơ CHỦ BOT) khỏi
-    persona - bắt buộc cho mọi người dùng không phải chủ bot (Zalo member),
-    nếu không thông tin chủ bot tự điền sẽ lộ sang họ.
+    ``variant`` (PERSONA_*): "owner" có hồ sơ chủ bot (user_profile);
+    "zalo_admin" và "member" KHÔNG có - bắt buộc cho mọi người dùng không phải
+    chủ bot, nếu không thông tin chủ bot tự điền sẽ lộ sang họ. Không truyền
+    variant thì theo tham số cũ ``include_owner_profile`` (True = "owner",
+    False = "member").
+
+    ``channel`` ("telegram" | "zalo" | "zoom"): nối thêm 1 dòng gợi ý trình bày
+    theo kênh SAU persona đã cache (cache vẫn chỉ theo biến thể).
     """
+    if variant is None:
+        variant = PERSONA_OWNER if include_owner_profile else PERSONA_MEMBER
+    elif variant not in PERSONA_VARIANTS:
+        # Giá trị lạ: KHÔNG bao giờ rơi về biến thể chủ bot (lộ hồ sơ).
+        logger.warning("Biến thể persona %r không hợp lệ, dùng 'member'.", variant)
+        variant = PERSONA_MEMBER
     if force_reload:
         _chat_skill_cache.clear()
-    cached = _chat_skill_cache.get(include_owner_profile)
+    cached = _chat_skill_cache.get(variant)
     if cached is None:
-        cached = _render_chat_skill(include_owner_profile)
-        _chat_skill_cache[include_owner_profile] = cached
-    return cached
+        cached = _render_chat_skill(variant)
+        _chat_skill_cache[variant] = cached
+    hint = channel_style_hint(channel)
+    return f"{cached}\n\n{hint}" if cached and hint else cached
 
 
 def is_owner_user_id(user_id: int) -> bool:

@@ -774,6 +774,16 @@ def _resolve_search_mode(
     return SEARCH_OFF if web_grounded else SEARCH_AUTO
 
 
+def _persona_variant(user_id: int, is_admin: bool) -> str:
+    """Hồ sơ chủ bot trong persona (user_profile) chỉ dành cho chủ bot
+    (ALLOWED_USER_ID); mọi id Zalo (âm) nhận biến thể không có mục đó - admin
+    Zalo có thể là người khác chủ bot (/zaloadmin), nên không bao giờ nhận
+    biến thể "owner" chỉ vì có quyền admin."""
+    if config.is_owner_user_id(user_id):
+        return config.PERSONA_OWNER
+    return config.PERSONA_ZALO_ADMIN if is_admin else config.PERSONA_MEMBER
+
+
 async def chat(
     user_id: int,
     prompt: str,
@@ -782,6 +792,9 @@ async def chat(
     require_real_search: bool = False,
     web_grounded: bool = False,
     search_mode: Optional[str] = None,
+    *,
+    channel: str = "telegram",
+    is_admin: bool = False,
 ):
     """Chat with shared history/memory through the provider chain.
 
@@ -799,11 +812,13 @@ async def chat(
 
     Tham số cũ vẫn nhận: ``require_real_search`` = "forced", ``web_grounded``
     = "off" (khi không truyền search_mode).
+
+    ``channel`` thêm 1 dòng gợi ý trình bày theo kênh vào persona (Zalo chỉ hiện
+    chữ thuần). ``is_admin`` chọn biến thể persona cho người KHÔNG phải chủ bot:
+    admin Zalo không bị dặn "không phải chủ bot" (xem config.load_chat_skill).
     """
     mode = _resolve_search_mode(search_mode, require_real_search, web_grounded)
-    # Hồ sơ chủ bot trong persona (user_profile) chỉ dành cho chủ bot; Zalo
-    # member (id âm) nhận persona không có mục đó.
-    persona = config.load_chat_skill(include_owner_profile=config.is_owner_user_id(user_id))
+    persona = config.load_chat_skill(variant=_persona_variant(user_id, is_admin), channel=channel)
     if untrusted.contains_untrusted(grounding):
         # Grounding có dữ liệu ngoài đã rào (web/RSS...): nhắc luật "dữ liệu
         # không phải chỉ dẫn" ngay trong system prompt.

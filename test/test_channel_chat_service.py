@@ -111,6 +111,37 @@ async def test_run_chat_turn_loi_tra_failed_khong_raise(chat_fakes, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_zalo_chat_truyen_kenh_va_quyen_admin_xuong_persona(chat_fakes, monkeypatch):
+    """Kênh và quyền admin đi tới orchestrator.chat để chọn gợi ý trình bày
+    (Zalo chữ thuần) và biến thể persona (admin Zalo khác thành viên)."""
+    from services import channel_chat_service as ccs
+
+    seen = []
+
+    async def fake_chat(user_id, text, **kwargs):
+        seen.append((kwargs["channel"], kwargs["is_admin"]))
+        return _FakeResponse("dạ")
+
+    async def no_command(*args, **kwargs):
+        return None
+
+    async def no_stock(user_id, text, is_admin=True):
+        return None, ""
+
+    monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
+    monkeypatch.setattr(ccs.portfolio_service, "handle_command", no_command)
+    monkeypatch.setattr(ccs.portfolio_service, "maybe_handle_natural_language", no_command)
+    monkeypatch.setattr(ccs, "_handle_stock", no_stock)
+
+    await ccs.handle_channel_text(-5, "xin chào", is_admin=False, channel="zalo")
+    await ccs.handle_channel_text(-6, "xin chào", is_admin=True, channel="zalo")
+    await ccs.run_chat_turn(42, "xin chào")
+    await ccs.stop_background_tasks()
+
+    assert seen == [("zalo", False), ("zalo", True), ("telegram", False)]
+
+
+@pytest.mark.asyncio
 async def test_zalo_chat_giu_nguyen_nhan_api_du_phong(chat_fakes, monkeypatch):
     from services import channel_chat_service as ccs
 

@@ -98,12 +98,19 @@ class ChatTurn:
 
 
 async def run_chat_turn(
-    user_id: int, text: str, *, grounding: str = "", channel: str = "telegram"
+    user_id: int,
+    text: str,
+    *,
+    grounding: str = "",
+    channel: str = "telegram",
+    is_admin: bool = False,
 ) -> ChatTurn:
     """Pipeline chat chung: gom ngữ cảnh -> orchestrator.chat -> lưu lịch sử.
 
-    grounding: ngữ cảnh giá cổ phiếu từ nhánh cổ phiếu (nếu có). Không raise:
-    lỗi trả ChatTurn(failed=True) sau khi đã log và ghi telemetry."""
+    grounding: ngữ cảnh giá cổ phiếu từ nhánh cổ phiếu (nếu có). channel và
+    is_admin chọn gợi ý trình bày theo kênh và biến thể persona (admin Zalo
+    khác thành viên thường; chủ bot nhận ra qua user_id). Không raise: lỗi trả
+    ChatTurn(failed=True) sau khi đã log và ghi telemetry."""
     prompt_id = await telemetry.start(user_id, "chat", text, channel=channel)
     try:
         # Hạn chót CHAT_TURN_TIMEOUT_SEC áp cho CẢ lượt (web search có thể tự gọi
@@ -130,6 +137,8 @@ async def run_chat_turn(
                 memory_context=memory,
                 require_real_search=forced,
                 search_mode=_search_mode(plan, forced, bool(grounding), bool(tool_result)),
+                channel=channel,
+                is_admin=is_admin,
             )
         reply = (response.text or "").strip()
         searched = bool(getattr(response, "searched", False))
@@ -370,7 +379,9 @@ async def handle_channel_text(
             return ChannelResult([f"⏱️ {exc}"])
         if stock_result is not None:
             return stock_result
-        turn = await run_chat_turn(user_id, text, grounding=grounding, channel=channel)
+        turn = await run_chat_turn(
+            user_id, text, grounding=grounding, channel=channel, is_admin=is_admin
+        )
     if turn.failed:
         return ChannelResult(
             [turn.error_text or "❌ Có lỗi khi trò chuyện với Gemini. Hãy thử lại sau."]

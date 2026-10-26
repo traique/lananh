@@ -68,7 +68,7 @@ def reset_state(monkeypatch):
     monkeypatch.setattr(
         config,
         "load_chat_skill",
-        lambda force_reload=False, *, include_owner_profile=True: "PERSONA",
+        lambda force_reload=False, **kwargs: "PERSONA",
     )
     yield
 
