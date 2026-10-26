@@ -32,6 +32,7 @@ from handlers import (
 from services import channel_chat_service
 from services import portfolio_alerts, rag_clean_service
 from services import monitor_service
+from services import owner_alerts
 from services import db_maintenance
 from services import http_client
 from services import web_reader
@@ -257,12 +258,11 @@ def build_application():
     app.add_handler(MessageHandler(filters.COMMAND, commands.unknown_cmd))
     app.add_error_handler(commands.error_handler)
 
-    async def alert(text):
-        try:
-            await app.bot.send_message(chat_id=config.ALLOWED_USER_ID, text=text)
-        except Exception:
-            logger.warning("Không gửi được cảnh báo.", exc_info=True)
+    async def send_telegram_alert(text):
+        await app.bot.send_message(chat_id=config.ALLOWED_USER_ID, text=text)
 
+    # Telegram trước, Zoom dự phòng/nhân bản (ALERT_ZOOM_MIRROR) - xem services/owner_alerts.py.
+    alert = owner_alerts.make_alert_callback(send_telegram_alert)
     orchestrator.set_alert_callback(alert)
     zalo_users.set_alert_callback(alert)
 

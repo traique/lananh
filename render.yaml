@@ -197,3 +197,6 @@ services:
         value: "10"
       - key: MARKET_MAX_ATTEMPTS
         value: "4"
+      # Zoom làm kênh phụ cho cảnh báo chủ bot (critical|fallback|all|off).
+      - key: ALERT_ZOOM_MIRROR
+        value: critical
