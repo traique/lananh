@@ -14,6 +14,7 @@ from services import (
     translate_service,
     usage_stats,
 )
+from services import daily_commands
 from services.telemetry import telemetry
 
 HELP = """📖 Lệnh trên Zalo/Zoom
@@ -28,6 +29,12 @@ Lịch, thần số học, tử vi
 /tsh_chitiet <như trên> — AI diễn giải chi tiết
 /tuvi <ngày sinh> <giờ> <nam|nữ> — an lá số tử vi (không tốn AI), vd /tuvi 15/3/1990 9h30 nam
 /tuvi_chitiet <như trên> — AI luận giải lá số
+
+Đời sống (số liệu thật, không tốn AI)
+/vang — giá vàng SJC; /tygia [mã|100 usd] — tỷ giá Vietcombank, đổi tiền
+/xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé] — kết quả xổ số, dò vé
+/thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của riêng anh
+/bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, danh mục, tin)
 
 Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
@@ -364,6 +371,10 @@ async def maybe_handle_command(
     divination = await divination_commands.handle(command, argument, user_id, channel)
     if divination is not None:
         return divination, None
+    # /vang, /tygia, /xoso, /thoitiet, /bantin: số liệu thật tính bằng code.
+    daily = await daily_commands.handle(command, argument, user_id, channel)
+    if daily is not None:
+        return daily, None
     if command == "/prompt":
         return await _prompt(user_id, argument, channel)
     if command == "/gia":

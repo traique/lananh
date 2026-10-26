@@ -132,6 +132,16 @@ DIGEST_CATCHUP_HOURS = 3
 _DIGEST_POLL_SEC = 15 * 60
 
 
+async def _brief_replaces_digest(user_id: int) -> bool:
+    from services import morning_brief
+
+    try:
+        return await morning_brief.replaces_telegram_digest(user_id)
+    except Exception:
+        logger.warning("scheduler: không đọc được cấu hình bản tin sáng.", exc_info=True)
+        return False
+
+
 def digest_due(now: datetime, last_sent_date: str | None) -> bool:
     """Tới giờ (hoặc trong khung gửi bù) và hôm nay chưa gửi."""
     if last_sent_date == now.date().isoformat():
@@ -146,6 +156,11 @@ async def run_daily_digest_once(user_id: int, *, force: bool = False) -> bool:
     now = datetime.now(_VN_TZ)
     last_sent = await db.get_setting(_DIGEST_LAST_SENT_KEY)
     if not force and not digest_due(now, last_sent):
+        return False
+    if not force and await _brief_replaces_digest(user_id):
+        # Bản tin sáng cá nhân (/bantin trên Telegram) đã gồm danh mục, chỉ gửi
+        # vào ngày giao dịch - không gửi thêm digest riêng.
+        await db.set_setting(_DIGEST_LAST_SENT_KEY, now.date().isoformat())
         return False
     digest = await _build_portfolio_digest(user_id)
     if not digest:

@@ -31,7 +31,12 @@ def reset_state(monkeypatch):
     monkeypatch.setattr(db, "get_setting", store.get)
     monkeypatch.setattr(db, "set_setting", store.set)
     monkeypatch.setattr(config, "MORNING_NEWS_RSS_FEEDS", ["https://example.com/rss1.xml"])
+    # Mặc định chưa ai bật bản tin cá nhân gộp tin; bản tin dùng chung trong RAM
+    # không được rò từ test này sang test khác.
+    monkeypatch.setattr(morning_news, "_absorbed_channels", lambda: _async_return(set()))
+    morning_news.reset_shared_state()
     yield
+    morning_news.reset_shared_state()
 
 
 # ─── build_digest ───────────────────────────────────────────────────────────
@@ -237,6 +242,73 @@ async def test_run_once_khong_gui_lai_trong_ngay_neu_da_gui_roi(monkeypatch):
 
 async def _async_return(value):
     return value
+
+
+# ─── Dùng chung cho bản tin sáng cá nhân ────────────────────────────────────
+
+_TWO_ITEMS = (
+    "[Feed: VnExpress]\n1. Tin A\nTóm tắt A\nhttps://vnexpress.net/a.html\n\n"
+    "2. Tin B\nTóm tắt B\nhttps://vnexpress.net/b.html"
+)
+
+
+@pytest.mark.asyncio
+async def test_shared_digest_tong_hop_mot_lan_moi_ngay(monkeypatch):
+    calls = {"n": 0}
+
+    async def fake_build_digest():
+        calls["n"] += 1
+        return f"bản tin {calls['n']}"
+
+    monkeypatch.setattr(morning_news, "build_digest", fake_build_digest)
+    assert await morning_news.shared_digest() == "bản tin 1"
+    assert await morning_news.shared_digest() == "bản tin 1"
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_headlines_tat_dinh_khong_goi_ai_khong_ghi_de_doc_bai(monkeypatch):
+    from services import article_reader
+
+    reads = []
+
+    async def fake_read_rss(url):
+        reads.append(url)
+        return _TWO_ITEMS
+
+    async def no_ai(prompt):
+        raise AssertionError("tin cho bản tin cá nhân không được gọi AI")
+
+    monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
+    monkeypatch.setattr(orchestrator, "ask", no_ai)
+    items, from_digest = await morning_news.today_headlines()
+    again, _ = await morning_news.today_headlines()
+
+    assert [i.title for i in items] == ["Tin A", "Tin B"] and from_digest is False
+    assert again == items and len(reads) == 1  # cache trong ngày
+    assert await db.get_setting(article_reader.LAST_LINKS_KEY) is None
+    text = morning_news.format_headlines(items, from_digest)
+    assert "1. Tin A (VnExpress)\n   https://vnexpress.net/a.html" in text
+    assert "Gửi lại link" in text and "đọc bài" not in text
+
+
+@pytest.mark.asyncio
+async def test_headlines_dung_lai_danh_sach_doc_bai_cua_ban_tin_ai(monkeypatch):
+    async def fake_read_rss(url):
+        return _TWO_ITEMS
+
+    async def fake_ask(prompt):
+        return SimpleNamespace(
+            text="Sáng nay có hai tin đáng chú ý về kinh doanh và thị trường trong nước, "
+            "anh xem nhanh bên dưới nhé.\nIMPORTANT_IDS: F1I2"
+        )
+
+    monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
+    monkeypatch.setattr(orchestrator, "ask", fake_ask)
+    await morning_news.build_digest()
+    items, from_digest = await morning_news.today_headlines()
+    assert from_digest is True and items[0].title == "Tin B"
+    assert '"đọc bài 1"' in morning_news.format_headlines(items, from_digest)
 
 
 def test_is_due_khung_gui_bu(monkeypatch):

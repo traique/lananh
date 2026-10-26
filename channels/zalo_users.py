@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
 from core import database as db
+from services import personal_settings
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +226,11 @@ async def _delete_user_data(conn, internal_user_id: int) -> None:
     for table in _USER_DATA_TABLES:
         await conn.execute(f"DELETE FROM {table} WHERE telegram_user_id = $1", internal_user_id)
     await conn.execute("DELETE FROM settings WHERE key = $1", f"memory_enabled_{internal_user_id}")
+    # Thành phố thời tiết + bản tin sáng cá nhân (services/personal_settings.py).
+    await conn.execute(
+        "DELETE FROM settings WHERE key = ANY($1::text[])",
+        personal_settings.zalo_user_keys(internal_user_id),
+    )
 
 
 @db.with_reconnect(idempotent=False)

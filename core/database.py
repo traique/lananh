@@ -653,10 +653,29 @@ async def mark_reminder_sent(reminder_id: int) -> None:
 
 
 @_with_reconnect
+async def list_reminders_between(
+    telegram_user_id: int, start: datetime, end: datetime, limit: int = 10
+) -> list[tuple[datetime, str]]:
+    """Nhắc việc chưa gửi đến hạn trong [start, end) - mục nhắc việc của bản tin sáng."""
+    from core.repositories import brief as brief_repository
+
+    return await brief_repository.list_reminders_between(
+        await get_pool(), telegram_user_id, start, end, limit
+    )
+
+
+@_with_reconnect
 async def get_setting(key: str) -> Optional[str]:
     pool = await get_pool()
     row = await pool.fetchrow("SELECT value FROM settings WHERE key = $1", key)
     return row["value"] if row else None
+
+
+@_with_reconnect
+async def list_settings_with_prefix(prefix: str, limit: int = 100) -> list[tuple[str, str]]:
+    from core.repositories import brief as brief_repository
+
+    return await brief_repository.list_settings_with_prefix(await get_pool(), prefix, limit)
 
 
 @_with_reconnect

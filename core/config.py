@@ -272,6 +272,20 @@ MORNING_NEWS_RSS_FEEDS = [
     url.strip() for url in _MORNING_NEWS_RSS_FEEDS_RAW.split(",") if url.strip()
 ]
 
+# Bản tin sáng CÁ NHÂN (services/morning_brief.py): mỗi người tự bật bằng /bantin
+# trên kênh của mình (mặc định không ai nhận). Thời tiết theo thành phố riêng, âm
+# lịch, nhắc việc hôm nay, vàng/tỷ giá, danh mục (ngày giao dịch), tin (Telegram
+# tắt mặc định - đúng lựa chọn không gửi tin RSS qua Telegram).
+MORNING_BRIEF_ENABLED = _env_bool("MORNING_BRIEF_ENABLED", True)
+MORNING_BRIEF_DEFAULT_HOUR = max(4, min(12, _env_int("MORNING_BRIEF_DEFAULT_HOUR", 7)))
+# Trần số thành viên Zalo bật bản tin (RAM + vệ sinh chống khoá Zalo).
+MORNING_BRIEF_MAX_MEMBERS = max(0, min(100, _env_int("MORNING_BRIEF_MAX_MEMBERS", 20)))
+# Zalo controller / Zoom của chủ bot đã bật bản tin -> bản tin RSS 8h gộp vào
+# bản tin cá nhân (1 tin thay vì 2) thay vì gửi riêng.
+MORNING_BRIEF_ABSORB_NEWS = _env_bool("MORNING_BRIEF_ABSORB_NEWS", True)
+# 1 câu mở đầu giọng Lan Anh do AI viết (chỉ chủ bot, tốn 1 lượt AI/ngày).
+MORNING_BRIEF_AI_INTRO = _env_bool("MORNING_BRIEF_AI_INTRO", False)
+
 # Giờ đăng (giờ VN, dạng HH:MM, nhiều mốc cách nhau bằng dấu phẩy) của Page chứng
 # khoán riêng - xem services/market_page.py. Giá trị sai định dạng thì dùng mặc định.
 MARKET_NEWS_TIMES_VN = os.getenv("MARKET_NEWS_TIMES_VN", "08:30").strip()

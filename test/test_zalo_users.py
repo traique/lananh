@@ -193,6 +193,12 @@ async def test_remove_user(patched_db):
         "delete from settings where key = $1",
         (f"memory_enabled_{user.internal_user_id}",),
     ) in [(q, a) for q, a in patched_db.data_deletes]
+    # Thành phố thời tiết + bản tin sáng cá nhân cũng là dữ liệu cá nhân.
+    uid = user.internal_user_id
+    assert (
+        "delete from settings where key = any($1::text[])",
+        ([f"weather_home:{uid}", f"brief:zalo:{uid}", f"brief_sent:zalo:{uid}"],),
+    ) in [(q, a) for q, a in patched_db.data_deletes]
 
 
 @pytest.mark.asyncio

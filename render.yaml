@@ -81,6 +81,17 @@ services:
         value: "8"
       - key: CHAT_SESSION_TIMEOUT_SEC
         value: "21600"
+      # Bản tin sáng cá nhân (/bantin): chỉ gửi cho người tự bật trên kênh của mình.
+      - key: MORNING_BRIEF_ENABLED
+        value: "true"
+      - key: MORNING_BRIEF_DEFAULT_HOUR
+        value: "7"
+      - key: MORNING_BRIEF_MAX_MEMBERS
+        value: "20"
+      - key: MORNING_BRIEF_ABSORB_NEWS
+        value: "true"
+      - key: MORNING_BRIEF_AI_INTRO
+        value: "false"
       # Heavy research jobs must never share the free web-service process.
       - key: STOCK_BACKTEST_ALLOW_ON_RENDER
         value: "false"
