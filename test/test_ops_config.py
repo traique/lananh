@@ -33,6 +33,14 @@ def test_render_chi_deploy_khi_ci_xanh_va_health_check_van_la_root():
     assert service["plan"] == "free" and service["numInstances"] == 1
 
 
+def test_ci_tren_main_khong_bi_huy_giua_chung():
+    """checksPass: run của commit trên main bị huỷ (commit bot [skip render] từ
+    /ragxuly đẩy ngay sau) thì commit đó không bao giờ deploy - chỉ PR được huỷ."""
+    ci = _yaml(".github/workflows/ci.yml")
+    cancel = ci["concurrency"]["cancel-in-progress"]
+    assert cancel == "${{ github.event_name == 'pull_request' }}"
+
+
 def test_quet_cve_khong_nam_trong_ci_push():
     """checksPass chờ MỌI check của commit: audit (đỏ khi có CVE mới bất kể commit)
     phải ở workflow riêng, không chạy khi push lên main."""

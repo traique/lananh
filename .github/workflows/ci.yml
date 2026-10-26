@@ -26,9 +26,12 @@ on:
 permissions:
   contents: read
 
+# Chỉ huỷ run cũ của PR. Trên main KHÔNG huỷ: checksPass cần check của commit
+# xanh, nếu run bị huỷ (vd commit bot "[skip render]" từ /ragxuly đẩy ngay sau)
+# thì commit của chủ bot không bao giờ deploy, còn commit bot thì Render bỏ qua.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   python-format:
