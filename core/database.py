@@ -804,6 +804,197 @@ async def set_setting(key: str, value: str) -> None:
     )
 
 
+# ─── Danh mục cổ phiếu: vị thế, sổ giao dịch, theo dõi/cảnh báo giá ─────────
+# SQL ở core/repositories/portfolio.py. Hàm ghi vị thế INSERT dòng sổ giao dịch
+# trong cùng transaction -> idempotent=False (không retry khi lệnh có thể đã
+# commit). Ngày truyền dạng text YYYY-MM-DD.
+
+
+@_with_reconnect
+async def portfolio_list_holdings(user_id: int):
+    from core.repositories import portfolio
+
+    return await portfolio.list_holdings(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def portfolio_get_holding(user_id: int, symbol: str):
+    from core.repositories import portfolio
+
+    return await portfolio.get_holding(await get_pool(), user_id, symbol)
+
+
+@_with_reconnect
+async def portfolio_list_all_holdings(limit: int):
+    from core.repositories import portfolio
+
+    return await portfolio.list_all_holdings(await get_pool(), limit)
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_replace_holding(
+    user_id: int, symbol: str, quantity: float, average_price: float, **kw
+):
+    from core.repositories import portfolio
+
+    return await portfolio.replace_holding(
+        await get_pool(), user_id, symbol, quantity, average_price, **kw
+    )
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_record_purchase(user_id: int, symbol: str, quantity: float, price: float, **kw):
+    from core.repositories import portfolio
+
+    return await portfolio.record_purchase(await get_pool(), user_id, symbol, quantity, price, **kw)
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_record_sale(
+    user_id: int, symbol: str, quantity: float | None, price: float | None, **kw
+):
+    from core.repositories import portfolio
+
+    return await portfolio.record_sale(await get_pool(), user_id, symbol, quantity, price, **kw)
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_update_alerts(user_id: int, symbol: str, **kw):
+    from core.repositories import portfolio
+
+    return await portfolio.update_alerts(await get_pool(), user_id, symbol, **kw)
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_rebase_holding(user_id: int, symbol: str, rebase):
+    from core.repositories import portfolio
+
+    return await portfolio.rebase_holding(await get_pool(), user_id, symbol, rebase)
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_delete_holding(user_id: int, symbol: str) -> bool:
+    from core.repositories import portfolio
+
+    return await portfolio.delete_holding(await get_pool(), user_id, symbol)
+
+
+@_with_reconnect
+async def portfolio_was_closed(user_id: int, symbol: str) -> bool:
+    from core.repositories import portfolio
+
+    return await portfolio.was_closed(await get_pool(), user_id, symbol)
+
+
+@_with_reconnect
+async def portfolio_list_transactions(user_id: int, *, symbol: str | None = None, limit: int = 15):
+    from core.repositories import portfolio
+
+    return await portfolio.list_transactions(await get_pool(), user_id, symbol=symbol, limit=limit)
+
+
+@_with_reconnect
+async def portfolio_transactions_between(user_id: int, start, end, *, limit: int = 2000):
+    from core.repositories import portfolio
+
+    return await portfolio.transactions_between(await get_pool(), user_id, start, end, limit=limit)
+
+
+@_with_reconnect
+async def portfolio_fill_sale_price(user_id: int, symbol: str, price: float, **kw):
+    from core.repositories import portfolio
+
+    return await portfolio.fill_sale_price(await get_pool(), user_id, symbol, price, **kw)
+
+
+@_with_reconnect
+async def portfolio_watchlist(user_id: int) -> list[str]:
+    from core.repositories import portfolio
+
+    return await portfolio.watchlist(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def portfolio_add_watch(user_id: int, symbols: list[str], max_symbols: int) -> list[str]:
+    from core.repositories import portfolio
+
+    return await portfolio.add_watch(await get_pool(), user_id, symbols, max_symbols)
+
+
+@_with_reconnect
+async def portfolio_remove_watch(user_id: int, symbol: str) -> tuple[bool, int]:
+    from core.repositories import portfolio
+
+    return await portfolio.remove_watch(await get_pool(), user_id, symbol)
+
+
+@_with_reconnect
+async def portfolio_list_price_alerts(user_id: int):
+    from core.repositories import portfolio
+
+    return await portfolio.list_price_alerts(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def portfolio_add_price_alert(user_id: int, symbol: str, direction: str, level: float, **kw):
+    from core.repositories import portfolio
+
+    return await portfolio.add_price_alert(
+        await get_pool(), user_id, symbol, direction, level, **kw
+    )
+
+
+@_with_reconnect
+async def portfolio_delete_price_alerts(user_id: int, symbol: str, level: float | None) -> int:
+    from core.repositories import portfolio
+
+    return await portfolio.delete_price_alerts(await get_pool(), user_id, symbol, level)
+
+
+@_with_reconnect
+async def portfolio_active_price_alerts(limit: int):
+    from core.repositories import portfolio
+
+    return await portfolio.active_price_alerts(await get_pool(), limit)
+
+
+@_with_reconnect
+async def portfolio_set_price_alert_state(alert_id: int, state: str, *, notified: bool) -> None:
+    from core.repositories import portfolio
+
+    await portfolio.set_price_alert_state(await get_pool(), alert_id, state, notified=notified)
+
+
+@_with_reconnect
+async def portfolio_alert_logged(
+    user_id: int, kind: str, ref_key: str, sent_on: str | None = None
+) -> bool:
+    from core.repositories import portfolio
+
+    return await portfolio.alert_logged(await get_pool(), user_id, kind, ref_key, sent_on)
+
+
+@_with_reconnect
+async def portfolio_log_alert(user_id: int, kind: str, ref_key: str, sent_on: str) -> None:
+    from core.repositories import portfolio
+
+    await portfolio.log_alert(await get_pool(), user_id, kind, ref_key, sent_on)
+
+
+@_with_reconnect
+async def portfolio_count_alerts_on(user_id: int, sent_on: str) -> int:
+    from core.repositories import portfolio
+
+    return await portfolio.count_alerts_on(await get_pool(), user_id, sent_on)
+
+
+@_with_reconnect
+async def portfolio_prune_alert_log(keep_days: int, batch: int = 5000) -> int:
+    from core.repositories import portfolio
+
+    return await portfolio.prune_alert_log(await get_pool(), keep_days, batch)
+
+
 async def close_pool() -> None:
     global _pool
     if _pool is not None:

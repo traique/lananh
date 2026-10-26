@@ -474,6 +474,7 @@ async def test_zaloxoa_removes_member_data_but_not_owner_data(delivery_db):
         "user_memory_summary",
         "notes",
         "stock_holdings",
+        "stock_transactions",
         "reminders",
     ):
         assert (
@@ -591,3 +592,137 @@ async def test_inbox_loi_khong_dang_thu_lai_ket_thuc_ngay_va_giu_last_error(
     assert len(sent) == 1
     await pool.execute("UPDATE webhook_inbox SET available_at=now()-interval '1 second'")
     assert await webhook_inbox.claim() is None
+
+
+# ─── Danh mục v2 (migration 022): sổ giao dịch, mốc giá vốn, cảnh báo giá ────
+
+
+@pytest.mark.asyncio
+async def test_022_backfills_cost_basis_and_seeds_open_rows(sql_pool, monkeypatch):
+    pool = sql_pool
+    for path in sorted(MIGRATIONS.glob("*.sql")):
+        if path.name >= "022":
+            continue
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(path.read_text())
+    await pool.execute(
+        "INSERT INTO stock_holdings (telegram_user_id, symbol, quantity, average_price, updated_at) "
+        "VALUES (1, 'FPT', 100, 120000, '2026-03-02T20:00:00+00:00')"
+    )
+    for path in sorted(MIGRATIONS.glob("022_*.sql")):
+        await pool.execute(path.read_text())
+        await pool.execute(path.read_text())  # chạy lại an toàn, không nhân đôi dòng OPEN
+    basis = await pool.fetchval("SELECT cost_basis_as_of::text FROM stock_holdings")
+    assert basis == "2026-03-03"  # 20h UTC = 3h sáng hôm sau giờ VN
+    rows = await pool.fetch("SELECT side, quantity, price FROM stock_transactions")
+    assert [(r["side"], float(r["quantity"]), float(r["price"])) for r in rows] == [
+        ("OPEN", 100.0, 120000.0)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ledger_purchase_sale_fees_tax_and_realized(delivery_db, monkeypatch):
+    monkeypatch.setenv("STOCK_FEE_RATE", "0.0015")
+    monkeypatch.setenv("STOCK_SELL_TAX_RATE", "0.001")
+    await portfolio.add_purchase(1, "HPG", 1000, 25000)
+    holding = await portfolio.add_purchase(1, "HPG", 1000, 27000)
+    assert holding.quantity == 2000 and holding.average_price == 26000
+    assert holding.cost_basis_as_of == portfolio.today_vn()
+
+    sale = await portfolio.record_sale(1, "HPG", 500, 30000)
+    # (30.000 - 26.000) x 500 = 2.000.000; phí 0,15% x 15tr = 22.500; thuế 15.000.
+    assert sale.fee == 22500 and sale.tax == 15000
+    assert sale.realized_pnl == 2_000_000 - 22500 - 15000
+    assert sale.holding.quantity == 1500
+
+    unpriced = await portfolio.record_sale(1, "HPG", 500)
+    assert unpriced.realized_pnl is None and unpriced.price is None
+    filled = await portfolio.fill_sale_price(1, "HPG", 24000)
+    assert filled.realized_pnl == (24000 - 26000) * 500 - 18000 - 12000
+    assert await portfolio.fill_sale_price(1, "HPG", 24000) is None  # không còn lệnh thiếu giá
+
+    rest = await portfolio.record_sale(1, "HPG")  # bán hết, không giá
+    assert rest.closed and rest.quantity == 1000
+    assert await portfolio.was_closed(1, "HPG")
+
+    history = await portfolio.list_transactions(1)
+    assert [tx.side for tx in history] == ["SELL", "SELL", "SELL", "BUY", "BUY"]
+    assert history[-1].fee == round(25_000_000 * 0.0015)
+
+    months = await portfolio.realized_by_month(1, months=1)
+    assert len(months) == 1
+    month = months[0]
+    assert month.priced_sells == 2 and month.wins == 1
+    assert month.realized == sale.realized_pnl + filled.realized_pnl
+    assert month.buy_fee == 37500 + 40500
+    assert month.unpriced and month.unpriced[0][0] == "HPG"
+
+
+@pytest.mark.asyncio
+async def test_ledger_replace_and_delete_write_adjust_rows(delivery_db):
+    await portfolio.set_holding(1, "VNM", 100, 60000)
+    await portfolio.set_holding(1, "VNM", 120, 50000)
+    assert await portfolio.delete_holding(1, "VNM")
+    history = await portfolio.list_transactions(1, symbol="VNM")
+    assert [(tx.side, tx.quantity) for tx in history] == [
+        ("ADJUST", 0.0),
+        ("ADJUST", 120.0),
+        ("ADJUST", 100.0),
+    ]
+    text = await portfolio.build_history_text(1)
+    assert "XOÁ VNM" in text and "GHI ĐÈ VNM → 120 cp" in text
+
+
+@pytest.mark.asyncio
+async def test_corporate_rebase_once_before_blending(delivery_db):
+    from core.repositories.portfolio import CorporateRebase
+
+    pool = delivery_db
+    await portfolio.set_holding(1, "VNM", 1005, 60000, stop_price=55000, target_price=72000)
+    await pool.execute("UPDATE stock_holdings SET cost_basis_as_of = '2026-01-05'")
+    rebase = CorporateRebase(1.2, "2026-02-10", "cổ tức CP 20% GDKHQ 10/02")
+    before, after = await db.portfolio_rebase_holding(1, "VNM", rebase)
+    assert float(before["quantity"]) == 1005
+    assert float(after["quantity"]) == 1206  # floor(1005 x 1,2): cp lẻ bị huỷ
+    assert round(float(after["average_price"]) * 1206) == 1005 * 60000  # giữ tổng giá vốn
+    assert float(after["stop_price"]) == round(55000 / 1.2, 2)
+    assert after["cost_basis_as_of"] == "2026-02-10"
+    assert await db.portfolio_rebase_holding(1, "VNM", rebase) is None  # không quy đổi 2 lần
+    sides = await pool.fetch("SELECT side FROM stock_transactions WHERE symbol = 'VNM' ORDER BY id")
+    assert [r["side"] for r in sides] == ["ADJUST", "CORP"]
+
+
+@pytest.mark.asyncio
+async def test_price_alerts_watchlist_and_alert_log(delivery_db):
+    added = await db.portfolio_add_watch(1, ["FPT", "MWG", "FPT", "HPG"], 2)
+    assert added == ["FPT", "MWG"]  # trần 2 mã, bỏ trùng
+    row, full = await db.portfolio_add_price_alert(
+        1, "FPT", "BELOW", 25000, state="unknown", max_per_user=2
+    )
+    assert row is not None and not full
+    dup, _ = await db.portfolio_add_price_alert(
+        1, "FPT", "BELOW", 25000, state="unknown", max_per_user=2
+    )
+    assert dup is None
+    await db.portfolio_add_price_alert(1, "FPT", "ABOVE", 30000, state="armed", max_per_user=2)
+    _, full = await db.portfolio_add_price_alert(
+        1, "MWG", "ABOVE", 70000, state="armed", max_per_user=2
+    )
+    assert full
+    await db.portfolio_set_price_alert_state(row["id"], "crossed", notified=True)
+    alerts = await db.portfolio_active_price_alerts(10)
+    crossed = [a for a in alerts if a["id"] == row["id"]][0]
+    assert crossed["last_state"] == "crossed" and crossed["notified_at"] is not None
+    assert await db.portfolio_delete_price_alerts(1, "FPT", 30000) == 1
+    assert await db.portfolio_remove_watch(1, "FPT") == (True, 1)
+    assert await db.portfolio_watchlist(1) == ["MWG"]
+
+    assert not await db.portfolio_alert_logged(1, "event", "VNM:DIV:2026-11-02")
+    await db.portfolio_log_alert(1, "event", "VNM:DIV:2026-11-02", "2026-10-30")
+    await db.portfolio_log_alert(1, "event", "VNM:DIV:2026-11-02", "2026-10-30")
+    assert await db.portfolio_alert_logged(1, "event", "VNM:DIV:2026-11-02")
+    assert await db.portfolio_alert_logged(1, "event", "VNM:DIV:2026-11-02", "2026-10-30")
+    assert not await db.portfolio_alert_logged(1, "event", "VNM:DIV:2026-11-02", "2026-10-31")
+    assert await db.portfolio_count_alerts_on(1, "2026-10-30") == 1
+    assert await db.portfolio_prune_alert_log(0) == 1

@@ -68,6 +68,11 @@ _USER_DATA_TABLES = (
     "prompts",
     "stock_holdings",
     "stock_closed_positions",
+    # migrations/022: sổ giao dịch, theo dõi/cảnh báo giá, nhật ký thông báo.
+    "stock_transactions",
+    "stock_watchlist",
+    "stock_price_alerts",
+    "stock_alert_log",
 )
 
 

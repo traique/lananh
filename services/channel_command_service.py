@@ -48,8 +48,10 @@ Danh mục cổ phiếu (riêng từng người)
 /danhmuc — xem danh mục, lãi/lỗ, cảnh báo stop/target
 /themcp <MÃ> <SỐ_LƯỢNG> <GIÁ_VỐN> [STOP] [TARGET] — thêm giao dịch mua (giá dưới 1.000 hiểu là nghìn đồng)
 /capnhatcp <MÃ> <SỐ_LƯỢNG> <GIÁ_VỐN> [STOP] [TARGET] — ghi đè vị thế
-/bancp <MÃ> [SỐ_LƯỢNG|hết] — bán bớt hoặc bán hết
+/bancp <MÃ> [SỐ_LƯỢNG|hết] [GIÁ_BÁN] — bán bớt hoặc bán hết (có giá thì tính lãi/lỗ đã chốt)
 /xoacp <MÃ> — xoá mã khỏi danh mục
+/lichsucp [MÃ] — sổ giao dịch; /laicp [THÁNG] — lãi/lỗ đã chốt sau phí, thuế
+/giaban <MÃ> <GIÁ> — bổ sung giá cho lệnh bán chưa có giá
 
 Chỉ admin
 /model [tên|auto] — xem hoặc đổi model

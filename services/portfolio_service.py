@@ -127,16 +127,93 @@ async def add_holding(
     )
 
 
-async def sell_holding(user_id: int, symbol: str, quantity: float | None) -> str:
+def _signed(value: float) -> str:
+    return ("+" if value > 0 else "") + _fmt(value)
+
+
+def format_sale(symbol: str, result: portfolio.SaleResult) -> str:
+    """Câu xác nhận lệnh bán; lãi/lỗ đã chốt tính trong code (stock.portfolio)."""
+    if result.closed:
+        text = f"✅ Đã bán hết và xóa {symbol} khỏi danh mục."
+    else:
+        text = f"✅ Đã giảm {symbol}, còn {_fmt(result.holding.quantity)} cp."
+    if result.price is not None and result.realized_pnl is not None:
+        icon = "🟢" if result.realized_pnl > 0 else "🔴"
+        text += (
+            f"\n{icon} Bán {_fmt(result.quantity)} cp @ {_fmt(result.price)}đ, giá vốn "
+            f"{_fmt(result.average_cost)}đ: lãi/lỗ đã chốt {_signed(result.realized_pnl)}đ "
+            f"(sau phí {_fmt(result.fee)}đ, thuế {_fmt(result.tax)}đ)."
+        )
+    else:
+        text += (
+            f"\nℹ️ Chưa có giá bán nên em chưa tính lãi/lỗ đã chốt - gõ /giaban {symbol} <GIÁ> "
+            "để bổ sung nhé."
+        )
+    return text
+
+
+async def sell_holding(
+    user_id: int, symbol: str, quantity: float | None, price: float | None = None
+) -> str:
     if quantity is not None and quantity <= 0:
         return "❌ Số lượng bán phải lớn hơn 0."
+    if price is not None and price <= 0:
+        return "❌ Giá bán phải lớn hơn 0."
     current = await portfolio.get_holding(user_id, symbol)
     if current is None:
         return f"❌ {symbol.upper()} không có trong danh mục."
-    updated = await portfolio.sell(user_id, symbol, quantity)
-    if updated is None:
-        return f"✅ Đã bán hết và xóa {symbol.upper()} khỏi danh mục."
-    return f"✅ Đã giảm {symbol.upper()}, còn {_fmt(updated.quantity)} cp."
+    result = await portfolio.record_sale(user_id, symbol, quantity, price)
+    if result is None:
+        return f"❌ {symbol.upper()} không có trong danh mục."
+    return format_sale(symbol.upper(), result)
+
+
+_MONTH_ARG_RE = re.compile(r"^(?:(\d{4})-(\d{1,2})|(\d{1,2})/(\d{4}))$")
+
+
+def _parse_month_arg(raw: str) -> tuple[str | None, int | None]:
+    """ "2026-09" / "9/2026" -> ("2026-09", None); "12" -> (None, 12 tháng)."""
+    match = _MONTH_ARG_RE.match(raw.strip())
+    if match:
+        year = int(match.group(1) or match.group(4))
+        month = int(match.group(2) or match.group(3))
+        if 1 <= month <= 12 and 2000 <= year <= 2100:
+            return f"{year:04d}-{month:02d}", None
+        raise ValueError("bad month")
+    months = int(raw)
+    if not 1 <= months <= 24:
+        raise ValueError("bad months")
+    return None, months
+
+
+async def _realized_command(user_id: int, parts: list[str]) -> str:
+    month, months = None, 6
+    if len(parts) >= 2:
+        try:
+            month, parsed = _parse_month_arg(parts[1])
+        except ValueError:
+            return "Cú pháp: /laicp [THÁNG] - vd /laicp, /laicp 2026-09, /laicp 9/2026, /laicp 12 (12 tháng)"
+        months = parsed or months
+    report = await portfolio.realized_by_month(user_id, months=months, month=month)
+    scope = f" tháng {int(month[5:])}/{month[:4]}" if month else f" {months} tháng gần nhất"
+    return portfolio.format_realized(report, title_scope=scope)
+
+
+async def _fill_price_command(user_id: int, parts: list[str]) -> str:
+    if len(parts) < 3:
+        return "Cú pháp: /giaban <MÃ> <GIÁ> - bổ sung giá cho lệnh bán gần nhất chưa có giá."
+    try:
+        price = parse_price(parts[2])
+    except ValueError:
+        return "❌ Giá bán không hợp lệ. Ví dụ: /giaban HPG 27.5 hoặc /giaban HPG 27500"
+    symbol = parts[1].upper()
+    tx = await portfolio.fill_sale_price(user_id, symbol, price)
+    if tx is None:
+        return f"❌ Không có lệnh bán {symbol} nào đang thiếu giá."
+    return (
+        f"✅ Đã bổ sung giá {_fmt(price)}đ cho lệnh bán {_fmt(tx.quantity)} {symbol}: "
+        f"lãi/lỗ đã chốt {_signed(tx.realized_pnl or 0)}đ (phí {_fmt(tx.fee)}đ, thuế {_fmt(tx.tax)}đ)."
+    )
 
 
 async def handle_command(user_id: int, text: str) -> str | None:
@@ -169,14 +246,32 @@ async def handle_command(user_id: int, text: str) -> str | None:
         )
     if command == "/bancp":
         if len(parts) < 2:
-            return "Cú pháp: /bancp <MÃ> [SỐ_LƯỢNG|hết]"
+            return (
+                "Cú pháp: /bancp <MÃ> [SỐ_LƯỢNG|hết] [GIÁ_BÁN]\n"
+                "Ví dụ: /bancp HPG 1000 27.5 (có giá bán thì em tính lãi/lỗ đã chốt sau phí, thuế)"
+            )
         quantity = None
         if len(parts) >= 3 and parts[2].lower() not in {"hết", "het", "all"}:
             try:
                 quantity = parse_number(parts[2])
             except ValueError:
                 return "❌ Số lượng bán không hợp lệ."
-        return await sell_holding(user_id, parts[1], quantity)
+        price = None
+        if len(parts) >= 4:
+            try:
+                price = parse_price(parts[3])
+            except ValueError:
+                return "❌ Giá bán không hợp lệ. Ví dụ: 27.5 hoặc 27500"
+        if price is None:
+            return await sell_holding(user_id, parts[1], quantity)
+        return await sell_holding(user_id, parts[1], quantity, price)
+    if command == "/lichsucp":
+        symbol = parts[1].upper() if len(parts) >= 2 else None
+        return await portfolio.build_history_text(user_id, symbol=symbol)
+    if command == "/laicp":
+        return await _realized_command(user_id, parts)
+    if command == "/giaban":
+        return await _fill_price_command(user_id, parts)
     if command == "/xoacp":
         if len(parts) < 2:
             return "Cú pháp: /xoacp <MÃ>"
@@ -225,14 +320,16 @@ async def _held_symbol(user_id: int, candidates: list[str]) -> str | None:
     return None
 
 
+# Giá bán tuỳ chọn sau số lượng: "đã bán HPG 1000 giá 27", "bán HPG 1000 cp @27 rồi".
+_SELL_PRICE = rf"(?:\s+(?:cp|cổ phiếu|co phieu))?(?:\s*(?:giá|gia|@)\s*({_NUMBER_RE}))?"
 _SELL_DONE_RE = re.compile(
     rf"(?<![\w]){_DONE_PREFIX}(?:bán|ban|chốt|chot|cắt|cat)\s+(?:(hết|het|toàn bộ|toan bo)\s+)?"
-    rf"(?:mã\s+|ma\s+)?{_SYMBOL_WORD}(?:\s+({_NUMBER_RE}|hết|het|all)(?![\w]))?",
+    rf"(?:mã\s+|ma\s+)?{_SYMBOL_WORD}(?:\s+({_NUMBER_RE}|hết|het|all)(?![\w]))?{_SELL_PRICE}",
     re.IGNORECASE,
 )
 _SELL_ROI_RE = re.compile(
     rf"(?<![\w])(?:bán|ban)\s+(?:(hết|het)\s+)?(?:mã\s+|ma\s+)?{_SYMBOL_WORD}"
-    rf"(?:\s+({_NUMBER_RE}|hết|het|all)(?![\w]))?(?:\s+(?:cp|cổ phiếu|co phieu))?\s+(?:rồi|roi)(?![\w])",
+    rf"(?:\s+({_NUMBER_RE}|hết|het|all)(?![\w]))?{_SELL_PRICE}\s+(?:rồi|roi)(?![\w])",
     re.IGNORECASE,
 )
 _SELL_BARE_RE = re.compile(
@@ -248,6 +345,7 @@ async def _handle_sell_statement(user_id: int, text: str) -> str | None:
     match = _SELL_DONE_RE.search(text) or _SELL_ROI_RE.search(text)
     if match:
         all_before, symbol, quantity_raw = match.group(1), match.group(2), match.group(3)
+        price_raw = match.group(4)
         symbol = symbol.upper()
         # Câu kể chung chung ("đã bán cho anh ấy" -> "CHO") không được bị bắt
         # làm lệnh danh mục: token ngoài danh sách mã đã biết chỉ được xử lý
@@ -255,16 +353,23 @@ async def _handle_sell_statement(user_id: int, text: str) -> str | None:
         # "không có trong danh mục".
         if not _is_known_symbol(symbol) and await _held_symbol(user_id, [symbol]) is None:
             return None
+        price = None
+        if price_raw:
+            try:
+                price = parse_price(price_raw)
+            except ValueError:
+                price = None
         sell_all = bool(all_before) or (quantity_raw or "").lower() in _ALL_WORDS
-        if sell_all:
-            return await sell_holding(user_id, symbol, None)
-        if quantity_raw:
+        quantity = None
+        if not sell_all and quantity_raw:
             try:
                 quantity = parse_number(quantity_raw)
             except ValueError:
                 quantity = None
-            if quantity:
+        if sell_all or quantity:
+            if price is None:
                 return await sell_holding(user_id, symbol, quantity)
+            return await sell_holding(user_id, symbol, quantity, price)
         return (
             f"⚠️ Em chưa ghi nhận bán {symbol} vì chưa rõ số lượng. Anh gõ /bancp {symbol} <SỐ_LƯỢNG>, "
             f'hoặc "đã bán hết {symbol}" nếu đã bán toàn bộ nhé.'
