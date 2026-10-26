@@ -27,7 +27,7 @@ from channels.contracts import (
 from channels.facebook_commands import maybe_handle_facebook_command, prepare_post
 from channels.group_commands import maybe_handle_group_command
 from channels.zalo_text import to_plain_text, zalo_rich_chunks
-from core import alerts, idempotency
+from core import alerts, idempotency, trace
 from core.envutil import env_on
 from services import channel_dispatch, reply_audience, turn_control
 from services.channel_chat_service import handle_channel_text, split_for_zalo
@@ -317,6 +317,16 @@ def _audience(zalo_user: zalo_users.ZaloUser, sender_id: str) -> reply_audience.
     )
 
 
+def media_turn(account_id: str, message_id: str, zalo_user: zalo_users.ZaloUser):
+    """Mã lượt (core/trace.py) cho route ảnh/thoại/file Zalo - cùng dạng event_key
+    "zalo:<account>:<message_id>" như tin chữ (services/channel_dispatch.py)."""
+    return trace.turn(
+        f"zalo:{account_id}:{message_id}",
+        channel="zalo",
+        user_kind="admin" if zalo_user.is_admin else "member",
+    )
+
+
 def _chat_for(zalo_user: zalo_users.ZaloUser, sender_id: str):
     """handle_channel_text chạy trong ngữ cảnh người nhận của zalo_user. Tra tên
     module-level lúc gọi để test monkeypatch ``router.handle_channel_text`` vẫn có
@@ -417,6 +427,27 @@ async def image_prompt(
     if not zalo_user.is_active:
         return ZaloMessageResponse(messages=[messages_module.ZALO_LOCKED_REPLY], provider=None)
 
+    with media_turn(x_zalo_account_id, x_zalo_message_id, zalo_user):
+        return await _image_prompt_turn(
+            request,
+            body,
+            zalo_user,
+            x_zalo_sender_id,
+            x_zalo_message_id,
+            x_zalo_caption,
+            x_zalo_account_id,
+        )
+
+
+async def _image_prompt_turn(
+    request: Request,
+    body: bytes,
+    zalo_user: zalo_users.ZaloUser,
+    x_zalo_sender_id: str,
+    x_zalo_message_id: str,
+    x_zalo_caption: str,
+    x_zalo_account_id: str,
+) -> ZaloMessageResponse:
     async with assistant_turn(f"zalo:{zalo_user.internal_user_id}"):
         cached = await idempotency.get_zalo_response(
             x_zalo_account_id,

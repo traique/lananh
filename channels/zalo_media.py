@@ -47,7 +47,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 import messages as messages_module
 from channels import zalo_users
 from channels.contracts import ZaloMessageResponse
-from channels.router import _audience, _auth_sender, _require_local_caller, _zalo_chunks
+from channels.router import (
+    _audience,
+    _auth_sender,
+    _require_local_caller,
+    _zalo_chunks,
+    media_turn,
+)
 from core import idempotency
 from services import document_service, reply_audience, turn_control, voice_service
 from services.concurrency import TurnCancelled, assistant_turn, run_cancellable
@@ -124,6 +130,25 @@ async def voice(
     zalo_user, early = await _resolve_sender(x_zalo_sender_id)
     if zalo_user is None:
         return early
+    with media_turn(x_zalo_account_id, x_zalo_message_id, zalo_user):
+        return await _voice_turn(
+            body,
+            zalo_user,
+            x_zalo_sender_id,
+            x_zalo_message_id,
+            x_zalo_account_id,
+            x_zalo_duration_ms,
+        )
+
+
+async def _voice_turn(
+    body: bytes,
+    zalo_user: zalo_users.ZaloUser,
+    x_zalo_sender_id: str,
+    x_zalo_message_id: str,
+    x_zalo_account_id: str,
+    x_zalo_duration_ms: str,
+) -> ZaloMessageResponse:
     async with assistant_turn(f"zalo:{zalo_user.internal_user_id}"):
         cached = await idempotency.get_zalo_response(x_zalo_account_id, x_zalo_message_id, "voice")
         if cached is not None:
@@ -162,6 +187,29 @@ async def document_file(
     zalo_user, early = await _resolve_sender(x_zalo_sender_id)
     if zalo_user is None:
         return early
+    with media_turn(x_zalo_account_id, x_zalo_message_id, zalo_user):
+        return await _file_turn(
+            request,
+            body,
+            zalo_user,
+            x_zalo_sender_id,
+            x_zalo_message_id,
+            x_zalo_account_id,
+            x_zalo_file_name,
+            x_zalo_caption,
+        )
+
+
+async def _file_turn(
+    request: Request,
+    body: bytes,
+    zalo_user: zalo_users.ZaloUser,
+    x_zalo_sender_id: str,
+    x_zalo_message_id: str,
+    x_zalo_account_id: str,
+    x_zalo_file_name: str,
+    x_zalo_caption: str,
+) -> ZaloMessageResponse:
     async with assistant_turn(f"zalo:{zalo_user.internal_user_id}"):
         cached = await idempotency.get_zalo_response(x_zalo_account_id, x_zalo_message_id, "file")
         if cached is not None:

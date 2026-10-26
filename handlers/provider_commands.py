@@ -14,7 +14,7 @@ from ai import agnes_client, orchestrator, router9_client, tavily_client
 from core import config
 from core.text_utils import parse_on_off
 from handlers import common
-from services import error_digest, search_status
+from services import error_digest, provider_health, search_status
 
 
 @common.restricted
@@ -285,6 +285,9 @@ async def _build_status_text() -> str:
         "",
         model_line,
     ]
+    latency = await provider_health.latency_lines(use_html=True)
+    if latency:
+        lines += ["", *latency]
     return "\n".join(lines)
 
 

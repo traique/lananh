@@ -17,7 +17,7 @@ from ai.timeouts import (
     bounded,
     with_timeout,
 )
-from ai import provider_overrides
+from ai import call_log, provider_overrides
 from ai.provider_state import provider_state
 from core import config
 from core.text_utils import strip_json_fence
@@ -202,6 +202,11 @@ async def generate(
     if enable_search:
         cfg_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
 
+    call_log.note_prompt_chars(
+        len(prompt_with_time)
+        + len(system_instruction or "")
+        + sum(len(content) for _role, content in history or ())
+    )
     response = await with_timeout(
         client.aio.models.generate_content(
             model=model or await _model_for(idx),
@@ -211,6 +216,7 @@ async def generate(
         OFFICIAL_CHAT_TIMEOUT_SEC,
         f"api{idx} generate_content",
     )
+    call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
     searched = bool(enable_search) and _used_google_search(response)
     if require_search_evidence and not searched:
         from ai.openai_compatible import NoSearchEvidenceError
@@ -230,6 +236,7 @@ async def generate_image_prompt(idx: int, instruction: str, image_path: str) -> 
 
     image_bytes = await asyncio.to_thread(_read_bytes)
     mime_type = mimetypes.guess_type(image_path)[0] or "image/jpeg"
+    call_log.note_prompt_chars(len(instruction))
     response = await with_timeout(
         client.aio.models.generate_content(
             model=await _model_for(idx),
@@ -238,6 +245,7 @@ async def generate_image_prompt(idx: int, instruction: str, image_path: str) -> 
         OFFICIAL_VISION_TIMEOUT_SEC,
         f"api{idx} image prompt",
     )
+    call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
     return FallbackResponse((response.text or "").strip())
 
 
@@ -250,6 +258,7 @@ async def generate_from_bytes(
     from google.genai import types
 
     client = await _get_official_client(idx)
+    call_log.note_prompt_chars(len(instruction))
     response = await with_timeout(
         client.aio.models.generate_content(
             model=await _model_for(idx),
@@ -258,6 +267,7 @@ async def generate_from_bytes(
         OFFICIAL_VISION_TIMEOUT_SEC,
         f"api{idx} {label}",
     )
+    call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
     return FallbackResponse((response.text or "").strip())
 
 
@@ -282,6 +292,9 @@ async def analyze_document(
 
 
 async def generate_utility_json(prompt: str) -> Optional[dict]:
+    """Lượt phụ trả JSON qua Gemini (dự phòng của orchestrator.utility_json). Mỗi
+    key thử được ghi provider_calls (ai/call_log.py, giai đoạn mặc định "utility")
+    kèm độ trễ, kết quả và token như provider-chain."""
     if not config.HAS_ANY_AI_STUDIO_KEY:
         return None
     from google.genai import types
@@ -302,10 +315,21 @@ async def generate_utility_json(prompt: str) -> Optional[dict]:
                     ),
                 )
 
-            # bounded(): tôn trọng hạn chót còn lại của lượt (hoặc của task nền
-            # đặt riêng) thay vì 45s cố định ngoài mọi ngân sách thời gian.
-            response = await bounded(_call, OFFICIAL_UTILITY_TIMEOUT_SEC)
-            return json.loads(strip_json_fence(response.text))
+            async def _attempt(_call=_call):
+                # bounded(): tôn trọng hạn chót còn lại của lượt (hoặc của task nền
+                # đặt riêng) thay vì 45s cố định ngoài mọi ngân sách thời gian.
+                call_log.note_prompt_chars(len(prompt))
+                response = await bounded(_call, OFFICIAL_UTILITY_TIMEOUT_SEC)
+                call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
+                return json.loads(strip_json_fence(response.text))
+
+            return await call_log.timed(
+                f"api{idx}",
+                model_name,
+                _attempt,
+                stage=call_log.current_stage() or "utility",
+                classify_error=classify_error,
+            )
         except TurnTimeoutError:
             raise
         except Exception as exc:
@@ -315,6 +339,16 @@ async def generate_utility_json(prompt: str) -> Optional[dict]:
     if last_exc is not None:
         logger.warning("generate_utility_json: hết key khả dụng, bỏ qua tác vụ.")
     return None
+
+
+def classify_error(exc: BaseException) -> str:
+    if isinstance(exc, TurnTimeoutError):
+        return "turn_timeout"
+    if is_quota_exhausted_error(exc):
+        return "rate_limited"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    return "error"
 
 
 async def check_ai_studio_status(idx: int) -> tuple[bool, str]:

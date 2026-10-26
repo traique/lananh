@@ -208,7 +208,7 @@ jobs:
       - name: SQL tests on PGlite
         env:
           TEST_PGLITE: "1"
-        run: pytest -q test/test_delivery_sql.py test/test_migrations.py test/test_zalo_outbox_sql.py test/test_ops_sql.py
+        run: pytest -q test/test_delivery_sql.py test/test_migrations.py test/test_zalo_outbox_sql.py test/test_ops_sql.py test/test_observability_sql.py
 
   zalo-gateway:
     runs-on: ubuntu-latest

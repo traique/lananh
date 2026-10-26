@@ -29,7 +29,7 @@ from channels import (
 )
 from channels.router import router as zalo_router
 from channels.zalo_media import router as zalo_media_router
-from core import config, database as db, idempotency, webhook_inbox
+from core import config, database as db, idempotency, trace, webhook_inbox
 from diagnose_router9 import main as diagnose_main
 from services import db_maintenance, market_page, morning_news
 from services import action_buttons, channel_dispatch, turn_control
@@ -72,13 +72,22 @@ async def _process_update(update: Update, *, locked: bool = True) -> None:
     if application is None:
         raise RuntimeError("Telegram application is not ready")
     token = update_error.set(None)
+    event_key = f"telegram:{update.update_id}"
     try:
-        with notification_target(
-            NotificationTarget(
-                "telegram",
-                str(update.effective_chat.id if update.effective_chat else config.ALLOWED_USER_ID),
-                event_key=f"telegram:{update.update_id}",
-            )
+        # Mã lượt = event_key (core/trace.py): log + provider_calls + turn_metrics.
+        with (
+            trace.turn(event_key, channel="telegram", user_kind="owner"),
+            notification_target(
+                NotificationTarget(
+                    "telegram",
+                    str(
+                        update.effective_chat.id
+                        if update.effective_chat
+                        else config.ALLOWED_USER_ID
+                    ),
+                    event_key=event_key,
+                )
+            ),
         ):
             message = getattr(update, "effective_message", None)
             command = (getattr(message, "text", None) or "").strip().lower().split(maxsplit=1)
@@ -95,6 +104,8 @@ async def _process_update(update: Update, *, locked: bool = True) -> None:
             boundary = assistant_turn(OWNER_TURN_KEY) if locked else nullcontext()
             async with boundary:
                 await application.process_update(update)
+            if update_error.get() is not None:
+                trace.set_outcome("error")
         if update_error.get() is not None:
             raise update_error.get()
     except Exception as exc:
@@ -167,6 +178,8 @@ async def lifespan(_: FastAPI):
         await _safe_shutdown("DB maintenance", db_maintenance.stop())
         await _safe_shutdown("webhook inbox", webhook_inbox.stop())
         await _safe_shutdown("Telegram turn feedback", turn_feedback.stop())
+        # Dòng turn_metrics của các lượt vừa xong (ghi nền) trước khi đóng DB.
+        await _safe_shutdown("turn metrics", trace.drain())
         if app_started:
             await _safe_shutdown("Telegram application stop", application.stop())
         if app_resources_started:

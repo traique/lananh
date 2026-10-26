@@ -25,6 +25,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from core import database as db
+from core import trace
 from core.envutil import env_int, env_on
 from services import portfolio_push
 from stock import calendar as trading_calendar
@@ -269,9 +270,11 @@ async def run_once(*, force: bool = False) -> bool:
 
 
 async def _loop() -> None:
+    trace.detach()
     while True:
         try:
-            await run_once()
+            with trace.job("portfolio_events"):
+                await run_once()
         except asyncio.CancelledError:
             raise
         except Exception:

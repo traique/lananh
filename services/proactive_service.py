@@ -34,7 +34,7 @@ import re
 from collections.abc import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
-from core import address, config, database as db
+from core import address, config, database as db, trace
 from core.envutil import env_int, env_on
 from core.text_normalize import fold
 from services import memory_guard, personal_settings
@@ -406,9 +406,11 @@ async def run_tick(now: dt.datetime | None = None) -> int:
 
 
 async def _loop() -> None:
+    trace.detach()
     while True:
         try:
-            await run_tick()
+            with trace.job("proactive"):
+                await run_tick()
         except asyncio.CancelledError:
             raise
         except Exception:

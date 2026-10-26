@@ -43,7 +43,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterator, Optional
 
-from ai import official_client
+from ai import call_log, official_client
 from ai.official_client import is_quota_exhausted_error
 from ai.timeouts import (
     OFFICIAL_CHAT_TIMEOUT_SEC,
@@ -116,6 +116,8 @@ _URL_NOT_PERMITTED = (
 
 
 MAX_AGENT_STEPS = 4
+# Giai đoạn ghi provider_calls cho mọi request của /agent (ai/call_log.py).
+_STAGE = "agent"
 # Trần ký tự 1 kết quả tool bất kỳ quay lại model (Groq free 8K TPM: 4 bước với kết
 # quả 6000 ký tự là vượt trần ngay bước 2-3).
 _ANY_RESULT_MAX_CHARS = 2500
@@ -485,15 +487,27 @@ async def _run_one_provider(idx: int, question: str) -> str:
     tools = _build_tool_declarations()
     gen_config = types.GenerateContentConfig(system_instruction=turn.system, tools=tools)
 
-    for step in range(MAX_AGENT_STEPS):
+    async def _step(step: int):
         response = await bounded(
-            lambda step=step: with_timeout(
+            lambda: with_timeout(
                 client.aio.models.generate_content(
                     model=model, contents=contents, config=gen_config
                 ),
                 OFFICIAL_CHAT_TIMEOUT_SEC,
                 f"agent api{idx} step {step + 1}",
             )
+        )
+        call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
+        return response
+
+    for step in range(MAX_AGENT_STEPS):
+        # Mỗi bước là 1 request tốn quota: ghi provider_calls (giai đoạn "agent").
+        response = await call_log.timed(
+            f"api{idx}",
+            model,
+            lambda step=step: _step(step),
+            stage=_STAGE,
+            classify_error=official_client.classify_error,
         )
         candidate = response.candidates[0] if response.candidates else None
         parts = candidate.content.parts if candidate and candidate.content else []
@@ -522,14 +536,21 @@ async def _run_openai_tools(
     call: Callable[[list[dict], list[dict]], Awaitable[Any]],
     question: str,
     own_timeout: float | None = None,
+    model: str | None = None,
 ) -> str:
     """Vòng lặp function-calling chuẩn OpenAI (Groq, OpenRouter, router9): cùng
-    MAX_AGENT_STEPS, cùng _call_tool(), mỗi bước qua bounded()/turn_deadline."""
+    MAX_AGENT_STEPS, cùng _call_tool(), mỗi bước qua bounded()/turn_deadline và
+    được ghi provider_calls (ai/call_log.py, giai đoạn "agent")."""
     conversation = _openai_messages(question)
     tools = _build_openai_tools()
 
     for step in range(MAX_AGENT_STEPS):
-        result = await bounded(lambda: call(conversation, tools), own_timeout)
+        result = await call_log.timed(
+            label,
+            model,
+            lambda: bounded(lambda: call(conversation, tools), own_timeout),
+            stage=_STAGE,
+        )
 
         if not result.tool_calls:
             return result.text or "Xin lỗi, em chưa tìm được câu trả lời."
@@ -579,6 +600,30 @@ async def _run_router9(question: str) -> str:
         lambda messages, tools: router9_client.generate_with_tools(messages, tools),
         question,
         config.ROUTER9_CALL_TIMEOUT_SEC,
+        await _router9_model(),
+    )
+
+
+async def _router9_model() -> str:
+    from ai import router9_client
+
+    try:
+        return await router9_client.get_preferred_model_name() or config.ROUTER9_MODEL
+    except Exception:
+        return config.ROUTER9_MODEL
+
+
+async def _router9_generate(prompt: str, **kwargs):
+    """1 lượt router9 của nhánh JSON-router: bounded() + ghi provider_calls."""
+    from ai import router9_client
+
+    return await call_log.timed(
+        "router9",
+        await _router9_model(),
+        lambda: bounded(
+            lambda: router9_client.generate(prompt, **kwargs), config.ROUTER9_CALL_TIMEOUT_SEC
+        ),
+        stage=_STAGE,
     )
 
 
@@ -604,7 +649,11 @@ async def _run_tool_provider(name: str, question: str) -> str:
     from ai import groq_client, openrouter_client
 
     client = groq_client if name == "groq" else openrouter_client
-    return await _run_openai_tools(name, client.generate_with_tools, question)
+    try:
+        model = await client.model_name()
+    except Exception:
+        model = None
+    return await _run_openai_tools(name, client.generate_with_tools, question, model=model)
 
 
 async def _run_router9_json_router(question: str) -> Optional[str]:
@@ -615,17 +664,12 @@ async def _run_router9_json_router(question: str) -> Optional[str]:
     bước). Trả về None nếu không xác định được tool hợp lệ hoặc lỗi bất kỳ
     bước nào - caller (ask_agent) coi None là "nhánh này không giải quyết
     được", rơi tiếp xuống api1/api2."""
-    from ai import router9_client
-
     system = _current().system
     router_prompt = _JSON_ROUTER_INSTRUCTION_TEMPLATE.format(
         tool_list=_build_tool_list_text(), question=question
     )
     try:
-        router_response = await bounded(
-            lambda: router9_client.generate(router_prompt, temperature=0.1),
-            config.ROUTER9_CALL_TIMEOUT_SEC,
-        )
+        router_response = await _router9_generate(router_prompt, temperature=0.1)
     except TurnTimeoutError:
         raise
     except Exception:
@@ -650,11 +694,8 @@ async def _run_router9_json_router(question: str) -> Optional[str]:
         # Không cần tool - hỏi router9 trả lời trực tiếp bằng văn phong tự
         # nhiên (KHÔNG dùng lại text ép JSON ở trên).
         try:
-            reply = await bounded(
-                lambda: router9_client.generate(
-                    question, system_instruction=system, history=list(_current().history)
-                ),
-                config.ROUTER9_CALL_TIMEOUT_SEC,
+            reply = await _router9_generate(
+                question, system_instruction=system, history=list(_current().history)
             )
             return (reply.text or "").strip() or None
         except TurnTimeoutError:
@@ -679,10 +720,7 @@ async def _run_router9_json_router(question: str) -> Optional[str]:
         "Không tự bịa thêm thông tin ngoài kết quả tool."
     )
     try:
-        final = await bounded(
-            lambda: router9_client.generate(synth_prompt, system_instruction=system),
-            config.ROUTER9_CALL_TIMEOUT_SEC,
-        )
+        final = await _router9_generate(synth_prompt, system_instruction=system)
         return (final.text or "").strip() or tool_result
     except TurnTimeoutError:
         raise

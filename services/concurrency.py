@@ -18,9 +18,12 @@ và kết thúc bình thường để inbox finish()/cache idempotency vẫn đ�
 
 import asyncio
 import os
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, TypeVar
+
+from core import trace
 
 T = TypeVar("T")
 
@@ -61,9 +64,14 @@ async def assistant_turn(key: str = OWNER_TURN_KEY) -> AsyncIterator[None]:
     """Serialize turns of ONE user; different users run in parallel (bounded)."""
     lock, users = _turn_locks.get(key, (asyncio.Lock(), 0))
     _turn_locks[key] = (lock, users + 1)
+    started = time.monotonic()
     try:
         async with lock:
+            locked_at = time.monotonic()
             async with _turn_slots:
+                # Thời gian chờ khoá của chính người này / chờ slot chung
+                # (turn_metrics của lượt - core/trace.py).
+                trace.mark_locked(_ms(locked_at - started), _ms(time.monotonic() - locked_at))
                 yield
     finally:
         _, users = _turn_locks[key]
@@ -71,6 +79,10 @@ async def assistant_turn(key: str = OWNER_TURN_KEY) -> AsyncIterator[None]:
             del _turn_locks[key]
         else:
             _turn_locks[key] = (lock, users - 1)
+
+
+def _ms(seconds: float) -> int:
+    return int(seconds * 1000)
 
 
 def is_busy(key: str = OWNER_TURN_KEY) -> bool:
@@ -108,6 +120,7 @@ async def run_cancellable(key: str, factory: Callable[[], Awaitable[T]]) -> T:
     except asyncio.CancelledError:
         current = asyncio.current_task()
         if task in _cancel_requested and not (current is not None and current.cancelling()):
+            trace.set_outcome("cancelled")
             raise TurnCancelled() from None
         raise
     finally:

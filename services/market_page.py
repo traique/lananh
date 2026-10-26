@@ -38,7 +38,7 @@ from services import http_client
 
 import messages
 from ai import orchestrator
-from core import alerts, config
+from core import alerts, config, trace
 from core import database as db
 from core.envutil import env_int
 from core.untrusted import wrap_untrusted
@@ -1379,9 +1379,11 @@ async def _tick(now: datetime) -> None:
 
 
 async def _loop() -> None:
+    trace.detach()
     while True:
         try:
-            await _tick(datetime.now(_VN_TZ))
+            with trace.job("market_page"):
+                await _tick(datetime.now(_VN_TZ))
         except asyncio.CancelledError:
             raise
         except Exception:

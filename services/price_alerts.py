@@ -27,6 +27,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from core import database as db
+from core import trace
 from core.envutil import env_int, env_on
 from services import portfolio_alerts, portfolio_push
 from stock import calendar as trading_calendar
@@ -254,9 +255,11 @@ async def run_once(owner_id: int, now: datetime | None = None) -> int:
 
 
 async def _loop(owner_id: int) -> None:
+    trace.detach()
     while True:
         try:
-            await run_once(owner_id)
+            with trace.job("price_alerts"):
+                await run_once(owner_id)
         except asyncio.CancelledError:
             raise
         except Exception:

@@ -374,21 +374,29 @@ async def record_provider_call(
     latency_ms: Optional[int] = None,
     stage: Optional[str] = None,
     prompt_chars: Optional[int] = None,
+    turn_id: Optional[str] = None,
+    prompt_tokens: Optional[int] = None,
+    completion_tokens: Optional[int] = None,
 ) -> None:
     """Ghi 1 lượt gọi provider/model (bảng provider_calls). ``outcome``: ok |
-    error | timeout | rate_limited | contaminated. Lỗi DB ở đây KHÔNG được để
-    văng lên caller (chỉ là số liệu thống kê, không phải luồng chính) - caller
-    (orchestrator) tự bọc try/except khi gọi hàm này."""
+    error | timeout | rate_limited | contaminated. ``turn_id`` (mã lượt
+    core/trace.py) và token (provider tự báo) - migrations/025. Lỗi DB ở đây
+    KHÔNG được để văng lên caller (chỉ là số liệu thống kê, không phải luồng
+    chính) - caller (ai/call_log.py) tự bọc try/except khi gọi hàm này."""
     pool = await get_pool()
     await pool.execute(
-        """INSERT INTO provider_calls (provider, model, outcome, latency_ms, stage, prompt_chars)
-        VALUES ($1, $2, $3, $4, $5, $6)""",
+        """INSERT INTO provider_calls (provider, model, outcome, latency_ms, stage, prompt_chars,
+                                       turn_id, prompt_tokens, completion_tokens)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
         provider,
         model,
         outcome,
         latency_ms,
         stage,
         prompt_chars,
+        turn_id,
+        prompt_tokens,
+        completion_tokens,
     )
 
 
@@ -411,6 +419,55 @@ async def provider_outcomes(since_hours: int = 24 * 7) -> list[dict]:
         str(since_hours),
     )
     return [dict(row) for row in rows]
+
+
+# ─── Truy vết lượt trả lời (core/trace.py, migrations/025) ──────────────────
+# SQL ở core/repositories/observability.py.
+
+
+@_with_reconnect
+async def provider_latency_summary(since_hours: int = 24) -> list[dict]:
+    """Mỗi provider: số lượt, số lượt lỗi, p50/p95 độ trễ lượt thành công (/status)."""
+    from core.repositories import observability
+
+    return await observability.latency_by_provider(await get_pool(), since_hours)
+
+
+@_with_reconnect(idempotent=False)
+async def record_turn_metrics(**row) -> None:
+    """1 dòng turn_metrics khi 1 lượt kết thúc (core/trace.py ghi ở nền)."""
+    from core.repositories import observability
+
+    await observability.insert_turn_metrics(await get_pool(), **row)
+
+
+@_with_reconnect
+async def recent_turn_metrics(since_hours: int = 24, limit: int = 50) -> list[dict]:
+    from core.repositories import observability
+
+    return await observability.recent_turns(await get_pool(), since_hours, limit)
+
+
+@_with_reconnect
+async def turn_stage_summary(since_hours: int = 24) -> list[dict]:
+    from core.repositories import observability
+
+    return await observability.turn_stage_summary(await get_pool(), since_hours)
+
+
+@_with_reconnect
+async def provider_calls_for_turn(turn_id: str, limit: int = 50) -> list[dict]:
+    from core.repositories import observability
+
+    return await observability.provider_calls_for_turn(await get_pool(), turn_id, limit)
+
+
+@_with_reconnect
+async def provider_burn_since(providers: list[str], since: datetime) -> list[dict]:
+    """Lượt/token/credit đã dùng từ ``since`` (services/quota_burn.py)."""
+    from core.repositories import observability
+
+    return await observability.burn_since(await get_pool(), providers, since)
 
 
 @_with_reconnect

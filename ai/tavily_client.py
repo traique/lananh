@@ -12,8 +12,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from ai import provider_overrides
-from core import config, database as db, settings_cache, untrusted
+from ai import call_log, provider_overrides
+from core import config, settings_cache, untrusted
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,12 @@ _client: Optional[httpx.AsyncClient] = None
 
 
 class TavilyError(RuntimeError):
-    """Lỗi khi gọi Tavily (chưa cấu hình key, HTTP lỗi, payload rỗng)."""
+    """Lỗi khi gọi Tavily (chưa cấu hình key, HTTP lỗi, payload rỗng).
+    ``status_code``: mã HTTP (429 = hết credit/rate-limit) cho cột outcome."""
+
+    def __init__(self, message: str, *, status_code: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass(frozen=True)
@@ -169,18 +174,26 @@ async def search_results(
     if time_range:
         payload["time_range"] = time_range
 
-    response = await _get_client().post(
-        f"{config.TAVILY_BASE_URL}/search",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json=payload,
-    )
-    if response.status_code != 200:
-        raise TavilyError(f"Tavily trả lỗi HTTP {response.status_code}: {response.text[:250]}")
+    async def _search() -> dict:
+        response = await _get_client().post(
+            f"{config.TAVILY_BASE_URL}/search",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+        )
+        if response.status_code != 200:
+            raise TavilyError(
+                f"Tavily trả lỗi HTTP {response.status_code}: {response.text[:250]}",
+                status_code=response.status_code,
+            )
+        body = response.json()
+        if not (body.get("results") or body.get("answer")):
+            raise TavilyError("Tavily không trả về kết quả nào")
+        return body
 
-    data = response.json()
+    # provider_calls (ai/call_log.py): model = search_depth - trang quota tính
+    # credit Tavily theo đó (advanced = 2, basic = 1); ghi cả lượt lỗi/429.
+    data = await call_log.timed("tavily", search_depth, _search, stage="search_tavily")
     raw_results = data.get("results") or []
-    if not raw_results and not data.get("answer"):
-        raise TavilyError("Tavily không trả về kết quả nào")
 
     results: list[TavilyResult] = []
     domain_count: dict[str, int] = {}
@@ -200,11 +213,6 @@ async def search_results(
                 published_date=item.get("published_date"),
             )
         )
-
-    try:
-        await db.record_provider_call("tavily", search_depth)
-    except Exception:
-        logger.warning("Không ghi được lượt gọi Tavily vào DB.", exc_info=True)
 
     return TavilySearchResponse(
         query=str(data.get("query") or query),

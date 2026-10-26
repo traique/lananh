@@ -65,7 +65,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from ai.timeouts import TurnTimeoutError, bounded, turn_deadline
-from core import config, database as db
+from core import config, database as db, trace
 from core.envutil import env_int, env_on
 from core.text_normalize import fold
 from services import conversation_log, memory_guard, personal_settings
@@ -830,8 +830,12 @@ def after_exchange(user_id: int, *, explicit: bool = False) -> None:
         # Context RỖNG: task không thừa hưởng hạn chót của lượt chat đang chạy
         # (handle_channel_text/chat_router bọc cả lượt trong turn_deadline) -
         # maybe_flush tự đặt hạn chót MEMORY_UPDATE_TIMEOUT_SEC riêng.
+        context = contextvars.Context()
+        # Chỉ mang theo MÃ LƯỢT (log/provider_calls của lượt trích nhớ gom về câu
+        # trả lời đã sinh ra nó), không mang số đo lượt hay hạn chót.
+        context.run(trace.adopt, trace.current())
         task = asyncio.get_running_loop().create_task(
-            maybe_flush(user_id, explicit=explicit), context=contextvars.Context()
+            maybe_flush(user_id, explicit=explicit), context=context
         )
     except RuntimeError:
         return
@@ -934,9 +938,11 @@ async def sweep_once() -> None:
 
 async def _sweep_loop() -> None:
     # Lượt đầu ngay khi khởi động: bắt kịp các lượt chưa xử lý trước lúc restart.
+    trace.detach()
     while True:
         try:
-            await sweep_once()
+            with trace.job("memory_sweep"):
+                await sweep_once()
         except asyncio.CancelledError:
             raise
         except Exception:

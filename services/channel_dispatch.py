@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from core import config, trace
 from services import concurrency, turn_control
 from services.channel_result import ChannelResult
 from services.concurrency import assistant_turn
@@ -95,8 +96,26 @@ async def _chat(h: DispatchHandlers, req: DispatchRequest, text: str) -> Channel
     return await h.chat(req.user_id, text, req.is_admin)
 
 
+def _user_kind(req: DispatchRequest) -> str:
+    if config.is_owner_user_id(req.user_id):
+        return "owner"
+    return "admin" if req.is_admin else "member"
+
+
 async def dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]:
-    """Trả payload đã cache được: {messages, provider, image_b64, image_url}."""
+    """Trả payload đã cache được: {messages, provider, image_b64, image_url}.
+
+    Mã lượt (core/trace.py) = "<kênh>:<account_id>:<event_id>" - trùng event_key
+    của kênh, gom log + provider_calls + turn_metrics của lượt."""
+    with trace.turn(
+        f"{req.channel}:{req.account_id}:{req.event_id}",
+        channel=req.channel,
+        user_kind=_user_kind(req),
+    ):
+        return await _dispatch(req, h)
+
+
+async def _dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]:
     cached = await h.get_cached(req.account_id, req.event_id, req.cache_kind)
     if cached is not None:
         return cached

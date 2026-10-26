@@ -39,7 +39,7 @@ async def test_search_results_boost_vietnamese_and_keeps_structured_results(monk
 
     monkeypatch.setattr(tavily_client, "_api_key", fake_api_key)
     monkeypatch.setattr(tavily_client, "_get_client", lambda: client)
-    monkeypatch.setattr(tavily_client.db, "record_provider_call", fake_record)
+    monkeypatch.setattr(tavily_client.call_log.db, "record_provider_call", fake_record)
 
     result = await tavily_client.search_results(
         "giá iphone", max_results=10, max_results_per_domain=1
@@ -58,9 +58,7 @@ async def test_search_compatibility_wrapper_formats_structured_response(monkeypa
     response = tavily_client.TavilySearchResponse(
         query="tin mới",
         answer="Tóm tắt",
-        results=(
-            tavily_client.TavilyResult("Bài A", "https://a.vn", "Nội dung A"),
-        ),
+        results=(tavily_client.TavilyResult("Bài A", "https://a.vn", "Nội dung A"),),
     )
 
     async def fake_search_results(*args, **kwargs):

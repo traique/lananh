@@ -732,6 +732,30 @@ async def admin_usage_models(request: Request) -> Response:
     )
 
 
+def _ms(value) -> int | None:
+    return None if value is None else int(round(float(value)))
+
+
+@api_router.get("/usage/outcomes")
+async def admin_usage_outcomes(request: Request) -> Response:
+    """Lượt gọi theo (provider, kết quả) kèm độ trễ p50/p95 - thấy provider nào
+    chậm/lỗi/hết quota (core.database.provider_outcomes), không chỉ lượt thành công."""
+    rows = await db.provider_outcomes(_hours_param(request))
+    return JSONResponse(
+        [
+            {
+                "provider": row["provider"],
+                "outcome": row["outcome"],
+                "calls": row["calls"],
+                "p50_ms": _ms(row["p50_ms"]),
+                "p95_ms": _ms(row["p95_ms"]),
+                "last_at": row["last_at"].isoformat() if row["last_at"] else None,
+            }
+            for row in rows
+        ]
+    )
+
+
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 # Dưới ngưỡng này gom theo giờ (tối đa 48 cột), trên thì theo ngày (tối đa 366 cột)
 # - kết quả luôn có trần nên không phình RAM dù chọn khoảng 1 năm.

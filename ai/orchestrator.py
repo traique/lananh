@@ -36,9 +36,9 @@ from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from typing import Awaitable, Callable, Iterator, NamedTuple, Optional
 
-from core import config, database as db, untrusted
+from core import config, database as db, trace, untrusted
 from ai import openai_compatible, router9_client, groq_client, openrouter_client, official_client
-from ai import cooldown, prompt_budget, provider_overrides
+from ai import call_log, cooldown, prompt_budget, provider_overrides
 from ai import provider_state as provider_state_module
 from ai.provider_state import ProviderStateSnapshot, provider_state
 from ai.timeouts import (
@@ -335,8 +335,10 @@ async def _effective_model(provider: str) -> str:
 
 
 # Giai đoạn của lượt gọi (chat/ask/utility/search...) - caller đặt qua
-# ``call_stage()`` để provider_calls phân biệt lượt nào đốt thời gian.
-_call_stage: ContextVar[str | None] = ContextVar("provider_call_stage", default=None)
+# ``call_stage()`` để provider_calls phân biệt lượt nào đốt thời gian. ContextVar
+# nằm ở ai/call_log.py để client tầng dưới (Gemini utility, agent) đọc chung.
+_call_stage = call_log._call_stage
+call_stage = call_log.call_stage
 
 
 def _cooldown_key(provider: str) -> str:
@@ -345,15 +347,6 @@ def _cooldown_key(provider: str) -> str:
     if provider == "groq" and _call_stage.get() == "search":
         return "groq_search"
     return provider
-
-
-@contextmanager
-def call_stage(stage: str) -> Iterator[None]:
-    token = _call_stage.set(stage)
-    try:
-        yield
-    finally:
-        _call_stage.reset(token)
 
 
 def _classify_outcome(exc: BaseException) -> str:
@@ -419,21 +412,23 @@ async def _record_provider_call(
     *,
     outcome: str = "ok",
     latency_ms: int | None = None,
+    usage: Optional[call_log.CallUsage] = None,
 ) -> None:
     """Ghi 1 lượt gọi (thành công lẫn lỗi/timeout/429) vào provider_calls kèm độ
-    trễ và giai đoạn. Lỗi DB ở đây KHÔNG được làm hỏng câu trả lời thật cho
-    người dùng - chỉ log cảnh báo rồi bỏ qua."""
+    trễ, giai đoạn, mã lượt và token (ai/call_log.py). Lỗi DB ở đây KHÔNG được
+    làm hỏng câu trả lời thật cho người dùng - chỉ log cảnh báo rồi bỏ qua."""
     try:
         model = await _effective_model(provider)
-        await db.record_provider_call(
-            provider,
-            model,
-            outcome=outcome,
-            latency_ms=latency_ms,
-            stage=_call_stage.get(),
-        )
     except Exception:
-        logger.warning("Không ghi được lượt gọi provider=%s vào DB.", provider, exc_info=True)
+        model = provider
+    await call_log.record(
+        provider,
+        model,
+        outcome=outcome,
+        latency_ms=latency_ms,
+        stage=_call_stage.get(),
+        usage=usage,
+    )
 
 
 async def _tag_answer(result, provider: str):
@@ -452,35 +447,40 @@ async def _tag_answer(result, provider: str):
     return result
 
 
-async def _assert_clean_recorded(result, provider: str, allow_cjk: bool, latency_ms: int):
+async def _assert_clean_recorded(
+    result, provider: str, allow_cjk: bool, latency_ms: int, usage=None
+):
     try:
         _assert_output_clean(result, provider, allow_cjk=allow_cjk)
     except OutputContaminatedError:
-        await _record_provider_call(provider, outcome="contaminated", latency_ms=latency_ms)
+        await _record_provider_call(
+            provider, outcome="contaminated", latency_ms=latency_ms, usage=usage
+        )
         raise
 
 
 async def _timed(provider: str, call: Callable[[], Awaitable]):
-    """Chạy ``call()``, đo độ trễ và ghi provider_calls cho CẢ lượt lỗi (outcome
-    phân loại theo exception). Lượt thành công do caller ghi sau khi kiểm output."""
-    import time
-
+    """Chạy ``call()`` trong 1 ô token (ai/call_log.collect_usage), đo độ trễ và
+    ghi provider_calls cho CẢ lượt lỗi (outcome phân loại theo exception). Lượt
+    thành công do caller ghi sau khi kiểm output -> trả (kết quả, ms, usage)."""
     started = time.monotonic()
-    try:
-        result = await call()
-    except TurnTimeoutError:
-        await _record_provider_call(
-            provider, outcome="turn_timeout", latency_ms=int((time.monotonic() - started) * 1000)
-        )
-        raise
-    except Exception as exc:
-        await _record_provider_call(
-            provider,
-            outcome=_classify_outcome(exc),
-            latency_ms=int((time.monotonic() - started) * 1000),
-        )
-        raise
-    return result, int((time.monotonic() - started) * 1000)
+    with call_log.collect_usage() as usage:
+        try:
+            result = await call()
+        except TurnTimeoutError:
+            await _record_provider_call(
+                provider, outcome="turn_timeout", latency_ms=_elapsed_ms(started), usage=usage
+            )
+            raise
+        except Exception as exc:
+            await _record_provider_call(
+                provider,
+                outcome=_classify_outcome(exc),
+                latency_ms=_elapsed_ms(started),
+                usage=usage,
+            )
+            raise
+    return result, _elapsed_ms(started), usage
 
 
 async def _run_provider_chain(
@@ -531,26 +531,30 @@ async def _run_provider_chain_within_deadline(
     }
 
     async def _attempt_router9():
-        result, latency_ms = await _timed("router9", lambda: _run_with_call_timeout(router9_call))
-        await _assert_clean_recorded(result, "router9", allow_cjk, latency_ms)
+        result, latency_ms, usage = await _timed(
+            "router9", lambda: _run_with_call_timeout(router9_call)
+        )
+        await _assert_clean_recorded(result, "router9", allow_cjk, latency_ms, usage)
         await provider_state.mark_router9_alive()
         await provider_state.set_active_provider("router9")
-        await _record_provider_call("router9", latency_ms=latency_ms)
+        await _record_provider_call("router9", latency_ms=latency_ms, usage=usage)
         return await _tag_answer(result, "router9")
 
     async def _attempt_api(idx: int):
         provider_name = f"api{idx}"
-        result, latency_ms = await _timed(provider_name, lambda: bounded(lambda: api_call(idx)))
-        await _assert_clean_recorded(result, provider_name, allow_cjk, latency_ms)
+        result, latency_ms, usage = await _timed(
+            provider_name, lambda: bounded(lambda: api_call(idx))
+        )
+        await _assert_clean_recorded(result, provider_name, allow_cjk, latency_ms, usage)
         await provider_state.set_active_provider(provider_name)
-        await _record_provider_call(provider_name, latency_ms=latency_ms)
+        await _record_provider_call(provider_name, latency_ms=latency_ms, usage=usage)
         return await _tag_answer(result, provider_name)
 
     async def _attempt_generic(name: str):
-        result, latency_ms = await _timed(name, lambda: bounded(generic_calls[name]))
-        await _assert_clean_recorded(result, name, allow_cjk, latency_ms)
+        result, latency_ms, usage = await _timed(name, lambda: bounded(generic_calls[name]))
+        await _assert_clean_recorded(result, name, allow_cjk, latency_ms, usage)
         await provider_state.set_active_provider(name)
-        await _record_provider_call(name, latency_ms=latency_ms)
+        await _record_provider_call(name, latency_ms=latency_ms, usage=usage)
         return await _tag_answer(result, name)
 
     async def _has_any_fallback_configured() -> bool:
@@ -1023,9 +1027,12 @@ async def utility_json(prompt: str) -> Optional[dict]:
     ):
         try:
             with call_stage("utility"):
-                data, latency_ms = await _timed("groq", lambda: groq_client.generate_json(prompt))
+                data, latency_ms, usage = await _timed(
+                    "groq", lambda: groq_client.generate_json(prompt)
+                )
             if isinstance(data, dict):
-                await _record_provider_call("groq", latency_ms=latency_ms)
+                with call_stage("utility"):
+                    await _record_provider_call("groq", latency_ms=latency_ms, usage=usage)
                 return data
         except TurnTimeoutError:
             raise
@@ -1125,12 +1132,7 @@ class Transcription(NamedTuple):
 
 
 async def _record_stt_call(provider: str, model: str, outcome: str, latency_ms: int) -> None:
-    try:
-        await db.record_provider_call(
-            provider, model, outcome=outcome, latency_ms=latency_ms, stage="stt"
-        )
-    except Exception:
-        logger.warning("Không ghi được lượt STT provider=%s vào DB.", provider, exc_info=True)
+    await call_log.record(provider, model, outcome=outcome, latency_ms=latency_ms, stage="stt")
 
 
 async def _stt_attempt(provider: str, model: str, call: Callable[[], Awaitable[str]]) -> str:
@@ -1256,6 +1258,7 @@ _probe_task: Optional[asyncio.Task] = None
 
 
 async def _router9_probe_loop() -> None:
+    trace.detach()
     while True:
         await asyncio.sleep(config.ROUTER9_PROBE_INTERVAL_SEC)
         await provider_state.ensure_loaded()

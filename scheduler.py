@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from core import config
 from core import database as db
-from core import idempotency
+from core import idempotency, trace
 
 logger = logging.getLogger(__name__)
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -132,14 +132,16 @@ async def _process_due_reminders(due: list[tuple]) -> None:
 
 
 async def _reminder_loop() -> None:
+    trace.detach()
     while True:
         await asyncio.sleep(config.REMINDER_CHECK_INTERVAL_SEC)
-        try:
-            due = await idempotency.claim_due_reminders()
-        except Exception:
-            logger.warning("scheduler: lỗi khi claim reminders đến hạn.", exc_info=True)
-            continue
-        await _process_due_reminders(due)
+        with trace.job("reminders"):
+            try:
+                due = await idempotency.claim_due_reminders()
+            except Exception:
+                logger.warning("scheduler: lỗi khi claim reminders đến hạn.", exc_info=True)
+                continue
+            await _process_due_reminders(due)
 
 
 def _seconds_until_next_hour(hour: int) -> float:
@@ -234,9 +236,11 @@ async def run_daily_digest_once(user_id: int, *, force: bool = False) -> bool:
 
 
 async def _daily_digest_loop(user_id: int) -> None:
+    trace.detach()
     while True:
         try:
-            await run_daily_digest_once(user_id)
+            with trace.job("digest"):
+                await run_daily_digest_once(user_id)
         except asyncio.CancelledError:
             raise
         except Exception:

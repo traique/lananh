@@ -39,7 +39,7 @@ from dataclasses import dataclass, replace
 from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
-from core import address, config
+from core import address, config, trace
 from core import database as db
 from services import personal_settings, weather_home
 
@@ -581,9 +581,11 @@ async def run_due(now: dt.datetime | None = None) -> int:
 
 
 async def _loop() -> None:
+    trace.detach()
     while True:
         try:
-            await run_due()
+            with trace.job("morning_brief"):
+                await run_due()
         except asyncio.CancelledError:
             raise
         except Exception:

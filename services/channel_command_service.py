@@ -15,6 +15,7 @@ from services import (
     memory_service,
     price_search,
     prompt_templates,
+    provider_health,
     reply_audience,
     search_status,
     translate_service,
@@ -534,9 +535,10 @@ async def maybe_handle_command(
         return await _news_now(), None
     if command == "/status":
         state = orchestrator.get_provider_state_snapshot()
+        latency = "\n".join(await provider_health.latency_lines())
         return [
             f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}\n"
-            f"{await search_status.search_mode_line()}"
+            f"{await search_status.search_mode_line()}" + (f"\n\n{latency}" if latency else "")
         ], None
     if command == "/thongke":
         # Dùng chung logic/format với Telegram - xem services/usage_stats.py.
