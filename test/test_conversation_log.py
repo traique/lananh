@@ -139,3 +139,61 @@ async def test_last_model_row_ngoai_phien_bo_qua(monkeypatch):
     assert await clog.last_model_row(1) is None
     old["created_at"] = datetime.now(timezone.utc)
     assert (await clog.last_model_row(1))["kind"] == "stock"
+
+
+def _aged(kind, content, minutes):
+    row = _row(kind, content)
+    row["created_at"] = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    return row
+
+
+MEMBER_QUOTE = "📊 **HPG**: **27.500 VND** (10:00 26/10)\n🟢 +300 (+1,10%) so với phiên trước"
+
+
+def test_chat_doi_chu_de_lau_sau_bao_gia_khong_bi_chan():
+    """2 tiếng sau 1 câu báo giá, câu chat chuyện khác không nhắc mã không bị thay."""
+    row = _aged(clog.KIND_STOCK, clog.stock_record([MEMBER_QUOTE], full_access=False), 120)
+    throat = "Đau họng thì chị nên giữ ấm cổ họng, uống nước ấm nhé."
+    assert clog.guard_stock_reply(throat, row, user_text="đau họng làm sao em") == throat
+    run = "Chị có thể đặt target chạy bộ 5km mỗi sáng."
+    assert clog.guard_stock_reply(run, row, user_text="tập thể dục sao cho đều") == run
+    owner_row = _aged(clog.KIND_STOCK, clog.stock_record([OWNER_REPORT], full_access=True), 120)
+    car = "Theo em anh nên mua VF8 nếu hay đi đường dài."
+    assert clog.guard_stock_reply(car, owner_row, user_text="xe điện nào ổn em") == car
+
+
+def test_chat_nhac_dung_ma_da_bao_cao_van_bi_chan_du_da_lau():
+    row = _aged(clog.KIND_STOCK, clog.stock_record([MEMBER_QUOTE], full_access=False), 120)
+    reply = "HPG đang tăng nhẹ.\nChị nên mua quanh 27.000, stop 25.000."
+    guarded = clog.guard_stock_reply(reply, row, user_text="hpg thế nào em", address_form="chị")
+    assert guarded.startswith("HPG đang tăng nhẹ.")
+    assert "nên mua" not in guarded and "stop" not in guarded
+    assert guarded.endswith("nha chị.")
+    # Báo cáo vừa gửi + câu hỏi không nêu mã khác: vẫn chặn.
+    recent = _aged(clog.KIND_STOCK, clog.stock_record([MEMBER_QUOTE], full_access=False), 3)
+    assert "stop" not in clog.guard_stock_reply("Đặt stop 25.000 nhé.", recent, user_text="vậy sao")
+    # Vừa gửi nhưng câu hỏi nói về mã KHÁC: không áp tín hiệu của HPG.
+    owner_row = _aged(clog.KIND_STOCK, clog.stock_record([OWNER_REPORT], full_access=True), 3)
+    other = "VNM thì em thấy anh nên mua dần."
+    assert clog.guard_stock_reply(other, owner_row, user_text="còn VNM thì sao") == other
+
+
+def test_chat_sau_bao_cao_chi_bo_dong_vi_pham_khong_thay_ca_cau():
+    owner_row = _row(clog.KIND_STOCK, clog.stock_record([OWNER_REPORT], full_access=True))
+    reply = "FPT vẫn trong xu hướng tăng.\nEm nghĩ anh nên mua thêm FPT ngay."
+    guarded = clog.guard_stock_reply(reply, owner_row, user_text="sao em bảo giữ?")
+    assert guarded.startswith("FPT vẫn trong xu hướng tăng.")
+    assert "nên mua" not in guarded
+    assert "Tín hiệu hệ thống: **🟡 GIỮ**" in guarded
+    # Không còn dòng nào: câu báo + dòng số liệu đã lưu, không bao giờ chỉ câu báo.
+    member_row = _row(clog.KIND_STOCK, clog.stock_record([MEMBER_QUOTE], full_access=False))
+    only = clog.guard_stock_reply("Chị nên mua HPG quanh 27.000.", member_row, user_text="x")
+    assert "27.500 VND" in only and "nên mua" not in only
+
+
+def test_cau_bao_ban_tham_khao_khong_bi_chinh_bo_loc_xoa():
+    note = clog.REFERENCE_NOTE.format(ai="em", Ai="Em", tail=" chị")
+    assert rfmt.find_plan_language(note) == []
+    assert rfmt.find_action_conflicts(note, frozenset()) == []
+    once = clog.reference_only_reply("FPT tăng.\nNên mua vùng 120.", [], address_form="chị")
+    assert clog.reference_only_reply(once, [], address_form="chị") == once

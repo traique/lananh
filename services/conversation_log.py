@@ -21,8 +21,14 @@ Câu trả lời được rút gọn theo loại:
 - còn lại: cắt ~1500 ký tự đầu.
 
 ``guard_stock_reply``: lượt chat ngay sau báo cáo cổ phiếu không được nói
-ngược action của policy (chủ bot) hoặc đưa vùng mua/stop/target (thành viên) -
-vi phạm thì thay bằng câu báo đã lược bỏ như bản diễn giải AI của báo cáo.
+ngược action của policy (chủ bot) hoặc đưa vùng mua/stop/target (thành viên).
+Chỉ áp khi lượt chat còn dính tới báo cáo đó (nhắc đúng mã đã báo cáo, hoặc
+báo cáo vừa gửi STOCK_GUARD_RECENT_SEC trước và câu hỏi không nêu mã khác) -
+"chị nên giữ ấm cổ họng" 2 tiếng sau 1 câu báo giá không bị chặn. Vi phạm thì
+bỏ đúng các dòng vi phạm (không thay cả câu trả lời) rồi nối câu báo; không
+còn dòng nào thì trả câu báo kèm dòng số liệu đã lưu, không bao giờ chỉ có câu
+báo trơ trọi. ``reference_only_reply``: cùng bộ lọc dòng cho câu chat của
+thành viên Zalo có số liệu giá cổ phiếu (services/channel_chat_service.py).
 
 Trích trí nhớ (services/memory_service.py) chỉ đọc các lượt MEMORY_KINDS.
 """
@@ -243,21 +249,125 @@ async def last_model_row(user_id: int) -> dict | None:
     return row
 
 
-def guard_stock_reply(reply: str, last_row: dict | None) -> str:
-    """Câu chat ngay sau báo cáo cổ phiếu: chủ bot không được nhận action khác
-    policy; thành viên không được nhận nhãn hành động/vùng mua/stop/target."""
-    if not reply or not last_row or last_row.get("kind") != KIND_STOCK:
+# Báo cáo cổ phiếu còn tính là "ngay trước" trong chừng này giây: sau đó lượt
+# chat chỉ bị chặn khi nhắc đúng mã đã báo cáo.
+STOCK_GUARD_RECENT_SEC = 15 * 60
+# Mã trong bản lưu: dòng tiêu đề "📊 **FPT** — ..." / "📊 **HPG**: ..." và dòng
+# bảng danh mục "• **FPT**: giá ...".
+_REPORTED_SYMBOL_RE = re.compile(r"(?:📊\s*\*{0,2}|•\s*\*\*)([A-Z][A-Z0-9]{2,9})(?![A-Za-z0-9])")
+# Câu do code nối sau khi bỏ dòng - KHÔNG chứa cụm nào find_plan_language/
+# find_action_conflicts bắt (lọc lần 2 không xoá chính câu báo).
+REFERENCE_NOTE = (
+    "📌 Phần nói về điểm vào lệnh hay kế hoạch giao dịch đã được lược bỏ - {ai} chỉ gửi "
+    "thông tin tham khảo, không phải khuyến nghị giao dịch nha{tail}."
+)
+_OWNER_PARTIAL_NOTE = (
+    "⚠️ Em đã bỏ câu nêu tín hiệu khác với hệ thống - tín hiệu vẫn do policy quyết định:"
+)
+_FALLBACK_LINES = 3
+
+
+def reported_symbols(content: str) -> set[str]:
+    """Các mã cổ phiếu nêu trong bản lưu của 1 lượt báo cáo (stock_record)."""
+    return set(_REPORTED_SYMBOL_RE.findall(content or ""))
+
+
+def _mentions(text: str, symbols: set[str]) -> bool:
+    return any(
+        re.search(rf"(?<![A-Za-z0-9]){re.escape(symbol)}(?![A-Za-z0-9])", text or "", re.IGNORECASE)
+        for symbol in symbols
+    )
+
+
+def _row_age_sec(row: dict) -> float | None:
+    created = row.get("created_at")
+    if not isinstance(created, datetime):
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - created).total_seconds()
+
+
+def stock_guard_applies(last_row: dict | None, user_text: str = "", reply: str = "") -> bool:
+    """Lượt chat này còn dính tới báo cáo cổ phiếu ngay trước không: người dùng
+    hoặc câu trả lời nhắc đúng mã đã báo cáo, hoặc báo cáo vừa gửi (<=
+    STOCK_GUARD_RECENT_SEC, không rõ giờ thì coi là vừa gửi) và câu hỏi không
+    nêu mã nào khác ("sao em bảo giữ?", "vậy có nên bán không?")."""
+    if not last_row or last_row.get("kind") != KIND_STOCK:
+        return False
+    symbols = reported_symbols(str(last_row.get("content") or ""))
+    if symbols and (_mentions(user_text, symbols) or _mentions(reply, symbols)):
+        return True
+    age = _row_age_sec(last_row)
+    if age is not None and age > STOCK_GUARD_RECENT_SEC:
+        return False
+    from stock import analysis as stock_analysis
+
+    known, _unverified = stock_analysis.detect_symbol_candidates(user_text or "")
+    return not (set(known) - symbols)
+
+
+def _is_reference_violation(line: str) -> bool:
+    from stock import report_format as rfmt
+
+    return bool(rfmt.find_action_conflicts(line, frozenset()) or rfmt.find_plan_language(line))
+
+
+def reference_only_reply(
+    reply: str, fallback_lines: list[str], *, address_form: str | None = None
+) -> str:
+    """Bản thành viên (chỉ tham khảo): bỏ từng dòng có nhãn hành động/ngôn ngữ kế
+    hoạch giao dịch rồi nối REFERENCE_NOTE. Không còn dòng nào thì trả câu báo
+    kèm ``fallback_lines`` (dòng số liệu) - không bao giờ rỗng."""
+    if not reply:
         return reply
+    kept: list[str] = []
+    dropped = 0
+    for line in reply.splitlines():
+        if _is_reference_violation(line):
+            dropped += 1
+            continue
+        kept.append(line)
+    if not dropped:
+        return reply
+    logger.warning("Đã bỏ %d dòng khuyến nghị giao dịch trong câu chat bản tham khảo.", dropped)
+    from services import media_text
+
+    note = media_text.say(REFERENCE_NOTE, owner=False, address_form=address_form)
+    body = "\n".join(kept).strip()
+    if body:
+        return f"{body}\n\n{note}"
+    from stock import analysis as stock_analysis
+
+    data = "\n".join(line for line in fallback_lines if line.strip()).strip()
+    return f"{stock_analysis._REFERENCE_DROPPED_NOTE}\n\n{data}" if data else note
+
+
+def grounding_price_lines(grounding: str) -> list[str]:
+    """Dòng giá "- FPT: 120.500 VND ..." trong khối build_price_grounding."""
+    return [
+        line.strip().rstrip("]")
+        for line in (grounding or "").splitlines()
+        if line.strip().startswith("- ")
+    ]
+
+
+def guard_stock_reply(
+    reply: str, last_row: dict | None, *, user_text: str = "", address_form: str | None = None
+) -> str:
+    """Câu chat ngay sau báo cáo cổ phiếu (stock_guard_applies): chủ bot không
+    được nhận action khác policy; thành viên không được nhận nhãn hành động/vùng
+    mua/stop/target. Chỉ bỏ đúng các dòng vi phạm."""
+    if not reply or not stock_guard_applies(last_row, user_text, reply):
+        return reply
+    assert last_row is not None
     from stock import analysis as stock_analysis
     from stock import report_format as rfmt
 
     content = str(last_row.get("content") or "")
     if content.startswith(MEMBER_STOCK_TAG):
-        conflicts = rfmt.find_action_conflicts(reply, frozenset()) + rfmt.find_plan_language(reply)
-        if conflicts:
-            logger.warning("Câu chat sau báo cáo tham khảo có nội dung kế hoạch: %s", conflicts[:5])
-            return stock_analysis._REFERENCE_DROPPED_NOTE
-        return reply
+        stored = [line for line in content.splitlines()[1:] if line.strip()]
+        return reference_only_reply(reply, stored[:_FALLBACK_LINES], address_form=address_form)
     match = _OWNER_TAG_RE.match(content)
     actions = [a.strip() for a in match.group(1).split(",")] if match else []
     known = [a for a in actions if a in stock_analysis._COMPATIBLE_ACTIONS]
@@ -266,9 +376,19 @@ def guard_stock_reply(reply: str, last_row: dict | None) -> str:
     allowed: set[str] = set()
     for action in known:
         allowed |= stock_analysis._COMPATIBLE_ACTIONS[action]
-    conflicts = rfmt.find_action_conflicts(reply, frozenset(allowed))
+    kept: list[str] = []
+    conflicts: list[str] = []
+    for line in reply.splitlines():
+        found = rfmt.find_action_conflicts(line, frozenset(allowed))
+        if found:
+            conflicts.extend(found)
+            continue
+        kept.append(line)
     if not conflicts:
         return reply
     logger.warning("Câu chat nói ngược action policy %s: %s", known, conflicts[:5])
     signal = "\n".join(line for line in content.splitlines()[1:4] if line.strip())
+    body = "\n".join(kept).strip()
+    if body:
+        return f"{body}\n\n{_OWNER_PARTIAL_NOTE}\n{signal}".strip()
     return f"{stock_analysis._CONFLICT_DROPPED_NOTE}\n\n{signal}".strip()

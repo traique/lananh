@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import messages
 from ai import drafts, orchestrator
 from ai.timeouts import TurnTimeoutError, turn_deadline
-from core import address, trace, untrusted, urls
+from core import address, config, trace, untrusted, urls
 from services import (
     article_reader,
     chat_context,
@@ -286,8 +286,11 @@ async def run_chat_turn(
             searching = mode in (orchestrator.SEARCH_NATIVE, orchestrator.SEARCH_FORCED)
             turn_progress.report(turn_progress.SEARCH if searching else turn_progress.THINK)
             # Bản nháp chữ đang sinh (Telegram) chỉ cho chat thường: lượt có số liệu
-            # cổ phiếu còn qua bước chặn câu nói ngược policy nên không phát nháp.
-            with drafts.drafting(not grounding), trace.stage("llm"):
+            # cổ phiếu, hoặc ngay sau báo cáo cổ phiếu (câu trả lời còn qua bước
+            # chặn câu nói ngược policy - conversation_log.guard_stock_reply), không
+            # phát nháp. Link trong nháp đã bị turn_feedback.draft_text thay "…".
+            stock_followup = (last_row or {}).get("kind") == conversation_log.KIND_STOCK
+            with drafts.drafting(not grounding and not stock_followup), trace.stage("llm"):
                 response = await orchestrator.chat(
                     user_id,
                     text,
@@ -300,7 +303,18 @@ async def run_chat_turn(
                     address_form=address_form,
                     style_rules="\n\n".join(p for p in (memory.style_rules, style_hint) if p),
                 )
-        reply = conversation_log.guard_stock_reply((response.text or "").strip(), last_row)
+        form = address_form or reply_audience.current().address_form
+        reply = conversation_log.guard_stock_reply(
+            (response.text or "").strip(), last_row, user_text=text, address_form=form
+        )
+        if grounding and not is_admin and not config.is_owner_user_id(user_id):
+            # Thành viên Zalo hỏi về mã có số liệu giá (vd "FPT có đáng tích luỹ
+            # dài hạn không"): chỉ bản tham khảo - bỏ dòng nhãn hành động/vùng
+            # mua/stop/target bằng code, không trông vào persona hay "cách trả
+            # lời" người dùng tự dặn.
+            reply = conversation_log.reference_only_reply(
+                reply, conversation_log.grounding_price_lines(grounding), address_form=form
+            )
         searched = bool(getattr(response, "searched", False))
         untrusted_context = plan.untrusted or untrusted.contains_untrusted(combined)
         reply = _filter_reply_links(
@@ -406,8 +420,6 @@ def _filter_reply_links(
       đọc trang lạ cùng persona/trí nhớ, nhưng nguồn trích dẫn có thể không có
       trong dữ liệu của bot -> lọc lỏng: giữ link không query, vô hiệu link mang
       dữ liệu (query string/userinfo không khớp nguồn, tên miền trần kèm ?/=)."""
-    from core import config
-
     mode = config.REPLY_URL_FILTER
     if not reply or mode == "off":
         return reply

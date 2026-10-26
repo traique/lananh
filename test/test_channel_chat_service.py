@@ -925,3 +925,66 @@ async def test_tat_loc_link_thi_luot_tu_tra_web_giu_nguyen(chat_fakes, monkeypat
     turn = await ccs.run_chat_turn(1, "giá vàng hôm nay")
     await ccs.stop_background_tasks()
     assert turn.text == "Xem https://evil.example/?d=1"
+
+
+_FPT_GROUNDING = (
+    "[DỮ LIỆU GIÁ THỰC TẾ lúc 10:00 26/10/2026 giờ VN, lấy trực tiếp từ DNSE - ...:\n"
+    "- FPT: 120.500 VND (10:00), +1.500 (+1,26%) so với phiên trước (119.000 VND)]"
+)
+
+
+@pytest.mark.asyncio
+async def test_thanh_vien_hoi_ma_co_so_lieu_gia_khong_nhan_ke_hoach_giao_dich(chat_fakes):
+    """Lượt chat có số liệu giá DNSE của thành viên Zalo: code bỏ dòng vùng mua/stop."""
+    from services import channel_chat_service as ccs
+
+    chat_fakes["response"] = _FakeResponse(
+        "FPT là doanh nghiệp công nghệ lớn, tăng trưởng đều.\n"
+        "Chị nên mua tích luỹ vùng 120-125, cắt lỗ dưới 110."
+    )
+    question = "em ơi FPT có đáng để tích luỹ dài hạn không"
+    turn = await ccs.run_chat_turn(
+        -5, question, grounding=_FPT_GROUNDING, channel="zalo", address_form="chị"
+    )
+    assert turn.text.startswith("FPT là doanh nghiệp công nghệ lớn")
+    assert "cắt lỗ" not in turn.text and "nên mua" not in turn.text
+    assert "thông tin tham khảo" in turn.text and turn.text.endswith("nha chị.")
+    # Cả câu chỉ toàn kế hoạch: câu báo + dòng giá, không bao giờ rỗng.
+    chat_fakes["response"] = _FakeResponse("Nên mua vùng 120, stop 110, target 140.")
+    turn = await ccs.run_chat_turn(-5, question, grounding=_FPT_GROUNDING, channel="zalo")
+    assert "FPT: 120.500 VND" in turn.text and "stop" not in turn.text
+    # Admin Zalo giữ bản đầy đủ như trước.
+    plan = "Nên mua vùng 120, stop 110."
+    chat_fakes["response"] = _FakeResponse(plan)
+    turn = await ccs.run_chat_turn(
+        -6, question, grounding=_FPT_GROUNDING, channel="zalo", is_admin=True
+    )
+    assert turn.text == plan
+    await ccs.stop_background_tasks()
+
+
+@pytest.mark.asyncio
+async def test_khong_phat_ban_nhap_ngay_sau_bao_cao_co_phieu(chat_fakes, monkeypatch):
+    from ai import drafts
+    from services import channel_chat_service as ccs
+    from services import conversation_log
+
+    seen = []
+
+    async def fake_chat(user_id, text, **kw):
+        seen.append(drafts.partial_sink() is not None)
+        return _FakeResponse("Dạ anh.")
+
+    monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
+    with drafts.sink_scope(lambda text: None):
+        await ccs.run_chat_turn(1, "chào em")
+        chat_fakes["last_row"] = {
+            "kind": conversation_log.KIND_STOCK,
+            "content": conversation_log.stock_record(
+                ["📊 **HPG** — **27.500 VND**\nTín hiệu hệ thống: **🟡 GIỮ** (x)\nĐang giữ"],
+                full_access=True,
+            ),
+        }
+        await ccs.run_chat_turn(1, "vậy có nên bán không?")
+    await ccs.stop_background_tasks()
+    assert seen == [True, False]
