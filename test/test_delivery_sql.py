@@ -813,7 +813,7 @@ async def test_price_alerts_watchlist_and_alert_log(delivery_db):
 async def test_sl_tp_and_partial_sale_keep_cost_basis_purchase_rebases_first(
     delivery_db, monkeypatch
 ):
-    from core.repositories.portfolio import CorporateRebase
+    from stock import corporate_actions as ca
 
     pool = delivery_db
     await portfolio.set_holding(1, "VNM", 1000, 60000)
@@ -824,10 +824,15 @@ async def test_sl_tp_and_partial_sale_keep_cost_basis_purchase_rebases_first(
     # Sửa SL/TP và bán bớt KHÔNG dời mốc giá vốn (khác updated_at).
     assert (await portfolio.get_holding(1, "VNM")).cost_basis_as_of == "2026-01-05"
 
-    async def pending(user_id, symbol):
-        return CorporateRebase(1.2, "2026-02-10", "cổ phiếu 20% GDKHQ 10/02")
+    event = ca.StockEvent(ex_date="2026-02-10", ratio=0.2)
 
-    monkeypatch.setattr(portfolio, "_pending_rebase", pending)
+    async def confirmed(holdings, series_list=None, *, limit_sec=8.0):
+        return [
+            portfolio.CorporateView(h, portfolio.effective_holding(h, [event]), (event,))
+            for h in holdings
+        ]
+
+    monkeypatch.setattr(portfolio, "corporate_views", confirmed)
     holding = await portfolio.add_purchase(1, "VNM", 120, 50000)
     # 900 cp x 1,2 = 1.080 cp giá 50.000 (quy đổi TRƯỚC) + 120 cp giá 50.000.
     assert holding.quantity == 1200
@@ -868,3 +873,61 @@ async def test_nl_target_only_keeps_rebased_stop(delivery_db, monkeypatch):
     await portfolio_service.maybe_handle_natural_language(1, "đặt HPG stop 16")
     holding = await portfolio.get_holding(1, "HPG")
     assert holding.stop_price == 16000 and holding.target_price == 30000
+
+
+@pytest.mark.asyncio
+async def test_purchase_fails_closed_when_corporate_check_unavailable(delivery_db, monkeypatch):
+    """Lịch quyền lỗi/quá giờ: mua thêm dời mốc giá vốn qua GDKHQ thì sự kiện bị
+    bỏ sót vĩnh viễn -> thử lại 1 lần với trần dài, vẫn lỗi thì KHÔNG ghi."""
+    from services import portfolio_service
+
+    pool = delivery_db
+    await portfolio.set_holding(1, "HPG", 1000, 25000)
+    await pool.execute("UPDATE stock_holdings SET cost_basis_as_of = '2026-10-01'")
+    limits = []
+
+    async def unchecked(holdings, series_list=None, *, limit_sec=8.0):
+        limits.append(limit_sec)
+        return [portfolio.CorporateView(h, h, checked=False) for h in holdings]
+
+    monkeypatch.setattr(portfolio, "corporate_views", unchecked)
+    reply = await portfolio_service.add_holding(1, "HPG", 1000, 21000)
+    assert "chưa ghi" in reply.lower() and "/capnhatcp HPG" in reply
+    assert limits == [8.0, portfolio._BACKGROUND_LOOKUP_TIMEOUT_SEC]
+    holding = await portfolio.get_holding(1, "HPG")
+    assert holding.quantity == 1000 and holding.average_price == 25000
+    assert holding.cost_basis_as_of == "2026-10-01"
+    sides = await pool.fetch("SELECT side FROM stock_transactions WHERE symbol='HPG' ORDER BY id")
+    assert [r["side"] for r in sides] == ["ADJUST"]
+
+    # Lần thử lại thành công thì vẫn ghi bình thường.
+    calls = {"n": 0}
+
+    async def second_ok(holdings, series_list=None, *, limit_sec=8.0):
+        calls["n"] += 1
+        return [portfolio.CorporateView(h, h, checked=calls["n"] > 1) for h in holdings]
+
+    monkeypatch.setattr(portfolio, "corporate_views", second_ok)
+    reply = await portfolio_service.add_holding(1, "HPG", 1000, 21000)
+    assert reply.startswith("✅ Đã ghi nhận mua HPG: 2.000 cp")
+
+
+@pytest.mark.asyncio
+async def test_purchase_with_unconfirmed_event_records_and_warns(delivery_db, monkeypatch):
+    from services import portfolio_service
+    from stock import corporate_actions as ca
+
+    pool = delivery_db
+    await portfolio.set_holding(1, "HPG", 1000, 25000)
+    await pool.execute("UPDATE stock_holdings SET cost_basis_as_of = '2026-10-01'")
+    event = ca.StockEvent(ex_date="2026-10-20", ratio=0.2)
+
+    async def unconfirmed(holdings, series_list=None, *, limit_sec=8.0):
+        return [portfolio.CorporateView(h, h, (), (event,)) for h in holdings]
+
+    monkeypatch.setattr(portfolio, "corporate_views", unconfirmed)
+    reply = await portfolio_service.add_holding(1, "HPG", 1000, 21000)
+    assert reply.startswith("✅ Đã ghi nhận mua HPG: 2.000 cp")
+    # Sau lệnh này mốc giá vốn đã qua GDKHQ -> sự kiện không còn được phát hiện:
+    # phải báo ngay để anh đối chiếu CTCK.
+    assert "GDKHQ 20/10" in reply and "/capnhatcp HPG" in reply

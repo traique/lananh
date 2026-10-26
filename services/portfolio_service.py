@@ -115,15 +115,24 @@ async def add_holding(
             target_price=target_price,
         )
         action = "Đã cập nhật"
+        warning = None
     else:
-        holding = await portfolio.add_purchase(
-            user_id,
-            valid_symbol,
-            quantity,
-            price,
-            stop_price=stop_price,
-            target_price=target_price,
-        )
+        try:
+            result = await portfolio.record_purchase(
+                user_id,
+                valid_symbol,
+                quantity,
+                price,
+                stop_price=stop_price,
+                target_price=target_price,
+            )
+        except portfolio.CorporateCheckUnavailable:
+            return (
+                f"⚠️ Em chưa kiểm tra được lịch sự kiện quyền của {valid_symbol} nên CHƯA ghi lệnh "
+                "mua (ghi lúc này có thể trộn giá vốn trước/sau ngày GDKHQ). Anh thử lại sau ít "
+                f"phút, hoặc gõ /capnhatcp {valid_symbol} <SỐ_CP> <GIÁ_VỐN> theo số liệu CTCK nhé."
+            )
+        holding, warning = result.holding, result.warning
         action = "Đã ghi nhận mua"
     text = (
         f"✅ {action} {valid_symbol}: {_fmt(holding.quantity)} cp, "
@@ -131,6 +140,8 @@ async def add_holding(
     )
     if not replace:
         text += f"\n⏳ Cổ phiếu mua về tài khoản {settlement_note()}."
+    if warning:
+        text += f"\n{warning}"
     return text
 
 

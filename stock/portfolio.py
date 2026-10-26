@@ -322,8 +322,10 @@ async def corporate_views(
 
 
 async def _pending_rebase(user_id: int, symbol: str) -> CorporateRebase | None:
-    """Quy đổi quyền còn treo của 1 vị thế, áp TRƯỚC mọi thao tác ghi (mua thêm,
-    bán, đặt SL/TP) để số anh nhập không bị trộn với số trước GDKHQ."""
+    """Quy đổi quyền còn treo của 1 vị thế, áp TRƯỚC thao tác ghi không dời mốc
+    giá vốn (bán, đặt SL/TP) để số anh nhập không bị trộn với số trước GDKHQ.
+    Lỗi tra cứu -> không quy đổi lúc này (mốc giá vốn giữ nguyên nên job hằng
+    ngày/lần xem sau vẫn quy đổi được). Mua thêm dùng _purchase_view (fail closed)."""
     try:
         holding = await get_holding(user_id, symbol)
         if holding is None:
@@ -332,6 +334,61 @@ async def _pending_rebase(user_id: int, symbol: str) -> CorporateRebase | None:
     except Exception:
         return None
     return view.rebase()
+
+
+class CorporateCheckUnavailable(RuntimeError):
+    """Chưa kiểm tra được lịch quyền của vị thế đang giữ nên không ghi lệnh mua."""
+
+    def __init__(self, symbol: str):
+        super().__init__(f"corporate actions check unavailable for {symbol}")
+        self.symbol = symbol
+
+
+def _purchase_retry_limit() -> float:
+    """Trần lần tra lịch quyền thứ 2 khi mua thêm: trần job nền, nhưng không vượt
+    thời gian còn lại của lượt trả lời (chừa biên để kịp trả lời)."""
+    from ai import timeouts
+
+    limit = _BACKGROUND_LOOKUP_TIMEOUT_SEC
+    remaining = timeouts.remaining_turn_seconds()
+    if remaining is not None:
+        limit = min(limit, remaining - 5.0)
+    return limit
+
+
+async def _purchase_view(user_id: int, symbol: str) -> CorporateView | None:
+    """Sự kiện quyền của vị thế đang giữ trước khi mua thêm (None = chưa có vị thế).
+
+    Mua thêm dời mốc giá vốn tới hôm nay: sự kiện có GDKHQ sau mốc cũ mà chưa
+    được quy đổi lúc này thì sẽ nằm ngoài cửa sổ "mốc < GDKHQ" VĨNH VIỄN (job
+    hằng ngày không còn thấy). Vì vậy tra lỗi/quá giờ thì thử lại 1 lần với trần
+    dài hơn, vẫn lỗi -> raise CorporateCheckUnavailable (không ghi)."""
+    holding = await get_holding(user_id, symbol)
+    if holding is None:
+        return None
+    (view,) = await corporate_views([holding])
+    if not view.checked:
+        limit = _purchase_retry_limit()
+        if limit > 0:
+            (view,) = await corporate_views([holding], limit_sec=limit)
+    if not view.checked:
+        raise CorporateCheckUnavailable(symbol)
+    return view
+
+
+def unconfirmed_purchase_warning(view: CorporateView | None) -> str | None:
+    """Cảnh báo khi lệnh mua gộp vào vị thế còn sự kiện quyền CHƯA được giá xác nhận:
+    sau lệnh mua mốc giá vốn đã qua GDKHQ nên em không tự quy đổi sự kiện đó nữa."""
+    if view is None or not view.unconfirmed:
+        return None
+    symbol = view.raw.symbol
+    labels = ", ".join(stock_event_label(e) for e in view.unconfirmed)
+    return (
+        f"⚠️ {symbol} có sự kiện {labels} sau mốc giá vốn cũ mà giá chưa xác nhận: em đã "
+        "bình quân lệnh mua với vị thế CHƯA quy đổi và sau lệnh này sẽ không tự quy đổi sự "
+        f"kiện đó nữa. Nếu sự kiện đã diễn ra, anh gõ /capnhatcp {symbol} <SỐ_CP> <GIÁ_VỐN> "
+        "theo số liệu CTCK nhé."
+    )
 
 
 async def apply_confirmed_corporate_actions(
@@ -394,7 +451,13 @@ async def set_holding(
     return _holding(row)
 
 
-async def add_purchase(
+@dataclass(frozen=True)
+class PurchaseResult:
+    holding: Holding
+    warning: Optional[str] = None  # sự kiện quyền chưa xác nhận bị gộp vào giá vốn
+
+
+async def record_purchase(
     user_id: int,
     symbol: str,
     quantity: float,
@@ -402,10 +465,13 @@ async def add_purchase(
     *,
     stop_price: float | None = None,
     target_price: float | None = None,
-) -> Holding:
-    """Ghi lệnh mua (bình quân giá trong 1 transaction) + dòng BUY kèm phí mua."""
+) -> PurchaseResult:
+    """Ghi lệnh mua (bình quân giá trong 1 transaction) + dòng BUY kèm phí mua.
+    Quy đổi quyền đã xác nhận TRƯỚC khi bình quân; chưa kiểm tra được lịch quyền
+    của vị thế đang giữ -> raise CorporateCheckUnavailable, không ghi gì."""
     await ensure_schema()
     symbol = symbol.strip().upper()
+    view = await _purchase_view(user_id, symbol)
     row = await db.portfolio_record_purchase(
         user_id,
         symbol,
@@ -415,9 +481,25 @@ async def add_purchase(
         target_price=target_price,
         fee=round(quantity * price * fee_rate()),
         basis_date=today_vn(),
-        rebase=await _pending_rebase(user_id, symbol),
+        rebase=view.rebase() if view is not None else None,
     )
-    return _holding(row)
+    return PurchaseResult(_holding(row), unconfirmed_purchase_warning(view))
+
+
+async def add_purchase(
+    user_id: int,
+    symbol: str,
+    quantity: float,
+    price: float,
+    *,
+    stop_price: float | None = None,
+    target_price: float | None = None,
+) -> Holding:
+    """record_purchase, chỉ trả vị thế sau lệnh mua."""
+    result = await record_purchase(
+        user_id, symbol, quantity, price, stop_price=stop_price, target_price=target_price
+    )
+    return result.holding
 
 
 async def update_alerts(

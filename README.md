@@ -520,7 +520,7 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/zalo` | Đăng nhập hoặc xem trạng thái Zalo |
 | `/zalologout` | Xóa Zalo session |
 | `/danhmuc` | Xem danh mục: giá, % thay đổi trong ngày từng mã, lãi/lỗ so với giá vốn, tỷ trọng, cảnh báo stop/target, và lãi/lỗ TRONG NGÀY của cả danh mục (riêng từng người dùng) |
-| `/themcp <MÃ> <SL> <GIÁ_VỐN> [STOP] [TARGET]` | Thêm giao dịch mua (giá < 1.000 hiểu là nghìn đồng); `/capnhatcp` ghi đè vị thế |
+| `/themcp <MÃ> <SL> <GIÁ_VỐN> [STOP] [TARGET]` | Thêm giao dịch mua (giá < 1.000 hiểu là nghìn đồng); mua thêm mã đang giữ mà chưa kiểm tra được lịch quyền thì KHÔNG ghi (thử lại sau), có sự kiện quyền chưa được giá xác nhận thì ghi kèm cảnh báo; `/capnhatcp` ghi đè vị thế |
 | `/bancp <MÃ> [SL\|hết]` | Bán bớt hoặc bán hết |
 | `/xoacp <MÃ>` | Xoá mã khỏi danh mục |
 | `/anh <mô tả>` / `/anh on\|off` | Tạo ảnh thật (Agnes AI) / bật tắt |

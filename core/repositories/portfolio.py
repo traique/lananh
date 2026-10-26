@@ -243,7 +243,9 @@ async def record_purchase(
     rebase: CorporateRebase | None = None,
 ):
     """Mua thêm: quy đổi sự kiện quyền còn treo TRƯỚC khi bình quân giá (không
-    trộn giá vốn trước GDKHQ với giá sau GDKHQ), rồi ghi dòng BUY."""
+    trộn giá vốn trước GDKHQ với giá sau GDKHQ), rồi ghi dòng BUY. Mốc giá vốn
+    dời tới ``basis_date`` - caller (stock.portfolio.record_purchase) phải đã
+    kiểm tra được lịch quyền, nếu không sự kiện bỏ sót không bao giờ được quy đổi."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             current = await _apply_rebase(conn, await _lock_holding(conn, user_id, symbol), rebase)

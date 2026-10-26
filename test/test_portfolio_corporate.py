@@ -179,3 +179,29 @@ async def test_khong_co_su_kien_sau_moc_thi_khong_tai_chuoi_gia(events, monkeypa
     view = await portfolio.corporate_view(_holding())
     assert view.effective == view.raw and view.checked
     assert calls == []  # /danhmuc không tốn thêm request DNSE khi không có sự kiện
+
+
+@pytest.mark.asyncio
+async def test_mua_them_thu_lai_tra_lich_quyen_trong_han_chot_luot(monkeypatch):
+    from ai import timeouts
+
+    limits = []
+
+    async def fake_get_holding(user_id, symbol):
+        return _holding()
+
+    async def unchecked(holdings, series_list=None, *, limit_sec=8.0):
+        limits.append(limit_sec)
+        return [portfolio.CorporateView(h, h, checked=False) for h in holdings]
+
+    monkeypatch.setattr(portfolio, "get_holding", fake_get_holding)
+    monkeypatch.setattr(portfolio, "corporate_views", unchecked)
+    with timeouts.turn_deadline(20):
+        with pytest.raises(portfolio.CorporateCheckUnavailable):
+            await portfolio._purchase_view(1, "VNM")
+    assert len(limits) == 2 and limits[0] == 8.0 and 10 < limits[1] <= 15
+    limits.clear()
+    with timeouts.turn_deadline(3):  # không còn đủ thời gian thử lại
+        with pytest.raises(portfolio.CorporateCheckUnavailable):
+            await portfolio._purchase_view(1, "VNM")
+    assert limits == [8.0]
