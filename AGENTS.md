@@ -22,13 +22,15 @@ các file thay đổi). `stock/analysis.py` và `stock/sector.py` được miễ
   dùng (`"owner"` cho Telegram/Zoom, `"zalo:<internal_user_id>"` cho Zalo);
   tổng lượt song song bị chặn bởi `MAX_CONCURRENT_TURNS`. Lệnh `/fb_*` chạy
   ngoài khoá này. Gateway Zalo xếp tin riêng theo từng người gửi
-  (`ZALO_DIRECT_CONCURRENCY`, khớp `MAX_CONCURRENT_TURNS`). Mỗi lượt trả lời
+  (`ZALO_DIRECT_CONCURRENCY`, khớp số chỗ thành viên
+  `MAX_CONCURRENT_TURNS - OWNER_RESERVED_SLOTS`). Mỗi lượt trả lời
   có hạn chót tổng `CHAT_TURN_TIMEOUT_SEC` (`ai.timeouts.turn_deadline`) - gọi
   AI mới phải đi qua `ai.timeouts.bounded()` hoặc provider-chain.
 - Layering: `services/`, `ai/`, `channels/`, `core/`, `stock/` KHÔNG import
   `handlers/`; handler chỉ parse lệnh và gọi service.
 - DB: schema chỉ đổi qua `migrations/NNN_*.sql`. KHÔNG sửa migration đã áp
-  (runner lưu checksum và báo chủ bot khi lệch) - thêm file số mới. Hàm INSERT
+  (runner lưu checksum và báo chủ bot khi lệch) - thêm file số mới, rồi chạy
+  `python -m core.migrations --write-lock` và commit `migrations.lock`. Hàm INSERT
   không idempotent dùng `@_with_reconnect(idempotent=False)`.
 - Phân tích cổ phiếu: action và mọi con số entry/stop/target/tỷ trọng do
   `stock/policy.py` quyết định; LLM chỉ diễn giải, không được đổi action.
