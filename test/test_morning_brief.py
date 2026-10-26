@@ -305,6 +305,14 @@ async def test_run_due_gui_dung_kenh_mot_lan_moi_ngay(world):
     assert await mb.run_due(MONDAY + dt.timedelta(hours=4)) == 0  # quá khung gửi bù
 
 
+async def test_nhieu_dong_zalo_da_tat_khong_che_chu_bot(world):
+    for i in range(1, mb._LIST_LIMIT + 50):
+        world["settings"][f"brief:zalo:-{i}"] = mb.dump_settings(mb.BriefSettings(on=False))
+    await mb.save_settings("zoom", OWNER, mb.BriefSettings(on=True))
+    await mb.save_settings("telegram", OWNER, mb.BriefSettings(on=True))
+    assert {t.channel for t in await mb.list_targets()} == {"telegram", "zoom"}
+
+
 async def test_zalo_danh_dau_truoc_khi_vao_outbox(world):
     await mb.save_settings("zalo", -5, mb.BriefSettings(on=True, hour=7))
     world["outbox_down"] = True

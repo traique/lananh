@@ -113,7 +113,12 @@ class BriefTarget:
 
 async def list_targets() -> list[BriefTarget]:
     """Những người đang bật bản tin (Zalo cắt ở MORNING_BRIEF_MAX_MEMBERS)."""
-    rows = await db.list_settings_with_prefix(personal_settings.BRIEF_PREFIX, _LIST_LIMIT)
+    rows: list[tuple[str, str]] = []
+    # Đọc theo từng kênh: nhiều dòng Zalo đã tắt không được đẩy Telegram/Zoom
+    # của chủ bot ra khỏi trần LIMIT.
+    for channel in CHANNELS:
+        prefix = f"{personal_settings.BRIEF_PREFIX}{channel}:"
+        rows.extend(await db.list_settings_with_prefix(prefix, _LIST_LIMIT))
     targets: list[BriefTarget] = []
     members = 0
     for key, value in rows:
