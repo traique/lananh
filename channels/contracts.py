@@ -65,6 +65,31 @@ class ZaloMessageResponse(BaseModel):
     styles: list[list[ZaloTextStyle]] | None = None
 
 
+# Câu báo gateway xin dựng sẵn (POST /internal/zalo/notice, channels/zalo_media.py)
+# - khớp NoticeKind trong zalo-gateway/src/bridge.ts.
+ZaloNoticeKind = Literal[
+    "image",
+    "voice_failed",
+    "voice_too_large",
+    "file_failed",
+    "file_too_large",
+    "file_unsupported",
+    "video",
+    "location",
+]
+
+
+class ZaloNoticeRequest(BaseModel):
+    account_id: str = Field(default="zalo-bot", max_length=200)
+    sender_id: str = Field(min_length=1, max_length=200)
+    kind: ZaloNoticeKind
+
+
+class ZaloNoticeResponse(BaseModel):
+    # None = người lạ chưa pair / bị khoá: gateway im lặng.
+    text: str | None = None
+
+
 class ZaloGroupMessageRequest(BaseModel):
     account_id: str = Field(min_length=1)
     group_id: str = Field(min_length=1)

@@ -41,7 +41,7 @@ from ai import (
     tavily_client,
 )
 from ai.provider_state import provider_state
-from channels import zalo_users
+from channels import zalo_gateway_status, zalo_users
 from core import config, database as db
 from services import db_maintenance, market_page, memory_control, memory_service, memory_stats
 from services import backup_status, error_digest, key_rotation, watchdog
@@ -794,13 +794,15 @@ async def _safe_section(label: str, factory) -> dict:
 async def admin_watchdog() -> Response:
     """Giám sát vận hành: lỗi gom theo loại hôm nay (chỉ loại + vị trí code), số lần
     khởi động lại 7 ngày qua, trạng thái sao lưu DB (services/watchdog.py,
-    error_digest.py, backup_status.py)."""
+    error_digest.py, backup_status.py), bộ đếm gateway Zalo
+    (channels/zalo_gateway_status.py)."""
     return JSONResponse(
         {
             "errors": error_digest.summary(),
             "restarts": await _safe_section("khởi động lại", watchdog.restart_summary),
             "backup": await _safe_section("sao lưu", backup_status.status),
             "key_rotation": await _safe_section("xoay khoá", key_rotation.status),
+            "zalo_gateway": await _safe_section("gateway Zalo", zalo_gateway_status.snapshot),
         }
     )
 

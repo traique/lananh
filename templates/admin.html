@@ -1317,6 +1317,16 @@ async function loadWatchdog() {
   const keyCell = k.error
     ? `<span class="muted">không đọc được (${esc(k.error)})</span>`
     : `${esc(fmtNum(k.total))} giá trị mã hoá · ${k.remaining ? `<span class="pill warn">${esc(k.remaining)} còn khoá cũ</span>` : '<span class="pill ok">đều dùng khoá mới</span>'}${k.unreadable ? ` <span class="pill bad">${esc(k.unreadable)} không giải mã được</span>` : ''}${k.old_keys_configured && !k.remaining && !k.unreadable ? ' <span class="muted small">· xoá SETTINGS_ENC_KEY_OLD được rồi</span>' : ''}${k.remaining ? ' <button class="btn sm" type="button" id="rotate-keys-btn">Xoay khoá ngay</button>' : ''}`;
+  const z = d.zalo_gateway || {}, zs = z.stats || {}, zq = z.queue || {};
+  const zaloCell = z.error
+    ? `<span class="muted">không đọc được (${esc(z.error)})</span>`
+    : z.enabled === false
+      ? '<span class="muted">đang tắt (ZALO_ENABLED)</span>'
+      : !z.reachable
+        ? '<span class="pill bad">không trả lời</span>'
+        : `${pill(Boolean(z.connected), 'đã kết nối', z.state || 'mất kết nối')} <span class="muted small">đếm từ ${esc(zs.since ? fmtAbs(new Date(zs.since)) : '—')}</span>
+          <div class="small">${esc(fmtNum(zs.direct_messages))} tin riêng · ${esc(fmtNum(zs.merged_messages))} tin được gộp · ${esc(fmtNum(zs.fast_lane))} lệnh làn nhanh · ${esc(fmtNum(zs.voice_turns))} tin thoại · ${esc(fmtNum(zs.file_turns))} file · ${esc(fmtNum(zs.chunks_sent))} tin đã gửi${zs.plain_fallbacks ? ` · ${esc(fmtNum(zs.plain_fallbacks))} lần rơi về chữ thuần` : ''}${zs.send_failures ? ` <span class="pill bad">${esc(fmtNum(zs.send_failures))} lần gửi lỗi</span>` : ''}</div>
+          <div class="muted small">outbox ${esc(fmtNum(zs.outbox_sent))} gửi · ${esc(fmtNum(zs.outbox_failed))} lỗi · ${esc(fmtNum(zs.outbox_deferred))} lần hoãn (hết ngân sách giờ) · hàng đợi ${esc(fmtNum(zq.pending))} chờ, ${esc(fmtNum(zq.running))} đang chạy</div>`;
   const drillCell = b.last_drill_at
     ? `${pill(!b.drill_stale, 'đạt', 'quá hạn')} ${esc(fmtAbs(new Date(b.last_drill_at)))}`
     : '<span class="muted">chưa có (ngày 2 hằng tháng)</span>';
@@ -1329,6 +1339,7 @@ async function loadWatchdog() {
       <tr><th>Sao lưu DB</th><td>${backupCell}</td></tr>
       <tr><th>Diễn tập khôi phục</th><td>${drillCell}</td></tr>
       <tr><th>Khoá settings</th><td>${keyCell}</td></tr>
+      <tr><th>Gateway Zalo</th><td>${zaloCell}</td></tr>
       <tr><th>Nhịp tim gần nhất</th><td>${r.enabled ? esc(r.heartbeat_at ? fmtAbs(new Date(r.heartbeat_at)) : '—') : '<span class="muted">chỉ chạy trên Render (WATCHDOG_ENABLED)</span>'} <span class="muted small">· uptime ${esc(r.uptime_min == null ? '—' : r.uptime_min >= 120 ? `${Math.round(r.uptime_min / 60)} giờ` : `${Math.round(r.uptime_min)} phút`)}${r.commit ? ` · commit <span class="mono">${esc(r.commit)}</span>` : ''}</span></td></tr>
     </table>
     <div class="card-head" style="margin:14px 0 6px"><h3>Lỗi hôm nay theo loại</h3></div>
