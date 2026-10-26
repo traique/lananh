@@ -293,6 +293,22 @@ async def test_absorbed_news_channels(world):
     assert await mb.absorbed_news_channels() == {"zoom"}
 
 
+async def test_absorbed_news_zalo_chi_khi_controller_thuc_su_nhan_ban_tin(world, monkeypatch):
+    world["controller"] = "z-5"
+    await mb.save_settings("zalo", -5, mb.BriefSettings(on=True))
+    # Chủ bot tắt bản tin Zalo (0 = tắt): controller không nhận bản tin nên bản tin
+    # RSS 8h phải đi đường cũ, không bị "gộp" vào bản tin không bao giờ gửi.
+    monkeypatch.setattr(config, "MORNING_BRIEF_MAX_MEMBERS", 0)
+    assert "zalo" not in await mb.absorbed_news_channels()
+    # Trần cắt mất controller (dòng khác đứng trước theo thứ tự khoá).
+    monkeypatch.setattr(config, "MORNING_BRIEF_MAX_MEMBERS", 1)
+    await mb.save_settings("zalo", -4, mb.BriefSettings(on=True))
+    assert [t.user_id for t in await mb.list_targets() if t.channel == "zalo"] == [-4]
+    assert "zalo" not in await mb.absorbed_news_channels()
+    monkeypatch.setattr(config, "MORNING_BRIEF_MAX_MEMBERS", 2)
+    assert "zalo" in await mb.absorbed_news_channels()
+
+
 async def test_run_due_gui_dung_kenh_mot_lan_moi_ngay(world):
     await mb.save_settings("telegram", OWNER, mb.BriefSettings(on=True, hour=7))
     await mb.save_settings("zalo", -5, mb.BriefSettings(on=True, hour=7))

@@ -209,8 +209,11 @@ async def absorbed_news_channels() -> set[str]:
     if _zalo_enabled():
         internal_id = await _zalo_controller_internal_id()
         if internal_id is not None:
-            settings = await get_settings("zalo", internal_id)
-            if settings.on and settings.news_enabled("zalo"):
+            # Đúng danh sách run_due sẽ gửi (đã cắt ở MORNING_BRIEF_MAX_MEMBERS, 0 =
+            # tắt Zalo): controller bị cắt mà vẫn coi là "gộp" thì mất cả 2 bản tin.
+            delivered = {t.user_id: t.settings for t in await list_targets() if t.channel == "zalo"}
+            settings = delivered.get(internal_id)
+            if settings is not None and settings.news_enabled("zalo"):
                 out.add("zalo")
     return out
 
