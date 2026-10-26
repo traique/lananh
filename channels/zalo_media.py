@@ -6,6 +6,8 @@ chặn kích thước body TRƯỚC khi đọc (services/request_limits.py cũng
 ASGI), người lạ chưa pair -> im lặng + báo chủ bot, tài khoản bị khoá -> câu báo
 khoá, xử lý trong ``assistant_turn("zalo:<internal_user_id>")`` và cache câu trả
 lời theo (account_id, message_id, kind) để gateway gửi lại không chạy lượt 2 lần.
+Lượt chạy trong task con huỷ được: "/huy" của chính người đó (gửi ngoài hàng đợi,
+channels/router.py) dừng lượt nghe/đọc file đang chạy, trả câu "em dừng rồi".
 
 Hợp đồng (gateway gửi raw bytes, KHÔNG base64):
 
@@ -35,7 +37,9 @@ POST /internal/zalo/file
 
 from __future__ import annotations
 
+import functools
 import logging
+from collections.abc import Awaitable, Callable
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -45,8 +49,8 @@ from channels import zalo_users
 from channels.contracts import ZaloMessageResponse
 from channels.router import _audience, _auth_sender, _require_local_caller, _zalo_chunks
 from core import idempotency
-from services import document_service, reply_audience, voice_service
-from services.concurrency import assistant_turn
+from services import document_service, reply_audience, turn_control, voice_service
+from services.concurrency import TurnCancelled, assistant_turn, run_cancellable
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +98,18 @@ async def _resolve_sender(
     return zalo_user, None
 
 
+async def _cancellable(
+    internal_user_id: int, factory: Callable[[], Awaitable[tuple[list[str], str | None]]]
+) -> tuple[list[str], str | None]:
+    """Chạy lượt trong task con khoá "zalo:<id>" như /image-prompt: "/huy" gửi
+    ngoài hàng đợi (channels/router.py) huỷ được. Bị huỷ -> câu "em dừng rồi" là
+    câu trả lời bình thường (được cache: gateway gửi lại không chạy lại lượt)."""
+    try:
+        return await run_cancellable(f"zalo:{internal_user_id}", factory)
+    except TurnCancelled:
+        return [await turn_control.cancelled_text_for(internal_user_id)], None
+
+
 @router.post("/voice", response_model=ZaloMessageResponse)
 async def voice(
     request: Request,
@@ -113,11 +129,15 @@ async def voice(
         if cached is not None:
             return ZaloMessageResponse.model_validate(cached)
         with reply_audience.use(_audience(zalo_user, x_zalo_sender_id)):
-            replies, provider = await voice_service.handle_channel_voice(
+            replies, provider = await _cancellable(
                 zalo_user.internal_user_id,
-                body,
-                is_admin=zalo_user.is_admin,
-                duration_ms=_duration_ms(x_zalo_duration_ms),
+                functools.partial(
+                    voice_service.handle_channel_voice,
+                    zalo_user.internal_user_id,
+                    body,
+                    is_admin=zalo_user.is_admin,
+                    duration_ms=_duration_ms(x_zalo_duration_ms),
+                ),
             )
         del body
         response = ZaloMessageResponse(messages=_zalo_chunks(replies), provider=provider)
@@ -147,13 +167,17 @@ async def document_file(
         if cached is not None:
             return ZaloMessageResponse.model_validate(cached)
         with reply_audience.use(_audience(zalo_user, x_zalo_sender_id)):
-            replies, provider = await document_service.handle_channel_file(
+            replies, provider = await _cancellable(
                 zalo_user.internal_user_id,
-                body,
-                filename=unquote(x_zalo_file_name)[:200],
-                content_type=request.headers.get("content-type", ""),
-                caption=unquote(x_zalo_caption)[:500],
-                message_id=x_zalo_message_id,
+                functools.partial(
+                    document_service.handle_channel_file,
+                    zalo_user.internal_user_id,
+                    body,
+                    filename=unquote(x_zalo_file_name)[:200],
+                    content_type=request.headers.get("content-type", ""),
+                    caption=unquote(x_zalo_caption)[:500],
+                    message_id=x_zalo_message_id,
+                ),
             )
         del body
         response = ZaloMessageResponse(messages=_zalo_chunks(replies), provider=provider)

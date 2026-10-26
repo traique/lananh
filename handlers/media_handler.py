@@ -23,8 +23,9 @@ import messages
 from core import config
 from core.text_normalize import nfc
 from ai import orchestrator
-from handlers import common
+from handlers import common, turn_feedback
 from services import conversation_log, expense_service, vision_service
+from services.concurrency import TurnCancelled
 from services.prompt_identity import resolve_prompt_identity
 from services.prompt_templates import build_image_instruction
 from services.telemetry import telemetry
@@ -75,8 +76,12 @@ async def _vision_msg(
     local_path = config.MEDIA_DIR / f"vision_{update.message.message_id}.jpg"
     try:
         await common.download_telegram_photo_with_retry(file_obj, local_path)
-        result = await vision_service.answer(
-            update.effective_user.id, str(local_path), caption, intent
+        # Task con dưới khoá chủ bot: /huy huỷ được (None = đã trả lời "em dừng rồi").
+        result = await turn_feedback.owner_cancellable(
+            update.message,
+            lambda: vision_service.answer(
+                update.effective_user.id, str(local_path), caption, intent
+            ),
         )
     except (TimedOut, NetworkError):
         logger.exception("Lỗi tải ảnh hỏi đáp từ Telegram")
@@ -90,6 +95,8 @@ async def _vision_msg(
         return
     finally:
         await common.safe_delete(local_path)
+    if result is None:
+        return
     text = result.text or messages.friendly_error("empty", owner=True)
     if result.text and result.used_fallback:
         text += "\n\n⚙️ API"
@@ -156,7 +163,13 @@ async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         instruction = build_image_instruction(caption, identity)
 
-        response = await orchestrator.analyze_image(instruction, str(local_path))
+        # Task con dưới khoá chủ bot: /huy huỷ được (None = đã trả lời "em dừng rồi").
+        response = await turn_feedback.owner_cancellable(
+            update.message, lambda: orchestrator.analyze_image(instruction, str(local_path))
+        )
+        if response is None:
+            await telemetry.failure(prompt_id, "promptify", TurnCancelled())
+            return
         result_text = (getattr(response, "text", None) or "").strip()
         used_fallback = bool(getattr(response, "used_fallback", False))
     except Exception as e:

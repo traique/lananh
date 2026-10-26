@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 
 from core import config
 from core.text_normalize import nfc
-from handlers import common
+from handlers import common, turn_feedback
 from services import document_service
 
 logger = logging.getLogger(__name__)
@@ -47,15 +47,17 @@ async def document_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 "📥 Em chưa tải được file về (mạng chập chờn). Anh gửi lại giúp em nha."
             )
             return
-        reply = await document_service.handle_file(
-            user_id,
-            path,
-            filename=filename,
-            mime=mime,
-            caption=nfc((message.caption or "").strip()),
-            channel="telegram",
+        caption = nfc((message.caption or "").strip())
+        # Task con dưới khoá chủ bot: /huy huỷ được lượt đọc tài liệu dài.
+        reply = await turn_feedback.owner_cancellable(
+            message,
+            lambda: document_service.handle_file(
+                user_id, path, filename=filename, mime=mime, caption=caption, channel="telegram"
+            ),
         )
     finally:
         await common.safe_delete(path)
+    if reply is None:  # /huy - đã trả lời "em dừng rồi"
+        return
     text = reply.text + ("\n\n⚙️ API" if reply.used_fallback else "")
     await common.reply_long_text(message, text)

@@ -24,12 +24,15 @@ import random
 import re
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from core import config
 from services import concurrency, turn_control, turn_progress
 from services.concurrency import OWNER_TURN_KEY
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 STATUS_TEXTS = {
     turn_progress.THINK: "✍️ Em đang soạn câu trả lời, anh đợi em xíu nha…",
@@ -228,6 +231,23 @@ async def _run_logged(run_unlocked, update) -> None:
         await run_unlocked(update)
     except Exception:
         logger.warning("Lệnh chỉ đọc ở lối nhanh lỗi (update %s).", update.update_id, exc_info=True)
+
+
+async def owner_cancellable(message, factory: Callable[[], Awaitable[T]]) -> T | None:
+    """Chạy phần việc AI của 1 lượt Telegram không phải chat chữ (chép lời tin
+    thoại, hỏi đáp ảnh, viết prompt từ ảnh, đọc tài liệu) trong task con dưới
+    khoá chủ bot, để /huy huỷ được như lượt chat (handlers/chat_router._ai_reply).
+
+    Trả kết quả của ``factory`` (không bao giờ là None); bị huỷ -> trả lời "em
+    dừng rồi" và trả None - handler dừng, kết thúc bình thường nên inbox không
+    chạy lại lượt đã huỷ. Lỗi khác của ``factory`` đi tiếp như gọi thẳng. Phần
+    gửi câu trả lời để NGOÀI (như _ai_reply): /huy tới lúc đang gửi không cắt
+    ngang tin đã ghi lịch sử."""
+    try:
+        return await concurrency.run_cancellable(OWNER_TURN_KEY, factory)
+    except concurrency.TurnCancelled:
+        await message.reply_text(turn_control.cancelled_text(owner=True))
+        return None
 
 
 # ─── Bản nháp chữ đang sinh (sendMessageDraft) ───────────────────────────────

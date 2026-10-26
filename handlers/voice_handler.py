@@ -10,6 +10,7 @@ lượt chủ bot đã có ở web.py::_process_update).
 """
 
 import asyncio
+import functools
 import logging
 
 from telegram import Update
@@ -19,7 +20,7 @@ from telegram.ext import ContextTypes
 import messages
 from ai.timeouts import TurnTimeoutError, turn_deadline
 from core import config
-from handlers import chat_router, common
+from handlers import chat_router, common, turn_feedback
 from services import conversation_log, voice_service
 
 logger = logging.getLogger(__name__)
@@ -61,12 +62,16 @@ async def voice_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     finally:
         await common.safe_delete(path)
 
+    duration = voice_service.duration_seconds(getattr(media, "duration", None))
     with turn_deadline():
         try:
-            transcript = await voice_service.transcribe(
-                audio,
-                user_id=user_id,
-                duration=voice_service.duration_seconds(getattr(media, "duration", None)),
+            # Bước nghe chạy trong task con dưới khoá chủ bot: /huy huỷ được cả lúc
+            # đang chép lời; lượt chat sau đó (route_text) tự bắt /huy của nó.
+            transcript = await turn_feedback.owner_cancellable(
+                message,
+                functools.partial(
+                    voice_service.transcribe, audio, user_id=user_id, duration=duration
+                ),
             )
         except voice_service.VoiceError as exc:
             await message.reply_text(
@@ -79,6 +84,8 @@ async def voice_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
         del audio
+        if transcript is None:  # /huy lúc đang nghe - đã trả lời "em dừng rồi"
+            return
         await message.reply_text(voice_service.echo_line(transcript, owner=True))
         blocked = voice_service.write_statement_kind(transcript)
         if blocked is not None:
