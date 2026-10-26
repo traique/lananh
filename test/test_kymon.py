@@ -435,6 +435,11 @@ def fixed_now(monkeypatch):
         ("1/1/2027 23:10", "2027-01-01 23:10"),
         ("20/11", "2026-11-20 14:37"),
         ("20-11-2026 6h45", "2026-11-20 06:45"),
+        ("20-11 6h45", "2026-11-20 06:45"),
+        ("20.11", "2026-11-20 14:37"),
+        ("9h30", "2026-10-25 09:30"),
+        ("10g30", "2026-10-25 10:30"),
+        ("10 giờ", "2026-10-25 10:00"),
         ("9h sáng mai", "2026-10-26 09:00"),
         ("3h chiều nay", "2026-10-25 15:00"),
         ("ngày mai 7:30", "2026-10-26 07:30"),
@@ -473,6 +478,21 @@ def test_parse_question(fixed_now):
     chart, question = kymon.parse_question("9h sáng mai ký hợp đồng có thuận không")
     assert chart.moment.strftime("%d/%m %H:%M") == "26/10 09:00"
     assert question == "ký hợp đồng có thuận không"
+    # Câu hỏi bắt đầu bằng số + chữ "h/g" ("2 hợp đồng", "3 hướng") không phải giờ;
+    # "2-3 người", "2.5 tỷ" (không năm, không dấu "/") không phải ngày.
+    for text in (
+        "2 hợp đồng ký có thuận không",
+        "3 hướng nhà nào tốt",
+        "1 giao dịch lớn",
+        "2-3 người góp vốn",
+        "2.5 tỷ đầu tư có nên không",
+    ):
+        chart, question = kymon.parse_question(text)
+        assert chart.moment.strftime("%d/%m %H:%M") == "25/10 14:37" and question == text
+    chart, question = kymon.parse_question("10g30 ký hợp đồng")
+    assert chart.moment.strftime("%H:%M") == "10:30" and question == "ký hợp đồng"
+    chart, question = kymon.parse_question("20/11 9h mở hàng")
+    assert chart.moment.strftime("%d/%m %H:%M") == "20/11 09:00" and question == "mở hàng"
     assert kymon.parse_question("25/10/2026 9:00") == kymon.QUESTION_USAGE
     assert "tối đa" in kymon.parse_question("x" * 500)
     assert "Ngày không hợp lệ" in kymon.parse_question("30/2/2026 việc gì")

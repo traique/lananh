@@ -630,9 +630,16 @@ def chart_data(c: Chart) -> dict:
 
 # ─── Phân tích tham số lệnh ─────────────────────────────────────────────────
 
-_DATE_RE = re.compile(r"(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{4}))?(?![\d/.-])")
+# Thiếu năm thì dấu "-"/"." chỉ nhận khi ngay sau là giờ hoặc hết chuỗi ("20-11 6h45"):
+# "2-3 người góp vốn", "2.5 tỷ đầu tư" là câu hỏi, không phải ngày. "20/11" luôn nhận.
+_DATE_RE = re.compile(
+    r"(\d{1,2})(?:/(\d{1,2})(?:/(\d{4}))?|([.-])(\d{1,2})(?:\4(\d{4})|(?=\s*$|\s+\d)))"
+    r"(?![\d/.-])"
+)
+# Sau đơn vị giờ không được là chữ cái: "2 hợp đồng", "3 hướng", "1 giao dịch" không
+# phải giờ; "9h30", "10g30", "9:00", "9h sáng" vẫn là giờ.
 _TIME_RE = re.compile(
-    r"(\d{1,2})\s*(?:giờ|gio|:|h|g)\s*(\d{1,2})?(?:\s*(?:phút|phut|p)\b)?"
+    r"(\d{1,2})\s*(?:giờ|gio|:|h|g)(?![^\W\d_])\s*(\d{1,2})?(?:\s*(?:phút|phut|p)\b)?"
     r"(?:\s*(sáng|sang|trưa|trua|chiều|chieu|tối|toi|đêm|dem|pm|am)\b)?",
     re.IGNORECASE,
 )
@@ -678,11 +685,12 @@ def parse_moment(argument: str) -> tuple[dt.datetime, str] | str:
         date += dt.timedelta(days=_rel_offset(rel.group(1)))
         rest = rest[rel.end() :].strip()
     elif m:
-        year = int(m.group(3)) if m.group(3) else now.year
+        month, year_text = (m.group(2), m.group(3)) if m.group(2) else (m.group(5), m.group(6))
+        year = int(year_text) if year_text else now.year
         if not MIN_YEAR <= year <= MAX_YEAR:
             return f"Năm cần trong khoảng {MIN_YEAR}-{MAX_YEAR}."
         try:
-            date = dt.date(year, int(m.group(2)), int(m.group(1)))
+            date = dt.date(year, int(month), int(m.group(1)))
         except ValueError:
             return "Ngày không hợp lệ.\n" + USAGE
         rest = rest[m.end() :].strip()
