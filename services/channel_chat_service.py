@@ -27,6 +27,7 @@ from services import (
 )
 from services.background_tasks import stop_tracked_tasks
 from services import channel_command_service
+from services import vn_daily_chat
 from services.channel_result import ChannelResult
 from services.telemetry import telemetry
 from stock import analysis as stock_analysis
@@ -96,6 +97,10 @@ class ChatTurn:
     error_text: str = ""
 
 
+async def _no_search() -> str:
+    return ""
+
+
 async def run_chat_turn(
     user_id: int, text: str, *, grounding: str = "", channel: str = "telegram"
 ) -> ChatTurn:
@@ -110,21 +115,34 @@ async def run_chat_turn(
         # nếu không, tổng thời gian vượt mức gateway Zalo chờ (240s). Task con của
         # asyncio.gather thừa hưởng cùng hạn chót qua ContextVar.
         with turn_deadline():
+            # Giá vàng/tỷ giá/xổ số: số liệu tra bằng code (thường đã nằm sẵn
+            # cache từ nhánh trả lời nhanh). Có đủ số liệu thì bỏ tra web và
+            # forced search của lượt này - khỏi trả 2 lần và khỏi chỉ thị mâu
+            # thuẫn "hệ thống không có dữ liệu".
+            daily = await vn_daily_chat.grounding_for(text)
+            search = (
+                _no_search()
+                if daily.skip_search
+                else web_search.maybe_search(text, user_id=user_id)
+            )
             # 3 nguồn ngữ cảnh độc lập nhau - chạy song song thay vì tuần tự
             # (trước đây Tavily + memory nối tiếp, thêm vài trăm ms - vài giây
             # độ trễ cho mọi tin nhắn).
             tool_result, search_result, memory = await asyncio.gather(
                 tools.maybe_run_tool(user_id, text),
-                web_search.maybe_search(text, user_id=user_id),
+                search,
                 memory_service.build_memory_context(user_id, text),
             )
-            combined = "\n\n".join(part for part in (grounding, tool_result, search_result) if part)
+            combined = "\n\n".join(
+                part for part in (grounding, daily.text, tool_result, search_result) if part
+            )
             response = await orchestrator.chat(
                 user_id,
                 text,
                 grounding=combined,
                 memory_context=memory,
-                require_real_search=stock_analysis.wants_external_market_data(text),
+                require_real_search=daily.force_real_search
+                or (not daily.skip_search and stock_analysis.wants_external_market_data(text)),
                 web_grounded=bool(search_result),
             )
         reply = (response.text or "").strip()
@@ -271,9 +289,13 @@ async def handle_channel_text(
     article = await article_reader.maybe_handle(text)
     if article is not None:
         return ChannelResult([article])
-    # Thời tiết (Open-Meteo) và âm lịch (offline): trả lời thẳng, không tốn
-    # lượt AI nào; câu không chắc trả None và đi tiếp xuống chat AI như cũ.
-    weather_reply = await weather_chat.maybe_handle(text)
+    # Giá vàng/tỷ giá/xổ số, thời tiết (Open-Meteo) và âm lịch (offline): trả
+    # lời thẳng, không tốn lượt AI nào; câu không chắc trả None và đi tiếp
+    # xuống chat AI như cũ.
+    daily_reply = await vn_daily_chat.maybe_handle(text, user_id)
+    if daily_reply is not None:
+        return ChannelResult([daily_reply])
+    weather_reply = await weather_chat.maybe_handle(text, user_id=user_id)
     if weather_reply is not None:
         return ChannelResult([weather_reply])
     lunar_reply = await lunar_chat.maybe_handle(text)
