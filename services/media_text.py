@@ -58,3 +58,25 @@ def persona_forms(user_id: int) -> tuple[str, str, bool]:
     form = None if owner else address.normalize(reply_audience.current().address_form)
     you = form or "anh"
     return you, address.self_word(you), owner
+
+
+# ─── Tin nhắn loại chưa hỗ trợ (handlers/unsupported.py) ─────────────────────
+_SUPPORTED = (
+    "{Ai} hiểu được: tin nhắn chữ, ảnh (kèm câu hỏi để {ai} xem ảnh, không kèm thì {ai} "
+    "viết prompt), tin thoại, file PDF/TXT/Word và vị trí (để {ai} báo thời tiết chỗ đó) "
+    "nha{tail}."
+)
+_UNSUPPORTED = {
+    "sticker": "😆 Sticker dễ thương ghê! Có gì cần {ai} giúp thì nhắn chữ hoặc gửi tin thoại nha{tail}.",
+    "video": "🎬 {Ai} chưa xem được video hay ảnh động. " + _SUPPORTED,
+    "document": "📄 {Ai} mới đọc được file PDF, TXT/MD, Word (.docx) và ảnh thôi. " + _SUPPORTED,
+    "contact": "👤 {Ai} chưa lưu được danh bạ gửi qua chat. " + _SUPPORTED,
+    "other": "{Ai} chưa xử lý được loại tin này. " + _SUPPORTED,
+}
+
+
+def unsupported_text(kind: str, *, owner: bool = False, address_form: str | None = None) -> str:
+    """Câu giọng Lan Anh cho tin nhắn loại chưa hỗ trợ (sticker, video, file lạ...)."""
+    return say(
+        _UNSUPPORTED.get(kind, _UNSUPPORTED["other"]), owner=owner, address_form=address_form
+    )

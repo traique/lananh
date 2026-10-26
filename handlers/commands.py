@@ -46,7 +46,13 @@ HELP_TEXT = (
     '📊 *Cổ phiếu Việt Nam*: nhắc tới 1 mã là em báo giá realtime; nói rõ "phân tích FPT" để có báo cáo đầy đủ '
     '(action do hệ thống quyết, AI chỉ diễn giải). "Soi danh mục" để xem cả rổ. Thêm "theo Buffett/Minervini/'
     'Đoàn Vĩnh Bình" (hoặc "3 huyền thoại") để nghe góc nhìn định tính.\n\n'
-    "🖼️ *Gửi 1 ảnh chân dung* để em viết prompt (dán sang app Gemini) giữ nguyên khuôn mặt.\n\n"
+    "🖼️ *Gửi 1 ảnh chân dung* để em viết prompt (dán sang app Gemini) giữ nguyên khuôn mặt; "
+    'ảnh kèm câu hỏi ("ảnh này là gì?", "dịch giúp anh chữ trong ảnh") thì em trả lời về ảnh.\n\n'
+    "🎙️ *Tin thoại*: em nghe rồi trả lời như tin chữ (tin thoại không tự ghi danh mục, chi tiêu, "
+    "nhắc việc - muốn ghi thì gõ chữ).\n\n"
+    "📄 *File PDF, TXT/MD, Word (.docx)*: em tóm tắt hoặc trả lời câu hỏi ở chú thích; chú thích "
+    '"lưu vào kho" để em lưu tài liệu vào kho kiến thức rag/.\n\n'
+    "📍 *Gửi vị trí*: em báo thời tiết hôm nay và ngày mai tại chỗ đó.\n\n"
     "*Lịch, thần số học, tử vi, kỳ môn*\n"
     "/lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8, "
     "/lich tháng này, /lich trung thu, /lich ngày tốt tháng này, /lich tuổi 15/3/1990, "
@@ -81,7 +87,8 @@ HELP_TEXT = (
     "/gia <sản phẩm> — tìm và so sánh giá sản phẩm\n"
     "/dich [ja>vi|vi>ja] <nội dung> — dịch chat công việc Nhật-Việt\n"
     "/reset — xoá ngữ cảnh chat\n"
-    "/history — xem 10 lượt gần nhất\n"
+    '/history — xem 10 lượt gần nhất; hỏi "hôm trước em nói gì về ..." để em tìm lại '
+    "trong lịch sử chat\n"
     "/memory [on|off] — xem trí nhớ dài hạn (đánh số), bật hoặc tắt\n"
     "/quen <số|từ khoá> — quên 1 mục; /nho <điều cần nhớ> — ghim 1 điều "
     '("nhớ giúp anh là..." cũng được); /ghim, /boghim <số>\n'

@@ -31,6 +31,7 @@ from handlers import (
     portfolio_commands,
     provider_commands,
     reminder_commands,
+    unsupported,
     zalo_bridge_commands,
     zalo_login,
 )
@@ -340,8 +341,20 @@ def build_application():
             document_handler.document_msg,
         )
     )
+    # Vị trí -> thời tiết tại toạ độ; UpdateType.MESSAGE: bỏ qua cập nhật live location.
+    app.add_handler(
+        MessageHandler(filters.LOCATION & filters.UpdateType.MESSAGE, unsupported.location_msg)
+    )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_router.chat_msg))
     app.add_handler(MessageHandler(filters.COMMAND, commands.unknown_cmd))
+    # Đăng ký CUỐI: tin loại chưa hỗ trợ (sticker, video, file lạ...) nhận 1 câu giọng
+    # Lan Anh thay vì im lặng; tin dịch vụ (vào nhóm, ghim...) và tin sửa bị bỏ qua.
+    app.add_handler(
+        MessageHandler(
+            filters.UpdateType.MESSAGE & ~filters.COMMAND & ~filters.StatusUpdate.ALL,
+            unsupported.unsupported_msg,
+        )
+    )
     app.add_error_handler(commands.error_handler)
 
     async def send_telegram_alert(text):

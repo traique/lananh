@@ -63,11 +63,15 @@ Nhắn "cafe 45k", "đổ xăng 1tr2", "2 củ tiền điện" là Lan Anh ghi l
 Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
 /anh <mô tả> — tạo ảnh thật (Agnes AI)
-🖼️ Gửi 1 ảnh (Zalo) — nhận prompt tạo ảnh viết dựa trên ảnh đó
+🖼️ Gửi 1 ảnh (Zalo) — nhận prompt tạo ảnh viết dựa trên ảnh đó; kèm câu hỏi ("ảnh này là gì?",
+  "dịch giúp chữ trong ảnh") thì Lan Anh trả lời về ảnh
+🎙️ Gửi tin thoại — Lan Anh nghe rồi trả lời như tin chữ (tin thoại không tự ghi danh mục, chi tiêu,
+  nhắc việc - muốn ghi thì gõ chữ)
+📄 Gửi file PDF, TXT, Word (.docx) — tóm tắt hoặc trả lời câu hỏi kèm theo
 /gia <sản phẩm> — tìm và so sánh giá
 /dich [ja>vi|vi>ja] <nội dung> — dịch chat công việc Nhật-Việt
 /reset — xoá ngữ cảnh chat
-/history — xem 10 lượt gần nhất
+/history — xem 10 lượt gần nhất; hỏi "hôm trước em nói gì về ..." để tìm lại trong lịch sử chat
 /memory [on|off] — xem trí nhớ dài hạn (đánh số), bật hoặc tắt
 /quen <số|từ khoá> — quên 1 mục; /nho <điều cần nhớ> — ghim 1 điều; /ghim, /boghim <số>
 /forget — xoá hết trí nhớ dài hạn
