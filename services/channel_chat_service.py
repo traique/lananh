@@ -78,6 +78,10 @@ async def failure_text(turn: ChatTurn, user_id: int) -> str:
     )
 
 
+async def _empty_text() -> str:
+    return ""
+
+
 async def _skip_search_plan() -> web_search.SearchPlan:
     """Số liệu code (vàng/tỷ giá/xổ số) đã đủ: không tra Tavily, provider cũng
     không tự tra web chồng lên (dễ lẫn giá web khác giá nguồn chính thức)."""
@@ -114,35 +118,62 @@ async def run_chat_turn(
             # forced search của lượt này - khỏi trả 2 lần và khỏi chỉ thị mâu
             # thuẫn "hệ thống không có dữ liệu".
             daily = await vn_daily_chat.grounding_for(text)
+            # Tin có link (article_reader không xử lý): đọc trang thay vì tra web
+            # theo chữ trong tin - trừ khi người dùng muốn so với nguồn khác.
+            links_ok = chat_context.links_allowed(user_id, is_admin)
+            page_turn = links_ok and chat_context.first_url(text) is not None
+            compare = page_turn and chat_context.wants_outside_sources(text)
+            skip_search = daily.skip_search or (page_turn and not compare)
             search = (
                 _skip_search_plan()
-                if daily.skip_search
+                if skip_search
                 else web_search.plan_search(text, user_id=user_id)
             )
-            # 3 nguồn ngữ cảnh độc lập nhau - chạy song song thay vì tuần tự
+            use_kb = chat_context.kb_allowed(
+                user_id, is_admin, text, has_stock_grounding=bool(grounding)
+            )
+            # Các nguồn ngữ cảnh độc lập nhau - chạy song song thay vì tuần tự
             # (trước đây Tavily + memory nối tiếp, thêm vài trăm ms - vài giây
             # độ trễ cho mọi tin nhắn).
-            tool_result, plan, memory, last_row = await asyncio.gather(
+            tool_result, plan, memory, last_row, page, kb = await asyncio.gather(
                 tools.maybe_run_tool(user_id, text),
                 search,
                 memory_service.build_turn_memory(user_id, text),
                 # Câu trả lời ngay trước (báo cáo cổ phiếu?) - chặn câu chat nói ngược policy.
                 conversation_log.last_model_row(user_id),
+                chat_context.read_link(user_id, text, allowed=links_ok),
+                chat_context.kb_grounding(text) if use_kb else _empty_text(),
             )
             quote = chat_context.quote_grounding(quote_text)
+            # Kho rag/ đặt CUỐI: cắt giữa (prompt_budget) không cắt vào kết quả tra web.
             combined = "\n\n".join(
-                part for part in (quote, grounding, daily.text, tool_result, plan.grounding) if part
+                part
+                for part in (
+                    quote,
+                    grounding,
+                    daily.text,
+                    tool_result,
+                    page.grounding,
+                    plan.grounding,
+                    kb,
+                )
+                if part
             )
             forced = daily.force_real_search or (
-                not daily.skip_search and stock_analysis.wants_external_market_data(text)
+                not skip_search and stock_analysis.wants_external_market_data(text)
             )
+            mode = _search_mode(plan, forced, bool(grounding), bool(tool_result))
+            if page.grounding and not (forced or compare) and mode == orchestrator.SEARCH_AUTO:
+                # Đã có nội dung trang (hoặc biết chắc không đọc được): Gemini không
+                # tự tra Google chồng lên.
+                mode = orchestrator.SEARCH_OFF
             response = await orchestrator.chat(
                 user_id,
                 text,
                 grounding=combined,
                 memory_context=memory.context,
                 require_real_search=forced,
-                search_mode=_search_mode(plan, forced, bool(grounding), bool(tool_result)),
+                search_mode=mode,
                 channel=channel,
                 is_admin=is_admin,
                 address_form=address_form,
@@ -368,6 +399,8 @@ async def handle_channel_text(
     article = await article_reader.maybe_handle(text)
     if article is not None:
         await record(user_id, text, article, conversation_log.KIND_ARTICLE)
+        # Giữ bài vừa đọc (đã rào) cho câu hỏi nối tiếp "bài này nói gì về...".
+        chat_context.remember_article(user_id, text, article)
         return ChannelResult([article])
     # Giá vàng/tỷ giá/xổ số, thời tiết (Open-Meteo) và âm lịch (offline): trả
     # lời thẳng, không tốn lượt AI nào; câu không chắc trả None và đi tiếp

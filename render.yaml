@@ -99,6 +99,13 @@ services:
         value: "1"
       - key: GROQ_HISTORY_MAX_CHARS
         value: "3500"
+      # Đọc link trong chat (chủ bot/admin; thành viên khi =1) và tra tự động kho rag/.
+      - key: CHAT_READ_LINKS
+        value: "1"
+      - key: CHAT_READ_LINKS_MEMBERS
+        value: "0"
+      - key: CHAT_AUTO_RAG
+        value: "1"
       # Bản tin sáng cá nhân (/bantin): chỉ gửi cho người tự bật trên kênh của mình.
       - key: MORNING_BRIEF_ENABLED
         value: "true"

@@ -105,7 +105,17 @@ def is_bare_symbol_message(text: str) -> bool:
     return bool(_BARE_SYMBOL_MSG_RE.match(text.strip()))
 
 
+# URL trong tin nhắn ("phân tích bài này https://cafef.vn/hpg-lai-ky-luc-...") không
+# được thành mã cổ phiếu: slug hpg/fpt từng chiếm cả lượt bằng pipeline phân tích.
+_URL_IN_TEXT_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+
+
+def _strip_urls(text: str) -> str:
+    return _URL_IN_TEXT_RE.sub(" ", text or "")
+
+
 def detect_symbol_candidates(text: str) -> tuple[list[str], list[str]]:
+    text = _strip_urls(text)
     tokens = _SYMBOL_TOKEN_RE.findall(text)
     uppercase_tokens = set(_UPPERCASE_TOKEN_RE.findall(text))
     known, unverified = [], []
@@ -263,6 +273,7 @@ def looks_like_price_question(text: str) -> bool:
     giống mã không xác định; loại câu này để xuống chat thường có Tavily
     search tiếp sức mới đúng.
     """
+    text = _strip_urls(text)
     if is_bare_symbol_message(text):
         upper = text.strip().upper()
         if upper not in _COMMON_WORD_EXCLUDE and upper not in _LOWERCASE_NOISE_EXCLUDE:
@@ -298,6 +309,7 @@ _EXTERNAL_MARKET_RE = _build_keyword_re(_EXTERNAL_MARKET_KEYWORDS)
 
 def wants_external_market_data(text: str) -> bool:
     """Câu hỏi có đang cần số liệu/sự kiện thị trường ngoài sàn VN không?"""
+    text = _strip_urls(text)
     return bool(_EXTERNAL_MARKET_RE.search(text))
 
 

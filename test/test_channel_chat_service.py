@@ -74,6 +74,10 @@ def chat_fakes(monkeypatch):
     async def fake_last_row(user_id):
         return calls.get("last_row")
 
+    async def fake_kb(text):
+        calls.setdefault("kb_calls", []).append(text)
+        return calls.get("kb", "")
+
     monkeypatch.setattr(ccs.telemetry, "start", fake_start)
     monkeypatch.setattr(ccs.telemetry, "success", fake_success)
     monkeypatch.setattr(ccs.telemetry, "failure", fake_failure)
@@ -84,6 +88,8 @@ def chat_fakes(monkeypatch):
     monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
     monkeypatch.setattr(ccs.conversation_log.db, "add_chat_turn", fake_add_turn)
     monkeypatch.setattr(ccs.conversation_log, "last_model_row", fake_last_row)
+    # Kho rag/ thật của repo không được lọt vào test pipeline chung.
+    monkeypatch.setattr(ccs.chat_context, "kb_grounding", fake_kb)
     return calls
 
 
