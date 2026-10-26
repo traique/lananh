@@ -118,6 +118,13 @@ async def test_telegram_nhanh_co_phieu_mot_han_chot_va_bao_qua_gio(
         sent.append(text)
 
     monkeypatch.setattr(stock_handler.common, "reply_long_text", reply_long)
+    recorded = []
+
+    async def record(user_id, text, reply, kind="chat", **kwargs):
+        recorded.append((user_id, text, reply, kind, kwargs.get("stock_outputs")))
+        return True
+
+    monkeypatch.setattr(chat_router.conversation_log, "record_exchange", record)
 
     update = _Update("phân tích FPT HPG")
     started = time.monotonic()
@@ -127,6 +134,9 @@ async def test_telegram_nhanh_co_phieu_mot_han_chot_va_bao_qua_gio(
     # Không hạn chót ngoài: mỗi mã chờ đủ 1s (2s). Có hạn chót 0,3s cho CẢ lượt.
     assert elapsed < 0.9
     assert sent == ["SỐ LIỆU FPT", "SỐ LIỆU HPG"]  # mã sau vẫn có bản số liệu
+    # Bản số liệu đã gửi cũng vào lịch sử (kind stock) cho câu hỏi nối tiếp.
+    assert recorded and recorded[0][3] == "stock"
+    assert recorded[0][4] == ["SỐ LIỆU FPT", "SỐ LIỆU HPG"]
     note = update.message.replies[-1]
     assert "FPT, HPG" in note and "quá giờ" in note
     assert messages.STOCK_ANALYZE_FAILED.format(symbol="HPG") not in update.message.replies

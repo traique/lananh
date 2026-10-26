@@ -29,11 +29,14 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from typing import TypeVar
 
 from core import config, database as db, untrusted
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 KIND_CHAT = "chat"
 # Chat dựa trên dữ liệu ngoài (web, trang người dùng gửi, tin trích dẫn...):
@@ -80,9 +83,11 @@ def _label_to_action() -> dict[str, str]:
 
     out: dict[str, str] = {}
     for action, label in stock_analysis._ACTION_LABEL_VI.items():
-        out[label.strip()] = action
+        # Bỏ phần ngoặc ("ĐỨNG NGOÀI (NO_TRADE)") - regex dòng tín hiệu dừng ở "(".
+        base = re.sub(r"\s*\(.*?\)", "", label).strip()
+        out[base] = action
         # Nhãn không emoji ("GIỮ") cũng nhận.
-        out[label.split(" ", 1)[-1].strip()] = action
+        out[base.split(" ", 1)[-1].strip()] = action
     return out
 
 
@@ -145,8 +150,7 @@ def compact_reply(reply: str, kind: str, user_text: str = "") -> str:
             untrusted.sanitize(reply), 600
         )
     if kind == KIND_TRANSLATE:
-        label = _clip(reply, 60)
-        return f"[Đã dịch giúp ({label}): «{_clip(user_text, _STUB_SOURCE_CHARS)}»]"
+        return f"[Đã dịch giúp đoạn: «{_clip(user_text, _STUB_SOURCE_CHARS)}» - bản dịch không lưu]"
     if kind == KIND_IMAGE:
         return "[Đã viết prompt tạo ảnh từ ảnh người dùng gửi - nội dung tiếng Anh không lưu]"
     return _clip(reply, REPLY_MAX_CHARS)
@@ -187,6 +191,18 @@ async def record_exchange(
 
         memory_service.after_exchange(user_id)
     return True
+
+
+async def run_and_record(
+    user_id: int, user_text: str, kind: str, call: Callable[[], Awaitable[T]]
+) -> T:
+    """Chạy ``call()`` (lệnh /agent, /dich...) rồi lưu lượt vào lịch sử. Dùng bên
+    trong reply_cache.generate_once để lần gửi lại (webhook retry) không ghi trùng.
+    Kết quả là tuple thì phần tử đầu là câu trả lời."""
+    result = await call()
+    text = result[0] if isinstance(result, tuple) else result
+    await record_exchange(user_id, user_text, str(text or ""), kind)
+    return result
 
 
 # ─── Chặn câu chat mâu thuẫn báo cáo cổ phiếu ngay trước đó ──────────────────

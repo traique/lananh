@@ -158,8 +158,12 @@ async def test_each_zalo_user_gets_own_internal_user_id(monkeypatch):
     monkeypatch.setattr(zalo_router.zalo_users, "resolve", fake_resolve)
     monkeypatch.setattr(zalo_router, "handle_channel_text", fake_handle_channel_text)
 
-    resp_a = await zalo_router.receive(_payload(sender_id="a", text="hi", message_id="ma"), "s3cr3t")
-    resp_b = await zalo_router.receive(_payload(sender_id="b", text="hi", message_id="mb"), "s3cr3t")
+    resp_a = await zalo_router.receive(
+        _payload(sender_id="a", text="hi", message_id="ma"), "s3cr3t"
+    )
+    resp_b = await zalo_router.receive(
+        _payload(sender_id="b", text="hi", message_id="mb"), "s3cr3t"
+    )
 
     assert captured_user_ids == [-101, -202]
     assert captured_user_ids[0] != captured_user_ids[1]
@@ -261,6 +265,7 @@ async def test_admin_plain_chat_falls_through_to_channel_text(monkeypatch):
         return ChannelResult(["chat bình thường"])
 
     monkeypatch.setattr(zalo_router.zalo_users, "resolve", fake_resolve)
+
     async def fake_facebook_command(account_id, text):
         return None
 
@@ -270,3 +275,37 @@ async def test_admin_plain_chat_falls_through_to_channel_text(monkeypatch):
 
     response = await zalo_router.receive(_payload(text="xin chào"), "s3cr3t")
     assert response.messages == ["chat bình thường"]
+
+
+def test_quote_text_tuy_chon_cat_600_ky_tu():
+    base = dict(account_id="acc", sender_id="z", conversation_id="c", message_id="m", text="ý này")
+    assert ZaloMessageRequest(**base).quote_text is None
+    assert ZaloMessageRequest(**base, quote_text="   ").quote_text is None
+    long = ZaloMessageRequest.model_validate({**base, "quote_text": "x" * 900})
+    assert long.quote_text == "x" * 600  # dài hơn thì cắt, không từ chối cả tin
+
+
+@pytest.mark.asyncio
+async def test_tin_tra_loi_zalo_truyen_quote_text_xuong_chat(monkeypatch):
+    class FakeUser:
+        is_active = True
+        is_admin = False
+        internal_user_id = -7
+        address_form = None
+
+    seen = []
+
+    async def fake_resolve(external_id):
+        return FakeUser()
+
+    async def fake_handle_channel_text(user_id, text, is_admin=True, quote_text=None):
+        seen.append(quote_text)
+        return ChannelResult(["ok"])
+
+    monkeypatch.setattr(zalo_router.zalo_users, "resolve", fake_resolve)
+    monkeypatch.setattr(zalo_router, "handle_channel_text", fake_handle_channel_text)
+    payload = _payload(text="ý 2 là sao", message_id="q1")
+    payload.quote_text = "1. Mua 2. Giữ"
+    await zalo_router.receive(payload, "s3cr3t")
+    await zalo_router.receive(_payload(text="chào", message_id="q2"), "s3cr3t")
+    assert seen == ["1. Mua 2. Giữ", None]

@@ -37,6 +37,8 @@ class DispatchRequest:
     # account_id Zalo dùng cho lệnh nhóm và /fb_* (None = không có tài khoản
     # Zalo nào đăng nhập -> bỏ qua 2 nhóm lệnh đó).
     command_account_id: str | None = None
+    # Tin người gửi đang trả lời (Zalo quote_text) - chỉ truyền cho chat khi có.
+    quote_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -103,8 +105,14 @@ async def dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]:
                 result = await h.group(req.command_account_id, text)
             if result is None:
                 # Chữ ký như handle_channel_text(user_id, text, is_admin) cũ của Zalo;
-                # kênh khác bọc lambda để truyền channel=.
-                result = await h.chat(req.user_id, text, req.is_admin)
+                # kênh khác bọc lambda để truyền channel=. quote_text chỉ thêm khi
+                # có (handler cũ/giả lập không nhận tham số này vẫn chạy).
+                if req.quote_text:
+                    result = await h.chat(
+                        req.user_id, text, req.is_admin, quote_text=req.quote_text
+                    )
+                else:
+                    result = await h.chat(req.user_id, text, req.is_admin)
             payload = payload_from_result(result, h.chunk)
             await _save_cached_best_effort(h, req, payload)
             return payload

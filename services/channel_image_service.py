@@ -7,7 +7,7 @@ import messages
 from ai import orchestrator
 from core import config
 from core.fileutil import safe_delete
-from services import reply_audience
+from services import conversation_log, reply_audience
 from services.prompt_identity import resolve_prompt_identity
 from services.prompt_templates import build_image_instruction
 from services.telemetry import telemetry
@@ -47,6 +47,10 @@ async def handle_channel_image(
         if not output:
             return [await reply_audience.error_text("image_empty", user_id)], None
         fallback = bool(getattr(response, "used_fallback", False))
+        # Lịch sử chỉ lưu 1 dòng tóm tắt, không lưu prompt tiếng Anh.
+        await conversation_log.record_exchange(
+            user_id, f"[Gửi ảnh] {caption}".strip(), "-", conversation_log.KIND_IMAGE
+        )
         return [f"📝 Prompt gợi ý\n{hint}\n\n{output}"], "api" if fallback else None
     except Exception as exc:
         await telemetry.failure(prompt_id, "promptify", exc)

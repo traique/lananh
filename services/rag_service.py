@@ -326,4 +326,11 @@ async def ask(user_id: int, query: str) -> str:
         return (
             f"⚠️ AI diễn giải lỗi nên em gửi nguyên trích dẫn nhé:\n\n{_format_citations(matches)}"
         )
+    # Lưu câu hỏi GỐC (không phải khung build_prompt) + câu trả lời vào lịch sử:
+    # "giải thích ý 2" ở lượt sau mới có ngữ cảnh.
+    from services import conversation_log
+
+    await conversation_log.record_exchange(
+        user_id, f"/rag {query}", answer, conversation_log.KIND_RAG
+    )
     return answer

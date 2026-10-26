@@ -9,6 +9,7 @@ from ai.timeouts import TurnTimeoutError
 from core import config, database as db
 from core.text_utils import parse_on_off
 from services import (
+    conversation_log,
     divination_commands,
     memory_service,
     price_search,
@@ -224,7 +225,12 @@ async def _translate(
 
     prompt_id = await telemetry.start(user_id, "translate", text, channel=channel)
     try:
-        result, resolved, response = await translate_service.translate(text, direction)
+        result, resolved, response = await conversation_log.run_and_record(
+            user_id,
+            text,
+            conversation_log.KIND_TRANSLATE,
+            lambda: translate_service.translate(text, direction),
+        )
     except translate_service.TextTooLongError as exc:
         return [str(exc)], None
     except ValueError as exc:
@@ -254,7 +260,12 @@ async def _agent(
 
     prompt_id = await telemetry.start(user_id, "agent", question, channel=channel)
     try:
-        text, provider = await agent_service.ask_agent(question)
+        text, provider = await conversation_log.run_and_record(
+            user_id,
+            f"/agent {question}",
+            conversation_log.KIND_AGENT,
+            lambda: agent_service.ask_agent(question),
+        )
         await telemetry.success(prompt_id, "agent", text)
         return [f"{text}\n\n⚙️ {provider}"], None
     except Exception as exc:

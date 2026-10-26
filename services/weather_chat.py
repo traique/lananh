@@ -25,6 +25,8 @@ import asyncio
 import datetime as dt
 import logging
 import re
+import time
+from collections import OrderedDict
 from zoneinfo import ZoneInfo
 
 from services import weather, weather_home
@@ -334,6 +336,72 @@ async def _hourly_answer(
     return _format_hours(data, label, start_h, end_h, points)
 
 
+# Câu hỏi nối tiếp ngay sau 1 câu trả lời thời tiết ("thế còn ngày mai?", "còn
+# Đà Lạt thì sao") không có từ khoá thời tiết: nhớ địa điểm vừa tra của từng
+# người (có trần số người + TTL) để tra dự báo thật thay vì để AI tự bịa.
+_RECENT_MAX = 256
+_RECENT_TTL_SEC = 900
+_recent: OrderedDict[int, tuple[float, str]] = OrderedDict()
+_FOLLOW_UP_START_RE = re.compile(r"^(?:the con|vay con|con|the|vay|thu|con ve)\b")
+_FOLLOW_UP_END_RE = re.compile(r"\b(?:thi sao|the nao|ra sao|sao|nhi|khong)$")
+_FOLLOW_UP_WHEN_RE = re.compile(
+    r"\b(?:hom nay|ngay mai|mai|ngay kia|ngay mot|cuoi tuan|tuan (?:nay|toi|sau)|"
+    r"(?:sang|trua|chieu|toi|dem) (?:nay|mai)|\d+ ngay (?:toi|nua))\b"
+)
+_FOLLOW_UP_MAX_WORDS = 8
+
+
+def remember_place(user_id: int, place: str, *, now: float | None = None) -> None:
+    _recent[user_id] = (time.monotonic() if now is None else now, place)
+    _recent.move_to_end(user_id)
+    while len(_recent) > _RECENT_MAX:
+        _recent.popitem(last=False)
+
+
+def recent_place(user_id: int, *, now: float | None = None) -> str | None:
+    item = _recent.get(user_id)
+    if item is None:
+        return None
+    stamp, place = item
+    if (time.monotonic() if now is None else now) - stamp > _RECENT_TTL_SEC:
+        _recent.pop(user_id, None)
+        return None
+    return place
+
+
+def _follow_up(text: str, user_id: int | None) -> str | None:
+    """Địa điểm vừa tra nếu ``text`` là câu hỏi nối tiếp về thời tiết."""
+    if user_id is None:
+        return None
+    place = recent_place(user_id)
+    if place is None:
+        return None
+    folded = _norm(text)
+    if not folded or len(folded.split()) > _FOLLOW_UP_MAX_WORDS:
+        return None
+    if not (_FOLLOW_UP_START_RE.search(folded) or _FOLLOW_UP_END_RE.search(folded)):
+        return None
+    mentions_place = any(re.search(rf"\b{re.escape(key)}\b", folded) for key, _ in _KNOWN_FOLDED)
+    if not (_FOLLOW_UP_WHEN_RE.search(folded) or mentions_place):
+        return None
+    return place
+
+
+_LEAD_WORDS = {"the", "vay", "con", "thu", "ve"}
+_TAIL_WORDS = {"thi", "sao", "the", "nao", "ra", "nhi", "khong", "a"}
+
+
+def _strip_follow_up_words(text: str) -> str:
+    """Bỏ "thế còn"/"vậy còn" đầu câu và "thì sao"/"thế nào" cuối câu (giữ dấu
+    phần còn lại) để phần tách địa danh không coi chúng là tên địa điểm."""
+    words = re.sub(r"[?!.,;:]+", " ", text).split()
+    while words and weather.fold(words[0]) in _LEAD_WORDS:
+        words.pop(0)
+    while words and weather.fold(words[-1]) in _TAIL_WORDS:
+        words.pop()
+    return " ".join(words)
+
+
 async def answer(
     text: str,
     today: dt.date | None = None,
@@ -344,10 +412,27 @@ async def answer(
     """Câu trả lời thời tiết, hoặc None nếu không phải/không chắc (để AI lo).
 
     ``user_id``: câu không nói địa điểm thì dùng thành phố mặc định riêng của
-    người này (weather_home). ``now`` (giờ VN, không tz) để test cố định giờ."""
+    người này (weather_home); ngay sau 1 câu trả lời thời tiết, câu nối tiếp
+    ("thế còn ngày mai?") dùng lại địa điểm vừa tra. ``now`` (giờ VN, không tz)
+    để test cố định giờ."""
+    return await _answer(text, today, user_id=user_id, now=now)
+
+
+async def _answer(
+    text: str,
+    today: dt.date | None,
+    *,
+    user_id: int | None,
+    now: dt.datetime | None,
+) -> str | None:
     is_weather = weather.looks_like_weather_question(text)
+    follow_place = None
     if not is_weather and not weather.looks_like_air_question(text):
-        return None
+        follow_place = _follow_up(text, user_id)
+        if follow_place is None:
+            return None
+        text = f"thời tiết {_strip_follow_up_words(text)}"
+        is_weather = True
     if now is None:
         now = (
             dt.datetime.combine(today, dt.time())
@@ -359,7 +444,9 @@ async def answer(
     if loc is None:
         return None
     place, rest, explicit = loc
-    if not place and not explicit and user_id is not None:
+    if not place and not explicit and follow_place:
+        place = follow_place
+    elif not place and not explicit and user_id is not None:
         place = await weather_home.get(user_id)
     if not is_weather:
         return await _air_answer(place)
@@ -367,6 +454,8 @@ async def answer(
     if part is not None:
         reply = await _hourly_answer(place, part, today, now)
         if reply is not None:
+            if user_id is not None:
+                remember_place(user_id, place)
             return reply
     start, days = _when(rest, today)
     weather_call = asyncio.wait_for(weather.get_weather(place, start + days), _TIMEOUT_SEC)
@@ -381,6 +470,8 @@ async def answer(
         return "❌ Chưa lấy được dữ liệu thời tiết lúc này (Open-Meteo và wttr.in đều lỗi), thử lại sau nhé."
     if data.get("error"):
         return None  # không tìm thấy địa danh -> để AI hiểu câu / hỏi lại
+    if user_id is not None:
+        remember_place(user_id, place)
     return _format(data, start, days, today, air)
 
 

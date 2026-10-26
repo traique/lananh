@@ -20,6 +20,7 @@ from core import database as db, webhook_inbox
 from core.text_utils import parse_on_off
 from handlers import common
 from services import (
+    conversation_log,
     divination_commands,
     memory_service,
     price_search,
@@ -288,7 +289,13 @@ async def dich_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Cache theo sự kiện webhook: lỗi ở bước gửi -> inbox thử lại chỉ gửi
         # lại bản đã dịch, không gọi LLM lần nữa (services/reply_cache.py).
         result, resolved, response = await reply_cache.generate_once(
-            "dich", lambda: translate_service.translate(text, direction)
+            "dich",
+            lambda: conversation_log.run_and_record(
+                user_id,
+                text,
+                conversation_log.KIND_TRANSLATE,
+                lambda: translate_service.translate(text, direction),
+            ),
         )
     except ValueError as exc:
         await update.message.reply_text(f"Cú pháp: /dich [ja>vi|vi>ja] <nội dung>\n({exc})")
@@ -407,7 +414,13 @@ async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         from ai import agent_service
 
         text, provider = await reply_cache.generate_once(
-            "agent", lambda: agent_service.ask_agent(question)
+            "agent",
+            lambda: conversation_log.run_and_record(
+                user_id,
+                f"/agent {question}",
+                conversation_log.KIND_AGENT,
+                lambda: agent_service.ask_agent(question),
+            ),
         )
         await telemetry.success(prompt_id, "agent", text)
     except Exception as exc:

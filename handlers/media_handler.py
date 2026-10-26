@@ -21,6 +21,7 @@ from core import config
 from core.text_normalize import nfc
 from ai import orchestrator
 from handlers import common
+from services import conversation_log
 from services.prompt_identity import resolve_prompt_identity
 from services.prompt_templates import build_image_instruction
 from services.telemetry import telemetry
@@ -113,6 +114,10 @@ async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await telemetry.success(prompt_id, "promptify", result_text)
+    # Lịch sử chỉ lưu 1 dòng tóm tắt (prompt tiếng Anh dài kéo câu trả lời sau lệch ngôn ngữ).
+    await conversation_log.record_exchange(
+        user_id, f"[Gửi ảnh] {caption}".strip(), "-", conversation_log.KIND_IMAGE
+    )
 
     # ── Pha 3: Gửi kết quả về Telegram ──────────────────────────────
     # Header riêng, rồi nội dung prompt gửi trong khối <pre> để Telegram hiện

@@ -2,6 +2,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from core.text_normalize import nfc
 
+# Trần tin được trích dẫn (ZaloMessageRequest.quote_text) - khớp
+# services/chat_context.QUOTE_MAX_CHARS.
+QUOTE_TEXT_MAX_CHARS = 600
+
 
 class ZaloMessageRequest(BaseModel):
     account_id: str = Field(min_length=1)
@@ -10,6 +14,10 @@ class ZaloMessageRequest(BaseModel):
     conversation_id: str = Field(min_length=1)
     message_id: str = Field(min_length=1)
     text: str = Field(min_length=1, max_length=20_000)
+    # Tin người gửi đang trả lời (zca-js data.quote.msg). Tuỳ chọn, JSON key
+    # "quote_text", tối đa QUOTE_TEXT_MAX_CHARS ký tự - dài hơn thì CẮT (không
+    # từ chối cả tin nhắn). Gateway cũ không gửi trường này -> None.
+    quote_text: str | None = None
 
     # nfc(): text từ Zalo (đặc biệt qua một số input method/iOS) có thể ở
     # dạng NFD - chuẩn hoá ngay tại model, để MỌI endpoint nhận request này
@@ -18,6 +26,14 @@ class ZaloMessageRequest(BaseModel):
     @classmethod
     def _normalize_nfc(cls, value: str) -> str:
         return nfc(value)
+
+    @field_validator("quote_text", mode="before")
+    @classmethod
+    def _clip_quote(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = nfc(str(value)).strip()[:QUOTE_TEXT_MAX_CHARS]
+        return text or None
 
 
 class ZaloMessageResponse(BaseModel):

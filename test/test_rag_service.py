@@ -31,18 +31,22 @@ def test_tokenize_drops_stopwords_and_short_tokens():
     tokens = rag_service.tokenize("Chiến lược DCA vào cổ phiếu FPT")
     assert "dca" in tokens and "fpt" in tokens and "chien" in tokens
     assert "vao" not in tokens  # stopword
-    assert "a" not in tokens    # quá ngắn
+    assert "a" not in tokens  # quá ngắn
 
 
 def test_split_chunks_by_heading(rag_dir):
-    _write(rag_dir, "dautu.md", """# Đầu tư
+    _write(
+        rag_dir,
+        "dautu.md",
+        """# Đầu tư
 
 ## Chiến lược DCA
 Vào tiền 30% khi VNINDEX dưới MA200.
 
 ## Quản trị rủi ro
 Không all-in, tối đa 10% vốn cho một mã.
-""")
+""",
+    )
     chunks = rag_service._load_chunks()
     headings = {c.heading for c in chunks}
     assert headings == {"Đầu tư > Chiến lược DCA", "Đầu tư > Quản trị rủi ro"}
@@ -81,14 +85,18 @@ def test_split_chunks_raw_file_without_headings(rag_dir):
 
 
 def test_search_matches_without_diacritics(rag_dir):
-    _write(rag_dir, "dautu.md", """# Đầu tư
+    _write(
+        rag_dir,
+        "dautu.md",
+        """# Đầu tư
 
 ## Chiến lược DCA
 Vào tiền 30% khi VNINDEX dưới MA200.
 
 ## Nguyên tắc cắt lỗ
 Cắt lỗ khi giá giảm 7% so với giá vào.
-""")
+""",
+    )
     # Hỏi không dấu vẫn khớp heading có dấu.
     matches = rag_service.search("chiến lược dca vào tiền")
     assert matches, "Phải tìm thấy chunk Chiến lược DCA"
@@ -142,6 +150,7 @@ async def test_ask_falls_back_to_citations_when_llm_fails(rag_dir, monkeypatch):
         raise RuntimeError("provider sập")
 
     import ai.orchestrator as orchestrator
+
     monkeypatch.setattr(orchestrator, "chat", fail_chat)
 
     reply = await rag_service.ask(1, "dca")
@@ -160,8 +169,31 @@ async def test_ask_no_match_does_not_call_llm(rag_dir, monkeypatch):
         raise RuntimeError("không được gọi tới")
 
     import ai.orchestrator as orchestrator
+
     monkeypatch.setattr(orchestrator, "chat", fail_chat)
 
     reply = await rag_service.ask(1, "mon an sang nay")
     assert "không tìm thấy" in reply
     assert not called
+
+
+@pytest.mark.asyncio
+async def test_ask_luu_cau_hoi_goc_va_cau_tra_loi_vao_lich_su(rag_dir, monkeypatch):
+    _write(rag_dir, "dautu.md", "# Đầu tư\n\n## DCA\nVào tiền đều đặn hàng tháng.\n")
+    saved = []
+
+    async def fake_chat(*args, **kwargs):
+        return type("R", (), {"text": "DCA là vào tiền đều."})()
+
+    async def fake_record(user_id, user_text, reply, kind="chat", **kwargs):
+        saved.append((user_id, user_text, reply, kind))
+        return True
+
+    import ai.orchestrator as orchestrator
+    from services import conversation_log
+
+    monkeypatch.setattr(orchestrator, "chat", fake_chat)
+    monkeypatch.setattr(conversation_log, "record_exchange", fake_record)
+    assert await rag_service.ask(1, "dca là gì") == "DCA là vào tiền đều."
+    # Câu hỏi GỐC, không phải khung build_prompt.
+    assert saved == [(1, "/rag dca là gì", "DCA là vào tiền đều.", "rag")]

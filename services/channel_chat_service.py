@@ -18,6 +18,7 @@ from ai.timeouts import TurnTimeoutError, turn_deadline
 from core import untrusted, urls
 from services import (
     article_reader,
+    chat_context,
     conversation_log,
     lunar_chat,
     weather_chat,
@@ -91,14 +92,16 @@ async def run_chat_turn(
     channel: str = "telegram",
     is_admin: bool = False,
     address_form: str | None = None,
+    quote_text: str | None = None,
 ) -> ChatTurn:
     """Pipeline chat chung: gom ngữ cảnh -> orchestrator.chat -> lưu lịch sử.
 
     grounding: ngữ cảnh giá cổ phiếu từ nhánh cổ phiếu (nếu có). channel và
     is_admin chọn gợi ý trình bày theo kênh và biến thể persona (admin Zalo
     khác thành viên thường; chủ bot nhận ra qua user_id); address_form là cách
-    gọi riêng của thành viên Zalo (core/address.py). Không raise: lỗi trả
-    ChatTurn(failed=True) sau khi đã log và ghi telemetry."""
+    gọi riêng của thành viên Zalo (core/address.py). quote_text: tin người dùng
+    đang trả lời/trích dẫn (rào như dữ liệu, không gộp vào lời người dùng).
+    Không raise: lỗi trả ChatTurn(failed=True) sau khi đã log và ghi telemetry."""
     prompt_id = await telemetry.start(user_id, "chat", text, channel=channel)
     try:
         # Hạn chót CHAT_TURN_TIMEOUT_SEC áp cho CẢ lượt (web search có thể tự gọi
@@ -119,13 +122,16 @@ async def run_chat_turn(
             # 3 nguồn ngữ cảnh độc lập nhau - chạy song song thay vì tuần tự
             # (trước đây Tavily + memory nối tiếp, thêm vài trăm ms - vài giây
             # độ trễ cho mọi tin nhắn).
-            tool_result, plan, memory = await asyncio.gather(
+            tool_result, plan, memory, last_row = await asyncio.gather(
                 tools.maybe_run_tool(user_id, text),
                 search,
                 memory_service.build_turn_memory(user_id, text),
+                # Câu trả lời ngay trước (báo cáo cổ phiếu?) - chặn câu chat nói ngược policy.
+                conversation_log.last_model_row(user_id),
             )
+            quote = chat_context.quote_grounding(quote_text)
             combined = "\n\n".join(
-                part for part in (grounding, daily.text, tool_result, plan.grounding) if part
+                part for part in (quote, grounding, daily.text, tool_result, plan.grounding) if part
             )
             forced = daily.force_real_search or (
                 not daily.skip_search and stock_analysis.wants_external_market_data(text)
@@ -142,7 +148,7 @@ async def run_chat_turn(
                 address_form=address_form,
                 style_rules=memory.style_rules,
             )
-        reply = (response.text or "").strip()
+        reply = conversation_log.guard_stock_reply((response.text or "").strip(), last_row)
         searched = bool(getattr(response, "searched", False))
         untrusted_context = plan.untrusted or untrusted.contains_untrusted(combined)
         reply = _filter_reply_links(
@@ -326,11 +332,18 @@ async def _handle_stock(
 
 
 async def handle_channel_text(
-    user_id: int, text: str, is_admin: bool = True, channel: str = "zalo"
+    user_id: int,
+    text: str,
+    is_admin: bool = True,
+    channel: str = "zalo",
+    *,
+    quote_text: str | None = None,
 ) -> ChannelResult:
+    """quote_text: tin người dùng đang trả lời trên Zalo (ZaloMessageRequest.quote_text)."""
     text = (text or "").strip()
     if not text:
         return ChannelResult([])
+    record = conversation_log.record_exchange
 
     portfolio_command = await portfolio_service.handle_command(user_id, text)
     if portfolio_command is not None:
@@ -346,23 +359,30 @@ async def handle_channel_text(
             channel_command_service.take_pending_image(),
             channel_command_service.take_pending_image_url(),
         )
+    # Mọi câu trả lời nhanh bên dưới cũng vào lịch sử (services/conversation_log):
+    # câu hỏi nối tiếp ("thế còn ngày mai?", "sao em bảo giữ?") mới có ngữ cảnh.
     portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
     if portfolio_result is not None:
+        await record(user_id, text, portfolio_result, conversation_log.KIND_PORTFOLIO)
         return ChannelResult([portfolio_result])
     article = await article_reader.maybe_handle(text)
     if article is not None:
+        await record(user_id, text, article, conversation_log.KIND_ARTICLE)
         return ChannelResult([article])
     # Giá vàng/tỷ giá/xổ số, thời tiết (Open-Meteo) và âm lịch (offline): trả
     # lời thẳng, không tốn lượt AI nào; câu không chắc trả None và đi tiếp
     # xuống chat AI như cũ.
     daily_reply = await vn_daily_chat.maybe_handle(text, user_id)
     if daily_reply is not None:
+        await record(user_id, text, daily_reply, conversation_log.KIND_DAILY)
         return ChannelResult([daily_reply])
     weather_reply = await weather_chat.maybe_handle(text, user_id=user_id)
     if weather_reply is not None:
+        await record(user_id, text, weather_reply, conversation_log.KIND_WEATHER)
         return ChannelResult([weather_reply])
     lunar_reply = await lunar_chat.maybe_handle(text)
     if lunar_reply is not None:
+        await record(user_id, text, lunar_reply, conversation_log.KIND_LUNAR)
         return ChannelResult([lunar_reply])
 
     # MỘT hạn chót cho cả nhánh cổ phiếu (debate nhiều lượt gọi AI) LẪN lượt chat
@@ -376,6 +396,15 @@ async def handle_channel_text(
             logger.warning("Nhánh cổ phiếu hết hạn chót lượt: %s", exc)
             return ChannelResult([await reply_audience.error_text("timeout", user_id, str(exc))])
         if stock_result is not None:
+            # Thành viên (is_admin=False): bản lưu cũng chỉ là thông tin tham khảo.
+            await record(
+                user_id,
+                text,
+                "",
+                conversation_log.KIND_STOCK,
+                full_access=is_admin,
+                stock_outputs=list(stock_result.messages),
+            )
             return stock_result
         turn = await run_chat_turn(
             user_id,
@@ -385,6 +414,7 @@ async def handle_channel_text(
             is_admin=is_admin,
             # Router Zalo gắn cách gọi riêng của người gửi (services/reply_audience.py).
             address_form=reply_audience.current().address_form,
+            quote_text=quote_text,
         )
     if turn.failed:
         return ChannelResult([await failure_text(turn, user_id)])

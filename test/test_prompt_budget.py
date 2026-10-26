@@ -43,3 +43,43 @@ def test_fit_chat_prompt_khong_dung_den_khi_vua_ngan_sach():
 def test_estimate_tokens():
     assert pb.estimate_tokens("") == 0
     assert pb.estimate_tokens("abcd" * 10) == 10
+
+
+def test_lich_su_rieng_cho_groq_co_tran_nho_hon():
+    from ai import prompt_budget
+
+    history = [("user", "a" * 1000), ("model", "b" * 1000)] * 5
+    groq = prompt_budget.history_for_provider(history, "groq")
+    assert sum(len(c) for _, c in groq) <= prompt_budget.GROQ_HISTORY_MAX_CHARS
+    assert groq[-1] == history[-1]  # giữ tin mới nhất
+    assert prompt_budget.history_for_provider(history, "router9") == history
+
+
+async def test_chat_doc_lich_su_theo_luot_va_noi_cach_tra_loi_vao_persona(monkeypatch):
+    from types import SimpleNamespace
+
+    from ai import orchestrator
+    from core import config, database as db
+
+    seen = {}
+
+    async def fake_history(user_id, k, session_timeout_sec):
+        seen["k"] = k
+        return []
+
+    async def fake_chain(**kwargs):
+        seen["groq"] = kwargs["groq_call"]
+        return SimpleNamespace(text="dạ")
+
+    async def fake_groq_generate(prompt, *, system_instruction, history, temperature):
+        seen["persona"] = system_instruction
+        return SimpleNamespace(text="dạ")
+
+    monkeypatch.setattr(config, "CHAT_HISTORY_TURNS", 10)
+    monkeypatch.setattr(db, "get_session_messages", fake_history)
+    monkeypatch.setattr(orchestrator, "_run_provider_chain", fake_chain)
+    monkeypatch.setattr(orchestrator.groq_client, "generate", fake_groq_generate)
+    await orchestrator.chat(1, "chào", search_mode="off", style_rules="CÁCH TRẢ LỜI: ngắn gọn")
+    assert seen["k"] == 20  # 10 lượt = 20 dòng
+    await seen["groq"]()
+    assert seen["persona"].endswith("CÁCH TRẢ LỜI: ngắn gọn")

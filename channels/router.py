@@ -316,8 +316,10 @@ def _chat_for(zalo_user: zalo_users.ZaloUser, sender_id: str):
     module-level lúc gọi để test monkeypatch ``router.handle_channel_text`` vẫn có
     hiệu lực."""
 
-    async def chat(user_id: int, text: str, is_admin: bool = True):
+    async def chat(user_id: int, text: str, is_admin: bool = True, quote_text: str | None = None):
         with reply_audience.use(_audience(zalo_user, sender_id)):
+            if quote_text:
+                return await handle_channel_text(user_id, text, is_admin, quote_text=quote_text)
             return await handle_channel_text(user_id, text, is_admin)
 
     return chat
@@ -354,6 +356,7 @@ async def _receive_text(payload: ZaloMessageRequest):
             text=payload.text,
             turn_key=f"zalo:{zalo_user.internal_user_id}",
             command_account_id=payload.account_id,
+            quote_text=payload.quote_text,
         ),
         channel_dispatch.DispatchHandlers(
             chat=_chat_for(zalo_user, payload.sender_id),

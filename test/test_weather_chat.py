@@ -231,3 +231,30 @@ async def test_thanh_pho_rieng_khi_khong_noi_dia_diem(monkeypatch, calls):
     await weather_chat.answer("TP.HCM mai có mưa không", TODAY, user_id=-7)
     await weather_chat.answer("Đà Lạt mai có mưa không", TODAY, user_id=-7)
     assert calls == [("Hà Nội", 2), ("", 2), ("", 2), ("Đà Lạt", 2)]
+
+
+async def test_cau_noi_tiep_dung_lai_dia_diem_vua_tra(monkeypatch, calls):
+    """ "thế còn ngày mai?" ngay sau câu trả lời thời tiết: tra dự báo thật cho
+    đúng địa điểm vừa hỏi, không để AI tự bịa."""
+    weather_chat._recent.clear()
+    assert await weather_chat.answer("thế còn ngày mai?", TODAY, user_id=5) is None  # chưa hỏi gì
+    await weather_chat.answer("Đà Lạt hôm nay có mưa không", TODAY, user_id=5)
+    reply = await weather_chat.answer("thế còn ngày mai?", TODAY, user_id=5)
+    assert reply is not None and "Thời tiết Đà Lạt" in reply and "Ngày mai" in reply
+    reply = await weather_chat.answer("còn Nha Trang thì sao", TODAY, user_id=5)
+    assert reply is not None and "Nha Trang" in reply
+    # Người khác, câu dài/không có mốc thời gian hay địa danh: không đoán.
+    assert await weather_chat.answer("thế còn ngày mai?", TODAY, user_id=6) is None
+    assert await weather_chat.answer("vậy còn chuyện công ty thì sao", TODAY, user_id=5) is None
+    assert calls == [("Đà Lạt", 1), ("Đà Lạt", 2), ("Nha Trang", 1)]
+
+
+def test_dia_diem_vua_tra_co_tran_va_het_han():
+    weather_chat._recent.clear()
+    for uid in range(weather_chat._RECENT_MAX + 5):
+        weather_chat.remember_place(uid, "Huế", now=0.0)
+    assert len(weather_chat._recent) == weather_chat._RECENT_MAX
+    assert weather_chat.recent_place(0, now=1.0) is None  # bị đẩy ra
+    assert weather_chat.recent_place(200, now=1.0) == "Huế"
+    assert weather_chat.recent_place(200, now=weather_chat._RECENT_TTL_SEC + 10) is None
+    weather_chat._recent.clear()

@@ -71,6 +71,9 @@ def chat_fakes(monkeypatch):
     def fake_after_exchange(user_id, **kwargs):
         calls.setdefault("flush", []).append(user_id)
 
+    async def fake_last_row(user_id):
+        return calls.get("last_row")
+
     monkeypatch.setattr(ccs.telemetry, "start", fake_start)
     monkeypatch.setattr(ccs.telemetry, "success", fake_success)
     monkeypatch.setattr(ccs.telemetry, "failure", fake_failure)
@@ -80,6 +83,7 @@ def chat_fakes(monkeypatch):
     monkeypatch.setattr(ccs.memory_service, "after_exchange", fake_after_exchange)
     monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
     monkeypatch.setattr(ccs.conversation_log.db, "add_chat_turn", fake_add_turn)
+    monkeypatch.setattr(ccs.conversation_log, "last_model_row", fake_last_row)
     return calls
 
 
@@ -212,6 +216,82 @@ async def test_cau_hoi_am_lich_tra_loi_thang_khong_goi_ai(chat_fakes, monkeypatc
     assert chat_fakes["telemetry"] == []  # không ghi lượt chat AI
 
 
+@pytest.mark.asyncio
+async def test_tin_duoc_trich_dan_vao_grounding_co_rao_khong_gop_loi_nguoi_dung(chat_fakes):
+    from services import channel_chat_service as ccs
+
+    turn = await ccs.run_chat_turn(1, "ý 2 là sao em?", quote_text="1. Mua\n2. Giữ tiền mặt")
+    await ccs.stop_background_tasks()
+    grounding, _ = chat_fakes["chat"]
+    assert "đang trả lời/trích dẫn" in grounding and "2. Giữ tiền mặt" in grounding
+    assert "DỮ_LIỆU_NGOÀI" in grounding  # rào như dữ liệu ngoài
+    assert chat_fakes["saved"][0] == ("user", "ý 2 là sao em?")
+    # Lượt có dữ liệu ngoài: trích nhớ chỉ đọc lời người dùng.
+    assert chat_fakes["kinds"] == ["chat_ext"] and turn.text == "trả lời"
+
+
+@pytest.mark.asyncio
+async def test_chat_ngay_sau_bao_cao_co_phieu_khong_duoc_noi_nguoc_policy(chat_fakes):
+    from services import channel_chat_service as ccs
+    from services import conversation_log
+
+    report = (
+        "📊 **FPT** — **120.500 VND**\nTín hiệu hệ thống: **🟡 GIỮ** (confidence 0.6)\n"
+        "Đang giữ | Cân nhắc cắt lỗ dưới 110.000"
+    )
+    chat_fakes["last_row"] = {
+        "kind": "stock",
+        "content": conversation_log.stock_record([report], full_access=True),
+    }
+    chat_fakes["response"] = _FakeResponse("Anh nên bán hết FPT ngay đi.")
+    turn = await ccs.run_chat_turn(1, "sao em bảo giữ?")
+    await ccs.stop_background_tasks()
+    assert turn.text.startswith("⚠️ Bản diễn giải AI lần này")
+    assert "GIỮ" in turn.text and "nên bán" not in turn.text
+
+
+@pytest.mark.asyncio
+async def test_kenh_zalo_luu_tra_loi_nhanh_va_bao_cao_co_phieu_theo_quyen(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+
+    async def no_command(*args, **kwargs):
+        return None
+
+    async def stock(user_id, text, is_admin=True):
+        report = "📊 FPT\nThông tin tham khảo\nNên mua quanh vùng mua 118.000"
+        return ccs.ChannelResult([report]), ""
+
+    monkeypatch.setattr(ccs.portfolio_service, "handle_command", no_command)
+    monkeypatch.setattr(ccs.portfolio_service, "maybe_handle_natural_language", no_command)
+    monkeypatch.setattr(ccs.article_reader, "maybe_handle", no_command)
+    monkeypatch.setattr(ccs.vn_daily_chat, "maybe_handle", no_command)
+    monkeypatch.setattr(ccs.weather_chat, "maybe_handle", no_command)
+    monkeypatch.setattr(ccs.lunar_chat, "maybe_handle", no_command)
+    monkeypatch.setattr(ccs, "_handle_stock", stock)
+    await ccs.handle_channel_text(-5, "phân tích FPT", is_admin=False, channel="zalo")
+    assert chat_fakes["kinds"] == ["stock"]
+    stored = chat_fakes["saved"][1][1]
+    assert stored.startswith("[Báo cáo tham khảo") and "vùng mua" not in stored.lower()
+
+
+@pytest.mark.asyncio
+async def test_kenh_zalo_truyen_tin_trich_dan_xuong_chat(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+
+    async def no_command(*args, **kwargs):
+        return None
+
+    async def no_stock(user_id, text, is_admin=True):
+        return None, ""
+
+    monkeypatch.setattr(ccs.portfolio_service, "handle_command", no_command)
+    monkeypatch.setattr(ccs.portfolio_service, "maybe_handle_natural_language", no_command)
+    monkeypatch.setattr(ccs, "_handle_stock", no_stock)
+    await ccs.handle_channel_text(-5, "ý này là sao", is_admin=False, quote_text="Tin cũ ABC")
+    await ccs.stop_background_tasks()
+    assert "Tin cũ ABC" in chat_fakes["chat"][0]
+
+
 # ─── Telegram chat_msg dùng lại run_chat_turn ───────────────────────────────
 
 
@@ -272,16 +352,37 @@ async def test_telegram_chat_dung_pipeline_chung_va_nhan_api_ngan(telegram_chat,
 
     chat_router, sent, seen = telegram_chat
 
-    async def fake_turn(user_id, text, *, grounding, channel):
+    async def fake_turn(user_id, text, *, grounding, channel, quote_text=None):
         seen.update(user_id=user_id, text=text, grounding=grounding, channel=channel)
+        seen["quote"] = quote_text
         return ccs.ChatTurn("dạ em đây", used_fallback=True, prompt_id=5)
 
     monkeypatch.setattr(chat_router.channel_chat_service, "run_chat_turn", fake_turn)
     update = _TgUpdate("chào em")
     await chat_router.chat_msg(update, _TgContext())
 
-    assert seen == {"user_id": 42, "text": "chào em", "grounding": "GIÁ FPT", "channel": "telegram"}
+    assert seen == {
+        "user_id": 42,
+        "text": "chào em",
+        "grounding": "GIÁ FPT",
+        "channel": "telegram",
+        "quote": None,
+    }
     assert sent == ["dạ em đây\n\n⚙️ API"]
+
+
+def test_telegram_lay_tin_duoc_tra_loi_hoac_doan_trich():
+    from handlers import chat_router
+
+    msg = _TgMessage("ý 2 là sao em?")
+    assert chat_router.quoted_text(msg) is None
+    msg.reply_to_message = type("R", (), {"text": None, "caption": "Chú thích ảnh"})()
+    assert chat_router.quoted_text(msg) == "Chú thích ảnh"
+    msg.reply_to_message = type("R", (), {"text": "x" * 900, "caption": None})()
+    assert chat_router.quoted_text(msg) == "x" * 600
+    # Đoạn trích chọn riêng (Message.quote) được ưu tiên.
+    msg.quote = type("Q", (), {"text": "đoạn được chọn"})()
+    assert chat_router.quoted_text(msg) == "đoạn được chọn"
 
 
 @pytest.mark.asyncio
