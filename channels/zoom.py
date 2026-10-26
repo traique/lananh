@@ -50,7 +50,8 @@ def notify_unpaired(jid: str) -> bool:
     _notified_unpaired[jid] = None
     while len(_notified_unpaired) > _NOTIFIED_UNPAIRED_MAX:
         _notified_unpaired.pop(next(iter(_notified_unpaired)))
-    return alerts.send(messages.ZOOM_UNPAIRED_ALERT.format(jid=jid))
+    # Cần chủ bot quyết có cấp quyền không: gửi ngay, không gom.
+    return alerts.send(messages.ZOOM_UNPAIRED_ALERT.format(jid=jid), urgent=True)
 
 
 @dataclass(frozen=True)

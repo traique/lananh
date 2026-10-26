@@ -394,7 +394,7 @@ async def test_list_pending_for_refilter_returns_media_count(delivery_db):
 async def test_inbox_exhausted_event_goes_dead_once_and_is_never_claimed(delivery_db, monkeypatch):
     pool = delivery_db
     sent = []
-    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text: sent.append(text) or True)
+    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text, **kw: sent.append(text) or True)
     monkeypatch.setattr(webhook_inbox.config, "WEBHOOK_MAX_ATTEMPTS", 2)
     await webhook_inbox.enqueue("telegram", "poison", {"update_id": 7})
     first = await webhook_inbox.claim()
@@ -415,7 +415,7 @@ async def test_inbox_exhausted_event_goes_dead_once_and_is_never_claimed(deliver
 async def test_inbox_reaps_event_whose_last_attempt_crashed(delivery_db, monkeypatch):
     pool = delivery_db
     sent = []
-    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text: sent.append(text) or True)
+    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text, **kw: sent.append(text) or True)
     monkeypatch.setattr(webhook_inbox.config, "WEBHOOK_MAX_ATTEMPTS", 1)
     await webhook_inbox.enqueue("zoom", "crash", {"x": 1})
     assert (await webhook_inbox.claim())["attempts"] == 1
@@ -586,6 +586,13 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "INSERT INTO turn_metrics (turn_id,created_at) "
         "VALUES ('telegram:1',now()-interval '20 days'),('telegram:2',now())"
     )
+    # Hàng đợi gom (migrations/026): chỉ xoá dòng đã gửi/đã bỏ đủ cũ, tin còn chờ giữ nguyên.
+    await pool.execute(
+        "INSERT INTO notify_queue (channel,user_id,level,source,content,status,created_at) "
+        "VALUES ('telegram',1,'normal','system','old sent','sent',now()-interval '10 days'),"
+        "('telegram',1,'normal','system','old pending','pending',now()-interval '10 days'),"
+        "('telegram',1,'normal','system','new sent','sent',now())"
+    )
     result = await db_maintenance.prune_retention()
     assert result == {
         "user_calls": 1,
@@ -596,8 +603,12 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "user_session_notes": 1,
         "user_events": 1,
         "turn_metrics": 1,
+        "notify_queue": 1,
         "answer_feedback": 1,
     }
+    assert [
+        r["content"] for r in await pool.fetch("SELECT content FROM notify_queue ORDER BY id")
+    ] == ["old pending", "new sent"]
     assert await pool.fetchval("SELECT prompt_id FROM answer_feedback") == 2
     assert await pool.fetchval("SELECT session_key FROM user_session_notes") == 2
     assert await pool.fetchval("SELECT title FROM user_events") == "mới"
@@ -663,7 +674,7 @@ async def test_inbox_loi_khong_dang_thu_lai_ket_thuc_ngay_va_giu_last_error(
 ):
     pool = delivery_db
     sent = []
-    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text: sent.append(text) or True)
+    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text, **kw: sent.append(text) or True)
     await webhook_inbox.enqueue("telegram", "bug", {"update_id": 8})
     row = await webhook_inbox.claim()
     await webhook_inbox.retry(row, KeyError("missing"))

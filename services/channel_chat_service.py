@@ -35,7 +35,7 @@ from services import (
     web_search,
 )
 from services import channel_command_service, reply_audience
-from services import vn_daily_chat
+from services import attention, vn_daily_chat
 from services.channel_result import ChannelResult
 from services.telemetry import telemetry
 from stock import analysis as stock_analysis
@@ -639,6 +639,11 @@ async def handle_channel_text(
         # Giữ bài vừa đọc (đã rào) cho câu hỏi nối tiếp "bài này nói gì về...".
         chat_context.remember_article(user_id, text, article)
         return ChannelResult([article])
+    # "Có gì cần anh chú ý?" / "hôm nay có gì cần lo": tin /chuy tính bằng code.
+    if attention.is_attention_question(text):
+        reply = await channel_command_service.attention_text(user_id, channel, is_admin)
+        await record(user_id, text, reply, conversation_log.KIND_DAILY)
+        return ChannelResult([reply])
     # Giá vàng/tỷ giá/xổ số, thời tiết (Open-Meteo) và âm lịch (offline): trả
     # lời thẳng, không tốn lượt AI nào; câu không chắc trả None và đi tiếp
     # xuống chat AI như cũ.

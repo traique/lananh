@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core import config, trace
-from services import concurrency, turn_control, usage_quota
+from services import concurrency, notify_hub, turn_control, usage_quota
 from services.channel_result import ChannelResult
 from services.concurrency import assistant_turn
 
@@ -112,7 +112,11 @@ async def dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]:
         channel=req.channel,
         user_kind=_user_kind(req),
     ):
-        return await _dispatch(req, h)
+        payload = await _dispatch(req, h)
+    # Người dùng vừa nhắn: xả tin đang chờ gom của CHÍNH họ sau vài giây (sau câu
+    # trả lời) - services/notify_hub.py.
+    notify_hub.note_activity(req.user_id)
+    return payload
 
 
 async def _dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]:

@@ -51,6 +51,7 @@ from services import ngay_nho  # noqa: F401 - đăng ký mục "ngay_nho" của 
 from services import portfolio_alerts, rag_clean_service
 from services import portfolio_events, portfolio_push, price_alerts
 from services import monitor_service
+from services import notify_hub
 from services import owner_alerts
 from services import db_maintenance
 from services import http_client
@@ -89,6 +90,8 @@ COMMANDS = [
     BotCommand("xoso", "Kết quả xổ số, dò vé"),
     BotCommand("thoitiet", "Thời tiết; /thoitiet nha <tỉnh> đặt nơi ở"),
     BotCommand("bantin", "Bản tin sáng cá nhân (on|off|giờ|xem)"),
+    BotCommand("chuy", "Có gì cần anh chú ý hôm nay"),
+    BotCommand("yenlang", "Giờ yên lặng, gom thông báo (on|off|22-7)"),
     BotCommand("nhac", "Nhắc việc: xem, đặt, huỷ, hoãn"),
     BotCommand("ngaynho", "Ngày nhớ: giỗ, sinh nhật, kỷ niệm"),
     BotCommand("chitieu", "Chi tiêu: tổng theo danh mục, ghi khoản"),
@@ -167,6 +170,8 @@ async def _post_init(app):
     await app.bot.set_my_commands(COMMANDS)
     await orchestrator.init_provider_state()
     orchestrator.start_background_tasks()
+    # Cửa gom thông báo chủ động: bật TRƯỚC các vòng nền để tin đầu tiên đã đi qua hub.
+    notify_hub.start()
     monitor_service.start()
     scheduler.start(config.ALLOWED_USER_ID)
     portfolio_alerts.start(config.ALLOWED_USER_ID)
@@ -184,6 +189,7 @@ async def _post_shutdown(app):
         except Exception:
             logger.exception("Shutdown step lỗi: %s", label)
 
+    await run_step("notify hub", notify_hub.stop())
     await run_step("Telegram scheduler", scheduler.stop())
     await run_step("portfolio alerts", portfolio_alerts.stop())
     await run_step("portfolio events", portfolio_events.stop())
@@ -299,6 +305,8 @@ def build_application():
         ("xoso", daily_data_commands.xoso_cmd),
         ("thoitiet", daily_data_commands.thoitiet_cmd),
         ("bantin", daily_data_commands.bantin_cmd),
+        ("chuy", daily_data_commands.chuy_cmd),
+        ("yenlang", daily_data_commands.yenlang_cmd),
         ("nhac", reminder_commands.nhac_cmd),
         ("ngaynho", reminder_commands.ngaynho_cmd),
         ("chitieu", expense_commands.chitieu_cmd),
@@ -437,4 +445,5 @@ def build_application():
     portfolio_push.set_notify_callback(notify)
     morning_brief.set_notify_callback(notify)
     proactive_service.set_notify_callback(notify)
+    notify_hub.set_telegram_sender(notify)
     return app

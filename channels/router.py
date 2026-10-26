@@ -224,7 +224,9 @@ async def gateway_state(
     )
     text = gateway_state_alert_text(payload.account_id, payload.state, payload.detail)
     if text:
-        alerts.send(text)
+        # Mất/có lại kết nối gateway: gửi ngay (giữ đúng thứ tự mất -> có lại); lỗi gửi
+        # 1 tin trả lời là cảnh báo nhẹ, được gom (services/notify_hub.py).
+        alerts.send(text, urgent=payload.state != "send_failed")
     return Response(status_code=204)
 
 

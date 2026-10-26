@@ -634,6 +634,8 @@ async def delete_own_data(user_id: int, argument: str = "") -> str:
             await db.clear_notes(user_id)
             await db.clear_chat(user_id)
             await db.clear_user_events(user_id)
+            # Tin chủ động đang chờ gom (có nội dung hỏi thăm, bản tin...).
+            await db.notify_clear_user(user_id)
             # Đánh giá 👍/👎 có bản chụp câu hỏi/câu trả lời (migrations/021).
             await db.answer_feedback_clear(user_id)
             for key in personal_settings.memory_user_keys(user_id):

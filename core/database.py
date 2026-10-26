@@ -1700,6 +1700,105 @@ async def portfolio_prune_alert_log(keep_days: int, batch: int = 5000) -> int:
     return await portfolio.prune_alert_log(await get_pool(), keep_days, batch)
 
 
+# ─── Hàng đợi thông báo gom (migrations/026, services/notify_hub.py) ────────
+# SQL nằm ở core/repositories/notify.py.
+
+
+@_with_reconnect(idempotent=False)
+async def notify_enqueue(
+    channel: str,
+    user_id: int,
+    level: str,
+    source: str,
+    content: str,
+    dedup_key: str | None,
+    cap: int,
+) -> tuple[int | None, int]:
+    """Xếp 1 tin vào hàng đợi; (id mới hoặc None nếu trùng dedup_key, số tin cũ bị
+    bỏ vì vượt trần). Không retry sau khi mất kết nối: tin không có dedup_key có thể
+    đã được xếp ở lần đầu."""
+    from core.repositories import notify
+
+    return await notify.enqueue(
+        await get_pool(), channel, user_id, level, source, content, dedup_key, cap
+    )
+
+
+@_with_reconnect
+async def notify_pending_recipients(priority_sources: list[str], limit: int = 100) -> list[dict]:
+    from core.repositories import notify
+
+    return await notify.pending_recipients(await get_pool(), limit, priority_sources)
+
+
+@_with_reconnect(idempotent=False)
+async def notify_claim(channel: str, user_id: int, limit: int, lease_sec: int) -> list[dict]:
+    from core.repositories import notify
+
+    return await notify.claim(await get_pool(), channel, user_id, limit, lease_sec)
+
+
+@_with_reconnect
+async def notify_mark_sent(ids: list[int]) -> None:
+    from core.repositories import notify
+
+    await notify.mark_sent(await get_pool(), ids)
+
+
+@_with_reconnect
+async def notify_release(ids: list[int]) -> None:
+    from core.repositories import notify
+
+    await notify.release(await get_pool(), ids)
+
+
+@_with_reconnect(idempotent=False)
+async def notify_take_dropped(channel: str, user_id: int) -> int:
+    from core.repositories import notify
+
+    return await notify.take_dropped(await get_pool(), channel, user_id)
+
+
+@_with_reconnect(idempotent=False)
+async def notify_flush_zalo(
+    user_id: int, limit: int, account_id: str, recipient_id: str, compose
+) -> int:
+    from core.repositories import notify
+
+    return await notify.flush_zalo(
+        await get_pool(), user_id, limit, account_id, recipient_id, compose
+    )
+
+
+@_with_reconnect
+async def notify_drop_pending(channel: str, user_id: int) -> int:
+    from core.repositories import notify
+
+    return await notify.drop_pending(await get_pool(), channel, user_id)
+
+
+@_with_reconnect
+async def notify_count_pending(user_id: int) -> int:
+    from core.repositories import notify
+
+    return await notify.count_pending(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def notify_clear_user(user_id: int) -> None:
+    from core.repositories import notify
+
+    await notify.clear_user(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def portfolio_alert_log_since(user_id: int, since: str) -> list[tuple[str, str, str]]:
+    """(kind, ref_key, ngày) nhật ký thông báo danh mục từ ngày ``since``."""
+    from core.repositories import portfolio
+
+    return await portfolio.alert_log_since(await get_pool(), user_id, since)
+
+
 # ─── Giám sát vận hành / sao lưu (services/watchdog.py, backup_status.py) ───
 # SQL nằm ở core/repositories/ops.py; đây chỉ là wrapper có retry kết nối.
 

@@ -71,7 +71,11 @@ HELP_TEXT = (
     "/xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé] — kết quả xổ số, dò vé\n"
     "/thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của anh\n"
     "/bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, "
-    "danh mục; bật thì thay digest danh mục 8h)\n\n"
+    "danh mục; bật thì thay digest danh mục 8h)\n"
+    "/chuy — có gì cần anh chú ý (nhắc việc, ngày nhớ, danh mục, hỏi thăm, bài FB chờ, lỗi, "
+    'provider, giám sát; hoặc hỏi "hôm nay có gì cần lo")\n'
+    "/yenlang on|off|22-7 — giờ yên lặng: ban đêm chỉ nhắn ngay nhắc việc và cảnh báo nghiêm "
+    "trọng, tin khác em gom lại gửi 1 tin\n\n"
     "*Nhắc việc và ngày nhớ (giờ tính bằng code)*\n"
     "/nhac — xem nhắc việc đang chờ; /nhac 8h tối mai gọi mẹ — đặt nhắc; "
     "/nhac 7h sáng mỗi ngày uống thuốc, /nhac mùng 1 và rằm 6h thắp hương — nhắc lặp\n"

@@ -11,6 +11,11 @@ lỗi kéo dài.
 giây (chống spam khi 1 sự cố kéo dài, vd watchdog RAM/DB/lỗi lặp lại). Bảng
 key -> lần gửi gần nhất nằm trong RAM, có trần ``MAX_KEYS`` (bỏ key cũ nhất);
 restart thì reset - dedup cần sống qua restart (theo ngày) tự lưu ở settings.
+
+Mức thông báo (services/notify_hub.py đăng ký ``set_router`` lúc khởi động):
+cảnh báo mở đầu bằng 🚨 hoặc ``urgent=True`` gửi ngay; còn lại là cảnh báo nhẹ,
+được hub gom vào 1 tin theo lượt xả. Chưa có router (NOTIFY_HUB_ENABLED=0, test)
+thì mọi cảnh báo đi thẳng callback như cũ. ``urgent=False`` ép gom dù có 🚨.
 """
 
 from __future__ import annotations
@@ -32,6 +37,8 @@ MAX_KEYS = 128
 DEFAULT_COOLDOWN_SEC = 3600.0
 
 _callback: Callable[[str], Awaitable[None]] | None = None
+# (text, urgent) -> gửi ngay hoặc xếp hàng gom; None = gửi thẳng _callback.
+_router: Callable[[str, bool | None], Awaitable[None]] | None = None
 _last_sent: OrderedDict[str, float] = OrderedDict()
 # bot_app._post_shutdown drain đúng set này (qua ai.provider_state._background_tasks).
 tasks: set[asyncio.Task] = set()
@@ -40,6 +47,17 @@ tasks: set[asyncio.Task] = set()
 def set_callback(fn: Callable[[str], Awaitable[None]] | None) -> None:
     global _callback
     _callback = fn
+
+
+def set_router(fn: Callable[[str, bool | None], Awaitable[None]] | None) -> None:
+    global _router
+    _router = fn
+
+
+async def deliver_now(text: str) -> None:
+    """Gửi thẳng qua callback (router dùng cho cảnh báo khẩn); chưa có callback thì bỏ."""
+    if _callback is not None:
+        await _callback(text)
 
 
 def in_cooldown(key: str, cooldown: float = DEFAULT_COOLDOWN_SEC) -> bool:
@@ -55,9 +73,16 @@ def _remember(key: str) -> None:
         _last_sent.popitem(last=False)
 
 
-def send(text: str, *, key: str | None = None, cooldown: float = DEFAULT_COOLDOWN_SEC) -> bool:
+def send(
+    text: str,
+    *,
+    key: str | None = None,
+    cooldown: float = DEFAULT_COOLDOWN_SEC,
+    urgent: bool | None = None,
+) -> bool:
     """Gửi cảnh báo cho chủ bot ở nền. Trả False nếu chưa có callback/quá tải,
-    hoặc cùng ``key`` đã gửi trong ``cooldown`` giây gần đây."""
+    hoặc cùng ``key`` đã gửi trong ``cooldown`` giây gần đây. ``urgent``: None =
+    theo tiền tố 🚨 (xem docstring module)."""
     if _callback is None:
         logger.info("Chưa đăng ký kênh cảnh báo chủ bot, bỏ qua: %.120s", text)
         return False
@@ -68,7 +93,8 @@ def send(text: str, *, key: str | None = None, cooldown: float = DEFAULT_COOLDOW
         logger.warning("Quá nhiều cảnh báo đang chờ gửi, bỏ qua: %.120s", text)
         return False
     try:
-        task = asyncio.create_task(_callback(text))
+        coro = _router(text, urgent) if _router is not None else _callback(text)
+        task = asyncio.create_task(coro)
     except Exception:
         logger.warning("Không gửi được cảnh báo chủ bot.", exc_info=True)
         return False

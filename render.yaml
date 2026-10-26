@@ -163,6 +163,15 @@ services:
         value: "20"
       - key: PROACTIVE_TICK_SEC
         value: "1800"
+      # Gom thông báo chủ động + giờ yên lặng (services/notify_hub.py, /yenlang); 0 = tắt.
+      - key: NOTIFY_HUB_ENABLED
+        value: "1"
+      - key: NOTIFY_BATCH_MINUTES
+        value: "60"
+      - key: NOTIFY_QUIET_HOURS
+        value: "22:30-06:30"
+      - key: NOTIFY_QUEUE_MAX_PER_USER
+        value: "30"
       # Bản tin sáng cá nhân (/bantin): chỉ gửi cho người tự bật trên kênh của mình.
       - key: MORNING_BRIEF_ENABLED
         value: "true"
@@ -431,3 +440,5 @@ services:
         value: "90"
       - key: RETENTION_ANSWER_FEEDBACK_DAYS
         value: "180"
+      - key: RETENTION_NOTIFY_QUEUE_DAYS
+        value: "7"

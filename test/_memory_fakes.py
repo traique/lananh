@@ -92,6 +92,7 @@ class FakeMemoryDB:
             "list_user_events",
             "finish_user_event_ids",
             "clear_user_events",
+            "notify_clear_user",
         ):
             monkeypatch.setattr(db_module, name, getattr(self, name))
 
@@ -314,6 +315,9 @@ class FakeMemoryDB:
 
     async def clear_user_events(self, uid):
         self.events = [e for e in self.events if e["uid"] != uid]
+
+    async def notify_clear_user(self, uid):
+        self.notify_cleared = [*getattr(self, "notify_cleared", []), uid]
 
     # ─── notes ───
     async def add_note(self, uid, content, *, event_key=None):

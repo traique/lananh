@@ -23,8 +23,11 @@ Ai nhận: người tự bật ``/bantin`` trên kênh của mình (mặc địn
   viên nhận tin chọn tất định (không AI). Tối đa MORNING_BRIEF_MAX_MEMBERS.
 
 Gửi: vòng lặp 15 phút, khung gửi bù 3 giờ như morning_news; ``brief_sent:*``
-lưu ngày đã gửi. Zalo đánh dấu TRƯỚC khi đưa vào outbox (INSERT không
-idempotent): lỡ lỗi giữa chừng thì mất 1 bản tin chứ không gửi đôi. Chạy nền
+lưu ngày đã gửi. Bật services/notify_hub (mặc định) thì bản tin đi qua hàng đợi
+gom: ngoài giờ yên lặng xả ngay (kèm tin NORMAL đang chờ), trong giờ yên lặng
+(vd /bantin 5 khi yên lặng tới 6:30) chờ hết giờ mới gửi. Đường cũ (hub tắt):
+Zalo đánh dấu TRƯỚC khi đưa vào outbox (INSERT không idempotent): lỡ lỗi giữa
+chừng thì mất 1 bản tin chứ không gửi đôi. Chạy nền
 ngoài khoá lượt; từng người lần lượt (RAM), mỗi mục có timeout riêng.
 """
 
@@ -510,12 +513,30 @@ async def _zalo_users_by_internal_id() -> dict:
     return {user.internal_user_id: user for user in await zalo_users.list_users()}
 
 
+async def _offer(channel: str, user_id: int, text: str, now: dt.datetime) -> bool:
+    """Bản tin là tin tổng hợp (NORMAL) qua services/notify_hub: xả ngay (gộp kèm
+    tin đang chờ) hoặc chờ hết giờ yên lặng. False = gửi thẳng như cũ."""
+    from services import notify_hub
+
+    return await notify_hub.offer(
+        channel,
+        user_id,
+        text,
+        source="morning_brief",
+        dedup=f"brief:{channel}:{user_id}:{now.date().isoformat()}",
+        now=now,
+    )
+
+
 async def _deliver(target: BriefTarget, now: dt.datetime, zalo_map: dict) -> bool:
     channel, user_id = target.channel, target.user_id
     if channel == "telegram":
         if not config.is_owner_user_id(user_id) or _notify_callback is None:
             return False
         text = await build(user_id, channel, now=now, settings=target.settings)
+        if await _offer(channel, user_id, text, now):
+            await _mark_sent(channel, user_id, now)
+            return True
         try:
             await _notify_callback(user_id, text)
         except Exception:
@@ -532,6 +553,9 @@ async def _deliver(target: BriefTarget, now: dt.datetime, zalo_map: dict) -> boo
         if not pairing:
             return False
         text = await build(user_id, channel, now=now, settings=target.settings)
+        if await _offer(channel, user_id, text, now):
+            await _mark_sent(channel, user_id, now)
+            return True
         try:
             await zoom.send_message(to_jid=pairing[0], text=text)
         except Exception:
@@ -546,15 +570,19 @@ async def _deliver(target: BriefTarget, now: dt.datetime, zalo_map: dict) -> boo
         user = zalo_map.get(user_id)
         if user is None or not user.is_active:
             return False  # đã gỡ pairing hoặc đang bị khoá: không gửi
-        text = to_plain_text(
-            await build(
-                user_id,
-                channel,
-                now=now,
-                settings=target.settings,
-                address_form=user.address_form,
-            )
+        raw = await build(
+            user_id,
+            channel,
+            now=now,
+            settings=target.settings,
+            address_form=user.address_form,
         )
+        # Hàng đợi gom xả Zalo trong 1 transaction cùng zalo_outbox (dedup theo ngày):
+        # đã nhận thì không bao giờ gửi đôi, đánh dấu sau cũng an toàn.
+        if await _offer(channel, user_id, raw, now):
+            await _mark_sent(channel, user_id, now)
+            return True
+        text = to_plain_text(raw)
         # Đánh dấu TRƯỚC khi đưa vào outbox (INSERT không idempotent): sập giữa
         # chừng thì mất 1 bản tin, không bao giờ gửi đôi qua Zalo.
         await _mark_sent(channel, user_id, now)

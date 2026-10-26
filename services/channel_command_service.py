@@ -23,6 +23,7 @@ from services import (
     usage_stats,
 )
 from services import answer_feedback, daily_commands, expense_service, reminder_commands
+from services import attention, notify_hub
 from services import turn_control
 from services.telemetry import telemetry
 
@@ -51,6 +52,9 @@ _HELP_COMMON = """Lịch, thần số học, tử vi, kỳ môn
 /xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé] — kết quả xổ số, dò vé
 /thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của riêng mình
 /bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, danh mục, tin)
+/chuy — có gì cần mình chú ý: nhắc việc hôm nay, ngày nhớ, cảnh báo danh mục, hỏi thăm đang chờ
+  (hoặc hỏi "hôm nay có gì cần lo")
+/yenlang on|off|22-7 — giờ yên lặng: ban đêm chỉ nhắn ngay nhắc việc đã đặt, tin khác gom lại sáng gửi
 
 Nhắc việc và ngày nhớ (giờ tính bằng code)
 /nhac — xem nhắc việc đang chờ; /nhac 8h tối mai gọi mẹ — đặt nhắc;
@@ -94,6 +98,7 @@ Danh mục cổ phiếu (riêng từng người)
 /theodoi [MÃ...] — danh sách theo dõi; /botheodoi <MÃ> — bỏ theo dõi
 /canhbaogia <MÃ> [về|lên] <GIÁ> — báo khi giá chạm ngưỡng đã đặt; /xoacanhbao <MÃ> [GIÁ]"""
 _HELP_ADMIN_ONLY = """Chỉ admin
+/chuy — admin thấy thêm bài Facebook chờ duyệt; chủ bot thấy thêm lỗi mới, provider, giám sát
 /model [tên|auto] — xem hoặc đổi model
 /status — xem trạng thái provider
 /thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày
@@ -182,6 +187,18 @@ def _about(user_id: int) -> str:
     if config.is_owner_user_id(user_id):
         return "anh"
     return reply_audience.current().address_form or ""
+
+
+async def attention_text(user_id: int, channel: str, is_admin: bool) -> str:
+    """Tin /chuy của người gõ: chủ bot (Telegram/Zoom hoặc Zalo controller) thấy cả
+    mục hệ thống; admin Zalo thấy bài Facebook chờ duyệt; thành viên chỉ dữ liệu mình."""
+    return await attention.build(
+        user_id,
+        channel,
+        is_owner=await reply_audience.is_owner(user_id),
+        is_admin=is_admin,
+        address_form=reply_audience.current().address_form,
+    )
 
 
 def _arg(text: str) -> str:
@@ -350,7 +367,8 @@ async def _ragxuly(user_id: int, name: str) -> tuple[list[str], str | None]:
             text = await rag_clean_service.clean_file(name)
         except Exception as exc:
             text = f"❌ /ragxuly {name} lỗi: {exc}"
-        alerts.send(f"/ragxuly {name}:\n{text}")
+        # Kết quả lệnh chủ bot vừa gọi: gửi ngay, không gom (services/notify_hub.py).
+        alerts.send(f"/ragxuly {name}:\n{text}", urgent=True)
 
     if not rag_clean_service.start_background(name, _run()):
         return ["⏳ Đang có một lượt /ragxuly khác chạy. Chờ xong rồi gọi lại nhé."], None
@@ -457,6 +475,12 @@ async def maybe_handle_command(
     feedback = await answer_feedback.handle_command(command, argument, user_id, channel)
     if feedback is not None:
         return feedback, None
+    # /chuy: "có gì cần chú ý" (code, không AI); /yenlang: giờ yên lặng của chính mình.
+    if command == "/chuy":
+        return [await attention_text(user_id, channel, is_admin)], None
+    if command == "/yenlang":
+        you = reply_audience.forms()[0]
+        return [await notify_hub.yenlang(user_id, argument, you=you)], None
     if command == "/huy":
         # /huy thật được xử lý TRƯỚC khoá lượt (bridge Zalo, webhook Zoom); tới
         # được đây nghĩa là không còn việc gì đang chạy để dừng.

@@ -31,7 +31,7 @@ from services import (
     turn_progress,
     weather_chat,
 )
-from services import vn_daily_chat
+from services import attention, vn_daily_chat
 from services.concurrency import OWNER_TURN_KEY
 from services.telemetry import telemetry
 
@@ -116,6 +116,13 @@ async def _quick_reply(
         await record(user_id, text, article, conversation_log.KIND_ARTICLE)
         chat_context.remember_article(user_id, text, article)
         await common.reply_long_text(update.message, article)
+        return True
+
+    # "Có gì cần anh chú ý?": tin /chuy tính bằng code (services/attention.py).
+    if attention.is_attention_question(text):
+        reply = await attention.build(user_id, "telegram")
+        await record(user_id, text, reply, conversation_log.KIND_DAILY)
+        await common.reply_long_text(update.message, reply)
         return True
 
     # Giá vàng/tỷ giá/xổ số, thời tiết và âm lịch: trả lời thẳng bằng code,

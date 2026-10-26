@@ -73,8 +73,9 @@ def set_alert_callback(fn: Callable[[str], Awaitable[None]]) -> None:
     alerts.set_callback(fn)
 
 
-def send_alert(text: str) -> None:
-    alerts.send(text)
+def send_alert(text: str, *, urgent: bool | None = None) -> None:
+    """``urgent``: xem core.alerts.send (None = theo tiền tố 🚨)."""
+    alerts.send(text, urgent=urgent)
 
 
 class ProviderChainState:

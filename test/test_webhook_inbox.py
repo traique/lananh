@@ -50,7 +50,7 @@ def pool(monkeypatch):
 @pytest.fixture
 def alerts(monkeypatch):
     sent = []
-    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text: sent.append(text) or True)
+    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text, **kw: sent.append(text) or True)
     return sent
 
 

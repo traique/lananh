@@ -111,10 +111,12 @@ def _notify_dead(channel: str, event_id: str, attempts: int, last_error: str | N
         last_error or "?",
         extra={"alerted": True},  # đã báo chủ bot ngay dưới: error digest không báo lần 2
     )
+    # 1 tin của người dùng đã bị bỏ: gửi ngay, không gom (services/notify_hub.py).
     alerts.send(
         messages.WEBHOOK_DEAD_ALERT.format(
             channel=channel, event_id=event_id, attempts=attempts, error=last_error or "?"
-        )
+        ),
+        urgent=True,
     )
 
 
@@ -186,7 +188,8 @@ async def retry(row, error: BaseException) -> None:
             alerts.send(
                 messages.WEBHOOK_NO_RETRY_ALERT.format(
                     channel=row["channel"], event_id=row["event_id"], error=error_name
-                )
+                ),
+                urgent=True,
             )
         return
     if row["attempts"] >= max_attempts():

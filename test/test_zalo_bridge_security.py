@@ -135,7 +135,7 @@ async def test_outbox_failure_schedules_retry(bridge):
 @pytest.mark.asyncio
 async def test_outbox_failure_gives_up_and_alerts_owner_once(bridge, monkeypatch):
     alerts = []
-    monkeypatch.setattr(zalo_router.alerts, "send", lambda text: alerts.append(text) or True)
+    monkeypatch.setattr(zalo_router.alerts, "send", lambda text, **kw: alerts.append(text) or True)
     bridge["failed_row"] = {"id": 7, "recipient_id": "u9", "attempts": 5, "failed": True}
     response = await _call(
         "POST", "/internal/zalo/outbox/7/failed", json={"error": "x" * 5000, "chunks_sent": 0}
@@ -168,7 +168,7 @@ async def test_outbox_failure_rejects_negative_chunks(bridge):
 @pytest.mark.asyncio
 async def test_gateway_state_alerts_owner_once_per_state_change(bridge, monkeypatch):
     sent = []
-    monkeypatch.setattr(zalo_router.alerts, "send", lambda text: sent.append(text) or True)
+    monkeypatch.setattr(zalo_router.alerts, "send", lambda text, **kw: sent.append(text) or True)
     zalo_router._last_reported_gateway_state.clear()
 
     async def post(state, detail=""):

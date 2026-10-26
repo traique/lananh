@@ -75,7 +75,8 @@ async def _check_all_providers_down() -> None:
         downtime_min = (now - _all_down_since) / 60
         logger.info("Provider-chain hồi phục sau %.1f phút down toàn bộ.", downtime_min)
         _all_down_since = None
-        send_alert(messages.ALL_PROVIDERS_RECOVERED_ALERT)
+        # Gửi ngay (không gom) để chủ bot biết bot đã trả lời lại được.
+        send_alert(messages.ALL_PROVIDERS_RECOVERED_ALERT, urgent=True)
 
 
 async def _run_step(label: str, step) -> None:

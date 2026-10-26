@@ -296,9 +296,16 @@ async def _compose(event: dict, now: dt.datetime, form: str) -> str | None:
     return text[:_REPLY_MAX_CHARS]
 
 
-async def _send(user_id: int, text: str, zalo_user) -> None:
+async def _send(user_id: int, text: str, zalo_user, event_id: int = 0) -> None:
     """Gửi trên ĐÚNG kênh của người đó (id âm -> outbox Zalo, chủ bot -> Telegram).
-    Raise khi lỗi."""
+    Hỏi thăm là tin NORMAL: qua hàng đợi gom services/notify_hub (bền, dedup theo
+    sự kiện) nếu hub đang chạy, không thì gửi thẳng. Raise khi lỗi."""
+    from services import notify_hub
+
+    channel = "zalo" if user_id < 0 else "telegram"
+    dedup = f"followup:{event_id}" if event_id else None
+    if await notify_hub.offer(channel, user_id, text, source="followup", dedup=dedup):
+        return
     if user_id < 0:
         from channels import zalo_repository
         from channels.zalo_text import to_plain_text
@@ -352,7 +359,7 @@ async def _deliver(user_id: int, event: dict, now: dt.datetime) -> str:
             # còn hơn gửi đôi), như bản tin sáng.
             await db.mark_user_event_asked(int(event["id"]))
         try:
-            await _send(user_id, text, zalo_user)
+            await _send(user_id, text, zalo_user, int(event["id"]))
         except Exception:
             logger.warning("proactive: gửi tin hỏi thăm lỗi (user %s).", user_id, exc_info=True)
             return DONE if user_id < 0 else RETRY
