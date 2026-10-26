@@ -3,11 +3,11 @@
 import base64
 import contextvars
 
+import messages
 from ai import agnes_client, orchestrator, router9_client, tavily_client
 from ai.timeouts import TurnTimeoutError
 from core import config, database as db
 from core.text_utils import parse_on_off
-import messages
 from services import (
     divination_commands,
     memory_service,

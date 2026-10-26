@@ -475,7 +475,7 @@ def load_chat_skill(
     False = "member").
 
     ``channel`` ("telegram" | "zalo" | "zoom"): nối thêm 1 dòng gợi ý trình bày
-    theo kênh SAU persona đã cache (cache vẫn chỉ theo biến thể).
+    theo kênh SAU persona đã cache (gợi ý không nằm trong cache).
 
     ``address_form`` (core/address.py, vd "chị", "cô"): cách gọi riêng do chủ
     bot đặt cho 1 thành viên Zalo - chỉ áp cho biến thể Zalo, giá trị ngoài
