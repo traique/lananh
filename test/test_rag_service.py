@@ -259,3 +259,36 @@ def test_chi_muc_cache_doc_lai_khi_file_doi(rag_dir, monkeypatch):
     _write(rag_dir, "a.md", "# A\n\n## DCA\nVào tiền đều đặn hàng tháng, kỷ luật.\n")
     rag_service.search("dca")
     assert len(loads) == 2
+
+
+@pytest.mark.asyncio
+async def test_rag_cua_admin_zalo_dung_persona_va_cach_xung_ho_rieng(rag_dir, monkeypatch):
+    """/rag trên Zalo (chỉ admin) trả lời bằng biến thể persona admin + cách gọi
+    chủ bot đặt, như lượt chat thường - không rơi về persona thành viên + "anh"."""
+    from services import channel_command_service, conversation_log, reply_audience
+
+    _write(rag_dir, "dautu.md", "# Đầu tư\n\n## DCA\nVào tiền đều đặn hàng tháng.\n")
+    seen = {}
+
+    async def fake_chat(user_id, prompt, **kwargs):
+        seen.update(kwargs)
+        return type("R", (), {"text": "DCA là vào tiền đều."})()
+
+    async def fake_record(*args, **kwargs):
+        return True
+
+    import ai.orchestrator as orchestrator
+
+    monkeypatch.setattr(orchestrator, "chat", fake_chat)
+    monkeypatch.setattr(conversation_log, "record_exchange", fake_record)
+    with reply_audience.use(reply_audience.ReplyAudience(address_form="chị")):
+        result = await channel_command_service.maybe_handle_command(
+            -7, "/rag dca", is_admin=True, channel="zalo"
+        )
+    assert result is not None and result[0] == ["DCA là vào tiền đều."]
+    assert seen["channel"] == "zalo" and seen["is_admin"] is True
+    assert seen["address_form"] == "chị" and seen["search_mode"] == "off"
+    # Telegram (chủ bot) giữ mặc định.
+    seen.clear()
+    await rag_service.ask(1, "dca")
+    assert seen.get("channel", "telegram") == "telegram" and not seen.get("is_admin")

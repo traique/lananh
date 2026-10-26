@@ -463,15 +463,32 @@ def build_prompt(query: str, matches: list[Match]) -> tuple[str, str]:
     return grounding, prompt
 
 
-async def _ask_llm(user_id: int, query: str, matches: list[Match]) -> str:
+async def _ask_llm(
+    user_id: int,
+    query: str,
+    matches: list[Match],
+    *,
+    channel: str = "telegram",
+    is_admin: bool = False,
+    address_form: str | None = None,
+) -> str:
     from ai import orchestrator  # tránh import vòng khi ai.* import services.*
 
     grounding, prompt = build_prompt(query, matches)
     # search_mode="off": /rag CHỈ trả lời từ tài liệu riêng của chủ bot - nhánh
     # Gemini không được bật Google Search (trước đây bật ngầm vì không truyền
     # web_grounded, trộn kết quả web vào câu trả lời "chỉ từ tài liệu").
+    # channel/is_admin/address_form: cùng biến thể persona + cách gọi như lượt
+    # chat thường của người hỏi (admin Zalo không bị coi là thành viên + "anh").
     response = await orchestrator.chat(
-        user_id, prompt, grounding=grounding, memory_context="", search_mode="off"
+        user_id,
+        prompt,
+        grounding=grounding,
+        memory_context="",
+        search_mode="off",
+        channel=channel,
+        is_admin=is_admin,
+        address_form=address_form,
     )
     answer = (getattr(response, "text", "") or "").strip()
     if not answer:
@@ -479,11 +496,20 @@ async def _ask_llm(user_id: int, query: str, matches: list[Match]) -> str:
     return answer
 
 
-async def ask(user_id: int, query: str) -> str:
+async def ask(
+    user_id: int,
+    query: str,
+    *,
+    channel: str = "telegram",
+    is_admin: bool = False,
+    address_form: str | None = None,
+) -> str:
     """Flow chính của /rag: tìm chunk -> AI diễn giải (hoặc trả trích dẫn).
 
     Trả về text sẵn sàng gửi người dùng (đã kèm nguồn / gợi ý khi trượt).
     Telemetry do handler ở trên lo (kèm channel); ở đây chỉ log fallback.
+    channel/is_admin/address_form chuyển xuống orchestrator.chat (Telegram -
+    chủ bot - giữ mặc định: biến thể chủ bot chọn theo user_id).
     """
     matches = await asyncio.to_thread(search, query)
     if not matches:
@@ -491,7 +517,14 @@ async def ask(user_id: int, query: str) -> str:
         return await asyncio.to_thread(_no_match_reply, query)
 
     try:
-        answer = await _ask_llm(user_id, query, matches)
+        answer = await _ask_llm(
+            user_id,
+            query,
+            matches,
+            channel=channel,
+            is_admin=is_admin,
+            address_form=address_form,
+        )
     except Exception as exc:
         logger.warning("AI diễn giải /rag lỗi, fallback trả trích dẫn: %s", exc)
         return (

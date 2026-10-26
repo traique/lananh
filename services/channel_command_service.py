@@ -310,7 +310,7 @@ async def _agent(
         return ["Agent gặp lỗi, thử lại sau hoặc dùng lệnh thường (/gia, /thongke...) nhé."], None
 
 
-async def _rag(user_id: int, question: str) -> tuple[list[str], str | None]:
+async def _rag(user_id: int, question: str, channel: str) -> tuple[list[str], str | None]:
     if not question:
         return [
             "Dùng: /rag <câu hỏi>\n"
@@ -320,7 +320,15 @@ async def _rag(user_id: int, question: str) -> tuple[list[str], str | None]:
     from services import rag_service
 
     # Timeout của orchestrator lo phần chờ AI; ở đây không cần tự bọc thêm.
-    text = await rag_service.ask(user_id, question)
+    # /rag chỉ tới được đây khi is_admin (chặn ở maybe_handle_command): persona
+    # admin + cách gọi riêng của người gửi như lượt chat thường.
+    text = await rag_service.ask(
+        user_id,
+        question,
+        channel=channel,
+        is_admin=True,
+        address_form=reply_audience.current().address_form,
+    )
     return [text], None
 
 
@@ -532,7 +540,7 @@ async def maybe_handle_command(
     if command == "/agent":
         return await _agent(user_id, argument, channel)
     if command == "/rag":
-        return await _rag(user_id, argument)
+        return await _rag(user_id, argument, channel)
     if command == "/ragxuly":
         return await _ragxuly(user_id, argument)
     if command in {"/bangtinsang", "/bantinsang"}:
