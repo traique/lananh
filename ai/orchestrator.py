@@ -753,11 +753,15 @@ async def ask(
         # người dùng chỉ định `model` tường minh (tham số hàm này, không phải
         # preferred_model_name lấy từ router9), vẫn tôn trọng - chỉ bỏ qua
         # phần suy ra từ router9_client.get_preferred_model_name().
+        # require_real_search: Gemini phải có grounding metadata (đã gọi Google
+        # Search thật) như Groq/OpenRouter/9Router phải có bằng chứng - không thì
+        # NoSearchEvidenceError, chuỗi chuyển provider kế (không cooldown).
         return await official_client.generate(
             idx,
             effective_prompt,
             model=model,
             enable_search=enable_search or require_real_search,
+            require_search_evidence=require_real_search,
         )
 
     with call_stage("search") if require_real_search else nullcontext():

@@ -691,3 +691,33 @@ async def test_lenh_tavily_tren_telegram_bao_che_do_tra_web(monkeypatch):
     await provider_commands.tavily_toggle_cmd(update, context)
     assert "Đã bật tra web Tavily" in replies[-1]
     assert "Tavily lỗi hoặc ít nguồn thì dùng web search của provider" in replies[-1]
+
+
+@pytest.mark.asyncio
+async def test_ask_bat_buoc_tra_web_doi_gemini_chung_minh_da_tra(monkeypatch):
+    """ask(require_real_search=True) (dự phòng /gia, tim_web của /agent): Gemini
+    trả lời không có grounding metadata thì bị loại như Groq/OpenRouter/9Router,
+    không được coi câu trả lời từ trí nhớ là kết quả tra web."""
+    calls = _Calls(monkeypatch)
+    calls.fail = {"groq:search", "api1"}
+
+    response = await orchestrator.ask(
+        "giá iPhone 15", require_real_search=True, providers_override=["groq", "api1", "api2"]
+    )
+
+    assert response.text == "api2-ok"
+    assert calls.names() == ["groq:search", "api1", "api2"]
+    assert all(kw["require_search_evidence"] for name, kw in calls.log if name.startswith("api"))
+
+    calls.fail = {"groq:search", "api1", "api2"}
+    with pytest.raises(openai_compatible.NoSearchEvidenceError):
+        await orchestrator.ask(
+            "giá iPhone 15", require_real_search=True, providers_override=["groq", "api1", "api2"]
+        )
+
+
+@pytest.mark.asyncio
+async def test_ask_thuong_khong_doi_bang_chung_tra_web(monkeypatch):
+    calls = _Calls(monkeypatch)
+    await orchestrator.ask("tóm tắt giúp", providers_override=["api1"])
+    assert calls.log[0][1]["require_search_evidence"] is False
