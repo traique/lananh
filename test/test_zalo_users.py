@@ -185,6 +185,8 @@ async def test_remove_user(patched_db):
         "user_facts",
         "user_memory_summary",
         "user_memory_highlights",
+        "user_session_notes",
+        "user_events",
         "notes",
         "prompts",
         "stock_holdings",
@@ -200,7 +202,19 @@ async def test_remove_user(patched_db):
     uid = user.internal_user_id
     assert (
         "delete from settings where key = any($1::text[])",
-        ([f"weather_home:{uid}", f"brief:zalo:{uid}", f"brief_sent:zalo:{uid}"],),
+        (
+            [
+                f"weather_home:{uid}",
+                f"brief:zalo:{uid}",
+                f"brief_sent:zalo:{uid}",
+                # Trí nhớ/hỏi thăm (services/personal_settings.memory_user_keys).
+                f"memory_wm:{uid}",
+                f"memory_forget:{uid}",
+                f"memory_consolidated:{uid}",
+                f"followup:{uid}",
+                f"followup_sent:{uid}",
+            ],
+        ),
     ) in [(q, a) for q, a in patched_db.data_deletes]
 
 

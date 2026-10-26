@@ -14,7 +14,7 @@ Kết quả (trước/sau) được báo cho admin qua Telegram/Zoom.
 
 Ngoài ra mỗi ngày 1 lần dọn dữ liệu cũ của các bảng chỉ-thêm-không-bớt (xem
 ``prune_retention``): user_calls/provider_calls (thống kê), zalo_outbox đã gửi,
-reminders đã gửi. Xoá theo lô nhỏ để không khoá bảng lâu; số ngày giữ chỉnh qua
+reminders đã gửi, ghi chú phiên và sự kiện hỏi thăm cũ. Xoá theo lô nhỏ để không khoá bảng lâu; số ngày giữ chỉnh qua
 biến môi trường, đặt 0 để tắt từng loại.
 
 Cùng vòng lặp, mỗi ngày kiểm tra bản sao lưu DB (workflow GitHub Actions) còn
@@ -96,6 +96,22 @@ RETENTION_RULES = (
         90,
         "DELETE FROM reminders WHERE id IN (SELECT id FROM reminders "
         "WHERE sent = true AND due_at < now() - $1::interval LIMIT $2)",
+    ),
+    # Trí nhớ v2 (migrations/017-018): ghi chú phiên cũ (ngoài trần 100 phiên/
+    # người khi ghi) và sự kiện hỏi thăm đã qua.
+    RetentionRule(
+        "user_session_notes",
+        "RETENTION_SESSION_NOTES_DAYS",
+        365,
+        "DELETE FROM user_session_notes WHERE id IN (SELECT id FROM user_session_notes "
+        "WHERE updated_at < now() - $1::interval LIMIT $2)",
+    ),
+    RetentionRule(
+        "user_events",
+        "RETENTION_USER_EVENTS_DAYS",
+        90,
+        "DELETE FROM user_events WHERE id IN (SELECT id FROM user_events "
+        "WHERE created_at < now() - $1::interval LIMIT $2)",
     ),
 )
 

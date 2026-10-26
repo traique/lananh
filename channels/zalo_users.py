@@ -65,6 +65,9 @@ _USER_DATA_TABLES = (
     "user_facts",
     "user_memory_summary",
     "user_memory_highlights",
+    # migrations/017-018: ghi chú theo phiên, sự kiện hỏi thăm chủ động.
+    "user_session_notes",
+    "user_events",
     "notes",
     "prompts",
     "stock_holdings",

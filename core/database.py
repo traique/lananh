@@ -508,9 +508,13 @@ async def add_chat_message(telegram_user_id: int, role: str, content: str) -> No
 
 
 @_with_reconnect(idempotent=False)
-async def add_chat_turn(telegram_user_id: int, user_text: str, model_text: str) -> None:
+async def add_chat_turn(
+    telegram_user_id: int, user_text: str, model_text: str, *, kind: str = "chat"
+) -> None:
     """Lưu CẢ lượt (tin người dùng + câu trả lời) trong 1 transaction - không
-    bao giờ còn nửa lượt (chỉ có câu hỏi) khi DB lỗi giữa 2 lệnh INSERT."""
+    bao giờ còn nửa lượt (chỉ có câu hỏi) khi DB lỗi giữa 2 lệnh INSERT.
+    ``kind``: loại lượt (services/conversation_log.py) - trích nhớ chỉ đọc lượt
+    chat/rag/agent, lượt "stock" giúp chặn câu chat sau mâu thuẫn policy."""
     from core.repositories import chat_history
 
     await chat_history.add_turn(
@@ -519,7 +523,48 @@ async def add_chat_turn(telegram_user_id: int, user_text: str, model_text: str) 
         user_text,
         model_text,
         retention=CHAT_MESSAGES_RETENTION_LIMIT,
+        kind=kind,
     )
+
+
+@_with_reconnect
+async def get_chat_rows_after(
+    telegram_user_id: int, after_id: int, limit: int = 60, max_chars: int = 1500
+) -> list[dict]:
+    """Dòng lịch sử có id > after_id (cũ -> mới) - cửa sổ chưa trích nhớ."""
+    from core.repositories import memory
+
+    rows = await memory.chat_rows_after(
+        await get_pool(), telegram_user_id, after_id, limit, max_chars
+    )
+    return [dict(row) for row in rows]
+
+
+@_with_reconnect
+async def get_recent_chat_rows(
+    telegram_user_id: int, limit: int = 40, max_chars: int = 1500
+) -> list[dict]:
+    """``limit`` dòng gần nhất, mới -> cũ (kèm id, kind, created_at)."""
+    from core.repositories import memory
+
+    rows = await memory.recent_chat_rows(await get_pool(), telegram_user_id, limit, max_chars)
+    return [dict(row) for row in rows]
+
+
+@_with_reconnect
+async def get_last_model_row(telegram_user_id: int, max_chars: int = 4000) -> dict | None:
+    """Câu trả lời gần nhất của bot (id, kind, content, created_at) hoặc None."""
+    from core.repositories import memory
+
+    row = await memory.last_model_row(await get_pool(), telegram_user_id, max_chars)
+    return dict(row) if row else None
+
+
+@_with_reconnect
+async def users_with_chat_since(since: datetime, limit: int = 50) -> list[int]:
+    from core.repositories import memory
+
+    return await memory.users_with_chat_after(await get_pool(), since, limit)
 
 
 @_with_reconnect
@@ -571,64 +616,124 @@ async def clear_chat(telegram_user_id: int) -> None:
     await pool.execute("DELETE FROM chat_messages WHERE telegram_user_id = $1", telegram_user_id)
 
 
-# ─── Trí nhớ dài hạn: user_facts + rolling summary (xem services/memory_service.py) ─────────
+# ─── Trí nhớ dài hạn: user_facts + highlights + ghi chú phiên ─────────────────
+# (xem services/memory_service.py; SQL ở core/repositories/memory.py). Từ
+# migrations/017: fact có ghim/độ quan trọng/nguồn, giá trị cũ được vô hiệu hoá
+# (invalid_at) thay vì xoá - mọi hàm đọc "fact" dưới đây chỉ trả dòng hiện hành.
+
+# Trần giá trị cũ giữ lại (cho câu hỏi "trước đây..."): theo từng key và tổng.
+SUPERSEDED_FACTS_PER_KEY = 3
+SUPERSEDED_FACTS_TOTAL = 60
 
 
 @_with_reconnect
 async def upsert_fact(telegram_user_id: int, key: str, value: str) -> None:
-    pool = await get_pool()
-    await pool.execute(
-        """
-        INSERT INTO user_facts (telegram_user_id, key, value, updated_at)
-        VALUES ($1, $2, $3, now())
-        ON CONFLICT (telegram_user_id, key)
-        DO UPDATE SET value = EXCLUDED.value, updated_at = now()
-        """,
+    """Tương thích cũ: ghi fact tự động (nguồn 'auto', không ghim)."""
+    await save_fact(telegram_user_id, key, value)
+
+
+@_with_reconnect
+async def save_fact(
+    telegram_user_id: int,
+    key: str,
+    value: str,
+    *,
+    importance: int = 2,
+    category: str = "",
+    source: str = "auto",
+    pinned: bool = False,
+    protect: bool = True,
+) -> str:
+    """Thêm/cập nhật fact (giá trị đổi -> bản cũ vô hiệu hoá, giữ làm lịch sử).
+    Trả "added" | "updated" | "unchanged" | "protected" (protect=True và fact
+    đang ghim/do người dùng tự nhập). Chạy lại sau lỗi kết nối an toàn: lần 2
+    thấy đúng giá trị đã ghi -> "unchanged"."""
+    from core.repositories import memory
+
+    return await memory.save_fact(
+        await get_pool(),
         telegram_user_id,
         key,
         value,
+        importance=importance,
+        category=category,
+        source=source,
+        pinned=pinned,
+        protect=protect,
     )
 
 
 @_with_reconnect
 async def get_facts(telegram_user_id: int) -> list[tuple[str, str]]:
-    """Trả về [(key, value), ...] mới cập nhật nhất trước."""
-    pool = await get_pool()
-    rows = await pool.fetch(
-        "SELECT key, value FROM user_facts WHERE telegram_user_id = $1 ORDER BY updated_at DESC",
-        telegram_user_id,
-    )
+    """[(key, value), ...] fact HIỆN HÀNH theo thứ tự ưu tiên (ghim > quan trọng >
+    mới cập nhật)."""
+    from core.repositories import memory
+
+    rows = await memory.current_facts(await get_pool(), telegram_user_id)
     return [(r["key"], r["value"]) for r in rows]
 
 
 @_with_reconnect
-async def delete_fact(telegram_user_id: int, key: str) -> None:
-    pool = await get_pool()
-    await pool.execute(
-        "DELETE FROM user_facts WHERE telegram_user_id = $1 AND key = $2",
-        telegram_user_id,
-        key,
+async def get_fact_rows(telegram_user_id: int) -> list[dict]:
+    """Fact hiện hành kèm id/ghim/độ quan trọng/nhóm/nguồn/mốc thời gian."""
+    from core.repositories import memory
+
+    return [dict(r) for r in await memory.current_facts(await get_pool(), telegram_user_id)]
+
+
+@_with_reconnect
+async def get_superseded_facts(telegram_user_id: int, limit: int = 20) -> list[dict]:
+    from core.repositories import memory
+
+    rows = await memory.superseded_facts(await get_pool(), telegram_user_id, limit)
+    return [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def invalidate_fact(
+    telegram_user_id: int, fact_id: int, *, protect: bool = True
+) -> str | None:
+    """Vô hiệu hoá 1 fact theo id (giữ lịch sử); trả key hoặc None."""
+    from core.repositories import memory
+
+    return await memory.invalidate_fact(
+        await get_pool(), telegram_user_id, fact_id, protect=protect
     )
 
 
 @_with_reconnect
-async def trim_facts(telegram_user_id: int, keep_n: int) -> None:
-    """Giữ lại tối đa `keep_n` fact mới cập nhật nhất / user, xoá phần dư -
-    chặn user_facts phình vô hạn nếu Gemini trích xuất quá tay qua thời gian."""
-    pool = await get_pool()
-    await pool.execute(
-        """
-        DELETE FROM user_facts
-        WHERE telegram_user_id = $1
-          AND id NOT IN (
-              SELECT id FROM user_facts
-              WHERE telegram_user_id = $1
-              ORDER BY updated_at DESC
-              LIMIT $2
-          )
-        """,
+async def delete_fact(telegram_user_id: int, key: str) -> None:
+    """XOÁ HẲN mọi phiên bản của 1 key (người dùng chủ động bảo quên)."""
+    from core.repositories import memory
+
+    await memory.forget_key(await get_pool(), telegram_user_id, key)
+
+
+@_with_reconnect
+async def set_fact_pinned(telegram_user_id: int, fact_id: int, pinned: bool) -> bool:
+    from core.repositories import memory
+
+    return await memory.set_pinned(await get_pool(), telegram_user_id, fact_id, pinned)
+
+
+@_with_reconnect
+async def trim_facts(
+    telegram_user_id: int,
+    keep_n: int,
+    *,
+    superseded_per_key: int = SUPERSEDED_FACTS_PER_KEY,
+    superseded_total: int = SUPERSEDED_FACTS_TOTAL,
+) -> None:
+    """Giữ tối đa ``keep_n`` fact hiện hành theo thứ tự ưu tiên (fact ghim không
+    bị cắt), kèm trần riêng cho giá trị cũ - chặn user_facts phình vô hạn."""
+    from core.repositories import memory
+
+    await memory.trim_facts(
+        await get_pool(),
         telegram_user_id,
-        keep_n,
+        keep_current=keep_n,
+        keep_superseded_per_key=superseded_per_key,
+        keep_superseded_total=superseded_total,
     )
 
 
@@ -680,6 +785,22 @@ async def get_highlights(telegram_user_id: int, limit: int) -> list[str]:
 
 
 @_with_reconnect
+async def get_highlight_rows(telegram_user_id: int, limit: int) -> list[dict]:
+    """(id, content, created_at) mới nhất trước - /memory đánh số, /quen xoá theo id."""
+    from core.repositories import memory
+
+    rows = await memory.highlight_rows(await get_pool(), telegram_user_id, limit)
+    return [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def delete_highlights(telegram_user_id: int, ids: list[int]) -> int:
+    from core.repositories import memory
+
+    return await memory.delete_highlights(await get_pool(), telegram_user_id, ids)
+
+
+@_with_reconnect
 async def clear_highlights(telegram_user_id: int) -> None:
     pool = await get_pool()
     await pool.execute(
@@ -712,6 +833,61 @@ async def set_summary(telegram_user_id: int, summary: str) -> None:
     )
 
 
+# Ghi chú theo phiên: tối đa N phiên gần nhất / người (cắt khi ghi).
+SESSION_NOTES_RETENTION = 100
+
+
+@_with_reconnect
+async def upsert_session_note(
+    telegram_user_id: int,
+    session_key: int,
+    *,
+    title: str = "",
+    bullets: str = "",
+    summary: str = "",
+    started_at: datetime,
+) -> None:
+    from core.repositories import memory
+
+    await memory.upsert_session_note(
+        await get_pool(),
+        telegram_user_id,
+        session_key,
+        title=title,
+        bullets=bullets,
+        summary=summary,
+        started_at=started_at,
+        keep_n=SESSION_NOTES_RETENTION,
+    )
+
+
+@_with_reconnect
+async def get_session_notes(
+    telegram_user_id: int, limit: int = 10, *, exclude_session_key: int | None = None
+) -> list[dict]:
+    from core.repositories import memory
+
+    rows = await memory.session_notes(
+        await get_pool(), telegram_user_id, limit, exclude_session_key=exclude_session_key
+    )
+    return [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def get_session_note(telegram_user_id: int, session_key: int) -> dict | None:
+    from core.repositories import memory
+
+    row = await memory.session_note(await get_pool(), telegram_user_id, session_key)
+    return dict(row) if row else None
+
+
+@_with_reconnect
+async def clear_session_notes(telegram_user_id: int) -> None:
+    from core.repositories import memory
+
+    await memory.clear_session_notes(await get_pool(), telegram_user_id)
+
+
 # ─── Function calling: notes + reminders (xem services/tools.py, scheduler.py) ──────
 
 
@@ -741,6 +917,118 @@ async def get_notes(telegram_user_id: int, limit: int = 10) -> list[tuple[str, d
         limit,
     )
     return [(r["content"], r["created_at"]) for r in rows]
+
+
+@_with_reconnect
+async def get_recent_notes(
+    telegram_user_id: int, limit: int = 200, max_chars: int = 400
+) -> list[dict]:
+    """(id, content, created_at) mới nhất trước, có trần - tìm/xoá ghi chú."""
+    from core.repositories import memory
+
+    rows = await memory.recent_notes(await get_pool(), telegram_user_id, limit, max_chars)
+    return [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def delete_note(telegram_user_id: int, note_id: int) -> bool:
+    from core.repositories import memory
+
+    return await memory.delete_note(await get_pool(), telegram_user_id, note_id)
+
+
+@_with_reconnect
+async def clear_notes(telegram_user_id: int) -> int:
+    from core.repositories import memory
+
+    return await memory.clear_notes(await get_pool(), telegram_user_id)
+
+
+# ─── Sự kiện hỏi thăm chủ động (migrations/018, services/proactive_service.py) ──
+
+USER_EVENTS_PER_USER = 50
+
+
+@_with_reconnect
+async def add_user_event(telegram_user_id: int, title: str, when_text: str, event_date) -> bool:
+    """Thêm sự kiện (trùng người + ngày + tiêu đề thì bỏ qua - chạy lại an toàn)."""
+    from core.repositories import memory
+
+    return await memory.add_event(
+        await get_pool(),
+        telegram_user_id,
+        title,
+        when_text,
+        event_date,
+        keep_n=USER_EVENTS_PER_USER,
+    )
+
+
+@_with_reconnect
+async def expire_user_events(before) -> int:
+    from core.repositories import memory
+
+    return await memory.expire_events(await get_pool(), before)
+
+
+@_with_reconnect
+async def users_with_due_events(on_or_before, limit: int = 20) -> list[int]:
+    from core.repositories import memory
+
+    return await memory.users_with_due_events(await get_pool(), on_or_before, limit)
+
+
+@_with_reconnect(idempotent=False)
+async def claim_due_user_event(telegram_user_id: int, on_or_before) -> dict | None:
+    """Claim 1 sự kiện tới hạn (pending -> asked). Không retry sau khi mất kết nối
+    giữa chừng: lần 2 sẽ claim THÊM 1 sự kiện khác."""
+    from core.repositories import memory
+
+    row = await memory.claim_due_event(await get_pool(), telegram_user_id, on_or_before)
+    return dict(row) if row else None
+
+
+@_with_reconnect
+async def release_user_event(event_id: int) -> None:
+    from core.repositories import memory
+
+    await memory.release_event(await get_pool(), event_id)
+
+
+@_with_reconnect
+async def mark_user_event_asked(event_id: int) -> None:
+    from core.repositories import memory
+
+    await memory.mark_event_asked(await get_pool(), event_id)
+
+
+@_with_reconnect
+async def finish_user_events(telegram_user_id: int) -> int:
+    from core.repositories import memory
+
+    return await memory.finish_events(await get_pool(), telegram_user_id)
+
+
+@_with_reconnect
+async def list_user_events(telegram_user_id: int, limit: int = 20) -> list[dict]:
+    from core.repositories import memory
+
+    return [dict(r) for r in await memory.list_events(await get_pool(), telegram_user_id, limit)]
+
+
+@_with_reconnect
+async def user_events_on(telegram_user_id: int, day, limit: int = 5) -> list[dict]:
+    from core.repositories import memory
+
+    rows = await memory.events_on(await get_pool(), telegram_user_id, day, limit)
+    return [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def clear_user_events(telegram_user_id: int) -> None:
+    from core.repositories import memory
+
+    await memory.clear_events(await get_pool(), telegram_user_id)
 
 
 @_with_reconnect(idempotent=False)

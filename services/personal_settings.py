@@ -12,6 +12,14 @@ from __future__ import annotations
 BRIEF_PREFIX = "brief:"
 BRIEF_SENT_PREFIX = "brief_sent:"
 WEATHER_HOME_PREFIX = "weather_home:"
+# Trí nhớ hội thoại (services/memory_service.py): watermark id tin đã trích nhớ,
+# danh sách "đừng học lại" sau /quen, ngày gộp fact gần nhất.
+MEMORY_WATERMARK_PREFIX = "memory_wm:"
+MEMORY_FORGET_PREFIX = "memory_forget:"
+MEMORY_CONSOLIDATED_PREFIX = "memory_consolidated:"
+# Hỏi thăm chủ động (services/proactive_service.py): bật/tắt, số tin đã gửi trong ngày.
+FOLLOWUP_PREFIX = "followup:"
+FOLLOWUP_SENT_PREFIX = "followup_sent:"
 
 
 def weather_home_key(user_id: int) -> str:
@@ -28,10 +36,42 @@ def brief_sent_key(channel: str, user_id: int) -> str:
     return f"{BRIEF_SENT_PREFIX}{channel}:{user_id}"
 
 
+def memory_watermark_key(user_id: int) -> str:
+    return f"{MEMORY_WATERMARK_PREFIX}{user_id}"
+
+
+def memory_forget_key(user_id: int) -> str:
+    return f"{MEMORY_FORGET_PREFIX}{user_id}"
+
+
+def memory_consolidated_key(user_id: int) -> str:
+    return f"{MEMORY_CONSOLIDATED_PREFIX}{user_id}"
+
+
+def followup_key(user_id: int) -> str:
+    return f"{FOLLOWUP_PREFIX}{user_id}"
+
+
+def followup_sent_key(user_id: int) -> str:
+    return f"{FOLLOWUP_SENT_PREFIX}{user_id}"
+
+
+def memory_user_keys(user_id: int) -> list[str]:
+    """Khoá trí nhớ/hỏi thăm của 1 người (dùng chung cho /zaloxoa và /xoadulieu)."""
+    return [
+        memory_watermark_key(user_id),
+        memory_forget_key(user_id),
+        memory_consolidated_key(user_id),
+        followup_key(user_id),
+        followup_sent_key(user_id),
+    ]
+
+
 def zalo_user_keys(user_id: int) -> list[str]:
     """Mọi khoá cá nhân của 1 Zalo user (xoá cùng pairing)."""
     return [
         weather_home_key(user_id),
         brief_key("zalo", user_id),
         brief_sent_key("zalo", user_id),
+        *memory_user_keys(user_id),
     ]

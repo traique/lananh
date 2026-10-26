@@ -570,6 +570,14 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "(1,'old sent',now()-interval '200 days',true,'1'),"
         "(1,'old unsent',now()-interval '200 days',false,'1')"
     )
+    await pool.execute(
+        "INSERT INTO user_session_notes (telegram_user_id,session_key,updated_at) VALUES "
+        "(1,1,now()-interval '400 days'),(1,2,now())"
+    )
+    await pool.execute(
+        "INSERT INTO user_events (telegram_user_id,title,event_date,created_at) VALUES "
+        "(1,'cũ','2026-01-01',now()-interval '100 days'),(1,'mới','2026-12-01',now())"
+    )
     result = await db_maintenance.prune_retention()
     assert result == {
         "user_calls": 1,
@@ -577,7 +585,11 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "zalo_outbox": 1,
         "zalo_outbox_failed": 0,
         "reminders": 1,
+        "user_session_notes": 1,
+        "user_events": 1,
     }
+    assert await pool.fetchval("SELECT session_key FROM user_session_notes") == 2
+    assert await pool.fetchval("SELECT title FROM user_events") == "mới"
     assert [
         r["content"] for r in await pool.fetch("SELECT content FROM zalo_outbox ORDER BY id")
     ] == [

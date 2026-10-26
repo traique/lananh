@@ -294,7 +294,7 @@ async def test_add_chat_turn_ghi_2_dong_trong_1_transaction(monkeypatch):
     await asyncio.sleep(0)
     assert executed[0] == "BEGIN" and executed[-1] == "COMMIT"
     insert = executed[1]
-    assert insert[0] == "INSERT" and insert[1] == (7, "hỏi", "đáp")
+    assert insert[0] == "INSERT" and insert[1] == (7, "hỏi", "đáp", "chat")
 
 
 @pytest.mark.asyncio
