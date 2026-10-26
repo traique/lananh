@@ -38,3 +38,29 @@ async def test_webhook_backlog_chi_dem_pending_da_toi_han_qua_lau(delivery_db):
     assert stale == 1
     assert oldest is not None and 29 * 60 <= oldest <= 31 * 60
     assert await db.webhook_backlog(timedelta(hours=2)) == (0, None)
+
+
+@pytest.mark.asyncio
+async def test_backup_runs_lay_luot_moi_nhat_theo_loai(delivery_db):
+    pool = delivery_db
+    assert await db.latest_backup_run("backup") is None
+    await pool.execute(
+        """
+        INSERT INTO backup_runs (run_key, kind, finished_at, size_bytes) VALUES
+            ('1-1-backup', 'backup', now() - interval '2 days', 100),
+            ('2-1-backup', 'backup', now() - interval '1 day', 200),
+            ('2-1-drill', 'drill', now() - interval '1 day', NULL)
+        """
+    )
+    latest = await db.latest_backup_run("backup")
+    assert latest["run_key"] == "2-1-backup" and latest["size_bytes"] == 200
+    assert (await db.latest_backup_run("drill"))["run_key"] == "2-1-drill"
+    with pytest.raises(Exception, match="backup_runs_kind_check"):
+        await pool.execute("INSERT INTO backup_runs (run_key, kind) VALUES ('x', 'khac')")
+
+
+@pytest.mark.asyncio
+async def test_migration_023_chay_lai_duoc(delivery_db):
+    sql = (_delivery_sql.MIGRATIONS / "023_backup_runs.sql").read_text("utf-8")
+    await delivery_db.execute(sql)  # đã áp qua migrate(): chạy lại không lỗi
+    assert await delivery_db.fetchval("SELECT to_regclass('backup_runs') IS NOT NULL")

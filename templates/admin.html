@@ -542,7 +542,7 @@
           </div>
         </div>
         <div class="card" style="margin-top:14px">
-          <div class="card-head"><h3>Giám sát &amp; lỗi</h3><span class="hint">chỉ lưu loại lỗi + vị trí code · /loi trên Telegram</span></div>
+          <div class="card-head"><h3>Giám sát, sao lưu &amp; lỗi</h3><span class="hint">chỉ lưu loại lỗi + vị trí code · /loi trên Telegram</span></div>
           <div id="watchdog-box"><div class="skeleton"><i></i><i></i><i></i></div></div>
         </div>
       </section>
@@ -1271,14 +1271,24 @@ const RESTART_LABEL = { first: 'lần đầu', deploy: 'deploy', restart: 'khở
 
 async function loadWatchdog() {
   const d = await api('/admin/api/watchdog');
-  const e = d.errors || {}, r = d.restarts || {};
+  const e = d.errors || {}, r = d.restarts || {}, b = d.backup || {};
   const counts = Object.entries(r.counts || {});
+  const backupCell = b.error
+    ? `<span class="muted">không đọc được (${esc(b.error)})</span>`
+    : !b.configured
+      ? '<span class="muted">chưa thiết lập - xem docs/backup-restore.md</span>'
+      : `${pill(!b.stale, 'đang chạy', `quá ${b.stale_days} ngày`)} ${esc(b.last_backup_at ? fmtAbs(new Date(b.last_backup_at)) : '—')}${b.size_mib == null ? '' : ` <span class="muted small">· ${esc(b.size_mib)} MB đã mã hoá</span>`}`;
+  const drillCell = b.last_drill_at
+    ? `${pill(!b.drill_stale, 'đạt', 'quá hạn')} ${esc(fmtAbs(new Date(b.last_drill_at)))}`
+    : '<span class="muted">chưa có (ngày 2 hằng tháng)</span>';
   $('watchdog-box').innerHTML = `
     <table class="tbl kv">
       <tr><th>Lỗi hôm nay</th><td><b>${esc(fmtNum(e.today_total))}</b> lần · ${esc(fmtNum(e.signatures_today))} loại <span class="muted small">(hôm qua ${esc(fmtNum(e.yesterday_total))} lần)</span></td></tr>
       <tr><th>Khởi động lại ${esc(r.days ?? 7)} ngày</th><td>${counts.length
         ? counts.map(([kind, n]) => `<span class="pill ${['crash', 'oom', 'sleep'].includes(kind) ? 'bad' : 'neutral'}">${esc(RESTART_LABEL[kind] || kind)}: ${esc(n)}</span>`).join(' ')
         : '<span class="muted">không có</span>'}</td></tr>
+      <tr><th>Sao lưu DB</th><td>${backupCell}</td></tr>
+      <tr><th>Diễn tập khôi phục</th><td>${drillCell}</td></tr>
       <tr><th>Nhịp tim gần nhất</th><td>${r.enabled ? esc(r.heartbeat_at ? fmtAbs(new Date(r.heartbeat_at)) : '—') : '<span class="muted">chỉ chạy trên Render (WATCHDOG_ENABLED)</span>'} <span class="muted small">· uptime ${esc(r.uptime_min == null ? '—' : r.uptime_min >= 120 ? `${Math.round(r.uptime_min / 60)} giờ` : `${Math.round(r.uptime_min)} phút`)}${r.commit ? ` · commit <span class="mono">${esc(r.commit)}</span>` : ''}</span></td></tr>
     </table>
     <div class="card-head" style="margin:14px 0 6px"><h3>Lỗi hôm nay theo loại</h3></div>

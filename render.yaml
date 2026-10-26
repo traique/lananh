@@ -222,3 +222,6 @@ services:
         value: "4"
       - key: ERROR_DIGEST_HOUR_VN
         value: "7"
+      # Báo khi bản sao lưu DB (GitHub Actions backup.yml) mới nhất quá N ngày; 0 = tắt.
+      - key: BACKUP_STALE_DAYS
+        value: "3"

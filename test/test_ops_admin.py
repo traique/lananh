@@ -19,13 +19,18 @@ async def test_watchdog_api_can_dang_nhap_va_tra_loi_va_restart(client, monkeypa
     async def restart_summary():
         return {"days": 7, "counts": {"deploy": 1}, "enabled": True}
 
+    async def backup_status():
+        raise RuntimeError("bảng backup_runs chưa có")
+
     monkeypatch.setattr(web_admin.watchdog, "restart_summary", restart_summary)
+    monkeypatch.setattr(web_admin.backup_status, "status", backup_status)
     monkeypatch.setattr(web_admin.error_digest, "summary", lambda: {"today_total": 2, "today": []})
     assert (await client.get("/admin/api/watchdog")).status_code == 403
     await _admin._login(client)
     body = (await client.get("/admin/api/watchdog")).json()
     assert body["errors"]["today_total"] == 2
     assert body["restarts"]["counts"] == {"deploy": 1}
+    assert body["backup"] == {"error": "RuntimeError"}  # 1 phần lỗi không hỏng cả trang
 
 
 def test_trang_admin_co_the_giam_sat():

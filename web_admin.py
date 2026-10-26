@@ -43,7 +43,7 @@ from ai.provider_state import provider_state
 from channels import zalo_users
 from core import config, database as db
 from services import db_maintenance, market_page, memory_service, memory_stats
-from services import error_digest, watchdog
+from services import backup_status, error_digest, watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -746,12 +746,26 @@ async def admin_memory_usage() -> Response:
     return JSONResponse(await asyncio.to_thread(memory_stats.snapshot))
 
 
+async def _safe_section(label: str, factory) -> dict:
+    """1 phần của trang giám sát lỗi không được làm hỏng cả trang."""
+    try:
+        return await factory()
+    except Exception as exc:
+        logger.warning("Admin watchdog: không đọc được %s.", label, exc_info=True)
+        return {"error": type(exc).__name__}
+
+
 @api_router.get("/watchdog")
 async def admin_watchdog() -> Response:
-    """Giám sát vận hành: lỗi gom theo loại hôm nay (chỉ loại + vị trí code) và
-    số lần khởi động lại 7 ngày qua (services/watchdog.py, error_digest.py)."""
+    """Giám sát vận hành: lỗi gom theo loại hôm nay (chỉ loại + vị trí code), số lần
+    khởi động lại 7 ngày qua, trạng thái sao lưu DB (services/watchdog.py,
+    error_digest.py, backup_status.py)."""
     return JSONResponse(
-        {"errors": error_digest.summary(), "restarts": await watchdog.restart_summary()}
+        {
+            "errors": error_digest.summary(),
+            "restarts": await _safe_section("khởi động lại", watchdog.restart_summary),
+            "backup": await _safe_section("sao lưu", backup_status.status),
+        }
     )
 
 

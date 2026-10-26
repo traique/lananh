@@ -16,6 +16,9 @@ Ngoài ra mỗi ngày 1 lần dọn dữ liệu cũ của các bảng chỉ-thê
 ``prune_retention``): user_calls/provider_calls (thống kê), zalo_outbox đã gửi,
 reminders đã gửi. Xoá theo lô nhỏ để không khoá bảng lâu; số ngày giữ chỉnh qua
 biến môi trường, đặt 0 để tắt từng loại.
+
+Cùng vòng lặp, mỗi ngày kiểm tra bản sao lưu DB (workflow GitHub Actions) còn
+chạy không - xem services/backup_status.py.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from zoneinfo import ZoneInfo
 
 from core import database as db
 from core.envutil import env_int, env_on
+from services import backup_status
 
 logger = logging.getLogger(__name__)
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -287,6 +291,12 @@ async def _loop() -> None:
             raise
         except Exception:
             logger.exception("Job dọn DB lỗi; thử lại lượt sau.")
+        try:
+            await backup_status.check_stale_if_due()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Không kiểm tra được bản sao lưu DB; thử lại lượt sau.", exc_info=True)
         await asyncio.sleep(_CHECK_INTERVAL_SEC)
 
 
