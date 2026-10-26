@@ -1,4 +1,5 @@
 import type { GatewayConfig } from "./config.js";
+import { clipChars } from "./msgtype.js";
 import type { ZaloTextStyle } from "./types.js";
 export type IncomingDirectMessage = {
   senderId: string;
@@ -203,7 +204,7 @@ export async function callImageBridge(
   return callMediaBridge(c, "/image-prompt", "Image bridge", mime, image, {
     "x-zalo-sender-id": senderId,
     "x-zalo-message-id": messageId,
-    "x-zalo-caption": encodeURIComponent(caption.slice(0, 500)),
+    "x-zalo-caption": encodeURIComponent(clipChars(caption, 500)),
   });
 }
 /** POST /voice (channels/zalo_media.py): messages[0] là câu "Em nghe là: ...". */
@@ -234,8 +235,8 @@ export async function callFileBridge(
   return callMediaBridge(c, "/file", "File bridge", mime, data, {
     "x-zalo-sender-id": senderId,
     "x-zalo-message-id": messageId,
-    "x-zalo-file-name": encodeURIComponent(fileName.slice(0, 200)),
-    ...(caption ? { "x-zalo-caption": encodeURIComponent(caption.slice(0, 500)) } : {}),
+    "x-zalo-file-name": encodeURIComponent(clipChars(fileName, 200)),
+    ...(caption ? { "x-zalo-caption": encodeURIComponent(clipChars(caption, 500)) } : {}),
   });
 }
 /**

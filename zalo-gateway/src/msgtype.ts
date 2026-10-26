@@ -220,7 +220,12 @@ export function voiceDurationMs(content: unknown): number | null {
   return positiveInt(parseParams(record.params).duration);
 }
 
-function clipChars(text: string, max: number): string {
+/**
+ * Cắt theo ký tự (code point), không theo đơn vị UTF-16: không bao giờ để lại nửa
+ * cặp surrogate (emoji) - encodeURIComponent ném URIError với nửa cặp đó. Khớp
+ * cách Python cắt str ([:n]).
+ */
+export function clipChars(text: string, max: number): string {
   const chars = Array.from(text);
   return chars.length > max ? chars.slice(0, max).join("") : text;
 }

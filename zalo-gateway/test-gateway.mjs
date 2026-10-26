@@ -25,7 +25,7 @@ import {
   MAX_BUFFERED_MEDIA_BYTES,
   isPermanentPostError,
 } from "./dist/facebook-buffer.js";
-import { BridgeHttpError } from "./dist/bridge.js";
+import { BridgeHttpError, callFileBridge, callImageBridge } from "./dist/bridge.js";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
@@ -455,4 +455,31 @@ test("downloadImage giữ câu lỗi cũ (ảnh)", async () => {
     downloadImage(["https://a.zdn.vn/x.png"], { userAgent: "ua", fetchImpl }),
     /Không tải được ảnh từ Zalo \(a\.zdn\.vn: MIME text\/html\)/,
   );
+});
+
+test("header tên file/caption cắt theo ký tự: emoji ở chỗ cắt không làm encodeURIComponent ném lỗi", async () => {
+  const seen = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), headers: init.headers });
+    return new Response(JSON.stringify({ messages: ["ok"] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const config = { bridgeBaseUrl: "http://bridge", bridgeSecret: "s", accountId: "acc" };
+  // 199 ký tự ASCII + emoji: cắt 200 đơn vị UTF-16 sẽ để lại nửa cặp surrogate.
+  const name = "a".repeat(199) + "😀b.pdf";
+  const caption = "c".repeat(499) + "😀 đuôi";
+  try {
+    await callFileBridge(config, "u1", "m1", name, caption, "application/pdf", bytes("%PDF"));
+    await callImageBridge(config, "u1", "m2", caption, "image/png", PNG);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(seen.length, 2);
+  const file = seen[0].headers;
+  assert.equal(decodeURIComponent(file["x-zalo-file-name"]), "a".repeat(199) + "😀");
+  assert.equal(decodeURIComponent(file["x-zalo-caption"]), "c".repeat(499) + "😀");
+  assert.equal(decodeURIComponent(seen[1].headers["x-zalo-caption"]), "c".repeat(499) + "😀");
 });
