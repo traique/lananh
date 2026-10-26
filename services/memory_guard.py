@@ -141,6 +141,14 @@ _SECRET_KEY_RE = re.compile(
 )
 
 
+def names_secret(text: str) -> bool:
+    """Văn bản nêu thẳng loại bí mật ("mật khẩu wifi ...", "stk ...") dù không có
+    dấu tách để find_secret bắt được giá trị."""
+    from core.text_normalize import fold
+
+    return bool(_SECRET_KEY_RE.search(fold(text or "")))
+
+
 def is_secret_fact(key: str, value: str) -> bool:
     """Fact {key, value} có phải bí mật không (xét cả key lẫn giá trị)."""
     from core.text_normalize import fold

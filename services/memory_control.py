@@ -38,6 +38,36 @@ _REMEMBER_PREFIX_RE = re.compile(
     re.IGNORECASE,
 )
 _KEY_VALUE_RE = re.compile(r"^(.{2,60}?)(?:\s+là\s+|\s+la\s+|\s*[:=]\s*)(.+)$", re.IGNORECASE)
+# Phần trước "là" chỉ là đại từ/cách xưng hô ("anh là người Hà Nội", "mình là
+# dân IT"): không dùng làm key - mọi câu tự giới thiệu sẽ chung 1 key và lần
+# /nho sau âm thầm thay lần trước.
+_PRONOUN_KEYS = frozenset(
+    {
+        "anh",
+        "minh",
+        "toi",
+        "chi",
+        "chu",
+        "bac",
+        "chau",
+        "ban",
+        "tao",
+        "ong",
+        "anh_ay",
+        "chi_ay",
+        "em_ay",
+        "ong_ay",
+        "ba_ay",
+    }
+)
+# Key ngắn hơn thế ("em", "co", "ba", "vo"...) cũng không dùng.
+_MIN_KEY_CHARS = 3
+# Token trông như giá trị bí mật (có chữ số, >= 4 ký tự: "abc12345", "Abc@2024").
+_SECRET_VALUE_RE = re.compile(r"(?=\S*\d)\S{4,}")
+_SECRET_REFUSAL = (
+    "Cái này có vẻ là {label} nên em không lưu vào trí nhớ để giữ an toàn. "
+    "Nên cất ở trình quản lý mật khẩu nhé."
+)
 
 
 @dataclass
@@ -186,9 +216,18 @@ def _split_key_value(text: str) -> tuple[str, str]:
     if match and len(match.group(1).split()) <= 6:
         key = memory_service._normalize_key(match.group(1))
         value = match.group(2).strip()
-        if key and value:
+        if key and value and len(key) >= _MIN_KEY_CHARS and key not in _PRONOUN_KEYS:
             return key, value
     return memory_service._normalize_key(" ".join(text.split()[:5])), text
+
+
+def _secret_label(key: str, value: str) -> str | None:
+    """Loại bí mật để báo người dùng, hoặc None. find_secret cần dấu tách
+    ("mật khẩu là ...") nên xét thêm key đã tách ("mat_khau_wifi_nha_anh") như
+    bộ trích xuất tự động (memory_guard.is_secret_fact)."""
+    if memory_guard.is_secret_fact(key, value):
+        return memory_guard.find_secret(f"{key.replace('_', ' ')}: {value}") or "thông tin bí mật"
+    return None
 
 
 async def remember(user_id: int, text: str) -> str:
@@ -199,16 +238,22 @@ async def remember(user_id: int, text: str) -> str:
         return "Cú pháp: /nho <điều cần nhớ>, ví dụ /nho size giày của vợ là 38"
     secret = memory_guard.find_secret(text)
     if secret:
-        return (
-            f"Cái này có vẻ là {secret} nên em không lưu vào trí nhớ để giữ an toàn. "
-            "Nên cất ở trình quản lý mật khẩu nhé."
-        )
+        return _SECRET_REFUSAL.format(label=secret)
     clean = memory_guard.clean(text)
+    style = _STYLE_PREFIX_RE.match(clean)
+    rule = clean[style.end() :].strip() if style else ""
+    if rule:
+        # "luôn kèm mật khẩu wifi abc12345" bị chặn; "đừng hỏi mật khẩu" thì không.
+        leaked = memory_guard.names_secret(rule) and _SECRET_VALUE_RE.search(rule)
+        secret = _secret_label("", rule) or ("thông tin bí mật" if leaked else None)
+    else:
+        key, value = _split_key_value(clean)
+        secret = _secret_label(key, value) or _secret_label(key, clean)
+    if secret:
+        return _SECRET_REFUSAL.format(label=secret)
     async with memory_service.user_lock(user_id):
         rows = await db.get_fact_rows(user_id)
-        style = _STYLE_PREFIX_RE.match(clean)
-        if style and clean[style.end() :].strip():
-            rule = clean[style.end() :].strip()
+        if rule:
             current = next((r for r in rows if r["key"] == memory_service.STYLE_KEY), None)
             merged = f"{current['value']}\n- {rule}" if current else f"- {rule}"
             if len(merged) > memory_service.STYLE_RULES_MAX_CHARS:
@@ -230,6 +275,7 @@ async def remember(user_id: int, text: str) -> str:
         key, value = _split_key_value(clean)
         if not key:
             return "Em chưa hiểu cần nhớ điều gì, thử viết rõ hơn giúp em nhé."
+        value = value[:200]
         existing = next((r for r in rows if r["key"] == key), None)
         pinned_count = sum(1 for r in rows if r.get("pinned"))
         if (existing is None or not existing.get("pinned")) and (
@@ -242,7 +288,7 @@ async def remember(user_id: int, text: str) -> str:
         await db.save_fact(
             user_id,
             key,
-            value[:200],
+            value,
             importance=3,
             category="khac",
             source="user",
@@ -250,7 +296,11 @@ async def remember(user_id: int, text: str) -> str:
             protect=False,
         )
         await db.trim_facts(user_id, memory_service.MAX_FACTS_PER_USER)
-    return f"📌 Em nhớ rồi: {_label(key)}: {value[:200]}"
+    previous = str(existing["value"]) if existing else ""
+    if previous and previous != value:
+        # Cùng key, giá trị khác: giá trị cũ thôi hiệu lực - nói rõ, không im lặng.
+        return f"📌 Em nhớ rồi (đã cập nhật): {_label(key)}: {value} (trước đây: {previous})"
+    return f"📌 Em nhớ rồi: {_label(key)}: {value}"
 
 
 async def pin_item(user_id: int, selector: str, pinned: bool = True) -> str:

@@ -102,6 +102,41 @@ async def test_remember_fact_tool_bo_tien_to_nho_giup(mem):
 
 
 @pytest.mark.asyncio
+async def test_nho_bi_mat_khong_co_dau_tach_van_bi_tu_choi(mem):
+    """find_secret cần "là/:/=" - remember() phải xét cả key/value đã tách."""
+    for text in (
+        "mật khẩu wifi nhà anh abc12345",
+        "nhớ giúp anh mật khẩu wifi abc12345",
+        "cách trả lời: luôn kèm mật khẩu wifi abc12345",
+    ):
+        reply = await memory_control.remember(UID, text)
+        assert "không lưu" in reply, text
+    assert mem.current(UID) == []
+    refused = await tools._HANDLERS["remember_fact"](UID, content="pass gmail anh Abc@2024")
+    assert "không lưu" in refused.text and mem.current(UID) == []
+    # Quy tắc trả lời chỉ NHẮC tới mật khẩu (không có giá trị) vẫn lưu được.
+    rule = await memory_control.remember(UID, "cách trả lời: đừng bao giờ hỏi mật khẩu của anh")
+    assert rule.startswith("✅")
+
+
+@pytest.mark.asyncio
+async def test_nho_ve_ban_than_khong_ghi_de_nhau_qua_key_dai_tu(mem):
+    """'anh là ...' không được thành key "anh" - lần /nho sau thay mất lần trước."""
+    first = await memory_control.remember(UID, "anh là người Hà Nội")
+    second = await memory_control.remember(UID, "anh là fan MU")
+    third = await memory_control.remember(UID, "nhớ giúp anh là anh là con út")
+    fourth = await memory_control.remember(UID, "mình là dân IT")
+    assert all(r.startswith("📌 Em nhớ rồi") for r in (first, second, third, fourth))
+    values = {r["value"] for r in mem.current(UID)}
+    assert {"anh là người Hà Nội", "anh là fan MU", "anh là con út", "mình là dân IT"} <= values
+    assert not {"anh", "minh"} & {r["key"] for r in mem.current(UID)}
+    # Cùng key người dùng tự nhập, giá trị khác: báo rõ giá trị cũ thay vì im lặng.
+    await memory_control.remember(UID, "size giày của vợ là 38")
+    updated = await memory_control.remember(UID, "size giày của vợ là 39")
+    assert "39" in updated and "trước đây: 38" in updated
+
+
+@pytest.mark.asyncio
 async def test_ghim_va_bo_ghim(mem):
     await _seed(mem)
     assert "Đã ghim" in (await _cmd("/ghim", "2")).messages[0]
