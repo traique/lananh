@@ -377,3 +377,20 @@ async def test_forget_dung_ca_su_kien_hoi_tham(mem):
     mem.add_event(UID, "phỏng vấn ở công ty X")
     assert "Đã xoá toàn bộ" in (await _cmd("/forget")).messages[0]
     assert mem.events == []
+
+
+@pytest.mark.asyncio
+async def test_admin_quen_fact_cung_don_ghi_chu_phien_theo_cum_tu_rieng(mem):
+    from datetime import datetime, timezone
+
+    await db.save_fact(UID, "biet_danh", "Trai")
+    await db.upsert_session_note(
+        UID,
+        3,
+        bullets="Anh tên ở nhà là Trai\nAnh xem trailer phim mới",
+        started_at=datetime.now(timezone.utc),
+    )
+    fact_id = mem.current(UID)[0]["id"]
+    assert await memory_control.admin_edit(UID, "forget", "fact", fact_id) is True
+    # "trai" không khớp "trailer": chỉ bỏ đúng dòng nhắc tới giá trị đã quên.
+    assert mem.session_notes[(UID, 3)]["bullets"] == "Anh xem trailer phim mới"

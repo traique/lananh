@@ -546,10 +546,17 @@ _SCRUB_MIN_CHARS = 4
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+|\n+")
 
 
+def _mentions_value(text: str, needle: str) -> bool:
+    """``text`` có nhắc ``needle`` (đã fold) như 1 cụm từ riêng ("trai" không
+    khớp "trailer")."""
+    pattern = rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])"
+    return re.search(pattern, fold(text or "")) is not None
+
+
 def _drop_sentences(text: str, needle: str) -> str:
     """Bỏ các câu (hoặc dòng) có ``needle`` (đã fold) - giữ nguyên nếu không có."""
     parts = [part.strip() for part in _SENTENCE_SPLIT_RE.split(text or "") if part.strip()]
-    kept = [part for part in parts if needle not in fold(part)]
+    kept = [part for part in parts if not _mentions_value(part, needle)]
     return text if len(kept) == len(parts) else " ".join(kept)
 
 
@@ -562,15 +569,19 @@ async def scrub_forgotten(user_id: int, value: str) -> None:
     if len(needle) < _SCRUB_MIN_CHARS:
         return
     highlights = await db.get_highlight_rows(user_id, MAX_HIGHLIGHTS_PER_USER)
-    related = [int(h["id"]) for h in highlights if needle in fold(str(h.get("content") or ""))]
+    related = [
+        int(h["id"]) for h in highlights if _mentions_value(str(h.get("content") or ""), needle)
+    ]
     if related:
         await db.delete_highlights(user_id, related)
     for note in await db.get_session_notes(user_id, db.SESSION_NOTES_RETENTION):
         title = str(note.get("title") or "")
         bullets = str(note.get("bullets") or "")
         summary = str(note.get("summary") or "")
-        new_title = "" if needle in fold(title) else title
-        new_bullets = "\n".join(line for line in bullets.splitlines() if needle not in fold(line))
+        new_title = "" if _mentions_value(title, needle) else title
+        new_bullets = "\n".join(
+            line for line in bullets.splitlines() if not _mentions_value(line, needle)
+        )
         new_summary = _drop_sentences(summary, needle)
         if (new_title, new_bullets, new_summary) != (title, bullets, summary):
             await db.rewrite_session_note(
@@ -581,13 +592,13 @@ async def scrub_forgotten(user_id: int, value: str) -> None:
                 summary=new_summary,
             )
     legacy = await db.get_summary(user_id)
-    if legacy and needle in fold(legacy):
+    if legacy and _mentions_value(legacy, needle):
         await db.set_summary(user_id, _drop_sentences(legacy, needle))
     events = await db.list_user_events(user_id, db.USER_EVENTS_PER_USER)
     pending = [
         int(e["id"])
         for e in events
-        if e.get("status") == "pending" and needle in fold(str(e.get("title") or ""))
+        if e.get("status") == "pending" and _mentions_value(str(e.get("title") or ""), needle)
     ]
     if pending:
         await db.finish_user_event_ids(user_id, pending)

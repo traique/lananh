@@ -688,6 +688,7 @@ async def admin_edit(user_id: int, action: str, kind: str, item_id: int) -> bool
             return False
         if action == "forget":
             await db.delete_fact(user_id, str(row["key"]))
+            await memory_service.scrub_forgotten(user_id, str(row["value"]))
             await memory_service.add_to_forget_list(
                 user_id, key=str(row["key"]), text=str(row["value"])
             )
