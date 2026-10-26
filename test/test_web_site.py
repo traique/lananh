@@ -266,7 +266,10 @@ async def test_thoi_tiet_gioi_han_dia_diem_la(client, monkeypatch):
     assert "°C" in (await client.get("/thoi-tiet", params={"noi": "đà lạt"})).text
     assert "°C" in (await client.get("/thoi-tiet")).text
     assert len(calls) == 5
-    assert web_site._new_place_allowed(now=10_000.0)  # cửa sổ 10 phút đã qua
+    # Cửa sổ 10 phút đã qua. Tính từ đồng hồ monotonic hiện tại: số cố định
+    # 10_000 chỉ đúng khi máy chạy test mới bật dưới ~2,6 giờ.
+    later = web_site.time.monotonic() + 10_000.0
+    assert web_site._new_place_allowed(now=later)
 
 
 async def test_trang_than_so_hoc_escape_ho_ten(client):
