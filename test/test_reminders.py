@@ -281,6 +281,52 @@ async def test_loi_tat_hoan_va_xong(fake):
 
 
 @pytest.mark.asyncio
+async def test_loi_tat_hoan_vuot_tran_hoac_loi_db_thi_tra_loi_ro(fake, monkeypatch):
+    await reminder_service.create(1, "uống thuốc", fake.now + dt.timedelta(minutes=5))
+    rid = next(iter(fake.rows))
+    fake.fire(rid)
+
+    async def full(uid):
+        return reminder_service.MAX_PENDING_ONCE
+
+    monkeypatch.setattr(db, "reminder_count_pending_once", full)
+    reply = await reminder_service.maybe_handle_shortcut(1, "hoãn 10p")
+    assert reply.startswith("❌") and "100" in reply
+    assert fake.rows[rid]["done_at"] is None  # chưa hoãn được -> lần nhắc gốc chưa "xong"
+
+    async def broken(*args, **kwargs):
+        raise ConnectionError("DB rớt mô phỏng")
+
+    monkeypatch.setattr(db, "reminder_count_pending_once", broken)
+    reply = await reminder_service.maybe_handle_shortcut(1, "hoãn 10p")
+    assert reply.startswith("⚠️") and "chưa hoãn được" in reply
+    assert fake.rows[rid]["done_at"] is None
+
+    monkeypatch.setattr(db, "reminder_mark_done", broken)
+    reply = await reminder_service.maybe_handle_shortcut(1, "xong")
+    assert reply.startswith("⚠️") and "chưa ghi nhận" in reply
+
+
+@pytest.mark.asyncio
+async def test_nut_hoan_vuot_tran_thi_tra_loi_ro(fake, monkeypatch):
+    await reminder_service.create(1, "uống thuốc", fake.now + dt.timedelta(minutes=5))
+    rid = next(iter(fake.rows))
+    fake.fire(rid)
+
+    async def get(uid, reminder_id):
+        return fake.rows.get(reminder_id)
+
+    async def full(uid):
+        return reminder_service.MAX_PENDING_ONCE
+
+    monkeypatch.setattr(db, "reminder_get", get)
+    monkeypatch.setattr(db, "reminder_count_pending_once", full)
+    reply = await reminder_service.snooze_delivered(1, rid, "10")
+    assert reply.startswith("❌") and "100" in reply
+    assert fake.rows[rid]["done_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_loi_tat_khong_bat_nham_cau_thuong(fake):
     await reminder_service.create(1, "uống thuốc", fake.now + dt.timedelta(minutes=5))
     fake.fire(next(iter(fake.rows)))

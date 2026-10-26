@@ -345,11 +345,30 @@ async def snooze_delivered(user_id: int, reminder_id: int, choice: str) -> str:
     if due is None:  # pragma: no cover - 3 lựa chọn cố định đều hiểu được
         return f"{_me().capitalize()} chưa hoãn được nhắc này, thử /nhac hoan giúp {_me()} nha."
     target = dataclasses.replace(current_target(user_id), event_key=f"snooze:{reminder_id}")
-    with notification_target(target):
-        created = await create(user_id, message, due)
-    await db.reminder_mark_done(reminder_id)
+    try:
+        with notification_target(target):
+            created = await create(user_id, message, due)
+    except ReminderError as exc:
+        return f"❌ {exc}"
+    except Exception:
+        logger.warning("Nút hoãn nhắc lỗi (reminder_id=%s).", reminder_id, exc_info=True)
+        return _snooze_failed()
+    await _mark_done_quietly(reminder_id)
     when = vn_time_parse.describe_due(created.due_at, now)
     return f"⏰ Dạ {_me()} hoãn tới {when} nha: {message}"
+
+
+def _snooze_failed() -> str:
+    return f"⚠️ {_me().capitalize()} chưa hoãn được lúc này - {_you()} thử lại sau ít phút nha."
+
+
+async def _mark_done_quietly(reminder_id: int) -> None:
+    """Đánh dấu lần nhắc gốc đã xử lý SAU khi đã đặt nhắc hoãn; lỗi chỉ ghi log
+    (nhắc mới đã lưu - báo lỗi lúc này sẽ khiến người dùng hoãn lại lần nữa)."""
+    try:
+        await db.reminder_mark_done(reminder_id)
+    except Exception:
+        logger.warning("Không đánh dấu xong lần nhắc %s.", reminder_id, exc_info=True)
 
 
 # ─── "hoãn 10p" / "xong" ngay sau khi nhắc ────────────────────────────────
@@ -394,7 +413,14 @@ async def maybe_handle_shortcut(user_id: int, text: str) -> str | None:
     if fired.get("series_id") and message.startswith("🗓"):
         message = message.removeprefix("🗓").strip()
     if action == "done":
-        await db.reminder_mark_done(fired["id"])
+        try:
+            await db.reminder_mark_done(fired["id"])
+        except Exception:
+            logger.warning("Không ghi nhận được 'xong' cho nhắc %s.", fired["id"], exc_info=True)
+            return (
+                f"⚠️ {_me().capitalize()} chưa ghi nhận được lúc này - {_you()} nhắn lại "
+                f'"xong" sau ít phút nha.'
+            )
         return f"✅ Dạ {_me()} ghi nhận xong: {message}"
     now = dt.datetime.now(VN_TZ)
     due = vn_time_parse.parse_snooze(rest, now)
@@ -402,6 +428,12 @@ async def maybe_handle_shortcut(user_id: int, text: str) -> str | None:
         return f'Hoãn tới khi nào {_you()} ơi? Ví dụ "hoãn 10p", "hoãn 1 tiếng", "hoãn sáng mai".'
     if due - now > dt.timedelta(days=7):
         return f"Lối tắt hoãn chỉ dời tối đa 7 ngày - {_you()} đặt nhắc mới giúp {_me()} nha."
-    await create(user_id, message, due, key_suffix=":hoan")
-    await db.reminder_mark_done(fired["id"])
+    try:
+        await create(user_id, message, due, key_suffix=":hoan")
+    except ReminderError as exc:
+        return f"❌ {exc}"
+    except Exception:
+        logger.warning("Hoãn nhắc lỗi (reminder_id=%s).", fired["id"], exc_info=True)
+        return _snooze_failed()
+    await _mark_done_quietly(fired["id"])
     return f"⏰ Dạ {_me()} hoãn tới {vn_time_parse.describe_due(due, now)} nha: {message}"
