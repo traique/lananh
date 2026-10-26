@@ -981,3 +981,56 @@ async def test_grouped_event_notice_counts_one_message_toward_zalo_cap(delivery_
         -5, "🔔 HPG chạm 25.000đ", kind="price", ref_key="7", today="2026-10-26"
     )
     assert len(outbox) == 2
+
+
+@pytest.mark.asyncio
+async def test_portfolio_events_rotates_member_holdings_beyond_cap(delivery_db, monkeypatch):
+    """Quá trần PORTFOLIO_EVENTS_MAX_HOLDINGS: chủ bot luôn được xét, vị thế thành
+    viên xoay vòng (con trỏ lưu settings) - không còn đuôi bảng bị bỏ sót mãi."""
+    from services import portfolio_events as pe
+
+    await portfolio.set_holding(1, "FPT", 10, 100_000)
+    for uid, symbol in ((-7, "HPG"), (-6, "VNM"), (-6, "MWG"), (-5, "SSI")):
+        await portfolio.set_holding(uid, symbol, 10, 20_000)
+    batches = []
+    notices = []
+
+    async def persist(holdings, today):
+        batches.append([(h.user_id, h.symbol) for h in holdings])
+        return 0
+
+    async def send(holdings, today):
+        notices.append([(h.user_id, h.symbol) for h in holdings])
+        return 0
+
+    monkeypatch.setattr(pe, "persist_corporate_actions", persist)
+    monkeypatch.setattr(pe, "send_event_notices", send)
+    monkeypatch.setenv("PORTFOLIO_EVENTS_MAX_HOLDINGS", "3")
+    for _ in range(3):
+        assert await pe.run_once(force=True)
+    assert batches == [
+        [(1, "FPT"), (-7, "HPG"), (-6, "MWG")],
+        [(1, "FPT"), (-6, "VNM"), (-5, "SSI")],
+        [(1, "FPT"), (-7, "HPG"), (-6, "MWG")],  # hết vòng thì quay lại đầu
+    ]
+    assert notices == batches
+
+    # Dưới trần: mọi vị thế được xét mỗi ngày, con trỏ không làm sót/lặp dòng nào.
+    monkeypatch.setenv("PORTFOLIO_EVENTS_MAX_HOLDINGS", "60")
+    batches.clear()
+    assert await pe.run_once(force=True)
+    assert sorted(batches[0]) == sorted(
+        [(1, "FPT"), (-7, "HPG"), (-6, "MWG"), (-6, "VNM"), (-5, "SSI")]
+    )
+
+    # Trần số mã tra lịch quyền: lượt cắt ở mã thứ N của thành viên, lượt sau
+    # bắt đầu đúng từ vị thế bị cắt (persist và báo lịch dùng cùng 1 lượt).
+    monkeypatch.setenv("PORTFOLIO_EVENTS_MAX_SYMBOLS", "2")
+    batches.clear()
+    notices.clear()
+    await pe.run_once(force=True)
+    await pe.run_once(force=True)
+    assert batches == notices
+    assert [len(b) for b in batches] == [2, 2]
+    members = [row for batch in batches for row in batch if row[0] < 0]
+    assert len(set(members)) == 2

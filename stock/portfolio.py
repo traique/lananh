@@ -420,10 +420,13 @@ async def get_holding(user_id: int, symbol: str) -> Holding | None:
     return _holding(row) if row else None
 
 
-async def list_all_holdings(limit: int = 300) -> list[Holding]:
-    """Vị thế của mọi người dùng (job nền), có trần số dòng."""
+async def list_all_holdings(
+    limit: int = 300, *, after: tuple[int, str] | None = None
+) -> list[Holding]:
+    """Vị thế của mọi người dùng (job nền), có trần số dòng: chủ bot trước, thành
+    viên xoay vòng từ sau con trỏ (id, mã) ``after``."""
     await ensure_schema()
-    return [_holding(row) for row in await db.portfolio_list_all_holdings(limit)]
+    return [_holding(row) for row in await db.portfolio_list_all_holdings(limit, after=after)]
 
 
 async def set_holding(

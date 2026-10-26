@@ -14,7 +14,9 @@ guard ngày trong settings):
 3. Dọn nhật ký thông báo cũ hơn _LOG_KEEP_DAYS ngày.
 
 Có trần số vị thế, số mã tra lịch mỗi lượt và số lượt tra cứu song song
-(RAM/requests VCI). Tắt cả job bằng PORTFOLIO_EVENTS_ENABLED=0.
+(RAM/requests VCI). Quá trần: vị thế chủ bot luôn được xét, vị thế thành viên
+xoay vòng theo con trỏ lưu settings (mỗi ngày 1 đoạn kế tiếp, hết thì quay lại
+đầu). Tắt cả job bằng PORTFOLIO_EVENTS_ENABLED=0.
 """
 
 from __future__ import annotations
@@ -36,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _LAST_RUN_KEY = "portfolio_events:last_run_date"
+# Con trỏ xoay vòng vị thế thành viên: "<id>|<MÃ>" của dòng cuối lượt trước.
+_CURSOR_KEY = "portfolio_events:cursor"
 CATCHUP_HOURS = 3
 _POLL_SEC = 15 * 60
 # Số mã tra cứu song song (mỗi mã: 1 chuỗi DNSE 90 phiên + lịch quyền VCI có cache 24h).
@@ -259,13 +263,54 @@ async def send_event_notices(holdings: list[portfolio.Holding], today: date) -> 
     return sent
 
 
+# ─── Lượt xét hằng ngày: chủ bot + thành viên xoay vòng ──────────────────────
+
+
+def _parse_cursor(raw: str | None) -> tuple[int, str] | None:
+    try:
+        user_id, symbol = str(raw or "").split("|", 1)
+        return (int(user_id), symbol) if symbol else None
+    except ValueError:
+        return None
+
+
+def trim_to_symbol_cap(holdings: list[portfolio.Holding], cap: int) -> list[portfolio.Holding]:
+    """Cắt lượt ở vị thế thành viên đầu tiên mang mã thứ cap+1 (chủ bot giữ đủ):
+    báo lịch quyền và lưu quy đổi xét CÙNG các vị thế, lượt sau bắt đầu đúng từ
+    vị thế bị cắt thay vì bỏ qua nó cả vòng."""
+    seen: set[str] = set()
+    out: list[portfolio.Holding] = []
+    for holding in holdings:
+        if holding.user_id < 0 and holding.symbol not in seen and len(seen) >= cap:
+            break
+        seen.add(holding.symbol)
+        out.append(holding)
+    return out
+
+
+async def _daily_batch() -> list[portfolio.Holding]:
+    """Vị thế của lượt hôm nay (có trần dòng/mã): chủ bot trước, thành viên xoay
+    vòng từ sau con trỏ - tổng quá trần thì mỗi ngày 1 đoạn, ai cũng tới lượt."""
+    cursor = _parse_cursor(await db.get_setting(_CURSOR_KEY))
+    holdings = await portfolio.list_all_holdings(max_holdings(), after=cursor)
+    if notices_enabled():
+        holdings = trim_to_symbol_cap(holdings, max_event_symbols())
+    return holdings
+
+
+async def _save_cursor(holdings: list[portfolio.Holding]) -> None:
+    members = [h for h in holdings if h.user_id < 0]
+    if members:
+        await db.set_setting(_CURSOR_KEY, f"{members[-1].user_id}|{members[-1].symbol}")
+
+
 async def run_once(*, force: bool = False) -> bool:
     now = datetime.now(_VN_TZ)
     last = await db.get_setting(_LAST_RUN_KEY)
     if not force and not is_due(now, last):
         return False
     today = now.date().isoformat()
-    holdings = await portfolio.list_all_holdings(max_holdings())
+    holdings = await _daily_batch()
     rebased = await persist_corporate_actions(holdings, today)
     if rebased:
         logger.info("portfolio_events: đã quy đổi quyền %d vị thế.", rebased)
@@ -275,6 +320,8 @@ async def run_once(*, force: bool = False) -> bool:
         await db.portfolio_prune_alert_log(_LOG_KEEP_DAYS)
     except Exception:
         logger.warning("portfolio_events: không dọn được nhật ký thông báo.", exc_info=True)
+    # Chỉ dời con trỏ sau khi lượt chạy xong (lỗi giữa chừng -> vòng sau xét lại).
+    await _save_cursor(holdings)
     await db.set_setting(_LAST_RUN_KEY, today)
     return True
 

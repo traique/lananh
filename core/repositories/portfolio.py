@@ -164,12 +164,25 @@ async def get_holding(pool: Any, user_id: int, symbol: str):
     )
 
 
-async def list_all_holdings(pool: Any, limit: int):
-    """Vị thế của MỌI người dùng (job nền hằng ngày), có trần số dòng."""
+async def list_all_holdings(pool: Any, limit: int, *, after: tuple[int, str] | None = None):
+    """Vị thế của MỌI người dùng (job nền hằng ngày), có trần số dòng.
+
+    Chủ bot (id dương) luôn đứng đầu; vị thế thành viên (id âm) xoay vòng theo
+    (id, mã): bắt đầu từ dòng ngay SAU con trỏ ``after``, hết bảng thì quay lại
+    đầu - quá trần thì mỗi ngày xét 1 đoạn khác, không có đuôi bảng bị bỏ mãi."""
+    after_user, after_symbol = after if after is not None else (None, None)
     return await pool.fetch(
-        f"SELECT {HOLDING_COLUMNS} FROM stock_holdings "
-        "ORDER BY (telegram_user_id > 0) DESC, telegram_user_id, symbol LIMIT $1",
+        f"""
+        SELECT {HOLDING_COLUMNS} FROM stock_holdings
+        ORDER BY (telegram_user_id > 0) DESC,
+            ($2::bigint IS NOT NULL
+             AND (telegram_user_id, symbol) <= ($2::bigint, $3::text)) ASC,
+            telegram_user_id, symbol
+        LIMIT $1
+        """,
         limit,
+        after_user,
+        after_symbol,
     )
 
 

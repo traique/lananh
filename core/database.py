@@ -1527,10 +1527,10 @@ async def portfolio_get_holding(user_id: int, symbol: str):
 
 
 @_with_reconnect
-async def portfolio_list_all_holdings(limit: int):
+async def portfolio_list_all_holdings(limit: int, *, after: tuple[int, str] | None = None):
     from core.repositories import portfolio
 
-    return await portfolio.list_all_holdings(await get_pool(), limit)
+    return await portfolio.list_all_holdings(await get_pool(), limit, after=after)
 
 
 @_with_reconnect(idempotent=False)
