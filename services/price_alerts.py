@@ -42,11 +42,13 @@ BELOW, ABOVE = "BELOW", "ABOVE"
 _REARM_PCT = 0.01
 _MAX_ALERT_ROWS = 500
 _TICK_CONCURRENCY = 4
-# Vị thế đã quy đổi quyền của chủ bot: cache ngắn (mỗi lần tính tốn 1 chuỗi DNSE
-# 90 phiên + lịch quyền), có trần.
+# Sự kiện quyền đã xác nhận của vị thế chủ bot: cache ngắn (mỗi lần tính tốn 1
+# chuỗi DNSE 90 phiên + lịch quyền), có trần. Chỉ cache SỰ KIỆN theo (mã, mốc giá
+# vốn) - quy đổi áp lên dòng vị thế mới đọc mỗi vòng, nên sửa stop/target hay bán
+# bớt có hiệu lực ngay thay vì chờ hết TTL.
 _VIEW_TTL_SEC = 30 * 60
 _VIEW_CACHE_MAX = 64
-_view_cache: dict[tuple[str, str, str], tuple[float, portfolio.CorporateView]] = {}
+_view_cache: dict[tuple[str, str], tuple[float, tuple]] = {}
 _task: asyncio.Task | None = None
 
 
@@ -134,19 +136,20 @@ async def _fetch_ticks(symbols: list[str]) -> dict[str, float | None]:
     return dict(zip(symbols, prices, strict=True))
 
 
-async def _cached_view(holding: portfolio.Holding) -> portfolio.CorporateView:
-    key = (holding.symbol, holding.cost_basis_as_of or "", f"{holding.quantity}")
+async def _effective(holding: portfolio.Holding) -> portfolio.Holding:
+    """Vị thế (dòng DB mới đọc) sau quy đổi sự kiện quyền đã xác nhận (cache)."""
+    key = (holding.symbol, holding.cost_basis_as_of or "")
     now = time.monotonic()
     hit = _view_cache.get(key)
     if hit is not None and now - hit[0] < _VIEW_TTL_SEC:
-        return hit[1]
+        return portfolio.effective_holding(holding, hit[1])
     (view,) = await portfolio.corporate_views([holding])
     for stale in [k for k, (ts, _) in _view_cache.items() if now - ts >= _VIEW_TTL_SEC]:
         _view_cache.pop(stale, None)
     while len(_view_cache) >= _VIEW_CACHE_MAX:
         _view_cache.pop(next(iter(_view_cache)))
-    _view_cache[key] = (now, view)
-    return view
+    _view_cache[key] = (now, tuple(view.applied))
+    return portfolio.effective_holding(holding, view.applied)
 
 
 async def _owner_holdings(owner_id: int) -> list[portfolio.Holding]:
@@ -157,7 +160,7 @@ async def _owner_holdings(owner_id: int) -> list[portfolio.Holding]:
         for h in await portfolio.list_holdings(owner_id)
         if h.stop_price is not None or h.target_price is not None
     ]
-    return [(await _cached_view(h)).effective for h in holdings]
+    return [await _effective(h) for h in holdings]
 
 
 def _breached_at_last_close(state: dict, symbol: str, kind: str, level: float, today) -> bool:

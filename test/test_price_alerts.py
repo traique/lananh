@@ -194,3 +194,54 @@ def test_canh_bao_cuoi_phien_bo_qua_stop_da_bao_trong_phien():
     # Hôm sau vẫn dưới stop: dòng rút gọn "ngày thứ 2" vẫn có.
     text, _ = pa.compose_alert(scan, state, day + timedelta(days=1), outage=False)
     assert "ngày thứ 2 dưới stop" in text
+
+
+@pytest.mark.asyncio
+async def test_cache_quy_doi_quyen_khong_giu_stop_target_cu(monkeypatch):
+    """Cache chỉ giữ sự kiện quyền đã xác nhận theo (mã, mốc giá vốn): dời stop
+    (không đổi mốc/số cp) phải có hiệu lực ngay ở vòng quét kế tiếp."""
+    from stock import corporate_actions as ca
+
+    monkeypatch.setenv("PRICE_ALERTS_HOLDINGS_INTRADAY", "1")
+    monkeypatch.setattr(alerts, "_view_cache", {})
+    row = {"symbol": "HPG", "quantity": 1000, "stop": 20_000.0, "events": []}
+    lookups = []
+
+    async def list_holdings(owner_id):
+        return [
+            portfolio.Holding(
+                42,
+                row["symbol"],
+                row["quantity"],
+                24_000.0,
+                stop_price=row["stop"],
+                cost_basis_as_of="2026-10-01",
+            )
+        ]
+
+    async def views(holdings, series_list=None, *, limit_sec=8.0):
+        lookups.append([h.symbol for h in holdings])
+        applied = tuple(row["events"])
+        return [
+            portfolio.CorporateView(h, portfolio.effective_holding(h, applied), applied)
+            for h in holdings
+        ]
+
+    monkeypatch.setattr(alerts.portfolio, "list_holdings", list_holdings)
+    monkeypatch.setattr(alerts.portfolio, "corporate_views", views)
+    (first,) = await alerts._owner_holdings(42)
+    assert first.stop_price == 20_000
+    row["stop"] = 24_000.0  # 10h anh dời stop lên 24.000 (không đổi mốc giá vốn/số cp)
+    (second,) = await alerts._owner_holdings(42)
+    assert second.stop_price == 24_000
+    assert len(lookups) == 1  # vẫn dùng cache, không tra lại lịch quyền
+
+    # Mã có sự kiện đã xác nhận: quy đổi áp lên dòng vị thế MỚI mỗi vòng (bán bớt
+    # cũng không làm lệch số cp đã quy đổi).
+    row.update(symbol="VNM", events=[ca.StockEvent(ex_date="2026-10-20", ratio=0.2)])
+    (third,) = await alerts._owner_holdings(42)
+    assert third.quantity == 1200 and third.stop_price == pytest.approx(20_000, abs=0.01)
+    row.update(quantity=500, stop=30_000.0)
+    (fourth,) = await alerts._owner_holdings(42)
+    assert fourth.quantity == 600 and fourth.stop_price == pytest.approx(25_000, abs=0.01)
+    assert len(lookups) == 2
