@@ -87,6 +87,77 @@ async def test_khong_phai_cau_hoi_gon_thi_none(sources, text):
     assert await daily.maybe_handle(text) is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Vâng, bây giờ ạ",  # bỏ dấu "vâng" = "vang"
+        "vâng hôm nay em bận",
+        "Vâng nhắn em nha",  # "nhắn" bỏ dấu = "nhẫn"
+        "lớp vắng hôm nay nhiều quá",
+        "rượu vang bao nhiêu tiền 1 chai",
+        "ruou vang bao nhieu",
+        "vâng, bây giờ tin tức về bão thế nào",
+    ],
+)
+def test_vang_vang_vang_khong_phai_hoi_gia_vang(text):
+    assert daily.wants_gold(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "giá vàng hôm nay",
+        "vàng nhẫn bao nhiêu 1 chỉ",
+        "vang hom nay",  # gõ không dấu cả câu
+        "gia vang sjc",
+        "giá vàng SJC bao nhiêu vậy em",
+        "vàng miếng bây giờ",
+    ],
+)
+def test_hoi_gia_vang_van_nhan_ra(text):
+    assert daily.wants_gold(text) is True
+
+
+async def test_vang_vang_khong_tra_bang_gia_vang(sources):
+    assert await daily.maybe_handle("Vâng, bây giờ ạ") is None
+    assert await daily.maybe_handle("vâng hôm nay em bận") is None
+    g = await daily.grounding_for("rượu vang bao nhiêu tiền 1 chai")
+    assert g == daily.DailyGrounding()
+    assert sources["calls"] == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "anh chuyển về 500000 cho em rồi nha",  # bỏ dấu "về" = "vé"
+        "tiền điện tháng này về 350000 à",
+        "em giải thích về số hôm qua anh gửi đi",
+        "con về 12345 lần rồi",
+        "vé 200000 đồng một người",  # giá vé, không phải số vé
+    ],
+)
+async def test_ve_so_khong_nham_ve(sources, text):
+    assert daily.parse_lottery(text) is None
+    assert await daily.maybe_handle(text) is None
+    assert sources["calls"] == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "dò vé 729510",
+        "do ve so 729510 giup anh",
+        "ve so mien nam",
+        "vé 30328 có trúng không",
+        "xổ số miền nam",
+        "vé số hôm qua",
+        "dò vé 123456 đồng nai",
+    ],
+)
+def test_ve_so_van_nhan_ra(text):
+    assert daily.parse_lottery(text) is not None
+
+
 async def test_nguon_vang_loi_thi_none_de_tra_web(sources):
     sources["down"].add("gold")
     assert await daily.maybe_handle("giá vàng hôm nay") is None

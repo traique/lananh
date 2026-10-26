@@ -46,9 +46,12 @@ def _low(text: str) -> str:
 
 # ─── Nhận diện câu hỏi ──────────────────────────────────────────────────────
 
-_GOLD_RE = re.compile(
-    r"\bgia vang\b|\bvang (?:sjc|mieng|nhan|9999|24k|hom nay|bay gio|bao nhieu)\b|\bsjc\b"
-)
+# Bỏ dấu thì "vâng" (dạ), "vắng", "vang" (rượu vang) đều thành "vang", "nhắn"
+# thành "nhẫn": "vàng + chữ mơ hồ" chỉ so trên chữ CÓ DẤU. Bản bỏ dấu chỉ giữ cụm
+# không thể nhầm; người gõ không dấu cả câu được so riêng (_GOLD_PLAIN_RE).
+_GOLD_RE = re.compile(r"\bgia vang\b|\bvang (?:sjc|mieng|9999|24k)\b|\bsjc\b")
+_GOLD_ACCENTED_RE = re.compile(r"\bvàng (?:sjc|miếng|nhẫn|9999|24k|hôm nay|bây giờ|bao nhiêu)\b")
+_GOLD_PLAIN_RE = re.compile(r"(?<!ruou )\bvang (?:nhan|hom nay|bay gio|bao nhieu)\b")
 _WORLD_GOLD_RE = re.compile(r"\b(?:the gioi|quoc te|ounce|kitco|spot)\b")
 _FX_EXPLICIT_RE = re.compile(r"\bt[yi] gia\b")
 # Câu tiền số/chứng khoán Mỹ có "usd" không phải hỏi tỷ giá ngân hàng.
@@ -123,13 +126,18 @@ _SCALES = {
     "triệu": 1e6, "trieu": 1e6, "tr": 1e6, "củ": 1e6, "cu": 1e6, "tỷ": 1e9, "ty": 1e9,
 }  # fmt: skip
 
-# Bỏ dấu thì "vé số" trùng "về số" ("nói về số liệu"), "dò vé" trùng "đổ về": các
-# cụm đó chỉ so trên chữ CÓ DẤU; bản không dấu phải kèm số vé hoặc miền/ngày.
-_LOTTERY_RE = re.compile(
-    r"\bxo so\b|\bso xo\b|\bxs(?:mb|mn|mt|kt|hcm|tphcm)\b|\bkqxs\b|"
-    r"\b(?:ve|do ve|do so|ve so) \d{5,6}\b|\bve so (?:mien|hom|xs|dai)"
+# Bỏ dấu thì "vé" trùng "về" ("chuyển về 500000", "nói về số liệu"), "dò vé" trùng
+# "đổ về": cụm có "vé" chỉ so trên chữ GIỮ DẤU (``low``), nhận "vé" có dấu hoặc
+# "ve" gõ không dấu - "về" còn dấu nên không bao giờ khớp. Bản bỏ dấu chỉ giữ từ
+# không thể nhầm (xổ số, xsmn, kqxs).
+_LOTTERY_RE = re.compile(r"\bxo so\b|\bso xo\b|\bxs(?:mb|mn|mt|kt|hcm|tphcm)\b|\bkqxs\b")
+_LOTTERY_ACCENTED_RE = re.compile(
+    r"\bvé số\b|\bdò vé\b|\bdò số\b|"
+    # "vé 200000 đồng" là giá vé, không phải số vé ("đồng nai" vẫn là đài).
+    r"\b(?:v[ée]|d[òo] v[ée]|d[òo] s[ốo]|v[ée] s[ốo]) \d{5,6}\b"
+    r"(?! ?(?:đ|đồng(?! nai)|dong(?! nai)|vnd|vnđ|k|nghìn|ngàn)\b)|"
+    r"\bv[ée] s[ốo] (?:mi[ềe]n|h[ôo]m|xs|đ[àa]i|dai)"
 )
-_LOTTERY_ACCENTED_RE = re.compile(r"\bvé số\b|\bdò vé\b|\bdò số\b")
 # Câu hỏi kiến thức/ý kiến về xổ số (không hỏi số) -> để AI, cấm nêu số.
 _LOTTERY_BROAD_RE = re.compile(
     r"\b(?:la gi|nghia la|tai sao|vi sao|co nen|nen mua|nen choi|lam sao|cach choi|y nghia|"
@@ -220,7 +228,13 @@ def _code(match: re.Match, by_alias: dict[str, str]) -> str | None:
 
 
 def wants_gold(text: str) -> bool:
-    return bool(_GOLD_RE.search(fold(_low(text))))
+    low = _low(text)
+    folded = fold(low)
+    if _GOLD_RE.search(folded) or _GOLD_ACCENTED_RE.search(low):
+        return True
+    # Cả câu không dấu: "vang hom nay" mới chắc là hỏi giá vàng ("rượu vang" có
+    # dấu vẫn không có dấu thanh nên nhánh này KHÔNG chạy trên chữ có dấu).
+    return low == folded and bool(_GOLD_PLAIN_RE.search(low))
 
 
 def parse_fx(text: str) -> FxQuery | None:
