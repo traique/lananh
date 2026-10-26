@@ -31,7 +31,7 @@ from core import address, config
 from core import database as db
 from core.text_normalize import fold, nfc
 from core.text_utils import strip_json_fence
-from services import morning_brief, reply_audience
+from services import morning_brief, reply_audience, write_intent
 from services import tool_registry as reg
 from services.reminder_delivery import current_event_key
 
@@ -384,6 +384,8 @@ def parse_expense(
             return None
         if len(clean.split()) > 10:
             return None
+        if not _SPEND_VERB_RE.match(clean) and write_intent.asks_remind_or_remember(clean):
+            return None  # "nhắc anh 9h mai trả 500k": nhắc việc/ghi chú, để router tool lo
     found = parse_amount(clean, bare_thousands=not strict)
     if found is None:
         return None

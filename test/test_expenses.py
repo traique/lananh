@@ -241,3 +241,30 @@ async def test_ban_tin_sang_dong_chi_tieu_rieng_tung_nguoi(fake, monkeypatch):
     assert await section.build(owner) is None  # chủ bot chưa ghi khoản nào
     monkeypatch.setattr(ex.config, "MORNING_BRIEF_EXPENSES", False)
     assert await section.build(member) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "nhắc anh 9h mai trả 500k",
+        "nhắc em mai đóng tiền điện 1tr2",
+        "mai nhắc anh chuyển 2tr cho mẹ",
+        "ghi chú: mượn Hùng 500k",
+        "nhớ giúp anh tiền nhà 5tr",
+        "nhac anh 9h mai tra 500k",  # gõ không dấu
+    ],
+)
+async def test_cau_nhac_viec_ghi_chu_co_so_tien_khong_bi_ghi_thanh_khoan_chi(fake, text):
+    # Câu nhắc việc/ghi chú/nhờ nhớ kèm số tiền phải đi tiếp tới router tool.
+    assert ex.parse_expense(text, today=TODAY) is None
+    assert await ex.maybe_handle_chat(1, text) is None
+    assert not fake.rows
+
+
+@pytest.mark.asyncio
+async def test_khoan_chi_thuong_van_ghi_sau_khi_chan_cau_nhac(fake):
+    assert (await ex.maybe_handle_chat(1, "cafe 45k")).startswith("💸")
+    # "ghi lại chi tiêu ..." vẫn là khoản chi (không phải ghi chú).
+    assert ex.parse_expense("ghi lại chi tiêu ăn trưa 60k", today=TODAY).amount == 60_000
+    assert ex.parse_expense("nhạc cụ 500k", today=TODAY).amount == 500_000  # nhạc != nhắc

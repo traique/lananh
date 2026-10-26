@@ -159,6 +159,9 @@ def test_nhan_dien_cau_ghi_du_lieu_tu_tin_thoai():
     assert voice_service.write_statement_kind("cafe 45k") == "expense"
     assert voice_service.write_statement_kind("có nên mua FPT không") is None
     assert voice_service.write_statement_kind("mai Hà Nội mưa không") is None
+    # Câu nhắc việc có số tiền: không phải "khoản chi bị chặn" - để lượt chỉ đọc báo
+    # đúng là chưa đặt nhắc (router tool, outcome blocked).
+    assert voice_service.write_statement_kind("nhắc anh 9h mai trả 500k") is None
 
 
 # ─── Zalo: handle_channel_voice ──────────────────────────────────────────────

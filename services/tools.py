@@ -38,11 +38,12 @@ from zoneinfo import ZoneInfo
 
 from core import config, urls
 from core import database as db
-from core.text_normalize import fold, nfc
+from core.text_normalize import fold
 from core.text_utils import strip_json_fence
 from services import history_search  # noqa: F401 - đăng ký tool search_history
 from services import lunar, turn_progress, weather
 from services import tool_registry as reg
+from services import write_intent
 from services.reminder_delivery import current_target
 from stock import analysis as stock_analysis
 
@@ -85,46 +86,9 @@ Quy tắc:
 - KHÔNG tự cộng trừ giờ: chép nguyên văn cụm thời gian vào "when"; hệ thống tự tính."""
 
 # ─── Ý định ghi dữ liệu (regex, độc lập router) ─────────────────────────────
-# (loại, mẫu trên chữ thường CÒN DẤU, mẫu khi cả câu gõ không dấu). Không dùng
+# services/write_intent.py (dùng chung với bắt khoản chi từ chat). Không dùng
 # chữ bỏ dấu cho câu có dấu: fold("nhạc") == fold("nhắc") == "nhac".
-_PRONOUNS = r"anh|em|tôi|mình|giúp|giùm|chị|cô|chú|bác|con|cháu|tui|tớ|bố|mẹ|với|ba|má"
-_PRONOUNS_PLAIN = r"anh|em|toi|minh|giup|gium|chi|co|chu|bac|con|chau|tui|to"
-_SIDE_EFFECT_INTENTS = (
-    (
-        "reminder",
-        re.compile(
-            rf"\bnhắc (?:nhở )?(?:{_PRONOUNS})\b|\bhẹn giờ\b|\bđặt (?:lịch|nhắc|báo thức)\b"
-            r"|\bremind\b|\b(?:huỷ|hủy|xoá|xóa|bỏ) (?:cái )?nhắc\b"
-        ),
-        re.compile(
-            rf"\bnhac (?:nho )?(?:{_PRONOUNS_PLAIN})\b|\bhen gio\b|\bdat (?:lich|nhac|bao thuc)\b"
-            r"|\bremind\b|\b(?:huy|xoa) (?:cai )?nhac\b"
-        ),
-    ),
-    (
-        "note",
-        re.compile(
-            r"\bghi chú (?:giúp|giùm|lại|cho|vào|là)\b|\bghi chú\s*:|\bghi lại\b"
-            r"|\bnote (?:lại|giúp|giùm)\b|\blưu lại\b"
-        ),
-        re.compile(r"\bghi chu (?:giup|gium|lai|cho|vao|la)\b|\bghi lai\b|\bnote (?:lai|giup)\b"),
-    ),
-    (
-        "expense",
-        re.compile(r"\b(?:ghi|thêm|lưu) (?:khoản |lại )?chi(?: tiêu)?\b"),
-        re.compile(r"\b(?:ghi|them|luu) (?:khoan |lai )?chi(?: tieu)?\b"),
-    ),
-)
-
-
-def side_effect_intent(user_text: str) -> str:
-    """ "reminder" | "note" | "expense" | "" - người dùng muốn bot GHI gì đó."""
-    low = nfc(user_text or "").lower()
-    plain = fold(low) == low
-    for kind, accented, unaccented in _SIDE_EFFECT_INTENTS:
-        if (unaccented if plain else accented).search(low):
-            return kind
-    return ""
+side_effect_intent = write_intent.side_effect_intent
 
 
 # ─── Handler ────────────────────────────────────────────────────────────────
