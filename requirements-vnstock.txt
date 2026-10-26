@@ -1,0 +1,16 @@
+# vnstock >=4: GraphQL cũ (trading.vietcap.com.vn/data-mt/graphql) bị VCI tắt
+# -> vnstock 3.5.1 chết KeyError 'data' cho mọi mã; các method Finance công khai
+# trên 4.x cắt còn 4 quý 2018 sai (xem stock/vci_direct.py). Định giá/BCTC đã
+# chuyển sang gọi REST VCI thẳng (stock/vci_direct.py); vnstock còn dùng cho
+# Quote/Trading/Listing/Company.events/news.
+#
+# Vnstock chuyển sang kho riêng vnstocks.com. Kho đó CHỈ được dùng cho đúng 3
+# package ghim == dưới đây, cài với --no-deps (không resolve dependency bắc cầu
+# qua kho riêng); dependency thật của chúng nằm trong requirements.txt (PyPI):
+#   pip install --no-deps -r requirements-vnstock.txt && pip check
+--index-url https://vnstocks.com/api/simple
+# vnstock_ezchart có trên PyPI; giữ PyPI làm nguồn phụ cho 3 tên này.
+--extra-index-url https://pypi.org/simple
+vnstock==4.0.9
+vnai==2.6.2
+vnstock_ezchart==1.0.2

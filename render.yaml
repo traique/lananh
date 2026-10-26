@@ -7,6 +7,12 @@ services:
     region: singapore
     plan: free
     numInstances: 1
+    # Chỉ deploy khi MỌI check CI của commit xanh (ci.yml). Quét CVE nằm riêng ở
+    # audit.yml để advisory mới không chặn deploy. Deploy tay trên dashboard vẫn
+    # dùng được khi cần vượt qua; commit có [skip render] vẫn được bỏ qua.
+    autoDeployTrigger: checksPass
+    # Health check giữ GET / (nhẹ, không chạm DB); /healthz (có kiểm tra DB) để
+    # UptimeRobot cảnh báo, không để Render restart vì Supabase chập chờn.
     healthCheckPath: /
     envVars:
       - key: TELEGRAM_TOKEN

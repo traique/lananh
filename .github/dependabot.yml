@@ -1,5 +1,8 @@
 # Dependabot: PR cập nhật dependency theo tuần, gom nhóm để không ngập PR.
-# Bản vá bảo mật luôn được mở PR riêng ngay khi có.
+# Bản vá bảo mật luôn được mở PR riêng ngay khi có (không chịu cooldown).
+#
+# cooldown 7 ngày: chỉ đề xuất bản phát hành đã "sống" ít nhất 1 tuần - bản độc
+# kiểu LiteLLM 1.82.7/1.82.8 (3/2026) thường bị gỡ trong vài giờ tới vài ngày.
 version: 2
 updates:
   - package-ecosystem: pip
@@ -10,13 +13,21 @@ updates:
       time: "08:00"
       timezone: Asia/Ho_Chi_Minh
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
       python-minor:
         update-types: [minor, patch]
-    # vnstock/vnai lấy từ kho riêng (vnstocks.com), Dependabot không resolve được.
+    # vnstock/vnai/vnstock_ezchart lấy từ kho riêng (requirements-vnstock.txt),
+    # Dependabot không resolve được - nâng tay, đối chiếu Requires-Dist rồi cập nhật
+    # dependency tương ứng trong requirements.txt.
     ignore:
       - dependency-name: vnstock
       - dependency-name: vnai
+      - dependency-name: vnstock_ezchart
+      # vnstock_ezchart 1.0.2 yêu cầu numpy<2.3 (pip check sẽ đỏ nếu nâng).
+      - dependency-name: numpy
+        versions: [">=2.3"]
   - package-ecosystem: npm
     directory: /zalo-gateway
     schedule:
@@ -25,6 +36,8 @@ updates:
       time: "08:00"
       timezone: Asia/Ho_Chi_Minh
     open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
     groups:
       npm-minor:
         update-types: [minor, patch]
@@ -32,3 +45,23 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7
+  # Base image Dockerfile (python:3.12-slim-trixie, node:22-bookworm-slim). Giữ
+  # nguyên Python 3.12 / Node 22: chỉ nhận cập nhật cùng dòng (và digest nếu sau
+  # này ghim @sha256).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Asia/Ho_Chi_Minh
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
