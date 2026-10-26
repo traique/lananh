@@ -158,3 +158,15 @@ async def test_laicp_va_lichsucp_goi_dung_ham(monkeypatch):
     assert seen["realized"] == (-3, 6, "2026-09") and "Chưa có lệnh" in text
     assert await portfolio_service.handle_command(-3, "/lichsucp fpt") == "sổ"
     assert seen["history"] == (-3, "FPT")
+
+
+def test_ngay_thanh_toan_t_cong_2_theo_phien():
+    from datetime import date
+
+    # Thứ Năm 22/10/2026 -> thứ Hai 26/10 (bỏ cuối tuần).
+    assert "26/10" in portfolio_service.settlement_note(date(2026, 10, 22))
+    # Thứ Bảy: tính từ phiên thứ Sáu 23/10 -> thứ Ba 27/10.
+    note = portfolio_service.settlement_note(date(2026, 10, 24))
+    assert "27/10" in note and "phiên 23/10" in note
+    # 24/11/2026 là ngày nghỉ: lệnh thứ Hai 23/11 về thứ Năm 26/11.
+    assert "26/11" in portfolio_service.settlement_note(date(2026, 11, 23))

@@ -1,7 +1,10 @@
 """Commands and deterministic natural-language actions for stock holdings."""
 
 import re
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
+from stock import calendar as trading_calendar
 from stock import portfolio, providers
 from stock.report_format import fmt_price as _fmt
 from stock.sector import ALL_KNOWN_SYMBOLS
@@ -13,6 +16,7 @@ _SYMBOL_WORD = rf"(?<![\w])({_SYMBOL_RE})(?![\w])"
 # Giá dưới ngưỡng này (không kèm k/nghìn/tr) được hiểu theo quy ước bảng giá
 # VN là NGHÌN đồng: "giá 25.5" = 25.500đ, "giá 120" = 120.000đ.
 _THOUSAND_VND_CUTOFF = 1_000
+_VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 def parse_number(raw: str) -> float:
@@ -121,10 +125,25 @@ async def add_holding(
             target_price=target_price,
         )
         action = "Đã ghi nhận mua"
-    return (
+    text = (
         f"✅ {action} {valid_symbol}: {_fmt(holding.quantity)} cp, "
         f"giá vốn bình quân {_fmt(holding.average_price)}đ."
     )
+    if not replace:
+        text += f"\n⏳ Cổ phiếu mua về tài khoản {settlement_note()}."
+    return text
+
+
+def settlement_note(today: date | None = None) -> str:
+    """Ngày thanh toán T+2 (theo phiên giao dịch) cho lệnh khớp hôm nay."""
+    today = today or datetime.now(_VN_TZ).date()
+    session = (
+        today
+        if trading_calendar.is_trading_day(today)
+        else trading_calendar.previous_trading_day(today)
+    )
+    settle = trading_calendar.next_trading_day(trading_calendar.next_trading_day(session))
+    return f"ngày {settle:%d/%m} (T+2, nếu lệnh khớp phiên {session:%d/%m})"
 
 
 def _signed(value: float) -> str:
@@ -144,6 +163,7 @@ def format_sale(symbol: str, result: portfolio.SaleResult) -> str:
             f"{_fmt(result.average_cost)}đ: lãi/lỗ đã chốt {_signed(result.realized_pnl)}đ "
             f"(sau phí {_fmt(result.fee)}đ, thuế {_fmt(result.tax)}đ)."
         )
+        text += f"\n⏳ Tiền bán về tài khoản {settlement_note()}."
     else:
         text += (
             f"\nℹ️ Chưa có giá bán nên em chưa tính lãi/lỗ đã chốt - gõ /giaban {symbol} <GIÁ> "
