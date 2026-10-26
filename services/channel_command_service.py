@@ -266,7 +266,10 @@ async def _agent(
 
     prompt_id = await telemetry.start(user_id, "agent", question, channel=channel)
     try:
-        text, provider = await agent_service.ask_agent(question)
+        # user_id của chính người hỏi (Zalo tách Telegram): persona, trí nhớ, lịch sử.
+        text, provider = await agent_service.ask_agent(
+            question, user_id=user_id, address_form=reply_audience.current().address_form
+        )
         await telemetry.success(prompt_id, "agent", text)
         return [f"{text}\n\n⚙️ {provider}"], None
     except Exception as exc:

@@ -397,10 +397,9 @@ async def thongke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 # /agent - AI agent thật (xem ai/agent_service.py): model tự quyết định gọi
-# tool nào (tim_gia, xem_thong_ke...) bao nhiêu lần để trả lời, khác mọi lệnh
-# khác trong file này (pipeline cố định). Thử nghiệm - chỉ bật ở Telegram,
-# chỉ admin, vì mỗi câu hỏi có thể tốn tới MAX_AGENT_STEPS lượt gọi api1/api2
-# (quota thấp nhất trong provider-chain).
+# tool nào (tim_gia, xem_thong_ke, nhắc việc/ghi chú chỉ đọc...) bao nhiêu lần để
+# trả lời, khác mọi lệnh khác trong file này (pipeline cố định). Chỉ chủ bot/admin:
+# mỗi câu hỏi có thể tốn tới MAX_AGENT_STEPS lượt gọi (Groq/OpenRouter trước).
 @common.restricted
 async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     question = common.extract_arg(context)
@@ -416,8 +415,9 @@ async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from ai import agent_service
 
+        # user_id: persona + trí nhớ + lịch sử của chính chủ bot, Q&A lưu vào lịch sử.
         text, provider = await reply_cache.generate_once(
-            "agent", lambda: agent_service.ask_agent(question)
+            "agent", lambda: agent_service.ask_agent(question, user_id=user_id)
         )
         await telemetry.success(prompt_id, "agent", text)
     except Exception as exc:

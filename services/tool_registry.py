@@ -287,13 +287,17 @@ def openai_tools(items: Iterable[ToolSpec]) -> list[dict[str, Any]]:
 def gemini_declarations(items: Iterable[ToolSpec]):
     from google.genai import types
 
-    return [
-        types.Tool(
-            function_declarations=[
+    declarations = []
+    for spec in items:
+        # Gemini từ chối schema OBJECT có "properties" rỗng: tool không tham số thì bỏ hẳn.
+        if (spec.parameters or {}).get("properties"):
+            declarations.append(
                 types.FunctionDeclaration(
                     name=spec.name, description=spec.description, parameters=spec.parameters
                 )
-                for spec in items
-            ]
-        )
-    ]
+            )
+        else:
+            declarations.append(
+                types.FunctionDeclaration(name=spec.name, description=spec.description)
+            )
+    return [types.Tool(function_declarations=declarations)]

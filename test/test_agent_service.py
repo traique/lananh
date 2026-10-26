@@ -59,6 +59,15 @@ def reset_state(monkeypatch):
     yield
 
 
+def _patch_tool(monkeypatch, name, fn):
+    from dataclasses import replace
+
+    spec = agent_service._TOOLS[name]
+    monkeypatch.setitem(
+        agent_service._TOOLS, name, replace(spec, handler=agent_service.agent_handler(fn))
+    )
+
+
 @pytest.mark.asyncio
 async def test_router9_tra_loi_thang_khong_can_tool(monkeypatch):
     async def fake_generate_with_tools(messages, tools, **kwargs):
@@ -93,13 +102,9 @@ async def test_router9_goi_tool_1_buoc_roi_tra_loi_cuoi(monkeypatch):
         return "10 lượt gọi"
 
     monkeypatch.setattr(router9_client, "generate_with_tools", fake_generate_with_tools)
-    # _call_tool() tra fn thực thi từ _TOOLS (đóng gói lúc import module) -
-    # phải patch đúng entry trong dict này, patch tên hàm module-level không
-    # đủ vì tuple trong _TOOLS đã giữ tham chiếu hàm gốc từ trước.
-    desc, schema, _old_fn = agent_service._TOOLS["xem_thong_ke"]
-    monkeypatch.setitem(
-        agent_service._TOOLS, "xem_thong_ke", (desc, schema, fake_tool_xem_thong_ke)
-    )
+    # _call_tool() tra ToolSpec từ _TOOLS (đóng gói lúc import module) - phải
+    # patch đúng entry trong dict này, patch tên hàm module-level không đủ.
+    _patch_tool(monkeypatch, "xem_thong_ke", fake_tool_xem_thong_ke)
 
     text, provider = await agent_service.ask_agent("thống kê 24h qua sao rồi")
 
@@ -199,8 +204,7 @@ async def test_json_router_goi_tool_thanh_cong_khi_native_tools_loi(monkeypatch)
 
     monkeypatch.setattr(router9_client, "generate_with_tools", fake_native_fail)
     monkeypatch.setattr(router9_client, "generate", fake_generate)
-    desc, schema, _old = agent_service._TOOLS["xem_thong_ke"]
-    monkeypatch.setitem(agent_service._TOOLS, "xem_thong_ke", (desc, schema, fake_tool))
+    _patch_tool(monkeypatch, "xem_thong_ke", fake_tool)
 
     text, provider = await agent_service.ask_agent("thống kê 24h qua sao rồi")
 
@@ -436,3 +440,203 @@ async def test_agent_whole_turn_has_deadline(monkeypatch):
     monkeypatch.setattr(agent_service, "_run_one_provider", fake_run_one_provider)
     with pytest.raises(TurnTimeoutError):
         await asyncio.wait_for(agent_service.ask_agent("câu hỏi"), 2)
+
+
+# ─── Groq/OpenRouter đa bước, persona + lịch sử riêng, danh bạ ToolSpec ─────
+
+
+def _usable(*names):
+    async def usable(name):
+        return name in names
+
+    return usable
+
+
+@pytest.mark.asyncio
+async def test_groq_da_buoc_chay_truoc_router9_kem_persona(monkeypatch):
+    from ai import groq_client
+
+    calls = []
+
+    async def fake_groq(messages, tools, **kwargs):
+        calls.append([dict(m) for m in messages])
+        if len(calls) == 1:
+            return ToolCallResponse("", [{"id": "c1", "name": "xem_thong_ke", "arguments": {}}])
+        if len(calls) == 2:
+            return ToolCallResponse(
+                "", [{"id": "c2", "name": "xem_gia_co_phieu", "arguments": {"ma_co_phieu": "FPT"}}]
+            )
+        return ToolCallResponse("Tổng hợp xong.", [])
+
+    async def router9_must_not_run(*args, **kwargs):
+        raise AssertionError("Groq trả lời được thì không xuống router9")
+
+    async def stats(so_gio=168, **_):
+        return "10 lượt"
+
+    async def quote(ma_co_phieu="", **_):
+        return "FPT 120"
+
+    monkeypatch.setattr(agent_service, "_tool_provider_usable", _usable("groq"))
+    monkeypatch.setattr(groq_client, "generate_with_tools", fake_groq)
+    monkeypatch.setattr(router9_client, "generate_with_tools", router9_must_not_run)
+    _patch_tool(monkeypatch, "xem_thong_ke", stats)
+    _patch_tool(monkeypatch, "xem_gia_co_phieu", quote)
+
+    text, provider = await agent_service.ask_agent("thống kê và giá FPT")
+
+    assert (text, provider) == ("Tổng hợp xong.", "groq")
+    assert len(calls) == 3  # đa bước thật, không chỉ 1 tool như JSON-router
+    assert "Lan Anh" in calls[0][0]["content"] and "QUY TẮC AN TOÀN" in calls[0][0]["content"]
+    assert calls[2][-1] == {"role": "tool", "tool_call_id": "c2", "content": "FPT 120"}
+
+
+@pytest.mark.asyncio
+async def test_groq_429_chuyen_openrouter_khong_dat_cooldown(monkeypatch):
+    from ai import groq_client, openrouter_client
+    from ai.openai_compatible import OpenAICompatibleError
+
+    async def groq_429(messages, tools, **kwargs):
+        raise OpenAICompatibleError("Groq tools HTTP 429: rate limit", status_code=429)
+
+    async def openrouter_ok(messages, tools, **kwargs):
+        return ToolCallResponse("Trả lời từ OpenRouter.", [])
+
+    monkeypatch.setattr(agent_service, "_tool_provider_usable", _usable("groq", "openrouter"))
+    monkeypatch.setattr(groq_client, "generate_with_tools", groq_429)
+    monkeypatch.setattr(openrouter_client, "generate_with_tools", openrouter_ok)
+
+    text, provider = await agent_service.ask_agent("câu hỏi")
+
+    assert provider == "openrouter" and text == "Trả lời từ OpenRouter."
+    assert not provider_state.api_in_cooldown("groq")  # chat (utility_json) không mất Groq
+
+
+@pytest.mark.asyncio
+async def test_goi_lap_y_het_bi_chan_va_ket_qua_bi_cat(monkeypatch):
+    runs = []
+
+    async def long_stats(so_gio=168, **_):
+        runs.append(so_gio)
+        return "x" * 6000
+
+    _patch_tool(monkeypatch, "xem_thong_ke", long_stats)
+    token = agent_service._turn.set(agent_service._Turn())
+    try:
+        first = await agent_service._call_tool("xem_thong_ke", {"so_gio": 24})
+        again = await agent_service._call_tool("xem_thong_ke", {"so_gio": 24})
+    finally:
+        agent_service._turn.reset(token)
+    assert runs == [24]
+    assert len(first) < 2600 and first.endswith("(đã cắt bớt)")
+    assert "Đã gọi tool này" in again
+
+
+@pytest.mark.asyncio
+async def test_tool_ghi_du_lieu_khong_vao_agent():
+    assert "set_reminder" not in agent_service._TOOLS
+    assert "save_note" not in agent_service._TOOLS and "add_expense" not in agent_service._TOOLS
+    assert {"list_reminders", "list_notes", "lunar_calendar"} <= set(agent_service._TOOLS)
+    names = {t["function"]["name"] for t in agent_service._build_openai_tools()}
+    assert "set_reminder" not in names and "tim_web" in names
+    assert "không có tool" in await agent_service._call_tool("set_reminder", {"message": "x"})
+
+
+@pytest.mark.asyncio
+async def test_agent_dung_lich_su_tri_nho_cua_chinh_nguoi_hoi_va_luu_qa(monkeypatch):
+    from ai import groq_client
+    from services import memory_service
+
+    seen = {}
+    saved = []
+
+    async def history(user_id, k, session_timeout_sec):
+        seen["history_user"] = user_id
+        return [("user", "mai anh đi Đà Lạt"), ("model", "dạ")]
+
+    async def memory(user_id, query=""):
+        seen["memory_user"] = user_id
+        return "Tên: Mẹ"
+
+    async def add_turn(user_id, user_text, model_text):
+        saved.append((user_id, user_text, model_text))
+
+    async def fake_groq(messages, tools, **kwargs):
+        seen["messages"] = messages
+        return ToolCallResponse("Dạ cô ơi, mai Đà Lạt se lạnh ạ.", [])
+
+    monkeypatch.setattr(db, "get_session_messages", history)
+    monkeypatch.setattr(db, "add_chat_turn", add_turn)
+    monkeypatch.setattr(memory_service, "build_memory_context", memory)
+    monkeypatch.setattr(agent_service, "_tool_provider_usable", _usable("groq"))
+    monkeypatch.setattr(groq_client, "generate_with_tools", fake_groq)
+
+    text, _ = await agent_service.ask_agent("mai trời sao", user_id=-7, address_form="cô")
+
+    assert seen["history_user"] == seen["memory_user"] == -7
+    system = seen["messages"][0]["content"]
+    assert 'xưng "cháu"' in system and "Tên: Mẹ" in system
+    assert seen["messages"][1] == {"role": "user", "content": "mai anh đi Đà Lạt"}
+    assert seen["messages"][2] == {"role": "assistant", "content": "dạ"}
+    assert saved == [(-7, "/agent mai trời sao", text)]
+
+
+@pytest.mark.asyncio
+async def test_groq_generate_with_tools_gui_tham_so_agent(monkeypatch):
+    from ai import groq_client, openai_compatible, openrouter_client
+
+    seen = []
+
+    async def fake_post(client, **kwargs):
+        seen.append(kwargs)
+        return ToolCallResponse("ok", [])
+
+    async def key():
+        return "k"
+
+    monkeypatch.setattr(openai_compatible, "post_chat_completion_with_tools", fake_post)
+    monkeypatch.setattr(groq_client, "_api_key", key)
+    monkeypatch.setattr(openrouter_client, "_api_key", key)
+    await groq_client.generate_with_tools([{"role": "user", "content": "x"}], [])
+    await openrouter_client.generate_with_tools([{"role": "user", "content": "x"}], [])
+
+    assert seen[0]["extra_payload"] == {"parallel_tool_calls": False}
+    assert seen[0]["max_tokens"] == groq_client.AGENT_MAX_TOKENS == 1024
+    assert seen[1]["extra_payload"] == {"provider": {"require_parameters": True}}
+
+
+@pytest.mark.asyncio
+async def test_post_tools_tron_extra_payload():
+    import httpx
+
+    from ai import openai_compatible
+
+    captured = {}
+
+    def handler(request):
+        import json as _json
+
+        captured.update(_json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "xin chào"}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await openai_compatible.post_chat_completion_with_tools(
+            client,
+            base_url="https://api.example/v1",
+            api_key="k",
+            messages=[],
+            tools=[],
+            model="m",
+            temperature=0.1,
+            max_tokens=10,
+            provider_label="Test",
+            extra_payload={"parallel_tool_calls": False},
+        )
+    assert result.text == "xin chào" and captured["parallel_tool_calls"] is False
+
+
+def test_gemini_khong_nhan_schema_rong():
+    from services import tool_registry as reg
+
+    tool = reg.gemini_declarations([agent_service._TOOLS["list_notes"]])[0]
+    assert tool.function_declarations[0].parameters is None

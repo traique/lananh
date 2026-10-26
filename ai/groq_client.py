@@ -114,6 +114,44 @@ async def generate_json(prompt: str, *, max_tokens: int = 1024) -> Optional[dict
     return data if isinstance(data, dict) else None
 
 
+# /agent nhiều bước (ai/agent_service.py): gpt-oss trên Groq không gọi tool song
+# song, TPM free nhỏ -> max_tokens thấp, kết quả tool đã cắt ~2.5K ký tự ở agent.
+AGENT_MAX_TOKENS = 1024
+
+
+async def generate_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.3,
+    max_tokens: int = AGENT_MAX_TOKENS,
+) -> openai_compatible.ToolCallResponse:
+    """1 bước function-calling chuẩn OpenAI cho agent. KHÔNG đánh dấu cooldown khi
+    lỗi (429...): agent tự chuyển provider kế, utility_json của chat không bị vạ lây."""
+    api_key = await _api_key()
+    if not api_key:
+        raise openai_compatible.OpenAICompatibleError("Chưa cấu hình GROQ_API_KEY")
+    model_name = model or await _model()
+
+    async def _call() -> openai_compatible.ToolCallResponse:
+        async with _pool.get_semaphore():
+            return await openai_compatible.post_chat_completion_with_tools(
+                _pool.get_client(),
+                base_url=config.GROQ_BASE_URL,
+                api_key=api_key,
+                messages=messages,
+                tools=tools,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider_label="Groq tools",
+                extra_payload={"parallel_tool_calls": False},
+            )
+
+    return await _pool.bounded("Groq tools", _call)
+
+
 async def generate_image_prompt(instruction: str, image_path: str) -> Response:
     api_key = await _api_key()
     if not api_key:
