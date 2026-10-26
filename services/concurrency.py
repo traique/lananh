@@ -8,6 +8,18 @@ dùng khác nhau chạy song song, nhưng tổng số lượt AI đang chạy b�
 Thứ tự lấy khoá: lock theo user TRƯỚC, semaphore toàn cục SAU - người đang
 chờ lượt của chính mình không giữ chỗ trong semaphore.
 
+Chỗ dành riêng cho chủ bot (``OWNER_RESERVED_SLOTS``, mặc định 1): khi
+MAX_CONCURRENT_TURNS >= 2, mọi khoá KHÔNG phải ``OWNER_TURN_KEY`` (Zalo - kể cả
+admin và Zalo của chính chủ bot, ngữ cảnh tách riêng) phải lấy thêm
+Semaphore(MAX - dành riêng) TRƯỚC semaphore toàn cục; khoá chủ bot (Telegram,
+Zoom, web) chỉ lấy semaphore toàn cục. Vì thành viên giữ tối đa MAX - dành riêng
+chỗ, chủ bot luôn còn chỗ (khoá riêng của chủ bot bảo đảm chủ bot chỉ giữ 1 chỗ)
+mà tổng số lượt vẫn không vượt MAX - RAM đỉnh không đổi. MAX = 1 thì không dành
+riêng (Semaphore(0) sẽ chặn chết mọi thành viên). Đánh đổi: với MAX = 2, hai
+thành viên không còn chạy song song - gateway Zalo nên đặt
+ZALO_DIRECT_CONCURRENCY = số chỗ thành viên (1) để hàng đợi nằm ở gateway (không
+có timeout) thay vì chờ trong Python quá BRIDGE_TIMEOUT_MS.
+
 /huy: phần việc AI của 1 lượt chạy trong 1 task CON đăng ký theo khoá người
 dùng (``run_cancellable``); ``cancel_turn(key)`` chỉ huỷ task con đó. Không
 bao giờ huỷ task giao sự kiện của webhook inbox (bị coi là mất lease -> chạy
@@ -20,7 +32,7 @@ import asyncio
 import os
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from typing import AsyncIterator, TypeVar
 
 from core import trace
@@ -37,7 +49,22 @@ def _max_concurrent_turns() -> int:
         return 2
 
 
-_turn_slots = asyncio.Semaphore(_max_concurrent_turns())
+def _owner_reserved_slots(max_turns: int) -> int:
+    """Số chỗ dành riêng cho chủ bot, kẹp trong [0, MAX - 1]; lỗi parse -> 1."""
+    try:
+        reserved = int(os.getenv("OWNER_RESERVED_SLOTS", "1").strip())
+    except ValueError:
+        reserved = 1
+    return max(0, min(reserved, max_turns - 1))
+
+
+_max_turns = _max_concurrent_turns()
+_turn_slots = asyncio.Semaphore(_max_turns)
+_reserved_slots = _owner_reserved_slots(_max_turns)
+# Chỗ cho mọi khoá không phải chủ bot; None = không dành riêng (MAX = 1 hoặc tắt).
+_member_slots: asyncio.Semaphore | None = (
+    asyncio.Semaphore(_max_turns - _reserved_slots) if _reserved_slots else None
+)
 _turn_locks: dict[str, tuple[asyncio.Lock, int]] = {}
 _message_locks: dict[tuple[str, str, str], tuple[asyncio.Lock, int]] = {}
 
@@ -65,14 +92,16 @@ async def assistant_turn(key: str = OWNER_TURN_KEY) -> AsyncIterator[None]:
     lock, users = _turn_locks.get(key, (asyncio.Lock(), 0))
     _turn_locks[key] = (lock, users + 1)
     started = time.monotonic()
+    member_slots = None if key == OWNER_TURN_KEY else _member_slots
     try:
         async with lock:
             locked_at = time.monotonic()
-            async with _turn_slots:
-                # Thời gian chờ khoá của chính người này / chờ slot chung
-                # (turn_metrics của lượt - core/trace.py).
-                trace.mark_locked(_ms(locked_at - started), _ms(time.monotonic() - locked_at))
-                yield
+            async with member_slots if member_slots is not None else nullcontext():
+                async with _turn_slots:
+                    # Thời gian chờ khoá của chính người này / chờ slot chung
+                    # (turn_metrics của lượt - core/trace.py).
+                    trace.mark_locked(_ms(locked_at - started), _ms(time.monotonic() - locked_at))
+                    yield
     finally:
         _, users = _turn_locks[key]
         if users == 1:

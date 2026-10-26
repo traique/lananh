@@ -44,7 +44,8 @@ from ai.provider_state import provider_state
 from channels import zalo_users
 from core import config, database as db
 from services import db_maintenance, market_page, memory_control, memory_service, memory_stats
-from services import backup_status, error_digest, key_rotation, quota_burn, watchdog
+from services import backup_status, error_digest, key_rotation, quota_burn, usage_quota
+from services import watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -791,6 +792,32 @@ async def admin_usage_turn(request: Request) -> Response:
             "calls": [{**row, "created_at": _iso(row["created_at"])} for row in rows],
         }
     )
+
+
+@api_router.get("/quota")
+async def admin_quota() -> Response:
+    """Trần lượt/ngày của thành viên Zalo + số đã dùng hôm nay (services/usage_quota.py)."""
+    return JSONResponse(await usage_quota.today_overview())
+
+
+@api_router.post("/quota")
+async def admin_quota_update(request: Request) -> Response:
+    """Body: {"turns"?: int, "heavy"?: int} - 0 = không giới hạn."""
+    body = await request.json()
+    values: dict[str, int] = {}
+    for field in ("turns", "heavy"):
+        if field not in body:
+            continue
+        try:
+            values[field] = int(body[field])
+        except (TypeError, ValueError):
+            return Response(status_code=400)
+        if not 0 <= values[field] <= usage_quota.MAX_CAP:
+            return Response(status_code=400)
+    if not values:
+        return Response(status_code=400)
+    limits = await usage_quota.set_caps(values.get("turns"), values.get("heavy"))
+    return JSONResponse({"turns": limits.turns, "heavy": limits.heavy})
 
 
 @api_router.get("/usage/burn")

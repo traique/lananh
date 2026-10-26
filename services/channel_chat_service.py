@@ -31,6 +31,7 @@ from services import (
     tool_registry,
     tools,
     turn_progress,
+    usage_quota,
     web_search,
 )
 from services import channel_command_service, reply_audience
@@ -210,9 +211,14 @@ async def run_chat_turn(
             page_turn = links_ok and chat_context.first_url(text) is not None
             compare = page_turn and chat_context.wants_outside_sources(text)
             skip_search = daily.skip_search or (page_turn and not compare)
+            # Thành viên Zalo đã hết lượt "nặng" hôm nay (services/usage_quota.py):
+            # không tra web, câu cần tin mới kèm ghi chú cấm bịa.
+            quota_no_search = not skip_search and usage_quota.search_blocked()
             search = (
                 _skip_search_plan()
                 if skip_search
+                else usage_quota.exhausted_search_plan(text)
+                if quota_no_search
                 else web_search.plan_search(text, user_id=user_id)
             )
             use_kb = chat_context.kb_allowed(
@@ -262,8 +268,9 @@ async def run_chat_turn(
                 )
                 if part
             )
-            forced = daily.force_real_search or (
-                not skip_search and stock_analysis.wants_external_market_data(text)
+            forced = not quota_no_search and (
+                daily.force_real_search
+                or (not skip_search and stock_analysis.wants_external_market_data(text))
             )
             mode = _search_mode(
                 plan,
@@ -346,6 +353,9 @@ async def run_chat_turn(
             else conversation_log.KIND_CHAT
         )
         await conversation_log.record_exchange(user_id, text, reply, kind)
+    if searched or plan.untrusted or searching:
+        # Lượt có tra web: tính vào trần lượt "nặng" của thành viên Zalo.
+        await usage_quota.note_web_search(user_id)
     return ChatTurn(
         reply,
         bool(getattr(response, "used_fallback", False)),
@@ -603,6 +613,9 @@ async def handle_channel_text(
             logger.warning("Nhánh cổ phiếu hết hạn chót lượt: %s", exc)
             return ChannelResult([await reply_audience.error_text("timeout", user_id, str(exc))])
         if stock_result is not None:
+            # Lượt cổ phiếu không qua telemetry: ghi user_calls (thống kê + quota
+            # thành viên - tính như lượt thường, không có trần riêng).
+            await usage_quota.record(user_id, channel, usage_quota.KIND_STOCK)
             # Thành viên (is_admin=False): bản lưu cũng chỉ là thông tin tham khảo.
             await record(
                 user_id,

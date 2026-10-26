@@ -19,6 +19,7 @@ from services import (
     reply_audience,
     search_status,
     translate_service,
+    usage_quota,
     usage_stats,
 )
 from services import answer_feedback, daily_commands, expense_service, reminder_commands
@@ -32,7 +33,8 @@ _HELP_INTRO_ADMIN = """📖 Lệnh trên Zalo/Zoom
 (thành viên nhận bản tham khảo, admin nhận bản đầy đủ). Nói "đã mua FPT 100 giá 120" để ghi danh mục."""
 _HELP_INTRO_MEMBER = """📖 Lệnh dùng được
 💬 Nhắn bình thường để trò chuyện. Nhắc tới 1 mã cổ phiếu là có giá realtime; nói "phân tích FPT" để xem
-báo cáo tham khảo. Nói "đã mua FPT 100 giá 120" để ghi danh mục."""
+báo cáo tham khảo. Nói "đã mua FPT 100 giá 120" để ghi danh mục.
+⏳ Mỗi ngày có giới hạn số lượt trò chuyện và lượt tạo ảnh, luận giải chi tiết, tra web; mở lại lúc 0h."""
 _HELP_COMMON = """Lịch, thần số học, tử vi, kỳ môn
 /lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8,
   /lich tháng này, /lich trung thu, /lich ngày tốt tháng này, /lich tuổi 15/3/1990,
@@ -392,7 +394,7 @@ async def _news_now() -> list[str]:
 
 
 async def _generate_image(
-    argument: str, is_admin: bool, channel: str
+    argument: str, is_admin: bool, channel: str, user_id: int = 0
 ) -> tuple[list[str], str | None]:
     enabled = parse_on_off(argument)
     if enabled is not None:
@@ -414,6 +416,10 @@ async def _generate_image(
         image = await agnes_client.generate_image(argument.strip())
     except agnes_client.AgnesError as exc:
         return [f"❌ Không tạo được ảnh: {exc}"], None
+    if user_id:
+        # /anh không đi qua telemetry: ghi user_calls kind "image" (thống kê + trần
+        # lượt nặng của thành viên Zalo, services/usage_quota.py).
+        await usage_quota.record(user_id, channel, usage_quota.KIND_IMAGE)
 
     if channel == "zoom":
         # Zoom gửi ảnh qua URL công khai (Zoom tự tải), KHÔNG qua base64 -
@@ -470,7 +476,7 @@ async def maybe_handle_command(
     if command == "/dich":
         return await _translate(user_id, argument, channel)
     if command == "/anh":
-        return await _generate_image(argument, is_admin, channel)
+        return await _generate_image(argument, is_admin, channel, user_id)
     if command == "/reset":
         await memory_service.flush_before_reset(user_id)
         await orchestrator.reset_chat()

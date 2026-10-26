@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core import config, trace
-from services import concurrency, turn_control
+from services import concurrency, turn_control, usage_quota
 from services.channel_result import ChannelResult
 from services.concurrency import assistant_turn
 
@@ -133,6 +133,16 @@ async def _dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]
     # (services/turn_control.py).
     if result is None and turn_control.is_readonly(text):
         result = await _chat(h, req, text)
+    # Quota ngày của thành viên Zalo (services/usage_quota.py): SAU kiểm cache (lượt
+    # gửi lại của gateway không bị chặn/đếm 2 lần), TRƯỚC khoá lượt (người bị chặn
+    # không giữ chỗ). Câu báo hết lượt cũng được cache như mọi câu trả lời.
+    decision = usage_quota.ALLOW
+    if result is None:
+        decision = await usage_quota.check(
+            req.user_id, text, channel=req.channel, is_admin=req.is_admin
+        )
+        if not decision.allowed:
+            result = ChannelResult([decision.notice] if decision.notice else [])
 
     if result is None:
         async with h.turn(req.turn_key):
@@ -148,9 +158,10 @@ async def _dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]
                 # trả câu "em dừng rồi" như 1 kết quả bình thường: cache vẫn ghi để
                 # lượt gửi lại của gateway/inbox không chạy lại lượt đã huỷ.
                 try:
-                    result = await concurrency.run_cancellable(
-                        req.turn_key, lambda: _chat(h, req, text)
-                    )
+                    with usage_quota.scope(decision, req.user_id):
+                        result = await concurrency.run_cancellable(
+                            req.turn_key, lambda: _chat(h, req, text)
+                        )
                 except concurrency.TurnCancelled:
                     result = ChannelResult([await turn_control.cancelled_text_for(req.user_id)])
             payload = payload_from_result(result, h.chunk, h.rich_chunk)

@@ -111,3 +111,37 @@ async def test_burn_tu_moc_quota_bo_luot_429_va_tinh_credit_tavily(delivery_db):
     assert rows["api1"]["requests"] == 1 and rows["api1"]["rate_limited"] == 1
     assert rows["api1"]["prompt_tokens"] == 100 and rows["api1"]["completion_tokens"] == 20
     assert rows["tavily"]["credits"] == 3
+
+
+# ─── Quota ngày thành viên Zalo (services/usage_quota.py) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_quota_dem_luot_va_luot_nang_tu_dau_ngay(delivery_db):
+    start = datetime.now(timezone.utc) - timedelta(hours=3)
+    await db.save_prompt(-7, "chat", "chào em", channel="zalo")
+    await db.save_prompt(-7, "tuvi_chitiet", "/tuvi_chitiet", channel="zalo")
+    await db.record_user_call("zalo", -7, "image")
+    await db.record_user_call("zalo", -8, "chat")
+    await delivery_db.execute(
+        "INSERT INTO user_calls (channel, telegram_user_id, kind, created_at) "
+        "VALUES ('zalo', -7, 'chat', now() - interval '1 day'), ('zalo', -7, NULL, now())"
+    )
+    heavy = ["image", "tuvi_chitiet", "kymon_chitiet", "tsh_chitiet", "chat_search"]
+    assert await db.user_calls_since("zalo", -7, start, heavy) == (4, 2)
+    # Lượt chat có tra web: đổi lượt chat MỚI NHẤT hôm nay sang chat_search.
+    assert await db.relabel_last_user_call("zalo", -7, "chat", "chat_search", start)
+    assert await db.user_calls_since("zalo", -7, start, heavy) == (4, 3)
+    assert not await db.relabel_last_user_call("zalo", -7, "chat", "chat_search", start)
+    rows = await db.user_calls_by_user_since("zalo", start, heavy)
+    assert [(r["telegram_user_id"], r["turns"], r["heavy"]) for r in rows] == [
+        (-7, 4, 3),
+        (-8, 1, 0),
+    ]
+    # Lượt chat ngày hôm trước không bị đổi loại.
+    assert (
+        await delivery_db.fetchval(
+            "SELECT kind FROM user_calls WHERE created_at < now() - interval '12 hours'"
+        )
+        == "chat"
+    )

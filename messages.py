@@ -30,6 +30,41 @@ ALL_PROVIDERS_RECOVERED_ALERT = (
 # ─── Zalo Team Chat (nhiều tài khoản, phân quyền admin/user) ───────────────
 ZALO_LOCKED_REPLY = "Tài khoản Zalo đang bị tạm khóa."
 
+
+def member_quota_notice(reason: str, address_form: str | None = None, cap: int = 0) -> str:
+    """Câu báo thành viên Zalo đã hết lượt trong ngày (services/usage_quota.py),
+    giọng Lan Anh theo cách gọi riêng (core/address.py), kèm giờ mở lại (0h giờ
+    VN). ``reason``: "turns" (hết lượt trò chuyện) | "heavy" (hết lượt tạo ảnh,
+    luận giải chi tiết, tra web)."""
+    form = address.normalize(address_form)
+    me = address.self_word(form) if form else "em"
+    elder = form in ("cô", "chú")
+    ending = "ạ" if elder else "nha"
+    tail = f" {form}" if form else ""
+    you = form or "mình"
+    if reason == "heavy":
+        what = f"{cap} lượt" if cap else "lượt"
+        return (
+            f"Hôm nay {you} đã dùng hết {what} tạo ảnh, luận giải chi tiết và tra web rồi "
+            f"{'ạ' if elder else 'nè'} 🙏 Từ 0h đêm nay (giờ Việt Nam) {me} làm tiếp được. "
+            f"Trong lúc chờ, {you} vẫn trò chuyện bình thường với {me} được {ending}{tail}."
+        )
+    who = f"{form} nhắn {me}" if form else "mình trò chuyện"
+    return (
+        f"Hôm nay {who} nhiều quá rồi {'ạ' if elder else 'nè'} 😅 {me.capitalize()} xin nghỉ "
+        f"một chút - từ 0h đêm nay (giờ Việt Nam) {me} trả lời tiếp được {ending}{tail}."
+    )
+
+
+# Chèn vào grounding khi thành viên đã hết lượt tra web trong ngày: model không được
+# "bịa" số liệu/tin mới như thể vừa tra.
+MEMBER_SEARCH_QUOTA_NOTE = (
+    "[GHI CHÚ HỆ THỐNG] Hôm nay người dùng này đã dùng hết lượt tra web trong ngày (mở "
+    "lại lúc 0h giờ Việt Nam). TUYỆT ĐỐI không nêu số liệu, giá, tỷ giá, tin tức hay sự "
+    "kiện mới nào từ trí nhớ như thể vừa tra được. Nói ngắn gọn là hôm nay hết lượt tra "
+    "web, phần kiến thức nền chung vẫn trả lời được, mai hỏi lại để có thông tin mới nhất."
+)
+
 # ─── Zoom Team Chat ──────────────────────────────────────────────────────────
 ZOOM_UNPAIRED_ALERT = (
     "🔔 Zoom jid={jid} vừa nhắn cho bot nhưng chưa được cấp quyền.\n"

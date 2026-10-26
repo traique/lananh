@@ -45,6 +45,19 @@ services:
         value: gemini-3.5-flash-lite
       - key: MAX_CONCURRENT_TURNS
         value: "2"
+      # 1 chỗ trong MAX_CONCURRENT_TURNS dành riêng cho chủ bot (Telegram/Zoom/web);
+      # mọi lượt Zalo dùng chỗ còn lại. 0 = tắt.
+      - key: OWNER_RESERVED_SLOTS
+        value: "1"
+      # Gateway Zalo xử lý song song = số chỗ của thành viên (MAX - OWNER_RESERVED_SLOTS)
+      # để tin chờ ở gateway, không chờ trong Python quá BRIDGE_TIMEOUT_MS.
+      - key: ZALO_DIRECT_CONCURRENCY
+        value: "1"
+      # Giới hạn mỗi ngày của thành viên Zalo (0 = không giới hạn; sửa được trên /admin).
+      - key: ZALO_MEMBER_DAILY_TURNS
+        value: "40"
+      - key: ZALO_MEMBER_DAILY_HEAVY
+        value: "5"
       - key: ZALO_ENABLED
         value: "true"
       - key: ZALO_COOKIE_JSON

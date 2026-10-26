@@ -317,9 +317,10 @@ async def save_prompt(
             # usage_by_user()/`/thongke`, xem docstring bảng user_calls trong
             # init_db().
             await conn.execute(
-                "INSERT INTO user_calls (channel, telegram_user_id) VALUES ($1, $2)",
+                "INSERT INTO user_calls (channel, telegram_user_id, kind) VALUES ($1, $2, $3)",
                 channel,
                 telegram_user_id,
+                command_type,
             )
             # Chỉ giữ HISTORY_RETENTION_LIMIT prompt gần nhất của user này -
             # chạy ngay sau mỗi insert nên bảng không bao giờ phình quá giới
@@ -363,6 +364,47 @@ async def usage_by_user(since_hours: int = 24 * 7) -> list[dict]:
         str(since_hours),
     )
     return [dict(row) for row in rows]
+
+
+# ─── Quota ngày thành viên Zalo (services/usage_quota.py, migrations/025) ───
+# SQL ở core/repositories/quota.py.
+
+
+@_with_reconnect
+async def user_calls_since(
+    channel: str, telegram_user_id: int, since: datetime, heavy_kinds: list[str]
+) -> tuple[int, int]:
+    """(số lượt, số lượt nặng) của 1 người từ ``since`` (bảng user_calls)."""
+    from core.repositories import quota
+
+    return await quota.count_since(await get_pool(), channel, telegram_user_id, since, heavy_kinds)
+
+
+@_with_reconnect
+async def user_calls_by_user_since(
+    channel: str, since: datetime, heavy_kinds: list[str], limit: int = 100
+) -> list[dict]:
+    from core.repositories import quota
+
+    return await quota.counts_by_user_since(await get_pool(), channel, since, heavy_kinds, limit)
+
+
+@_with_reconnect(idempotent=False)
+async def record_user_call(channel: str, telegram_user_id: int, kind: str) -> None:
+    from core.repositories import quota
+
+    await quota.insert(await get_pool(), channel, telegram_user_id, kind)
+
+
+@_with_reconnect
+async def relabel_last_user_call(
+    channel: str, telegram_user_id: int, from_kind: str, to_kind: str, since: datetime
+) -> bool:
+    from core.repositories import quota
+
+    return await quota.relabel_latest(
+        await get_pool(), channel, telegram_user_id, from_kind, to_kind, since
+    )
 
 
 @_with_reconnect(idempotent=False)

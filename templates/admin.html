@@ -527,6 +527,11 @@
             <div id="memory-items" hidden></div>
           </div>
         </div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-head"><h3>Giới hạn lượt của thành viên Zalo</h3><span class="hint">mỗi ngày, mở lại lúc 0h giờ VN · 0 = không giới hạn</span></div>
+          <p class="note">Chỉ áp cho thành viên (không áp cho chủ bot, admin Zalo). Lượt nặng = tạo ảnh /anh, luận giải chi tiết (/tuvi_chitiet, /kymon_chitiet, /tsh_chitiet) và lượt chat có tra web; hết lượt nặng thì vẫn trò chuyện được nhưng không tra web. Cổ phiếu tính như lượt thường.</p>
+          <div id="quota-box"><div class="skeleton"><i></i><i></i></div></div>
+        </div>
       </section>
 
       <!-- ========== PAGE CHỨNG KHOÁN ========== -->
@@ -1059,6 +1064,38 @@ async function loadMemory() {
   renderZalo();
 }
 
+/* ---------- Giới hạn lượt thành viên Zalo (services/usage_quota.py) ---------- */
+async function loadQuota() {
+  const q = await api('/admin/api/quota');
+  const box = $('quota-box');
+  box.innerHTML = `
+    <div class="field">
+      <div class="field-row">
+        <label class="field-label" for="quota-turns">Lượt / ngày</label>
+        <input class="input mono" type="number" min="0" max="10000" id="quota-turns" value="${esc(q.turns)}">
+        <label class="field-label" for="quota-heavy">Lượt nặng / ngày</label>
+        <input class="input mono" type="number" min="0" max="10000" id="quota-heavy" value="${esc(q.heavy)}">
+        <button class="btn sm" type="button" id="quota-save">Lưu</button>
+      </div>
+      <div class="field-label">Mặc định từ biến môi trường: ${esc(q.default_turns)} lượt, ${esc(q.default_heavy)} lượt nặng.</div>
+    </div>
+    <div id="quota-members"></div>`;
+  renderTable($('quota-members'), [
+    { label: 'Thành viên', cell: x => `${esc(x.label)}<div class="muted small mono">${esc(x.user_id)}</div>` },
+    { label: 'Hôm nay', cls: 'num', cell: x => `${esc(fmtNum(x.turns))}${q.turns ? ` / ${esc(fmtNum(q.turns))}` : ''}` },
+    { label: 'Lượt nặng', cls: 'num', cell: x => `${esc(fmtNum(x.heavy))}${q.heavy ? ` / ${esc(fmtNum(q.heavy))}` : ''}` },
+  ], q.members, 'Chưa có thành viên Zalo nào.');
+  $('quota-save').addEventListener('click', async () => {
+    const btn = $('quota-save');
+    busy(btn);
+    try {
+      const saved = await post('/admin/api/quota', { turns: parseInt($('quota-turns').value, 10) || 0, heavy: parseInt($('quota-heavy').value, 10) || 0 });
+      msg(`Đã lưu giới hạn: ${saved.turns || 'không giới hạn'} lượt, ${saved.heavy || 'không giới hạn'} lượt nặng mỗi ngày.`);
+      loadQuota();
+    } catch (e) { msg('Lưu thất bại: ' + e.message, true); idle(btn); }
+  });
+}
+
 // Trình sửa trí nhớ: fact (ghim/bỏ ghim/quên) + chi tiết đáng nhớ (quên).
 async function loadMemoryItems(userId, label) {
   const box = $('memory-items');
@@ -1455,6 +1492,7 @@ const CONFIG_LOADERS = [
   ['tavily', loadTavily, 'tavily-box'],
   ['agnes', loadAgnes, 'agnes-box'],
   ['memory', loadMemory, 'memory-table'],
+  ['quota', loadQuota, 'quota-box'],
 ];
 let refreshing = false;
 

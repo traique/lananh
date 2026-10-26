@@ -29,7 +29,7 @@ from channels.group_commands import maybe_handle_group_command
 from channels.zalo_text import to_plain_text, zalo_rich_chunks
 from core import alerts, idempotency, trace
 from core.envutil import env_on
-from services import channel_dispatch, reply_audience, turn_control
+from services import channel_dispatch, reply_audience, turn_control, usage_quota
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.channel_image_service import MAX_ZALO_IMAGE_BYTES, handle_channel_image
 from services import facebook_dedup, facebook_intake_stats
@@ -327,6 +327,35 @@ def media_turn(account_id: str, message_id: str, zalo_user: zalo_users.ZaloUser)
     )
 
 
+async def media_quota_gate(
+    zalo_user: zalo_users.ZaloUser, account_id: str, message_id: str, kind: str
+) -> ZaloMessageResponse | None:
+    """Quota ngày của thành viên cho ảnh/tin thoại/tài liệu (services/usage_quota.py):
+    như tin chữ - SAU kiểm cache idempotency, TRƯỚC khoá lượt. None = cho qua; bị
+    chặn thì trả (và cache) câu báo hết lượt hoặc phản hồi rỗng."""
+    if not usage_quota.applies("zalo", zalo_user.is_admin):
+        return None
+    cached = await idempotency.get_zalo_response(account_id, message_id, kind)
+    if cached is not None:
+        return ZaloMessageResponse.model_validate(cached)
+    decision = await usage_quota.check(
+        zalo_user.internal_user_id,
+        channel="zalo",
+        is_admin=zalo_user.is_admin,
+        address_form=getattr(zalo_user, "address_form", None),
+    )
+    if decision.allowed:
+        return None
+    response = ZaloMessageResponse(
+        messages=[decision.notice] if decision.notice else [], provider=None
+    )
+    try:
+        await idempotency.save_zalo_response(account_id, message_id, kind, response.model_dump())
+    except Exception:
+        logger.warning("Không lưu được cache câu báo hết lượt (%s/%s).", kind, message_id)
+    return response
+
+
 def _chat_for(zalo_user: zalo_users.ZaloUser, sender_id: str):
     """handle_channel_text chạy trong ngữ cảnh người nhận của zalo_user. Tra tên
     module-level lúc gọi để test monkeypatch ``router.handle_channel_text`` vẫn có
@@ -427,6 +456,11 @@ async def image_prompt(
     if not zalo_user.is_active:
         return ZaloMessageResponse(messages=[messages_module.ZALO_LOCKED_REPLY], provider=None)
 
+    blocked = await media_quota_gate(
+        zalo_user, x_zalo_account_id, x_zalo_message_id, "image-prompt"
+    )
+    if blocked is not None:
+        return blocked
     with media_turn(x_zalo_account_id, x_zalo_message_id, zalo_user):
         return await _image_prompt_turn(
             request,
