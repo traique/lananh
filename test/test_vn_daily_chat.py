@@ -208,9 +208,9 @@ def chat_spy(monkeypatch):
     async def noop(*args, **kwargs):
         return None
 
-    async def fake_search(text, user_id=None):
+    async def fake_plan(text, user_id=None):
         seen["search"] += 1
-        return "WEB"
+        return ccs.web_search.SearchPlan("WEB", ccs.orchestrator.SEARCH_OFF, True)
 
     async def fake_chat(user_id, text, *, grounding, memory_context, require_real_search, **kw):
         seen.update(grounding=grounding, require_real_search=require_real_search, **kw)
@@ -219,11 +219,11 @@ def chat_spy(monkeypatch):
     monkeypatch.setattr(ccs.telemetry, "start", fake_start)
     monkeypatch.setattr(ccs.telemetry, "success", noop)
     monkeypatch.setattr(ccs.tools, "maybe_run_tool", noop)
-    monkeypatch.setattr(ccs.web_search, "maybe_search", fake_search)
+    monkeypatch.setattr(ccs.web_search, "plan_search", fake_plan)
     monkeypatch.setattr(ccs.memory_service, "build_memory_context", noop)
     monkeypatch.setattr(ccs.memory_service, "update_memory", noop)
     monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
-    monkeypatch.setattr(ccs.db, "add_chat_message", noop)
+    monkeypatch.setattr(ccs.db, "add_chat_turn", noop)
     return ccs, seen
 
 
@@ -232,7 +232,8 @@ async def test_run_chat_turn_dung_so_lieu_code_bo_web_va_forced_search(sources, 
     await ccs.run_chat_turn(1, "giá vàng hôm nay có nên mua không", channel="zalo")
     await ccs.stop_background_tasks()
     assert seen["search"] == 0 and seen["require_real_search"] is False
-    assert "Giá vàng SJC thật" in seen["grounding"] and seen["web_grounded"] is False
+    # Số liệu code đã đủ: provider cũng không tự tra web chồng lên.
+    assert "Giá vàng SJC thật" in seen["grounding"] and seen["search_mode"] == "off"
 
 
 async def test_run_chat_turn_nguon_loi_giu_duong_tra_web(sources, chat_spy):
@@ -241,6 +242,7 @@ async def test_run_chat_turn_nguon_loi_giu_duong_tra_web(sources, chat_spy):
     await ccs.run_chat_turn(1, "giá vàng hôm nay có nên mua không", channel="zalo")
     await ccs.stop_background_tasks()
     assert seen["search"] == 1 and seen["require_real_search"] is True
+    assert seen["search_mode"] == "forced"
     assert "THAM KHẢO" in seen["grounding"] and "WEB" in seen["grounding"]
 
 
