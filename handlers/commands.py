@@ -117,7 +117,7 @@ HELP_TEXT = (
     "/fb\\_check <post\\_id> — kiểm tra từng page đã published/công khai chưa, lấy permalink\n"
     "/fb\\_reconcile — đối soát lượt đăng bị gián đoạn (bài kẹt POSTING/UNKNOWN)\n"
     "/fb\\_boqua <post\\_id> — bỏ bài chờ\n"
-    "/fb\\_reset — xóa bài Facebook đã lưu, reset ID về #1 khi có thể\n"
+    "/fb\\_reset xacnhan — xóa bài Facebook đã lưu, reset ID về #1 khi có thể\n"
     "/fb\\_boloc [reset] — thống kê bộ lọc Zalo→Facebook (bài giữ/bỏ/trùng, số bài chờ)\n"
     "/fb\\_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt\n\n"
     "/start — lời chào; /help — hiển thị hướng dẫn này\n"

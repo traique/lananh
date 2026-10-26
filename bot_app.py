@@ -105,7 +105,7 @@ COMMANDS = [
     BotCommand("fb_check", "Kiểm tra bài Facebook đã công khai"),
     BotCommand("fb_reconcile", "Đối soát lượt đăng Facebook bị gián đoạn"),
     BotCommand("fb_boqua", "Bỏ bài Facebook chờ"),
-    BotCommand("fb_reset", "Xóa bài Facebook đã lưu, reset ID"),
+    BotCommand("fb_reset", "Xóa bài Facebook đã lưu (cần gõ kèm xacnhan)"),
     BotCommand("fb_boloc", "Thống kê bộ lọc Zalo → Facebook"),
     BotCommand("fb_loclai", "Lọc lại các bài đang chờ duyệt"),
     BotCommand("zalopair", "Cấp quyền thành viên Zalo"),

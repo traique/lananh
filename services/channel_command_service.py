@@ -94,7 +94,7 @@ _HELP_FACEBOOK = """📣 Zalo → Facebook Page (tách riêng khỏi /tongket, c
 /fb_check <post_id> — kiểm tra từng page đã published/công khai chưa, lấy permalink
 /fb_reconcile — đối soát lượt đăng bị gián đoạn (bài kẹt POSTING/UNKNOWN)
 /fb_boqua <post_id> — bỏ bài chờ
-/fb_reset — xóa toàn bộ bài Facebook đã lưu của tài khoản, reset ID về #1 khi có thể
+/fb_reset xacnhan — xóa toàn bộ bài Facebook đã lưu của tài khoản, reset ID về #1 khi có thể
 /fb_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt
 /fb_boloc [reset] — thống kê bộ lọc: bao nhiêu bài vào hàng chờ, bị bỏ/trùng vì sao, số bài đang chờ
 (hàng chờ giữ tối đa 150 bài, bài trùng trong 7 ngày không được đưa vào)"""
