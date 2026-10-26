@@ -840,3 +840,105 @@ async def test_agent_router9_429_dat_cooldown_khong_khai_tu(monkeypatch):
     assert provider == "api1"
     assert provider_state.api_in_cooldown("router9")
     assert provider_state.router9_dead_since is None
+
+
+@pytest.mark.asyncio
+async def test_tran_so_lan_goi_tool_moi_buoc_va_ca_luot(monkeypatch):
+    """Model đòi 10 tool/bước mãi: mỗi bước chạy tối đa 3, cả lượt tối đa 8; bước
+    cuối không chạy tool nữa; mọi tool_call_id vẫn có kết quả (hội thoại hợp lệ)."""
+    from ai import groq_client
+
+    calls, runs = [], []
+
+    async def fake_groq(messages, tools, **kwargs):
+        calls.append([dict(m) for m in messages])
+        step = len(calls)
+        return ToolCallResponse(
+            "",
+            [
+                {
+                    "id": f"s{step}c{i}",
+                    "name": "xem_gia_co_phieu",
+                    "arguments": {"ma_co_phieu": f"M{step}{i}"},
+                }
+                for i in range(10)
+            ],
+        )
+
+    async def quote(ma_co_phieu="", **_):
+        runs.append(ma_co_phieu)
+        return f"{ma_co_phieu} 100"
+
+    monkeypatch.setattr(agent_service, "_tool_provider_usable", _usable("groq"))
+    monkeypatch.setattr(groq_client, "generate_with_tools", fake_groq)
+    _patch_tool(monkeypatch, "xem_gia_co_phieu", quote)
+
+    text, provider = await agent_service.ask_agent("so giá 40 mã")
+
+    assert provider == "groq" and text == agent_service._STEP_LIMIT_REPLY
+    assert len(calls) == agent_service.MAX_AGENT_STEPS
+    assert runs == ["M10", "M11", "M12", "M20", "M21", "M22", "M30", "M31"]  # 3 + 3 + 2
+    last = calls[-1]
+    tool_ids = [m["tool_call_id"] for m in last if m["role"] == "tool"]
+    assert len(tool_ids) == 30 and len(set(tool_ids)) == 30
+    skipped = [m for m in last if m["role"] == "tool" and m["content"].startswith("(Bỏ qua")]
+    assert len(skipped) == 30 - 8
+    assert "lượt gọi tool cuối" in last[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_tran_so_lan_goi_tool_moi_buoc(monkeypatch):
+    from types import SimpleNamespace
+
+    runs, seen_contents = [], []
+
+    def response(step):
+        if step > 1:
+            return SimpleNamespace(
+                candidates=[SimpleNamespace(content=SimpleNamespace(parts=[]))],
+                text="Xong.",
+                usage_metadata=None,
+            )
+        parts = [
+            SimpleNamespace(
+                function_call=SimpleNamespace(
+                    name="xem_gia_co_phieu", args={"ma_co_phieu": f"G{i}"}
+                )
+            )
+            for i in range(6)
+        ]
+        return SimpleNamespace(
+            candidates=[SimpleNamespace(content=SimpleNamespace(parts=parts))],
+            text="",
+            usage_metadata=None,
+        )
+
+    class Models:
+        def __init__(self):
+            self.step = 0
+
+        async def generate_content(self, model, contents, config):
+            self.step += 1
+            seen_contents.append(list(contents))
+            return response(self.step)
+
+    client = SimpleNamespace(aio=SimpleNamespace(models=Models()))
+
+    async def get_client_and_model(idx):
+        return client, "gemini-test"
+
+    async def quote(ma_co_phieu="", **_):
+        runs.append(ma_co_phieu)
+        return "ok"
+
+    monkeypatch.setattr(agent_service.official_client, "get_client_and_model", get_client_and_model)
+    _patch_tool(monkeypatch, "xem_gia_co_phieu", quote)
+    token = agent_service._turn.set(agent_service._Turn())
+    try:
+        text = await agent_service._run_one_provider(1, "giá 6 mã")
+    finally:
+        agent_service._turn.reset(token)
+
+    assert text == "Xong." and runs == ["G0", "G1", "G2"]
+    responses = seen_contents[-1][-1].parts  # đủ 6 function_response cho 6 lời gọi
+    assert len(responses) == 6

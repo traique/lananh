@@ -15,8 +15,10 @@ Thứ tự provider (ask_agent):
      "trả JSON").
   3. api1/api2: Gemini function calling (`functionCall`/`functionResponse`),
      quota thấp nhất nên đứng cuối.
-Mỗi vòng giới hạn MAX_AGENT_STEPS, mỗi bước qua bounded()/turn_deadline, mỗi
-kết quả tool cắt ~2.5K ký tự, gọi lặp y hệt (cùng tool + tham số) bị chặn.
+Mỗi vòng giới hạn MAX_AGENT_STEPS (bước cuối chỉ để trả lời, không chạy tool),
+mỗi bước chạy tối đa 3 tool và cả lượt tối đa 8, mỗi bước qua bounded()/
+turn_deadline, mỗi kết quả tool cắt ~2.5K ký tự, gọi lặp y hệt (cùng tool +
+tham số) bị chặn.
 
 Persona Lan Anh rút gọn + trí nhớ + cách trả lời người dùng đã dặn + 4 dòng hội
 thoại gần nhất của CHÍNH người hỏi (user_id - Zalo tách hẳn Telegram); Q&A lưu
@@ -133,6 +135,16 @@ _STAGE = "agent"
 _ANY_RESULT_MAX_CHARS = 2500
 # Trần số lượt gọi (tool, args) khác nhau nhớ để chặn gọi lặp y hệt trong 1 lượt.
 _MAX_SEEN_CALLS = 16
+# Trần số tool CHẠY THẬT mỗi bước / cả lượt (OpenRouter, Gemini trả được nhiều lời
+# gọi 1 bước - mỗi tim_web tốn credit Tavily). Lời gọi vượt trần vẫn nhận 1 kết quả
+# "bỏ qua" để hội thoại function-calling hợp lệ (mỗi tool_call_id có 1 tool message).
+_MAX_CALLS_PER_STEP = 3
+_MAX_CALLS_PER_TURN = 8
+_SKIPPED_CALL = "(Bỏ qua: đã đủ số lần gọi tool trong lượt này - trả lời từ kết quả đã có.)"
+_LAST_TOOLS_NOTE = (
+    "\n\n(Hệ thống: đây là lượt gọi tool cuối - bước sau phải trả lời người dùng từ các "
+    "kết quả đã có, KHÔNG gọi tool nữa.)"
+)
 _HISTORY_ROWS = 4
 _HISTORY_ROW_MAX_CHARS = 500
 _MEMORY_MAX_CHARS = 1500
@@ -172,6 +184,11 @@ def _persona(address_form: str | None = None) -> str:
 _SYSTEM_INSTRUCTION = _persona()
 
 
+@dataclass
+class _CallBudget:
+    used: int = 0
+
+
 @dataclass(frozen=True)
 class _Turn:
     """Ngữ cảnh 1 lượt /agent: người hỏi (tool đọc dữ liệu riêng theo user_id này),
@@ -182,6 +199,7 @@ class _Turn:
     system: str = _SYSTEM_INSTRUCTION
     history: tuple[tuple[str, str], ...] = ()
     seen: dict = field(default_factory=dict)
+    budget: _CallBudget = field(default_factory=_CallBudget)
 
 
 _turn: ContextVar[_Turn | None] = ContextVar("agent_turn", default=None)
@@ -477,6 +495,25 @@ async def _call_tool(name: str, args: dict) -> str:
         return f"Lỗi khi chạy tool '{name}': {exc}"
 
 
+async def _call_tools_capped(calls: list[tuple[str, dict]], step: int) -> list[str]:
+    """Kết quả cho TỪNG lời gọi của 1 bước: chạy tối đa _MAX_CALLS_PER_STEP lời gọi
+    (và _MAX_CALLS_PER_TURN cả lượt), phần vượt trần nhận _SKIPPED_CALL. Bước áp
+    chót (hoặc đã hết trần lượt) thì nhắc model bước sau phải trả lời luôn."""
+    budget = _current().budget
+    results: list[str] = []
+    for index, (name, args) in enumerate(calls):
+        if index >= _MAX_CALLS_PER_STEP or budget.used >= _MAX_CALLS_PER_TURN:
+            logger.info("Agent bỏ qua tool '%s' (vượt trần số lần gọi).", name)
+            results.append(_SKIPPED_CALL)
+            continue
+        budget.used += 1
+        logger.info("Agent gọi tool '%s' với args=%s", name, args)
+        results.append(await _call_tool(name, args))
+    if results and (step >= MAX_AGENT_STEPS - 2 or budget.used >= _MAX_CALLS_PER_TURN):
+        results[-1] += _LAST_TOOLS_NOTE
+    return results
+
+
 def _openai_messages(question: str) -> list[dict]:
     turn = _current()
     messages: list[dict] = [{"role": "system", "content": turn.system}]
@@ -529,17 +566,19 @@ async def _run_one_provider(idx: int, question: str) -> str:
 
         if not function_calls:
             return (response.text or "").strip() or "Xin lỗi, em chưa tìm được câu trả lời."
+        if step == MAX_AGENT_STEPS - 1:
+            break  # bước cuối: không chạy thêm tool mà không còn bước dùng kết quả
 
-        # Model có thể yêu cầu nhiều tool cùng lúc trong 1 bước - chạy tuần tự
-        # (đơn giản, đủ dùng cho quy mô 1 user; không cần asyncio.gather).
+        # Model có thể yêu cầu nhiều tool cùng lúc trong 1 bước - chạy tuần tự, có
+        # trần (đơn giản, đủ dùng cho quy mô 1 user; không cần asyncio.gather).
         contents.append(candidate.content)
-        response_parts = []
-        for call in function_calls:
-            logger.info("Agent gọi tool '%s' với args=%s", call.name, dict(call.args or {}))
-            result_text = await _call_tool(call.name, dict(call.args or {}))
-            response_parts.append(
-                types.Part.from_function_response(name=call.name, response={"result": result_text})
-            )
+        results = await _call_tools_capped(
+            [(call.name, dict(call.args or {})) for call in function_calls], step
+        )
+        response_parts = [
+            types.Part.from_function_response(name=call.name, response={"result": result_text})
+            for call, result_text in zip(function_calls, results, strict=True)
+        ]
         contents.append(types.Content(role="user", parts=response_parts))
 
     return _STEP_LIMIT_REPLY
@@ -572,6 +611,8 @@ async def _run_openai_tools(
         logger.info(
             "Agent (%s) yêu cầu %d tool call(s) ở bước %d.", label, len(result.tool_calls), step + 1
         )
+        if step == MAX_AGENT_STEPS - 1:
+            break  # bước cuối: không chạy thêm tool mà không còn bước dùng kết quả
         conversation.append(
             {
                 "role": "assistant",
@@ -589,14 +630,10 @@ async def _run_openai_tools(
                 ],
             }
         )
-        for tool_call in result.tool_calls:
-            logger.info(
-                "Agent (%s) gọi tool '%s' với args=%s",
-                label,
-                tool_call["name"],
-                tool_call["arguments"],
-            )
-            result_text = await _call_tool(tool_call["name"], tool_call["arguments"])
+        results = await _call_tools_capped(
+            [(tool_call["name"], tool_call["arguments"]) for tool_call in result.tool_calls], step
+        )
+        for tool_call, result_text in zip(result.tool_calls, results, strict=True):
             conversation.append(
                 {"role": "tool", "tool_call_id": tool_call["id"], "content": result_text}
             )
