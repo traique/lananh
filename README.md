@@ -386,6 +386,44 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   người 1 tin/ngày; Zalo đánh dấu trước khi vào outbox nên không bao giờ gửi đôi.
   `MORNING_BRIEF_AI_INTRO=true` thêm 1 câu chào do AI viết cho chủ bot (mặc định tắt).
 - Module khác thêm mục bằng `morning_brief.register_section("ten", order=35)`.
+- Bật gom thông báo (mặc định) thì bản tin đi qua hàng đợi gom: ngoài giờ yên lặng
+  gửi ngay kèm các tin nhẹ đang chờ, trong giờ yên lặng (vd `/bantin 5`) chờ hết giờ.
+
+#### "Có gì cần anh chú ý?" (`/chuy`)
+
+- `/chuy` hoặc câu rõ ràng "có gì cần anh chú ý", "hôm nay có gì cần lo" (phải có
+  người được nhắc hoặc mốc "hôm nay/bây giờ"; "có gì cần lưu ý khi mua nhà" vẫn đi
+  chat AI) trả MỘT tin tính bằng code, không gọi AI (`services/attention.py`).
+- Mục: nhắc việc còn lại hôm nay + ngày nhớ 3 ngày tới; danh mục (stop/target, giá
+  chạm ngưỡng đã báo hôm nay, đang dưới stop nhiều phiên, sự kiện quyền rơi vào hôm
+  nay); hỏi thăm đang chờ; số tin đang chờ gom (gửi luôn sau đó); bài Facebook chờ
+  duyệt (chủ bot, admin Zalo); lỗi mới hôm nay, provider đang cooldown hoặc quota
+  miễn phí ≥ 80%, watchdog đang báo (chỉ chủ bot: Telegram, Zoom, Zalo controller).
+- Thành viên Zalo chỉ thấy dữ liệu của chính mình. Mỗi mục có timeout riêng; mục
+  lỗi bị bỏ và ghi 1 dòng "chưa đọc được". Không có gì thì 1 câu ngắn.
+- Lệnh chỉ đọc: chạy ngay cả khi lượt dài đang chạy. Module khác thêm mục bằng
+  `attention.register_section("ten", order=80, audience="owner")`.
+
+#### Gom thông báo và giờ yên lặng (`/yenlang`)
+
+- Tin bot tự nhắn đi qua `services/notify_hub.py`. Việc cần người quyết gửi ngay
+  (URGENT): nhắc việc tự đặt, chạm stop/target, giá chạm ngưỡng đã đặt, bài Facebook
+  chờ duyệt, cảnh báo hệ thống 🚨 và cảnh báo cần kiểm tra tay. Việc đã xong/thông
+  tin (NORMAL: hỏi thăm, quy đổi và lịch sự kiện quyền, cảnh báo cuối phiên không có
+  stop/target, cảnh báo nhẹ ⚠️/🐞/⛽, tổng hợp lỗi, bản tin sáng, digest 8h) vào bảng
+  `notify_queue` (migration 026, bền qua restart) và được gộp thành 1 tin khi: tin cũ
+  nhất đã chờ `NOTIFY_BATCH_MINUTES` (60) phút, người dùng vừa nhắn bot (kể cả ban
+  đêm), hết giờ yên lặng, hoặc có tin tổng hợp hẹn giờ (bản tin, digest).
+- Giờ yên lặng mặc định 22:30-06:30 giờ VN (`NOTIFY_QUIET_HOURS`), mỗi người đổi
+  bằng `/yenlang on|off|22-7` (chủ bot Telegram/Zoom dùng chung, mỗi Zalo riêng).
+  Trong giờ này chỉ nhắc việc tự đặt và cảnh báo 🚨 gửi ngay; URGENT khác bị giữ và
+  đứng đầu tin gom lúc hết giờ (bài Facebook giữ lại không kèm nút, vẫn có dòng
+  `/fb_ok`, `/fb_boqua`; bản Zoom không được giữ).
+- Không gửi trùng: mỗi nguồn giữ guard cũ và chỉ đánh dấu khi hub đã nhận; `dedup_key`
+  chặn xếp 2 lần; Zalo xả vào `zalo_outbox` trong cùng transaction. Tối đa
+  `NOTIFY_QUEUE_MAX_PER_USER` tin chờ/người (vượt thì bỏ tin nhẹ cũ nhất, tin gom
+  ghi số tin bị lược). `NOTIFY_HUB_ENABLED=0` = hành vi cũ. Chi tiết từng nguồn:
+  [docs/nang-cap-jarvis.md](docs/nang-cap-jarvis.md).
 
 #### Tin thoại, ảnh, tài liệu, vị trí
 
@@ -751,6 +789,10 @@ Nhắc việc, chi tiêu, bản tin sáng, danh mục:
 | `PRICE_ALERTS_ENABLED` / `PRICE_ALERTS_HOLDINGS_INTRADAY` | 1 / 1 | Quét ngưỡng giá trong phiên; báo luôn stop/target danh mục chủ bot trong phiên |
 | `PRICE_ALERT_POLL_SEC` | 300 | Chu kỳ quét trong phiên (120-1800 giây) |
 | `PRICE_ALERT_MAX_SYMBOLS` / `PRICE_ALERT_MAX_PER_USER` / `WATCHLIST_MAX_SYMBOLS` | 40 / 10 / 20 | Mã mỗi vòng quét; ngưỡng mỗi người; mã theo dõi mỗi người |
+| `NOTIFY_HUB_ENABLED` | 1 | Gom thông báo chủ động + giờ yên lặng (`services/notify_hub.py`); 0 = mọi nguồn gửi thẳng như cũ |
+| `NOTIFY_BATCH_MINUTES` | 60 | Tin nhẹ chờ tối đa chừng này phút rồi gộp gửi (5-1440) |
+| `NOTIFY_QUIET_HOURS` | `22:30-06:30` | Giờ yên lặng mặc định (giờ VN; `off` = không có), từng người đổi bằng `/yenlang` |
+| `NOTIFY_QUEUE_MAX_PER_USER` / `RETENTION_NOTIFY_QUEUE_DAYS` | 30 / 7 | Trần tin chờ mỗi người nhận; số ngày giữ dòng đã gửi (chống xếp trùng) |
 
 Thoại, ảnh, tài liệu:
 
@@ -1193,6 +1235,8 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/notes [từ khoá]`, `/xoaghichu <số\|tatca xacnhan>` | Xem/tìm, xoá ghi chú |
 | `/xuatdulieu`, `/xoadulieu [xacnhan]` | Xuất / xoá dữ liệu cá nhân |
 | `/hoithan [on\|off]` | Bật/tắt hỏi thăm chủ động |
+| `/chuy` | Có gì cần chú ý: nhắc việc, ngày nhớ, danh mục, hỏi thăm, tin chờ gom; admin thêm bài FB chờ duyệt; chủ bot thêm lỗi, provider, giám sát (không tốn AI) |
+| `/yenlang [on\|off\|22-7]` | Giờ yên lặng của chính mình: ban đêm chỉ nhắn ngay nhắc việc (và cảnh báo 🚨 cho chủ bot), tin khác gom lại |
 | `/model` | Xem hoặc đổi model 9Router |
 | `/status` | Provider chain, chế độ tra web, cooldown (lý do, phút còn lại), khối "📈 24 giờ qua" (số lượt, p50/p95, tỉ lệ lỗi theo provider) |
 | `/loi` | Lỗi gom theo loại + vị trí code hôm nay/hôm qua, số lần khởi động lại 7 ngày (Telegram, chủ bot) |
@@ -1434,7 +1478,10 @@ khoảng chọn. Không script/CDN ngoài; mọi giá trị server vẫn escape.
   Phần nhịp tim/khởi động lại chỉ chạy khi `RENDER=true`.
 - **Kênh cảnh báo.** Cảnh báo cùng loại có cooldown (`core.alerts`, trần 128 khoá).
   Telegram là kênh chính; Zoom là kênh phụ khi Telegram lỗi và luôn nhận các cảnh
-  báo 🚨 (`ALERT_ZOOM_MIRROR`).
+  báo 🚨 (`ALERT_ZOOM_MIRROR`). Cảnh báo 🚨 và cảnh báo cần xử lý ngay (`urgent=True`:
+  hồi phục provider, gateway Zalo mất/có lại kết nối, tin bị bỏ DEAD, Zoom lạ, lượt đăng
+  Page chưa rõ, kết quả `/ragxuly`) gửi ngay; cảnh báo nhẹ được gom (mục "Gom thông
+  báo" ở trên) - tin gom đi Telegram, không nhân bản sang Zoom.
 - **Gom lỗi** (`services/error_digest.py`): lỗi ERROR (và WARNING có traceback)
   được gom theo logger, loại lỗi và vị trí code trong repo; không lưu nội dung lỗi.
   Có loại lỗi mới thì bot báo ngay (tối đa 4 tin/giờ); 7h sáng gửi tổng hợp lỗi
@@ -1600,13 +1647,14 @@ handlers/           Telegram handlers mỏng (parse lệnh -> gọi service -> t
 services/           Logic dùng chung cho mọi kênh: channel_chat_service.run_chat_turn
                     (pipeline chat), channel_dispatch (Zalo/Zoom), memory_service,
                     tools + tool_registry, reminder_service, expense_service,
-                    morning_brief, vn_daily_chat, kymon, voice/vision/document_service,
+                    morning_brief, attention (/chuy), notify_hub (gom thông báo,
+                    giờ yên lặng), vn_daily_chat, kymon, voice/vision/document_service,
                     portfolio_* / price_alerts, usage_quota, watchdog, error_digest,
                     quota_burn, price_search (/gia), usage_stats (/thongke)...
 stock/              Market data, validation, policy, lịch giao dịch, danh mục và backtest
 assets/             Ý nghĩa soạn sẵn: tu_vi.yaml, than_so_hoc.yaml, ky_mon.yaml
 rag/                Kho kiến thức .md cho lệnh /rag (mỗi heading 1 mẩu kiến thức)
-migrations/         NNN_*.sql (001-025), checksum ghim trong migrations.lock
+migrations/         NNN_*.sql (001-026), checksum ghim trong migrations.lock
 scripts/            backup_drill.py, run_evals.py, train_trend_model.py, run-zalo-gateway.sh
 test/evals/         Golden set đánh giá (YAML + harness.py)
 zalo-gateway/        Node.js Zalo listener
@@ -1718,6 +1766,7 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
 
 ## Tài liệu bổ sung
 
+- `docs/nang-cap-jarvis.md` — các tính năng lấy ý từ các dự án Jarvis: `/chuy`, gom thông báo + giờ yên lặng (bảng nguồn và mức, migration 026, rủi ro)
 - `docs/nang-cap-2026-10-26.md` — đợt nâng cấp 26/10/2026: thay đổi theo nhóm, danh sách việc khi deploy (migration 017-025, biến Render, GitHub secrets), việc chủ bot còn phải quyết, phần cố ý chưa làm, rủi ro
 - `docs/backup-restore.md` — sao lưu/khôi phục DB, role chỉ-đọc, diễn tập, xoay khoá
 - `docs/upgrade-2026-10.md` — đợt nâng cấp toàn diện 10/2026 (lỗi đã sửa, migration 015, biến mới, kết quả backtest offline, việc cần làm khi deploy)

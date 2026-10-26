@@ -1,0 +1,120 @@
+# Nâng cấp lấy ý từ các dự án Jarvis
+
+Các tính năng mới lấy ý tưởng từ isair/jarvis, ethanplusai/jarvis,
+amanimran786/jarvis-ai, microsoft/JARVIS. Mỗi gói một mục; chi tiết cách dùng nằm
+trong `README.md`.
+
+## Gói P1: "Có gì cần anh chú ý?" + gom thông báo, giờ yên lặng
+
+### Đã làm
+
+- **`/chuy`** (ý từ amanimran786/jarvis-ai "what needs my attention",
+  `services/attention.py`): MỘT tin tính bằng code, không gọi AI, trên Telegram,
+  Zalo, Zoom. Câu tự nhiên rõ ràng ("có gì cần anh chú ý", "hôm nay có gì cần lo")
+  cũng được - phải có người được nhắc hoặc mốc "hôm nay/bây giờ", câu dài quá 80
+  ký tự không tính, nên "có gì cần lưu ý khi mua nhà" vẫn đi chat AI. Registry mục
+  giống `morning_brief` (`register_section(key, order, timeout=, audience=)`, audience
+  `all`/`admin`/`owner`) để gói sau thêm "việc nền đang chạy", "tác vụ định kỳ". Mục
+  có sẵn: nhắc việc còn lại hôm nay + ngày nhớ 3 ngày tới; danh mục (stop/target và
+  giá chạm ngưỡng đã báo hôm nay, đang dưới stop từ 2 phiên, sự kiện quyền rơi vào hôm
+  nay - đọc nhật ký `stock_alert_log` và trạng thái job cuối phiên, không gọi nguồn
+  giá); hỏi thăm đang chờ (hôm nay/mai); số tin đang chờ gom; bài Facebook chờ duyệt
+  (chủ bot, admin Zalo); lỗi ERROR hôm nay, provider cooldown, quota miễn phí ≥
+  `QUOTA_BURN_ALERT_PCT`, watchdog đang báo (`watchdog.active_issues`, chỉ chủ bot:
+  Telegram/Zoom và Zalo controller). Mỗi mục có timeout 6-8 giây; mục lỗi bị bỏ và
+  ghi "chưa đọc được: ...". Thành viên Zalo chỉ thấy dữ liệu theo internal_user_id của
+  mình. `/chuy` và `/yenlang` (không tham số) là lệnh chỉ đọc: chạy ngoài khoá lượt,
+  gateway Zalo đưa ra làn nhanh (`zalo-gateway/src/commands.ts`).
+- **Gom thông báo + giờ yên lặng** (ý từ ethanplusai/jarvis,
+  `services/notify_hub.py`, migration 026 bảng `notify_queue`): việc cần người quyết
+  báo ngay, việc đã xong/thông tin gom lại báo một lần. `/yenlang on|off|22-7`.
+
+### Nguồn tự nhắn và mức
+
+| Nguồn | Mức | Ngoài giờ yên lặng | Trong giờ yên lặng (mặc định 22:30-06:30) |
+|---|---|---|---|
+| Nhắc việc, ngày nhớ (`scheduler`) | URGENT | Gửi ngay (không qua hub) | Gửi ngay |
+| Stop/target trong phiên (`price_alerts`) | URGENT | Gửi ngay | Giữ lại (thực tế chỉ có trong giờ giao dịch) |
+| Giá chạm ngưỡng người dùng đặt | URGENT | Gửi ngay | Giữ lại (như trên) |
+| Cảnh báo cuối phiên (`portfolio_alerts`) | URGENT nếu có dòng stop/target, còn lại NORMAL | Gửi ngay / gom | Không xảy ra (15h05-18h05) |
+| Bài Facebook chờ duyệt (bản xem trước) | URGENT | Gửi ngay, kèm nút | Giữ lại cho Telegram + Zalo controller, gửi đầu tiên khi hết giờ (không nút, vẫn có `/fb_ok`, `/fb_boqua`); bản Zoom bỏ |
+| Cảnh báo 🚨 (`core.alerts`: OOM, crash, toàn bộ provider chết, Zalo cần đăng nhập lại) | URGENT | Gửi ngay | Gửi ngay |
+| `core.alerts.send(urgent=True)`: provider hồi phục, gateway Zalo mất/có lại kết nối, tin bị bỏ (DEAD/không thử lại), Zoom lạ nhắn, lượt đăng Page chưa rõ, kết quả `/ragxuly` | URGENT | Gửi ngay | Giữ lại |
+| Cảnh báo nhẹ `core.alerts` (watchdog ⚠️/💽/⏰, lỗi mới 🐞, tổng hợp lỗi 🧾, quota ⛽, 9Router lỗi/hồi phục, migration bị sửa, nghi prompt injection, outbox Zalo bỏ cuộc, sao lưu cũ, xoay khoá, nhắc cập nhật lịch giao dịch) | NORMAL | Gom | Chờ |
+| Quy đổi sự kiện quyền, lịch quyền báo trước (`portfolio_events` qua `portfolio_push`) | NORMAL | Gom | Chờ |
+| Hỏi thăm chủ động (`proactive_service`) | NORMAL | Gom | Không xảy ra (giờ hoạt động 08:00-21:30) |
+| Bản tin sáng (`morning_brief`), digest danh mục 8h (`scheduler`) | NORMAL, tin tổng hợp | Xả ngay, kèm tin NORMAL đang chờ | Chờ hết giờ |
+
+Không qua hub (gửi như cũ): câu hỏi cấp quyền người Zalo lạ (kèm nút, cần quyết
+ngay), bản tin RSS 8h `morning_news` và tổng kết nhóm Zalo 9h (nội dung định kỳ ngoài
+giờ yên lặng, guard riêng; Zalo controller bật `/bantin` thì RSS đã gộp vào bản tin
+sáng), báo cáo VACUUM của `db_maintenance` (chỉ khi thật sự dọn, 3h sáng Chủ nhật),
+trả lời trực tiếp của mọi lượt chat.
+
+### Cách xả và chống trùng
+
+- NORMAL vào `notify_queue` (bền qua restart/redeploy). Vòng 5 phút xả người nhận có
+  tin cũ nhất đã chờ `NOTIFY_BATCH_MINUTES` (60) phút, có tin URGENT bị giữ hoặc tin
+  tổng hợp chưa gửi được, hoặc có tin xếp trong giờ yên lặng vừa hết. Người dùng vừa
+  nhắn bot (Telegram, Zalo, Zoom) thì xả sau 8 giây, kể cả ban đêm (họ đang thức).
+- Mọi tin chờ của 1 người nhận gộp thành MỘT tin ("🔔 Em gom N thông báo từ HH:MM
+  cho anh nè:"), URGENT bị giữ đứng đầu; chỉ 1 tin thì gửi nguyên văn. Trần 8.000 ký
+  tự/tin gom, dư thì tin gom tiếp theo ngay sau.
+- Nguồn chỉ đánh dấu guard của mình (ngày đã gửi, `stock_alert_log`, sự kiện hỏi
+  thăm `asked`...) khi hub đã nhận tin vào hàng đợi bền; `dedup_key` (vd
+  `brief:zalo:-5:2026-10-26`, `followup:<id>`, `corp:<ref>:<ngày>`) chặn xếp 2 lần khi
+  nguồn chạy lại. Dòng đã gửi giữ `RETENTION_NOTIFY_QUEUE_DAYS` (7) ngày.
+- Zalo: đánh dấu đã gửi và INSERT `zalo_outbox` trong CÙNG transaction - không bao
+  giờ gửi đôi, gateway vẫn gửi qua outbox (ngân sách 60 tin/giờ). Telegram/Zoom: lease
+  5 phút; gửi lỗi thì nhả và vòng sau thử lại.
+- Tối đa `NOTIFY_QUEUE_MAX_PER_USER` (30) tin chờ/người; vượt thì bỏ tin NORMAL cũ
+  nhất, tin gom kế tiếp ghi "có N thông báo cũ hơn đã được lược bớt".
+- Hub chỉ nhận tin khi vòng xả đã chạy trong process (`bot_app._post_init`); DB lỗi lúc
+  xếp hàng thì nguồn gửi thẳng như cũ (fail open). `NOTIFY_HUB_ENABLED=0` = hành vi cũ
+  hoàn toàn.
+
+### Việc khi deploy
+
+1. Migration 026 tự áp lúc khởi động; `migrations.lock` đã có dòng 026.
+2. Biến mới (đều có mặc định an toàn, có trong `.env.example` và `render.yaml`):
+   `NOTIFY_HUB_ENABLED=1`, `NOTIFY_BATCH_MINUTES=60`, `NOTIFY_QUIET_HOURS=22:30-06:30`,
+   `NOTIFY_QUEUE_MAX_PER_USER=30`, `RETENTION_NOTIFY_QUEUE_DAYS=7`.
+3. Menu Telegram tự cập nhật (`/chuy`, `/yenlang`). Gateway Zalo cần build lại (đã
+   nằm trong image) để `/chuy` đi làn nhanh.
+4. Thử: `/chuy` trên Telegram và từ 1 Zalo thành viên (không được thấy lỗi/provider/
+   bài FB); `/yenlang` xem giờ. Khi có 1 tin nhẹ đang chờ (`/chuy` hiện dòng "📬 Có N
+   thông báo"), nhắn bot 1 câu - tin gom phải tới vài giây sau câu trả lời.
+
+### Quyết định đã chọn (chủ bot có thể đổi)
+
+- URGENT khác nhắc việc và 🚨 trong giờ yên lặng: GIỮ lại tới hết giờ (không gửi im
+  tiếng), vì Zalo không có chế độ im tiếng và tin chạm giá/stop thực tế chỉ có trong
+  phiên. Bài FB giữ lại mất nút bấm.
+- Tin gom của chủ bot đi Telegram, không nhân bản sang Zoom (luật `ALERT_ZOOM_MIRROR`
+  chỉ còn áp cho tin gửi ngay). Telegram lỗi thì tin gom nằm chờ và thử lại, không
+  chuyển Zoom.
+- Kết quả `/ragxuly`, lượt đăng Page chưa rõ, gateway Zalo mất kết nối, tin bị DEAD:
+  coi là URGENT (gửi ngay ban ngày) dù không mang 🚨.
+- Người dùng nhắn bot trong giờ yên lặng thì vẫn xả tin chờ.
+
+### Cố ý chưa làm
+
+- Gửi im tiếng (`disable_notification`) cho Telegram trong giờ yên lặng: cần thêm
+  tham số qua mọi callback gửi; giữ lại đơn giản hơn và giống nhau giữa các kênh.
+- Đưa nhắc việc vào hàng đợi: nhắc việc cần nút hoãn, `reminder_id` của outbox Zalo
+  và luôn gửi đúng giờ - giữ đường cũ.
+- Gom bản tin RSS 8h, tổng kết nhóm Zalo: đã có guard ngày riêng, gửi ngoài giờ yên lặng.
+
+### Rủi ro
+
+- Telegram: sập đúng giữa lúc gửi và lúc đánh dấu thì tin gom có thể lặp 1 lần (như
+  các nguồn at-least-once cũ). Tin gom dùng `send_rich` (định dạng markdown nhẹ) cho cả
+  cảnh báo hệ thống trước đây gửi chữ thô; Telegram từ chối định dạng thì tự rơi về chữ
+  thô.
+- Cảnh báo nhẹ (RAM cao, lỗi mới...) có thể tới muộn tới 60 phút nếu chủ bot không
+  nhắn bot; `/chuy` luôn xem được ngay.
+- Vượt trần 30 tin chờ thì tin nhẹ cũ nhất bị bỏ (có ghi số tin bị lược).
+- Bản tin sáng trước 6:30 (`/bantin 5`) giờ tới lúc hết giờ yên lặng; muốn nhận 5h thì
+  `/yenlang 22-5` hoặc `/yenlang off`.
+- Câu tự nhiên `/chuy` dựa trên mẫu cố định; câu lạ ("có chuyện gì anh phải biết
+  không") vẫn đi chat AI.
