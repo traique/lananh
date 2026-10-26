@@ -195,7 +195,7 @@ async def _translate(
         return [
             "Cú pháp: /dich [ja>vi|vi>ja] <nội dung>\n"
             "Không chỉ định chiều thì tự nhận diện theo chữ Nhật trong câu.\n"
-            "Câu tiếng Anh (không dấu) em sẽ không tự đoán chiều - anh chỉ định giúp em.\n"
+            "Câu tiếng Anh (không dấu) em sẽ không tự đoán chiều - chỉ định chiều dịch giúp em nhé.\n"
             "Ví dụ: /dich お世話になります。確認お願いします。"
         ], None
 
@@ -209,8 +209,8 @@ async def _translate(
     # chiều "Việt→Nhật" như trước, hỏi lại để người dùng chủ động chọn.
     if direction is None and translate_service.looks_english(text):
         return [
-            "Câu này là tiếng Anh nên em không tự đoán được anh cần dịch sang ngôn ngữ nào.\n"
-            "Anh chỉ định giúp em nhé:\n"
+            "Câu này là tiếng Anh nên em không tự đoán được cần dịch sang ngôn ngữ nào.\n"
+            "Chỉ định giúp em nhé:\n"
             "• /dich ja>vi <nội dung> — dịch sang tiếng Việt\n"
             "• /dich vi>ja <nội dung> — dịch sang tiếng Nhật"
         ], None
