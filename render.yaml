@@ -81,6 +81,8 @@ services:
         value: "30"
       - key: TELEGRAM_MEDIA_RETRIES
         value: "3"
+      - key: TELEGRAM_RICH_MESSAGES
+        value: "false"
       # Fine-grained GitHub token: chỉ cấp repo này + Contents: write.
       # /ragxuly dùng token này để commit rag/*.md với [skip render].
       - key: GITHUB_RAG_TOKEN

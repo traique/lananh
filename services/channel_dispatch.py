@@ -49,6 +49,9 @@ class DispatchHandlers:
     facebook: Callable[[str, str], Awaitable[ChannelResult | None]] | None = None
     group: Callable[[str, str], Awaitable[ChannelResult | None]] | None = None
     chunk: Callable[[list[str]], list[str]] = field(default=lambda messages: list(messages))
+    # Zalo: cắt tin KÈM styles zca-js (channels/zalo_text.zalo_rich_chunks) - có thì
+    # dùng thay ``chunk``, payload có thêm "styles" (cùng chỉ số với messages).
+    rich_chunk: Callable[..., tuple[list[str], list[list[dict]]]] | None = None
     # Khoá lượt theo người dùng (services.concurrency.assistant_turn); tiêm để
     # kênh/test thay thế được.
     turn: Callable[[str], Any] = field(default=assistant_turn)
@@ -70,13 +73,16 @@ async def _save_cached_best_effort(h: DispatchHandlers, req: DispatchRequest, pa
         )
 
 
-def payload_from_result(result: ChannelResult, chunk) -> dict[str, Any]:
-    return {
-        "messages": chunk(list(result.messages)),
+def payload_from_result(result: ChannelResult, chunk, rich_chunk=None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "provider": result.provider,
         "image_b64": result.image_b64,
         "image_url": result.image_url,
     }
+    if rich_chunk is None:
+        return {"messages": chunk(list(result.messages)), **payload}
+    messages, styles = rich_chunk(list(result.messages), colorize=result.market)
+    return {"messages": messages, **payload, "styles": styles if any(styles) else None}
 
 
 async def dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]:
@@ -113,10 +119,10 @@ async def dispatch(req: DispatchRequest, h: DispatchHandlers) -> dict[str, Any]:
                     )
                 else:
                     result = await h.chat(req.user_id, text, req.is_admin)
-            payload = payload_from_result(result, h.chunk)
+            payload = payload_from_result(result, h.chunk, h.rich_chunk)
             await _save_cached_best_effort(h, req, payload)
             return payload
 
-    payload = payload_from_result(result, h.chunk)
+    payload = payload_from_result(result, h.chunk, h.rich_chunk)
     await _save_cached_best_effort(h, req, payload)
     return payload

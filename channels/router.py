@@ -26,7 +26,7 @@ from channels.contracts import (
 )
 from channels.facebook_commands import maybe_handle_facebook_command, prepare_post
 from channels.group_commands import maybe_handle_group_command
-from channels.zalo_text import to_plain_text
+from channels.zalo_text import to_plain_text, zalo_rich_chunks
 from core import alerts, idempotency
 from core.envutil import env_on
 from services import channel_dispatch, reply_audience
@@ -365,6 +365,7 @@ async def _receive_text(payload: ZaloMessageRequest):
             facebook=maybe_handle_facebook_command,
             group=maybe_handle_group_command,
             chunk=_zalo_chunks,
+            rich_chunk=zalo_rich_chunks,
             turn=assistant_turn,
         ),
     )

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 from core.text_normalize import nfc
@@ -36,10 +38,31 @@ class ZaloMessageRequest(BaseModel):
         return text or None
 
 
+# Giá trị TextStyle của zca-js 2.1.2 (dist/apis/sendMessage.d.ts) mà bridge dùng:
+# đậm, nghiêng, gạch chân, gạch ngang, đỏ, cam, vàng, xanh lá, chữ nhỏ, chữ to.
+ZaloTextStyleName = Literal[
+    "b", "i", "u", "s", "c_db342e", "c_f27806", "c_f7b503", "c_15a85f", "f_13", "f_18"
+]
+
+
+class ZaloTextStyle(BaseModel):
+    """1 phần tử ``styles`` của zca-js sendMessage({msg, styles}). start/len tính
+    theo đơn vị UTF-16 (như String.length của JavaScript), trong chính tin đó."""
+
+    start: int = Field(ge=0)
+    len: int = Field(ge=1)
+    st: ZaloTextStyleName
+
+
 class ZaloMessageResponse(BaseModel):
     messages: list[str]
     provider: str | None = None
     image_b64: str | None = None
+    # Tuỳ chọn: styles[i] là định dạng của messages[i] (channels/zalo_text.py);
+    # None/thiếu = gửi chữ thuần. Gateway chưa hỗ trợ thì bỏ qua trường này - chữ
+    # trong messages đã là bản thuần đầy đủ. Bản cache idempotency cũ không có
+    # trường này vẫn đọc được.
+    styles: list[list[ZaloTextStyle]] | None = None
 
 
 class ZaloGroupMessageRequest(BaseModel):

@@ -465,9 +465,19 @@ def _render_chat_skill(variant: str = PERSONA_OWNER, address_form: str | None = 
         return raw.strip()
 
 
+# TELEGRAM_RICH_MESSAGES bật: Telegram tự dựng tiêu đề/bảng từ markdown (tg_format.py).
+_TELEGRAM_RICH_STYLE_HINT = (
+    "KÊNH ĐANG TRẢ LỜI: Telegram - hiển thị được markdown (chữ đậm, gạch đầu dòng, tiêu "
+    "đề #, bảng nhỏ khi cần so sánh); vẫn ưu tiên trả lời gọn như nhắn tin."
+)
+
+
 def channel_style_hint(channel: str | None) -> str:
     """1 dòng gợi ý trình bày theo kênh (rỗng nếu kênh lạ/không truyền)."""
-    return _CHANNEL_STYLE_HINTS.get((channel or "").strip().lower(), "")
+    key = (channel or "").strip().lower()
+    if key == "telegram" and TELEGRAM_RICH_MESSAGES:
+        return _TELEGRAM_RICH_STYLE_HINT
+    return _CHANNEL_STYLE_HINTS.get(key, "")
 
 
 def load_chat_skill(
@@ -551,6 +561,12 @@ TELEGRAM_READ_TIMEOUT = float(os.getenv("TELEGRAM_READ_TIMEOUT", "90"))
 TELEGRAM_WRITE_TIMEOUT = float(os.getenv("TELEGRAM_WRITE_TIMEOUT", "90"))
 TELEGRAM_POOL_TIMEOUT = float(os.getenv("TELEGRAM_POOL_TIMEOUT", "30"))
 TELEGRAM_MEDIA_RETRIES = int(os.getenv("TELEGRAM_MEDIA_RETRIES", "3"))
+
+# ─── Định dạng câu trả lời Telegram (tg_format.py) ───────────────────────────
+# Gửi câu trả lời bằng tin "rich" gốc (Bot API 10.1: tiêu đề, bảng, khối code do
+# Telegram dựng); bị từ chối thì quay về HTML. Mặc định tắt tới khi chủ bot thấy
+# app của mình hiển thị ổn.
+TELEGRAM_RICH_MESSAGES = _env_bool("TELEGRAM_RICH_MESSAGES", False)
 
 
 def ensure_media_dir() -> None:

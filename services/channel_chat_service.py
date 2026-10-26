@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import dataclasses
 import logging
 from dataclasses import dataclass
 
@@ -484,7 +485,7 @@ async def _side_effect_paths(
     record = conversation_log.record_exchange
     portfolio_command = await portfolio_service.handle_command(user_id, text)
     if portfolio_command is not None:
-        return ChannelResult([portfolio_command])
+        return ChannelResult([portfolio_command], market=True)
     command_result = await channel_command_service.maybe_handle_command(
         user_id, text, is_admin, channel
     )
@@ -506,7 +507,7 @@ async def _side_effect_paths(
     portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
     if portfolio_result is not None:
         await record(user_id, text, portfolio_result, conversation_log.KIND_PORTFOLIO)
-        return ChannelResult([portfolio_result])
+        return ChannelResult([portfolio_result], market=True)
     # "cafe 45k", "đổ xăng 1tr2" (hoặc "huỷ" ngay sau đó): ghi chi tiêu bằng code.
     expense_reply = await expense_service.maybe_handle_chat(user_id, text)
     if expense_reply is not None:
@@ -579,7 +580,8 @@ async def handle_channel_text(
                 full_access=is_admin,
                 stock_outputs=list(stock_result.messages),
             )
-            return stock_result
+            # Zalo tô màu % tăng/giảm trong tin cổ phiếu (channels/zalo_text.py).
+            return dataclasses.replace(stock_result, market=True)
         turn = await run_chat_turn(
             user_id,
             text,

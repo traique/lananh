@@ -62,8 +62,12 @@ def extract_arg(context: ContextTypes.DEFAULT_TYPE) -> str:
     return nfc(" ".join(context.args).strip()) if context.args else ""
 
 
-async def reply_long_text(message, text: str) -> None:
-    await tg_format.reply_rich(message, text, max_len=TELEGRAM_TEXT_MAX)
+async def reply_long_text(message, text: str, *, reply_markup=None) -> None:
+    """reply_markup (nút bấm) chỉ gắn vào đoạn cuối của câu trả lời dài."""
+    if reply_markup is None:
+        await tg_format.reply_rich(message, text, max_len=TELEGRAM_TEXT_MAX)
+        return
+    await tg_format.reply_rich(message, text, max_len=TELEGRAM_TEXT_MAX, reply_markup=reply_markup)
 
 
 async def reply_code_block(message, text: str) -> None:
@@ -74,10 +78,12 @@ async def reply_code_block(message, text: str) -> None:
     await tg_format_codeblock.reply_code_block(message, text, max_len=TELEGRAM_TEXT_MAX)
 
 
-async def reply_long_text_edit_first(status_message, text: str) -> None:
+async def reply_long_text_edit_first(status_message, text: str, *, reply_markup=None) -> None:
     """Như reply_long_text, nhưng edit vào status_message có sẵn thay vì
     gửi tin mới - dùng khi đã có 1 tin nhắn trạng thái "đang xử lý..."."""
-    await tg_format.reply_rich_edit_first(status_message, text, max_len=TELEGRAM_TEXT_MAX)
+    await tg_format.reply_rich_edit_first(
+        status_message, text, max_len=TELEGRAM_TEXT_MAX, reply_markup=reply_markup
+    )
 
 
 async def download_telegram_photo_with_retry(photo, local_path: Path) -> None:
