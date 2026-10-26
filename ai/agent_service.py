@@ -27,8 +27,10 @@ tool CHỈ ĐỌC của chat (ghi chú, nhắc việc, ngày nhớ, chi tiêu, t
 lịch, rag/). Tool GHI dữ liệu (đặt nhắc, ghi chú, chi tiêu...) không vào /agent:
 duyệt bằng nút bấm cần callback_query (web.py/main.py chỉ nhận "message") và
 không được chờ đồng bộ trong lượt (web.py giữ assistant_turn(OWNER) suốt lượt ->
-nút bấm không bao giờ được xử lý kịp). Kết quả tool ngoài (web, link, RSS) được
-rào core.untrusted và đánh dấu taint.
+nút bấm không bao giờ được xử lý kịp). Kết quả tool ngoài (web, link, RSS) LUÔN
+được làm sạch + rào core.untrusted (kể cả khi trang tự chèn marker giả), cắt trần
+và đánh dấu taint; câu trả lời cuối qua core.urls.filter_reply_urls (chỉ giữ link
+có trong câu hỏi/kết quả tim_web, tim_gia).
 
 Cố ý KHÔNG gọi provider_state.mark_router9_dead() khi router9 lỗi trong agent:
 lỗi có thể do router9 không hỗ trợ tools/JSON đúng ý (đặc thù agent), không
@@ -43,7 +45,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterator, Optional
 
-from ai import call_log, official_client
+from ai import call_log, official_client, prompt_budget
 from ai.official_client import is_quota_exhausted_error
 from ai.timeouts import (
     OFFICIAL_CHAT_TIMEOUT_SEC,
@@ -71,6 +73,12 @@ _URL_SOURCE_TOOLS = frozenset({"tim_web", "tim_gia"})
 # core.untrusted trước khi quay lại model - câu "bỏ qua mọi chỉ dẫn" trong trang
 # chỉ còn là dữ liệu.
 _UNTRUSTED_RESULT_TOOLS = frozenset({"tim_web", "tim_gia", "doc_link", "xem_rss"})
+# Tool mà CODE của bot đã tự rào từng khối dữ liệu ngoài (services/web_search ->
+# tavily_client.format_search_results, đọc sâu, dự phòng): chỉ cắt giữa
+# (prompt_budget.truncate_middle cân lại marker), không rào chồng. Mọi tool ngoài
+# khác (doc_link, xem_rss, tim_gia) LUÔN được làm sạch + rào: không dựa vào
+# contains_untrusted(kết quả) vì chuỗi "<<<DỮ_LIỆU_NGOÀI" có thể đến từ chính trang độc.
+_PREFENCED_TOOLS = frozenset({"tim_web"})
 # Trần ký tự 1 kết quả tool ngoài (cắt trước khi rào để marker đóng không mất).
 _TOOL_RESULT_MAX_CHARS = 8000
 # Trần số URL được phép trong 1 lượt (tránh phình bộ nhớ với kết quả dài).
@@ -440,7 +448,10 @@ async def _call_tool(name: str, args: dict) -> str:
             _allow_urls_from(result)
         if spec.untrusted_output or name in _UNTRUSTED_RESULT_TOOLS:
             reg.mark_tainted()
-            if not untrusted.contains_untrusted(result):
+            if name in _PREFENCED_TOOLS and untrusted.contains_untrusted(result):
+                # Đã rào sẵn: vẫn chịu trần chung (Groq free 8K TPM).
+                result = prompt_budget.truncate_middle(result, _ANY_RESULT_MAX_CHARS)
+            else:
                 result = (
                     untrusted.wrap_untrusted(
                         result,
@@ -798,15 +809,27 @@ async def ask_agent(
     Cả lượt chạy trong hạn chót CHAT_TURN_TIMEOUT_SEC (TurnTimeoutError khi
     hết), doc_link/xem_rss chỉ đọc URL có sẵn trong câu hỏi/kết quả tìm kiếm,
     tool ghi dữ liệu không bao giờ chạy trong /agent."""
-    with turn_deadline(), agent_url_scope(question), reg.taint_scope():
+    with turn_deadline(), agent_url_scope(question) as allowed_urls, reg.taint_scope():
         turn = await _build_turn(user_id, question, address_form)
         token = _turn.set(turn)
         try:
             text, provider = await _ask_agent(question)
         finally:
             _turn.reset(token)
+    text = _filter_answer_links(text, question, allowed_urls)
     await _save_turn(user_id, question, text)
     return text, provider
+
+
+def _filter_answer_links(text: str, question: str, allowed_urls: set[str]) -> str:
+    """Vô hiệu hoá link lạ trong câu trả lời /agent (core/urls.py) - lớp phụ sau
+    rào dữ liệu ngoài: chỉ giữ link có trong câu hỏi hoặc kết quả tim_web/tim_gia
+    (KHÔNG lấy chữ trang doc_link làm nguồn), link model tự dựng để nhét dữ liệu
+    (list_notes, chi tiêu...) vào query string thành chữ thường trên mọi kênh."""
+    filtered, removed = urls.filter_reply_urls(text, [question, *sorted(allowed_urls)])
+    if removed:
+        logger.warning("Agent: đã vô hiệu hoá %d link lạ trong câu trả lời.", removed)
+    return filtered
 
 
 async def _ask_agent(question: str) -> tuple[str, str]:
