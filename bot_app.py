@@ -31,7 +31,7 @@ from handlers import (
 )
 from services import channel_chat_service
 from services import portfolio_alerts, rag_clean_service
-from services import portfolio_events, portfolio_push
+from services import portfolio_events, portfolio_push, price_alerts
 from services import monitor_service
 from services import db_maintenance
 from services import http_client
@@ -52,6 +52,8 @@ COMMANDS = [
     BotCommand("xoacp", "Xóa mã khỏi danh mục"),
     BotCommand("lichsucp", "Sổ giao dịch cổ phiếu"),
     BotCommand("laicp", "Lãi/lỗ đã chốt theo tháng"),
+    BotCommand("theodoi", "Danh sách theo dõi và ngưỡng giá"),
+    BotCommand("canhbaogia", "Báo khi giá chạm ngưỡng anh đặt"),
     BotCommand("zalo", "Đăng nhập hoặc xem trạng thái Zalo B"),
     BotCommand("zalologout", "Đăng xuất Zalo B"),
     BotCommand("lich", "Tra lịch âm, ngày lễ, ngày tốt, tuổi, sao hạn"),
@@ -128,6 +130,7 @@ async def _post_init(app):
     scheduler.start(config.ALLOWED_USER_ID)
     portfolio_alerts.start(config.ALLOWED_USER_ID)
     portfolio_events.start()
+    price_alerts.start(config.ALLOWED_USER_ID)
 
 
 async def _post_shutdown(app):
@@ -140,6 +143,7 @@ async def _post_shutdown(app):
     await run_step("Telegram scheduler", scheduler.stop())
     await run_step("portfolio alerts", portfolio_alerts.stop())
     await run_step("portfolio events", portfolio_events.stop())
+    await run_step("price alerts", price_alerts.stop())
     await run_step("idempotency cleanup task", idempotency.stop_cleanup_task())
     await run_step("provider monitor task", monitor_service.stop())
     await run_step("chat memory tasks", channel_chat_service.stop_background_tasks())
@@ -205,6 +209,10 @@ def build_application():
         ("lichsucp", portfolio_commands.portfolio_cmd),
         ("laicp", portfolio_commands.portfolio_cmd),
         ("giaban", portfolio_commands.portfolio_cmd),
+        ("theodoi", portfolio_commands.portfolio_cmd),
+        ("botheodoi", portfolio_commands.portfolio_cmd),
+        ("canhbaogia", portfolio_commands.portfolio_cmd),
+        ("xoacanhbao", portfolio_commands.portfolio_cmd),
         ("zalo", zalo_login.zalo_cmd),
         ("zalologout", zalo_login.zalologout_cmd),
         ("prompt", commands.prompt_cmd),

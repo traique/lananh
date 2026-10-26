@@ -52,6 +52,8 @@ Danh mục cổ phiếu (riêng từng người)
 /xoacp <MÃ> — xoá mã khỏi danh mục
 /lichsucp [MÃ] — sổ giao dịch; /laicp [THÁNG] — lãi/lỗ đã chốt sau phí, thuế
 /giaban <MÃ> <GIÁ> — bổ sung giá cho lệnh bán chưa có giá
+/theodoi [MÃ...] — danh sách theo dõi; /botheodoi <MÃ> — bỏ theo dõi
+/canhbaogia <MÃ> [về|lên] <GIÁ> — báo khi giá chạm ngưỡng anh đặt; /xoacanhbao <MÃ> [GIÁ]
 
 Chỉ admin
 /model [tên|auto] — xem hoặc đổi model

@@ -76,7 +76,9 @@ HELP_TEXT = (
     "/xoacp <MÃ> — xoá mã khỏi danh mục\n"
     "/lichsucp [MÃ] — sổ giao dịch; /laicp [THÁNG] — lãi/lỗ đã chốt sau phí, thuế\n"
     "/giaban <MÃ> <GIÁ> — bổ sung giá cho lệnh bán chưa có giá\n"
-    "Cuối phiên (sau 15h) em tự báo nếu mã nào chạm stop/target hoặc breakout; 8h sáng gửi digest danh mục.\n\n"
+    "/theodoi [MÃ...] — danh sách theo dõi; /botheodoi <MÃ> — bỏ theo dõi\n"
+    '/canhbaogia <MÃ> [về|lên] <GIÁ> — báo khi giá chạm ngưỡng anh đặt (hoặc nhắn "báo anh khi HPG về 25"); /xoacanhbao <MÃ> [GIÁ]\n'
+    "Trong giờ giao dịch em báo ngay khi giá chạm ngưỡng/stop/target; cuối phiên (sau 15h) báo breakout, lỗ sâu; 8h sáng ngày giao dịch gửi digest danh mục.\n\n"
     "*Bản tin và thống kê*\n"
     "/bangtinsang (hoặc /bantinsang) — gửi ngay Bản tin sáng tới Zalo + Zoom (bình thường tự gửi lúc 8h)\n"
     "/tintuc — đọc Điểm tin mới ngay trong Telegram, không broadcast sang Zalo/Zoom\n"

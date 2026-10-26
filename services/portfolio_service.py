@@ -272,6 +272,10 @@ async def handle_command(user_id: int, text: str) -> str | None:
         return await _realized_command(user_id, parts)
     if command == "/giaban":
         return await _fill_price_command(user_id, parts)
+    from services import watchlist_service  # import trễ: watchlist_service dùng module này
+
+    if command in watchlist_service.COMMANDS:
+        return await watchlist_service.handle_command(user_id, command, parts)
     if command == "/xoacp":
         if len(parts) < 2:
             return "Cú pháp: /xoacp <MÃ>"
@@ -443,6 +447,13 @@ async def maybe_handle_natural_language(user_id: int, text: str) -> str | None:
     # để nhánh phân tích cổ phiếu xử lý thay vì ghi nhầm vào danh mục.
     if _is_question_or_advice(stripped):
         return None
+
+    # "báo anh khi HPG về 25": ngưỡng giá NGƯỜI DÙNG tự đặt (không đụng danh mục).
+    from services import watchlist_service
+
+    alert_reply = await watchlist_service.maybe_handle_alert_request(user_id, stripped)
+    if alert_reply is not None:
+        return alert_reply
 
     for index, pattern in enumerate(_BUY_PATTERNS):
         match = pattern.search(stripped)

@@ -101,6 +101,19 @@ services:
         value: "60"
       - key: PORTFOLIO_PUSH_ZALO_DAILY_CAP
         value: "5"
+      # Cảnh báo giá trong phiên (chỉ giờ giao dịch, tick hôm nay).
+      - key: PRICE_ALERTS_ENABLED
+        value: "1"
+      - key: PRICE_ALERTS_HOLDINGS_INTRADAY
+        value: "1"
+      - key: PRICE_ALERT_POLL_SEC
+        value: "300"
+      - key: PRICE_ALERT_MAX_SYMBOLS
+        value: "40"
+      - key: PRICE_ALERT_MAX_PER_USER
+        value: "10"
+      - key: WATCHLIST_MAX_SYMBOLS
+        value: "20"
       - key: ROUTER9_PROBE_INTERVAL_SEC
         value: "900"
       - key: API_QUOTA_COOLDOWN_SEC

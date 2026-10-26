@@ -93,8 +93,12 @@ class _Env:
                 )
             return providers.OhlcvSeries(symbol=symbol)
 
+        async def not_logged(*args, **kwargs):
+            return False
+
         monkeypatch.setattr(pa.db, "get_setting", get_setting)
         monkeypatch.setattr(pa.db, "set_setting", set_setting)
+        monkeypatch.setattr(pa.db, "portfolio_alert_logged", not_logged)
         monkeypatch.setattr(pa, "is_due", lambda now, last: last != self.today.isoformat())
         monkeypatch.setattr(pa, "is_final_poll", lambda now: self.final)
         monkeypatch.setattr(pa.portfolio, "list_holdings", list_holdings)

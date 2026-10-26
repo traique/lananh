@@ -178,10 +178,22 @@ def _streak(prev: dict | None, level: float, today: date) -> int:
     return days + max(1, trading_calendar.trading_days_between(last, today))
 
 
+def holding_alert_ref(symbol: str, level: float) -> str:
+    """Khoá nhật ký stock_alert_log cho lần chạm stop/target của 1 mã (dùng chung
+    với vòng quét trong phiên services/price_alerts.py)."""
+    return f"{symbol}:{level:.0f}"
+
+
 def apply_repeat_rules(
-    signals: list[Signal], prev_state: dict | None, today: date
+    signals: list[Signal],
+    prev_state: dict | None,
+    today: date,
+    *,
+    reported_intraday: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[list[str], dict]:
-    """(dòng cần báo, trạng thái mới) cho 1 mã. Hàm thuần - xem docstring module."""
+    """(dòng cần báo, trạng thái mới) cho 1 mã. Hàm thuần - xem docstring module.
+    ``reported_intraday``: loại (stop/target) đã báo trong phiên hôm nay - ngày
+    đầu chạm thì không báo lại lúc cuối phiên."""
     prev_state = prev_state if isinstance(prev_state, dict) else {}
     lines: list[str] = []
     state: dict = {}
@@ -189,6 +201,8 @@ def apply_repeat_rules(
         if signal.kind in ("stop", "target") and signal.level is not None:
             days = _streak(prev_state.get(signal.kind), signal.level, today)
             state[signal.kind] = {"level": signal.level, "days": days, "last": today.isoformat()}
+            if days <= 1 and signal.kind in reported_intraday:
+                continue
             if days <= 1:
                 lines.append(signal.text)
             elif signal.kind == "stop":
@@ -327,9 +341,16 @@ async def scan_portfolio(user_id: int, today: date) -> PortfolioScan:
 
 
 def compose_alert(
-    scan: PortfolioScan, state: dict, today: date, *, outage: bool
+    scan: PortfolioScan,
+    state: dict,
+    today: date,
+    *,
+    outage: bool,
+    reported_intraday: dict[str, set[str]] | None = None,
 ) -> tuple[str | None, dict]:
-    """(nội dung cảnh báo hoặc None, trạng thái chống lặp mới)."""
+    """(nội dung cảnh báo hoặc None, trạng thái chống lặp mới).
+    ``reported_intraday``: {mã: {"stop", "target"}} đã báo trong phiên hôm nay."""
+    reported_intraday = reported_intraday or {}
     lines: list[str] = []
     new_state: dict = {}
     for item in scan.items:
@@ -340,7 +361,12 @@ def compose_alert(
                 new_state[symbol] = state[symbol]
             continue
         signals = detect_signals(item.holding, item.quote, item.series)
-        shown, symbol_state = apply_repeat_rules(signals, state.get(symbol), today)
+        shown, symbol_state = apply_repeat_rules(
+            signals,
+            state.get(symbol),
+            today,
+            reported_intraday=reported_intraday.get(symbol, set()),
+        )
         if symbol_state:
             new_state[symbol] = symbol_state
         if shown:
@@ -369,7 +395,31 @@ def compose_alert(
     return text, new_state
 
 
-async def _load_state(user_id: int) -> dict:
+async def _reported_intraday(user_id: int, scan: PortfolioScan, today: date) -> dict[str, set[str]]:
+    """Mã/loại (stop, target) đã được vòng quét trong phiên báo hôm nay."""
+    reported: dict[str, set[str]] = {}
+    for item in scan.items:
+        for kind, level in (
+            ("stop", item.holding.stop_price),
+            ("target", item.holding.target_price),
+        ):
+            if level is None:
+                continue
+            try:
+                logged = await db.portfolio_alert_logged(
+                    user_id, kind, holding_alert_ref(item.holding.symbol, level), today.isoformat()
+                )
+            except Exception:
+                logger.warning(
+                    "portfolio_alerts: không đọc được nhật ký trong phiên.", exc_info=True
+                )
+                return reported
+            if logged:
+                reported.setdefault(item.holding.symbol, set()).add(kind)
+    return reported
+
+
+async def load_state(user_id: int) -> dict:
     try:
         raw = await db.get_setting(_STATE_KEY.format(user_id=user_id))
         data = json.loads(raw) if raw else {}
@@ -413,8 +463,9 @@ async def run_once(user_id: int, *, force: bool = False) -> bool:
             len(scan.items),
         )
         return False
-    state = await _load_state(user_id)
-    text, new_state = compose_alert(scan, state, today, outage=outage)
+    state = await load_state(user_id)
+    reported = await _reported_intraday(user_id, scan, today)
+    text, new_state = compose_alert(scan, state, today, outage=outage, reported_intraday=reported)
     if not text:
         await _save_state(user_id, new_state)
         await db.set_setting(_LAST_RUN_KEY, today.isoformat())
