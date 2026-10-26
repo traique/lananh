@@ -323,6 +323,36 @@ async def session_note(pool: Any, telegram_user_id: int, session_key: int) -> An
     )
 
 
+async def rewrite_session_note(
+    pool: Any,
+    telegram_user_id: int,
+    session_key: int,
+    *,
+    title: str,
+    bullets: str,
+    summary: str,
+) -> None:
+    """Ghi ĐÈ title/bullets/summary của 1 phiên (kể cả chuỗi rỗng - khác
+    upsert_session_note giữ trường cũ) mà không đổi thứ tự (updated_at giữ
+    nguyên); cả 3 rỗng thì xoá luôn ghi chú phiên đó. Dùng khi /quen 1 điều."""
+    if not (title or bullets or summary):
+        await pool.execute(
+            "DELETE FROM user_session_notes WHERE telegram_user_id = $1 AND session_key = $2",
+            telegram_user_id,
+            session_key,
+        )
+        return
+    await pool.execute(
+        "UPDATE user_session_notes SET title = $3, bullets = $4, summary = $5 "
+        "WHERE telegram_user_id = $1 AND session_key = $2",
+        telegram_user_id,
+        session_key,
+        title,
+        bullets,
+        summary,
+    )
+
+
 async def clear_session_notes(pool: Any, telegram_user_id: int) -> None:
     await pool.execute(
         "DELETE FROM user_session_notes WHERE telegram_user_id = $1", telegram_user_id
@@ -509,6 +539,20 @@ async def finish_events(pool: Any, telegram_user_id: int) -> int:
             "UPDATE user_events SET status = 'done' "
             "WHERE telegram_user_id = $1 AND status = 'pending'",
             telegram_user_id,
+        )
+    )
+
+
+async def finish_event_ids(pool: Any, telegram_user_id: int, ids: list[int]) -> int:
+    """Các sự kiện còn chờ trong ``ids`` (của chính người đó) -> done."""
+    if not ids:
+        return 0
+    return _count(
+        await pool.execute(
+            "UPDATE user_events SET status = 'done' "
+            "WHERE telegram_user_id = $1 AND id = ANY($2::bigint[]) AND status = 'pending'",
+            telegram_user_id,
+            ids,
         )
     )
 

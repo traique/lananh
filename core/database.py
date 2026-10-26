@@ -1081,6 +1081,23 @@ async def get_session_note(telegram_user_id: int, session_key: int) -> dict | No
 
 
 @_with_reconnect
+async def rewrite_session_note(
+    telegram_user_id: int, session_key: int, *, title: str, bullets: str, summary: str
+) -> None:
+    """Ghi đè (kể cả rỗng) ghi chú 1 phiên; cả 3 trường rỗng thì xoá phiên đó."""
+    from core.repositories import memory
+
+    await memory.rewrite_session_note(
+        await get_pool(),
+        telegram_user_id,
+        session_key,
+        title=title,
+        bullets=bullets,
+        summary=summary,
+    )
+
+
+@_with_reconnect
 async def clear_session_notes(telegram_user_id: int) -> None:
     from core.repositories import memory
 
@@ -1206,6 +1223,14 @@ async def finish_user_events(telegram_user_id: int) -> int:
     from core.repositories import memory
 
     return await memory.finish_events(await get_pool(), telegram_user_id)
+
+
+@_with_reconnect
+async def finish_user_event_ids(telegram_user_id: int, ids: list[int]) -> int:
+    """Sự kiện còn chờ trong ``ids`` -> done (lặp lại an toàn)."""
+    from core.repositories import memory
+
+    return await memory.finish_event_ids(await get_pool(), telegram_user_id, ids)
 
 
 @_with_reconnect

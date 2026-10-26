@@ -536,6 +536,61 @@ class _FlushStats:
     facts: int = 0
     highlights: int = 0
     events: int = 0
+    # Giá trị fact vừa bị FORGET: dọn khỏi ghi chú phiên/tóm tắt SAU khi ghi
+    # ghi chú phiên của chính lượt này (AI có thể chép lại vào bản tóm tắt mới).
+    forgotten: list[str] = field(default_factory=list)
+
+
+# ─── Dọn giá trị đã quên khỏi mọi nơi được chèn vào prompt ──────────────────
+_SCRUB_MIN_CHARS = 4
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+|\n+")
+
+
+def _drop_sentences(text: str, needle: str) -> str:
+    """Bỏ các câu (hoặc dòng) có ``needle`` (đã fold) - giữ nguyên nếu không có."""
+    parts = [part.strip() for part in _SENTENCE_SPLIT_RE.split(text or "") if part.strip()]
+    kept = [part for part in parts if needle not in fold(part)]
+    return text if len(kept) == len(parts) else " ".join(kept)
+
+
+async def scrub_forgotten(user_id: int, value: str) -> None:
+    """/quen hoặc op FORGET: giá trị đã quên không được ở lại trong highlight,
+    ghi chú phiên (tiêu đề/gạch đầu dòng/tóm tắt), tóm tắt cũ user_memory_summary
+    và sự kiện hỏi thăm còn chờ - cả 4 đều được chèn vào prompt/nhắn chủ động.
+    Giá trị quá ngắn (< 4 ký tự) thì bỏ qua: khớp chuỗi con dễ xoá nhầm."""
+    needle = fold(value or "").strip()
+    if len(needle) < _SCRUB_MIN_CHARS:
+        return
+    highlights = await db.get_highlight_rows(user_id, MAX_HIGHLIGHTS_PER_USER)
+    related = [int(h["id"]) for h in highlights if needle in fold(str(h.get("content") or ""))]
+    if related:
+        await db.delete_highlights(user_id, related)
+    for note in await db.get_session_notes(user_id, db.SESSION_NOTES_RETENTION):
+        title = str(note.get("title") or "")
+        bullets = str(note.get("bullets") or "")
+        summary = str(note.get("summary") or "")
+        new_title = "" if needle in fold(title) else title
+        new_bullets = "\n".join(line for line in bullets.splitlines() if needle not in fold(line))
+        new_summary = _drop_sentences(summary, needle)
+        if (new_title, new_bullets, new_summary) != (title, bullets, summary):
+            await db.rewrite_session_note(
+                user_id,
+                int(note["session_key"]),
+                title=new_title,
+                bullets=new_bullets,
+                summary=new_summary,
+            )
+    legacy = await db.get_summary(user_id)
+    if legacy and needle in fold(legacy):
+        await db.set_summary(user_id, _drop_sentences(legacy, needle))
+    events = await db.list_user_events(user_id, db.USER_EVENTS_PER_USER)
+    pending = [
+        int(e["id"])
+        for e in events
+        if e.get("status") == "pending" and needle in fold(str(e.get("title") or ""))
+    ]
+    if pending:
+        await db.finish_user_event_ids(user_id, pending)
 
 
 async def _apply_facts(
@@ -576,6 +631,7 @@ async def _apply_facts(
                 continue
             await db.delete_fact(user_id, target["key"])
             await add_to_forget_list(user_id, key=target["key"], text=str(target["value"]))
+            stats.forgotten.append(str(target["value"]))
             stats.facts += 1
             continue
         if op == "update":
@@ -739,6 +795,8 @@ async def _process_group(
         stats.events = await proactive_service.add_extracted_events(
             user_id, data["events"], [r for r in window if r["role"] == "user"]
         )
+    for value in stats.forgotten:
+        await scrub_forgotten(user_id, value)
     logger.info(
         "Trích nhớ user_id=%s: %d lượt, %d fact, %d highlight, %d sự kiện.",
         user_id,
@@ -1368,7 +1426,8 @@ async def _mid_block(
 
 
 async def clear_memory(user_id: int) -> None:
-    """Xoá sạch trí nhớ dài hạn (facts + summary + highlights + ghi chú phiên).
+    """Xoá sạch trí nhớ dài hạn (facts + summary + highlights + ghi chú phiên +
+    sự kiện hỏi thăm).
     Lịch sử phiên (chat_messages) KHÔNG bị ảnh hưởng - dùng /reset cho việc đó;
     watermark nhảy tới tin mới nhất để lịch sử cũ không bị trích lại. Chờ khoá
     có trần (lệnh tương tác): raise MemoryBusy."""
@@ -1377,4 +1436,7 @@ async def clear_memory(user_id: int) -> None:
         await db.set_summary(user_id, "")
         await db.clear_highlights(user_id)
         await db.clear_session_notes(user_id)
+        # Sự kiện hỏi thăm ("phỏng vấn ở công ty X") cũng là điều em nhớ về
+        # người dùng: "xoá toàn bộ trí nhớ" thì không còn hỏi thăm theo chúng.
+        await db.clear_user_events(user_id)
         await _skip_to_latest(user_id)

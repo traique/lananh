@@ -224,6 +224,31 @@ async def test_forget_chi_khi_nguoi_dung_chu_dong_bao_quen_va_khong_hoc_lai(mem)
 
 
 @pytest.mark.asyncio
+async def test_forget_cua_bo_trich_xoa_ca_ghi_chu_phien_nhac_toi(mem):
+    """Op FORGET của bộ trích: ghi chú phiên (kể cả bản tóm tắt AI vừa viết lại
+    trong cùng lượt) và highlight nhắc tới giá trị đó cũng bị xoá."""
+    from datetime import datetime, timezone
+
+    await db.save_fact(UID, "suc_khoe", "tiểu đường type 2")
+    await db.add_highlight(UID, "Anh bị tiểu đường type 2 nên kiêng ngọt", 25)
+    await db.upsert_session_note(
+        UID, 5, bullets="Anh kể bị tiểu đường type 2", started_at=datetime.now(timezone.utc)
+    )
+    fact_id = mem.current(UID)[0]["id"]
+    mem.add_turn(UID, "em quên chuyện anh bị bệnh đi", "dạ em quên rồi")
+    mem.responses.append(
+        {
+            "facts": [{"op": "forget", "id": fact_id}],
+            "session": {"summary": "Anh nhắc chuyện tiểu đường type 2 rồi bảo em quên đi."},
+        }
+    )
+    assert await memory_service.maybe_flush(UID, explicit=True) is True
+    assert mem.current(UID) == [] and mem.highlights == []
+    for note in mem.session_notes.values():
+        assert "tiểu đường" not in " ".join(str(v) for v in note.values())
+
+
+@pytest.mark.asyncio
 async def test_dinh_dang_cu_delete_thanh_invalidate_va_chan_bi_mat(mem):
     await db.save_fact(UID, "nghe_nghiep", "kỹ sư")
     mem.add_turn(UID, "mật khẩu wifi nhà anh là abc12345", "dạ")

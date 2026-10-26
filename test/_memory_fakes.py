@@ -88,6 +88,10 @@ class FakeMemoryDB:
             "clear_chat",
             "get_session_messages",
             "answer_feedback_clear",
+            "rewrite_session_note",
+            "list_user_events",
+            "finish_user_event_ids",
+            "clear_user_events",
         ):
             monkeypatch.setattr(db_module, name, getattr(self, name))
 
@@ -284,6 +288,32 @@ class FakeMemoryDB:
 
     async def clear_session_notes(self, uid):
         self.session_notes = {k: v for k, v in self.session_notes.items() if k[0] != uid}
+
+    async def rewrite_session_note(self, uid, session_key, *, title, bullets, summary):
+        if not (title or bullets or summary):
+            self.session_notes.pop((uid, session_key), None)
+            return
+        note = self.session_notes.get((uid, session_key))
+        if note is not None:
+            note.update(title=title, bullets=bullets, summary=summary)
+
+    # ─── sự kiện hỏi thăm ───
+    def add_event(self, uid, title, status="pending"):
+        self.events.append({"id": next(self._ids), "uid": uid, "title": title, "status": status})
+
+    async def list_user_events(self, uid, limit=20):
+        return [dict(e) for e in self.events if e["uid"] == uid][::-1][:limit]
+
+    async def finish_user_event_ids(self, uid, ids):
+        count = 0
+        for e in self.events:
+            if e["uid"] == uid and e["id"] in ids and e["status"] == "pending":
+                e["status"] = "done"
+                count += 1
+        return count
+
+    async def clear_user_events(self, uid):
+        self.events = [e for e in self.events if e["uid"] != uid]
 
     # ─── notes ───
     async def add_note(self, uid, content, *, event_key=None):

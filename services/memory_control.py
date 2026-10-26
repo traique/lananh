@@ -310,12 +310,9 @@ async def forget_item(user_id: int, selector: str) -> str:
         if kind == "fact":
             key, value = str(row["key"]), str(row["value"])
             await db.delete_fact(user_id, key)
-            related = [
-                int(h["id"])
-                for h in items.highlights
-                if len(value) >= 4 and fold(value) in fold(str(h["content"]))
-            ]
-            await db.delete_highlights(user_id, related)
+            # Cả highlight, ghi chú phiên, tóm tắt cũ và sự kiện hỏi thăm nhắc
+            # tới giá trị này (đều được chèn vào prompt).
+            await memory_service.scrub_forgotten(user_id, value)
             await memory_service.add_to_forget_list(user_id, key=key, text=value)
             return f"🗑️ Em quên rồi: {_label(key)}: {value}"
         content = str(row["content"])

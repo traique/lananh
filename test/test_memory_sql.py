@@ -149,3 +149,33 @@ async def test_su_kien_hoi_tham_claim_release_va_het_han(delivery_db):
     assert await db.finish_user_events(UID) == 1  # "đi khám"
     statuses = {row["title"]: row["status"] for row in await db.list_user_events(UID)}
     assert statuses == {"phỏng vấn": "asked", "đi khám": "done"}
+
+
+@pytest.mark.asyncio
+async def test_ghi_de_ghi_chu_phien_va_xong_su_kien_theo_id(delivery_db):
+    """/quen 1 điều: ghi đè (kể cả rỗng) ghi chú phiên không đổi thứ tự, cả 3 trường
+    rỗng thì xoá; chỉ sự kiện còn chờ của chính người đó trong danh sách id -> done."""
+    start = dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc)
+    await db.upsert_session_note(
+        UID, 10, title="Sức khoẻ", bullets="- tiểu đường\n- bơi", summary="A. B.", started_at=start
+    )
+    await db.upsert_session_note(UID, 20, title="Phiên 2", started_at=start)
+    await db.rewrite_session_note(UID, 10, title="Sức khoẻ", bullets="- bơi", summary="")
+    note = await db.get_session_note(UID, 10)
+    assert (note["title"], note["bullets"], note["summary"]) == ("Sức khoẻ", "- bơi", "")
+    assert [n["session_key"] for n in await db.get_session_notes(UID, 10)] == [20, 10]
+    await db.rewrite_session_note(UID, 20, title="", bullets="", summary="")
+    assert await db.get_session_note(UID, 20) is None
+
+    today = dt.date(2026, 10, 26)
+    await db.add_user_event(UID, "tái khám tiểu đường", "mai", today)
+    await db.add_user_event(UID, "phỏng vấn", "mai", today)
+    await db.add_user_event(-5, "tái khám tiểu đường", "mai", today)
+    events = {e["title"]: e["id"] for e in await db.list_user_events(UID)}
+    other = (await db.list_user_events(-5))[0]["id"]
+    assert await db.finish_user_event_ids(UID, [events["tái khám tiểu đường"], other]) == 1
+    assert await db.finish_user_event_ids(UID, [events["tái khám tiểu đường"]]) == 0
+    assert await db.finish_user_event_ids(UID, []) == 0
+    statuses = {e["title"]: e["status"] for e in await db.list_user_events(UID)}
+    assert statuses == {"tái khám tiểu đường": "done", "phỏng vấn": "pending"}
+    assert (await db.list_user_events(-5))[0]["status"] == "pending"

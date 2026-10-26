@@ -339,3 +339,41 @@ async def test_quen_theo_so_khi_chua_xem_danh_sach_thi_hoi_xac_nhan(mem, monkeyp
     monkeypatch.setattr(memory_control, "LISTING_TTL_SEC", -1.0)
     again = (await _cmd("/quen", "1")).messages[0]
     assert "/quen 1 xacnhan" in again and len(mem.current(UID)) == 2
+
+
+@pytest.mark.asyncio
+async def test_quen_xoa_ca_ghi_chu_phien_tom_tat_cu_va_su_kien_nhac_toi(mem):
+    """/quen 1 fact: ghi chú phiên, tóm tắt cũ và sự kiện hỏi thăm nhắc tới giá
+    trị đó (đều được chèn vào prompt) cũng không còn giữ nó."""
+    from datetime import datetime, timezone
+
+    await db.save_fact(UID, "suc_khoe", "tiểu đường type 2", importance=3)
+    started = datetime.now(timezone.utc)
+    await db.upsert_session_note(
+        UID,
+        10,
+        title="Chuyện sức khoẻ",
+        bullets="Anh kể bị tiểu đường type 2\nAnh định đi bơi",
+        summary="Anh kể bị tiểu đường type 2. Anh định đi bơi buổi sáng.",
+        started_at=started,
+    )
+    await db.upsert_session_note(UID, 20, title="Tiểu đường type 2", started_at=started)
+    await db.set_summary(UID, "Anh làm PM. Anh bị tiểu đường type 2 từ năm ngoái.")
+    mem.add_event(UID, "tái khám tiểu đường type 2")
+    mem.add_event(UID, "phỏng vấn ở công ty X")
+    done = (await _cmd("/quen", "suc khoe")).messages[0]
+    assert done.startswith("🗑️ Em quên rồi")
+    note = mem.session_notes[(UID, 10)]
+    assert note["bullets"] == "Anh định đi bơi"
+    assert note["summary"] == "Anh định đi bơi buổi sáng."
+    assert (UID, 20) not in mem.session_notes  # chỉ còn tiêu đề nhắc tới -> bỏ cả ghi chú
+    assert mem.summary[UID] == "Anh làm PM."
+    statuses = {e["title"]: e["status"] for e in mem.events}
+    assert statuses == {"tái khám tiểu đường type 2": "done", "phỏng vấn ở công ty X": "pending"}
+
+
+@pytest.mark.asyncio
+async def test_forget_dung_ca_su_kien_hoi_tham(mem):
+    mem.add_event(UID, "phỏng vấn ở công ty X")
+    assert "Đã xoá toàn bộ" in (await _cmd("/forget")).messages[0]
+    assert mem.events == []
