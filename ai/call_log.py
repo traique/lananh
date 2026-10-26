@@ -13,8 +13,9 @@ xong response. Ô chứa là 1 object mutable trong ContextVar nên client chạ
 task con (asyncio.wait_for, gather) vẫn ghi được vào đúng ô của lượt gọi đó.
 
 Header rate-limit (x-ratelimit-remaining-requests/-tokens của Groq...) được giữ
-bản mới nhất theo provider (``latest_ratelimit``) cho trang quota (services/
-quota_burn.py) - chỉ vài provider đã biết, có trần.
+bản mới nhất theo (provider, model) (``latest_ratelimit`` - Groq tính quota THEO
+MODEL: model tra web khác bucket model chat) cho trang quota (services/
+quota_burn.py) - chỉ vài provider đã biết, có trần số bản.
 """
 
 from __future__ import annotations
@@ -174,14 +175,30 @@ def note_ratelimit_headers(headers: Any) -> None:
         usage.ratelimit = found
 
 
-# Bản header rate-limit mới nhất theo provider: (epoch, headers). Chỉ provider
-# trong danh sách -> tối đa vài phần tử.
+# Bản header rate-limit mới nhất theo (provider, model): (epoch, headers). Chỉ
+# provider trong danh sách; quá trần thì bỏ bản cũ nhất.
 _RATELIMIT_PROVIDERS = frozenset({"groq", "openrouter", "router9"})
-_latest_ratelimit: dict[str, tuple[float, dict[str, str]]] = {}
+_MAX_RATELIMIT_SNAPSHOTS = 12
+_latest_ratelimit: dict[tuple[str, str], tuple[float, dict[str, str]]] = {}
 
 
-def latest_ratelimit(provider: str) -> tuple[float, dict[str, str]] | None:
-    return _latest_ratelimit.get(provider)
+def latest_ratelimit(
+    provider: str, model: str | None = None
+) -> tuple[float, dict[str, str]] | None:
+    """Bản header mới nhất của ``provider`` - đúng ``model`` khi truyền (Groq: quota
+    theo model), không thì bản mới nhất của bất kỳ model nào."""
+    if model is not None:
+        return _latest_ratelimit.get((provider, model))
+    found = [value for (name, _model), value in _latest_ratelimit.items() if name == provider]
+    return max(found, key=lambda item: item[0], default=None)
+
+
+def _keep_ratelimit(provider: str, model: str, headers: dict[str, str]) -> None:
+    key = (provider, model)
+    if key not in _latest_ratelimit and len(_latest_ratelimit) >= _MAX_RATELIMIT_SNAPSHOTS:
+        oldest = min(_latest_ratelimit, key=lambda item: _latest_ratelimit[item][0])
+        del _latest_ratelimit[oldest]
+    _latest_ratelimit[key] = (time.time(), dict(headers))
 
 
 # ─── Ghi provider_calls ─────────────────────────────────────────────────────
@@ -201,7 +218,7 @@ async def record(
     stage = stage if stage is not None else _call_stage.get()
     trace.note_call(provider, outcome, latency_ms, stage)
     if usage is not None and usage.ratelimit and provider in _RATELIMIT_PROVIDERS:
-        _latest_ratelimit[provider] = (time.time(), dict(usage.ratelimit))
+        _keep_ratelimit(provider, model or provider, usage.ratelimit)
     try:
         await db.record_provider_call(
             provider,

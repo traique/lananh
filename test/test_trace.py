@@ -262,6 +262,27 @@ async def test_header_rate_limit_giu_ban_moi_nhat_theo_provider(provider_calls):
     assert headers == {"x-ratelimit-remaining-requests": "990"}
 
 
+async def test_header_rate_limit_tach_theo_model(provider_calls, monkeypatch):
+    """Groq tính quota THEO MODEL: header của model tra web (gpt-oss-120b) không
+    được đè bản của model chat (gpt-oss-20b)."""
+    monkeypatch.setattr(call_log, "_latest_ratelimit", {})
+    for model, remaining in (("openai/gpt-oss-20b", "900"), ("openai/gpt-oss-120b", "10")):
+        with call_log.collect_usage() as usage:
+            call_log.note_ratelimit_headers({"x-ratelimit-remaining-requests": remaining})
+        await call_log.record("groq", model, usage=usage, stage="chat")
+    _, chat = call_log.latest_ratelimit("groq", "openai/gpt-oss-20b")
+    _, search = call_log.latest_ratelimit("groq", "openai/gpt-oss-120b")
+    assert chat["x-ratelimit-remaining-requests"] == "900"
+    assert search["x-ratelimit-remaining-requests"] == "10"
+    assert call_log.latest_ratelimit("groq", "khac") is None
+    # Có trần số bản giữ trong RAM.
+    for i in range(call_log._MAX_RATELIMIT_SNAPSHOTS + 5):
+        with call_log.collect_usage() as usage:
+            call_log.note_ratelimit_headers({"x-ratelimit-remaining-requests": "1"})
+        await call_log.record("groq", f"m{i}", usage=usage)
+    assert len(call_log._latest_ratelimit) == call_log._MAX_RATELIMIT_SNAPSHOTS
+
+
 # ─── Orchestrator: provider-chain ghi mã lượt + token ────────────────────────
 
 

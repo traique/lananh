@@ -277,12 +277,23 @@ async def test_burn_gemini_cung_project_cong_chung(burn_db, monkeypatch):
     assert "api1" not in burns and burns["gemini"].used == 200 and burns["gemini"].pct == 80.0
 
 
-async def test_burn_groq_lay_so_con_lai_tu_header(burn_db):
+async def test_burn_groq_lay_so_con_lai_tu_header(burn_db, monkeypatch):
     import time
 
-    call_log._latest_ratelimit["groq"] = (
-        time.time(),
+    from ai import groq_client
+
+    async def chat_model():
+        return "openai/gpt-oss-20b"
+
+    monkeypatch.setattr(groq_client, "model_name", chat_model)
+    call_log._latest_ratelimit[("groq", "openai/gpt-oss-20b")] = (
+        time.time() - 5,
         {"x-ratelimit-limit-requests": "1000", "x-ratelimit-remaining-requests": "150"},
+    )
+    # Header MỚI HƠN của model tra web (bucket khác) không được đè số của model chat.
+    call_log._latest_ratelimit[("groq", "openai/gpt-oss-120b")] = (
+        time.time(),
+        {"x-ratelimit-limit-requests": "1000", "x-ratelimit-remaining-requests": "990"},
     )
     groq = {b.name: b for b in await quota_burn.snapshot()}["groq"]
     assert (groq.used, groq.limit, groq.pct, groq.source) == (850, 1000, 85.0, "header")

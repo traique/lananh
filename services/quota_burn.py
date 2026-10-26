@@ -139,8 +139,22 @@ def _int(value) -> int | None:
         return None
 
 
-def _apply_groq_headers(burn: Burn, now_epoch: float) -> None:
-    snapshot = call_log.latest_ratelimit("groq")
+async def _groq_chat_model() -> str:
+    """Model chat của Groq (override trang admin/`/model` hoặc GROQ_MODEL) - quota
+    Groq tính theo model, trang quota đọc bucket của model chat."""
+    try:
+        from ai import groq_client
+
+        return await groq_client.model_name()
+    except Exception:
+        logger.warning("Không đọc được model Groq đang dùng, lấy GROQ_MODEL.", exc_info=True)
+        from core import config
+
+        return config.GROQ_MODEL
+
+
+def _apply_groq_headers(burn: Burn, now_epoch: float, model: str) -> None:
+    snapshot = call_log.latest_ratelimit("groq", model)
     if snapshot is None or now_epoch - snapshot[0] > _HEADER_MAX_AGE_SEC:
         return
     headers = snapshot[1]
@@ -184,7 +198,7 @@ async def snapshot(now: datetime | None = None) -> list[Burn]:
             burn.completion_tokens += int(row.get("completion_tokens") or 0)
             burn.used += int(row.get("credits" if spec.unit == "credit" else "requests") or 0)
         if spec.name == "groq":
-            _apply_groq_headers(burn, now.timestamp())
+            _apply_groq_headers(burn, now.timestamp(), await _groq_chat_model())
         if burn.limit:
             burn.pct = round(burn.used * 100 / burn.limit, 1)
         burns.append(burn)

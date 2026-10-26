@@ -337,10 +337,17 @@ async def _effective_model(provider: str) -> str:
     logic web.py::_provider_info() dùng để hiển thị ở trang admin (phần
     "Providers - model & API key"), tái dùng ở đây để log_lượt gọi theo
     đúng model admin đang thấy, kể cả khi có override qua provider_overrides
-    hoặc /model."""
+    hoặc /model. Lượt tự tra web (call_stage "search") ghi đúng model tra web:
+    Groq browser_search chạy GROQ_REALTIME_MODEL, 9Router chạy
+    ROUTER9_WEB_SEARCH_MODEL (nếu đặt) - không phải model chat."""
+    search = _call_stage.get() == "search"
     if provider == "router9":
+        if search and router9_client.supports_web_search() and config.ROUTER9_WEB_SEARCH_MODEL:
+            return config.ROUTER9_WEB_SEARCH_MODEL
         return await router9_client.get_preferred_model_name() or config.ROUTER9_MODEL
     if provider == "groq":
+        if search:
+            return groq_client.search_model()
         return await groq_client._model()
     if provider == "openrouter":
         return await openrouter_client._model()

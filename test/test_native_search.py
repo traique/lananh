@@ -721,3 +721,28 @@ async def test_ask_thuong_khong_doi_bang_chung_tra_web(monkeypatch):
     calls = _Calls(monkeypatch)
     await orchestrator.ask("tóm tắt giúp", providers_override=["api1"])
     assert calls.log[0][1]["require_search_evidence"] is False
+
+
+@pytest.mark.asyncio
+async def test_ghi_luot_goi_tra_web_dung_model_tra_web(monkeypatch):
+    """provider_calls.model/response.model của lượt tự tra web: Groq chạy
+    GROQ_REALTIME_MODEL, 9Router chạy ROUTER9_WEB_SEARCH_MODEL - không phải model chat."""
+    monkeypatch.setattr(config, "GROQ_MODEL", "openai/gpt-oss-20b")
+    monkeypatch.setattr(config, "ROUTER9_WEB_SEARCH", True)
+    monkeypatch.setattr(config, "ROUTER9_WEB_SEARCH_MODEL", "gpt-4o-search")
+    monkeypatch.setattr(config, "ROUTER9_MODEL", "r9-chat")
+
+    assert await orchestrator._effective_model("groq") == "openai/gpt-oss-20b"
+    assert await orchestrator._effective_model("router9") == "r9-chat"
+    with orchestrator.call_stage("search"):
+        assert await orchestrator._effective_model("groq") == "openai/gpt-oss-120b"
+        assert await orchestrator._effective_model("router9") == "gpt-4o-search"
+        monkeypatch.setattr(config, "ROUTER9_WEB_SEARCH_MODEL", "")
+        assert await orchestrator._effective_model("router9") == "r9-chat"
+
+    calls = _Calls(monkeypatch)
+    response = await orchestrator.ask(
+        "giá vàng", require_real_search=True, providers_override=["groq"]
+    )
+    assert calls.names() == ["groq:search"]
+    assert (response.provider, response.model) == ("groq", "openai/gpt-oss-120b")
