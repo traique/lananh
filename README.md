@@ -267,6 +267,23 @@ STOCK_BACKTEST_ALLOW_ON_RENDER=false
 
 Nếu code vô tình gọi backtest trên Render, tác vụ dừng trước khi tải dữ liệu hoặc dùng CPU đáng kể. Hãy tạo `stock/data/backtest_stats.json` bằng job CI/offline riêng rồi deploy file kết quả.
 
+### Lưu ý khi deploy lên bản có migration 017 (trí nhớ v2)
+
+Migration chạy ở instance MỚI (`_post_init` → `init_db`) trong lúc Render vẫn để
+instance CŨ phục vụ cho tới khi instance mới healthy. `017_memory_meta.sql` bỏ
+`UNIQUE(telegram_user_id, key)` của `user_facts` (thay bằng unique index chỉ trên
+dòng hiện hành, để giữ lịch sử giá trị cũ), nên trong khoảng chạy chồng đó lệnh
+ghi trí nhớ của bản cũ (`ON CONFLICT (telegram_user_id, key)`) lỗi "no unique or
+exclusion constraint matching the ON CONFLICT specification": trí nhớ (fact, tóm
+tắt) trích từ các lượt chat do bản cũ trả lời trong vài chục giây tới vài phút đó
+bị mất, chỉ còn 1 dòng WARNING trong log. Chỉ xảy ra 1 lần ở lần deploy áp 017 và
+không ảnh hưởng câu trả lời; muốn tránh hẳn thì deploy lúc không ai chat. Không
+giữ được unique index đầy đủ cho bản cũ vì nó chặn chính việc giữ lịch sử fact.
+
+Quy ước từ nay: migration bỏ ràng buộc/cột mà code bản đang chạy còn dùng phải
+tách 2 bước - bản phát hành trước thêm cấu trúc mới và ngừng phụ thuộc cái cũ
+(expand), bản sau mới bỏ (contract) - vì instance cũ luôn chạy chồng lúc deploy.
+
 ## Thiết lập Zalo
 
 Đặt `ZALO_ENABLED=true`, cấu hình `ZALO_BRIDGE_SECRET` và redeploy. Trong Telegram gửi:
