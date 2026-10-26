@@ -120,8 +120,16 @@ _STATEMENT_RE = re.compile(
 )
 
 
+# Câu HỎI ("em ở Đà Nẵng à?", "anh ở Hà Nội hả") không phải khai báo - so trên chữ
+# có dấu vì bỏ dấu thì "à" (hỏi) trùng "ạ" (lễ phép: "em ở Hà Nội ạ" vẫn là khai báo).
+_QUESTION_END_RE = re.compile(r"(?:^|\s)(?:à|hả|hở|hử|sao|chưa|không|hông|ko|k)\s*$")
+
+
 def parse_statement(text: str) -> str | None:
     """Tên địa danh quen nếu tin nhắn là câu khai báo nơi ở, ngược lại None."""
+    low = (text or "").lower()
+    if "?" in low or _QUESTION_END_RE.search(re.sub(r"[!.,;:…]+", " ", low)):
+        return None
     folded = re.sub(r"[?!.,;:]+", " ", fold(text or ""))
     folded = re.sub(r"\s+", " ", folded).strip()
     if len(folded) > 60:

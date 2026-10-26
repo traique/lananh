@@ -36,6 +36,16 @@ def store(monkeypatch):
         ("anh đang ở Hà Nội", None),  # đi công tác/du lịch: không đổi mặc định
         ("hôm nay anh ở Hà Nội mệt quá", None),
         ("thời tiết Hà Nội", None),
+        # Câu hỏi không phải câu khai báo: không được ghi đè thành phố đã lưu.
+        ("em ở Đà Nẵng à?", None),
+        ("em ở Đà Nẵng à", None),
+        ("anh ở Hà Nội hả", None),
+        ("em ở Huế không", None),
+        ("anh ở Hà Nội ko", None),
+        ("em ở Cần Thơ sao", None),
+        ("mình ở Hà Nội?", None),
+        ("em ở Hà Nội ạ", "Hà Nội"),  # "ạ" lễ phép, vẫn là khai báo
+        ("em o Ha Noi a", "Hà Nội"),  # gõ không dấu: không phân biệt được, giữ như cũ
     ],
 )
 def test_parse_statement(text, expected):
