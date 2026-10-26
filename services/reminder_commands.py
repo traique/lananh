@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 
-from core.text_normalize import fold
+from core.text_normalize import fold, nfc
 from services import ngay_nho, reminder_service, vn_time_parse
 
 NHAC_USAGE = (
@@ -34,8 +34,19 @@ NGAYNHO_USAGE = (
     "Âm lịch: tháng thiếu không có ngày 30 thì nhắc ngày 29; năm có tháng nhuận vẫn theo "
     'tháng thường (thêm "theo tháng nhuận" nếu nhà mình làm theo tháng nhuận).'
 )
-_CANCEL_WORDS = {"huy", "xoa", "bo", "cancel", "del"}
-_SNOOZE_WORDS = {"hoan", "doi", "snooze"}
+_CANCEL_WORDS = {"huy", "xoa", "bo", "cancel", "del"}  # /ngaynho (đã soát thêm ngày-tháng)
+# /nhac: so chữ đầu CÒN DẤU - bỏ dấu thì "bỏ"/"bố", "Huy" (tên), "đổi"/"đợi"/"đội"
+# trùng lệnh huỷ/hoãn. Chữ gõ không dấu (huy, xoa, hoan, doi) chỉ là lệnh khi viết
+# thường và theo sau là số thứ tự, hoặc phần còn lại không phải 1 nhắc mới có giờ.
+_CANCEL_HEADS = {"huỷ", "hủy", "xoá", "xóa", "cancel", "del"}
+_CANCEL_PLAIN_HEADS = {"huy", "xoa"}
+_SNOOZE_HEADS = {"hoãn", "dời", "snooze"}
+_SNOOZE_PLAIN_HEADS = {"hoan", "doi"}
+_PLAIN_HEADS = {
+    **dict.fromkeys(_CANCEL_PLAIN_HEADS, "cancel"),
+    **dict.fromkeys(_SNOOZE_PLAIN_HEADS, "snooze"),
+}
+_INDEX_RE = re.compile(r"#?\d{1,3}")
 _LIST_WORDS = {"", "xem", "list", "ds", "danh sach"}
 _HELP_WORDS = {"help", "huong dan", "?"}
 
@@ -45,23 +56,48 @@ def _split(argument: str) -> tuple[str, str]:
     return fold(head), rest.strip()
 
 
+def _nhac_action(argument: str, now: dt.datetime) -> tuple[str | None, str]:
+    """("cancel" | "snooze" | None (đặt nhắc mới), phần sau chữ lệnh) của /nhac."""
+    raw_head, _, rest = argument.partition(" ")
+    rest = rest.strip()
+    head = nfc(raw_head).lower()
+    target = rest.partition(" ")[0]
+    if head in _CANCEL_HEADS:
+        return "cancel", rest
+    if head in _SNOOZE_HEADS:
+        return "snooze", rest
+    if head in {"bỏ", "bo"} and _INDEX_RE.fullmatch(rest):
+        return "cancel", rest  # "bỏ 2"; "bỏ rác 7h tối" là đặt nhắc
+    action = _PLAIN_HEADS.get(head)
+    if action is None:
+        return None, rest
+    if _INDEX_RE.fullmatch(rest if action == "cancel" else target):
+        return action, rest
+    if raw_head != raw_head.lower():
+        return None, rest  # "Huy gửi hồ sơ 9h sáng mai": tên người
+    extracted = vn_time_parse.extract_reminder(argument, now)
+    if extracted is not None and extracted[1].due_at is not None:
+        return None, rest  # "huy gửi hồ sơ 9h sáng mai": nhắc mới có giờ
+    return action, rest
+
+
 async def nhac(user_id: int, argument: str) -> str:
     argument = " ".join(argument.split())
-    head, rest = _split(argument)
     if fold(argument) in _LIST_WORDS:
         return reminder_service.format_items(await reminder_service.pending_items(user_id))
     if fold(argument) in _HELP_WORDS:
         return NHAC_USAGE
-    if head in _CANCEL_WORDS:
+    now = dt.datetime.now(vn_time_parse.VN_TZ)
+    action, rest = _nhac_action(argument, now)
+    if action == "cancel":
         if not rest:
             return "Huỷ nhắc nào? Ví dụ /nhac huy 2 (số trong danh sách /nhac)."
         return (await reminder_service.cancel(user_id, rest))[0]
-    if head in _SNOOZE_WORDS:
+    if action == "snooze":
         target, _, when = rest.partition(" ")
         if not target:
             return "Ví dụ: /nhac hoan 2 30p, /nhac hoan 2 sáng mai."
         return (await reminder_service.snooze_pending(user_id, target, when))[0]
-    now = dt.datetime.now(vn_time_parse.VN_TZ)
     extracted = vn_time_parse.extract_reminder(argument, now)
     if extracted is None:
         me = reminder_service.me_word().capitalize()

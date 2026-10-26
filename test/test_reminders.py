@@ -210,6 +210,39 @@ async def test_nhac_hoan_doi_gio(fake):
 
 
 @pytest.mark.asyncio
+async def test_nhac_chu_dau_trung_huy_hoan_khi_bo_dau_van_dat_nhac(fake):
+    """bỏ/bố, Huy, đổi/đợi bỏ dấu trùng lệnh huỷ/hoãn: vẫn là đặt nhắc mới, không
+    huỷ/dời nhầm 1 nhắc khác."""
+    await reminder_commands.nhac(1, "9h tối mai thay bình lọc nước")
+    old = {rid: dict(r) for rid, r in fake.rows.items()}
+    for argument in (
+        "bỏ rác 7h tối",
+        "bố uống thuốc 8h tối",
+        "Huy gửi hồ sơ 9h sáng mai",
+        "đổi bình gas 9h sáng mai",
+        "đợi Lan 5h chiều",
+    ):
+        out = await reminder_commands.nhac(1, argument)
+        assert out.startswith("✅ Đã đặt nhắc"), (argument, out)
+    assert len(fake.rows) == 6
+    for rid, row in old.items():
+        assert fake.rows[rid]["due_at"] == row["due_at"]  # nhắc cũ không bị dời/huỷ
+
+
+@pytest.mark.asyncio
+async def test_nhac_lenh_huy_hoan_co_dau_va_khong_dau(fake):
+    for text in ("8h tối mai gọi mẹ", "9h tối mai uống thuốc", "10h tối mai tắt máy"):
+        await reminder_commands.nhac(1, text)
+    assert "Đã dời sang 20:30" in await reminder_commands.nhac(1, "hoan 1 30p")
+    assert "Đã dời sang 08:00" in await reminder_commands.nhac(1, "hoãn 2 sáng mai")
+    # Sau khi dời: 1. uống thuốc 08:00, 2. gọi mẹ 20:30, 3. tắt máy 22:00.
+    assert "Đã huỷ nhắc việc: Tắt máy" in await reminder_commands.nhac(1, "Huy 3")
+    assert "Đã huỷ nhắc việc: Gọi mẹ" in await reminder_commands.nhac(1, "bỏ 2")
+    assert "Đã huỷ nhắc việc: Uống thuốc" in await reminder_commands.nhac(1, "xoá uống thuốc")
+    assert "chưa có nhắc việc" in await reminder_commands.nhac(1, "")
+
+
+@pytest.mark.asyncio
 async def test_tran_so_nhac_dang_cho(fake, monkeypatch):
     async def full(uid):
         return reminder_service.MAX_PENDING_ONCE
