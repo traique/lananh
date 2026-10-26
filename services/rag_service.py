@@ -1,13 +1,21 @@
-"""Tra cứu kiến thức cục bộ theo file .md trong thư mục rag/ (lệnh /rag).
+"""Tra cứu kiến thức cục bộ theo file .md trong thư mục rag/ (lệnh /rag và tra
+tự động trong chat của chủ bot/admin).
 
 Thiết kế cố ý ĐƠN GIẢN - không embedding, không bảng DB mới:
-- Mỗi lần query quét lại toàn bộ rag/**/*.md (kho cá nhân vài chục file,
-  đọc đĩa vẫn nhanh hơn plumbing sync embedding + pgvector).
 - Chia chunk theo heading markdown (#, ##, ###...), mỗi chunk là 1 "kiến thức"
   mang nhãn (tên file, chuỗi heading).
-- Chấm điểm bằng trùng từ khóa ĐÃ BỎ DẤU (Unicode NFD + bỏ combining marks),
-  nên "hoa hong" vẫn khớp "hồng hạnh", "dat nen" khớp "đất nền". Có thưởng
-  nhỏ nếu từ khóa xuất hiện ngay trong heading.
+- Chấm điểm BM25 (k1=1.2, b=0.75, IDF kiểu Lucene log(1+(N-df+0.5)/(df+0.5)) -
+  không âm với từ xuất hiện ở hơn nửa số chunk) trên token ĐÃ BỎ DẤU: âm tiết
+  đơn + cặp âm tiết liền nhau ("dat_nen", "co_phieu") để "bán đất" không còn
+  khớp mọi chunk có "bán" hay "đất". Stopword tiếng Việt mở rộng (anh, em, có,
+  không, gì, mình, giúp...). Heading được nhân đôi trọng số.
+- Điểm chuẩn hoá = BM25 / tổng IDF các token câu hỏi (so được giữa các câu
+  hỏi); phải đạt ngưỡng tối thiểu VÀ trùng >= 2 token nội dung mới tính là khớp
+  - câu không liên quan nhận gợi ý từ khoá thay vì trích dẫn lạc đề.
+- Chỉ mục cache trong RAM theo (đường dẫn, mtime, kích thước) của các file,
+  có trần số chunk; đọc lại đĩa chỉ khi file đổi.
+- ``tokenize()`` (tập âm tiết đơn) giữ nguyên cho /ragxuly so độ phủ từ khoá
+  và trí nhớ hội thoại - KHÔNG thêm cặp âm tiết vào đó.
 - AI diễn giải: các chunk khớp nhất được nhét vào làm grounding cho
   orchestrator.chat() (giữ persona Lan Anh + lịch sử hội thoại) với chỉ dẫn
   CHỈ trả lời dựa trên tài liệu. Không khớp chunk nào thì không gọi AI.
@@ -15,7 +23,9 @@ Thiết kế cố ý ĐƠN GIẢN - không embedding, không bảng DB mới:
 
 import asyncio
 import logging
+import math
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,12 +53,16 @@ def strip_vn_diacritics(text: str) -> str:
 
 
 # Từ quá ngắn/quá phổ biến (tiếng Việt lẫn tiếng Anh) không đáng để chấm điểm.
-# So sánh với token ĐÃ BỎ DẤU nên danh sách phải qua strip_vn_diacritics.
+# So sánh với token ĐÃ BỎ DẤU nên danh sách phải qua strip_vn_diacritics - vì
+# vậy KHÔNG thêm hư từ trùng dạng bỏ dấu với từ nội dung ("nên"/"nền",
+# "mà"/"mã", "đầu"/"đâu", "vâng"/"vàng", "nhà"/"nha", "nợ"/"nó"...).
 _STOPWORDS = frozenset(
     strip_vn_diacritics(w)
     for w in """và với của các cho trong khi thì là được bị sẽ đã cũng
     như về tới đến từ trên dưới ngoài vào ra một hai ba này đó kia những
     cái con chú điều chỗ lúc nào sao vậy nhỉ nhé
+    anh em mình tôi tớ chúng ta bọn có không gì giúp dùm ạ à ơi dạ ừ thế đi
+    rất hơn hay hoặc nếu vì để nhiêu xem biết thể
     a an and are as at be but by for from has have how i in is it its
     of on or that the to was what when where which who why will with""".split()
 )
@@ -205,25 +219,181 @@ def _load_chunks() -> list[Chunk]:
     return chunks
 
 
-def search(query: str, top_n: int = MAX_MATCHES) -> list[Match]:
-    """Tìm các chunk khớp nhất với câu hỏi (không cần dấu, không cần API)."""
-    query_tokens = tokenize(query)
-    if not query_tokens:
+# ─── BM25 ────────────────────────────────────────────────────────────────────
+
+BM25_K1 = 1.2
+BM25_B = 0.75
+# Ngưỡng cho /rag: điểm chuẩn hoá tối thiểu + số token nội dung trùng.
+MIN_NORMALIZED_SCORE = 0.2
+MIN_MATCHED_TERMS = 2
+# Trần chỉ mục trong RAM (kho hiện ~110 KB -> ~100 chunk, < 2 MB).
+MAX_INDEX_CHUNKS = 2000
+
+
+def _syllables(text: str) -> list[tuple[str, str]]:
+    """[(bỏ dấu, còn dấu chữ thường)] từng âm tiết, đã bỏ ký tự không phải chữ/số."""
+    out = []
+    for raw in unicodedata.normalize("NFC", text or "").lower().split():
+        accented = "".join(ch for ch in raw if ch.isalnum())
+        if accented:
+            out.append((strip_vn_diacritics(accented), accented))
+    return out
+
+
+def index_terms(text: str, *, query: bool = False) -> list[str]:
+    """Token BM25 (CÓ lặp để tính tần suất): âm tiết đơn không phải stopword +
+    cặp 2 âm tiết NỘI DUNG liền nhau ("dat_nen", "vong_lap"). Chỉ mục giữ cả
+    dạng bỏ dấu lẫn dạng còn dấu (tiền tố "~"); câu hỏi gõ CÓ dấu thì so dạng
+    còn dấu để "bán đất" không khớp "bạn đặt". KHÁC tokenize() (tập âm tiết
+    đơn bỏ dấu, dùng cho /ragxuly và trí nhớ)."""
+    pairs = _syllables(text)
+    content = [len(f) >= 2 and f not in _STOPWORDS for f, _ in pairs]
+    terms: list[str] = []
+    for (folded, accented), ok in zip(pairs, content, strict=True):
+        if not ok:
+            continue
+        if query:
+            terms.append(f"~{accented}" if accented != folded else folded)
+        else:
+            terms.append(folded)
+            if accented != folded:
+                terms.append(f"~{accented}")
+    for i in range(len(pairs) - 1):
+        if not (content[i] and content[i + 1]):
+            continue
+        (f1, a1), (f2, a2) = pairs[i], pairs[i + 1]
+        both_accented = a1 != f1 and a2 != f2
+        if query:
+            terms.append(f"~{a1}_{a2}" if both_accented else f"{f1}_{f2}")
+        else:
+            terms.append(f"{f1}_{f2}")
+            if a1 != f1 or a2 != f2:
+                terms.append(f"~{a1}_{a2}")
+    return terms
+
+
+@dataclass
+class _Index:
+    chunks: list[Chunk]
+    doc_terms: list[Counter]
+    doc_len: list[int]
+    df: Counter
+    avgdl: float
+
+    def idf(self, term: str) -> float:
+        n = len(self.chunks)
+        df = self.df.get(term, 0)
+        return math.log(1 + (n - df + 0.5) / (df + 0.5))
+
+
+_index_cache: tuple[tuple, _Index] | None = None
+
+
+def _files_signature() -> tuple:
+    sig = []
+    for path in _iter_markdown_files():
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        sig.append((str(path), stat.st_mtime_ns, stat.st_size))
+    return tuple(sig)
+
+
+def _build_index(chunks: list[Chunk]) -> _Index:
+    chunks = chunks[:MAX_INDEX_CHUNKS]
+    doc_terms: list[Counter] = []
+    df: Counter = Counter()
+    for chunk in chunks:
+        terms = Counter(index_terms(f"{chunk.heading} {chunk.heading} {chunk.content}"))
+        doc_terms.append(terms)
+        df.update(terms.keys())
+    doc_len = [sum(c.values()) for c in doc_terms]
+    avgdl = (sum(doc_len) / len(doc_len)) if doc_len else 1.0
+    return _Index(chunks, doc_terms, doc_len, df, avgdl or 1.0)
+
+
+def _get_index() -> _Index:
+    """Chỉ mục BM25, đọc lại đĩa chỉ khi danh sách file/mtime/kích thước đổi."""
+    global _index_cache
+    signature = _files_signature()
+    if _index_cache is not None and _index_cache[0] == signature:
+        return _index_cache[1]
+    index = _build_index(_load_chunks())
+    _index_cache = (signature, index)
+    return index
+
+
+def clear_index_cache() -> None:
+    global _index_cache
+    _index_cache = None
+
+
+def _bm25(index: _Index, query_terms: set[str]) -> list[tuple[float, int, int]]:
+    """[(điểm chuẩn hoá, số âm tiết nội dung trùng, vị trí chunk)] chưa lọc."""
+    if not index.chunks or not query_terms:
         return []
-    scored: list[Match] = []
-    for chunk in _load_chunks():
-        if not chunk.tokens:
+    idf = {term: index.idf(term) for term in query_terms}
+    total_idf = sum(idf.values()) or 1.0
+    results = []
+    for pos, terms in enumerate(index.doc_terms):
+        dl = index.doc_len[pos] or 1
+        score = 0.0
+        matched_unigrams = 0
+        for term in query_terms:
+            tf = terms.get(term, 0)
+            if not tf:
+                continue
+            if "_" not in term:
+                matched_unigrams += 1
+            denom = tf + BM25_K1 * (1 - BM25_B + BM25_B * dl / index.avgdl)
+            score += idf[term] * tf * (BM25_K1 + 1) / denom
+        if score > 0:
+            results.append((score / ((BM25_K1 + 1) * total_idf), matched_unigrams, pos))
+    results.sort(key=lambda r: r[0], reverse=True)
+    return results
+
+
+def search(
+    query: str,
+    top_n: int = MAX_MATCHES,
+    *,
+    min_score: float = MIN_NORMALIZED_SCORE,
+    min_terms: int = MIN_MATCHED_TERMS,
+    strict_terms: bool = False,
+) -> list[Match]:
+    """Các chunk khớp nhất (BM25 trên token bỏ dấu, không cần API). Câu hỏi chỉ
+    có 1 token nội dung thì chỉ cần trùng 1 (trừ khi strict_terms)."""
+    query_terms = set(index_terms(query, query=True))
+    content_terms = {t for t in query_terms if "_" not in t}
+    if not content_terms:
+        return []
+    need = min_terms if strict_terms else min(min_terms, len(content_terms))
+    index = _get_index()
+    matches = []
+    for score, matched, pos in _bm25(index, query_terms):
+        if score < min_score or matched < need:
             continue
-        overlap = query_tokens & chunk.tokens
-        if not overlap:
-            continue
-        score = len(overlap) / len(query_tokens)
-        # Thưởng nhẹ khi từ khóa nằm ngay trong heading - đây là "chủ đề"
-        # của chunk, đáng tin hơn việc từ khóa lọt lẻo trong thân bài.
-        score += 0.5 * len(query_tokens & chunk.heading_tokens) / len(query_tokens)
-        scored.append(Match(chunk=chunk, score=score))
-    scored.sort(key=lambda m: m.score, reverse=True)
-    return scored[:top_n]
+        matches.append(Match(chunk=index.chunks[pos], score=score))
+        if len(matches) >= top_n:
+            break
+    return matches
+
+
+# Tra tự động trong chat thường (services/chat_context.kb_grounding): ngưỡng cao
+# hơn /rag nhiều (đã hiệu chỉnh trên rag/c1.md: câu đúng chủ đề ~0,7-0,8, câu
+# đời thường/cổ phiếu < 0,25) và bắt buộc trùng >= 2 token nội dung.
+AUTO_MIN_SCORE = 0.5
+AUTO_MIN_TERMS = 2
+AUTO_MAX_CHARS = 1500
+
+
+def auto_lookup(query: str) -> Match | None:
+    """Chunk khớp RẤT rõ với câu chat (hoặc None) - không gọi AI."""
+    matches = search(
+        query, top_n=1, min_score=AUTO_MIN_SCORE, min_terms=AUTO_MIN_TERMS, strict_terms=True
+    )
+    return matches[0] if matches else None
 
 
 def _format_citation(match: Match) -> str:
@@ -251,7 +421,7 @@ def _suggestions(chunks: list[Chunk]) -> list[str]:
 
 
 def _no_match_reply(query: str) -> str:
-    chunks = _load_chunks()
+    chunks = _get_index().chunks
     if not chunks:
         return (
             "📁 Em chưa có kiến thức nào trong thư mục rag/ cả.\n"
@@ -317,7 +487,8 @@ async def ask(user_id: int, query: str) -> str:
     """
     matches = await asyncio.to_thread(search, query)
     if not matches:
-        return _no_match_reply(query)
+        # Đọc chỉ mục (có thể phải đọc đĩa) ngoài event loop.
+        return await asyncio.to_thread(_no_match_reply, query)
 
     try:
         answer = await _ask_llm(user_id, query, matches)

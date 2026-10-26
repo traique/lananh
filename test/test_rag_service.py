@@ -11,7 +11,9 @@ from services import rag_service
 def rag_dir(tmp_path, monkeypatch):
     """Trỏ RAG_DIR sang tmp_path để không đụng kho thật trong repo."""
     monkeypatch.setattr(rag_service, "RAG_DIR", tmp_path)
-    return tmp_path
+    rag_service.clear_index_cache()
+    yield tmp_path
+    rag_service.clear_index_cache()
 
 
 def _write(rag_dir: Path, name: str, text: str) -> None:
@@ -197,3 +199,63 @@ async def test_ask_luu_cau_hoi_goc_va_cau_tra_loi_vao_lich_su(rag_dir, monkeypat
     assert await rag_service.ask(1, "dca là gì") == "DCA là vào tiền đều."
     # Câu hỏi GỐC, không phải khung build_prompt.
     assert saved == [(1, "/rag dca là gì", "DCA là vào tiền đều.", "rag")]
+
+
+# ─── BM25 + cặp âm tiết + stopword mở rộng ──────────────────────────────────
+
+_AGENT_DOC = """# AI Agent
+
+## Mở đầu
+Bạn đặt câu hỏi và nó trả lời. Bạn có thể giúp mình không? Có cách nào để bạn đặt
+lịch không? Bạn đặt vé, bạn đặt câu hỏi, bạn có cách làm của bạn.
+
+## Vòng lặp ReAct
+Vòng lặp ReAct gồm suy nghĩ, hành động, quan sát; vòng lặp lặp lại tới khi xong.
+
+## Guardrails
+Guardrails và an ninh cho agent: chặn công cụ nguy hiểm.
+"""
+
+
+def test_cau_khong_lien_quan_khong_con_khop_toi_da(rag_dir):
+    """Trước đây "có cách nào giúp mình bán đất không" đạt điểm tối đa 1,0 trên
+    các chunk về AI agent chỉ vì "có/không/bán/mình" xuất hiện khắp nơi."""
+    _write(rag_dir, "c1.md", _AGENT_DOC)
+    assert rag_service.search("có cách nào giúp mình bán đất không") == []
+    assert rag_service.auto_lookup("có cách nào giúp mình bán đất không") is None
+    # Câu đúng chủ đề vẫn ra đúng chunk đầu tiên, cả /rag lẫn tra tự động.
+    (top, *_) = rag_service.search("vòng lặp ReAct là gì")
+    assert top.chunk.heading == "AI Agent > Vòng lặp ReAct"
+    assert rag_service.auto_lookup("vòng lặp ReAct").chunk is top.chunk
+
+
+def test_token_chi_muc_co_cap_am_tiet_va_dang_con_dau():
+    terms = rag_service.index_terms("Đất nền Long An")
+    assert {"dat", "nen", "dat_nen", "~đất_nền"} <= set(terms)
+    query = rag_service.index_terms("bán đất", query=True)
+    assert query == ["~bán", "~đất", "~bán_đất"]  # gõ có dấu: so dạng còn dấu
+    assert rag_service.index_terms("ban dat", query=True) == ["ban", "dat", "ban_dat"]
+    # Stopword mở rộng: lời xưng hô/hư từ không còn là token nội dung.
+    assert rag_service.index_terms("anh ơi em có không gì giúp mình", query=True) == []
+
+
+def test_tokenize_cho_ragxuly_van_chi_am_tiet_don():
+    assert rag_service.tokenize("đất nền") == {"dat", "nen"}
+
+
+def test_chi_muc_cache_doc_lai_khi_file_doi(rag_dir, monkeypatch):
+    _write(rag_dir, "a.md", "# A\n\n## DCA\nVào tiền đều đặn.\n")
+    loads = []
+    real_load = rag_service._load_chunks
+
+    def counting_load():
+        loads.append(1)
+        return real_load()
+
+    monkeypatch.setattr(rag_service, "_load_chunks", counting_load)
+    rag_service.search("dca")
+    rag_service.search("dca vào tiền")
+    assert len(loads) == 1  # không đọc lại đĩa mỗi câu hỏi
+    _write(rag_dir, "a.md", "# A\n\n## DCA\nVào tiền đều đặn hàng tháng, kỷ luật.\n")
+    rag_service.search("dca")
+    assert len(loads) == 2

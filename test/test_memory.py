@@ -486,3 +486,16 @@ async def test_flush_truoc_reset_co_tran_thoi_gian(mem, monkeypatch):
     await memory_service.flush_before_reset(UID, timeout_sec=0.05)
     assert asyncio.get_running_loop().time() - started < 2
     assert _wm(mem) == 0
+
+
+def test_loi_xung_ho_khong_con_keo_tri_nho_giua_phien():
+    """Chủ bot gần như luôn viết "anh"/"em": trước đây mỗi câu đều khớp fact có
+    chữ "anh" và nhồi trí nhớ vào giữa phiên."""
+    facts = [("anh_trai", "anh Tuấn ở Đà Nẵng"), ("thoi_quen", "anh hay dậy sớm")]
+    assert memory_service.select_relevant_memory("anh ơi em có nhớ gì không", facts, []) == (
+        [],
+        [],
+    )
+    assert memory_service.select_relevant_memory("anh trai anh ở đâu", facts, [])[0] == [
+        ("anh_trai", "anh Tuấn ở Đà Nẵng")
+    ]
