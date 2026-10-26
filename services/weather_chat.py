@@ -240,13 +240,23 @@ def rain_line(points: list[weather.HourPoint]) -> str:
     return f"🌤 Ít khả năng mưa ({peak_text})."
 
 
-def _format_hours(data: dict, label: str, start_h: int, end_h: int, points: list) -> str:
+def _format_hours(
+    data: dict, label: str, start_h: int, end_h: int, points: list, *, cut_short: bool = False
+) -> str:
+    """``cut_short``: nguồn hết dữ liệu trước ``end_h`` (đã cắt theo giờ thật có)."""
     n = weather._n
-    span = "theo giờ" if (start_h, end_h) == (0, 24) else f"{start_h}h-{end_h % 24 or 24}h"
+    span = (
+        "theo giờ"
+        if (start_h, end_h) == (0, 24) and not cut_short
+        else f"{start_h}h-{end_h % 24 or 24}h"
+    )
     lines = [
         f"🌦 {label[:1].upper()}{label[1:]} ({span}) ở {data.get('location')}",
         rain_line(points),
     ]
+    if cut_short:
+        stop = f"{end_h % 24 or 24}h"
+        lines.append(f"(Nguồn mới có tới {stop}, sau {stop} em chưa có dự báo theo giờ.)")
     temps = [p.temperature_c for p in points if p.temperature_c is not None]
     rain_mm = sum(p.precip_mm or 0 for p in points)
     if temps:
@@ -365,7 +375,11 @@ async def _hourly_answer(
     points = _window(data["hours"], day, start_h, end_h, now if offset == 0 else None)
     if not points:
         return None
-    return _format_hours(data, label, start_h, end_h, points)
+    # Nguồn hết giờ trước cuối buổi: nhãn và kết luận chỉ nói phần thật có số liệu.
+    last = points[-1].time + dt.timedelta(hours=1)
+    covered_h = int((last - dt.datetime.combine(day, dt.time())).total_seconds() // 3600)
+    cut_short = covered_h < end_h
+    return _format_hours(data, label, start_h, min(end_h, covered_h), points, cut_short=cut_short)
 
 
 # Câu hỏi nối tiếp ngay sau 1 câu trả lời thời tiết ("thế còn ngày mai?", "còn

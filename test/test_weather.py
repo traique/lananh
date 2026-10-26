@@ -187,7 +187,7 @@ async def test_get_hourly_parse_va_cache(mock_http, clear_extra_caches):
     assert first.time == dt.datetime(2026, 10, 21, 0, 0)
     assert data["hours"][47].precip_mm == 1.2 and data["hours"][47].rain_chance == 47
     assert sent[0].url.params["hourly"].startswith("precipitation_probability")
-    assert sent[0].url.params["forecast_days"] == "2"
+    assert sent[0].url.params["forecast_days"] == "3"  # đủ cả "đêm mai" (tới 6h ngày kia)
     assert again["hours"] is data["hours"] and len(sent) == 1  # cache theo toạ độ
 
 

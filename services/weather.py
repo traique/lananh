@@ -13,8 +13,8 @@ Không nói địa điểm (hoặc nói Sài Gòn/HCM...) -> mặc định TP. H
     describe_weather(data)
 
 Thêm (gọi riêng, chỉ khi cần):
-- ``get_hourly``: khả năng mưa/nhiệt độ theo giờ hôm nay + ngày mai (câu "chiều
-  nay có mưa không", "mấy giờ mưa").
+- ``get_hourly``: khả năng mưa/nhiệt độ theo giờ hôm nay tới ngày kia (câu "chiều
+  nay có mưa không", "mấy giờ mưa", "đêm mai" kéo tới 6h ngày kia).
 - ``get_air_quality``: US AQI + PM2.5 từ air-quality-api.open-meteo.com (dữ liệu
   CAMS toàn cầu ~45 km, 3 giờ/lần -> chỉ là ước tính thô, luôn ghi nguồn).
 """
@@ -62,7 +62,8 @@ _FORECAST_TTL_SEC = 600
 _HOURLY_CACHE_MAX = 16
 _AIR_CACHE_MAX = 16
 _AIR_TTL_SEC = 1800
-_HOURLY_DAYS = 2
+# Hôm nay + ngày mai + ngày kia: "đêm mai" (22h-6h) kéo sang sáng ngày kia.
+_HOURLY_DAYS = 3
 # tên đã chuẩn hoá -> (nhãn, lat, lon) hoặc None (không tìm thấy, tránh gọi lại)
 _geo_cache: OrderedDict[str, tuple[str, float, float] | None] = OrderedDict()
 _forecast_cache: OrderedDict[tuple[float, float, int], tuple[float, dict]] = OrderedDict()
@@ -258,7 +259,7 @@ async def get_weather_at(lat: float, lon: float, label: str, days: int = 1) -> d
 
 
 async def get_hourly(location: str = "") -> dict:
-    """Dự báo theo giờ hôm nay + ngày mai: {"location", "source", "hours": [HourPoint]}.
+    """Dự báo theo giờ 3 ngày (hôm nay -> ngày kia): {"location", "source", "hours": [HourPoint]}.
 
     Không tìm thấy địa điểm -> dict có ``error``. Raise WeatherError khi lỗi
     (không có nguồn dự phòng theo giờ: nơi gọi tự quay về dự báo theo ngày)."""

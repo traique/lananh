@@ -133,10 +133,10 @@ async def test_kenh_zalo_khong_goi_ai(calls, monkeypatch):
 # ─── Theo giờ, AQI, thành phố riêng ─────────────────────────────────────────
 
 
-def _hours(start: dt.date, chances: dict[int, int]) -> list:
-    """48 giờ từ 0h ngày ``start``; ``chances`` map giờ thứ mấy -> % mưa."""
+def _hours(start: dt.date, chances: dict[int, int], count: int = 48) -> list:
+    """``count`` giờ từ 0h ngày ``start``; ``chances`` map giờ thứ mấy -> % mưa."""
     out = []
-    for i in range(48):
+    for i in range(count):
         moment = dt.datetime.combine(start, dt.time()) + dt.timedelta(hours=i)
         rain = chances.get(i, 10)
         out.append(weather.HourPoint(moment, rain, 0.5 if rain >= 50 else 0.0, 30.0, 61))
@@ -181,6 +181,28 @@ async def test_may_gio_mua_tinh_tu_bay_gio(hourly, calls):
     reply = await weather_chat.answer("hôm nay mấy giờ mưa", TODAY, now=now)
     assert "Hôm nay (theo giờ)" in reply and "khoảng 15h-18h" in reply
     assert "Từng giờ: 9h 10% · 11h 10%" in reply  # từ giờ hiện tại, bước 2 giờ khi dài
+
+
+async def test_dem_mai_du_ca_dem(monkeypatch, calls):
+    async def three_days(location=""):
+        hours = _hours(TODAY, {48 + 3: 80}, count=72)  # mưa lúc 3h sáng ngày kia
+        return {"location": "Huế", "source": "Open-Meteo", "hours": hours}
+
+    monkeypatch.setattr(weather, "get_hourly", three_days)
+    reply = await weather_chat.answer("Huế đêm mai có mưa không", TODAY)
+    assert "Đêm mai (22h-6h)" in reply and "Dễ mưa (từ 50%) khoảng 3h-4h" in reply
+    assert "chưa có" not in reply
+
+
+async def test_dem_mai_thieu_gio_khong_noi_ca_dem(monkeypatch, calls):
+    async def two_days(location=""):
+        return {"location": "Huế", "source": "Open-Meteo", "hours": _hours(TODAY, {})}
+
+    monkeypatch.setattr(weather, "get_hourly", two_days)
+    reply = await weather_chat.answer("Huế đêm mai có mưa không", TODAY)
+    # Nguồn chỉ có tới 24h: không được tóm tắt như thể đã xem cả đêm 22h-6h.
+    assert "Đêm mai (22h-24h)" in reply and "22h-6h" not in reply
+    assert "sau 24h em chưa có dự báo theo giờ" in reply
 
 
 async def test_theo_gio_khong_mua(monkeypatch, calls):
