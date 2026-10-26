@@ -21,6 +21,7 @@ FB_OK = "fbok"  # duyệt bài Facebook chờ: fbok:<post_id>
 FB_SKIP = "fbno"  # bỏ bài Facebook chờ: fbno:<post_id>
 ZALO_PAIR = "zpair"  # cấp quyền người Zalo lạ: zpair:<external_id>:m|a
 SNOOZE = "snz"  # hoãn nhắc việc vừa tới: snz:<reminder_id>:10|60|am
+STYLE = "hoc"  # duyệt cách trả lời em tự rút ra: hoc:<proposal_id>:k (ghi nhớ)|b (bỏ)
 
 _PATTERNS = {
     RATE: re.compile(r"rate:(\d{1,18}):([ud])"),
@@ -29,6 +30,7 @@ _PATTERNS = {
     FB_SKIP: re.compile(r"fbno:(\d{1,18})()"),
     ZALO_PAIR: re.compile(r"zpair:(\d{1,30}):([ma])"),
     SNOOZE: re.compile(r"snz:(\d{1,18}):(10|60|am)"),
+    STYLE: re.compile(r"hoc:(\d{1,18}):([kb])"),
 }
 # Chỉ chạy lại lượt chat (tốn AI, ghi lịch sử) mới phải xếp hàng sau khoá lượt; còn
 # lại là ghi DB/gọi API ngắn, chạy ngoài khoá như /fb_*.
@@ -99,3 +101,8 @@ def reminder_snooze_rows(reminder_id: int) -> Rows:
             ("Sáng mai", f"{SNOOZE}:{reminder_id}:am"),
         ]
     ]
+
+
+def style_approval_rows(proposal_id: int) -> Rows:
+    """[Ghi nhớ] [Bỏ] đề xuất cách trả lời chờ duyệt (services/style_approval.py)."""
+    return [[("✅ Ghi nhớ", f"{STYLE}:{proposal_id}:k"), ("🗑 Bỏ", f"{STYLE}:{proposal_id}:b")]]

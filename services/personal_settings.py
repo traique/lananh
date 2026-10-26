@@ -20,6 +20,8 @@ MEMORY_CONSOLIDATED_PREFIX = "memory_consolidated:"
 # Hỏi thăm chủ động (services/proactive_service.py): bật/tắt, số tin đã gửi trong ngày.
 FOLLOWUP_PREFIX = "followup:"
 FOLLOWUP_SENT_PREFIX = "followup_sent:"
+# "Cách trả lời" bộ trích nhớ đề xuất, chờ người dùng duyệt (services/style_approval.py).
+STYLE_PENDING_PREFIX = "style_pending:"
 
 
 def weather_home_key(user_id: int) -> str:
@@ -56,6 +58,10 @@ def followup_sent_key(user_id: int) -> str:
     return f"{FOLLOWUP_SENT_PREFIX}{user_id}"
 
 
+def style_pending_key(user_id: int) -> str:
+    return f"{STYLE_PENDING_PREFIX}{user_id}"
+
+
 def memory_user_keys(user_id: int) -> list[str]:
     """Khoá trí nhớ/hỏi thăm của 1 người (dùng chung cho /zaloxoa và /xoadulieu)."""
     return [
@@ -64,6 +70,7 @@ def memory_user_keys(user_id: int) -> list[str]:
         memory_consolidated_key(user_id),
         followup_key(user_id),
         followup_sent_key(user_id),
+        style_pending_key(user_id),
     ]
 
 

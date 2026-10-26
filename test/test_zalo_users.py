@@ -227,6 +227,7 @@ async def test_remove_user(patched_db, monkeypatch):
                 f"memory_consolidated:{uid}",
                 f"followup:{uid}",
                 f"followup_sent:{uid}",
+                f"style_pending:{uid}",
             ],
         ),
     ) in [(q, a) for q, a in patched_db.data_deletes]

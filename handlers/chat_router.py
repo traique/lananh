@@ -17,6 +17,7 @@ from core import config, trace
 from core.text_normalize import nfc
 from handlers import callbacks, common, stock_handler, turn_feedback
 from services import (
+    action_buttons,
     answer_feedback,
     article_reader,
     channel_chat_service,
@@ -27,6 +28,7 @@ from services import (
     lunar_chat,
     portfolio_service,
     reminder_service,
+    style_approval,
     turn_control,
     turn_progress,
     weather_chat,
@@ -83,6 +85,14 @@ async def _quick_reply(
     """Các nhánh trả lời bằng code (không tốn lượt AI). True nếu đã trả lời."""
     # Câu trả lời nhanh cũng vào lịch sử để câu hỏi nối tiếp có ngữ cảnh.
     record = conversation_log.record_exchange
+
+    # "ghi nhớ"/"bỏ" ngay sau câu em hỏi duyệt cách trả lời (services/style_approval).
+    approval = (
+        await style_approval.maybe_handle_reply(user_id, text) if allow_side_effects else None
+    )
+    if approval is not None:
+        await common.reply_long_text(update.message, approval)
+        return True
 
     # "hoãn 10p" / "xong" ngay sau tin nhắc việc: code xử lý, không tốn lượt AI.
     shortcut = (
@@ -282,6 +292,23 @@ async def _ai_reply(
                 history_ids=turn.history_ids,
             )
         )
+    if turn.text:
+        await _ask_style_approval(update.message, user_id)
+
+
+async def _ask_style_approval(message, user_id: int) -> None:
+    """Đề xuất cách trả lời chờ duyệt: hỏi bằng tin RIÊNG sau câu trả lời (không chen
+    giữa), tối đa 1 lần/ngày - services/style_approval. Lỗi gửi chỉ log."""
+    question = await style_approval.take_question(user_id, buttons=True)
+    if question is None:
+        return
+    try:
+        await message.reply_text(
+            question.text,
+            reply_markup=callbacks.markup(action_buttons.style_approval_rows(question.proposal_id)),
+        )
+    except Exception:
+        logger.warning("Không gửi được câu hỏi duyệt cách trả lời.", exc_info=True)
 
 
 def _event_key(update) -> str | None:
