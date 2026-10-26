@@ -556,7 +556,9 @@ async def test_agent_dung_lich_su_tri_nho_cua_chinh_nguoi_hoi_va_luu_qa(monkeypa
 
     async def memory(user_id, query=""):
         seen["memory_user"] = user_id
-        return "Tên: Mẹ"
+        return memory_service.TurnMemory(
+            context="Tên: Mẹ", style_rules="CÁCH TRẢ LỜI NGƯỜI DÙNG ĐÃ DẶN:\nluôn trả lời thật ngắn"
+        )
 
     async def add_turn(user_id, user_text, model_text, *, kind="chat"):
         saved.append((user_id, user_text, model_text, kind))
@@ -567,7 +569,7 @@ async def test_agent_dung_lich_su_tri_nho_cua_chinh_nguoi_hoi_va_luu_qa(monkeypa
 
     monkeypatch.setattr(db, "get_session_messages", history)
     monkeypatch.setattr(db, "add_chat_turn", add_turn)
-    monkeypatch.setattr(memory_service, "build_memory_context", memory)
+    monkeypatch.setattr(memory_service, "build_turn_memory", memory)
     monkeypatch.setattr(agent_service, "_tool_provider_usable", _usable("groq"))
     monkeypatch.setattr(groq_client, "generate_with_tools", fake_groq)
 
@@ -576,6 +578,7 @@ async def test_agent_dung_lich_su_tri_nho_cua_chinh_nguoi_hoi_va_luu_qa(monkeypa
     assert seen["history_user"] == seen["memory_user"] == -7
     system = seen["messages"][0]["content"]
     assert 'xưng "cháu"' in system and "Tên: Mẹ" in system
+    assert "luôn trả lời thật ngắn" in system  # cách trả lời người dùng đã dặn
     assert seen["messages"][1] == {"role": "user", "content": "mai anh đi Đà Lạt"}
     assert seen["messages"][2] == {"role": "assistant", "content": "dạ"}
     # Lưu đúng 1 lần, kind "agent" (conversation_log.record_exchange).
@@ -778,10 +781,10 @@ async def test_agent_doc_du_4_dong_lich_su(monkeypatch):
         return rows[-k:]
 
     async def memory(user_id, query=""):
-        return ""
+        return memory_service.TurnMemory()
 
     monkeypatch.setattr(db, "get_session_messages", history)
-    monkeypatch.setattr(memory_service, "build_memory_context", memory)
+    monkeypatch.setattr(memory_service, "build_turn_memory", memory)
     turn = await agent_service._build_turn(-7, "còn cái kia thì sao", None)
 
     assert seen["k"] == agent_service._HISTORY_ROWS == 4

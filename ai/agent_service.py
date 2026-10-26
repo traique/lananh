@@ -18,8 +18,9 @@ Thứ tự provider (ask_agent):
 Mỗi vòng giới hạn MAX_AGENT_STEPS, mỗi bước qua bounded()/turn_deadline, mỗi
 kết quả tool cắt ~2.5K ký tự, gọi lặp y hệt (cùng tool + tham số) bị chặn.
 
-Persona Lan Anh rút gọn + trí nhớ + 4 dòng hội thoại gần nhất của CHÍNH người
-hỏi (user_id - Zalo tách hẳn Telegram); Q&A lưu vào lịch sử chat của người đó.
+Persona Lan Anh rút gọn + trí nhớ + cách trả lời người dùng đã dặn + 4 dòng hội
+thoại gần nhất của CHÍNH người hỏi (user_id - Zalo tách hẳn Telegram); Q&A lưu
+vào lịch sử chat của người đó.
 
 Tool lấy từ danh bạ chung services/tool_registry.py (ToolSpec): tool riêng của
 agent (tim_web, tim_gia, xem_thong_ke, xem_gia_co_phieu, doc_link, xem_rss) +
@@ -135,6 +136,7 @@ _MAX_SEEN_CALLS = 16
 _HISTORY_ROWS = 4
 _HISTORY_ROW_MAX_CHARS = 500
 _MEMORY_MAX_CHARS = 1500
+_STYLE_MAX_CHARS = 700
 # Tắt hẳn cả 2 nhánh router9 (native tools + JSON-router) của /agent, không
 # đụng /router9 on|off của chat chính.
 _ROUTER9_AGENT_ENABLED = True
@@ -756,9 +758,9 @@ async def _run_router9_json_router(question: str) -> Optional[str]:
 
 
 async def _build_turn(user_id: int | None, question: str, address_form: str | None) -> _Turn:
-    """Persona + trí nhớ + 4 dòng hội thoại gần nhất của ĐÚNG user_id người hỏi
-    (Zalo, kể cả Zalo của chủ bot, tách hẳn Telegram). Lỗi DB -> lượt chạy không
-    có ngữ cảnh, không chặn /agent."""
+    """Persona + trí nhớ + cách trả lời người dùng đã dặn + 4 dòng hội thoại gần
+    nhất của ĐÚNG user_id người hỏi (Zalo, kể cả Zalo của chủ bot, tách hẳn
+    Telegram). Lỗi DB -> lượt chạy không có ngữ cảnh, không chặn /agent."""
     system = _persona(address_form)
     if not user_id:
         return _Turn(system=system)
@@ -779,11 +781,17 @@ async def _build_turn(user_id: int | None, question: str, address_form: str | No
     try:
         from services import memory_service
 
-        memory = (await memory_service.build_memory_context(user_id, question) or "").strip()
+        turn_memory = await memory_service.build_turn_memory(user_id, question)
+        memory = (turn_memory.context or "").strip()
         if memory:
             system += (
                 "\n\nĐiều đã biết về người dùng (trí nhớ dài hạn):\n" + memory[:_MEMORY_MAX_CHARS]
             )
+        # "Cách trả lời" người dùng đã dặn (đã kèm tiêu đề, không đè quy tắc an toàn/
+        # xưng hô) - /agent theo cùng phong cách như chat.
+        style = (turn_memory.style_rules or "").strip()
+        if style:
+            system += "\n\n" + style[:_STYLE_MAX_CHARS]
     except Exception:
         logger.warning("Agent: không đọc được trí nhớ dài hạn.", exc_info=True)
     return _Turn(user_id=user_id, role=role, system=system, history=history)
