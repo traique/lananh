@@ -165,6 +165,11 @@ def stock_record(outputs: list[str], *, full_access: bool) -> str:
     return "\n".join(part for part in (head, body, rest) if part)
 
 
+def stored_user_text(user_text: str) -> str:
+    """Tin người dùng ĐÚNG như record_exchange lưu vào chat_messages."""
+    return _clip(user_text, USER_MAX_CHARS)
+
+
 def compact_reply(reply: str, kind: str, user_text: str = "") -> str:
     reply = (reply or "").strip()
     if kind == KIND_ARTICLE:
@@ -205,7 +210,7 @@ async def record_exchange(
     if not stored:
         return False
     try:
-        await db.add_chat_turn(user_id, _clip(user_text, USER_MAX_CHARS), stored, kind=kind)
+        await db.add_chat_turn(user_id, stored_user_text(user_text), stored, kind=kind)
     except Exception:
         logger.warning(
             "Không lưu được lịch sử chat user_id=%s kind=%s (DB lỗi) - vẫn gửi câu trả lời.",

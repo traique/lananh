@@ -56,6 +56,11 @@ class AnswerSnapshot:
     regenerable: bool = False
     quote_text: str | None = None
     event_key: str | None = None
+    # Cặp ĐÚNG như chat_messages đang lưu (conversation_log rút gọn câu hỏi 2000,
+    # câu trả lời 1500 ký tự) - tính từ bản đầy đủ trước khi cắt TEXT_MAX, để
+    # 🔄/✂️ xoá được cặp cũ của câu trả lời dài.
+    history_prompt: str = ""
+    history_answer: str = ""
 
 
 _recent: OrderedDict[int, AnswerSnapshot] = OrderedDict()
@@ -72,11 +77,24 @@ def can_regenerate(text: str, *, grounding: str = "") -> bool:
     return not tools.side_effect_intent(text)
 
 
+def _history_pair(snapshot: AnswerSnapshot) -> tuple[str, str]:
+    from services import conversation_log
+
+    return (
+        snapshot.history_prompt or conversation_log.stored_user_text(snapshot.prompt_text),
+        snapshot.history_answer
+        or conversation_log.compact_reply(snapshot.answer_text, conversation_log.KIND_CHAT),
+    )
+
+
 def remember_answer(snapshot: AnswerSnapshot) -> None:
+    history_prompt, history_answer = _history_pair(snapshot)
     snapshot = dataclasses.replace(
         snapshot,
         prompt_text=snapshot.prompt_text[:TEXT_MAX],
         answer_text=snapshot.answer_text[:TEXT_MAX],
+        history_prompt=history_prompt,
+        history_answer=history_answer,
     )
     _recent[snapshot.prompt_id] = snapshot
     _recent.move_to_end(snapshot.prompt_id)
@@ -229,10 +247,17 @@ async def regenerate(snapshot: AnswerSnapshot, *, shorter: bool):
     trong khoá lượt của người đó. Trả ChatTurn."""
     from services import channel_chat_service
 
+    history_prompt, history_answer = _history_pair(snapshot)
     try:
-        await db.delete_last_chat_pair(snapshot.user_id, snapshot.prompt_text, snapshot.answer_text)
+        deleted = await db.delete_last_chat_pair(snapshot.user_id, history_prompt, history_answer)
     except Exception:
         logger.warning("Không xoá được cặp lịch sử cũ trước khi làm lại.", exc_info=True)
+    else:
+        if not deleted:
+            logger.info(
+                "Làm lại câu trả lời user_id=%s: cặp lịch sử cũ không còn là cặp mới nhất.",
+                snapshot.user_id,
+            )
     target = (
         notification_target(
             dataclasses.replace(current_target(snapshot.user_id), event_key=snapshot.event_key)

@@ -170,6 +170,51 @@ async def test_lam_lai_xoa_cap_cu_va_chan_tool_ghi(monkeypatch):
     assert seen["event_key"] == "telegram:100"  # tool (nếu có) không ghi trùng
 
 
+async def test_lam_lai_cau_tra_loi_dai_xoa_dung_cap_da_luu(monkeypatch):
+    """Lịch sử lưu bản rút gọn (_clip 1500 / 2000): làm lại câu trả lời dài vẫn xoá
+    đúng cặp cũ, không để câu hỏi + câu trả lời cũ nằm trùng trong lịch sử."""
+    from services import channel_chat_service as ccs
+    from services import conversation_log, memory_service
+
+    rows: list[tuple[str, str]] = []
+
+    async def add_turn(uid, user_text, model_text, *, kind="chat"):
+        rows.extend([("user", user_text), ("model", model_text)])
+
+    async def delete_pair(uid, user_text, model_text):
+        # Cùng ngữ nghĩa core/repositories/chat_history.delete_last_pair: khớp NGUYÊN VĂN.
+        if rows[-2:] == [("user", user_text), ("model", model_text)]:
+            del rows[-2:]
+            return True
+        return False
+
+    monkeypatch.setattr(db, "add_chat_turn", add_turn)
+    monkeypatch.setattr(db, "delete_last_chat_pair", delete_pair)
+    monkeypatch.setattr(memory_service, "after_exchange", lambda uid, **kw: None)
+    question = "giải thích giúp anh " + "lạm phát " * 300  # > 2000 ký tự
+    answer = "Lạm phát là " + "giá cả tăng. " * 150  # > 1500 ký tự
+    await conversation_log.record_exchange(42, question, answer, conversation_log.KIND_CHAT)
+    answer_feedback.remember_answer(
+        answer_feedback.AnswerSnapshot(
+            prompt_id=9,
+            user_id=42,
+            channel="telegram",
+            prompt_text=question,
+            answer_text=answer,
+            regenerable=True,
+        )
+    )
+    snapshot = answer_feedback.latest_regenerable(42, 9)
+    assert snapshot is not None
+
+    async def fake_turn(user_id, text, **kwargs):
+        return ccs.ChatTurn("ngắn thôi", prompt_id=10)
+
+    monkeypatch.setattr(ccs, "run_chat_turn", fake_turn)
+    await answer_feedback.regenerate(snapshot, shorter=True)
+    assert rows == []
+
+
 # ─── handlers.callbacks ──────────────────────────────────────────────────────
 
 
