@@ -152,6 +152,7 @@ async def test_ve_so_khong_nham_ve(sources, text):
         "xổ số miền nam",
         "vé số hôm qua",
         "dò vé 123456 đồng nai",
+        "vé 123456 đồng tháp",
     ],
 )
 def test_ve_so_van_nhan_ra(text):
@@ -188,6 +189,48 @@ async def test_do_ve_bang_code(sources):
     assert "[Kiên Giang]" in await daily.maybe_handle("ve so mien nam")
     mb = await daily.maybe_handle("vé 30328 có trúng không")  # 5 số -> miền Bắc
     assert "Giải Đặc biệt" in mb and sources["calls"][-1] == ("xs", "mb")
+
+
+async def test_do_ve_dai_duoc_nhac_tim_dung_ky(sources):
+    # Kỳ mới nhất (25/10) không có đài HCM: tìm kỳ 24/10 có đài đó, kể cả tên khác.
+    reply = await daily.maybe_handle("dò vé 698440 sài gòn")
+    assert "24/10/2026" in reply and "Hồ Chí Minh: 🎉 TRÚNG Giải Đặc biệt" in reply
+    assert "Kiên Giang" not in reply
+    only = await daily.maybe_handle("xổ số hồ chí minh")
+    assert "[Hồ Chí Minh]" in only and "Kiên Giang" not in only
+
+
+@pytest.mark.parametrize("text", ["dò vé 123456 vĩnh long", "dò vé 123456 vĩnh long hôm qua"])
+async def test_do_ve_dai_khong_co_trong_ky_khong_phan_trung_truot(sources, text):
+    reply = await daily.maybe_handle(text)
+    assert "Vĩnh Long" in reply
+    assert "chưa trúng" not in reply and "không trúng" not in reply and "TRÚNG" not in reply
+
+
+async def test_ky_hom_nay_chua_du_dai_thi_khong_ket_luan_truot(sources, monkeypatch):
+    def draw(day, *names):
+        provinces = tuple(market.ProvinceResult(n, {"ĐB": ("111111",)}) for n in names)
+        return market.LotteryDraw("mn", day, provinces)
+
+    draws = [
+        draw(TODAY, "TP. HCM"),  # đang quay: mới có 1 đài
+        draw(TODAY - dt.timedelta(days=7), "TP. HCM", "Đồng Tháp", "Cà Mau"),
+    ]
+
+    async def fake(region):
+        return draws
+
+    monkeypatch.setattr(market, "get_lottery", fake)
+    reply = await daily.maybe_handle("dò vé 123456 hôm nay")
+    assert "TP. HCM: không trúng" in reply and "Tiếc ghê" not in reply
+    assert "1/3 đài" in reply
+    result = await daily.maybe_handle("xổ số miền nam hôm nay")
+    assert "1/3 đài" in result and "[TP. HCM]" in result
+    # Đài được nhắc chưa có trong kỳ hôm nay: báo chưa có kết quả, không phán.
+    reply = await daily.maybe_handle("dò vé 123456 đồng tháp hôm nay")
+    assert "Đồng Tháp" in reply and "chưa có kết quả" in reply and "trúng" not in reply
+    # Tên kiểu "TP. HCM" trên nguồn vẫn khớp "sài gòn".
+    assert "TP. HCM: không trúng" in await daily.maybe_handle("dò vé 123456 sài gòn hôm nay")
 
 
 async def test_do_ve_nguon_loi_bao_that_khong_doan(sources):

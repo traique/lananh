@@ -135,9 +135,9 @@ _SCALES = {
 _LOTTERY_RE = re.compile(r"\bxo so\b|\bso xo\b|\bxs(?:mb|mn|mt|kt|hcm|tphcm)\b|\bkqxs\b")
 _LOTTERY_ACCENTED_RE = re.compile(
     r"\bvé số\b|\bdò vé\b|\bdò số\b|"
-    # "vé 200000 đồng" là giá vé, không phải số vé ("đồng nai" vẫn là đài).
+    # "vé 200000 đồng" là giá vé, không phải số vé ("Đồng Nai/Tháp" vẫn là đài).
     r"\b(?:v[ée]|d[òo] v[ée]|d[òo] s[ốo]|v[ée] s[ốo]) \d{5,6}\b"
-    r"(?! ?(?:đ|đồng(?! nai)|dong(?! nai)|vnd|vnđ|k|nghìn|ngàn)\b)|"
+    r"(?! ?(?:đ|đồng|dong|vnd|vnđ|k|nghìn|ngàn)\b(?! (?:nai|th[áa]p)\b))|"
     r"\bv[ée] s[ốo] (?:mi[ềe]n|h[ôo]m|xs|đ[àa]i|dai)"
 )
 # Câu hỏi kiến thức/ý kiến về xổ số (không hỏi số) -> để AI, cấm nêu số.
@@ -369,34 +369,106 @@ async def fx_text(query: FxQuery) -> str:
     return market.format_fx(table, list(query.codes) or None)
 
 
+def _missing_day_text(query: LotteryQuery, draws: list[market.LotteryDraw]) -> str:
+    region = market.REGION_NAMES[query.region]
+    if query.day == _today():
+        return (
+            f"⏳ Hôm nay xổ số {region} chưa có kết quả (quay lúc "
+            f"{market.DRAW_TIMES[query.region]}, nguồn cập nhật sau đó ít phút)."
+        )
+    day = query.day.strftime("%d/%m/%Y") if query.day else ""
+    return (
+        f"Em chưa có kết quả xổ số {region} ngày {day} (nguồn chỉ giữ khoảng "
+        f"{len(draws)} kỳ gần nhất)."
+    )
+
+
+def _named_province(text: str, region: str) -> tuple[str, str] | None:
+    """(tên bỏ dấu, tên hiển thị) của đài miền Nam/Trung được nhắc trong câu.
+    Miền Bắc quay chung 1 kỳ nên không tách theo tỉnh."""
+    if region == "mb":
+        return None
+    low = _low(text)
+    folded = fold(low)
+    m = _PROVINCE_RE.search(folded)
+    if not m or _PROVINCE_REGION[m.group(1)] != region:
+        return None
+    alias = m.group(1)
+    if "hcm" in alias:
+        return alias, "TP.HCM"
+    shown = low[m.start() : m.end()] if len(low) == len(folded) else alias
+    return alias, shown.title()
+
+
+def _province_text(
+    query: LotteryQuery, draws: list[market.LotteryDraw], alias: str, label: str
+) -> str:
+    """Kết quả/dò vé của ĐÚNG đài người dùng nhắc. Kỳ được chọn không có đài đó
+    thì nói rõ, không bao giờ dò sang đài khác rồi phán "chưa trúng"."""
+    region = market.REGION_NAMES[query.region]
+    if query.day is None:
+        # Mỗi đài quay 1 lần/tuần: lấy kỳ mới nhất CÓ đài đó, không phải kỳ mới nhất.
+        hit = next(
+            ((d, p) for d in draws if (p := market.find_province(d, alias)) is not None), None
+        )
+        if hit is None:
+            note = (
+                f"Em chưa thấy kết quả đài {label} trong {len(draws)} kỳ xổ số {region} "
+                "gần nhất nguồn còn giữ"
+            )
+            return note + (" nên chưa dò vé này được nha." if query.ticket else ".")
+        draw, province = hit
+    else:
+        found = market.pick_draw(draws, query.day)
+        province = market.find_province(found, alias) if found else None
+        if found is None or province is None:
+            day = f"{query.day:%d/%m/%Y}"
+            have = ", ".join(p.name for p in found.provinces) if found else ""
+            if query.day == _today():
+                msg = (
+                    f"⏳ Đài {label} hôm nay chưa có kết quả (quay lúc "
+                    f"{market.DRAW_TIMES[query.region]}, nguồn cập nhật sau đó ít phút) "
+                    "hoặc hôm nay đài này không quay."
+                    + (f" Kỳ hôm nay nguồn mới có: {have}." if have else "")
+                )
+            elif found is None:
+                msg = _missing_day_text(query, draws)
+            else:
+                msg = f"Ngày {day} đài {label} không quay thưởng (kỳ đó có: {have})."
+            return msg + (" Em chưa dò vé này được nha." if query.ticket else "")
+        draw = found
+    one = market.LotteryDraw(draw.region, draw.date, (province,), draw.link)
+    if query.ticket:
+        return market.format_ticket(query.ticket, one)
+    return market.format_draw(one)
+
+
 async def lottery_text(query: LotteryQuery, text: str = "") -> str:
     """Kết quả/dò vé bằng code. Raise MarketDataError khi nguồn lỗi."""
     draws = await market.get_lottery(query.region)
+    named = _named_province(text, query.region)
+    if named is not None:
+        return _province_text(query, draws, *named)
     draw = market.pick_draw(draws, query.day)
     prefix = ""
     if draw is None:
-        region = market.REGION_NAMES[query.region]
-        if query.day == _today():
-            missing = (
-                f"⏳ Hôm nay xổ số {region} chưa có kết quả (quay lúc "
-                f"{market.DRAW_TIMES[query.region]}, nguồn cập nhật sau đó ít phút)."
-            )
-        else:
-            day = query.day.strftime("%d/%m/%Y") if query.day else ""
-            missing = (
-                f"Em chưa có kết quả xổ số {region} ngày {day} (nguồn chỉ giữ khoảng "
-                f"{len(draws)} kỳ gần nhất)."
-            )
+        missing = _missing_day_text(query, draws)
         if query.ticket:
             # Dò vé đúng 1 ngày chưa có kết quả: không dò nhầm sang kỳ khác.
             return f"{missing} Có kết quả rồi anh nhắn em dò lại nha."
         draw = draws[0]
         prefix = f"{missing} Kết quả gần nhất ngày {draw.date:%d/%m}:\n\n"
+    coverage = market.coverage(draw, draws, _today())
     if query.ticket:
-        return market.format_ticket(query.ticket, draw, text)
+        return market.format_ticket(query.ticket, draw, text, incomplete=coverage)
     province = market.find_province(draw, text)
     if province is not None and len(draw.provinces) > 1:
         draw = market.LotteryDraw(draw.region, draw.date, (province,), draw.link)
+    elif coverage is not None:
+        prefix += (
+            f"⏳ Kỳ hôm nay nguồn mới có kết quả {coverage[0]}/{coverage[1]} đài, đài còn lại "
+            "chưa cập nhật xong.\n\n"
+        )
     return prefix + market.format_draw(draw)
 
 

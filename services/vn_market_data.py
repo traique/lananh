@@ -560,17 +560,66 @@ def format_draw(draw: LotteryDraw) -> str:
     return "\n".join(lines)
 
 
+# Tên khác của cùng 1 đài (bỏ dấu, dấu câu thành khoảng trắng): nguồn ghi "TP.HCM"
+# hay "Hồ Chí Minh", người dùng gõ "sài gòn"; xổ số Lâm Đồng mang tên "Đà Lạt".
+_PROVINCE_ALIASES = (
+    ("ho chi minh", "tp ho chi minh", "tp hcm", "tphcm", "hcm", "sai gon"),
+    ("da lat", "lam dong"),
+    ("hue", "thua thien hue", "tt hue"),
+    ("vung tau", "ba ria vung tau", "brvt"),
+    ("dak lak", "daklak", "dac lac"),
+    ("dak nong", "daknong", "dac nong"),
+)
+
+
+def _name_key(text: str) -> str:
+    return " ".join(re.sub(r"[^\w]+", " ", fold(text)).split())
+
+
+def _province_keys(name: str) -> tuple[str, ...]:
+    key = _name_key(name)
+    return next((group for group in _PROVINCE_ALIASES if key in group), (key,))
+
+
 def find_province(draw: LotteryDraw, text: str) -> ProvinceResult | None:
-    """Tỉnh trong kỳ quay được nhắc tới trong câu (so bỏ dấu)."""
-    folded = f" {fold(text)} "
+    """Tỉnh trong kỳ quay được nhắc tới trong câu (so bỏ dấu, nhận tên khác)."""
+    folded = f" {_name_key(text)} "
     for province in draw.provinces:
-        name = fold(province.name)
-        if name and f" {name} " in folded:
+        if any(key and f" {key} " in folded for key in _province_keys(province.name)):
             return province
     return None
 
 
-def format_ticket(ticket: str, draw: LotteryDraw, province_hint: str = "") -> str:
+# Số đài quay tối thiểu mỗi ngày (khi cache chưa có kỳ cùng thứ tuần trước để so).
+_MIN_PROVINCES = {"mn": 3, "mt": 2, "mb": 1}
+
+
+def coverage(draw: LotteryDraw, draws: list[LotteryDraw], today: dt.date) -> tuple[int, int] | None:
+    """(số đài đã có, số đài thường quay) khi kỳ HÔM NAY còn thiếu đài - nguồn chỉ
+    ghi đài đã có giải ĐB nên lúc đang quay kỳ hôm nay chưa đủ đài; ngược lại None."""
+    if draw.date != today:
+        return None
+    usual = max(
+        (
+            len(d.provinces)
+            for d in draws
+            if d.date != draw.date and d.date.weekday() == draw.date.weekday()
+        ),
+        default=_MIN_PROVINCES.get(draw.region, 1),
+    )
+    have = len(draw.provinces)
+    return (have, usual) if have < usual else None
+
+
+def format_ticket(
+    ticket: str,
+    draw: LotteryDraw,
+    province_hint: str = "",
+    *,
+    incomplete: tuple[int, int] | None = None,
+) -> str:
+    """Dò vé trong 1 kỳ. ``incomplete`` = coverage(): kỳ hôm nay còn đài chưa có
+    kết quả -> không kết luận "chưa trúng" cho cả kỳ."""
     digits = ticket_digits(draw.region)
     if len(ticket) != digits:
         return (
@@ -579,6 +628,8 @@ def format_ticket(ticket: str, draw: LotteryDraw, province_hint: str = "") -> st
         )
     target = find_province(draw, province_hint) if province_hint else None
     provinces = [target] if target else list(draw.provinces)
+    if target is not None:
+        incomplete = None  # đúng đài người dùng hỏi đã có kết quả
     lines = [f"🎫 Dò vé {ticket} - {_draw_heading(draw)[2:]}"]
     any_win = False
     for province in provinces:
@@ -601,7 +652,12 @@ def format_ticket(ticket: str, draw: LotteryDraw, province_hint: str = "") -> st
             "Số tiền là cơ cấu vé 10.000đ để tham khảo - anh đối chiếu vé gốc với đại lý "
             "hoặc công ty xổ số trước khi lĩnh thưởng nha."
         )
-    else:
+    elif incomplete is None:
         lines.append("Tiếc ghê, lần này vé chưa trúng rồi anh 😅")
+    if incomplete is not None:
+        lines.append(
+            f"⏳ Kỳ hôm nay nguồn mới có kết quả {incomplete[0]}/{incomplete[1]} đài - đài còn "
+            "lại chưa có kết quả, anh nhắn em dò lại sau ít phút nha."
+        )
     lines.append("(Nguồn xskt.com.vn, em dò bằng code chứ không đoán)")
     return "\n".join(lines)
