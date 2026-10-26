@@ -204,6 +204,15 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   lượt có dữ liệu web ngoài trong prompt; lượt provider tự tra web thì lọc lỏng:
   giữ link không mang dữ liệu và nguồn được trích dẫn), `all` (mọi lượt), `off`.
 - Lượt trả lời dựa trên web chỉ trích nhớ từ lời người dùng.
+- Che bí mật trước khi gửi provider (`services/prompt_redaction.py`,
+  `PROMPT_REDACTION`, mặc định bật): câu hỏi, lịch sử chat, trí nhớ, grounding, lời
+  dặn kèm ảnh/tài liệu, chữ chép từ tin thoại và kết quả tool `/agent` được thay
+  phần giá trị OTP, mật khẩu/mk/pass, mã PIN, STK, CCCD/CMND/hộ chiếu, số thẻ (kiểm
+  Luhn), khoá bí mật, API key bằng nhãn `[đã ẩn: mã OTP]`... (bỏ cả ký tự vô hình).
+  Mẫu neo theo từ khoá như `memory_guard`, không bắt giá/khối lượng cổ phiếu, số
+  điện thoại, số tiền. Có ẩn thì model nhận thêm 1 dòng hệ thống (không đoán,
+  không hỏi lại). DB vẫn lưu nguyên văn; router tool đổi nhãn về giá trị gốc nên
+  "ghi chú giúp anh: mật khẩu wifi là ..." vẫn lưu đúng ghi chú.
 - Web và `/admin` có header bảo mật (nosniff, Referrer-Policy, X-Frame-Options
   DENY, CSP frame-ancestors, HSTS không preload - tắt HSTS bằng `SECURITY_HSTS=0`).
 
@@ -268,6 +277,13 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   - Không lưu mật khẩu, OTP, số thẻ, số tài khoản, CCCD/CMND/hộ chiếu, API key
     (`services/memory_guard.py`).
   - Nhớ "cách anh muốn em trả lời" (ngắn gọn, không emoji...) và áp dụng mọi lượt.
+    Quy tắc bộ trích nhớ TỰ rút ra phải được duyệt (`services/style_approval.py`,
+    `STYLE_RULES_NEED_APPROVAL`, mặc định bật): lưu thành đề xuất chờ (gộp nhiều
+    đề xuất, hết hạn sau 3 ngày), Lan Anh hỏi 1 lần bằng tin riêng sau câu trả lời
+    chat, tối đa 1 lần/ngày - Telegram có nút [✅ Ghi nhớ] [🗑 Bỏ], Zalo/Zoom nhắn
+    "ghi nhớ"/"bỏ" ngay sau câu hỏi, hoặc `/hoc ok|bo` lúc nào cũng được. Dòng đã
+    bỏ không đề xuất lại. Lời tự dặn rõ ("từ giờ trả lời ngắn thôi", "đừng chèn
+    emoji nữa", `/nho cách trả lời: ...`) vẫn áp ngay.
   - Mỗi phiên có ghi chú + tóm tắt ("lúc nãy mình bàn gì?", bảng
     `user_session_notes`); gộp fact trùng tối đa 1 lần/ngày khi gần đầy
     (`MEMORY_CONSOLIDATION`).
@@ -283,6 +299,7 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   | `/xuatdulieu` | Telegram gửi file .json (tối đa 1 MB), Zalo/Zoom gửi bản chữ rút gọn |
   | `/xoadulieu xacnhan` | Thành viên Zalo xoá mọi dữ liệu cá nhân (vẫn giữ pairing); chủ bot xoá trí nhớ, ghi chú, lịch sử chat, sự kiện hỏi thăm |
   | `/forget` | Xoá hết trí nhớ dài hạn |
+  | `/hoc [ok\|bo]` | Xem / ghi nhớ / bỏ đề xuất cách trả lời em tự rút ra đang chờ duyệt |
 
   Trang `/admin` xem, ghim, quên từng mục trí nhớ của từng người.
 - `/rag` chấm điểm BM25 trên âm tiết và cặp âm tiết (có dấu và bỏ dấu), stopword
@@ -726,6 +743,8 @@ Hội thoại, trí nhớ, hỏi thăm:
 | `MEMORY_FLUSH_EXCHANGES` | 3 | Trích nhớ khi có từng này lượt có nghĩa chưa xử lý |
 | `MEMORY_IDLE_FLUSH_SEC` / `MEMORY_SWEEP_SEC` | 1800 / 600 | Rảnh bao lâu thì trích; chu kỳ vòng quét nền (chạy cả lúc khởi động) |
 | `MEMORY_SWEEP_ENABLED` / `MEMORY_CONSOLIDATION` | 1 / 1 | Bật vòng quét nền; gộp fact trùng tối đa 1 lần/ngày khi gần đầy |
+| `STYLE_RULES_NEED_APPROVAL` | 1 | Cách trả lời bộ trích nhớ tự rút ra chờ người dùng duyệt (`/hoc`, nút [Ghi nhớ] [Bỏ]); 0 = áp ngay như cũ |
+| `PROMPT_REDACTION` | 1 | Che OTP/mật khẩu/STK/CCCD/số thẻ/API key trong prompt trước khi gửi provider; 0 = tắt |
 | `CHAT_READ_LINKS` / `CHAT_READ_LINKS_MEMBERS` | 1 / 0 | Đọc link gửi kèm câu hỏi (chủ bot, admin); 1 = mở cho cả thành viên Zalo |
 | `CHAT_AUTO_RAG` | 1 | Chat thường tự tra kho `rag/` khi khớp rất rõ (chủ bot/admin, không tốn AI) |
 | `PROACTIVE_FOLLOWUPS` | 1 | Công tắc chung hỏi thăm chủ động |
@@ -1193,6 +1212,7 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/notes [từ khoá]`, `/xoaghichu <số\|tatca xacnhan>` | Xem/tìm, xoá ghi chú |
 | `/xuatdulieu`, `/xoadulieu [xacnhan]` | Xuất / xoá dữ liệu cá nhân |
 | `/hoithan [on\|off]` | Bật/tắt hỏi thăm chủ động |
+| `/hoc [ok\|bo]` | Duyệt cách trả lời em tự rút ra (Telegram còn có nút [Ghi nhớ] [Bỏ]) |
 | `/model` | Xem hoặc đổi model 9Router |
 | `/status` | Provider chain, chế độ tra web, cooldown (lý do, phút còn lại), khối "📈 24 giờ qua" (số lượt, p50/p95, tỉ lệ lỗi theo provider) |
 | `/loi` | Lỗi gom theo loại + vị trí code hôm nay/hôm qua, số lần khởi động lại 7 ngày (Telegram, chủ bot) |
@@ -1263,6 +1283,12 @@ hỏi>` (`ai/agent_service.py`) để MODEL tự quyết định:
   `services/web_reader.py`), `xem_rss`, cộng các tool CHỈ ĐỌC của chat: ghi chú,
   nhắc việc, ngày nhớ, chi tiêu, thời tiết, âm lịch, danh mục, kho `rag/` (chủ
   bot/admin). Không có tool GHI dữ liệu trong `/agent`.
+- Mô tả tool/schema viết gọn kiểu EasyTool (1 câu + dạng args + khi nào dùng) để
+  router chat và mỗi bước `/agent` vừa 8K token/phút của Groq gpt-oss-20b:
+  danh sách tool router 4.221 → 2.622 ký tự, JSON tools `/agent` 4.037 → 3.558;
+  `test_tool_catalog_budget` đặt trần, thêm tool thì viết gọn tương tự.
+- Câu hỏi, lịch sử, trí nhớ và kết quả tool được che bí mật trước khi gửi
+  provider (`PROMPT_REDACTION`).
 - Kết quả tool ngoài (web, link, RSS) luôn được làm sạch, rào bằng `core.untrusted`
   và đánh dấu taint; câu trả lời cuối qua bộ lọc link lạ.
 - Bật trên cả Telegram, Zalo và Zoom (`services/channel_command_service.py`),
@@ -1718,6 +1744,7 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
 
 ## Tài liệu bổ sung
 
+- `docs/nang-cap-jarvis.md` — ý tưởng lấy từ các dự án Jarvis (che bí mật trước khi gửi provider, duyệt cách trả lời, mô tả tool gọn)
 - `docs/nang-cap-2026-10-26.md` — đợt nâng cấp 26/10/2026: thay đổi theo nhóm, danh sách việc khi deploy (migration 017-025, biến Render, GitHub secrets), việc chủ bot còn phải quyết, phần cố ý chưa làm, rủi ro
 - `docs/backup-restore.md` — sao lưu/khôi phục DB, role chỉ-đọc, diễn tập, xoay khoá
 - `docs/upgrade-2026-10.md` — đợt nâng cấp toàn diện 10/2026 (lỗi đã sửa, migration 015, biến mới, kết quả backtest offline, việc cần làm khi deploy)
