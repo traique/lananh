@@ -27,6 +27,7 @@ from channels import (
     zoom,
 )
 from channels.router import router as zalo_router
+from channels.zalo_media import router as zalo_media_router
 from core import config, database as db, idempotency, webhook_inbox
 from diagnose_router9 import main as diagnose_main
 from services import db_maintenance, market_page, morning_news
@@ -181,6 +182,7 @@ async def _http_error(request: Request, exc: StarletteHTTPException) -> Response
 
 
 api.include_router(zalo_router)
+api.include_router(zalo_media_router)
 api.include_router(web_admin.router)
 api.include_router(web_admin.api_router)
 api.include_router(web_site.static_router)

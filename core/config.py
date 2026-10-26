@@ -152,6 +152,11 @@ GROQ_CALL_TIMEOUT_SEC = _env_int("GROQ_CALL_TIMEOUT_SEC", 30)
 # chắc chắn chuyển tiếp được.
 GROQ_TOTAL_TIMEOUT_SEC = _env_int("GROQ_TOTAL_TIMEOUT_SEC", 90)
 GROQ_MAX_CONCURRENCY = _env_int("GROQ_MAX_CONCURRENCY", 4)
+# Groq Whisper (console.groq.com/docs/speech-to-text): chép lời tin nhắn thoại
+# (services/voice_service.py), cùng GROQ_API_KEY nhưng bucket rate-limit audio
+# riêng (cooldown "groq_stt", không khoá Groq chat). Nhận flac/mp3/mp4/m4a/ogg/
+# wav/webm - KHÔNG nhận AAC thô (ADTS): định dạng đó chỉ đi Gemini.
+GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo").strip()
 
 # OpenRouter — gateway OpenAI-compatible miễn phí, provider thứ 3 của
 # provider-chain. Model mặc định có hậu tố ":free" (không tốn phí) - danh mục
@@ -175,6 +180,12 @@ OPENROUTER_MAX_CONCURRENCY = _env_int("OPENROUTER_MAX_CONCURRENCY", 4)
 # web-search). TẮT mặc định: tra web TỐN CREDIT kể cả với model ":free" (Exa
 # ~$0.007/request) - tài khoản không nạp credit sẽ lỗi. Bật khi đã nạp credit.
 OPENROUTER_WEB_SEARCH = _env_bool("OPENROUTER_WEB_SEARCH", False)
+# Đọc PDF qua OpenRouter (dự phòng sau Gemini, services/document_service.py):
+# plugin file-parser với engine MIỄN PHÍ "cloudflare-ai" (openrouter.ai/docs/
+# features/multimodal/pdfs). Không đặt engine thì OpenRouter tự dùng mistral-ocr
+# TỐN TIỀN cho model không đọc PDF native - nên engine luôn được ghim; giá trị
+# khác "cloudflare-ai" (mistral-ocr, native) bị coi như tắt. Rỗng = tắt hẳn.
+OPENROUTER_PDF_ENGINE = os.getenv("OPENROUTER_PDF_ENGINE", "cloudflare-ai").strip().lower()
 
 # Tavily — web search dùng làm grounding cho chat, bật/tắt qua lệnh
 # /tavily on|off (ai/tavily_client.py: get_enabled()/set_enabled()), mặc định
@@ -234,6 +245,10 @@ WEB_READER_MAX_BYTES = max(64 * 1024, _env_int("WEB_READER_MAX_BYTES", 2 * 1024 
 # khi vượt ngân sách.
 CHAT_HISTORY_TURNS = _env_int("CHAT_HISTORY_TURNS", 10)
 CHAT_SESSION_TIMEOUT_SEC = _env_int("CHAT_SESSION_TIMEOUT_SEC", 21600)  # 6 giờ
+# Số dòng chat_messages giữ lại cho MỖI người (tin người dùng + câu trả lời,
+# xoay vòng): đủ cho tool search_history ("hôm trước em nói gì về ...") mà vẫn có
+# trần - mỗi thành viên Zalo cũng giữ chừng này dòng trên Supabase free 500 MB.
+CHAT_MESSAGES_RETENTION_LIMIT = max(200, min(2000, _env_int("CHAT_MESSAGES_RETENTION_LIMIT", 1000)))
 ROUTER9_PROBE_INTERVAL_SEC = _env_int(
     "ROUTER9_PROBE_INTERVAL_SEC", _env_int("COOKIE_PROBE_INTERVAL_SEC", 900)
 )  # 15 phút

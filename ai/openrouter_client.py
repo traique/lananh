@@ -7,6 +7,8 @@ guides/features/web-search) - TỐN CREDIT kể cả với model ":free", nên c
 qua OPENROUTER_WEB_SEARCH (mặc định tắt). Bằng chứng đã tra: annotations
 url_citation trong message; không có thì coi như chưa tra (NoSearchEvidenceError)."""
 
+import asyncio
+import base64
 from typing import Optional
 
 from ai import openai_compatible, provider_overrides
@@ -158,6 +160,66 @@ async def generate_image_prompt(instruction: str, image_path: str) -> Response:
         instruction=instruction,
         image_path=image_path,
     )
+
+
+# Engine file-parser MIỄN PHÍ (openrouter.ai/docs/features/multimodal/pdfs):
+# "pdf-text" cũ đã bị OpenRouter chuyển hướng sang "cloudflare-ai". "mistral-ocr"
+# ($2/1.000 trang) và "native" (tính token) KHÔNG BAO GIỜ được dùng.
+_FREE_PDF_ENGINES = {"cloudflare-ai": "cloudflare-ai", "pdf-text": "cloudflare-ai"}
+PDF_MAX_TOKENS = 4096
+
+
+def pdf_engine() -> str:
+    """Engine đọc PDF đang bật ("" = tắt: chưa đặt hoặc đặt engine tốn tiền)."""
+    return _FREE_PDF_ENGINES.get(config.OPENROUTER_PDF_ENGINE, "")
+
+
+async def analyze_document(instruction: str, path: str, *, filename: str) -> Response:
+    """Hỏi đáp 1 file PDF: content part "file" (data URL base64) + plugin
+    file-parser GHIM engine miễn phí - không ghim thì model không đọc PDF native
+    sẽ rơi vào mistral-ocr tính tiền."""
+    engine = pdf_engine()
+    if not engine:
+        raise openai_compatible.OpenAICompatibleError(
+            "OpenRouter đọc PDF đang tắt (OPENROUTER_PDF_ENGINE khác cloudflare-ai)"
+        )
+    api_key = await _api_key()
+    if not api_key:
+        raise openai_compatible.OpenAICompatibleError("Chưa cấu hình OPENROUTER_API_KEY")
+
+    def _read_bytes() -> bytes:
+        with open(path, "rb") as file:
+            return file.read()
+
+    data = await asyncio.to_thread(_read_bytes)
+    data_url = "data:application/pdf;base64," + base64.b64encode(data).decode("ascii")
+    del data
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": instruction},
+                {"type": "file", "file": {"filename": filename, "file_data": data_url}},
+            ],
+        }
+    ]
+    model_name = await _model()
+
+    async def _call() -> str:
+        async with _pool.get_semaphore():
+            return await openai_compatible.post_chat_completion(
+                _pool.get_client(),
+                base_url=config.OPENROUTER_BASE_URL,
+                api_key=api_key,
+                messages=messages,
+                model=model_name,
+                temperature=0.3,
+                max_tokens=PDF_MAX_TOKENS,
+                provider_label="OpenRouter PDF",
+                extra_payload={"plugins": [{"id": "file-parser", "pdf": {"engine": engine}}]},
+            )
+
+    return Response(await _pool.bounded("OpenRouter PDF", _call))
 
 
 async def check_status() -> tuple[bool, str]:

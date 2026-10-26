@@ -476,8 +476,10 @@ async def get_history(telegram_user_id: int, limit: int = 10):
 
 # Giữ tối đa N tin nhắn gần nhất / user trong chat_messages, để bảng không
 # phình vô hạn (prompt chỉ cần CHAT_HISTORY_TURNS*2 dòng - CHAT_HISTORY_TURNS là
-# số LƯỢT; phần dư là bộ đệm cho trích trí nhớ theo lô, services/memory_service).
-CHAT_MESSAGES_RETENTION_LIMIT = 200
+# số LƯỢT; phần dư là bộ đệm cho trích trí nhớ theo lô, services/memory_service,
+# và cho tool search_history tìm lại câu đã trao đổi). Mặc định 1000, env
+# CHAT_MESSAGES_RETENTION_LIMIT (kẹp 200-2000).
+CHAT_MESSAGES_RETENTION_LIMIT = config.CHAT_MESSAGES_RETENTION_LIMIT
 
 
 @_with_reconnect(idempotent=False)

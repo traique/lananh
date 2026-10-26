@@ -32,7 +32,14 @@ def _heavy_budget() -> int:
 # Body khai báo trên ngưỡng này ở /admin/* mới coi là heavy (upload); form đăng
 # nhập và JSON cấu hình chỉ vài KB.
 _ADMIN_HEAVY_THRESHOLD = 256 * 1024
-_MEDIA_PATHS = ("/facebook-group-post", "/image-prompt")
+# Tin thoại (/voice) và file tài liệu (/file) từ zalo-gateway: body thô <= 8 MB
+# như ảnh (service tự chặn chặt hơn: VOICE_MAX_BYTES, DOCUMENT_MAX_BYTES).
+_MEDIA_PATHS = (
+    "/facebook-group-post",
+    "/image-prompt",
+    "/internal/zalo/voice",
+    "/internal/zalo/file",
+)
 
 
 def _limits(path: str, declared: int) -> tuple[int, bool]:

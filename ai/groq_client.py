@@ -167,6 +167,39 @@ async def generate_image_prompt(instruction: str, image_path: str) -> Response:
     )
 
 
+async def transcribe(
+    audio: bytes,
+    *,
+    filename: str,
+    mime_type: str,
+    language: str = "",
+    prompt: str = "",
+) -> str:
+    """Chép lời 1 đoạn ghi âm bằng Whisper của Groq (GROQ_STT_MODEL, mặc định
+    whisper-large-v3-turbo). ``prompt`` (tối đa 224 token theo Groq) gợi ý từ
+    vựng: mã cổ phiếu, tên riêng. Có thể trả chuỗi rỗng (không nghe ra lời)."""
+    api_key = await _api_key()
+    if not api_key:
+        raise openai_compatible.OpenAICompatibleError("Chưa cấu hình GROQ_API_KEY")
+
+    async def _call() -> str:
+        async with _pool.get_semaphore():
+            return await openai_compatible.post_audio_transcription(
+                _pool.get_client(),
+                base_url=config.GROQ_BASE_URL,
+                api_key=api_key,
+                audio=audio,
+                filename=filename,
+                mime_type=mime_type,
+                model=config.GROQ_STT_MODEL,
+                provider_label="Groq STT",
+                language=language,
+                prompt=prompt,
+            )
+
+    return await _pool.bounded("Groq STT", _call)
+
+
 _WEB_EVIDENCE_MARKERS = ("http://", "https://", "nguồn:", "source:")
 # Trích dẫn kiểu 【2†L6-L10】 mà gpt-oss + browser_search chèn vào câu trả lời:
 # vừa là bằng chứng đã đọc trang, vừa là rác với người đọc chat -> gỡ đi.
