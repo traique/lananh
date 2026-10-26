@@ -55,11 +55,15 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import requests
 
 logger = logging.getLogger(__name__)
 
+_VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _BASE_URL = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
 _HEADERS = {
     # iq.vietcap.com.vn không bắt bắt buộc UA cụ thể, nhưng dùng UA trình
@@ -208,3 +212,132 @@ def fetch_income_statement(symbol: str) -> list[dict]:
         return _sorted_desc(rows or [], "yearReport", "lengthReport")
 
     return _cached(_income_cache, symbol, _fetch)
+
+
+# ─── Lịch sự kiện quyền SẮP TỚI (cổ tức, phát hành/quyền mua, ĐHCĐ) ──────────
+# Company.events() của vnstock gọi cùng endpoint nhưng cố định toDate = hôm nay
+# (không thấy sự kiện tương lai) và corporate_actions chỉ giữ ex_date của cổ tức
+# tiền/sự kiện cổ phiếu (bỏ quyền mua, ĐHCĐ, ngày chốt quyền). Hàm này gọi
+# thẳng /v1/events với cửa sổ ngày tường minh.
+#
+# CHƯA xác minh với API thật (gọi mạng cần chủ repo đồng ý) toDate lọc theo ngày
+# công bố hay ngày sự kiện: cửa sổ lấy RỘNG cả 2 phía (từ _EVENTS_LOOKBACK_DAYS
+# ngày trước tới days_ahead ngày sau) rồi lọc lại tại chỗ theo ngày sự kiện, đúng
+# với cả 2 cách hiểu. Tên trường dò theo từ khoá (như corporate_actions).
+_EVENTS_URL = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/events"
+_EVENT_CODES = "DIV,ISS,AGME,AGMR,EGME"
+_EVENTS_LOOKBACK_DAYS = 60
+_EVENTS_PAGE_SIZE = 50
+_EVENTS_CACHE_TTL_SEC = 12 * 3600
+_events_cache: dict[str, tuple[float, list]] = {}
+
+
+@dataclass(frozen=True)
+class UpcomingEvent:
+    symbol: str
+    code: str  # DIV | ISS | AGME | AGMR | EGME | ""
+    title: str
+    ex_date: str  # YYYY-MM-DD hoặc ""
+    record_date: str
+    issue_date: str  # ngày họp/ngày thực hiện (tuỳ loại sự kiện)
+    value: float | None  # cổ tức tiền (giá trị thô của nguồn)
+
+    @property
+    def key_date(self) -> str:
+        """Ngày quan trọng nhất để báo trước: GDKHQ, không có thì ngày chốt, ngày họp."""
+        return self.ex_date or self.record_date or self.issue_date
+
+
+def _event_date(value) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        # Epoch mili-giây; đổi theo giờ VN (mốc 0h UTC hay 0h VN đều ra đúng ngày).
+        try:
+            return datetime.fromtimestamp(float(value) / 1000, tz=_VN_TZ).date().isoformat()
+        except (OverflowError, OSError, ValueError):
+            return ""
+    text = str(value).strip()
+    return text[:10] if len(text) >= 10 and text[4] == "-" else ""
+
+
+def _pick(row: dict, *keywords: str):
+    lowered = {str(k).lower(): v for k, v in row.items()}
+    for keyword in keywords:
+        for key, value in lowered.items():
+            if keyword in key and value not in (None, ""):
+                return value
+    return None
+
+
+def parse_upcoming_events(symbol: str, rows: list) -> list[UpcomingEvent]:
+    """Hàm thuần: dòng JSON của /v1/events -> UpcomingEvent (bỏ dòng thiếu ngày)."""
+    out: list[UpcomingEvent] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        event = UpcomingEvent(
+            symbol=symbol,
+            code=str(_pick(row, "eventcode", "eventlistcode") or "").strip().upper(),
+            title=str(
+                _pick(row, "eventtitlevi", "eventtitle", "eventnamevi", "eventname", "title") or ""
+            ).strip()[:160],
+            ex_date=_event_date(_pick(row, "exright")),
+            record_date=_event_date(_pick(row, "recorddate")),
+            issue_date=_event_date(_pick(row, "issuedate")),
+            value=_float_or_none(_pick(row, "valuepershare", "dividend", "cashvalue")),
+        )
+        if event.key_date:
+            out.append(event)
+    return out
+
+
+def _float_or_none(value) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_upcoming_events(symbol: str, days_ahead: int = 45) -> list[UpcomingEvent]:
+    """Sự kiện quyền có ngày sự kiện từ hôm nay tới ``days_ahead`` ngày tới, cache
+    12 giờ theo mã (có trần). Có thể raise (mạng/HTTP/JSON) - caller tự xử lý."""
+    key = symbol.strip().upper()
+    with _cache_lock:
+        hit = _events_cache.get(key)
+        if hit and time.monotonic() - hit[0] < _EVENTS_CACHE_TTL_SEC:
+            return list(hit[1])
+    today = datetime.now(_VN_TZ).date()
+    response = requests.get(
+        _EVENTS_URL,
+        params={
+            "ticker": key,
+            "fromDate": (today - timedelta(days=_EVENTS_LOOKBACK_DAYS)).strftime("%Y%m%d"),
+            "toDate": (today + timedelta(days=days_ahead)).strftime("%Y%m%d"),
+            "eventCode": _EVENT_CODES,
+            "page": 0,
+            "size": _EVENTS_PAGE_SIZE,
+        },
+        headers=_HEADERS,
+        timeout=_REQUEST_TIMEOUT_SEC,
+    )
+    response.raise_for_status()
+    data = response.json()
+    payload = data.get("data") if isinstance(data, dict) else None
+    rows = payload.get("content") if isinstance(payload, dict) else payload
+    limit = (today + timedelta(days=days_ahead)).isoformat()
+    events = [
+        e
+        for e in parse_upcoming_events(key, rows if isinstance(rows, list) else [])
+        if today.isoformat() <= e.key_date <= limit
+    ]
+    with _cache_lock:
+        now = time.monotonic()
+        for stale in [
+            k for k, (ts, _) in _events_cache.items() if now - ts >= _EVENTS_CACHE_TTL_SEC
+        ]:
+            _events_cache.pop(stale, None)
+        if len(_events_cache) >= _CACHE_MAX_ENTRIES and key not in _events_cache:
+            _events_cache.pop(min(_events_cache, key=lambda k: _events_cache[k][0]), None)
+        _events_cache[key] = (now, events)
+    return list(events)

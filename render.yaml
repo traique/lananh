@@ -99,6 +99,10 @@ services:
         value: "8"
       - key: PORTFOLIO_EVENTS_MAX_HOLDINGS
         value: "60"
+      - key: PORTFOLIO_EVENT_NOTICES
+        value: "1"
+      - key: PORTFOLIO_EVENTS_MAX_SYMBOLS
+        value: "40"
       - key: PORTFOLIO_PUSH_ZALO_DAILY_CAP
         value: "5"
       # Cảnh báo giá trong phiên (chỉ giờ giao dịch, tick hôm nay).

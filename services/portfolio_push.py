@@ -47,6 +47,14 @@ async def already_sent(user_id: int, kind: str, ref_key: str, *, on: str | None 
     return await db.portfolio_alert_logged(user_id, kind, ref_key, on)
 
 
+async def mark_sent(user_id: int, kind: str, ref_key: str, today: str) -> None:
+    """Ghi nhật ký cho mục đã nằm trong 1 tin gộp vừa gửi (không gửi thêm gì)."""
+    try:
+        await db.portfolio_log_alert(user_id, kind, ref_key[:200], today)
+    except Exception:
+        logger.warning("portfolio_push: không ghi được nhật ký %s.", kind, exc_info=True)
+
+
 async def _zalo_recipient(user_id: int) -> str | None:
     from channels import zalo_users
 
