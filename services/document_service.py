@@ -122,14 +122,18 @@ def detect_kind(filename: str, mime: str, head: bytes) -> str | None:
     return None
 
 
-def decode_text(data: bytes) -> str:
+def decode_text(data: bytes, *, partial: bool = False) -> str:
+    """partial: ``data`` chỉ là phần đầu file (bị cắt) - chuỗi UTF-8 dở dang ở
+    cuối bị bỏ qua thay vì làm cả đoạn rơi về cp1258."""
     if data.startswith(codecs.BOM_UTF8):
         text = data[len(codecs.BOM_UTF8) :].decode("utf-8", errors="replace")
     elif data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
         text = data.decode("utf-16", errors="replace")
     else:
         try:
-            text = data.decode("utf-8")
+            # Byte lỗi ở GIỮA vẫn raise (file cp1258 thật); final=False chỉ giữ
+            # lại tối đa 3 byte của ký tự bị cắt ở cuối.
+            text = codecs.getincrementaldecoder("utf-8")().decode(data, final=not partial)
         except UnicodeDecodeError:
             # File Windows cũ: cp1258 (Windows tiếng Việt) giải được mọi byte.
             text = data.decode("cp1258", errors="replace")
@@ -234,10 +238,12 @@ def extract_text(path: Path, kind: str, limit: int) -> tuple[str, bool]:
     """(chữ đã tách, có bị cắt) cho TXT/DOCX - chạy trong thread (đọc đĩa, parse)."""
     if kind == KIND_DOCX:
         return extract_docx(path, limit)
+    want = limit * 4 + 4
     with open(path, "rb") as file:
         # Đọc dư 4 byte/ký tự là đủ cho `limit` ký tự UTF-8; phần sau bỏ qua.
-        data = file.read(limit * 4 + 4)
-    return _cut(decode_text(data), limit)
+        data = file.read(want)
+        partial = len(data) == want and bool(file.read(1))
+    return _cut(decode_text(data, partial=partial), limit)
 
 
 # ─── "Lưu vào kho" ──────────────────────────────────────────────────────────

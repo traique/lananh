@@ -77,6 +77,27 @@ def test_giai_ma_utf8_bom_utf16_va_cp1258():
     assert ds.decode_text("Ti\u00ea\u0300n thu\u00ea".encode("cp1258")) == "Tiền thuê"
 
 
+@pytest.mark.parametrize("padding", range(4))
+def test_txt_utf8_dai_bi_cat_giua_ky_tu_van_giai_dung_tieng_viet(tmp_path, padding):
+    """File UTF-8 dài hơn phần đọc (limit*4+4 byte): chỗ cắt rơi giữa ký tự nhiều
+    byte không được làm cả file rơi về cp1258 (chữ lỗi "Há»£p Ä‘á»“ng")."""
+    from core.text_normalize import nfc
+
+    limit = 2_000
+    head = "x" * padding + "Hợp đồng mua bán nhà ở. "
+    # Quanh chỗ cắt toàn ký tự 3 byte + 2 byte: padding 0..3 phủ mọi vị trí cắt.
+    data = (head + "ợđ" * 5_000).encode("utf-8")
+    assert len(data) > limit * 4 + 4
+    path = tmp_path / "hop-dong.txt"
+    path.write_bytes(data)
+    out, truncated = ds.extract_text(path, ds.KIND_TXT, limit)
+    assert truncated is True and len(out) == limit
+    assert out.startswith(head.strip()) and set(out[len(head) :]) <= {"ợ", "đ"}
+    # Đọc trọn file: byte lỗi thật ở cuối vẫn rơi về cp1258 như cũ.
+    broken_tail = "Hợp".encode() + b"\xe1\xbb"
+    assert ds.decode_text(broken_tail) == nfc(broken_tail.decode("cp1258", errors="replace"))
+
+
 def test_tach_chu_docx_theo_doan(tmp_path):
     path = _docx(
         tmp_path,
