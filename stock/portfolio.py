@@ -2,10 +2,14 @@
 
 import asyncio
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from core import database as db
 from stock import providers
+
+_VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 @dataclass(frozen=True)
@@ -271,6 +275,20 @@ def _day_change_note(quote, quantity: float) -> str:
     return f" {arrow} {pct:+.2f}% ({_fmt_signed(change * quantity)}đ)"
 
 
+def _session_label(quotes) -> str:
+    """Nhãn dòng lãi/lỗ trong ngày: "Hôm nay" chỉ khi mọi giá là của phiên hôm
+    nay; ngoài ra (digest 8h sáng, cuối tuần, ngày lễ) ghi rõ "Phiên dd/mm" theo
+    ngày của giá mới nhất - trước đây digest gọi thay đổi phiên trước là "Hôm nay"."""
+    today = datetime.now(_VN_TZ).date().isoformat()
+    dates = sorted({str(getattr(q, "date", "") or "")[:10] for q in quotes} - {""})
+    if not dates or dates == [today]:
+        return "Hôm nay"
+    try:
+        return f"Phiên {date.fromisoformat(dates[-1]):%d/%m}"
+    except ValueError:
+        return "Phiên gần nhất"
+
+
 async def build_report(user_id: int, *, digest: bool = False) -> str:
     holdings = await list_holdings(user_id)
     if not holdings:
@@ -306,6 +324,7 @@ async def build_report(user_id: int, *, digest: bool = False) -> str:
         if quote is not None and quote.prev_close and quote.prev_close > 0
     )
     day_pnl_pct = day_pnl / prev_value * 100 if prev_value else 0.0
+    day_label = _session_label([quote for _, quote, _ in priced if quote is not None])
 
     title = "📊 *Digest danh mục đang nắm giữ:*" if digest else "📊 *Danh mục đang nắm giữ:*"
     lines = [title]
@@ -354,7 +373,8 @@ async def build_report(user_id: int, *, digest: bool = False) -> str:
         if prev_value:
             day_icon = "🟢" if day_pnl >= 0 else "🔴"
             lines.append(
-                f"{day_icon} Hôm nay: *{_fmt_signed(day_pnl)}đ ({day_pnl_pct:+.2f}%)* so với phiên trước"
+                f"{day_icon} {day_label}: *{_fmt_signed(day_pnl)}đ ({day_pnl_pct:+.2f}%)* "
+                "so với phiên trước"
             )
     lines.append("\n⚠️ Số liệu chỉ để theo dõi, không phải khuyến nghị mua bán.")
     return "\n".join(lines)

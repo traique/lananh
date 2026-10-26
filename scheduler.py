@@ -133,9 +133,16 @@ _DIGEST_POLL_SEC = 15 * 60
 
 
 def digest_due(now: datetime, last_sent_date: str | None) -> bool:
-    """Tới giờ (hoặc trong khung gửi bù) và hôm nay chưa gửi."""
+    """Tới giờ (hoặc trong khung gửi bù) và hôm nay chưa gửi. Ngày không có phiên
+    (cuối tuần, lễ) bỏ qua: giá vẫn là phiên trước nên digest chỉ lặp lại bản hôm
+    trước - bật lại bằng DIGEST_ON_NON_TRADING_DAYS=true."""
     if last_sent_date == now.date().isoformat():
         return False
+    if not config.DIGEST_ON_NON_TRADING_DAYS:
+        from stock import calendar as trading_calendar
+
+        if not trading_calendar.is_trading_day(now.date()):
+            return False
     start = now.replace(hour=config.DAILY_DIGEST_HOUR_VN, minute=0, second=0, microsecond=0)
     return start <= now < start + timedelta(hours=DIGEST_CATCHUP_HOURS)
 

@@ -84,6 +84,9 @@ services:
       # Heavy research jobs must never share the free web-service process.
       - key: STOCK_BACKTEST_ALLOW_ON_RENDER
         value: "false"
+      # Danh mục cổ phiếu: digest bỏ qua ngày không có phiên.
+      - key: DIGEST_ON_NON_TRADING_DAYS
+        value: "false"
       - key: ROUTER9_PROBE_INTERVAL_SEC
         value: "900"
       - key: API_QUOTA_COOLDOWN_SEC

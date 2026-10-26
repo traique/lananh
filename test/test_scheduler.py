@@ -134,6 +134,20 @@ def test_digest_due_theo_khung_gio_va_guard_ngay(monkeypatch):
     assert scheduler.digest_due(datetime(2026, 5, 4, 8, 30, tzinfo=tz), "2026-05-03") is True
 
 
+def test_digest_bo_qua_ngay_khong_co_phien(monkeypatch):
+    from datetime import datetime
+
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Asia/Ho_Chi_Minh")
+    monkeypatch.setattr(scheduler.config, "DAILY_DIGEST_HOUR_VN", 8)
+    monkeypatch.setattr(scheduler.config, "DIGEST_ON_NON_TRADING_DAYS", False)
+    assert scheduler.digest_due(datetime(2026, 5, 9, 8, 30, tzinfo=tz), None) is False  # thứ Bảy
+    assert scheduler.digest_due(datetime(2026, 4, 30, 8, 30, tzinfo=tz), None) is False  # lễ
+    monkeypatch.setattr(scheduler.config, "DIGEST_ON_NON_TRADING_DAYS", True)
+    assert scheduler.digest_due(datetime(2026, 5, 9, 8, 30, tzinfo=tz), None) is True
+
+
 @pytest.mark.asyncio
 async def test_run_daily_digest_once_danh_dau_sau_khi_gui(monkeypatch):
     saved = {}

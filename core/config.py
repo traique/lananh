@@ -295,6 +295,8 @@ ENABLE_DAILY_DIGEST = _env_bool("ENABLE_DAILY_DIGEST", True)
 # Cảnh báo danh mục cuối phiên (chạm stop/target, breakout Donchian) - services/portfolio_alerts.py.
 ENABLE_PORTFOLIO_ALERTS = _env_bool("ENABLE_PORTFOLIO_ALERTS", True)
 DAILY_DIGEST_HOUR_VN = _env_int("DAILY_DIGEST_HOUR_VN", 8)
+# Mặc định digest bỏ qua cuối tuần/ngày lễ (giá vẫn là phiên trước, gửi lại y bản cũ).
+DIGEST_ON_NON_TRADING_DAYS = _env_bool("DIGEST_ON_NON_TRADING_DAYS", False)
 
 # Bản tin buổi sáng tổng hợp từ RSS, gửi qua Zalo + Zoom cho chủ bot lúc
 # MORNING_NEWS_HOUR_VN giờ VN - xem services/morning_news.py. Nguồn RSS mặc
