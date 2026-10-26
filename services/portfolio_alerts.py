@@ -76,10 +76,16 @@ def is_due(now: datetime, last_run_date: str | None) -> bool:
     return start <= now < start + timedelta(hours=CATCHUP_HOURS)
 
 
+# Biên cho phần việc giữa 2 vòng ngoài giấc ngủ _POLL_SEC (gửi tin, nhắc lịch...).
+_FINAL_POLL_MARGIN_SEC = 60
+
+
 def is_final_poll(now: datetime) -> bool:
-    """Vòng quét cuối cùng trong khung bù (vòng kế tiếp đã quá khung)."""
+    """Vòng quét cuối cùng trong khung bù: vòng kế tiếp (sớm nhất ``now`` +
+    _POLL_SEC, vì vòng lặp ngủ _POLL_SEC SAU khi quét xong) đã quá khung.
+    ``now`` phải là giờ SAU khi quét (run_once), không phải lúc vòng bắt đầu."""
     end = _window_start(now) + timedelta(hours=CATCHUP_HOURS)
-    return now >= end - timedelta(seconds=_POLL_SEC)
+    return now + timedelta(seconds=_POLL_SEC + _FINAL_POLL_MARGIN_SEC) >= end
 
 
 def _fmt(value: float) -> str:
@@ -446,8 +452,11 @@ async def run_once(user_id: int, *, force: bool = False) -> bool:
     last = await db.get_setting(_LAST_RUN_KEY)
     if not force and not is_due(now, last):
         return False
-    final_poll = force or is_final_poll(now)
     scan = await scan_portfolio(user_id, today)
+    # Xét "vòng cuối" theo giờ SAU khi quét: lượt quét ngày mất dữ liệu có thể
+    # mất cả phút (timeout lịch quyền/nguồn giá), vòng kế tiếp bắt đầu sau đó
+    # thêm _POLL_SEC - xét theo giờ bắt đầu thì vòng kế tiếp có thể đã quá khung.
+    final_poll = force or is_final_poll(datetime.now(_VN_TZ))
     if not scan.items:
         await db.set_setting(_LAST_RUN_KEY, today.isoformat())
         return False

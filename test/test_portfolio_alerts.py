@@ -6,6 +6,8 @@ import pytest
 from services import portfolio_alerts as pa
 from stock import portfolio, providers
 
+_REAL_IS_FINAL_POLL = pa.is_final_poll
+
 
 def _holding(**kw):
     base = dict(user_id=1, symbol="FPT", quantity=100, average_price=100_000.0)
@@ -147,6 +149,40 @@ async def test_run_once_mat_du_lieu_thu_lai_roi_bao_o_vong_cuoi(monkeypatch):
     assert await pa.run_once(1) is True
     assert "không lấy được dữ liệu giá cuối phiên" in env.sent[0]
     assert "FPT, HPG" in env.sent[0] and env.marked
+
+
+def test_vong_cuoi_tinh_theo_luc_vong_ke_tiep_bat_dau():
+    tz = pa._VN_TZ
+    # Khung bù 15h05-18h05, vòng quét mỗi 10 phút (+ biên): vòng kế tiếp của lượt
+    # xét lúc 17h54 rơi sau 18h05 -> đây đã là vòng cuối.
+    assert pa.is_final_poll(datetime(2026, 3, 12, 17, 50, tzinfo=tz)) is False
+    assert pa.is_final_poll(datetime(2026, 3, 12, 17, 54, 30, tzinfo=tz)) is True
+    assert pa.is_final_poll(datetime(2026, 3, 12, 18, 4, tzinfo=tz)) is True
+
+
+@pytest.mark.asyncio
+async def test_vong_cuoi_xet_sau_khi_quet_xong(monkeypatch):
+    """Lượt quét chậm (lịch quyền/timeout ngày mất dữ liệu): "vòng cuối" phải xét
+    theo giờ SAU khi quét, nếu không vòng kế tiếp đã quá khung và cả ngày không có
+    cảnh báo lẫn dòng báo mất dữ liệu."""
+    from datetime import time as dtime
+
+    env = _Env(monkeypatch, [_holding(), _holding(symbol="HPG")], {})
+    monkeypatch.setattr(pa, "is_final_poll", _REAL_IS_FINAL_POLL)
+    tz = pa._VN_TZ
+    clock = [
+        datetime.combine(env.today, dtime(17, 49), tzinfo=tz),  # vòng bắt đầu
+        datetime.combine(env.today, dtime(17, 55, 20), tzinfo=tz),  # quét xong
+    ]
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock.pop(0) if len(clock) > 1 else clock[0]
+
+    monkeypatch.setattr(pa, "datetime", _Clock)
+    assert await pa.run_once(1) is True
+    assert "không lấy được dữ liệu giá cuối phiên" in env.sent[0] and env.marked
 
 
 @pytest.mark.asyncio
