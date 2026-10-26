@@ -283,7 +283,7 @@ async def generate_realtime(
     cleaned = _BROWSER_CITATION_RE.sub("", text).strip()
     if not cleaned:
         raise openai_compatible.OpenAICompatibleError("Groq web search trả kết quả rỗng")
-    return Response(cleaned, searched=True)
+    return Response(cleaned, searched=True, citations=result.source_urls)
 
 
 async def check_status() -> tuple[bool, str]:

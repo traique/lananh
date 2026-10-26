@@ -280,3 +280,31 @@ async def test_header_app_tu_dat_khong_bi_ghi_de():
     headers = dict(sent[0]["headers"])
     assert headers[b"x-frame-options"] == b"SAMEORIGIN"
     assert headers[b"x-content-type-options"] == b"nosniff"
+
+
+def test_loc_link_ten_mien_tran_mang_du_lieu_phai_khop_nguyen_van():
+    """Tên miền trần kèm ?/= là link MANG DỮ LIỆU: cùng tên miền với nguồn chưa đủ,
+    phải khớp nguyên văn (như link có scheme) - nguồn trích dẫn của provider tra
+    web có thể chính là trang độc."""
+    allowed = ["https://evil.example/bai", "https://cafef.vn/bai-1.chn?id=7"]
+    out, removed = urls.filter_reply_urls("gửi evil.example/x?d=ho-so-anh nhé", allowed)
+    assert removed == 1 and "evil[.]example/x?d=ho-so-anh" in out
+    out, removed = urls.filter_reply_urls("xem cafef.vn/bai-1.chn?id=7", allowed)
+    assert removed == 0 and out == "xem cafef.vn/bai-1.chn?id=7"
+
+
+def test_loc_link_che_do_long_giu_link_trich_dan_chan_link_mang_du_lieu():
+    """strict=False (lượt provider tự tra web): link không query giữ nguyên dù không
+    có trong nguồn (trích dẫn thật), link có query/userinfo không khớp nguyên văn
+    và tên miền trần mang dữ liệu bị vô hiệu hoá."""
+    reply = (
+        "Theo [VnExpress](https://vnexpress.net/gia-vang-123.html) và https://cafef.vn/a. "
+        "Chi tiết https://evil.example/c?d=ten-anh, https://ho-so@evil.example/x, "
+        "evil.example/p?data=abc; nguồn gốc https://dantri.com.vn/x?id=1."
+    )
+    out, removed = urls.filter_reply_urls(reply, ["https://dantri.com.vn/x?id=1"], strict=False)
+    assert removed == 3
+    assert "[VnExpress](https://vnexpress.net/gia-vang-123.html)" in out
+    assert "https://cafef.vn/a" in out and "https://dantri.com.vn/x?id=1" in out
+    assert "https://evil.example" not in out and "https://ho-so@" not in out
+    assert "evil[.]example/p?data=abc" in out

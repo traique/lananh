@@ -199,7 +199,7 @@ async def generate_search(
             "9Router trả lời nhưng không kèm url_citation - không tin là đã tra web"
         )
         raise Router9Error(str(evidence)) from evidence
-    return Response(result.text, searched=True)
+    return Response(result.text, searched=True, citations=result.source_urls)
 
 
 async def generate_with_tools(

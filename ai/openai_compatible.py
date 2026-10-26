@@ -14,11 +14,12 @@ import mimetypes
 import re
 import time
 from email.utils import parsedate_to_datetime
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Iterable, Optional
 
 import httpx
 
 from ai import call_log, drafts
+from core import urls
 
 logger = logging.getLogger(__name__)
 
@@ -135,16 +136,57 @@ class NoSearchEvidenceError(OpenAICompatibleError):
     phải lỗi sức khoẻ/quota (không cooldown, không khai tử)."""
 
 
+# Trần số URL nguồn (trích dẫn) giữ theo 1 câu trả lời tự tra web.
+MAX_CITATIONS = 40
+_CITATION_MAX_CHARS = 500
+# Độ sâu tối đa khi duyệt executed_tools (JSON lồng nhau) tìm URL.
+_CITATION_SCAN_DEPTH = 6
+
+
+def bounded_citations(items: Iterable[str]) -> list[str]:
+    """URL http(s) không trùng, tối đa MAX_CITATIONS, mỗi URL có trần độ dài."""
+    out: list[str] = []
+    for item in items:
+        url = str(item or "").strip()
+        if len(url) > _CITATION_MAX_CHARS or not url.lower().startswith(("http://", "https://")):
+            continue
+        if url not in out:
+            out.append(url)
+            if len(out) >= MAX_CITATIONS:
+                break
+    return out
+
+
+def _scan_urls(value: Any, found: list[str], depth: int = 0) -> None:
+    if len(found) >= MAX_CITATIONS or depth > _CITATION_SCAN_DEPTH:
+        return
+    if isinstance(value, str):
+        for url in urls.extract_urls(value):
+            if len(found) >= MAX_CITATIONS:
+                return
+            if url not in found:
+                found.append(url)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _scan_urls(item, found, depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            _scan_urls(item, found, depth + 1)
+
+
 class Response:
     """Bọc kết quả text trả về, cùng interface `.text` như FallbackResponse
     của official_client, để orchestrator dùng chung 1 contract cho mọi nhánh.
 
     ``searched``: provider đã TỰ tra web trong chính lượt gọi này (có bằng
-    chứng) - caller dùng để biết câu trả lời dựa trên dữ liệu web ngoài."""
+    chứng) - caller dùng để biết câu trả lời dựa trên dữ liệu web ngoài.
+    ``citations``: URL nguồn provider đã tra (url_citation, executed_tools) -
+    nguồn được phép của bộ lọc link câu trả lời (core/urls.py)."""
 
-    def __init__(self, text: str, *, searched: bool = False) -> None:
+    def __init__(self, text: str, *, searched: bool = False, citations: Iterable[str] = ()) -> None:
         self.text = text
         self.searched = searched
+        self.citations = bounded_citations(citations)
 
 
 class CompletionResult:
@@ -164,7 +206,7 @@ class CompletionResult:
 
     @property
     def url_citations(self) -> list[str]:
-        urls: list[str] = []
+        found: list[str] = []
         for item in self.annotations:
             if not isinstance(item, dict) or item.get("type") != "url_citation":
                 continue
@@ -172,9 +214,17 @@ class CompletionResult:
                 item.get("url_citation") if isinstance(item.get("url_citation"), dict) else item
             )
             url = str(citation.get("url") or "")
-            if url and url not in urls:
-                urls.append(url)
-        return urls
+            if url and url not in found:
+                found.append(url)
+        return found
+
+    @property
+    def source_urls(self) -> list[str]:
+        """url_citation + mọi URL trong executed_tools (Groq browser_search: kết
+        quả tìm và trang đã mở), có trần MAX_CITATIONS."""
+        found = bounded_citations(self.url_citations)
+        _scan_urls(self.executed_tools, found)
+        return found[:MAX_CITATIONS]
 
 
 class ToolCallResponse:

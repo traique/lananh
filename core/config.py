@@ -199,8 +199,9 @@ TAVILY_CALL_TIMEOUT_SEC = _env_int("TAVILY_CALL_TIMEOUT_SEC", 20)
 # người dùng/dữ liệu tra cứu bị hiện dạng hxxps://ten[.]mien. "untrusted" (mặc
 # định): chỉ lọc lượt có dữ liệu ngoài (Tavily, đọc trang...) trong prompt -
 # đúng lượt có thể bị prompt injection; "all": lọc mọi lượt chat; "off": tắt.
-# Lượt provider tự tra web (Google Search, browser_search) không lọc vì link
-# nguồn do provider tìm ra, không nằm trong dữ liệu của bot.
+# Lượt provider tự tra web (Google Search, browser_search) luôn lọc (trừ "off"):
+# URL trích dẫn của provider là nguồn được phép; không có dữ liệu ngoài của bot
+# trong prompt thì lọc lỏng - giữ link không query, chỉ vô hiệu link mang dữ liệu.
 REPLY_URL_FILTER = os.getenv("REPLY_URL_FILTER", "untrusted").strip().lower() or "untrusted"
 
 # vnstock — API key MIỄN PHÍ (gói Community, đăng ký tại vnstocks.com/login)

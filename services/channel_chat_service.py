@@ -305,7 +305,7 @@ async def run_chat_turn(
         untrusted_context = plan.untrusted or untrusted.contains_untrusted(combined)
         reply = _filter_reply_links(
             reply,
-            (text, combined, memory.context),
+            (text, combined, memory.context, *_response_citations(response)),
             untrusted_context=untrusted_context,
             searched=searched,
         )
@@ -381,22 +381,49 @@ def _search_mode(
     return plan.mode
 
 
+_MAX_REPLY_CITATIONS = 40
+
+
+def _response_citations(response) -> list[str]:
+    """URL nguồn provider đã tra trong lượt tự tra web (Response.citations:
+    url_citation, executed_tools của Groq, tên miền grounding Gemini)."""
+    raw = getattr(response, "citations", None)
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [item for item in raw[:_MAX_REPLY_CITATIONS] if isinstance(item, str)]
+
+
 def _filter_reply_links(
     reply: str, sources: tuple[str, ...], *, untrusted_context: bool, searched: bool
 ) -> str:
-    """Vô hiệu hoá link lạ trong câu trả lời (core/urls.py) theo
-    REPLY_URL_FILTER. Bỏ qua lượt provider tự tra web: link nguồn do provider
-    tìm ra, không có trong dữ liệu của bot nên lọc sẽ hỏng trích dẫn thật."""
+    """Vô hiệu hoá link lạ trong câu trả lời (core/urls.py) theo REPLY_URL_FILTER
+    ("off" tắt hẳn). ``sources`` gồm cả URL trích dẫn của provider tự tra web.
+
+    - Lượt có dữ liệu ngoài đã rào (Tavily, trang, trích dẫn...) - kể cả khi
+      provider cũng tự tra web - hoặc chế độ "all" ở lượt không tự tra web: lọc
+      đầy đủ.
+    - Lượt provider tự tra web (native/forced, Gemini AUTO có grounding): provider
+      đọc trang lạ cùng persona/trí nhớ, nhưng nguồn trích dẫn có thể không có
+      trong dữ liệu của bot -> lọc lỏng: giữ link không query, vô hiệu link mang
+      dữ liệu (query string/userinfo không khớp nguồn, tên miền trần kèm ?/=)."""
     from core import config
 
     mode = config.REPLY_URL_FILTER
-    if not reply or searched or mode == "off":
+    if not reply or mode == "off":
         return reply
-    if mode != "all" and not untrusted_context:
+    if untrusted_context or (mode == "all" and not searched):
+        strict = True
+    elif searched:
+        strict = False
+    else:
         return reply
-    filtered, removed = urls.filter_reply_urls(reply, sources)
+    filtered, removed = urls.filter_reply_urls(reply, sources, strict=strict)
     if removed:
-        logger.warning("Đã vô hiệu hoá %d link lạ trong câu trả lời chat.", removed)
+        logger.warning(
+            "Đã vô hiệu hoá %d link lạ trong câu trả lời chat (%s).",
+            removed,
+            "đầy đủ" if strict else "lượt tự tra web",
+        )
     return filtered
 
 

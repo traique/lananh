@@ -7,7 +7,10 @@
   (hxxps://ten[.]mien/...) thành chữ thường, không bấm/preview được. Chống
   kiểu tấn công trang web độc xúi model viết https://ke-xau/?q=<trí nhớ> để
   rò rỉ dữ liệu qua bản xem trước link. Đây là lớp phụ: lớp chính là tắt link
-  preview của Telegram (bot_app.build_application).
+  preview của Telegram (bot_app.build_application). ``strict=False`` (lượt
+  provider tự tra web, nguồn trích dẫn có thể không nằm trong dữ liệu của bot):
+  chỉ vô hiệu hoá link MANG DỮ LIỆU (query string/userinfo không khớp nguyên
+  văn nguồn, tên miền trần kèm ?/=), giữ link trích dẫn không query.
 
 Chạy trên MARKDOWN THÔ (trước markdown_to_html) để bắt cả link ẩn [chữ](url).
 """
@@ -18,7 +21,9 @@ import re
 from collections.abc import Iterable
 from urllib.parse import urlsplit, urlunsplit
 
-URL_RE = re.compile(r"https?://[^\s<>\"'`\]\[(){}]+", re.IGNORECASE)
+# 【 】 †: khung trích dẫn của gpt-oss browser_search (【0†tiêu đề†https://...】),
+# không bao giờ nằm nguyên dạng trong URL thật.
+URL_RE = re.compile(r"https?://[^\s<>\"'`\]\[(){}【】†]+", re.IGNORECASE)
 URL_TRAILING_PUNCT = ".,;:!?…»”’"
 _MD_LINK_RE = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+)\)", re.IGNORECASE)
 # Tên miền trần (không có http) kèm đường dẫn MANG DỮ LIỆU (có ? hoặc =) - kiểu
@@ -97,18 +102,32 @@ class _Allowlist:
             return True
         return not parts.path and host in self.hosts
 
-    def permits_host(self, host: str) -> bool:
-        return _host(host) in self.hosts
+
+def _carries_no_data(url: str) -> bool:
+    """Link "trích dẫn" thuần: http(s) hợp lệ, không query string, không userinfo
+    (user:pass@) - 2 chỗ hay dùng để nhét dữ liệu rò rỉ."""
+    normalized = normalize_url(url.rstrip(URL_TRAILING_PUNCT))
+    if not normalized:
+        return False
+    parts = urlsplit(normalized)
+    return not parts.query and "@" not in parts.netloc
 
 
-def filter_reply_urls(text: str, allowed_sources: Iterable[str]) -> tuple[str, int]:
+def filter_reply_urls(
+    text: str, allowed_sources: Iterable[str], *, strict: bool = True
+) -> tuple[str, int]:
     """Vô hiệu hoá link không có trong ``allowed_sources``. Trả (text, số link đã
-    vô hiệu hoá). Link markdown [chữ](url) lạ thành "chữ (hxxps://...)"."""
+    vô hiệu hoá). Link markdown [chữ](url) lạ thành "chữ (hxxps://...)".
+    ``strict=False``: link không mang dữ liệu (_carries_no_data) được giữ dù không
+    có trong nguồn - xem docstring module."""
     if not text or ("http" not in text.lower() and "." not in text):
         return text, 0
     allow = _Allowlist(allowed_sources)
     kept: list[str] = []
     removed = 0
+
+    def _allowed(url: str) -> bool:
+        return allow.permits(url) or (not strict and _carries_no_data(url))
 
     def _keep(value: str) -> str:
         kept.append(value)
@@ -117,7 +136,7 @@ def filter_reply_urls(text: str, allowed_sources: Iterable[str]) -> tuple[str, i
     def _md_link(match: re.Match) -> str:
         nonlocal removed
         label, url = match.group(1), match.group(2)
-        if allow.permits(url):
+        if _allowed(url):
             return _keep(match.group(0))
         removed += 1
         return f"{label} ({defang_url(url)})"
@@ -127,7 +146,7 @@ def filter_reply_urls(text: str, allowed_sources: Iterable[str]) -> tuple[str, i
         raw = match.group(0)
         url = raw.rstrip(URL_TRAILING_PUNCT)
         trailing = raw[len(url) :]
-        if allow.permits(url):
+        if _allowed(url):
             return _keep(url) + trailing
         removed += 1
         return defang_url(url) + trailing
@@ -135,7 +154,9 @@ def filter_reply_urls(text: str, allowed_sources: Iterable[str]) -> tuple[str, i
     def _bare_domain(match: re.Match) -> str:
         nonlocal removed
         host, rest = match.group(1), match.group(2)
-        if allow.permits_host(host):
+        # Luôn mang dữ liệu (có ?/=): cùng tên miền với nguồn chưa đủ, phải khớp
+        # như link có scheme (query -> nguyên văn), kể cả ở chế độ lỏng.
+        if allow.permits(f"https://{host}{rest}") or allow.permits(f"http://{host}{rest}"):
             return match.group(0)
         removed += 1
         return host.replace(".", "[.]") + rest

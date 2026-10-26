@@ -4,8 +4,9 @@ import asyncio
 import json
 import logging
 import mimetypes
+import re
 from datetime import datetime
-from typing import Optional
+from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from ai.timeouts import (
@@ -125,11 +126,14 @@ def now_vn_context() -> str:
 
 
 class FallbackResponse:
-    def __init__(self, text: str, *, searched: bool = False) -> None:
+    def __init__(self, text: str, *, searched: bool = False, citations: Iterable[str] = ()) -> None:
         self.text = text
         self.used_fallback = True
         # Gemini đã THẬT SỰ gọi Google Search trong lượt này (có grounding metadata).
         self.searched = searched
+        # Nguồn grounding theo TÊN MIỀN (web.uri là link chuyển hướng vertexaisearch,
+        # không phải URL thật) - nguồn được phép của bộ lọc link câu trả lời.
+        self.citations = list(citations)[:_MAX_GROUNDING_SOURCES]
 
 
 def _used_google_search(response) -> bool:
@@ -143,6 +147,33 @@ def _used_google_search(response) -> bool:
         if getattr(meta, "web_search_queries", None) or getattr(meta, "grounding_chunks", None):
             return True
     return False
+
+
+_MAX_GROUNDING_SOURCES = 40
+_HOSTNAME_RE = re.compile(
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$", re.IGNORECASE
+)
+
+
+def _grounding_sources(response) -> list[str]:
+    """``https://<tên miền>`` của từng nguồn Google Search grounding (web.domain,
+    hoặc web.title khi title là tên miền - kiểu "vnexpress.net"). Bộ lọc link cho
+    phép trang chủ/tên miền đó, link có đường dẫn/query vẫn phải khớp nguồn khác."""
+    found: list[str] = []
+    for candidate in getattr(response, "candidates", None) or []:
+        meta = getattr(candidate, "grounding_metadata", None)
+        for chunk in getattr(meta, "grounding_chunks", None) or []:
+            web = getattr(chunk, "web", None)
+            for value in (getattr(web, "domain", None), getattr(web, "title", None)):
+                host = str(value or "").strip().lower().removeprefix("www.")
+                if host and _HOSTNAME_RE.match(host):
+                    source = f"https://{host}"
+                    if source not in found:
+                        found.append(source)
+                    break
+            if len(found) >= _MAX_GROUNDING_SOURCES:
+                return found
+    return found
 
 
 def is_quota_exhausted_error(exc: BaseException) -> bool:
@@ -222,7 +253,11 @@ async def generate(
         from ai.openai_compatible import NoSearchEvidenceError
 
         raise NoSearchEvidenceError(f"api{idx} trả lời nhưng không gọi Google Search")
-    return FallbackResponse((response.text or "").strip(), searched=searched)
+    return FallbackResponse(
+        (response.text or "").strip(),
+        searched=searched,
+        citations=_grounding_sources(response) if searched else (),
+    )
 
 
 async def generate_image_prompt(idx: int, instruction: str, image_path: str) -> FallbackResponse:

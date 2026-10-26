@@ -144,7 +144,7 @@ async def generate_search(
         raise openai_compatible.NoSearchEvidenceError(
             "OpenRouter trả lời nhưng không kèm url_citation - không tin là đã tra web"
         )
-    return Response(result.text, searched=True)
+    return Response(result.text, searched=True, citations=result.source_urls)
 
 
 async def generate_image_prompt(instruction: str, image_path: str) -> Response:

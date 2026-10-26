@@ -857,3 +857,71 @@ async def test_telegram_luu_lich_su_loi_tat_nhac_va_chi_tieu(telegram_chat, monk
         ("xong", "✅ Dạ xong: uống thuốc", "reminder"),
         ("cafe 45k", "✅ Đã ghi #3: cafe 45.000đ", "expense"),
     ]
+
+
+# ─── Lọc link lạ ở lượt provider tự tra web ─────────────────────────────────
+
+
+class _SearchedResponse(_FakeResponse):
+    def __init__(self, text, citations=()):
+        super().__init__(text)
+        self.searched = True
+        self.citations = list(citations)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["untrusted", "all"])
+async def test_luot_tu_tra_web_van_vo_hieu_link_mang_du_lieu(chat_fakes, monkeypatch, mode):
+    """Provider tự tra web (native/forced, Gemini AUTO có grounding) đọc trang lạ
+    cùng persona/trí nhớ: link mang dữ liệu (query string không khớp nguồn) vẫn bị
+    vô hiệu hoá; link trích dẫn không query vẫn giữ."""
+    from core import config
+    from services import channel_chat_service as ccs
+
+    monkeypatch.setattr(config, "REPLY_URL_FILTER", mode)
+    chat_fakes["response"] = _SearchedResponse(
+        "Giá vàng 80tr (https://vnexpress.net/gia-vang-1.html, https://sjc.com.vn/gia?ngay=26). "
+        "Xem https://evil.example/?d=ho-so-cua-anh",
+        citations=["https://sjc.com.vn/gia?ngay=26"],
+    )
+    turn = await ccs.run_chat_turn(1, "giá vàng hôm nay")
+    await ccs.stop_background_tasks()
+
+    assert "https://vnexpress.net/gia-vang-1.html" in turn.text
+    assert "https://sjc.com.vn/gia?ngay=26" in turn.text
+    assert "https://evil.example" not in turn.text
+    assert "hxxps://evil[.]example/?d=ho-so-cua-anh" in turn.text
+
+
+@pytest.mark.asyncio
+async def test_luot_tu_tra_web_co_du_lieu_ngoai_loc_day_du_kem_nguon_trich_dan(
+    chat_fakes, monkeypatch
+):
+    """Lượt vừa có dữ liệu ngoài đã rào (Tavily mỏng) vừa tự tra web: lọc đầy đủ,
+    nguồn trích dẫn của provider là nguồn được phép."""
+    from core import config, untrusted
+    from services import channel_chat_service as ccs
+
+    monkeypatch.setattr(config, "REPLY_URL_FILTER", "untrusted")
+    chat_fakes["response"] = _SearchedResponse(
+        "Theo https://sjc.com.vn/bang-gia và https://la.example/bai-khac.",
+        citations=["https://sjc.com.vn/bang-gia"],
+    )
+    fenced = untrusted.wrap_untrusted("kết quả mỏng https://cafef.vn/a", "Tavily")
+    turn = await ccs.run_chat_turn(1, "giá vàng hôm nay", grounding=fenced)
+    await ccs.stop_background_tasks()
+
+    assert "https://sjc.com.vn/bang-gia" in turn.text
+    assert "hxxps://la[.]example/bai-khac" in turn.text
+
+
+@pytest.mark.asyncio
+async def test_tat_loc_link_thi_luot_tu_tra_web_giu_nguyen(chat_fakes, monkeypatch):
+    from core import config
+    from services import channel_chat_service as ccs
+
+    monkeypatch.setattr(config, "REPLY_URL_FILTER", "off")
+    chat_fakes["response"] = _SearchedResponse("Xem https://evil.example/?d=1")
+    turn = await ccs.run_chat_turn(1, "giá vàng hôm nay")
+    await ccs.stop_background_tasks()
+    assert turn.text == "Xem https://evil.example/?d=1"

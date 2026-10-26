@@ -531,14 +531,19 @@ async def test_run_chat_turn_tavily_tat_cau_can_tin_moi_dung_native(turn_fakes):
 
     turn_fakes["plan"] = web_search.SearchPlan(mode="native")
     turn_fakes["response"] = SimpleNamespace(
-        text="Theo [VnExpress](https://vnexpress.net/x?a=1) ...", used_fallback=False, searched=True
+        text="Theo [VnExpress](https://vnexpress.net/x?a=1) ... https://la.example/?d=ho-so",
+        used_fallback=False,
+        searched=True,
+        citations=["https://vnexpress.net/x?a=1"],
     )
     turn = await ccs.run_chat_turn(1, "tin AI mới nhất hôm nay")
     await ccs.stop_background_tasks()
 
     assert turn_fakes["chat"]["search_mode"] == "native"
-    # Provider tự tra web: link nguồn do provider tìm ra -> không lọc.
-    assert "https://vnexpress.net/x?a=1" in turn.text
+    # Provider tự tra web: link nguồn provider trích dẫn được giữ, link mang dữ
+    # liệu không có trong nguồn trích dẫn vẫn bị vô hiệu hoá.
+    assert "[VnExpress](https://vnexpress.net/x?a=1)" in turn.text
+    assert "hxxps://la[.]example/?d=ho-so" in turn.text
     # Lượt dựa trên web: kind chat_ext -> trích nhớ chỉ đọc lời người dùng.
     assert turn_fakes["kind"] == "chat_ext"
 
@@ -746,3 +751,75 @@ async def test_ghi_luot_goi_tra_web_dung_model_tra_web(monkeypatch):
     )
     assert calls.names() == ["groq:search"]
     assert (response.provider, response.model) == ("groq", "openai/gpt-oss-120b")
+
+
+# ─── Nguồn trích dẫn của lượt tự tra web (bộ lọc link câu trả lời) ───────────
+
+
+@pytest.mark.asyncio
+async def test_groq_tra_web_tra_kem_url_nguon_tu_executed_tools(monkeypatch):
+    body = {
+        "choices": [
+            {
+                "message": {
+                    "content": "Dạ giá vàng 80 triệu【1†L2】.",
+                    "executed_tools": [
+                        {
+                            "type": "browser.search",
+                            "arguments": "{}",
+                            "output": "【0†Giá vàng†https://vnexpress.net/gia-vang-1.html】",
+                            "search_results": {
+                                "results": [{"title": "SJC", "url": "https://sjc.com.vn/gia?x=1"}]
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    _install_groq_transport(monkeypatch, body)
+    response = await groq_client.generate_realtime("giá vàng?")
+    assert "https://vnexpress.net/gia-vang-1.html" in response.citations
+    assert "https://sjc.com.vn/gia?x=1" in response.citations
+
+
+def test_completion_result_nguon_co_tran():
+    tools = [{"output": " ".join(f"https://a{i}.vn/x" for i in range(200))}]
+    result = openai_compatible.CompletionResult("x", executed_tools=tools)
+    assert 0 < len(result.source_urls) <= openai_compatible.MAX_CITATIONS
+
+
+def test_gemini_nguon_grounding_theo_ten_mien():
+    from ai import official_client
+
+    def chunk(uri, title, domain=None):
+        return SimpleNamespace(web=SimpleNamespace(uri=uri, title=title, domain=domain))
+
+    response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                grounding_metadata=SimpleNamespace(
+                    grounding_chunks=[
+                        chunk(
+                            "https://vertexaisearch.cloud.google.com/grounding-api-redirect/a",
+                            "vnexpress.net",
+                        ),
+                        chunk(
+                            "https://vertexaisearch.cloud.google.com/grounding-api-redirect/b",
+                            "Trang chủ SJC",
+                            "sjc.com.vn",
+                        ),
+                        chunk(
+                            "https://vertexaisearch.cloud.google.com/grounding-api-redirect/c",
+                            "Không phải tên miền",
+                        ),
+                    ],
+                    web_search_queries=["giá vàng"],
+                )
+            )
+        ]
+    )
+    assert official_client._grounding_sources(response) == [
+        "https://vnexpress.net",
+        "https://sjc.com.vn",
+    ]
