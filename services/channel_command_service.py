@@ -18,7 +18,7 @@ from services import (
     translate_service,
     usage_stats,
 )
-from services import daily_commands, reminder_commands
+from services import daily_commands, expense_service, reminder_commands
 from services.telemetry import telemetry
 
 # /help theo vai trò: thành viên Zalo chỉ thấy lệnh mình dùng được (không có
@@ -51,6 +51,12 @@ Nhắc việc và ngày nhớ (giờ tính bằng code)
   /nhac 7h sáng mỗi ngày uống thuốc, /nhac mùng 1 và rằm 6h thắp hương — nhắc lặp
 /nhac huy <số> — huỷ; /nhac hoan <số> 30p — dời; vừa nhận tin nhắc thì trả lời "hoãn 10p" hoặc "xong"
 /ngaynho — giỗ, sinh nhật, kỷ niệm; /ngaynho giỗ ông nội 12/3 âm trước 3 ngày; /ngaynho xoa <số>
+
+Chi tiêu (cộng bằng code, riêng từng người)
+Nhắn "cafe 45k", "đổ xăng 1tr2", "2 củ tiền điện" là Lan Anh ghi luôn (nhắn "huỷ" trong 10 phút nếu nhầm);
+  gửi ảnh kèm chữ "hoá đơn" để đọc hoá đơn (lưu nháp)
+/chitieu [hôm nay|tuần này|tháng trước|tháng 10] — tổng theo danh mục; /chitieu ds — khoản gần nhất
+/chitieu cafe 45k — ghi 1 khoản; /chitieu xoa <số> — xoá
 
 Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
@@ -411,6 +417,10 @@ async def maybe_handle_command(
     reminder = await reminder_commands.handle(command, argument, user_id, channel)
     if reminder is not None:
         return reminder, None
+    # /chitieu, /chitieu_xoa: chi tiêu cá nhân (cộng bằng SQL).
+    expense = await expense_service.handle_command(command, argument, user_id)
+    if expense is not None:
+        return expense, None
     if command == "/prompt":
         return await _prompt(user_id, argument, channel)
     if command == "/gia":

@@ -335,6 +335,11 @@ MORNING_BRIEF_MAX_MEMBERS = max(0, min(100, _env_int("MORNING_BRIEF_MAX_MEMBERS"
 MORNING_BRIEF_ABSORB_NEWS = _env_bool("MORNING_BRIEF_ABSORB_NEWS", True)
 # 1 câu mở đầu giọng Lan Anh do AI viết (chỉ chủ bot, tốn 1 lượt AI/ngày).
 MORNING_BRIEF_AI_INTRO = _env_bool("MORNING_BRIEF_AI_INTRO", False)
+# Dòng tổng chi tiêu tháng này của chính người nhận (chỉ hiện khi đã ghi khoản nào).
+MORNING_BRIEF_EXPENSES = _env_bool("MORNING_BRIEF_EXPENSES", True)
+# Tin ngắn kiểu "cafe 45k", "đổ xăng 1tr2" được ghi chi tiêu bằng code (không tốn AI);
+# false = chỉ ghi khi nói rõ "ghi chi tiêu ..." (router AI) hoặc /chitieu.
+EXPENSE_CHAT_CAPTURE = _env_bool("EXPENSE_CHAT_CAPTURE", True)
 
 # Giờ đăng (giờ VN, dạng HH:MM, nhiều mốc cách nhau bằng dấu phẩy) của Page chứng
 # khoán riêng - xem services/market_page.py. Giá trị sai định dạng thì dùng mặc định.

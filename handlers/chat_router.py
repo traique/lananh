@@ -17,6 +17,7 @@ from handlers import common, stock_handler
 from services import (
     article_reader,
     channel_chat_service,
+    expense_service,
     lunar_chat,
     portfolio_service,
     reminder_service,
@@ -46,6 +47,11 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
     if portfolio_result is not None:
         await common.reply_long_text(update.message, portfolio_result)
+        return
+
+    expense_reply = await expense_service.maybe_handle_chat(user_id, text)
+    if expense_reply is not None:
+        await common.reply_long_text(update.message, expense_reply)
         return
 
     article = await article_reader.maybe_handle(text)

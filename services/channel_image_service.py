@@ -1,4 +1,7 @@
-"""Channel-neutral image-to-prompt pipeline used by the Zalo bridge."""
+"""Channel-neutral image-to-prompt pipeline used by the Zalo bridge.
+
+Ảnh có caption "hoá đơn"/"bill"/"chi tiêu": đọc hoá đơn, ghi khoản chi nháp
+(services/expense_service.py) thay vì viết prompt."""
 
 import os
 from pathlib import Path
@@ -7,7 +10,7 @@ import messages
 from ai import orchestrator
 from core import config
 from core.fileutil import safe_delete
-from services import reply_audience
+from services import expense_service, reply_audience
 from services.prompt_identity import resolve_prompt_identity
 from services.prompt_templates import build_image_instruction
 from services.telemetry import telemetry
@@ -34,6 +37,13 @@ async def handle_channel_image(
 
     config.ensure_media_dir()
     safe_id = "".join(ch for ch in message_id if ch.isalnum())[:48] or "image"
+    if expense_service.is_receipt_caption(caption):
+        receipt: Path = config.MEDIA_DIR / f"zalo_receipt_{safe_id}{_ALLOWED_TYPES[mime]}"
+        try:
+            receipt.write_bytes(image)
+            return [await expense_service.analyze_receipt(user_id, str(receipt))], None
+        finally:
+            await safe_delete(receipt)
     path: Path = config.MEDIA_DIR / f"zalo_prompt_{safe_id}{_ALLOWED_TYPES[mime]}"
     prompt_id = await telemetry.start(
         user_id, "promptify", caption or "(ảnh Zalo không caption)", channel="zalo"

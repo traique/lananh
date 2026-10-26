@@ -886,6 +886,53 @@ async def reminder_mark_fired(reminder_id: int) -> None:
     await reminders.mark_fired(await get_pool(), reminder_id)
 
 
+# ─── Chi tiêu cá nhân (services/expense_service.py) ─────────────────────────
+# SQL ở core/repositories/expenses.py; ngày truyền dạng text YYYY-MM-DD. Khoản chi
+# không có event_key (lệnh ngoài webhook) INSERT không idempotent -> không retry.
+
+
+@_with_reconnect(idempotent=False)
+async def expense_add(telegram_user_id: int, amount_vnd: int, **kw) -> tuple[int, bool]:
+    from core.repositories import expenses
+
+    return await expenses.insert(await get_pool(), telegram_user_id, amount_vnd, **kw)
+
+
+@_with_reconnect
+async def expense_count_since(telegram_user_id: int, within) -> int:
+    from core.repositories import expenses
+
+    return await expenses.count_since(await get_pool(), telegram_user_id, within)
+
+
+@_with_reconnect
+async def expense_delete(telegram_user_id: int, expense_id: int) -> dict | None:
+    from core.repositories import expenses
+
+    return await expenses.delete(await get_pool(), telegram_user_id, expense_id)
+
+
+@_with_reconnect
+async def expense_last(telegram_user_id: int, within) -> dict | None:
+    from core.repositories import expenses
+
+    return await expenses.last_created(await get_pool(), telegram_user_id, within)
+
+
+@_with_reconnect
+async def expense_totals(telegram_user_id: int, start: str, end: str) -> list[dict]:
+    from core.repositories import expenses
+
+    return await expenses.totals(await get_pool(), telegram_user_id, start, end)
+
+
+@_with_reconnect
+async def expense_recent(telegram_user_id: int, limit: int = 10) -> list[dict]:
+    from core.repositories import expenses
+
+    return await expenses.recent(await get_pool(), telegram_user_id, limit)
+
+
 @_with_reconnect
 async def list_reminders_between(
     telegram_user_id: int, start: datetime, end: datetime, limit: int = 10

@@ -18,6 +18,7 @@ from ai.timeouts import TurnTimeoutError, turn_deadline
 from core import address, database as db, untrusted, urls
 from services import (
     article_reader,
+    expense_service,
     lunar_chat,
     weather_chat,
     memory_service,
@@ -482,6 +483,10 @@ async def handle_channel_text(
     portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
     if portfolio_result is not None:
         return ChannelResult([portfolio_result])
+    # "cafe 45k", "đổ xăng 1tr2" (hoặc "huỷ" ngay sau đó): ghi chi tiêu bằng code.
+    expense_reply = await expense_service.maybe_handle_chat(user_id, text)
+    if expense_reply is not None:
+        return ChannelResult([expense_reply])
     article = await article_reader.maybe_handle(text)
     if article is not None:
         return ChannelResult([article])

@@ -68,6 +68,11 @@ HELP_TEXT = (
     '"hoãn 10p" hoặc "xong"\n'
     "/ngaynho — giỗ, sinh nhật, kỷ niệm (âm/dương, báo trước); "
     "/ngaynho giỗ ông nội 12/3 âm trước 3 ngày; /ngaynho xoa <số>\n\n"
+    "*Chi tiêu (cộng bằng code)*\n"
+    'Nhắn "cafe 45k", "đổ xăng 1tr2", "2 củ tiền điện" là em ghi luôn (nhắn "huỷ" trong 10 phút '
+    'nếu nhầm); gửi ảnh kèm chữ "hoá đơn" để em đọc hoá đơn (lưu nháp)\n'
+    "/chitieu [hôm nay|tuần này|tháng trước|tháng 10] — tổng theo danh mục; /chitieu ds — khoản "
+    "gần nhất; /chitieu cafe 45k — ghi 1 khoản; /chitieu\\_xoa <số> — xoá\n\n"
     "*Chat và tiện ích*\n"
     "/prompt <mô tả> — viết prompt tạo ảnh từ mô tả cơ bản\n"
     "/anh <mô tả> — tạo ảnh thật (Agnes AI); /anh on|off — bật/tắt\n"

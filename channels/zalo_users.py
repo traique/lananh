@@ -73,6 +73,8 @@ _USER_DATA_TABLES = (
     "stock_transactions",
     "stock_watchlist",
     "stock_price_alerts",
+    # migrations/020: chi tiêu cá nhân.
+    "expenses",
     "stock_alert_log",
 )
 

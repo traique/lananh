@@ -490,6 +490,25 @@ async def _tool_read_link(user_id: int, url: str = "", **_ignored) -> reg.ToolRe
     return reg.ToolResult(wrapped or "Trang không có nội dung đọc được.")
 
 
+async def _tool_add_expense(user_id: int, text: str = "", items=None, **_ignored) -> reg.ToolResult:
+    """Ghi khoản chi; số tiền LUÔN do code đọc và phải có trong chính tin nhắn người
+    dùng (services/expense_service.py) - router chỉ tách từng khoản."""
+    from services import expense_service
+
+    phrases: list[str] = []
+    if isinstance(items, list):
+        phrases = [str(i.get("text") if isinstance(i, dict) else i) for i in items][:5]
+    if not phrases:
+        phrases = [str(text or "").strip() or _turn_text.get()]
+    return await expense_service.record_from_tool(user_id, phrases, _turn_text.get())
+
+
+async def _tool_expense_summary(user_id: int, period: str = "", **_ignored) -> str:
+    from services import expense_service
+
+    return await expense_service.summary_text(user_id, str(period or "") or _turn_text.get())
+
+
 def _obj(props: dict | None = None, required: tuple[str, ...] = ()) -> dict:
     return reg.object_schema(props or {}, required)
 
@@ -584,6 +603,34 @@ _CHAT_TOOLS = (
         parameters=_obj(),
         handler=_tool_list_special_dates,
         router_hint='args: {}. Vd "nhà mình sắp có giỗ ai không", "em nhớ những ngày nào".',
+    ),
+    reg.ToolSpec(
+        name="add_expense",
+        description="Ghi khoản chi tiêu (số tiền do hệ thống tự đọc từ câu).",
+        parameters=_obj(
+            {
+                "text": reg.string("nguyên văn khoản chi, vd 'cafe 45k'"),
+                "items": {"type": "array", "items": {"type": "string"}},
+            }
+        ),
+        handler=_tool_add_expense,
+        side_effect=True,
+        effect_label="khoản chi",
+        router_hint=(
+            'args: {"text": "nguyên văn khoản chi, vd \\"đổ xăng 80k\\""} hoặc {"items": '
+            '["cafe 45k", "ăn trưa 60k"]}. Dùng khi người dùng muốn GHI LẠI tiền đã chi '
+            '(vd "ghi chi tiêu: ăn trưa 60k", "hôm qua đổ xăng hết 80k ghi lại giúp anh").'
+        ),
+    ),
+    reg.ToolSpec(
+        name="expense_summary",
+        description="Tổng chi tiêu theo danh mục (tính bằng SQL).",
+        parameters=_obj({"period": reg.string("hôm nay|tuần này|tháng này|tháng trước|tháng M")}),
+        handler=_tool_expense_summary,
+        router_hint=(
+            'args: {"period": "hôm nay|hôm qua|tuần này|tháng này|tháng trước|tháng 10"}. Vd '
+            '"tháng này anh tiêu bao nhiêu rồi", "chi tiêu tuần này".'
+        ),
     ),
     reg.ToolSpec(
         name="get_portfolio",
@@ -788,7 +835,7 @@ async def _route_with_chain(prompt: str) -> dict | None:
 async def _deterministic(user_id: int, user_text: str, intent: str) -> reg.ToolOutcome | None:
     """Đường code tất định khi router AI hỏng: nhắc việc / ghi chú / khoản chi đọc
     được bằng code thì vẫn lưu được - không bắt người dùng gửi lại."""
-    from services import vn_time_parse
+    from services import expense_service, vn_time_parse
 
     if intent == "reminder":
         extracted = vn_time_parse.extract_reminder(user_text)
@@ -808,6 +855,10 @@ async def _deterministic(user_id: int, user_text: str, intent: str) -> reg.ToolO
             spec = reg.get("save_note")
             assert spec is not None
             return await execute(spec, user_id, {"content": m.group(1).strip()}, intent=intent)
+    if intent == "expense" and expense_service.parse_expense(user_text, strict=False) is not None:
+        spec = reg.get("add_expense")
+        assert spec is not None
+        return await execute(spec, user_id, {"text": user_text}, intent=intent)
     return None
 
 
