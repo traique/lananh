@@ -16,6 +16,7 @@ from core import database as db, idempotency, webhook_inbox
 from services import concurrency, facebook_page_service as facebook, price_search
 from services.channel_chat_service import ChannelResult
 from services.reminder_delivery import current_target, NotificationTarget, notification_target
+from services.reminder_service import REPLY_HINT
 from services.request_limits import RequestLimitsMiddleware, MIB
 from services.telegram_processing import record_error
 from stock import analysis, portfolio
@@ -55,18 +56,23 @@ async def test_reminder_delivery_uses_authenticated_channel_recipient(monkeypatc
     mark, telegram = AsyncMock(), AsyncMock()
     monkeypatch.setattr(zalo_repository, "enqueue_reminder", send)
     monkeypatch.setattr(zoom, "send_message", send)
+    fired = AsyncMock()
     monkeypatch.setattr(db, "mark_reminder_sent", mark)
+    monkeypatch.setattr(db, "reminder_mark_fired", fired)
     monkeypatch.setattr(scheduler, "_notify", telegram)
     await scheduler._process_due_reminders(
         [idempotency.DueReminder(7, -7, "test", channel, "destination", "account", "user-jid")]
     )
     telegram.assert_not_awaited()
+    # Tin nhắc kèm gợi ý trả lời "hoãn 10p" / "xong" (services/reminder_service.py).
+    text = f"⏰ Nhắc việc: test\n{REPLY_HINT}"
     if channel == "zalo":
-        send.assert_awaited_once_with(7, "account", "destination", "⏰ Nhắc việc: test")
+        send.assert_awaited_once_with(7, "account", "destination", text)
         mark.assert_not_awaited()
+        fired.assert_awaited_once_with(7)  # mốc cho lối tắt "hoãn/xong"
     else:
         send.assert_awaited_once_with(
-            "destination", "⏰ Nhắc việc: test", user_jid="user-jid", account_id="account"
+            "destination", text, user_jid="user-jid", account_id="account"
         )
         mark.assert_awaited_once_with(7)
 
@@ -78,10 +84,13 @@ async def test_legacy_zalo_reminder_resolves_active_account(monkeypatch):
     send = AsyncMock()
     monkeypatch.setattr(zalo_repository, "enqueue_reminder", send)
     monkeypatch.setattr(zalo_session, "load_account_id", AsyncMock(return_value="actual-account"))
+    monkeypatch.setattr(db, "reminder_mark_fired", AsyncMock())
     await scheduler._process_due_reminders(
         [idempotency.DueReminder(1, -1, "test", "zalo", "z-user")]
     )
-    send.assert_awaited_once_with(1, "actual-account", "z-user", "⏰ Nhắc việc: test")
+    send.assert_awaited_once_with(
+        1, "actual-account", "z-user", f"⏰ Nhắc việc: test\n{REPLY_HINT}"
+    )
 
 
 @pytest.mark.asyncio

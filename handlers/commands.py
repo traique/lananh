@@ -15,16 +15,22 @@ from telegram.ext import ContextTypes
 
 import messages
 from ai import orchestrator
+from ai.timeouts import TurnTimeoutError
 from core import database as db, webhook_inbox
-from core.text_utils import parse_on_off
 from handlers import common
 from services import (
+    concurrency,
+    conversation_log,
     divination_commands,
+    memory_commands,
+    memory_control,
     memory_service,
     price_search,
     prompt_templates,
     rag_clean_service,
     rag_service,
+    reply_cache,
+    turn_control,
     usage_stats,
 )
 from services.telemetry import telemetry
@@ -42,25 +48,57 @@ HELP_TEXT = (
     '📊 *Cổ phiếu Việt Nam*: nhắc tới 1 mã là em báo giá realtime; nói rõ "phân tích FPT" để có báo cáo đầy đủ '
     '(action do hệ thống quyết, AI chỉ diễn giải). "Soi danh mục" để xem cả rổ. Thêm "theo Buffett/Minervini/'
     'Đoàn Vĩnh Bình" (hoặc "3 huyền thoại") để nghe góc nhìn định tính.\n\n'
-    "🖼️ *Gửi 1 ảnh chân dung* để Gemini viết lại prompt giữ nguyên khuôn mặt.\n\n"
-    "*Lịch, thần số học, tử vi*\n"
+    "🖼️ *Gửi 1 ảnh chân dung* để em viết prompt (dán sang app Gemini) giữ nguyên khuôn mặt; "
+    'ảnh kèm câu hỏi ("ảnh này là gì?", "dịch giúp anh chữ trong ảnh") thì em trả lời về ảnh.\n\n'
+    "🎙️ *Tin thoại*: em nghe rồi trả lời như tin chữ (tin thoại không tự ghi danh mục, chi tiêu, "
+    "nhắc việc - muốn ghi thì gõ chữ).\n\n"
+    "📄 *File PDF, TXT/MD, Word (.docx)*: em tóm tắt hoặc trả lời câu hỏi ở chú thích; chú thích "
+    '"lưu vào kho" (cả chú thích, hoặc "lưu vào kho rồi <câu hỏi>") để em lưu tài liệu vào '
+    "kho kiến thức rag/.\n\n"
+    "📍 *Gửi vị trí*: em báo thời tiết hôm nay và ngày mai tại chỗ đó.\n\n"
+    "*Lịch, thần số học, tử vi, kỳ môn*\n"
     "/lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8, "
     "/lich tháng này, /lich trung thu, /lich ngày tốt tháng này, /lich tuổi 15/3/1990, "
     "/lich sao hạn 1990 nam năm 2027 (/lich help xem thêm ví dụ)\n"
     "/tsh <ngày sinh> [họ tên] — thần số học: con số chủ đạo, biểu đồ ngày sinh (không tốn AI)\n"
     "/tsh\\_chitiet <như trên> — AI diễn giải chi tiết\n"
     "/tuvi <ngày sinh> <giờ> <nam|nữ> — an lá số tử vi (không tốn AI), vd /tuvi 15/3/1990 9h30 nam\n"
-    "/tuvi\\_chitiet <như trên> — AI luận giải lá số\n\n"
+    "/tuvi\\_chitiet <như trên> — AI luận giải lá số\n"
+    "/kymon [ngày] [giờ] — lập bàn Kỳ Môn Độn Giáp (không tốn AI), mặc định lúc này\n"
+    "/kymon\\_chitiet [thời điểm] <việc cần xem> — AI luận giải bàn Kỳ Môn cho việc đó\n\n"
+    "*Đời sống (số liệu thật, không tốn AI)*\n"
+    "/vang — giá vàng SJC; /tygia [mã|100 usd] — tỷ giá Vietcombank, đổi tiền\n"
+    "/xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé] — kết quả xổ số, dò vé\n"
+    "/thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của anh\n"
+    "/bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, "
+    "danh mục; bật thì thay digest danh mục 8h)\n\n"
+    "*Nhắc việc và ngày nhớ (giờ tính bằng code)*\n"
+    "/nhac — xem nhắc việc đang chờ; /nhac 8h tối mai gọi mẹ — đặt nhắc; "
+    "/nhac 7h sáng mỗi ngày uống thuốc, /nhac mùng 1 và rằm 6h thắp hương — nhắc lặp\n"
+    "/nhac huy <số> — huỷ; /nhac hoan <số> 30p — dời; vừa nhận tin nhắc thì trả lời "
+    '"hoãn 10p" hoặc "xong"\n'
+    "/ngaynho — giỗ, sinh nhật, kỷ niệm (âm/dương, báo trước); "
+    "/ngaynho giỗ ông nội 12/3 âm trước 3 ngày; /ngaynho xoa <số>\n\n"
+    "*Chi tiêu (cộng bằng code)*\n"
+    'Nhắn "cafe 45k", "đổ xăng 1tr2", "2 củ tiền điện" là em ghi luôn (nhắn "huỷ" trong 10 phút '
+    'nếu nhầm); gửi ảnh kèm chữ "hoá đơn" để em đọc hoá đơn (lưu nháp)\n'
+    "/chitieu [hôm nay|tuần này|tháng trước|tháng 10] — tổng theo danh mục; /chitieu ds — khoản "
+    "gần nhất; /chitieu cafe 45k — ghi 1 khoản; /chitieu\\_xoa <số> — xoá\n\n"
     "*Chat và tiện ích*\n"
     "/prompt <mô tả> — viết prompt tạo ảnh từ mô tả cơ bản\n"
     "/anh <mô tả> — tạo ảnh thật (Agnes AI); /anh on|off — bật/tắt\n"
     "/gia <sản phẩm> — tìm và so sánh giá sản phẩm\n"
     "/dich [ja>vi|vi>ja] <nội dung> — dịch chat công việc Nhật-Việt\n"
     "/reset — xoá ngữ cảnh chat\n"
-    "/history — xem 10 lượt gần nhất\n"
-    "/memory [on|off] — xem, bật hoặc tắt trí nhớ dài hạn\n"
-    "/forget — xoá trí nhớ dài hạn\n"
-    "/notes — xem ghi chú đã lưu\n"
+    '/history — xem 10 lượt gần nhất; hỏi "hôm trước em nói gì về ..." để em tìm lại '
+    "trong lịch sử chat\n"
+    "/memory [on|off] — xem trí nhớ dài hạn (đánh số), bật hoặc tắt\n"
+    "/quen <số|từ khoá> — quên 1 mục; /nho <điều cần nhớ> — ghim 1 điều "
+    '("nhớ giúp anh là..." cũng được); /ghim, /boghim <số>\n'
+    "/forget — xoá hết trí nhớ dài hạn\n"
+    "/notes [từ khoá] — xem/tìm ghi chú; /xoaghichu <số> — xoá 1 ghi chú\n"
+    "/xuatdulieu — tải file dữ liệu em đang lưu; /xoadulieu — xoá trí nhớ, ghi chú, lịch sử chat\n"
+    "/hoithan on|off — em chủ động hỏi thăm việc anh kể sắp làm (phỏng vấn, đi khám...)\n"
     "/agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm)\n"
     "/rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/\n"
     "/ragxuly <file> — dọn file md OCR trong rag/ ở nền (AI thêm heading, backup bản gốc)\n\n"
@@ -68,22 +106,31 @@ HELP_TEXT = (
     "/danhmuc — xem danh mục, lãi/lỗ, cảnh báo stop/target\n"
     "/themcp <MÃ> <SỐ\\_LƯỢNG> <GIÁ\\_VỐN> [STOP] [TARGET] — thêm giao dịch mua (giá dưới 1.000 hiểu là nghìn đồng)\n"
     "/capnhatcp <MÃ> <SỐ\\_LƯỢNG> <GIÁ\\_VỐN> [STOP] [TARGET] — ghi đè vị thế\n"
-    "/bancp <MÃ> [SỐ\\_LƯỢNG|hết] — bán bớt hoặc bán hết\n"
+    "/bancp <MÃ> [SỐ\\_LƯỢNG|hết] [GIÁ\\_BÁN] — bán bớt hoặc bán hết (có giá thì tính lãi/lỗ đã chốt)\n"
     "/xoacp <MÃ> — xoá mã khỏi danh mục\n"
-    "Cuối phiên (sau 15h) em tự báo nếu mã nào chạm stop/target hoặc breakout; 8h sáng gửi digest danh mục.\n\n"
+    "/lichsucp [MÃ] — sổ giao dịch; /laicp [THÁNG] — lãi/lỗ đã chốt sau phí, thuế\n"
+    "/giaban <MÃ> <GIÁ> — bổ sung giá cho lệnh bán chưa có giá\n"
+    "/theodoi [MÃ...] — danh sách theo dõi; /botheodoi <MÃ> — bỏ theo dõi\n"
+    '/canhbaogia <MÃ> [về|lên] <GIÁ> — báo khi giá chạm ngưỡng anh đặt (hoặc nhắn "báo anh khi HPG về 25"); /xoacanhbao <MÃ> [GIÁ]\n'
+    "Trong giờ giao dịch em báo ngay khi giá chạm ngưỡng/stop/target; cuối phiên (sau 15h) báo breakout, lỗ sâu; 8h sáng ngày giao dịch gửi digest danh mục.\n\n"
     "*Bản tin và thống kê*\n"
     "/bangtinsang (hoặc /bantinsang) — gửi ngay Bản tin sáng tới Zalo + Zoom (bình thường tự gửi lúc 8h)\n"
     "/tintuc — đọc Điểm tin mới ngay trong Telegram, không broadcast sang Zalo/Zoom\n"
-    "/thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày\n\n"
+    "/thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày\n"
+    "/danhgia [Nd] — số 👍/👎 câu trả lời theo provider/model (mặc định 30 ngày); "
+    "/sai [lý do] — báo câu trả lời vừa rồi chưa ổn\n"
+    "/xuateval [Nd] — xuất các câu anh bấm 👎 thành file case đánh giá (golden set) để bổ sung test\n\n"
     "*Provider AI*\n"
     "/model [tên|auto] — xem/đổi model chat (chỉ áp dụng cho 9Router)\n"
     "/status — xem trạng thái provider chain\n"
+    "/loi — xem lỗi gom theo loại hôm nay/hôm qua và số lần bot khởi động lại\n"
     "/userouter9 — ép thử lại 9Router ngay\n"
     "/router9 on|off — bật/tắt 9Router thủ công\n"
-    "/tavily on|off — bật/tắt tra web Tavily trước khi trả lời\n\n"
+    "/tavily on|off — bật/tắt tra web Tavily (tắt thì dùng web search của provider)\n\n"
     "*Zalo bot B*\n"
     "/zalo — đăng nhập bằng QR hoặc xem trạng thái Zalo B; /zalologout — đăng xuất\n"
-    "/zalopair <id> [tên] — cấp quyền thành viên; /zaloadmin <id> [tên] — cấp quyền admin\n"
+    "/zalopair <id> [tên] [chị|cô|chú|bạn|em] — cấp quyền thành viên, từ cuối (viết thường) "
+    "là cách Lan Anh gọi người đó; /zaloadmin <id> [tên] [xưng hô] — cấp quyền admin\n"
     "/zalohaquyen <id> — hạ admin về thành viên; /zalokhoa, /zalomokhoa <id> — khoá/mở khoá\n"
     "/zaloxoa <id> — xoá pairing kèm toàn bộ dữ liệu cá nhân; /zalodanhsach — xem danh sách\n"
     "/nhom, /themnhom <group\\_id> <tên>, /xoanhom <group\\_id|tên> — nhóm Zalo đang theo dõi\n"
@@ -107,9 +154,13 @@ HELP_TEXT = (
     "/fb\\_check <post\\_id> — kiểm tra từng page đã published/công khai chưa, lấy permalink\n"
     "/fb\\_reconcile — đối soát lượt đăng bị gián đoạn (bài kẹt POSTING/UNKNOWN)\n"
     "/fb\\_boqua <post\\_id> — bỏ bài chờ\n"
-    "/fb\\_reset — xóa bài Facebook đã lưu, reset ID về #1 khi có thể\n"
+    "/fb\\_reset xacnhan — xóa bài Facebook đã lưu, reset ID về #1 khi có thể\n"
     "/fb\\_boloc [reset] — thống kê bộ lọc Zalo→Facebook (bài giữ/bỏ/trùng, số bài chờ)\n"
     "/fb\\_loclai — chạy lại bộ lọc cho các bài đang chờ, bỏ bài không đạt\n\n"
+    "Dưới câu trả lời chat có nút 👍/👎 (ghi theo provider), 🔄 Thử lại và ✂️ Ngắn hơn; bài "
+    "Facebook chờ duyệt, người Zalo lạ và tin nhắc việc cũng có nút bấm.\n"
+    "/huy — dừng câu trả lời đang chạy dở; trong lúc chờ vẫn dùng được /help, /notes, /lich, "
+    "/tsh, /tuvi, /kymon, /history, /memory (tin phải chờ lượt trước được thả 👀)\n"
     "/start — lời chào; /help — hiển thị hướng dẫn này\n"
     "Trang quản trị: /admin trên URL dịch vụ (thống kê, provider, RAM, DB)."
 )
@@ -119,6 +170,12 @@ HELP_TEXT = (
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Chào anh, em Lan Anh nè - trợ lý cá nhân của anh đây! 💕\n"
+        "Anh cứ nhắn tự nhiên như nhắn tin, vd:\n"
+        "• mai Hà Nội mưa không\n"
+        "• nhắc anh 8h tối gọi mẹ\n"
+        "• giá vàng hôm nay\n"
+        "• phân tích FPT\n"
+        "Gửi 1 ảnh là em viết prompt tạo ảnh từ ảnh đó. "
         "Gõ /help xem đầy đủ lệnh nha anh."
     )
 
@@ -140,6 +197,14 @@ def help_chunks(text: str = HELP_TEXT, limit: int = 3500) -> list[str]:
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     for chunk in help_chunks():
         await update.message.reply_text(chunk, parse_mode="Markdown")
+
+
+@common.restricted
+async def huy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/huy - dừng phần việc AI đang chạy. Webhook xử lý /huy ở lối nhanh trước
+    inbox (handlers/turn_feedback.py); handler này cho long polling (main.py)."""
+    if not concurrency.cancel_turn(concurrency.OWNER_TURN_KEY):
+        await update.message.reply_text(turn_control.nothing_to_cancel_text(owner=True))
 
 
 @common.restricted
@@ -167,8 +232,8 @@ async def prompt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         result_text = (response.text or "").strip()
 
         if not result_text:
-            await telemetry.success(prompt_id, "prompt_generator", "(Gemini không trả về nội dung)")
-            await update.message.reply_text("Gemini không trả lời được, anh thử lại nha.")
+            await telemetry.success(prompt_id, "prompt_generator", "(AI không trả về nội dung)")
+            await update.message.reply_text(messages.friendly_error("prompt_empty", owner=True))
             return
 
         await telemetry.success(prompt_id, "prompt_generator", result_text)
@@ -184,7 +249,9 @@ async def prompt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     except Exception as e:
         logger.exception("Lỗi tạo prompt")
         await telemetry.failure(prompt_id, "prompt_generator", e)
-        await update.message.reply_text("❌ Có lỗi khi tạo prompt. Hãy thử lại sau giây lát.")
+        await update.message.reply_text(
+            messages.friendly_error("prompt", owner=True, detail=messages.exception_detail(e))
+        )
 
 
 @common.restricted
@@ -218,7 +285,7 @@ async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         result_text, used_fallback = await price_search.search_price(product_name)
 
         if not result_text:
-            await telemetry.success(prompt_id, "price_search", "(Gemini không trả về nội dung)")
+            await telemetry.success(prompt_id, "price_search", "(AI không trả về nội dung)")
             await status.edit_text("Em không tìm được giá lúc này, anh thử lại sau nha.")
             return
 
@@ -228,6 +295,10 @@ async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         suffix = "\n\n⚙️ API" if used_fallback else ""
 
         await common.reply_long_text_edit_first(status, result_text + suffix)
+    except TurnTimeoutError as e:
+        logger.warning("Tìm giá %r hết hạn chót lượt: %s", product_name, e)
+        await telemetry.failure(prompt_id, "price_search", e)
+        await status.edit_text(messages.friendly_error("timeout", owner=True, detail=str(e)))
     except Exception as e:
         logger.exception("Lỗi tìm giá sản phẩm")
         await telemetry.failure(prompt_id, "price_search", e)
@@ -257,7 +328,17 @@ async def dich_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     prompt_id = await telemetry.start(user_id, "translate", text)
     try:
-        result, resolved, response = await translate_service.translate(text, direction)
+        # Cache theo sự kiện webhook: lỗi ở bước gửi -> inbox thử lại chỉ gửi
+        # lại bản đã dịch, không gọi LLM lần nữa (services/reply_cache.py).
+        result, resolved, response = await reply_cache.generate_once(
+            "dich",
+            lambda: conversation_log.run_and_record(
+                user_id,
+                text,
+                conversation_log.KIND_TRANSLATE,
+                lambda: translate_service.translate(text, direction),
+            ),
+        )
     except ValueError as exc:
         await update.message.reply_text(f"Cú pháp: /dich [ja>vi|vi>ja] <nội dung>\n({exc})")
         return
@@ -279,70 +360,41 @@ async def dich_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 @common.restricted
-async def notes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    notes = await db.get_notes(user_id, limit=10)
-    if not notes:
-        await update.message.reply_text("📝 Chưa có ghi chú nào.")
-        return
-    lines = ["📝 *Ghi chú gần đây:*"]
-    for content, created_at in notes:
-        lines.append(f"• {content} _(đặt lúc {created_at.strftime('%H:%M %d/%m')})_")
-    await common.reply_long_text(update.message, "\n".join(lines))
-
-
-@common.restricted
 async def reset_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    # Trích nốt trí nhớ từ các lượt chưa xử lý trước khi xoá lịch sử phiên.
+    await memory_service.flush_before_reset(user_id)
     await orchestrator.reset_chat()
     await db.clear_chat(user_id)
     await update.message.reply_text("🔄 Đã xoá ngữ cảnh hội thoại. Bắt đầu chat mới nhé!")
 
 
 @common.restricted
-async def memory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    if context.args:
-        toggle = parse_on_off(context.args[0])
-        if toggle is True:
-            await memory_service.set_enabled(user_id, True)
-            await update.message.reply_text("✅ Đã bật trí nhớ dài hạn.")
-            return
-        if toggle is False:
-            await memory_service.set_enabled(user_id, False)
-            await update.message.reply_text(
-                "🔴 Đã tắt trí nhớ dài hạn. Bot sẽ không trích xuất/nhớ thêm gì mới cho tới khi bật lại bằng /memory on."
-            )
-            return
-
-    facts = await db.get_facts(user_id)
-    summary = await db.get_summary(user_id)
-    enabled = await memory_service.is_enabled(user_id)
-    status_line = (
-        f"\nTrạng thái: {'BẬT' if enabled else 'TẮT'} (dùng /memory on hoặc /memory off để đổi)"
+async def memory_family_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/memory, /forget, /quen, /nho, /ghim, /boghim, /notes, /xoaghichu,
+    /xuatdulieu, /xoadulieu, /hoithan - logic ở services/memory_commands.py."""
+    text = (update.message.text or "").strip()
+    command = text.split(maxsplit=1)[0].lower().split("@", 1)[0] if text else ""
+    reply = await memory_commands.handle(
+        command,
+        common.extract_arg(context),
+        update.effective_user.id,
+        channel="telegram",
+        about="anh",  # Telegram chỉ phục vụ chủ bot
     )
-
-    if not facts and not summary:
-        await update.message.reply_text(f"🧠 Em chưa nhớ gì dài hạn về anh cả.{status_line}")
+    if reply is None:
         return
-
-    lines = ["🧠 *Trí nhớ dài hạn về anh:*"]
-    if summary:
-        lines.append(f"\n_Tóm tắt:_ {summary}")
-    if facts:
-        lines.append("\n*Các thông tin đã biết:*")
-        for key, value in facts:
-            lines.append(f"• `{key}`: {value}")
-    lines.append(status_line)
-    lines.append("\nGõ /forget nếu anh muốn em xoá hết trí nhớ này.")
-    await common.reply_long_text(update.message, "\n".join(lines))
+    for message in reply.messages:
+        await common.reply_long_text(update.message, message)
+    if reply.file is not None:
+        raw, name = reply.file
+        await update.message.reply_document(
+            document=memory_control.export_buffer(raw), filename=name
+        )
 
 
-@common.restricted
-async def forget_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    await memory_service.clear_memory(user_id)
-    await update.message.reply_text("🗑️ Đã xoá toàn bộ trí nhớ dài hạn.")
+# Tên cũ bot_app/test đang dùng.
+memory_cmd = forget_cmd = notes_cmd = memory_family_cmd
 
 
 @common.restricted
@@ -353,10 +405,9 @@ async def thongke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 # /agent - AI agent thật (xem ai/agent_service.py): model tự quyết định gọi
-# tool nào (tim_gia, xem_thong_ke...) bao nhiêu lần để trả lời, khác mọi lệnh
-# khác trong file này (pipeline cố định). Thử nghiệm - chỉ bật ở Telegram,
-# chỉ admin, vì mỗi câu hỏi có thể tốn tới MAX_AGENT_STEPS lượt gọi api1/api2
-# (quota thấp nhất trong provider-chain).
+# tool nào (tim_gia, xem_thong_ke, nhắc việc/ghi chú chỉ đọc...) bao nhiêu lần để
+# trả lời, khác mọi lệnh khác trong file này (pipeline cố định). Chỉ chủ bot/admin:
+# mỗi câu hỏi có thể tốn tới MAX_AGENT_STEPS lượt gọi (Groq/OpenRouter trước).
 @common.restricted
 async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     question = common.extract_arg(context)
@@ -372,7 +423,10 @@ async def agent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         from ai import agent_service
 
-        text, provider = await agent_service.ask_agent(question)
+        # user_id: persona + trí nhớ + lịch sử của chính chủ bot, Q&A lưu vào lịch sử.
+        text, provider = await reply_cache.generate_once(
+            "agent", lambda: agent_service.ask_agent(question, user_id=user_id)
+        )
         await telemetry.success(prompt_id, "agent", text)
     except Exception as exc:
         logger.exception("Agent lỗi với câu hỏi: %r", question)
@@ -411,11 +465,25 @@ async def tuvi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+@common.restricted
+async def kymon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/kymon [ngày] [giờ] - lập bàn Kỳ Môn Độn Giáp (không AI)."""
+    await common.reply_long_text(
+        update.message, divination_commands.kymon_chart(common.extract_arg(context))
+    )
+
+
+_CHITIET = {
+    "tsh": divination_commands.tsh_chitiet,
+    "tuvi": divination_commands.tuvi_chitiet,
+    "kymon": divination_commands.kymon_chitiet,
+}
+
+
 async def _reply_chitiet(update: Update, context: ContextTypes.DEFAULT_TYPE, kind: str) -> None:
     argument = common.extract_arg(context)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    handler = divination_commands.tsh_chitiet if kind == "tsh" else divination_commands.tuvi_chitiet
-    for part in await handler(update.effective_user.id, argument, "telegram"):
+    for part in await _CHITIET[kind](update.effective_user.id, argument, "telegram"):
         await common.reply_long_text(update.message, part)
 
 
@@ -429,6 +497,12 @@ async def tsh_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def tuvi_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/tuvi_chitiet - lá số tử vi kèm AI luận giải (1 lượt AI)."""
     await _reply_chitiet(update, context, "tuvi")
+
+
+@common.restricted
+async def kymon_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/kymon_chitiet [thời điểm] <việc cần xem> - bàn Kỳ Môn kèm AI luận giải (1 lượt AI)."""
+    await _reply_chitiet(update, context, "kymon")
 
 
 @common.restricted
@@ -447,7 +521,10 @@ async def rag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     prompt_id = await telemetry.start(user_id, "rag", query)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     try:
-        text = await rag_service.ask(user_id, query)
+        # Lệnh gửi để NGOÀI try có chủ đích: Telegram lỗi tạm lúc gửi thì inbox
+        # thử lại sự kiện và nhận lại đúng câu trả lời đã sinh từ cache (không
+        # gọi LLM lại, không mất câu trả lời như khi nuốt lỗi gửi trong try).
+        text = await reply_cache.generate_once("rag", lambda: rag_service.ask(user_id, query))
         await telemetry.success(prompt_id, "rag", text)
     except Exception as exc:
         logger.exception("Lỗi /rag với câu hỏi: %r", query)
@@ -602,8 +679,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     if isinstance(update, Update) and update.effective_message:
         try:
+            # Bot chỉ phục vụ chủ bot (@common.restricted): giọng Lan Anh + loại lỗi.
+            detail = messages.exception_detail(context.error) if context.error else ""
             await update.effective_message.reply_text(
-                "❌ Đã có lỗi không mong muốn xảy ra. Vui lòng thử lại."
+                messages.friendly_error("unexpected", owner=True, detail=detail)
             )
         except Exception:
             logger.exception("Không gửi được thông báo lỗi cho user")

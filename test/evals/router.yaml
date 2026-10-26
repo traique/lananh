@@ -1,0 +1,96 @@
+# Router tool (orchestrator.utility_json + services/tools._build_router_prompt): tên tool
+# khớp CHÍNH XÁC, tham số so có dung sai. Giờ nhắc: code tự tính từ tham số router
+# (vn_time_parse / _structured_due) và so với mốc kỳ vọng tính từ lúc chạy, ±2 phút.
+
+- id: router-nhac-gio-toi-mai
+  category: router
+  kind: router
+  prompt: "nhắc anh 8h tối mai gọi mẹ"
+  expect:
+    tool: set_reminder
+    args:
+      message: {contains: "gọi mẹ"}
+      due: {day_offset: 1, time: "20:00"}
+
+- id: router-nhac-sau-30-phut
+  category: router
+  kind: router
+  prompt: "30 phút nữa nhắc anh tắt bếp nhé"
+  expect:
+    tool: set_reminder
+    args:
+      message: {contains: "tắt bếp"}
+      due: {in_minutes: 30}
+
+- id: router-ghi-chu
+  category: router
+  kind: router
+  prompt: "ghi chú giúp anh: mật khẩu wifi nhà ngoại là hoa-sen-2026"
+  expect:
+    tool: save_note
+    args:
+      content: {contains: "hoa-sen-2026"}
+
+- id: router-thoi-tiet-da-lat
+  category: router
+  kind: router
+  prompt: "cuối tuần này Đà Lạt có mưa không em"
+  expect:
+    tool: get_weather
+    args:
+      location: {contains: "Đà Lạt"}
+
+- id: router-thoi-tiet-khong-dau
+  category: router
+  kind: router
+  prompt: "mai ha noi troi co lanh khong"
+  expect:
+    tool: get_weather
+    args:
+      location: {contains: "Ha"}
+
+- id: router-am-lich-ram
+  category: router
+  kind: router
+  prompt: "rằm tháng 7 năm nay là ngày mấy dương lịch?"
+  expect:
+    tool: lunar_calendar
+
+- id: router-chi-tieu-thang
+  category: router
+  kind: router
+  prompt: "tháng này anh tiêu hết bao nhiêu rồi em?"
+  expect:
+    tool: expense_summary
+
+- id: router-ngay-gio
+  category: router
+  kind: router
+  prompt: "lưu giúp anh ngày giỗ ông nội 12/3 âm lịch, báo trước 3 ngày"
+  expect:
+    tool: save_special_date
+    args:
+      text: {contains: "giỗ"}
+
+- id: router-tim-lai-lich-su
+  category: router
+  kind: router
+  prompt: "hôm trước em nói gì với anh về quỹ ETF ấy nhỉ?"
+  expect:
+    tool: search_history
+    args:
+      query: {contains: "ETF"}
+
+- id: router-khong-can-tool
+  category: router
+  kind: router
+  prompt: "kể anh nghe một câu chuyện cười ngắn đi"
+  expect:
+    tool: none
+
+- id: router-danh-sach-nhac
+  category: router
+  kind: router
+  prompt: "anh đang có những nhắc việc nào?"
+  expect:
+    tool: list_reminders

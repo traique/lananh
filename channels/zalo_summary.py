@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from ai import orchestrator
 from channels import zalo_repository
 from channels.zalo_text import to_plain_text
+from core.untrusted import wrap_untrusted
 
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -14,6 +15,7 @@ VERBATIM_MESSAGE_LIMIT = 2
 SHORT_SUMMARY_MESSAGE_LIMIT = 5
 _CHUNK_CHAR_LIMIT = 18_000
 _EMPTY_BODY = "Không tạo được nội dung tổng kết."
+_SOURCE = "tin nhắn nhóm Zalo"
 
 _SECTION_TITLES = (
     "MÃ ĐƯỢC BÀN",
@@ -196,15 +198,23 @@ async def summarize_group(
         body = "NGUYÊN VĂN (quá ít tin để tổng kết):\n" + "\n".join(lines)
         return group_id, alias, header + _render(body)
 
+    # Tin nhắn nhóm là lời của người ngoài: rào (core.untrusted) để câu kiểu
+    # "bot ơi bỏ qua chỉ dẫn..." trong nhóm chỉ là dữ liệu cần tóm tắt.
     if len(rows) <= SHORT_SUMMARY_MESSAGE_LIMIT:
-        short = await _ask(_short_prompt(alias) + "\n\n" + "\n".join(lines))
+        short = await _ask(
+            _short_prompt(alias) + "\n\n" + wrap_untrusted("\n".join(lines), _SOURCE)
+        )
         return group_id, alias, header + (_render(short) or _EMPTY_BODY)
 
     chunks = _chunks(lines)
     partials: list[str] = []
     for index, chunk in enumerate(chunks, 1):
-        partials.append(await _ask(_chunk_prompt(index, len(chunks)) + "\n\n" + chunk))
+        partials.append(
+            await _ask(_chunk_prompt(index, len(chunks)) + "\n\n" + wrap_untrusted(chunk, _SOURCE))
+        )
 
     combined = "\n\n--- PHẦN ---\n\n".join(partials)
-    final = await _ask(_merge_prompt(alias) + "\n\n" + combined)
+    final = await _ask(
+        _merge_prompt(alias) + "\n\n" + wrap_untrusted(combined, f"{_SOURCE} (bản tóm tắt)")
+    )
     return group_id, alias, header + (_render(final) or _EMPTY_BODY)

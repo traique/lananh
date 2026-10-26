@@ -1,0 +1,191 @@
+# Dữ liệu soạn sẵn cho /kymon và trang /ky-mon (services/kymon.py). Sửa thoải
+# mái, không cần đổi code (giữ nguyên các khoá). /kymon_chitiet mới dùng AI.
+#
+# cuu_tinh / bat_mon / bat_than: hành, cát/hung và ý nghĩa ngắn. Phân hạng sao
+#   theo cách phổ biến: Phụ, Cầm, Tâm đại cát; Nhậm, Xung tiểu cát; Bồng, Nhuế
+#   đại hung; Trụ, Anh tiểu hung. Cửa: Khai, Hưu, Sinh tam cát môn; Cảnh, Đỗ
+#   trung bình; Tử, Kinh, Thương hung môn.
+# thap_can: vai trò của 10 can trong Kỳ Môn (Giáp ẩn dưới Lục nghi).
+# cung: 9 cung Lạc thư (quẻ hậu thiên, phương, hành, tượng).
+# cach_cuc: các cách cục services/kymon.py phát hiện (ten, cat: true/false,
+#   y_nghia = lời khuyên ngắn). phuc_phan_ngam: câu chú cho phục/phản ngâm.
+# dung_than: gợi ý dụng thần đưa vào prompt AI của /kymon_chitiet.
+
+cuu_tinh:
+  Thiên Bồng:
+    hanh: Thủy
+    cat: false
+    y_nghia: Đại hung tinh - gan dạ, mưu mẹo nhưng chủ trộm cướp, hao tài, mạo hiểm; hợp việc cần quyết liệt, kỵ khởi sự lớn, đi đường thủy.
+  Thiên Nhuế:
+    hanh: Thổ
+    cat: false
+    y_nghia: Đại hung tinh - chủ bệnh tật, vướng mắc, trì trệ; hợp học hỏi, chữa bệnh, tu tập; kỵ khai trương, cưới hỏi.
+  Thiên Xung:
+    hanh: Mộc
+    cat: true
+    y_nghia: Tiểu cát tinh - mạnh mẽ, nhanh nhạy, hay xung động; hợp việc cần ra tay nhanh, thể thao, đòi nợ; kỵ việc cần nhẫn nại.
+  Thiên Phụ:
+    hanh: Mộc
+    cat: true
+    y_nghia: Đại cát tinh - văn chương, giáo dục, quý nhân phò tá; hợp học hành, thi cử, gặp người trên, xin thầy.
+  Thiên Cầm:
+    hanh: Thổ
+    cat: true
+    y_nghia: Đại cát tinh - trung chính, làm chủ; việc gì cũng thuận. Ở chuyển bàn luôn đi cùng Thiên Nhuế (ký Khôn).
+  Thiên Tâm:
+    hanh: Kim
+    cat: true
+    y_nghia: Đại cát tinh - y dược, mưu lược, quản trị; hợp chữa bệnh, lập kế hoạch, cầu chức, đầu tư có tính toán.
+  Thiên Trụ:
+    hanh: Kim
+    cat: false
+    y_nghia: Tiểu hung tinh - phá hoại, thị phi, khẩu thiệt; hợp giữ thủ, ẩn náu, sửa chữa; kỵ xuất hành, khai trương.
+  Thiên Nhậm:
+    hanh: Thổ
+    cat: true
+    y_nghia: Tiểu cát tinh - hiền hậu, đáng tin, ổn định; hợp cầu tài, nhà đất, giao dịch, cưới hỏi.
+  Thiên Anh:
+    hanh: Hỏa
+    cat: false
+    y_nghia: Tiểu hung tinh - sáng sủa, danh tiếng, văn thư nhưng nóng vội, dễ huyết quang; hợp quảng bá, thi cử; kỵ kiện tụng, cưới hỏi.
+
+bat_mon:
+  Khai:
+    hanh: Kim
+    cat: true
+    y_nghia: Cát môn - khai mở, sự nghiệp, nhậm chức, khai trương, đi xa, gặp người trên.
+  Hưu:
+    hanh: Thủy
+    cat: true
+    y_nghia: Cát môn - nghỉ ngơi, an lành, gặp quý nhân, cầu xin, hôn nhân, nhậm chức; kỵ việc hình sự.
+  Sinh:
+    hanh: Thổ
+    cat: true
+    y_nghia: Cát môn - sinh sôi, tài lộc, buôn bán, nhà đất, khởi sự; kỵ việc tang.
+  Thương:
+    hanh: Mộc
+    cat: false
+    y_nghia: Hung môn - thương tích, cạnh tranh; hợp đòi nợ, săn bắt, thể thao; kỵ cưới hỏi, khai trương.
+  Đỗ:
+    hanh: Mộc
+    cat: false
+    y_nghia: Trung bình - bế tắc, che giấu; hợp ẩn náu, giữ bí mật, tránh nạn, việc kỹ thuật; kỵ mở mang.
+  Cảnh:
+    hanh: Hỏa
+    cat: false
+    y_nghia: Trung bình - văn thư, thi cử, quảng cáo, tiệc tùng; dễ thị phi, huyết quang.
+  Tử:
+    hanh: Thổ
+    cat: false
+    y_nghia: Hung môn - bế tắc, tang thương; chỉ hợp việc tang lễ, đất đai mồ mả; kỵ mọi việc mưu cầu.
+  Kinh:
+    hanh: Kim
+    cat: false
+    y_nghia: Hung môn - kinh sợ, thị phi, kiện tụng; hợp đi kiện, bắt kẻ gian, thuyết phục; kỵ việc cần yên ổn.
+
+bat_than:
+  Trực Phù:
+    hanh: Thổ
+    cat: true
+    y_nghia: Quý thần đứng đầu - quyền lực, người lãnh đạo; gặp được thì giải hung, việc có người đỡ.
+  Đằng Xà:
+    hanh: Hỏa
+    cat: false
+    y_nghia: Hư ảo, quái lạ, lo âu, lừa dối, mộng mị; việc dễ thay đổi bất ngờ.
+  Thái Âm:
+    hanh: Kim
+    cat: true
+    y_nghia: Âm thầm che chở, mưu kín, quý nhân nữ; hợp việc cần kín đáo.
+  Lục Hợp:
+    hanh: Mộc
+    cat: true
+    y_nghia: Hòa hợp, mai mối, hợp tác, giao dịch; hợp cưới hỏi, ký kết.
+  Bạch Hổ:
+    hanh: Kim
+    cat: false
+    y_nghia: Hung bạo, tai nạn, bệnh tật, đường sá; cũng chủ uy quyền - nên thận trọng.
+  Huyền Vũ:
+    hanh: Thủy
+    cat: false
+    y_nghia: Mờ ám, trộm cắp, lừa gạt, thị phi; đề phòng mất mát.
+  Cửu Địa:
+    hanh: Thổ
+    cat: true
+    y_nghia: Kiên nhẫn, ẩn tàng, giữ yên, đất đai; lợi cho phòng thủ, tích trữ.
+  Cửu Thiên:
+    hanh: Kim
+    cat: true
+    y_nghia: Hiếu động, vươn xa, quảng bá, xuất quân; lợi cho tiến công, mở rộng.
+
+thap_can:
+  Giáp: Tôn quý nhất, ẩn dưới Lục nghi (độn giáp) - tượng người đứng đầu.
+  Ất: Nhật kỳ (kỳ thứ nhất) - mềm mỏng, y dược, phụ nữ; đàn ông hỏi vợ xem Ất.
+  Bính: Nguyệt kỳ - uy quyền, sáng rực, nhiệt huyết.
+  Đinh: Tinh kỳ - văn thư, tin tức, hy vọng, quý nhân ngầm.
+  Mậu: Giáp Tý ẩn - vốn liếng, tiền bạc, tài sản.
+  Kỷ: Giáp Tuất ẩn - mưu kế kín, đất đai, dây dưa.
+  Canh: Giáp Thân ẩn - trở ngại, đối thủ, kẻ địch; phụ nữ hỏi chồng xem Canh.
+  Tân: Giáp Ngọ ẩn - sai lầm, tội lỗi, đổi mới.
+  Nhâm: Giáp Thìn ẩn - lưu động, giam giữ (thiên lao).
+  Quý: Giáp Dần ẩn - bế tắc, ám muội (thiên võng).
+
+cung:
+  1: Khảm - Bắc - Thủy - trung nam, nước, hiểm trở, trí tuệ.
+  2: Khôn - Tây Nam - Thổ - mẹ, đất đai, nông nghiệp, quần chúng.
+  3: Chấn - Đông - Mộc - trưởng nam, chấn động, khởi đầu.
+  4: Tốn - Đông Nam - Mộc - trưởng nữ, gió, thương mại, đi lại.
+  5: Trung cung - Trung tâm - Thổ - trung tâm, ký Khôn 2 ở chuyển bàn.
+  6: Càn - Tây Bắc - Kim - cha, lãnh đạo, chính quyền.
+  7: Đoài - Tây - Kim - thiếu nữ, miệng lưỡi, vui vẻ.
+  8: Cấn - Đông Bắc - Thổ - thiếu nam, núi, dừng lại, nhà đất.
+  9: Ly - Nam - Hỏa - trung nữ, văn minh, sáng sủa, danh tiếng.
+
+cach_cuc:
+  mon_bach:
+    ten: Môn bách
+    cat: false
+    y_nghia: Cửa khắc cung - cửa tốt khó phát huy, cửa xấu càng xấu; tránh dùng hướng này cho việc quan trọng.
+  tam_ky_nhap_mo:
+    ten: Tam kỳ nhập mộ
+    cat: false
+    y_nghia: Kỳ nghi mất sức, quý nhân khó giúp, việc trì trệ; nên chờ thời.
+  luc_nghi_kich_hinh:
+    ten: Lục nghi kích hình
+    cat: false
+    y_nghia: Dễ tổn thương, thị phi, kiện cáo; không nên khởi sự hướng này.
+  thanh_long_phan_thu:
+    ten: Thanh long phản thủ
+    cat: true
+    y_nghia: Đại cát - mưu sự dễ thành, cầu tài cầu danh thuận; nên hành động.
+  phi_dieu_diet_huyet:
+    ten: Phi điểu điệt huyệt
+    cat: true
+    y_nghia: Đại cát - ít tốn sức mà được, may mắn bất ngờ; hợp cầu mưu, xuất hành.
+  thai_bach_nhap_huynh:
+    ten: Thái bạch nhập Huỳnh
+    cat: false
+    y_nghia: Giặc tới nhà - dễ bị tranh đoạt, hao tài; nên phòng thủ, giữ của.
+  huynh_nhap_thai_bach:
+    ten: Huỳnh nhập Thái bạch
+    cat: false
+    y_nghia: Rối ren, hao tài (kẻ gian tự lui); giữ mình, không nên mạo hiểm.
+  ngu_bat_ngo_thoi:
+    ten: Ngũ bất ngộ thời
+    cat: false
+    y_nghia: Can giờ khắc can ngày cùng âm dương - việc lớn không nên khởi sự giờ này.
+
+phuc_phan_ngam:
+  phuc_ngam: đứng yên ở cung gốc - việc trì trệ, nên giữ nguyên, chưa nên động.
+  phan_ngam: ở cung đối diện - việc biến động, lặp lại; việc gấp nên làm nhanh, việc lâu dài nên đợi.
+
+dung_than:
+  Công việc, sự nghiệp, nhậm chức: Khai môn, Trực phù
+  Tiền bạc, kinh doanh: Sinh môn, can Mậu
+  Thi cử, giấy tờ, văn thư: Cảnh môn, can Đinh, Thiên Phụ
+  Sức khỏe, bệnh tật: Thiên Nhuế (bệnh), Thiên Tâm (thầy thuốc), can Ất (thuốc)
+  Tình cảm, hôn nhân: Lục Hợp, can Ất (nữ), can Canh (nam)
+  Kiện tụng, tranh chấp: Kinh môn, Khai môn (quan xử)
+  Đi xa, xuất hành: Mã tinh, Khai môn, Hưu môn
+  Tìm đồ mất, kẻ gian: Huyền Vũ, Đỗ môn
+  Gặp quý nhân, cầu xin: Hưu môn, Trực phù
+  Nhà đất: Sinh môn, Thiên Nhậm, Cửu Địa

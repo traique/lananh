@@ -43,6 +43,21 @@ export function errorMessage(error: unknown, fallback = "lỗi không xác đị
   return error instanceof Error ? error.message : fallback;
 }
 
+/**
+ * Câu báo lỗi gửi người dùng Zalo. Chỉ chủ bot (controller) thấy thêm chi tiết
+ * kỹ thuật để khỏi mò log; người khác nhận đúng câu cố định - thông điệp lỗi có
+ * thể mang thân response của Python, chữ timeout tiếng Anh hay host CDN Zalo.
+ */
+export function userErrorReply(
+  error: unknown,
+  recipient: string,
+  controllerId: string,
+  publicText: string,
+): string {
+  if (!controllerId || recipient !== controllerId) return publicText;
+  return `${publicText}\n🔎 ${errorMessage(error, String(error))}`;
+}
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -67,6 +82,21 @@ export class KnownSenders {
       const oldest = this.ids.values().next().value;
       if (oldest !== undefined) this.ids.delete(oldest);
     }
+  }
+
+  /** Quên 1 người (chủ bot /zaloxoa, hoặc Python báo paired=false); true nếu đang nhớ. */
+  forget(id: string): boolean {
+    return this.ids.delete(id);
+  }
+
+  /**
+   * Cập nhật theo trả lời của Python: `paired` false = người lạ (chưa pair / vừa bị
+   * gỡ pairing) -> quên; true -> nhớ; thiếu (Python/bản cache idempotency cũ) ->
+   * nhớ khi Python có trả lời (`replied`), không thì giữ nguyên.
+   */
+  noteReply(id: string, paired: boolean | null | undefined, replied: boolean): void {
+    if (paired === false) this.forget(id);
+    else if (paired === true || replied) this.mark(id);
   }
 
   has(id: string): boolean {

@@ -1,13 +1,17 @@
 """Cấu hình logging dùng chung cho main.py và web.py.
 
 Gồm 1 logging.Filter để che các secret (API key 9Router, webhook secret,
-diagnose secret) nếu chúng vô tình lọt vào message log.
+diagnose secret) nếu chúng vô tình lọt vào message log, 1 filter gắn mã lượt
+(core/trace.py: "[telegram:123] ..." - gom mọi dòng log của 1 câu trả lời), và
+handler gom lỗi theo chữ ký (services/error_digest.py: báo chủ bot lỗi mới +
+tổng hợp hằng ngày; tắt bằng ERROR_DIGEST_ENABLED=0).
 """
 
 import logging
+import os
 from typing import Optional
 
-from core import config
+from core import config, trace
 
 
 def _db_password() -> str:
@@ -103,7 +107,7 @@ def add_redacted_secret(value: str) -> None:
 def configure_logging() -> None:
     global _active_filter
     logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        format="%(asctime)s - %(name)s - %(levelname)s - %(turn_tag)s%(message)s",
         level=logging.INFO,
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -115,5 +119,36 @@ def configure_logging() -> None:
     # con), record của chúng propagate thẳng tới handler mà KHÔNG đi qua
     # filter của root logger. Gắn nhầm ở logger khiến redact im lặng không
     # chạy cho bất kỳ log thực tế nào trước đây.
+    # Mã lượt (core/trace.py) gắn cùng chỗ: format trên dùng %(turn_tag)s nên
+    # filter này phải chạy trên MỌI handler gốc (luôn đặt giá trị mặc định).
+    turn_filter = trace.TurnIdFilter()
     for handler in logging.getLogger().handlers:
         handler.addFilter(_active_filter)
+        handler.addFilter(turn_filter)
+    if os.getenv("ERROR_DIGEST_ENABLED", "1").strip() != "0":
+        from services import error_digest
+
+        digest = error_digest.handler()
+        root = logging.getLogger()
+        if digest not in root.handlers:
+            # Handler chỉ lưu tên loại lỗi + vị trí code, nhưng vẫn gắn filter che
+            # secret cho chắc nếu sau này có trường nào đọc message.
+            digest.addFilter(_active_filter)
+            root.addHandler(digest)
+        # uvicorn CLI áp LOGGING_CONFIG (logger "uvicorn" propagate=False) TRƯỚC khi
+        # import web.py, nên "Exception in ASGI application" (route HTTP lỗi không
+        # bắt) từ uvicorn.error không bao giờ tới root. Chỉ gắn thêm khi chuỗi đó
+        # không tới root - chạy uvicorn với log_config=None thì không đếm 2 lần.
+        uv_error = logging.getLogger("uvicorn.error")
+        if not _reaches_root(uv_error) and digest not in uv_error.handlers:
+            uv_error.addHandler(digest)
+
+
+def _reaches_root(logger: logging.Logger) -> bool:
+    """Record của ``logger`` có lan tới handler của root không (mọi tầng propagate)."""
+    current: Optional[logging.Logger] = logger
+    while current is not None and current is not logging.getLogger():
+        if not current.propagate:
+            return False
+        current = current.parent
+    return True

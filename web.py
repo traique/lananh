@@ -16,6 +16,7 @@ from telegram.ext import Application
 
 import bot_app
 import web_admin
+from handlers import callbacks, turn_feedback
 import web_site
 import logging_setup
 from channels import (
@@ -27,15 +28,17 @@ from channels import (
     zoom,
 )
 from channels.router import router as zalo_router
-from core import config, database as db, idempotency, webhook_inbox
+from channels.zalo_media import router as zalo_media_router
+from core import config, database as db, idempotency, trace, webhook_inbox
 from diagnose_router9 import main as diagnose_main
 from services import db_maintenance, market_page, morning_news
-from services import channel_dispatch
+from services import action_buttons, channel_dispatch, turn_control
 from services.channel_chat_service import handle_channel_text, split_for_zalo
-from services.concurrency import OWNER_TURN_KEY, assistant_turn
+from services.concurrency import OWNER_TURN_KEY, assistant_turn, cancel_turn, is_busy
 from services.reminder_delivery import NotificationTarget, notification_target
 from services.telegram_processing import update_error
 from services.request_limits import RequestLimitsMiddleware
+from services.security_headers import SecurityHeadersMiddleware
 
 logging_setup.configure_logging()
 logger = logging.getLogger(__name__)
@@ -61,32 +64,66 @@ async def _safe_shutdown(label: str, awaitable) -> None:
         logger.exception("Shutdown step lỗi: %s", label)
 
 
-async def _process_update(update: Update) -> None:
-    """Preserve one cross-channel conversation order for the single owner."""
+async def _process_update(update: Update, *, locked: bool = True) -> None:
+    """Preserve one cross-channel conversation order for the single owner.
+
+    locked=False: lối nhanh của lệnh chỉ đọc khi khoá lượt đang bận
+    (handlers/turn_feedback.maybe_fast_path) - chạy ngoài assistant_turn."""
     if application is None:
         raise RuntimeError("Telegram application is not ready")
     token = update_error.set(None)
+    event_key = f"telegram:{update.update_id}"
     try:
-        with notification_target(
-            NotificationTarget(
-                "telegram",
-                str(update.effective_chat.id if update.effective_chat else config.ALLOWED_USER_ID),
-                event_key=f"telegram:{update.update_id}",
-            )
+        # Mã lượt = event_key (core/trace.py): log + provider_calls + turn_metrics.
+        with (
+            trace.turn(event_key, channel="telegram", user_kind="owner"),
+            notification_target(
+                NotificationTarget(
+                    "telegram",
+                    str(
+                        update.effective_chat.id
+                        if update.effective_chat
+                        else config.ALLOWED_USER_ID
+                    ),
+                    event_key=event_key,
+                )
+            ),
         ):
             message = getattr(update, "effective_message", None)
             command = (getattr(message, "text", None) or "").strip().lower().split(maxsplit=1)
-            boundary = (
-                nullcontext()
-                if command and command[0].startswith("/fb_")
-                else assistant_turn(OWNER_TURN_KEY)
-            )
+            query = getattr(update, "callback_query", None)
+            if query is not None:
+                # Nút bấm: chỉ "làm lại câu trả lời" mới xếp hàng sau khoá lượt; các
+                # nút khác (đánh giá, duyệt bài, cấp quyền, hoãn nhắc) chạy ngoài khoá
+                # như /fb_*. Trả lời callback TRƯỚC khi chờ khoá để tắt vòng quay.
+                locked = locked and action_buttons.needs_turn_lock(query.data)
+                if locked and is_busy(OWNER_TURN_KEY):
+                    await callbacks.answer_query(query, "⏳ Em làm ngay khi xong việc đang dở nha.")
+            elif command and command[0].startswith("/fb_"):
+                locked = False
+            boundary = assistant_turn(OWNER_TURN_KEY) if locked else nullcontext()
             async with boundary:
                 await application.process_update(update)
+            if update_error.get() is not None:
+                trace.set_outcome("error")
         if update_error.get() is not None:
             raise update_error.get()
+    except Exception as exc:
+        # Tin đã mang 👀 (phải chờ lượt trước): hỏng hẳn mới đổi 😢, còn được
+        # inbox thử lại thì giữ 👀.
+        attempt = webhook_inbox.current_attempt() or 1
+        final = webhook_inbox.is_non_retriable(exc) or attempt >= webhook_inbox.max_attempts()
+        bot = getattr(application, "bot", None)
+        turn_feedback.finish_queued(update.update_id, bot, ok=False, final=final)
+        raise
+    else:
+        turn_feedback.finish_queued(update.update_id, getattr(application, "bot", None), ok=True)
     finally:
         update_error.reset(token)
+
+
+async def _process_update_unlocked(update: Update) -> None:
+    await _process_update(update, locked=False)
 
 
 async def _process_inbox_event(channel: str, payload: dict) -> None:
@@ -124,7 +161,8 @@ async def lifespan(_: FastAPI):
         await application.bot.set_webhook(
             url=webhook_url,
             secret_token=config.WEBHOOK_SECRET,
-            allowed_updates=["message"],
+            # callback_query: nút inline (👍/👎, duyệt bài, cấp quyền Zalo, hoãn nhắc).
+            allowed_updates=["message", "callback_query"],
         )
         logger.info("Webhook đã set tới: %s", webhook_url)
         zalo_scheduler.start()
@@ -139,6 +177,9 @@ async def lifespan(_: FastAPI):
         await _safe_shutdown("Market page scheduler", market_page.stop())
         await _safe_shutdown("DB maintenance", db_maintenance.stop())
         await _safe_shutdown("webhook inbox", webhook_inbox.stop())
+        await _safe_shutdown("Telegram turn feedback", turn_feedback.stop())
+        # Dòng turn_metrics của các lượt vừa xong (ghi nền) trước khi đóng DB.
+        await _safe_shutdown("turn metrics", trace.drain())
         if app_started:
             await _safe_shutdown("Telegram application stop", application.stop())
         if app_resources_started:
@@ -156,6 +197,8 @@ async def lifespan(_: FastAPI):
 # nội bộ (/internal/zalo/*, /webhook) không cần lộ cho người lạ.
 api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 api.add_middleware(RequestLimitsMiddleware)
+# Thêm SAU (= bọc NGOÀI cùng) để cả response 413/503 của RequestLimits cũng có header.
+api.add_middleware(SecurityHeadersMiddleware)
 
 
 @api.exception_handler(StarletteHTTPException)
@@ -178,6 +221,7 @@ async def _http_error(request: Request, exc: StarletteHTTPException) -> Response
 
 
 api.include_router(zalo_router)
+api.include_router(zalo_media_router)
 api.include_router(web_admin.router)
 api.include_router(web_admin.api_router)
 api.include_router(web_site.static_router)
@@ -258,7 +302,12 @@ async def telegram_webhook(request: Request) -> Response:
         update = Update.de_json(payload, application.bot)
         if update.update_id is None:
             return Response(status_code=400)
+        # /huy và lệnh chỉ đọc lúc khoá lượt bận: xử lý ngay, không qua inbox
+        # (cả 2 worker inbox có thể đang kẹt sau khoá lượt của chủ bot).
+        if turn_feedback.maybe_fast_path(update, application.bot, _process_update_unlocked):
+            return Response(status_code=200)
         await webhook_inbox.enqueue("telegram", str(update.update_id), payload)
+        turn_feedback.mark_queued(update, application.bot)
     except (ValueError, TypeError, KeyError):
         return Response(status_code=400)
     except Exception:
@@ -354,6 +403,34 @@ async def _deliver_zoom_event(event: "zoom.ZoomEvent") -> None:
         raise
 
 
+async def _zoom_fast_path(event: "zoom.ZoomEvent") -> bool:
+    """/huy và lệnh chỉ đọc (lúc khoá lượt chủ bot bận) của Zoom: xử lý ngay ở
+    webhook như Telegram. True = đã xử lý, không đưa vào inbox."""
+    cancel = turn_control.is_cancel(event.text)
+    readonly = turn_control.is_readonly(event.text) and is_busy(OWNER_TURN_KEY)
+    if not (cancel or readonly):
+        return False
+    pairing = await db.zoom_get_pairing()
+    if pairing is None or pairing[0] != event.sender_jid:
+        return False  # inbox lo báo chủ bot như mọi tin chưa pair
+    if turn_feedback.seen_once(f"zoom:{event.event_id}"):
+        return True
+    if readonly:
+        turn_feedback.spawn(_process_zoom_event(event))
+        return True
+    if not cancel_turn(OWNER_TURN_KEY):
+        # Có việc bị huỷ thì chính lượt đó trả lời "em dừng rồi".
+        turn_feedback.spawn(
+            zoom.send_message(
+                event.reply_jid,
+                turn_control.nothing_to_cancel_text(owner=True),
+                user_jid=event.sender_jid,
+                account_id=event.account_id,
+            )
+        )
+    return True
+
+
 @api.post(config.ZOOM_WEBHOOK_PATH)
 async def zoom_webhook(request: Request) -> Response:
     if not config.ZOOM_ENABLED:
@@ -396,6 +473,8 @@ async def zoom_webhook(request: Request) -> Response:
         return Response(status_code=200)
 
     try:
+        if await _zoom_fast_path(event):
+            return Response(status_code=200)
         await webhook_inbox.enqueue("zoom", event.event_id, payload)
     except Exception:
         logger.warning("Không lưu được Zoom webhook vào inbox.", exc_info=True)

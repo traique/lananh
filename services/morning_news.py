@@ -8,11 +8,20 @@
 RSS được tổng hợp bằng AI nhưng danh sách link cuối bài KHÔNG để AI tự bịa URL:
 mỗi item được gắn ID nội bộ, model chỉ chọn ID đáng chú ý, còn code lấy lại đúng
 tiêu đề + URL gốc từ RSS để người dùng bấm trực tiếp.
+
+Bản tin sáng cá nhân (services/morning_brief.py) dùng chung, KHÔNG gọi AI thêm:
+- ``shared_digest()``: bản tin sáng của hôm nay, tổng hợp TỐI ĐA 1 lần/ngày rồi
+  giữ trong RAM (1 chuỗi) cho cả lượt 8h lẫn bản tin cá nhân gộp tin.
+- ``today_headlines()``: danh sách tin cho thành viên - lấy lại đúng danh sách
+  "đọc bài N" của bản tin AI nếu đã có, không thì chọn tất định từ RSS.
+- Zalo controller / Zoom đã bật bản tin cá nhân (gộp tin) thì lượt 8h bỏ qua
+  kênh đó: bản tin cá nhân mang luôn phần tin, người nhận chỉ nhận 1 tin.
 """
 
 import asyncio
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import NamedTuple
@@ -20,7 +29,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from ai import orchestrator
-from core import config
+from core import config, untrusted
 from core import database as db
 from services import article_reader, web_reader
 
@@ -162,7 +171,10 @@ def _annotate_feed(feed_text: str, feed_index: int) -> str:
 def _build_prompt(feed_texts: list[str]) -> str:
     annotated = [_annotate_feed(text, i) for i, text in enumerate(feed_texts, start=1)]
     combined = "\n\n--- NGUỒN KHÁC ---\n\n".join(annotated)
-    return f"Tổng hợp các tin RSS dưới đây thành bản tin.\n{_GROUNDING}\n{_STYLE}\n\n{combined}"
+    # Nội dung RSS là dữ liệu ngoài: rào lại (core.untrusted) để câu lệnh cài
+    # trong tiêu đề/tóm tắt tin không điều khiển được bản tin.
+    fenced = untrusted.wrap_untrusted(combined, "tin RSS")
+    return f"Tổng hợp các tin RSS dưới đây thành bản tin.\n{_GROUNDING}\n{_STYLE}\n\n{fenced}"
 
 
 def _extract_important_ids(body: str) -> tuple[str, list[str]]:
@@ -283,9 +295,10 @@ async def build_digest(mode: str = "morning") -> str | None:
         return None
 
     important_items = _select_important_items(all_items, important_ids)
+    now = datetime.now(_VN_TZ)
     if important_items:
         await article_reader.save_digest_links([(i.title, i.url) for i in important_items])
-    now = datetime.now(_VN_TZ)
+        _remember_digest_items(now, important_items)
     parts = [_header(mode, now), body]
     sources = _format_sources(successful_sources)
     if sources:
@@ -294,6 +307,104 @@ async def build_digest(mode: str = "morning") -> str | None:
     if links:
         parts.append(links)
     return "\n\n".join(parts)
+
+
+# ─── Dùng chung cho bản tin sáng cá nhân (services/morning_brief.py) ────────
+
+HEADLINE_COUNT = 5
+_HEADLINE_BUDGET_SEC = 45
+# (ngày ISO, tin) của bản tin AI gần nhất - đúng danh sách "đọc bài N" đã lưu.
+_digest_items: tuple[str, list[_NewsItem]] | None = None
+# (ngày ISO, nội dung) bản tin sáng hôm nay: lượt 8h và bản tin cá nhân gộp tin
+# dùng chung, tổng hợp AI tối đa 1 lần/ngày. Chỉ 1 chuỗi vài KB trong RAM.
+_shared: tuple[str, str] | None = None
+_shared_lock = asyncio.Lock()
+# (ngày ISO, tin chọn tất định từ RSS khi chưa có bản tin AI)
+_headlines: tuple[str, list[_NewsItem]] | None = None
+_headlines_lock = asyncio.Lock()
+
+
+def _remember_digest_items(now: datetime, items: list[_NewsItem]) -> None:
+    global _digest_items
+    _digest_items = (now.date().isoformat(), list(items[:8]))
+
+
+def reset_shared_state() -> None:
+    """Quên bản tin/tin đã giữ trong RAM (test và khi đổi ngày)."""
+    global _digest_items, _shared, _headlines
+    _digest_items = _shared = _headlines = None
+
+
+async def shared_digest(now: datetime | None = None) -> str | None:
+    """Bản tin sáng của hôm nay; tổng hợp (1 lượt AI) nếu hôm nay chưa có."""
+    global _shared
+    today = (now or datetime.now(_VN_TZ)).date().isoformat()
+    async with _shared_lock:
+        if _shared is not None and _shared[0] == today:
+            return _shared[1]
+        content = await build_digest()
+        if content:
+            _shared = (today, content)
+        return content
+
+
+async def _read_headlines() -> list[_NewsItem]:
+    """Chọn tin tất định từ RSS (không AI): ưu tiên mỗi nguồn 1 tin."""
+    deadline = time.monotonic() + _HEADLINE_BUDGET_SEC
+    all_items: list[_NewsItem] = []
+    for index, url in enumerate(config.MORNING_NEWS_RSS_FEEDS, start=1):
+        if time.monotonic() > deadline:
+            break
+        try:
+            text = await web_reader.read_rss(url)
+        except web_reader.WebReaderError as exc:
+            logger.warning("morning_news: tin cho bản tin cá nhân - lỗi feed '%s': %s", url, exc)
+            continue
+        all_items.extend(_parse_feed_items(text, index, _feed_source(text, url)))
+    return _select_important_items(all_items, [])[:HEADLINE_COUNT]
+
+
+async def today_headlines(now: datetime | None = None) -> tuple[list[_NewsItem], bool]:
+    """(tin hôm nay, có phải đúng danh sách "đọc bài N" của bản tin AI không).
+
+    Không bao giờ ghi đè danh sách "đọc bài N" chung: danh sách đó chỉ do bản
+    tin AI ghi (1 lần/ngày), tin chọn tất định đi kèm link để gửi lại đọc."""
+    global _headlines
+    today = (now or datetime.now(_VN_TZ)).date().isoformat()
+    if _digest_items is not None and _digest_items[0] == today and _digest_items[1]:
+        return list(_digest_items[1][:HEADLINE_COUNT]), True
+    async with _headlines_lock:
+        if _headlines is not None and _headlines[0] == today:
+            return list(_headlines[1]), False
+        items = await _read_headlines()
+        if items:
+            _headlines = (today, items)
+        return items, False
+
+
+def format_headlines(items: list[_NewsItem], from_digest: bool) -> str:
+    lines = ["📰 TIN ĐÁNG CHÚ Ý"]
+    for number, item in enumerate(items, 1):
+        lines.append(f"{number}. {item.title} ({item.source})\n   {item.url}")
+    lines.append(
+        '💬 Nhắn "đọc bài 1" (hoặc gửi link) để đọc nguyên bài ngay trong chat.'
+        if from_digest
+        else "💬 Gửi lại link để em đọc nguyên bài ngay trong chat."
+    )
+    return "\n".join(lines)
+
+
+async def _absorbed_channels() -> set[str]:
+    """Kênh mà bản tin cá nhân đã mang phần tin hôm nay (lượt 8h bỏ qua)."""
+    if not config.MORNING_BRIEF_ABSORB_NEWS:
+        return set()
+    from services import morning_brief
+
+    try:
+        return await asyncio.wait_for(morning_brief.absorbed_news_channels(), 15)
+    except Exception:
+        logger.warning("morning_news: không kiểm tra được bản tin cá nhân gộp tin.", exc_info=True)
+        return set()
 
 
 async def _send_to_zalo(content: str) -> bool:
@@ -343,14 +454,22 @@ async def run_once(force: bool = False) -> RunResult:
     if not force and await _already_sent_today(now):
         return RunResult(content=None, sent_zalo=False, sent_zoom=False)
 
-    content = await build_digest()
+    # /bangtinsang (force) vẫn gửi thẳng cả 2 kênh như cũ; lượt tự động bỏ qua
+    # kênh mà bản tin cá nhân đã gộp phần tin (1 tin/ngày thay vì 2).
+    absorbed = set() if force else await _absorbed_channels()
+    if {"zalo", "zoom"} <= absorbed:
+        logger.info("morning_news: Zalo lẫn Zoom đều nhận tin qua bản tin cá nhân, bỏ lượt 8h.")
+        await _mark_sent(now)
+        return RunResult(content=None, sent_zalo=False, sent_zoom=False)
+
+    content = await build_digest() if force else await shared_digest(now)
     if not content:
         logger.info("morning_news: không có nội dung để gửi (thiếu feed hoặc tất cả feed lỗi).")
         return RunResult(content=None, sent_zalo=False, sent_zoom=False)
 
-    sent_zalo = await _send_to_zalo(content)
-    sent_zoom = await _send_to_zoom(content)
-    if sent_zalo or sent_zoom:
+    sent_zalo = "zalo" not in absorbed and await _send_to_zalo(content)
+    sent_zoom = "zoom" not in absorbed and await _send_to_zoom(content)
+    if sent_zalo or sent_zoom or absorbed:
         await _mark_sent(now)
     else:
         logger.info(

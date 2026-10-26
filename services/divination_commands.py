@@ -1,9 +1,10 @@
-"""Lệnh /lich, /tsh, /tsh_chitiet, /tuvi, /tuvi_chitiet dùng chung cho mọi kênh.
+"""Lệnh /lich, /tsh, /tsh_chitiet, /tuvi, /tuvi_chitiet, /kymon, /kymon_chitiet
+dùng chung cho mọi kênh.
 
-/lich, /tsh, /tuvi tính bằng code, KHÔNG gọi AI. Hai lệnh *_chitiet gửi kết
-quả đã tính cho AI diễn giải (1 lượt AI, có telemetry như các lệnh AI khác).
-Ngày sinh, họ tên KHÔNG lưu vào DB/trí nhớ: telemetry chỉ ghi tên lệnh và độ
-dài câu trả lời để đếm lượt AI, không ghi tham số hay nội dung luận giải.
+/lich, /tsh, /tuvi, /kymon tính bằng code, KHÔNG gọi AI. Các lệnh *_chitiet gửi
+kết quả đã tính cho AI diễn giải (1 lượt AI, có telemetry như các lệnh AI khác).
+Ngày sinh, họ tên, việc cần xem KHÔNG lưu vào DB/trí nhớ: telemetry chỉ ghi tên
+lệnh và độ dài câu trả lời để đếm lượt AI, không ghi tham số hay nội dung luận giải.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import datetime as dt
 import logging
 
 from ai.timeouts import TurnTimeoutError
-from services import calendar_query, numerology, tuvi
+from services import calendar_query, kymon, numerology, reply_audience, tuvi
 from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,11 @@ def tuvi_chart(argument: str) -> str:
     return chart if isinstance(chart, str) else tuvi.format_chart(chart)
 
 
+def kymon_chart(argument: str) -> str:
+    chart = kymon.parse(argument)
+    return chart if isinstance(chart, str) else kymon.format_chart(chart)
+
+
 async def ai_text(user_id: int, kind: str, channel: str, explain) -> str:
     """1 lượt AI diễn giải có telemetry; lỗi/hết hạn thì trả câu báo lỗi."""
     prompt_id = await telemetry.start(user_id, kind, f"/{kind}", channel=channel)
@@ -55,7 +61,8 @@ async def ai_text(user_id: int, kind: str, channel: str, explain) -> str:
     except TurnTimeoutError as exc:
         logger.warning("%s hết hạn chót lượt: %s", kind, exc)
         await telemetry.failure(prompt_id, kind, exc)
-        return f"⏱️ {exc}"
+        # Câu giọng Lan Anh theo người nhận (chi tiết kỹ thuật chỉ chủ bot thấy).
+        return await reply_audience.error_text("timeout", user_id, str(exc))
     except Exception as exc:
         logger.warning("%s lỗi: %r", kind, exc)
         await telemetry.failure(prompt_id, kind, exc)
@@ -95,16 +102,47 @@ async def tuvi_chitiet(user_id: int, argument: str, channel: str) -> list[str]:
     )
 
 
+async def kymon_chitiet(user_id: int, argument: str, channel: str) -> list[str]:
+    parsed = kymon.parse_question(argument)
+    if isinstance(parsed, str):
+        return [parsed]
+    chart, question = parsed
+    return await _with_ai(
+        user_id,
+        "kymon_chitiet",
+        channel,
+        kymon.format_chart(chart),
+        lambda: kymon.explain_with_ai(chart, question),
+    )
+
+
+# Lệnh gọi AI (kể cả alias) -> loại lượt (user_calls.kind). Nguồn duy nhất: handle()
+# định tuyến theo bảng này và services/usage_quota dựng bảng lệnh "nặng" từ nó, nên
+# alias mới tự vào trần ZALO_MEMBER_DAILY_HEAVY.
+AI_COMMAND_KINDS: dict[str, str] = {
+    "/tsh_chitiet": "tsh_chitiet",
+    "/ths_chitiet": "tsh_chitiet",
+    "/tuvi_chitiet": "tuvi_chitiet",
+    "/kymon_chitiet": "kymon_chitiet",
+}
+_AI_HANDLERS = {
+    "tsh_chitiet": tsh_chitiet,
+    "tuvi_chitiet": tuvi_chitiet,
+    "kymon_chitiet": kymon_chitiet,
+}
+
+
 async def handle(command: str, argument: str, user_id: int, channel: str) -> list[str] | None:
     """Kết quả cho 1 lệnh huyền học, None nếu không phải lệnh của module này."""
     if command == "/lich":
         return [lich(argument)]
     if command == "/tsh":
         return [tsh(argument)]
-    if command in ("/tsh_chitiet", "/ths_chitiet"):
-        return await tsh_chitiet(user_id, argument, channel)
     if command == "/tuvi":
         return [tuvi_chart(argument)]
-    if command == "/tuvi_chitiet":
-        return await tuvi_chitiet(user_id, argument, channel)
+    if command == "/kymon":
+        return [kymon_chart(argument)]
+    kind = AI_COMMAND_KINDS.get(command)
+    if kind is not None:
+        return await _AI_HANDLERS[kind](user_id, argument, channel)
     return None

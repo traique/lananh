@@ -453,6 +453,11 @@ async def test_zaloxoa_removes_member_data_but_not_owner_data(delivery_db):
         await db.set_summary(owner_or_member, "tóm tắt")
         await db.add_note(owner_or_member, "ghi chú")
         await portfolio.set_holding(owner_or_member, "VCB", 10, 80000)
+        await db.portfolio_add_watch(owner_or_member, ["VCB"], 20)
+        await db.portfolio_add_price_alert(
+            owner_or_member, "VCB", "BELOW", 70000, state="armed", max_per_user=10
+        )
+        await db.portfolio_log_alert(owner_or_member, "price", "1", "2026-10-26")
     reminder = await db.add_reminder(
         uid,
         "nhắc",
@@ -466,14 +471,24 @@ async def test_zaloxoa_removes_member_data_but_not_owner_data(delivery_db):
     assert reminder is not None
     await zalo_repository.enqueue_reminder(reminder_id, "acc", "z-member", "nhắc")
     await db.set_setting(f"memory_enabled_{uid}", "0")
+    await db.set_setting(f"weather_home:{uid}", "Hà Nội")
+    await db.set_setting(f"brief:zalo:{uid}", '{"on": true}')
+    await db.set_setting("weather_home:999", "Huế")
 
     assert await zalo_users.remove("z-member") is True
+    assert await db.get_setting(f"weather_home:{uid}") is None
+    assert await db.get_setting(f"brief:zalo:{uid}") is None
+    assert await db.get_setting("weather_home:999") == "Huế"
     for table in (
         "chat_messages",
         "user_facts",
         "user_memory_summary",
         "notes",
         "stock_holdings",
+        "stock_transactions",
+        "stock_watchlist",
+        "stock_price_alerts",
+        "stock_alert_log",
         "reminders",
     ):
         assert (
@@ -485,6 +500,50 @@ async def test_zaloxoa_removes_member_data_but_not_owner_data(delivery_db):
     assert await pool.fetchval("SELECT count(*) FROM zalo_outbox WHERE sent_at IS NULL") == 0
     assert await db.get_setting(f"memory_enabled_{uid}") is None
     assert await zalo_users.resolve("z-member") is None
+
+
+@pytest.mark.asyncio
+async def test_zalo_address_form_luu_giu_nguyen_va_check_danh_sach(delivery_db):
+    """migrations/024: cách xưng hô riêng từng thành viên - pair lại không truyền
+    thì giữ nguyên, CHECK chặn giá trị ngoài danh sách core/address.py."""
+    from channels import zalo_users
+
+    pool = delivery_db
+    member = await zalo_users.pair("z-me", "Mẹ", address_form="cô")
+    assert member.address_form == "cô"
+    assert (await zalo_users.pair_as_admin("z-me", "")).address_form == "cô"
+    assert (await zalo_users.pair("z-me", "", address_form="chị")).address_form == "chị"
+    assert (await zalo_users.resolve("z-me")).address_form == "chị"
+    assert [u.address_form for u in await zalo_users.list_users()] == ["chị"]
+    with pytest.raises((RuntimeError, asyncpg.PostgresError), match="address_form_check"):
+        await pool.execute("UPDATE zalo_users SET address_form = 'sếp' WHERE external_id = 'z-me'")
+
+
+@pytest.mark.asyncio
+async def test_brief_sql_prefix_settings_and_reminders_today(delivery_db):
+    await db.set_setting("brief:telegram:42", '{"on": true}')
+    await db.set_setting("brief:zalo:-3", '{"on": false}')
+    await db.set_setting("brief_sent:zalo:-3", "2026-10-26")
+    await db.set_setting("brief%x", "không phải prefix")
+    rows = await db.list_settings_with_prefix("brief:", 10)
+    assert rows == [("brief:telegram:42", '{"on": true}'), ("brief:zalo:-3", '{"on": false}')]
+    assert await db.list_settings_with_prefix("brief:", 1) == [
+        ("brief:telegram:42", '{"on": true}')
+    ]
+
+    start = datetime(2026, 10, 26, 0, 0, tzinfo=timezone.utc)
+    for minutes, uid, text in (
+        (30, 42, "họp"),
+        (90, 42, "gọi mẹ"),
+        (60 * 30, 42, "mai"),
+        (45, 7, "khác"),
+    ):
+        await db.add_reminder(uid, text, start + timedelta(minutes=minutes))
+    sent_id = await db.add_reminder(42, "đã gửi", start + timedelta(minutes=10))
+    assert sent_id is not None
+    await delivery_db.execute("UPDATE reminders SET sent = true WHERE message = 'đã gửi'")
+    rows = await db.list_reminders_between(42, start, start + timedelta(days=1), limit=5)
+    assert [message for _, message in rows] == ["họp", "gọi mẹ"]
 
 
 @pytest.mark.asyncio
@@ -511,6 +570,22 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "(1,'old sent',now()-interval '200 days',true,'1'),"
         "(1,'old unsent',now()-interval '200 days',false,'1')"
     )
+    await pool.execute(
+        "INSERT INTO user_session_notes (telegram_user_id,session_key,updated_at) VALUES "
+        "(1,1,now()-interval '400 days'),(1,2,now())"
+    )
+    await pool.execute(
+        "INSERT INTO user_events (telegram_user_id,title,event_date,created_at) VALUES "
+        "(1,'cũ','2026-01-01',now()-interval '100 days'),(1,'mới','2026-12-01',now())"
+    )
+    await pool.execute(
+        "INSERT INTO answer_feedback (channel,telegram_user_id,prompt_id,rating,created_at) "
+        "VALUES ('telegram',1,1,-1,now()-interval '200 days'),('telegram',1,2,1,now())"
+    )
+    await pool.execute(
+        "INSERT INTO turn_metrics (turn_id,created_at) "
+        "VALUES ('telegram:1',now()-interval '20 days'),('telegram:2',now())"
+    )
     result = await db_maintenance.prune_retention()
     assert result == {
         "user_calls": 1,
@@ -518,7 +593,14 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "zalo_outbox": 1,
         "zalo_outbox_failed": 0,
         "reminders": 1,
+        "user_session_notes": 1,
+        "user_events": 1,
+        "turn_metrics": 1,
+        "answer_feedback": 1,
     }
+    assert await pool.fetchval("SELECT prompt_id FROM answer_feedback") == 2
+    assert await pool.fetchval("SELECT session_key FROM user_session_notes") == 2
+    assert await pool.fetchval("SELECT title FROM user_events") == "mới"
     assert [
         r["content"] for r in await pool.fetch("SELECT content FROM zalo_outbox ORDER BY id")
     ] == [
@@ -551,3 +633,404 @@ async def test_daily_summary_toggle_per_group_and_all(delivery_db):
         False,
     ]
     assert await zalo_repository.list_groups_with_daily("b") == [("g9", "khac", True)]
+
+
+@pytest.mark.asyncio
+async def test_add_chat_turn_ghi_ca_luot_dung_thu_tu_va_cat_retention(delivery_db, monkeypatch):
+    monkeypatch.setattr(db, "CHAT_MESSAGES_RETENTION_LIMIT", 4)
+    for i in range(3):
+        await db.add_chat_turn(5, f"hỏi {i}", f"đáp {i}")
+    rows = await delivery_db.fetch(
+        "SELECT role, content FROM chat_messages WHERE telegram_user_id=5 ORDER BY id"
+    )
+    assert [(r["role"], r["content"]) for r in rows] == [
+        ("user", "hỏi 1"),
+        ("model", "đáp 1"),
+        ("user", "hỏi 2"),
+        ("model", "đáp 2"),
+    ]
+    assert await db.get_session_messages(5, 10, 3600) == [
+        ("user", "hỏi 1"),
+        ("model", "đáp 1"),
+        ("user", "hỏi 2"),
+        ("model", "đáp 2"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_inbox_loi_khong_dang_thu_lai_ket_thuc_ngay_va_giu_last_error(
+    delivery_db, monkeypatch
+):
+    pool = delivery_db
+    sent = []
+    monkeypatch.setattr(webhook_inbox.alerts, "send", lambda text: sent.append(text) or True)
+    await webhook_inbox.enqueue("telegram", "bug", {"update_id": 8})
+    row = await webhook_inbox.claim()
+    await webhook_inbox.retry(row, KeyError("missing"))
+    stored = await pool.fetchrow("SELECT status, payload, last_error FROM webhook_inbox")
+    assert stored["status"] == "DONE" and stored["payload"] is None
+    assert stored["last_error"] == "KeyError"
+    assert len(sent) == 1
+    await pool.execute("UPDATE webhook_inbox SET available_at=now()-interval '1 second'")
+    assert await webhook_inbox.claim() is None
+
+
+# ─── Danh mục v2 (migration 022): sổ giao dịch, mốc giá vốn, cảnh báo giá ────
+
+
+@pytest.mark.asyncio
+async def test_022_backfills_cost_basis_and_seeds_open_rows(sql_pool, monkeypatch):
+    pool = sql_pool
+    for path in sorted(MIGRATIONS.glob("*.sql")):
+        if path.name >= "022":
+            continue
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(path.read_text())
+    await pool.execute(
+        "INSERT INTO stock_holdings (telegram_user_id, symbol, quantity, average_price, updated_at) "
+        "VALUES (1, 'FPT', 100, 120000, '2026-03-02T20:00:00+00:00')"
+    )
+    for path in sorted(MIGRATIONS.glob("022_*.sql")):
+        await pool.execute(path.read_text())
+        await pool.execute(path.read_text())  # chạy lại an toàn, không nhân đôi dòng OPEN
+    basis = await pool.fetchval("SELECT cost_basis_as_of::text FROM stock_holdings")
+    assert basis == "2026-03-03"  # 20h UTC = 3h sáng hôm sau giờ VN
+    rows = await pool.fetch("SELECT side, quantity, price FROM stock_transactions")
+    assert [(r["side"], float(r["quantity"]), float(r["price"])) for r in rows] == [
+        ("OPEN", 100.0, 120000.0)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ledger_purchase_sale_fees_tax_and_realized(delivery_db, monkeypatch):
+    monkeypatch.setenv("STOCK_FEE_RATE", "0.0015")
+    monkeypatch.setenv("STOCK_SELL_TAX_RATE", "0.001")
+    await portfolio.add_purchase(1, "HPG", 1000, 25000)
+    holding = await portfolio.add_purchase(1, "HPG", 1000, 27000)
+    assert holding.quantity == 2000 and holding.average_price == 26000
+    assert holding.cost_basis_as_of == portfolio.today_vn()
+
+    sale = await portfolio.record_sale(1, "HPG", 500, 30000)
+    # (30.000 - 26.000) x 500 = 2.000.000; phí 0,15% x 15tr = 22.500; thuế 15.000.
+    assert sale.fee == 22500 and sale.tax == 15000
+    assert sale.realized_pnl == 2_000_000 - 22500 - 15000
+    assert sale.holding.quantity == 1500
+
+    unpriced = await portfolio.record_sale(1, "HPG", 500)
+    assert unpriced.realized_pnl is None and unpriced.price is None
+    filled = await portfolio.fill_sale_price(1, "HPG", 24000)
+    assert filled.realized_pnl == (24000 - 26000) * 500 - 18000 - 12000
+    assert await portfolio.fill_sale_price(1, "HPG", 24000) is None  # không còn lệnh thiếu giá
+
+    rest = await portfolio.record_sale(1, "HPG")  # bán hết, không giá
+    assert rest.closed and rest.quantity == 1000
+    assert await portfolio.was_closed(1, "HPG")
+
+    history = await portfolio.list_transactions(1)
+    assert [tx.side for tx in history] == ["SELL", "SELL", "SELL", "BUY", "BUY"]
+    assert history[-1].fee == round(25_000_000 * 0.0015)
+
+    months = await portfolio.realized_by_month(1, months=1)
+    assert len(months) == 1
+    month = months[0]
+    assert month.priced_sells == 2 and month.wins == 1
+    assert month.realized == sale.realized_pnl + filled.realized_pnl
+    assert month.buy_fee == 37500 + 40500
+    assert month.unpriced and month.unpriced[0][0] == "HPG"
+
+
+@pytest.mark.asyncio
+async def test_ledger_replace_and_delete_write_adjust_rows(delivery_db):
+    await portfolio.set_holding(1, "VNM", 100, 60000)
+    await portfolio.set_holding(1, "VNM", 120, 50000)
+    assert await portfolio.delete_holding(1, "VNM")
+    history = await portfolio.list_transactions(1, symbol="VNM")
+    assert [(tx.side, tx.quantity) for tx in history] == [
+        ("ADJUST", 0.0),
+        ("ADJUST", 120.0),
+        ("ADJUST", 100.0),
+    ]
+    text = await portfolio.build_history_text(1)
+    assert "XOÁ VNM" in text and "GHI ĐÈ VNM → 120 cp" in text
+
+
+@pytest.mark.asyncio
+async def test_corporate_rebase_once_before_blending(delivery_db):
+    from core.repositories.portfolio import CorporateRebase
+
+    pool = delivery_db
+    await portfolio.set_holding(1, "VNM", 1005, 60000, stop_price=55000, target_price=72000)
+    await pool.execute("UPDATE stock_holdings SET cost_basis_as_of = '2026-01-05'")
+    rebase = CorporateRebase(1.2, "2026-02-10", "cổ tức CP 20% GDKHQ 10/02")
+    before, after = await db.portfolio_rebase_holding(1, "VNM", rebase)
+    assert float(before["quantity"]) == 1005
+    assert float(after["quantity"]) == 1206  # floor(1005 x 1,2): cp lẻ bị huỷ
+    assert round(float(after["average_price"]) * 1206) == 1005 * 60000  # giữ tổng giá vốn
+    assert float(after["stop_price"]) == round(55000 / 1.2, 2)
+    assert after["cost_basis_as_of"] == "2026-02-10"
+    assert await db.portfolio_rebase_holding(1, "VNM", rebase) is None  # không quy đổi 2 lần
+    sides = await pool.fetch("SELECT side FROM stock_transactions WHERE symbol = 'VNM' ORDER BY id")
+    assert [r["side"] for r in sides] == ["ADJUST", "CORP"]
+
+
+@pytest.mark.asyncio
+async def test_price_alerts_watchlist_and_alert_log(delivery_db):
+    added = await db.portfolio_add_watch(1, ["FPT", "MWG", "FPT", "HPG"], 2)
+    assert added == ["FPT", "MWG"]  # trần 2 mã, bỏ trùng
+    row, full = await db.portfolio_add_price_alert(
+        1, "FPT", "BELOW", 25000, state="unknown", max_per_user=2
+    )
+    assert row is not None and not full
+    dup, _ = await db.portfolio_add_price_alert(
+        1, "FPT", "BELOW", 25000, state="unknown", max_per_user=2
+    )
+    assert dup is None
+    await db.portfolio_add_price_alert(1, "FPT", "ABOVE", 30000, state="armed", max_per_user=2)
+    _, full = await db.portfolio_add_price_alert(
+        1, "MWG", "ABOVE", 70000, state="armed", max_per_user=2
+    )
+    assert full
+    await db.portfolio_set_price_alert_state(row["id"], "crossed", notified=True)
+    alerts = await db.portfolio_active_price_alerts(10)
+    crossed = [a for a in alerts if a["id"] == row["id"]][0]
+    assert crossed["last_state"] == "crossed" and crossed["notified_at"] is not None
+    assert await db.portfolio_delete_price_alerts(1, "FPT", 30000) == 1
+    assert await db.portfolio_remove_watch(1, "FPT") == (True, 1)
+    assert await db.portfolio_watchlist(1) == ["MWG"]
+
+    assert not await db.portfolio_alert_logged(1, "event", "VNM:DIV:2026-11-02")
+    await db.portfolio_log_alert(1, "event", "VNM:DIV:2026-11-02", "2026-10-30")
+    await db.portfolio_log_alert(1, "event", "VNM:DIV:2026-11-02", "2026-10-30")
+    assert await db.portfolio_alert_logged(1, "event", "VNM:DIV:2026-11-02")
+    assert await db.portfolio_alert_logged(1, "event", "VNM:DIV:2026-11-02", "2026-10-30")
+    assert not await db.portfolio_alert_logged(1, "event", "VNM:DIV:2026-11-02", "2026-10-31")
+    assert await db.portfolio_count_alerts_on(1, "2026-10-30") == 1
+    assert await db.portfolio_prune_alert_log(0) == 1
+
+
+@pytest.mark.asyncio
+async def test_sl_tp_and_partial_sale_keep_cost_basis_purchase_rebases_first(
+    delivery_db, monkeypatch
+):
+    from stock import corporate_actions as ca
+
+    pool = delivery_db
+    await portfolio.set_holding(1, "VNM", 1000, 60000)
+    await pool.execute("UPDATE stock_holdings SET cost_basis_as_of = '2026-01-05'")
+    monkeypatch.setattr(portfolio, "_pending_rebase", _no_rebase)
+    await portfolio.update_alerts(1, "VNM", stop_price=55000, target_price=None)
+    await portfolio.sell(1, "VNM", 100)
+    # Sửa SL/TP và bán bớt KHÔNG dời mốc giá vốn (khác updated_at).
+    assert (await portfolio.get_holding(1, "VNM")).cost_basis_as_of == "2026-01-05"
+
+    event = ca.StockEvent(ex_date="2026-02-10", ratio=0.2)
+
+    async def confirmed(holdings, series_list=None, *, limit_sec=8.0):
+        return [
+            portfolio.CorporateView(h, portfolio.effective_holding(h, [event]), (event,))
+            for h in holdings
+        ]
+
+    monkeypatch.setattr(portfolio, "corporate_views", confirmed)
+    holding = await portfolio.add_purchase(1, "VNM", 120, 50000)
+    # 900 cp x 1,2 = 1.080 cp giá 50.000 (quy đổi TRƯỚC) + 120 cp giá 50.000.
+    assert holding.quantity == 1200
+    assert holding.average_price == pytest.approx(50000)
+    assert holding.stop_price == pytest.approx(55000 / 1.2, abs=0.01)
+    assert holding.cost_basis_as_of == portfolio.today_vn()
+    sides = await pool.fetch("SELECT side FROM stock_transactions WHERE symbol='VNM' ORDER BY id")
+    assert [r["side"] for r in sides] == ["ADJUST", "SELL", "CORP", "BUY"]
+
+
+async def _no_rebase(user_id, symbol):
+    return None
+
+
+@pytest.mark.asyncio
+async def test_nl_target_only_keeps_rebased_stop(delivery_db, monkeypatch):
+    """Chỉ đặt target khi còn quy đổi quyền treo: stop KHÔNG được ghi đè bằng mức
+    thô trước GDKHQ (đọc trước khi quy đổi) - phải là stop cũ / factor."""
+    from core.repositories.portfolio import CorporateRebase
+    from services import portfolio_service
+
+    pool = delivery_db
+    await portfolio.set_holding(1, "HPG", 1000, 25000, stop_price=20000)
+    await pool.execute("UPDATE stock_holdings SET cost_basis_as_of = '2026-01-05'")
+
+    async def pending(user_id, symbol):
+        return CorporateRebase(1.2, "2026-02-10", "cổ phiếu 20% GDKHQ 10/02")
+
+    monkeypatch.setattr(portfolio, "_pending_rebase", pending)
+    reply = await portfolio_service.maybe_handle_natural_language(1, "đặt HPG target 30")
+    assert reply is not None and reply.startswith("✅")
+    holding = await portfolio.get_holding(1, "HPG")
+    assert holding.quantity == 1200 and holding.cost_basis_as_of == "2026-02-10"
+    assert holding.target_price == 30000
+    assert holding.stop_price == pytest.approx(20000 / 1.2, abs=0.01)
+
+    monkeypatch.setattr(portfolio, "_pending_rebase", _no_rebase)
+    await portfolio_service.maybe_handle_natural_language(1, "đặt HPG stop 16")
+    holding = await portfolio.get_holding(1, "HPG")
+    assert holding.stop_price == 16000 and holding.target_price == 30000
+
+
+@pytest.mark.asyncio
+async def test_purchase_fails_closed_when_corporate_check_unavailable(delivery_db, monkeypatch):
+    """Lịch quyền lỗi/quá giờ: mua thêm dời mốc giá vốn qua GDKHQ thì sự kiện bị
+    bỏ sót vĩnh viễn -> thử lại 1 lần với trần dài, vẫn lỗi thì KHÔNG ghi."""
+    from services import portfolio_service
+
+    pool = delivery_db
+    await portfolio.set_holding(1, "HPG", 1000, 25000)
+    await pool.execute("UPDATE stock_holdings SET cost_basis_as_of = '2026-10-01'")
+    limits = []
+
+    async def unchecked(holdings, series_list=None, *, limit_sec=8.0):
+        limits.append(limit_sec)
+        return [portfolio.CorporateView(h, h, checked=False) for h in holdings]
+
+    monkeypatch.setattr(portfolio, "corporate_views", unchecked)
+    reply = await portfolio_service.add_holding(1, "HPG", 1000, 21000)
+    assert "chưa ghi" in reply.lower() and "/capnhatcp HPG" in reply
+    assert limits == [8.0, portfolio._BACKGROUND_LOOKUP_TIMEOUT_SEC]
+    holding = await portfolio.get_holding(1, "HPG")
+    assert holding.quantity == 1000 and holding.average_price == 25000
+    assert holding.cost_basis_as_of == "2026-10-01"
+    sides = await pool.fetch("SELECT side FROM stock_transactions WHERE symbol='HPG' ORDER BY id")
+    assert [r["side"] for r in sides] == ["ADJUST"]
+
+    # Lần thử lại thành công thì vẫn ghi bình thường.
+    calls = {"n": 0}
+
+    async def second_ok(holdings, series_list=None, *, limit_sec=8.0):
+        calls["n"] += 1
+        return [portfolio.CorporateView(h, h, checked=calls["n"] > 1) for h in holdings]
+
+    monkeypatch.setattr(portfolio, "corporate_views", second_ok)
+    reply = await portfolio_service.add_holding(1, "HPG", 1000, 21000)
+    assert reply.startswith("✅ Đã ghi nhận mua HPG: 2.000 cp")
+
+
+@pytest.mark.asyncio
+async def test_purchase_with_unconfirmed_event_records_and_warns(delivery_db, monkeypatch):
+    from services import portfolio_service
+    from stock import corporate_actions as ca
+
+    pool = delivery_db
+    await portfolio.set_holding(1, "HPG", 1000, 25000)
+    await pool.execute("UPDATE stock_holdings SET cost_basis_as_of = '2026-10-01'")
+    event = ca.StockEvent(ex_date="2026-10-20", ratio=0.2)
+
+    async def unconfirmed(holdings, series_list=None, *, limit_sec=8.0):
+        return [portfolio.CorporateView(h, h, (), (event,)) for h in holdings]
+
+    monkeypatch.setattr(portfolio, "corporate_views", unconfirmed)
+    reply = await portfolio_service.add_holding(1, "HPG", 1000, 21000)
+    assert reply.startswith("✅ Đã ghi nhận mua HPG: 2.000 cp")
+    # Sau lệnh này mốc giá vốn đã qua GDKHQ -> sự kiện không còn được phát hiện:
+    # phải báo ngay để anh đối chiếu CTCK.
+    assert "GDKHQ 20/10" in reply and "/capnhatcp HPG" in reply
+
+
+@pytest.mark.asyncio
+async def test_grouped_event_notice_counts_one_message_toward_zalo_cap(delivery_db, monkeypatch):
+    """1 tin gộp 5 sự kiện chỉ tính 1/5 trần tin Zalo/ngày - cảnh báo giá của
+    thành viên trong ngày vẫn gửi được; mục đã gộp không bị gửi lại."""
+    from datetime import date
+
+    from channels import zalo_repository
+    from services import portfolio_events as pe
+    from services import portfolio_push
+    from stock import vci_direct
+
+    monkeypatch.setenv("PORTFOLIO_PUSH_ZALO_DAILY_CAP", "5")
+    outbox = []
+
+    async def recipient(user_id):
+        return "z5"
+
+    async def account():
+        return "acc"
+
+    async def enqueue(account_id, to, text):
+        outbox.append(text)
+
+    def ev(symbol, code, day):
+        return vci_direct.UpcomingEvent(symbol, code, "", day, "", "", None)
+
+    events = {
+        "VNM": [ev("VNM", "DIV", "2026-10-27"), ev("VNM", "AGME", "2026-10-28")],
+        "FPT": [ev("FPT", "DIV", "2026-10-27"), ev("FPT", "ISS", "2026-10-28")],
+        "HPG": [ev("HPG", "EGME", "2026-10-27")],
+    }
+
+    async def fetch(symbol):
+        return events.get(symbol, [])
+
+    monkeypatch.setattr(portfolio_push, "_zalo_recipient", recipient)
+    monkeypatch.setattr(zalo_repository, "resolve_active_account_id", account)
+    monkeypatch.setattr(zalo_repository, "enqueue_outbox", enqueue)
+    monkeypatch.setattr(pe, "_fetch_events", fetch)
+    holdings = [portfolio.Holding(-5, s, 100, 50_000) for s in ("VNM", "FPT", "HPG")]
+    today = date(2026, 10, 26)
+    assert await pe.send_event_notices(holdings, today) == 1
+    assert await db.portfolio_count_alerts_on(-5, "2026-10-26") == 1
+    assert await pe.send_event_notices(holdings, today) == 0  # không gửi lại mục đã gộp
+    assert await portfolio_push.deliver(
+        -5, "🔔 HPG chạm 25.000đ", kind="price", ref_key="7", today="2026-10-26"
+    )
+    assert len(outbox) == 2
+
+
+@pytest.mark.asyncio
+async def test_portfolio_events_rotates_member_holdings_beyond_cap(delivery_db, monkeypatch):
+    """Quá trần PORTFOLIO_EVENTS_MAX_HOLDINGS: chủ bot luôn được xét, vị thế thành
+    viên xoay vòng (con trỏ lưu settings) - không còn đuôi bảng bị bỏ sót mãi."""
+    from services import portfolio_events as pe
+
+    await portfolio.set_holding(1, "FPT", 10, 100_000)
+    for uid, symbol in ((-7, "HPG"), (-6, "VNM"), (-6, "MWG"), (-5, "SSI")):
+        await portfolio.set_holding(uid, symbol, 10, 20_000)
+    batches = []
+    notices = []
+
+    async def persist(holdings, today):
+        batches.append([(h.user_id, h.symbol) for h in holdings])
+        return 0
+
+    async def send(holdings, today):
+        notices.append([(h.user_id, h.symbol) for h in holdings])
+        return 0
+
+    monkeypatch.setattr(pe, "persist_corporate_actions", persist)
+    monkeypatch.setattr(pe, "send_event_notices", send)
+    monkeypatch.setenv("PORTFOLIO_EVENTS_MAX_HOLDINGS", "3")
+    for _ in range(3):
+        assert await pe.run_once(force=True)
+    assert batches == [
+        [(1, "FPT"), (-7, "HPG"), (-6, "MWG")],
+        [(1, "FPT"), (-6, "VNM"), (-5, "SSI")],
+        [(1, "FPT"), (-7, "HPG"), (-6, "MWG")],  # hết vòng thì quay lại đầu
+    ]
+    assert notices == batches
+
+    # Dưới trần: mọi vị thế được xét mỗi ngày, con trỏ không làm sót/lặp dòng nào.
+    monkeypatch.setenv("PORTFOLIO_EVENTS_MAX_HOLDINGS", "60")
+    batches.clear()
+    assert await pe.run_once(force=True)
+    assert sorted(batches[0]) == sorted(
+        [(1, "FPT"), (-7, "HPG"), (-6, "MWG"), (-6, "VNM"), (-5, "SSI")]
+    )
+
+    # Trần số mã tra lịch quyền: lượt cắt ở mã thứ N của thành viên, lượt sau
+    # bắt đầu đúng từ vị thế bị cắt (persist và báo lịch dùng cùng 1 lượt).
+    monkeypatch.setenv("PORTFOLIO_EVENTS_MAX_SYMBOLS", "2")
+    batches.clear()
+    notices.clear()
+    await pe.run_once(force=True)
+    await pe.run_once(force=True)
+    assert batches == notices
+    assert [len(b) for b in batches] == [2, 2]
+    members = [row for batch in batches for row in batch if row[0] < 0]
+    assert len(set(members)) == 2

@@ -28,3 +28,8 @@ Thumbs.db
 
 # Sensitive Shopee Affiliate browser session exported locally
 shopee-storage-state*.json
+
+# Đánh giá golden set (scripts/run_evals.py): cache kết quả + báo cáo chạy local
+.eval-cache/
+eval-report*.json
+eval-candidates*.yaml

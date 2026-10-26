@@ -6,6 +6,8 @@ import jinja2
 import yaml
 from dotenv import load_dotenv
 
+from core import address
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,13 @@ ROUTER9_CALL_TIMEOUT_SEC = _env_int(
     _env_int("GEMINI_COOKIE_CALL_TIMEOUT_SEC", 120),
 )
 ROUTER9_MAX_CONCURRENCY = _env_int("ROUTER9_MAX_CONCURRENCY", 4)
+# 9Router tự tra web: gửi web_search_options (chuẩn OpenAI Chat Completions)
+# tới model ROUTER9_WEB_SEARCH_MODEL (trống = model đang dùng cho chat). TẮT mặc
+# định: tài liệu 9Router không mô tả web search trong /chat/completions, và
+# gateway từng âm thầm bỏ qua `tools`. Khi bật, câu trả lời chỉ được tin là đã
+# tra web nếu kèm annotations url_citation - không có thì coi như chưa tra.
+ROUTER9_WEB_SEARCH = _env_bool("ROUTER9_WEB_SEARCH", False)
+ROUTER9_WEB_SEARCH_MODEL = os.getenv("ROUTER9_WEB_SEARCH_MODEL", "").strip()
 
 # Khoảng nghỉ (giây) giữa các lệnh gọi LLM liên tiếp trong 1 lượt phân tích
 # (news -> bull -> bear -> manager -> tổng hợp cuối, xem stock/debate.py và
@@ -95,11 +104,11 @@ ROUTER9_MAX_CONCURRENCY = _env_int("ROUTER9_MAX_CONCURRENCY", 4)
 ROUTER9_STEP_DELAY_SEC = _env_int("ROUTER9_STEP_DELAY_SEC", 3)
 
 # Groq — gateway OpenAI-compatible, provider thứ 2 của provider-chain.
-# (router9 -> groq -> openrouter -> api1 -> api2). GROQ_REALTIME_MODEL
-# (compound-mini) có tool tìm kiếm web tích hợp, chỉ dùng cho tác vụ
-# require_real_search; built-in web search có thể phát sinh phí theo Groq.
-# Danh mục model free đổi theo thời gian - xem README mục Provider-chain nếu
-# model mặc định ngừng hoạt động.
+# (router9 -> groq -> openrouter -> api1 -> api2). GROQ_REALTIME_MODEL là model
+# dùng khi cần Groq TỰ tra web (tool browser_search chạy phía server Groq) -
+# xem GROQ_WEB_SEARCH bên dưới; built-in web search có thể phát sinh phí theo
+# Groq. Danh mục model free đổi theo thời gian - xem README mục Provider-chain
+# nếu model mặc định ngừng hoạt động.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip()
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
@@ -108,7 +117,34 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
 # lỗi 400/404 nếu còn dùng model đó. qwen/qwen3.6-27b hiện là model vision
 # DUY NHẤT Groq liệt kê ở console.groq.com/docs/vision, miễn phí (free tier).
 GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b").strip()
-GROQ_REALTIME_MODEL = os.getenv("GROQ_REALTIME_MODEL", "groq/compound-mini").strip()
+# groq/compound và groq/compound-mini (giá trị mặc định cũ) đã bị Groq khai tử
+# (shutdown 21/09/2026, console.groq.com/docs/deprecations) - mọi request lỗi.
+# Thay bằng tool browser_search trên openai/gpt-oss-* (console.groq.com/docs/
+# browser-search: hỗ trợ openai/gpt-oss-20b, gpt-oss-120b, gpt-oss-safeguard-20b).
+# Render env còn lưu giá trị compound cũ thì tự đổi về mặc định mới (có log).
+_GROQ_DEFAULT_REALTIME_MODEL = "openai/gpt-oss-120b"
+_GROQ_DECOMMISSIONED_MODELS = {"groq/compound", "groq/compound-mini"}
+
+
+def _normalize_groq_realtime_model(raw: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return _GROQ_DEFAULT_REALTIME_MODEL
+    if value.lower() in _GROQ_DECOMMISSIONED_MODELS:
+        logger.warning(
+            "GROQ_REALTIME_MODEL=%s đã bị Groq khai tử - dùng %s (tool browser_search).",
+            value,
+            _GROQ_DEFAULT_REALTIME_MODEL,
+        )
+        return _GROQ_DEFAULT_REALTIME_MODEL
+    return value
+
+
+GROQ_REALTIME_MODEL = _normalize_groq_realtime_model(os.getenv("GROQ_REALTIME_MODEL", ""))
+# Groq tự tra web (browser_search) cho câu cần thông tin mới khi Tavily tắt/lỗi/
+# quá mỏng, và cho nhánh tra cứu bắt buộc (giá vàng, tỷ giá...). Chỉ có hiệu
+# lực khi GROQ_REALTIME_MODEL là model openai/gpt-oss-*.
+GROQ_WEB_SEARCH = _env_bool("GROQ_WEB_SEARCH", True)
 GROQ_CALL_TIMEOUT_SEC = _env_int("GROQ_CALL_TIMEOUT_SEC", 30)
 # GROQ_CALL_TIMEOUT_SEC chỉ là timeout từng pha của httpx (connect/đọc từng
 # chunk) - với response stream nhỏ giọt nó không bao giờ hết hạn. Biến dưới
@@ -116,6 +152,11 @@ GROQ_CALL_TIMEOUT_SEC = _env_int("GROQ_CALL_TIMEOUT_SEC", 30)
 # chắc chắn chuyển tiếp được.
 GROQ_TOTAL_TIMEOUT_SEC = _env_int("GROQ_TOTAL_TIMEOUT_SEC", 90)
 GROQ_MAX_CONCURRENCY = _env_int("GROQ_MAX_CONCURRENCY", 4)
+# Groq Whisper (console.groq.com/docs/speech-to-text): chép lời tin nhắn thoại
+# (services/voice_service.py), cùng GROQ_API_KEY nhưng bucket rate-limit audio
+# riêng (cooldown "groq_stt", không khoá Groq chat). Nhận flac/mp3/mp4/m4a/ogg/
+# wav/webm - KHÔNG nhận AAC thô (ADTS): định dạng đó chỉ đi Gemini.
+GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo").strip()
 
 # OpenRouter — gateway OpenAI-compatible miễn phí, provider thứ 3 của
 # provider-chain. Model mặc định có hậu tố ":free" (không tốn phí) - danh mục
@@ -135,6 +176,16 @@ OPENROUTER_CALL_TIMEOUT_SEC = _env_int("OPENROUTER_CALL_TIMEOUT_SEC", 30)
 # Chặn tổng thời gian 1 lượt gọi OpenRouter - xem chú thích GROQ_TOTAL_TIMEOUT_SEC.
 OPENROUTER_TOTAL_TIMEOUT_SEC = _env_int("OPENROUTER_TOTAL_TIMEOUT_SEC", 90)
 OPENROUTER_MAX_CONCURRENCY = _env_int("OPENROUTER_MAX_CONCURRENCY", 4)
+# OpenRouter tự tra web qua plugin "web" (openrouter.ai/docs/guides/features/
+# web-search). TẮT mặc định: tra web TỐN CREDIT kể cả với model ":free" (Exa
+# ~$0.007/request) - tài khoản không nạp credit sẽ lỗi. Bật khi đã nạp credit.
+OPENROUTER_WEB_SEARCH = _env_bool("OPENROUTER_WEB_SEARCH", False)
+# Đọc PDF qua OpenRouter (dự phòng sau Gemini, services/document_service.py):
+# plugin file-parser với engine MIỄN PHÍ "cloudflare-ai" (openrouter.ai/docs/
+# features/multimodal/pdfs). Không đặt engine thì OpenRouter tự dùng mistral-ocr
+# TỐN TIỀN cho model không đọc PDF native - nên engine luôn được ghim; giá trị
+# khác "cloudflare-ai" (mistral-ocr, native) bị coi như tắt. Rỗng = tắt hẳn.
+OPENROUTER_PDF_ENGINE = os.getenv("OPENROUTER_PDF_ENGINE", "cloudflare-ai").strip().lower()
 
 # Tavily — web search dùng làm grounding cho chat, bật/tắt qua lệnh
 # /tavily on|off (ai/tavily_client.py: get_enabled()/set_enabled()), mặc định
@@ -143,6 +194,15 @@ OPENROUTER_MAX_CONCURRENCY = _env_int("OPENROUTER_MAX_CONCURRENCY", 4)
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 TAVILY_BASE_URL = os.getenv("TAVILY_BASE_URL", "https://api.tavily.com").strip()
 TAVILY_CALL_TIMEOUT_SEC = _env_int("TAVILY_CALL_TIMEOUT_SEC", 20)
+
+# Lọc link lạ trong câu trả lời chat (core/urls.py): link không có trong tin
+# người dùng/dữ liệu tra cứu bị hiện dạng hxxps://ten[.]mien. "untrusted" (mặc
+# định): chỉ lọc lượt có dữ liệu ngoài (Tavily, đọc trang...) trong prompt -
+# đúng lượt có thể bị prompt injection; "all": lọc mọi lượt chat; "off": tắt.
+# Lượt provider tự tra web (Google Search, browser_search) luôn lọc (trừ "off"):
+# URL trích dẫn của provider là nguồn được phép; không có dữ liệu ngoài của bot
+# trong prompt thì lọc lỏng - giữ link không query, chỉ vô hiệu link mang dữ liệu.
+REPLY_URL_FILTER = os.getenv("REPLY_URL_FILTER", "untrusted").strip().lower() or "untrusted"
 
 # vnstock — API key MIỄN PHÍ (gói Community, đăng ký tại vnstocks.com/login)
 # nâng rate limit 20 -> 60 request/phút và số kỳ BCTC 4 -> 8 kỳ so với chế độ
@@ -181,8 +241,15 @@ WEB_READER_MAX_BYTES = max(64 * 1024, _env_int("WEB_READER_MAX_BYTES", 2 * 1024 
 # tin, chỉ có background probe + /userouter9 + đổi env mới kích hoạt thử lại
 # router9). Groq/OpenRouter/API hết quota (429) -> cooldown cố định rồi tự
 # thử lại (xem ai/provider_state.py).
-CHAT_HISTORY_TURNS = _env_int("CHAT_HISTORY_TURNS", 8)
+# Số LƯỢT hỏi-đáp gần nhất của phiên đưa vào prompt (mỗi lượt = 2 dòng lịch sử;
+# trước đây là số DÒNG nên 8 chỉ còn ~4 lượt). prompt_budget vẫn cắt tin cũ nhất
+# khi vượt ngân sách.
+CHAT_HISTORY_TURNS = _env_int("CHAT_HISTORY_TURNS", 10)
 CHAT_SESSION_TIMEOUT_SEC = _env_int("CHAT_SESSION_TIMEOUT_SEC", 21600)  # 6 giờ
+# Số dòng chat_messages giữ lại cho MỖI người (tin người dùng + câu trả lời,
+# xoay vòng): đủ cho tool search_history ("hôm trước em nói gì về ...") mà vẫn có
+# trần - mỗi thành viên Zalo cũng giữ chừng này dòng trên Supabase free 500 MB.
+CHAT_MESSAGES_RETENTION_LIMIT = max(200, min(2000, _env_int("CHAT_MESSAGES_RETENTION_LIMIT", 1000)))
 ROUTER9_PROBE_INTERVAL_SEC = _env_int(
     "ROUTER9_PROBE_INTERVAL_SEC", _env_int("COOKIE_PROBE_INTERVAL_SEC", 900)
 )  # 15 phút
@@ -249,6 +316,8 @@ ENABLE_DAILY_DIGEST = _env_bool("ENABLE_DAILY_DIGEST", True)
 # Cảnh báo danh mục cuối phiên (chạm stop/target, breakout Donchian) - services/portfolio_alerts.py.
 ENABLE_PORTFOLIO_ALERTS = _env_bool("ENABLE_PORTFOLIO_ALERTS", True)
 DAILY_DIGEST_HOUR_VN = _env_int("DAILY_DIGEST_HOUR_VN", 8)
+# Mặc định digest bỏ qua cuối tuần/ngày lễ (giá vẫn là phiên trước, gửi lại y bản cũ).
+DIGEST_ON_NON_TRADING_DAYS = _env_bool("DIGEST_ON_NON_TRADING_DAYS", False)
 
 # Bản tin buổi sáng tổng hợp từ RSS, gửi qua Zalo + Zoom cho chủ bot lúc
 # MORNING_NEWS_HOUR_VN giờ VN - xem services/morning_news.py. Nguồn RSS mặc
@@ -271,6 +340,25 @@ _MORNING_NEWS_RSS_FEEDS_RAW = os.getenv(
 MORNING_NEWS_RSS_FEEDS = [
     url.strip() for url in _MORNING_NEWS_RSS_FEEDS_RAW.split(",") if url.strip()
 ]
+
+# Bản tin sáng CÁ NHÂN (services/morning_brief.py): mỗi người tự bật bằng /bantin
+# trên kênh của mình (mặc định không ai nhận). Thời tiết theo thành phố riêng, âm
+# lịch, nhắc việc hôm nay, vàng/tỷ giá, danh mục (ngày giao dịch), tin (Telegram
+# tắt mặc định - đúng lựa chọn không gửi tin RSS qua Telegram).
+MORNING_BRIEF_ENABLED = _env_bool("MORNING_BRIEF_ENABLED", True)
+MORNING_BRIEF_DEFAULT_HOUR = max(4, min(12, _env_int("MORNING_BRIEF_DEFAULT_HOUR", 7)))
+# Trần số thành viên Zalo bật bản tin (RAM + vệ sinh chống khoá Zalo).
+MORNING_BRIEF_MAX_MEMBERS = max(0, min(100, _env_int("MORNING_BRIEF_MAX_MEMBERS", 20)))
+# Zalo controller / Zoom của chủ bot đã bật bản tin -> bản tin RSS 8h gộp vào
+# bản tin cá nhân (1 tin thay vì 2) thay vì gửi riêng.
+MORNING_BRIEF_ABSORB_NEWS = _env_bool("MORNING_BRIEF_ABSORB_NEWS", True)
+# 1 câu mở đầu giọng Lan Anh do AI viết (chỉ chủ bot, tốn 1 lượt AI/ngày).
+MORNING_BRIEF_AI_INTRO = _env_bool("MORNING_BRIEF_AI_INTRO", False)
+# Dòng tổng chi tiêu tháng này của chính người nhận (chỉ hiện khi đã ghi khoản nào).
+MORNING_BRIEF_EXPENSES = _env_bool("MORNING_BRIEF_EXPENSES", True)
+# Tin ngắn kiểu "cafe 45k", "đổ xăng 1tr2" được ghi chi tiêu bằng code (không tốn AI);
+# false = chỉ ghi khi nói rõ "ghi chi tiêu ..." (router AI) hoặc /chitieu.
+EXPENSE_CHAT_CAPTURE = _env_bool("EXPENSE_CHAT_CAPTURE", True)
 
 # Giờ đăng (giờ VN, dạng HH:MM, nhiều mốc cách nhau bằng dấu phẩy) của Page chứng
 # khoán riêng - xem services/market_page.py. Giá trị sai định dạng thì dùng mặc định.
@@ -297,11 +385,63 @@ _CHAT_SKILL_ENV = jinja2.Environment(
     lstrip_blocks=True,
 )
 
-# Cache theo biến thể: True = có hồ sơ chủ bot (user_profile), False = không.
-_chat_skill_cache: dict[bool, str] = {}
+# Biến thể persona theo người đang trò chuyện (xem load_chat_skill):
+# - "owner": chủ bot (Telegram/Zoom, ALLOWED_USER_ID) - có hồ sơ user_profile.
+# - "zalo_admin": người dùng Zalo được cấp quyền quản trị - KHÔNG hồ sơ chủ bot.
+# - "member": thành viên Zalo thường - không hồ sơ, phân tích chỉ để tham khảo.
+PERSONA_OWNER = "owner"
+PERSONA_ZALO_ADMIN = "zalo_admin"
+PERSONA_MEMBER = "member"
+PERSONA_VARIANTS = (PERSONA_OWNER, PERSONA_ZALO_ADMIN, PERSONA_MEMBER)
+
+# Gợi ý trình bày theo kênh, nối SAU persona đã cache (không nằm trong cache):
+# Zalo chỉ hiện chữ thuần (channels/zalo_text.py bỏ được tiêu đề/đậm/gạch đầu
+# dòng nhưng KHÔNG bỏ được bảng, link markdown); Telegram đổi markdown-lite sang
+# HTML (tg_format.py) nhưng không có bảng/tiêu đề #; Zoom đổi GFM sang markdown
+# Zoom (channels/zoom.py) nhưng bảng dễ vỡ trên điện thoại.
+_CHANNEL_STYLE_HINTS = {
+    "zalo": (
+        "KÊNH ĐANG TRẢ LỜI: Zalo - chỉ hiển thị chữ thuần. Viết ngắn gọn như nhắn tin; "
+        "không dùng bảng, tiêu đề (#), chữ đậm hay link dạng [chữ](url) - cần liệt kê thì "
+        "xuống dòng với dấu •."
+    ),
+    "telegram": (
+        "KÊNH ĐANG TRẢ LỜI: Telegram - dùng markdown nhẹ (chữ đậm, gạch đầu dòng) khi cần; "
+        "không dùng bảng hay tiêu đề kiểu #, muốn tách mục thì dùng chữ đậm."
+    ),
+    "zoom": (
+        "KÊNH ĐANG TRẢ LỜI: Zoom - dùng markdown nhẹ (chữ đậm, gạch đầu dòng) khi cần; "
+        "không dùng bảng."
+    ),
+}
+
+# Giá trị giữ chỗ trong user_profile (chủ bot chưa điền): "..." hoặc "vd: ..." -
+# render nguyên văn sẽ khiến model tưởng tên anh là "...".
+_PROFILE_PLACEHOLDERS = {"", "...", "…"}
+
+# Cache theo (biến thể persona, cách xưng hô riêng): cách xưng hô chỉ áp cho
+# biến thể Zalo và nằm trong danh sách đóng core/address.ADDRESS_FORMS, nên tối
+# đa 1 + 2 * (len(ADDRESS_FORMS) + 1) chuỗi (~15 chuỗi x ~15 KB).
+_chat_skill_cache: dict[tuple[str, str | None], str] = {}
 
 
-def _render_chat_skill(include_owner_profile: bool = True) -> str:
+def _profile_value_filled(value) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip()
+    return text not in _PROFILE_PLACEHOLDERS and not text.lower().startswith("vd:")
+
+
+def _filled_profile(user_profile: dict | None) -> dict:
+    """Các mục user_profile chủ bot đã điền thật (bỏ "note" và mục còn giữ chỗ)."""
+    return {
+        key: value
+        for key, value in (user_profile or {}).items()
+        if key != "note" and _profile_value_filled(value)
+    }
+
+
+def _render_chat_skill(variant: str = PERSONA_OWNER, address_form: str | None = None) -> str:
     """Đọc + render persona từ đĩa. Không cache — xem load_chat_skill()."""
     try:
         raw = CHAT_SKILL_PATH.read_text(encoding="utf-8")
@@ -314,43 +454,97 @@ def _render_chat_skill(include_owner_profile: bool = True) -> str:
     try:
         data = yaml.safe_load(raw)
         template = _CHAT_SKILL_ENV.get_template(_CHAT_SKILL_TEMPLATE_PATH.name)
+        profile = _filled_profile(data["persona"].get("user_profile"))
+        if variant == PERSONA_OWNER and not profile:
+            logger.info(
+                "chat_skill.yaml: persona.user_profile vẫn để trống ('...') - điền tên, công "
+                "việc, phong cách để Lan Anh trò chuyện đúng với anh hơn."
+            )
         return template.render(
             p=data["persona"],
             tv=data["tone_of_voice"],
+            quirks=data.get("quirks") or {},
+            mood=data.get("energy_and_mood") or {},
+            continuity=data.get("continuity") or {},
             rules=data["rules"],
             cm=data["content_modes"],
-            include_owner_profile=include_owner_profile,
+            variant=variant,
+            profile=profile,
+            address=(
+                {"user": address_form, "ai": address.self_word(address_form)}
+                if address_form
+                else None
+            ),
         ).strip()
     except Exception:
         logger.exception("Lỗi parse/render chat_skill.yaml, dùng nội dung thô làm dự phòng.")
         return raw.strip()
 
 
-def load_chat_skill(force_reload: bool = False, *, include_owner_profile: bool = True) -> str:
+# TELEGRAM_RICH_MESSAGES bật: Telegram tự dựng tiêu đề/bảng từ markdown (tg_format.py).
+_TELEGRAM_RICH_STYLE_HINT = (
+    "KÊNH ĐANG TRẢ LỜI: Telegram - hiển thị được markdown (chữ đậm, gạch đầu dòng, tiêu "
+    "đề #, bảng nhỏ khi cần so sánh); vẫn ưu tiên trả lời gọn như nhắn tin."
+)
+
+
+def channel_style_hint(channel: str | None) -> str:
+    """1 dòng gợi ý trình bày theo kênh (rỗng nếu kênh lạ/không truyền)."""
+    key = (channel or "").strip().lower()
+    if key == "telegram" and TELEGRAM_RICH_MESSAGES:
+        return _TELEGRAM_RICH_STYLE_HINT
+    return _CHANNEL_STYLE_HINTS.get(key, "")
+
+
+def load_chat_skill(
+    force_reload: bool = False,
+    *,
+    variant: str | None = None,
+    include_owner_profile: bool = True,
+    channel: str | None = None,
+    address_form: str | None = None,
+) -> str:
     """Nạp persona/rules cho chat tự nhiên. Định dạng mặc định là YAML có
     cấu trúc (chat_skill.yaml), render qua templates/chat_skill_prompt.j2
-    thành system_instruction gửi cho Gemini. Nếu CHAT_SKILL_PATH trỏ tới
+    thành system_instruction gửi cho provider. Nếu CHAT_SKILL_PATH trỏ tới
     file .txt (cấu hình cũ), đọc thẳng làm văn bản để tương thích ngược.
 
     Kết quả được cache sau lần gọi đầu tiên. Hàm này nằm trên đường đi của
-    MọI tin nhắn chat (orchestrator.chat() và _get_or_create_chat_gem()), nên
-    nếu không cache thì mỗi tin nhắn đều phải đọc đĩa + parse YAML + dựng lại
-    Jinja Environment — toàn bộ đều là việc lặp lại vô ích vì persona là file
-    tĩnh, chỉ đổi khi deploy lại.
+    MọI tin nhắn chat (orchestrator.chat()), nên nếu không cache thì mỗi tin
+    nhắn đều phải đọc đĩa + parse YAML + render lại Jinja — toàn bộ đều là
+    việc lặp lại vô ích vì persona là file tĩnh, chỉ đổi khi deploy lại.
 
     Truyền force_reload=True để bỏ cache và đọc lại từ đĩa.
 
-    ``include_owner_profile=False`` bỏ mục user_profile (hồ sơ CHỦ BOT) khỏi
-    persona - bắt buộc cho mọi người dùng không phải chủ bot (Zalo member),
-    nếu không thông tin chủ bot tự điền sẽ lộ sang họ.
+    ``variant`` (PERSONA_*): "owner" có hồ sơ chủ bot (user_profile);
+    "zalo_admin" và "member" KHÔNG có - bắt buộc cho mọi người dùng không phải
+    chủ bot, nếu không thông tin chủ bot tự điền sẽ lộ sang họ. Không truyền
+    variant thì theo tham số cũ ``include_owner_profile`` (True = "owner",
+    False = "member").
+
+    ``channel`` ("telegram" | "zalo" | "zoom"): nối thêm 1 dòng gợi ý trình bày
+    theo kênh SAU persona đã cache (gợi ý không nằm trong cache).
+
+    ``address_form`` (core/address.py, vd "chị", "cô"): cách gọi riêng do chủ
+    bot đặt cho 1 thành viên Zalo - chỉ áp cho biến thể Zalo, giá trị ngoài
+    danh sách bị bỏ qua. Biến thể chủ bot luôn giữ address_form của YAML.
     """
+    if variant is None:
+        variant = PERSONA_OWNER if include_owner_profile else PERSONA_MEMBER
+    elif variant not in PERSONA_VARIANTS:
+        # Giá trị lạ: KHÔNG bao giờ rơi về biến thể chủ bot (lộ hồ sơ).
+        logger.warning("Biến thể persona %r không hợp lệ, dùng 'member'.", variant)
+        variant = PERSONA_MEMBER
+    form = None if variant == PERSONA_OWNER else address.normalize(address_form)
     if force_reload:
         _chat_skill_cache.clear()
-    cached = _chat_skill_cache.get(include_owner_profile)
+    key = (variant, form)
+    cached = _chat_skill_cache.get(key)
     if cached is None:
-        cached = _render_chat_skill(include_owner_profile)
-        _chat_skill_cache[include_owner_profile] = cached
-    return cached
+        cached = _render_chat_skill(variant, form)
+        _chat_skill_cache[key] = cached
+    hint = channel_style_hint(channel)
+    return f"{cached}\n\n{hint}" if cached and hint else cached
 
 
 def is_owner_user_id(user_id: int) -> bool:
@@ -384,6 +578,22 @@ TELEGRAM_WRITE_TIMEOUT = float(os.getenv("TELEGRAM_WRITE_TIMEOUT", "90"))
 TELEGRAM_POOL_TIMEOUT = float(os.getenv("TELEGRAM_POOL_TIMEOUT", "30"))
 TELEGRAM_MEDIA_RETRIES = int(os.getenv("TELEGRAM_MEDIA_RETRIES", "3"))
 
+# ─── Trải nghiệm Telegram (handlers/turn_feedback.py, tg_format.py) ──────────
+# Lượt chat chạy quá chừng này giây thì gửi 1 dòng trạng thái giọng Lan Anh (câu
+# trả lời sửa đè lên đúng dòng đó); 0 = không gửi.
+TELEGRAM_STATUS_DELAY_SEC = max(0, min(60, _env_int("TELEGRAM_STATUS_DELAY_SEC", 7)))
+# Thả 👀 lên tin phải xếp hàng sau lượt đang chạy, xong đổi 👌 (lỗi 😢).
+TELEGRAM_BUSY_REACTIONS = _env_bool("TELEGRAM_BUSY_REACTIONS", True)
+# Nút 👍/👎/🔄 Thử lại/✂️ Ngắn hơn dưới câu trả lời chat (chỉ câu mới nhất giữ nút).
+TELEGRAM_ANSWER_BUTTONS = _env_bool("TELEGRAM_ANSWER_BUTTONS", True)
+# Hiện chữ đang sinh dần bằng bản nháp (sendMessageDraft) cho lượt chat thường;
+# tin cuối vẫn là bản đã lọc link/kiểm policy. Mặc định tắt.
+TELEGRAM_STREAM_DRAFTS = _env_bool("TELEGRAM_STREAM_DRAFTS", False)
+# Gửi câu trả lời bằng tin "rich" gốc (Bot API 10.1: tiêu đề, bảng, khối code do
+# Telegram dựng); bị từ chối thì quay về HTML. Mặc định tắt tới khi chủ bot thấy
+# app của mình hiển thị ổn.
+TELEGRAM_RICH_MESSAGES = _env_bool("TELEGRAM_RICH_MESSAGES", False)
+
 
 def ensure_media_dir() -> None:
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
@@ -413,6 +623,15 @@ SETTINGS_REJECT_PLAINTEXT = _env_bool("SETTINGS_REJECT_PLAINTEXT", False)
 # DATABASE_SSL_CA trỏ tới file CA của Supabase nếu CA đó không có trong hệ thống).
 DATABASE_SSL_MODE = os.getenv("DATABASE_SSL_MODE", "require").strip().lower() or "require"
 DATABASE_SSL_CA = os.getenv("DATABASE_SSL_CA", "").strip() or None
+# Trần thời gian MỞ 1 kết nối DB mới (asyncpg mặc định 60s): Supabase treo/mất
+# mạng thì lượt chat fail nhanh thay vì giữ khoá người dùng + slot
+# MAX_CONCURRENT_TURNS cả phút cho mỗi câu lệnh.
+DB_CONNECT_TIMEOUT_SEC = max(2, min(60, _env_int("DB_CONNECT_TIMEOUT_SEC", 8)))
+# Circuit breaker DB (core/database.py): khi cả lần thử lại sau reconnect cũng
+# mất kết nối (hoặc mở kết nối quá DB_CONNECT_TIMEOUT_SEC), coi DB sập trong
+# chừng này giây - mọi lệnh DB báo lỗi ngay thay vì treo; hết hạn cho 1 lệnh
+# thăm dò đi qua. 0 = tắt breaker.
+DB_BREAKER_OPEN_SEC = max(0, min(600, _env_int("DB_BREAKER_OPEN_SEC", 30)))
 
 # Secret riêng cho endpoint /diagnose (KHÔNG dùng chung với WEBHOOK_SECRET), truyền
 # qua header X-Diagnose-Token thay vì query string để tránh lộ qua access log.

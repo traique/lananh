@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import unicodedata
 from typing import Awaitable, Callable
 from urllib.parse import urlparse
 
@@ -26,13 +27,24 @@ from services.facebook_page_service import (
 _ALLOWED_AFFILIATE_SCHEMES = {"http", "https"}
 logger = logging.getLogger(__name__)
 _admin_notification_callback: Callable[[str], Awaitable[None]] | None = None
+# Bản kèm nút [✅ Duyệt][🗑 Bỏ qua] (bot_app gửi Telegram có nút, Zoom chữ thường);
+# đặt rồi thì preview bài chờ đi đường này thay cho callback chữ.
+_admin_buttons_callback: Callable[[str, list], Awaitable[None]] | None = None
 
 
 def set_admin_notification_callback(
     callback: Callable[[str], Awaitable[None]] | None,
 ) -> None:
-    global _admin_notification_callback
+    """Đặt callback chữ; xoá luôn bản kèm nút (đặt lại bằng
+    set_admin_buttons_callback SAU lệnh này nếu muốn có nút duyệt)."""
+    global _admin_notification_callback, _admin_buttons_callback
     _admin_notification_callback = callback
+    _admin_buttons_callback = None
+
+
+def set_admin_buttons_callback(callback: Callable[[str, list], Awaitable[None]] | None) -> None:
+    global _admin_buttons_callback
+    _admin_buttons_callback = callback
 
 
 def _valid_shopee_affiliate_url(value: str) -> bool:
@@ -127,11 +139,40 @@ async def prepare_post(account_id: str, post_id: int, note: str | None = None) -
         preview = f"{preview}\n\n{note}"
     if controller:
         await zalo_repository.enqueue_outbox(account_id, controller, preview)
-    if _admin_notification_callback is not None:
-        try:
+    try:
+        if _admin_buttons_callback is not None:
+            from services import action_buttons
+
+            await _admin_buttons_callback(preview, action_buttons.facebook_review_rows(post_id))
+        elif _admin_notification_callback is not None:
             await _admin_notification_callback(preview)
-        except Exception:
-            logger.warning("Không gửi được preview Facebook tới kênh admin phụ.", exc_info=True)
+    except Exception:
+        logger.warning("Không gửi được preview Facebook tới kênh admin phụ.", exc_info=True)
+
+
+# /fb_reset xoá TOÀN BỘ bài đã lưu, không hoàn tác: lệnh nằm trong menu Telegram
+# nên 1 lần chạm nhầm từng xoá sạch hàng chờ - giờ phải gõ kèm từ xác nhận.
+FB_RESET_CONFIRM_WORD = "xacnhan"
+
+
+def _is_reset_confirmed(argument: str) -> bool:
+    """Nhận "xacnhan", "xác nhận", "XACNHAN"... (bỏ dấu, khoảng trắng, hoa thường)."""
+    folded = unicodedata.normalize("NFD", argument.lower())
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch) and not ch.isspace())
+    return folded == FB_RESET_CONFIRM_WORD
+
+
+async def _fb_reset_warning(account_id: str) -> str:
+    try:
+        pending = f" (đang có {await facebook_repository.count_pending(account_id)} bài chờ duyệt)"
+    except Exception:
+        logger.warning("Không đếm được bài Facebook chờ duyệt.", exc_info=True)
+        pending = ""
+    return (
+        f"⚠️ /fb_reset sẽ XOÁ TOÀN BỘ bài Facebook đã lưu của tài khoản này{pending}: bài chờ "
+        "duyệt, lịch sử đăng và dấu chống trùng - không hoàn tác được.\n"
+        f"Gõ /fb_reset {FB_RESET_CONFIRM_WORD} nếu anh chắc chắn muốn xoá."
+    )
 
 
 async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelResult | None:
@@ -139,6 +180,9 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
     command = raw.split(maxsplit=1)[0].lower() if raw else ""
 
     if command == "/fb_reset":
+        argument = raw.split(maxsplit=1)[1] if len(raw.split(maxsplit=1)) == 2 else ""
+        if not _is_reset_confirmed(argument):
+            return ChannelResult([await _fb_reset_warning(account_id)])
         deleted, sequence_reset = await facebook_repository.reset_posts(account_id)
         if sequence_reset:
             return ChannelResult(

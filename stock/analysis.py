@@ -105,7 +105,17 @@ def is_bare_symbol_message(text: str) -> bool:
     return bool(_BARE_SYMBOL_MSG_RE.match(text.strip()))
 
 
+# URL trong tin nhắn ("phân tích bài này https://cafef.vn/hpg-lai-ky-luc-...") không
+# được thành mã cổ phiếu: slug hpg/fpt từng chiếm cả lượt bằng pipeline phân tích.
+_URL_IN_TEXT_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+
+
+def _strip_urls(text: str) -> str:
+    return _URL_IN_TEXT_RE.sub(" ", text or "")
+
+
 def detect_symbol_candidates(text: str) -> tuple[list[str], list[str]]:
+    text = _strip_urls(text)
     tokens = _SYMBOL_TOKEN_RE.findall(text)
     uppercase_tokens = set(_UPPERCASE_TOKEN_RE.findall(text))
     known, unverified = [], []
@@ -263,6 +273,7 @@ def looks_like_price_question(text: str) -> bool:
     giống mã không xác định; loại câu này để xuống chat thường có Tavily
     search tiếp sức mới đúng.
     """
+    text = _strip_urls(text)
     if is_bare_symbol_message(text):
         upper = text.strip().upper()
         if upper not in _COMMON_WORD_EXCLUDE and upper not in _LOWERCASE_NOISE_EXCLUDE:
@@ -298,6 +309,7 @@ _EXTERNAL_MARKET_RE = _build_keyword_re(_EXTERNAL_MARKET_KEYWORDS)
 
 def wants_external_market_data(text: str) -> bool:
     """Câu hỏi có đang cần số liệu/sự kiện thị trường ngoài sàn VN không?"""
+    text = _strip_urls(text)
     return bool(_EXTERNAL_MARKET_RE.search(text))
 
 
@@ -974,18 +986,27 @@ async def _position_line(user_id: int | None, symbol: str, price: float | None) 
         return None
     try:
         from stock import portfolio
-        holding = await portfolio.get_holding(user_id, symbol)
+        raw = await portfolio.get_holding(user_id, symbol)
+        # Vị thế ĐÃ quy đổi theo sự kiện quyền được giá xác nhận (cổ tức CP, thưởng,
+        # chia tách) - không thì ngày GDKHQ dòng này báo lỗ giả ~1/(1+r).
+        view = (await portfolio.corporate_views([raw]))[0] if raw is not None else None
     except Exception:
         return None
+    holding = view.effective if view is not None else None
     if holding is None or holding.quantity <= 0 or holding.average_price <= 0:
         return None
     pnl = (price - holding.average_price) * holding.quantity
     pnl_pct = (price / holding.average_price - 1) * 100
     sign = "+" if pnl > 0 else ""
-    return (
+    line = (
         f"Vị thế đang ghi nhận (hệ thống đã tính sẵn): {_fmt_price(holding.quantity)} cp, giá vốn {_fmt_price(holding.average_price)} VND"
         f" -> lãi/lỗ tạm tính {sign}{_fmt_price(pnl)} VND ({rfmt.fmt_signed_pct(pnl_pct)}) theo giá {_fmt_price(price)} VND."
     )
+    if view.applied:
+        line += " (Đã quy đổi theo " + ", ".join(portfolio.stock_event_label(e) for e in view.applied) + ".)"
+    if view.unconfirmed:
+        line += " Lưu ý: lịch quyền có sự kiện GDKHQ chưa được giá xác nhận nên lãi/lỗ này có thể lệch."
+    return line
 
 
 _STALE_NOTE = "\n\n⏱️ _Lưu ý: dữ liệu/thời điểm bên trên là của lần phân tích gần nhất_"

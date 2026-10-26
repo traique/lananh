@@ -1,73 +1,55 @@
-"""AI agent thật (phần "1" trong yêu cầu "biến lananh thành agent"): khác
-ai/orchestrator.py (pipeline CỐ ĐỊNH - mỗi lệnh gọi đúng 1-2 hàm theo thứ tự
-lập trình sẵn), module này để MODEL tự quyết định có cần gọi tool nào, gọi
-bao nhiêu lần, theo thứ tự nào, để trả lời 1 câu hỏi - dùng Google GenAI
-function calling (`google.genai.types.FunctionDeclaration`).
+"""AI agent thật: khác ai/orchestrator.py (pipeline CỐ ĐỊNH), module này để
+MODEL tự quyết định có cần gọi tool nào, gọi bao nhiêu lần, theo thứ tự nào để
+trả lời 1 câu hỏi (/agent - chỉ chủ bot/admin).
 
-Thử router9 theo 2 kiểu trước khi rơi xuống api1/api2 (function calling kiểu
-Gemini, `functionCall`/`functionResponse` - 2 provider "lưới an toàn" quota
-thấp nhất trong provider-chain):
-  1. _run_router9(): function-calling chuẩn OpenAI đa bước (xem
-     ai/router9_client.py::generate_with_tools) - "agent thật", có thể tự
-     lặp gọi nhiều tool.
-  2. _run_router9_json_router(): CHỈ chạy khi (1) lỗi - hỏi router9 bằng 1
-     lượt JSON-router đơn giản (giống services/tools.py::maybe_run_tool,
-     KHÔNG dùng tham số `tools` của API) xem có cần đúng 1 tool không, chạy
-     tool đó (nếu có), rồi 1 lượt router9 nữa để tổng hợp câu trả lời tự
-     nhiên. KHÔNG đa bước (tối đa 1 tool), nhưng KHÔNG phụ thuộc gateway có
-     hỗ trợ đúng function-calling chuẩn OpenAI hay không - chỉ cần model
-     theo được chỉ dẫn "trả JSON", hầu như gateway OpenAI-compatible nào
-     cũng làm được việc này (đã có tiền lệ trong services/tools.py, chạy ổn
-     định). Đây là lưới an toàn TRUNG GIAN, ưu tiên hơn api1/api2.
+Thứ tự provider (ask_agent):
+  1. Groq rồi OpenRouter: function-calling chuẩn OpenAI ĐA BƯỚC
+     (groq_client/openrouter_client.generate_with_tools; Groq
+     parallel_tool_calls=false + max_tokens thấp vì TPM free 8K; OpenRouter
+     provider.require_parameters=true để chỉ tới nhà cung cấp hỗ trợ tools).
+     Bỏ qua provider chưa cấu hình/đang tắt/cooldown; lỗi (kể cả 429) chỉ
+     chuyển provider kế, KHÔNG đặt cooldown - chat (utility_json) không mất Groq.
+  2. router9: native tool-calling (_run_router9, đang TẮT qua
+     _ROUTER9_NATIVE_TOOLS_ENABLED vì router9 lờ tham số `tools`) rồi
+     JSON-router 1 tool (_run_router9_json_router - chỉ cần model theo chỉ dẫn
+     "trả JSON").
+  3. api1/api2: Gemini function calling (`functionCall`/`functionResponse`),
+     quota thấp nhất nên đứng cuối.
+Mỗi vòng giới hạn MAX_AGENT_STEPS (bước cuối chỉ để trả lời, không chạy tool),
+mỗi bước chạy tối đa 3 tool và cả lượt tối đa 8, mỗi bước qua bounded()/
+turn_deadline, mỗi kết quả tool cắt ~2.5K ký tự, gọi lặp y hệt (cùng tool +
+tham số) bị chặn.
 
-Vòng lặp CHỦ ĐỘNG giới hạn số bước (MAX_AGENT_STEPS) ở nhánh (1) và
-_run_one_provider() (api1/api2) để không đốt quota nhanh - nhánh (2) không
-cần giới hạn vì tự thân đã chỉ tối đa 1 tool, không lặp.
+Persona Lan Anh rút gọn + trí nhớ + cách trả lời người dùng đã dặn + 4 dòng hội
+thoại gần nhất của CHÍNH người hỏi (user_id - Zalo tách hẳn Telegram); Q&A lưu
+vào lịch sử chat của người đó.
 
-LƯU Ý QUAN TRỌNG về nhánh (1) router9 native tool-calling: gateway
-OpenAI-compatible bên thứ ba có thể ÂM THẦM bỏ qua tham số `tools` (không
-lỗi, chỉ trả lời chữ bình thường) nếu backend thật sự đứng sau không hỗ trợ
-function-calling - lúc đó agent sẽ tưởng model "chủ động thấy không cần
-tool" và trả thẳng câu trả lời (có thể bịa số liệu thay vì tra tool thật).
-Code không tự phát hiện được trường hợp này (tool_calls rỗng do lờ đi và
-tool_calls rỗng do model chủ động thấy không cần đều giống hệt nhau ở phía
-caller); xem log `"Agent (router9) yêu cầu N tool call(s)..."` bằng traffic
-thật để tự kiểm chứng trước khi tin tưởng nhánh (1) ở production. Nhánh (2)
-KHÔNG có lỗ hổng này vì không dựa vào `tools`/`tool_calls` của API - chỉ dựa
-vào model làm đúng theo prompt JSON, đã có tiền lệ hoạt động ổn ở
-services/tools.py.
+Tool lấy từ danh bạ chung services/tool_registry.py (ToolSpec): tool riêng của
+agent (tim_web, tim_gia, xem_thong_ke, xem_gia_co_phieu, doc_link, xem_rss) +
+tool CHỈ ĐỌC của chat (ghi chú, nhắc việc, ngày nhớ, chi tiêu, thời tiết, âm
+lịch, rag/). Tool GHI dữ liệu (đặt nhắc, ghi chú, chi tiêu...) không vào /agent:
+duyệt bằng nút bấm cần callback_query (web.py/main.py chỉ nhận "message") và
+không được chờ đồng bộ trong lượt (web.py giữ assistant_turn(OWNER) suốt lượt ->
+nút bấm không bao giờ được xử lý kịp). Kết quả tool ngoài (web, link, RSS) LUÔN
+được làm sạch + rào core.untrusted (kể cả khi trang tự chèn marker giả), cắt trần
+và đánh dấu taint; câu trả lời cuối qua core.urls.filter_reply_urls (chỉ giữ link
+có trong câu hỏi/kết quả tim_web, tim_gia).
 
-Chưa thấy log `"Agent (router9) yêu cầu"` xuất hiện dù hỏi câu chắc chắn cần
-tool (vd "so sánh giá iPhone 15 và 15 Pro") -> router9 đang lờ `tools` đi ở
-nhánh (1), nên tắt riêng nhánh (1) qua `_ROUTER9_NATIVE_TOOLS_ENABLED =
-False` bên dưới (nhánh (2) và api1/api2 không bị ảnh hưởng, cứ để mặc định).
-Tắt hẳn cả router9 (cả 2 nhánh) qua `_ROUTER9_AGENT_ENABLED = False`.
-
-Cố ý KHÔNG gọi provider_state.mark_router9_dead() khi cả 2 nhánh router9 của
-agent đều lỗi: lỗi có thể do router9 không hỗ trợ tools/JSON đúng ý (đặc thù
-agent), không phải router9 sập hẳn (ảnh hưởng cả chat chính) - tránh làm
-chat chính mất oan router9 chỉ vì agent thất bại. Ngược lại, agent thành
-công (ở nhánh nào cũng vậy) VẪN báo alive (tín hiệu tốt, không hại gì) và
-tôn trọng router9_enabled/router9_dead_since đã biết (cờ /router9 off, hoặc
-router9 đã được đánh dấu chết ở nhánh chat chính) để không lãng phí 1 lượt
-gọi chắc chắn sẽ lỗi.
-
-Các tool tái dùng logic có sẵn: tim_web dùng services/web_search.py; tim_gia dùng
-services/price_search.py, xem_thong_ke dùng services/usage_stats.py - KHÔNG viết
-lại logic tìm kiếm/giá/thống kê. Muốn thêm tool mới: viết 1 async function nhận **kwargs trả về str, rồi
-thêm vào _TOOLS bên dưới (schema + hàm thực thi) - vòng lặp _run_agent_loop
-tự động dùng được, không cần sửa gì khác.
+Cố ý KHÔNG gọi provider_state.mark_router9_dead() khi router9 lỗi trong agent:
+lỗi có thể do router9 không hỗ trợ tools/JSON đúng ý (đặc thù agent), không
+phải router9 sập hẳn - tránh làm chat chính mất oan router9. Agent thành công
+qua router9 vẫn báo alive và tôn trọng router9_enabled/router9_dead_since/
+cooldown 429; router9 trả 429 trong agent thì đặt cooldown ngắn như chuỗi chat.
 """
 
 import json
 import logging
-import re
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Iterator, Optional
-from urllib.parse import urlsplit, urlunsplit
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable, Iterator, Optional
 
-from ai import official_client
+from ai import call_log, official_client, prompt_budget
 from ai.official_client import is_quota_exhausted_error
 from ai.timeouts import (
     OFFICIAL_CHAT_TIMEOUT_SEC,
@@ -76,8 +58,9 @@ from ai.timeouts import (
     turn_deadline,
     with_timeout,
 )
-from core import config
+from core import address, config, untrusted, urls
 from core.text_utils import strip_json_fence
+from services import tool_registry as reg
 
 logger = logging.getLogger(__name__)
 
@@ -88,34 +71,27 @@ logger = logging.getLogger(__name__)
 # vào query string của 1 URL lạ để rò rỉ ra ngoài. Vì vậy mỗi lượt /agent chỉ
 # cho đọc URL CÓ SẴN NGUYÊN VĂN trong câu hỏi của người dùng hoặc trong kết
 # quả của tool tìm kiếm - model không thể tự dựng URL mới chứa dữ liệu.
-_URL_RE = re.compile(r"https?://[^\s<>\"'`\]\[(){}]+", re.IGNORECASE)
-_URL_TRAILING_PUNCT = ".,;:!?…»”’"
 # Tool trả về URL nguồn đáng tin để doc_link được phép đọc tiếp.
 _URL_SOURCE_TOOLS = frozenset({"tim_web", "tim_gia"})
+# Tool trả về nội dung lấy từ BÊN NGOÀI (web, trang, RSS): kết quả được rào bằng
+# core.untrusted trước khi quay lại model - câu "bỏ qua mọi chỉ dẫn" trong trang
+# chỉ còn là dữ liệu.
+_UNTRUSTED_RESULT_TOOLS = frozenset({"tim_web", "tim_gia", "doc_link", "xem_rss"})
+# Tool mà CODE của bot đã tự rào từng khối dữ liệu ngoài (services/web_search ->
+# tavily_client.format_search_results, đọc sâu, dự phòng): chỉ cắt giữa
+# (prompt_budget.truncate_middle cân lại marker), không rào chồng. Mọi tool ngoài
+# khác (doc_link, xem_rss, tim_gia) LUÔN được làm sạch + rào: không dựa vào
+# contains_untrusted(kết quả) vì chuỗi "<<<DỮ_LIỆU_NGOÀI" có thể đến từ chính trang độc.
+_PREFENCED_TOOLS = frozenset({"tim_web"})
+# Trần ký tự 1 kết quả tool ngoài (cắt trước khi rào để marker đóng không mất).
+_TOOL_RESULT_MAX_CHARS = 8000
 # Trần số URL được phép trong 1 lượt (tránh phình bộ nhớ với kết quả dài).
 _MAX_ALLOWED_URLS = 200
 _allowed_urls: ContextVar[Optional[set[str]]] = ContextVar("agent_allowed_urls", default=None)
 
-
-def _normalize_url(url: str) -> str:
-    try:
-        parts = urlsplit(url.strip())
-    except ValueError:
-        return ""
-    if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
-        return ""
-    path = parts.path.rstrip("/") or ""
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, parts.query, ""))
-
-
-def extract_urls(text: str) -> list[str]:
-    urls = []
-    for match in _URL_RE.finditer(text or ""):
-        url = match.group(0).rstrip(_URL_TRAILING_PUNCT)
-        normalized = _normalize_url(url)
-        if normalized:
-            urls.append(normalized)
-    return urls
+# Tách/chuẩn hoá URL dùng chung với bộ lọc link câu trả lời chat (core/urls.py).
+_normalize_url = urls.normalize_url
+extract_urls = urls.extract_urls
 
 
 def _allow_urls_from(text: str) -> None:
@@ -150,7 +126,29 @@ _URL_NOT_PERMITTED = (
     "hoặc trong kết quả tim_web/tim_gia của lượt này."
 )
 
+
 MAX_AGENT_STEPS = 4
+# Giai đoạn ghi provider_calls cho mọi request của /agent (ai/call_log.py).
+_STAGE = "agent"
+# Trần ký tự 1 kết quả tool bất kỳ quay lại model (Groq free 8K TPM: 4 bước với kết
+# quả 6000 ký tự là vượt trần ngay bước 2-3).
+_ANY_RESULT_MAX_CHARS = 2500
+# Trần số lượt gọi (tool, args) khác nhau nhớ để chặn gọi lặp y hệt trong 1 lượt.
+_MAX_SEEN_CALLS = 16
+# Trần số tool CHẠY THẬT mỗi bước / cả lượt (OpenRouter, Gemini trả được nhiều lời
+# gọi 1 bước - mỗi tim_web tốn credit Tavily). Lời gọi vượt trần vẫn nhận 1 kết quả
+# "bỏ qua" để hội thoại function-calling hợp lệ (mỗi tool_call_id có 1 tool message).
+_MAX_CALLS_PER_STEP = 3
+_MAX_CALLS_PER_TURN = 8
+_SKIPPED_CALL = "(Bỏ qua: đã đủ số lần gọi tool trong lượt này - trả lời từ kết quả đã có.)"
+_LAST_TOOLS_NOTE = (
+    "\n\n(Hệ thống: đây là lượt gọi tool cuối - bước sau phải trả lời người dùng từ các "
+    "kết quả đã có, KHÔNG gọi tool nữa.)"
+)
+_HISTORY_ROWS = 4
+_HISTORY_ROW_MAX_CHARS = 500
+_MEMORY_MAX_CHARS = 1500
+_STYLE_MAX_CHARS = 700
 # Tắt hẳn cả 2 nhánh router9 (native tools + JSON-router) của /agent, không
 # đụng /router9 on|off của chat chính.
 _ROUTER9_AGENT_ENABLED = True
@@ -159,17 +157,62 @@ _ROUTER9_AGENT_ENABLED = True
 # module. Nhánh JSON-router (_run_router9_json_router) không bị ảnh hưởng
 # bởi cờ này, vẫn thử trước khi rơi xuống api1/api2.
 _ROUTER9_NATIVE_TOOLS_ENABLED = False
+# Provider tool-calling đa bước thử TRƯỚC router9 (khi đã cấu hình, đang bật và
+# không cooldown): Groq (gpt-oss, 1 tool/lần) rồi OpenRouter (require_parameters).
+_TOOL_PROVIDERS = ("groq", "openrouter")
 
-_SYSTEM_INSTRUCTION = (
-    "Bạn là trợ lý của lananh, 1 bot Telegram/Zalo/Zoom cá nhân. Bạn có các "
-    "tool bên dưới để tra cứu dữ liệu THẬT trước khi trả lời - KHÔNG tự bịa "
-    "số liệu. Nếu câu hỏi cần nhiều bước (vd so sánh 2 sản phẩm), hãy gọi "
-    "tool nhiều lần rồi mới tổng hợp câu trả lời cuối. Trả lời ngắn gọn, "
-    "tiếng Việt, không cần nhắc lại đã dùng tool nào."
+_STEP_LIMIT_REPLY = (
+    "Xin lỗi, câu hỏi này cần nhiều bước quá, em dừng lại để không lặp vô hạn - anh hỏi "
+    "cụ thể/ngắn hơn giúp em nhé."
 )
 
 
-async def _tool_tim_gia(ten_san_pham: str) -> str:
+def _persona(address_form: str | None = None) -> str:
+    """Persona Lan Anh rút gọn cho /agent (bản đầy đủ quá dài cho TPM free của Groq)."""
+    you = address.normalize(address_form) or "anh"
+    me = address.self_word(you)
+    return (
+        f'Bạn là Lan Anh, trợ lý cá nhân của người dùng (xưng "{me}", gọi người dùng là '
+        f'"{you}"), giọng nhẹ nhàng, ấm áp, nói thẳng vào việc. Bạn có các tool bên dưới để '
+        "tra dữ liệu THẬT trước khi trả lời - KHÔNG tự bịa số liệu. Câu hỏi cần nhiều bước "
+        "(vd so sánh 2 sản phẩm) thì gọi tool nhiều lần rồi mới tổng hợp câu trả lời cuối. "
+        "Trả lời ngắn gọn bằng tiếng Việt, không cần kể đã dùng tool nào.\n" + untrusted.SYSTEM_RULE
+    )
+
+
+# Giữ tên cũ cho chỗ khác đang import (bản không có trí nhớ/lịch sử).
+_SYSTEM_INSTRUCTION = _persona()
+
+
+@dataclass
+class _CallBudget:
+    used: int = 0
+
+
+@dataclass(frozen=True)
+class _Turn:
+    """Ngữ cảnh 1 lượt /agent: người hỏi (tool đọc dữ liệu riêng theo user_id này),
+    vai trò, persona + trí nhớ, vài lượt hội thoại gần nhất của CHÍNH người đó."""
+
+    user_id: int = 0
+    role: str = reg.ROLE_OWNER
+    system: str = _SYSTEM_INSTRUCTION
+    history: tuple[tuple[str, str], ...] = ()
+    seen: dict = field(default_factory=dict)
+    budget: _CallBudget = field(default_factory=_CallBudget)
+
+
+_turn: ContextVar[_Turn | None] = ContextVar("agent_turn", default=None)
+
+
+def _current() -> _Turn:
+    return _turn.get() or _Turn()
+
+
+# ─── Tool riêng của agent ───────────────────────────────────────────────────
+
+
+async def _tool_tim_gia(ten_san_pham: str = "", **_ignored) -> str:
     # Import trễ (lazy) như các tool khác: chỉ nạp module khi model thật sự gọi tool.
     from services import price_search
 
@@ -179,14 +222,14 @@ async def _tool_tim_gia(ten_san_pham: str) -> str:
     return text or "Không tìm được giá cho sản phẩm này."
 
 
-async def _tool_xem_thong_ke(so_gio: int = 168) -> str:
+async def _tool_xem_thong_ke(so_gio: int = 168, **_ignored) -> str:
     from services import usage_stats
 
     so_gio = so_gio if isinstance(so_gio, int) and so_gio > 0 else 168
     return await usage_stats.build_thongke_text(so_gio, use_html=False)
 
 
-async def _tool_xem_gia_co_phieu(ma_co_phieu: str) -> str:
+async def _tool_xem_gia_co_phieu(ma_co_phieu: str = "", **_ignored) -> str:
     from stock import analysis as stock_analysis
 
     if not ma_co_phieu or not ma_co_phieu.strip():
@@ -194,7 +237,7 @@ async def _tool_xem_gia_co_phieu(ma_co_phieu: str) -> str:
     return await stock_analysis.quick_quote(ma_co_phieu.strip())
 
 
-async def _tool_doc_link(url: str) -> str:
+async def _tool_doc_link(url: str = "", **_ignored) -> str:
     from services import web_reader
 
     if not url or not url.strip():
@@ -207,7 +250,7 @@ async def _tool_doc_link(url: str) -> str:
         return f"Không đọc được link: {exc}"
 
 
-async def _tool_xem_rss(url: str, so_muc: int = 0) -> str:
+async def _tool_xem_rss(url: str = "", so_muc: int = 0, **_ignored) -> str:
     from services import web_reader
 
     if not url or not url.strip():
@@ -220,7 +263,7 @@ async def _tool_xem_rss(url: str, so_muc: int = 0) -> str:
         return f"Không đọc được feed: {exc}"
 
 
-async def _tool_tim_web(query: str) -> str:
+async def _tool_tim_web(query: str = "", **_ignored) -> str:
     from services import web_search
 
     if not query or not query.strip():
@@ -239,114 +282,137 @@ async def _tool_tim_web(query: str) -> str:
         return f"Không tìm được trên web: {exc}"
 
 
-# name -> (mô tả cho model, JSON schema tham số kiểu OpenAPI, hàm thực thi)
-_TOOLS: dict[str, tuple[str, dict, callable]] = {
-    "tim_web": (
+def agent_handler(fn: Callable[..., Awaitable[str]]) -> reg.ToolHandler:
+    """Bọc tool không cần user_id thành handler chuẩn ToolSpec (user_id, **args)."""
+
+    async def handler(user_id: int, **kwargs) -> str:
+        return await fn(**kwargs)
+
+    handler.__wrapped__ = fn  # type: ignore[attr-defined]
+    return handler
+
+
+def _agent_spec(name, description, parameters, fn, *, untrusted_output=False, staff=False):
+    return reg.ToolSpec(
+        name=name,
+        description=description,
+        parameters=parameters,
+        handler=agent_handler(fn),
+        roles=reg.STAFF_ROLES if staff else reg.ALL_ROLES,
+        untrusted_output=untrusted_output,
+        surfaces=frozenset({reg.AGENT}),
+    )
+
+
+_AGENT_ONLY = (
+    _agent_spec(
+        "tim_web",
         "Tìm kiếm web theo từ khóa/câu hỏi, ưu tiên nguồn Việt Nam và trả kèm URL nguồn thật.",
-        {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Từ khóa hoặc câu hỏi cần tìm trên web",
-                },
-            },
-            "required": ["query"],
-        },
+        reg.object_schema(
+            {"query": reg.string("Từ khóa hoặc câu hỏi cần tìm trên web")}, required=["query"]
+        ),
         _tool_tim_web,
+        untrusted_output=True,
     ),
-    "tim_gia": (
+    _agent_spec(
+        "tim_gia",
         "Tìm giá bán thực tế của 1 sản phẩm tại Việt Nam (tìm web thật, không bịa).",
-        {
-            "type": "object",
-            "properties": {
-                "ten_san_pham": {
-                    "type": "string",
-                    "description": "Tên sản phẩm cần tìm giá, vd 'iPhone 15 128GB'",
-                },
-            },
-            "required": ["ten_san_pham"],
-        },
+        reg.object_schema(
+            {"ten_san_pham": reg.string("Tên sản phẩm cần tìm giá, vd 'iPhone 15 128GB'")},
+            required=["ten_san_pham"],
+        ),
         _tool_tim_gia,
+        untrusted_output=True,
     ),
-    "xem_thong_ke": (
+    _agent_spec(
+        "xem_thong_ke",
         "Xem thống kê lượt gọi AI của bot (theo user/kênh và theo model) trong N giờ gần nhất.",
-        {
-            "type": "object",
-            "properties": {
-                "so_gio": {
-                    "type": "integer",
-                    "description": "Số giờ gần nhất muốn xem, mặc định 168 (7 ngày)",
-                },
-            },
-        },
+        reg.object_schema(
+            {"so_gio": reg.integer("Số giờ gần nhất muốn xem, mặc định 168 (7 ngày)")}
+        ),
         _tool_xem_thong_ke,
+        staff=True,
     ),
-    "xem_gia_co_phieu": (
+    _agent_spec(
+        "xem_gia_co_phieu",
         "Xem giá cổ phiếu Việt Nam hiện tại theo mã (vd 'FPT', 'VNM'), lấy trực tiếp từ DNSE.",
-        {
-            "type": "object",
-            "properties": {
-                "ma_co_phieu": {"type": "string", "description": "Mã cổ phiếu, vd 'FPT'"},
-            },
-            "required": ["ma_co_phieu"],
-        },
+        reg.object_schema({"ma_co_phieu": reg.string("Mã cổ phiếu, vd 'FPT'")}, ["ma_co_phieu"]),
         _tool_xem_gia_co_phieu,
     ),
-    "doc_link": (
+    _agent_spec(
+        "doc_link",
         "Đọc nội dung 1 trang web/bài báo cụ thể theo URL người dùng đưa, trả về text sạch để tóm tắt/trả lời.",
-        {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "URL đầy đủ (bắt đầu bằng http:// hoặc https://) cần đọc",
-                },
-            },
-            "required": ["url"],
-        },
+        reg.object_schema(
+            {"url": reg.string("URL đầy đủ (bắt đầu bằng http:// hoặc https://) cần đọc")},
+            required=["url"],
+        ),
         _tool_doc_link,
+        untrusted_output=True,
     ),
-    "xem_rss": (
+    _agent_spec(
+        "xem_rss",
         "Đọc các mục mới nhất từ 1 feed RSS/Atom theo URL người dùng đưa.",
-        {
-            "type": "object",
-            "properties": {
-                "url": {"type": "string", "description": "URL feed RSS/Atom"},
-                "so_muc": {
-                    "type": "integer",
-                    "description": "Số mục mới nhất muốn xem, mặc định 8",
-                },
+        reg.object_schema(
+            {
+                "url": reg.string("URL feed RSS/Atom"),
+                "so_muc": reg.integer("Số mục mới nhất muốn xem, mặc định 8"),
             },
-            "required": ["url"],
-        },
+            required=["url"],
+        ),
         _tool_xem_rss,
+        untrusted_output=True,
     ),
-}
+)
+for _spec in _AGENT_ONLY:
+    reg.register(_spec)
+
+# Tool CHỈ ĐỌC của chat cũng dùng được trong /agent (danh bạ chung): ghi chú,
+# nhắc việc, ngày nhớ, chi tiêu (đọc theo đúng user_id người hỏi), thời tiết, âm
+# lịch, kho rag/ (chủ bot/admin). Tool GHI dữ liệu (đặt nhắc, ghi chú, chi tiêu...)
+# KHÔNG vào /agent: chưa có duyệt bằng nút bấm (callback_query) - xem docstring.
+_SHARED_READ_ONLY = (
+    "list_notes",
+    "list_reminders",
+    "list_special_dates",
+    "expense_summary",
+    "get_weather",
+    "lunar_calendar",
+    "get_portfolio",
+    "rag_search",
+)
+
+
+def _register_shared() -> None:
+    from dataclasses import replace
+
+    from services import tools as chat_tools  # noqa: F401 - đăng ký tool chat vào danh bạ
+
+    for name in _SHARED_READ_ONLY:
+        spec = reg.get(name)
+        if spec is not None and not spec.side_effect and reg.AGENT not in spec.surfaces:
+            reg.register(replace(spec, surfaces=spec.surfaces | {reg.AGENT}))
+
+
+_register_shared()
+
+# name -> ToolSpec của /agent (tool riêng + tool chỉ đọc dùng chung). Test thay 1
+# tool bằng ``monkeypatch.setitem(agent_service._TOOLS, name, replace(spec, ...))``.
+_TOOLS: dict[str, reg.ToolSpec] = {spec.name: spec for spec in reg.specs(reg.AGENT)}
+
+
+def _specs() -> list[reg.ToolSpec]:
+    role = _current().role
+    return [spec for spec in _TOOLS.values() if role in spec.roles and not spec.side_effect]
 
 
 def _build_tool_declarations():
-    from google.genai import types
-
-    return [
-        types.Tool(
-            function_declarations=[
-                types.FunctionDeclaration(name=name, description=desc, parameters=schema)
-                for name, (desc, schema, _fn) in _TOOLS.items()
-            ]
-        )
-    ]
+    return reg.gemini_declarations(_specs())
 
 
 def _build_openai_tools() -> list[dict]:
-    """Cùng nội dung mô tả/schema với _build_tool_declarations() ở trên
-    (dùng chung _TOOLS làm 1 nguồn duy nhất), chỉ khác khuôn JSON theo chuẩn
-    OpenAI function-calling (`{"type": "function", "function": {...}}`) thay
-    vì `types.FunctionDeclaration` của Google GenAI SDK."""
-    return [
-        {"type": "function", "function": {"name": name, "description": desc, "parameters": schema}}
-        for name, (desc, schema, _fn) in _TOOLS.items()
-    ]
+    """Cùng nội dung mô tả/schema với _build_tool_declarations() (1 nguồn là danh
+    bạ ToolSpec), chỉ khác khuôn JSON chuẩn OpenAI function-calling."""
+    return reg.openai_tools(_specs())
 
 
 _JSON_ROUTER_INSTRUCTION_TEMPLATE = """Bạn là bộ định tuyến tool (function router) nội bộ cho agent của lananh.
@@ -371,29 +437,54 @@ Câu hỏi của người dùng: {question}"""
 
 
 def _build_tool_list_text() -> str:
-    """Liệt kê _TOOLS thành text cho prompt JSON-router - tự sinh từ cùng 1
-    nguồn _TOOLS như _build_tool_declarations()/_build_openai_tools(), thêm
-    tool mới vào _TOOLS là nhánh JSON-router tự biết, không cần sửa gì ở đây."""
-    lines = []
-    for name, (desc, schema, _fn) in _TOOLS.items():
-        props = (schema or {}).get("properties", {}) or {}
-        args_desc = ", ".join(
-            f'"{key}": {prop.get("description") or prop.get("type", "any")}'
-            for key, prop in props.items()
-        )
-        lines.append(f'- "{name}": {desc} args: {{{args_desc}}}')
-    return "\n".join(lines)
+    """Liệt kê tool cho prompt JSON-router - sinh từ cùng danh bạ ToolSpec như
+    _build_tool_declarations()/_build_openai_tools()."""
+    return reg.router_tool_list(_specs())
+
+
+def _cap(text: str) -> str:
+    if len(text) <= _ANY_RESULT_MAX_CHARS:
+        return text
+    return text[:_ANY_RESULT_MAX_CHARS] + "\n...(đã cắt bớt)"
 
 
 async def _call_tool(name: str, args: dict) -> str:
-    entry = _TOOLS.get(name)
-    if entry is None:
+    spec = _TOOLS.get(name)
+    if spec is None or _current().role not in spec.roles:
         return f"Lỗi: không có tool tên '{name}'."
-    _desc, _schema, fn = entry
+    if spec.side_effect:
+        return f"Lỗi: tool '{name}' ghi dữ liệu, không dùng được trong /agent."
+    args = args or {}
+    key = (name, json.dumps(args, ensure_ascii=False, sort_keys=True, default=str))
+    seen = _current().seen
+    if key in seen:
+        # Gọi lặp y hệt (vòng lặp model): không chạy lại, nhắc model dùng kết quả cũ.
+        return "(Đã gọi tool này với đúng tham số ở bước trước - dùng lại kết quả đó.)"
     try:
-        result = await bounded(lambda: fn(**(args or {})))
-        if name in _URL_SOURCE_TOOLS and isinstance(result, str):
+        result = await bounded(lambda: spec.handler(_current().user_id, **spec.allowed_args(args)))
+        if isinstance(result, reg.ToolResult):
+            result = result.text
+        result = str(result)
+        if name in _URL_SOURCE_TOOLS:
             _allow_urls_from(result)
+        if spec.untrusted_output or name in _UNTRUSTED_RESULT_TOOLS:
+            reg.mark_tainted()
+            if name in _PREFENCED_TOOLS and untrusted.contains_untrusted(result):
+                # Đã rào sẵn: vẫn chịu trần chung (Groq free 8K TPM).
+                result = prompt_budget.truncate_middle(result, _ANY_RESULT_MAX_CHARS)
+            else:
+                result = (
+                    untrusted.wrap_untrusted(
+                        result,
+                        f"tool {name}",
+                        max_chars=min(_TOOL_RESULT_MAX_CHARS, _ANY_RESULT_MAX_CHARS),
+                    )
+                    or result
+                )
+        else:
+            result = _cap(result)
+        if len(seen) < _MAX_SEEN_CALLS:
+            seen[key] = True
         return result
     except TurnTimeoutError:
         raise
@@ -404,19 +495,52 @@ async def _call_tool(name: str, args: dict) -> str:
         return f"Lỗi khi chạy tool '{name}': {exc}"
 
 
+async def _call_tools_capped(calls: list[tuple[str, dict]], step: int) -> list[str]:
+    """Kết quả cho TỪNG lời gọi của 1 bước: chạy tối đa _MAX_CALLS_PER_STEP lời gọi
+    (và _MAX_CALLS_PER_TURN cả lượt), phần vượt trần nhận _SKIPPED_CALL. Bước áp
+    chót (hoặc đã hết trần lượt) thì nhắc model bước sau phải trả lời luôn."""
+    budget = _current().budget
+    results: list[str] = []
+    for index, (name, args) in enumerate(calls):
+        if index >= _MAX_CALLS_PER_STEP or budget.used >= _MAX_CALLS_PER_TURN:
+            logger.info("Agent bỏ qua tool '%s' (vượt trần số lần gọi).", name)
+            results.append(_SKIPPED_CALL)
+            continue
+        budget.used += 1
+        logger.info("Agent gọi tool '%s' với args=%s", name, args)
+        results.append(await _call_tool(name, args))
+    if results and (step >= MAX_AGENT_STEPS - 2 or budget.used >= _MAX_CALLS_PER_TURN):
+        results[-1] += _LAST_TOOLS_NOTE
+    return results
+
+
+def _openai_messages(question: str) -> list[dict]:
+    turn = _current()
+    messages: list[dict] = [{"role": "system", "content": turn.system}]
+    for role, content in turn.history:
+        messages.append({"role": "assistant" if role == "model" else "user", "content": content})
+    messages.append({"role": "user", "content": question})
+    return messages
+
+
 async def _run_one_provider(idx: int, question: str) -> str:
     from google.genai import types
 
     client, model = await official_client.get_client_and_model(idx)
+    turn = _current()
     contents: list = [
-        types.Content(role="user", parts=[types.Part.from_text(text=question)]),
+        types.Content(
+            role="model" if role == "model" else "user", parts=[types.Part.from_text(text=content)]
+        )
+        for role, content in turn.history
     ]
+    contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
     tools = _build_tool_declarations()
-    gen_config = types.GenerateContentConfig(system_instruction=_SYSTEM_INSTRUCTION, tools=tools)
+    gen_config = types.GenerateContentConfig(system_instruction=turn.system, tools=tools)
 
-    for step in range(MAX_AGENT_STEPS):
+    async def _step(step: int):
         response = await bounded(
-            lambda step=step: with_timeout(
+            lambda: with_timeout(
                 client.aio.models.generate_content(
                     model=model, contents=contents, config=gen_config
                 ),
@@ -424,100 +548,190 @@ async def _run_one_provider(idx: int, question: str) -> str:
                 f"agent api{idx} step {step + 1}",
             )
         )
+        call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
+        return response
+
+    for step in range(MAX_AGENT_STEPS):
+        # Mỗi bước là 1 request tốn quota: ghi provider_calls (giai đoạn "agent").
+        response = await call_log.timed(
+            f"api{idx}",
+            model,
+            lambda step=step: _step(step),
+            stage=_STAGE,
+            classify_error=official_client.classify_error,
+        )
         candidate = response.candidates[0] if response.candidates else None
         parts = candidate.content.parts if candidate and candidate.content else []
         function_calls = [p.function_call for p in parts if getattr(p, "function_call", None)]
 
         if not function_calls:
             return (response.text or "").strip() or "Xin lỗi, em chưa tìm được câu trả lời."
+        if step == MAX_AGENT_STEPS - 1:
+            break  # bước cuối: không chạy thêm tool mà không còn bước dùng kết quả
 
-        # Model có thể yêu cầu nhiều tool cùng lúc trong 1 bước - chạy tuần tự
-        # (đơn giản, đủ dùng cho quy mô 1 user; không cần asyncio.gather).
+        # Model có thể yêu cầu nhiều tool cùng lúc trong 1 bước - chạy tuần tự, có
+        # trần (đơn giản, đủ dùng cho quy mô 1 user; không cần asyncio.gather).
         contents.append(candidate.content)
-        response_parts = []
-        for call in function_calls:
-            logger.info("Agent gọi tool '%s' với args=%s", call.name, dict(call.args or {}))
-            result_text = await _call_tool(call.name, dict(call.args or {}))
-            response_parts.append(
-                types.Part.from_function_response(name=call.name, response={"result": result_text})
-            )
+        results = await _call_tools_capped(
+            [(call.name, dict(call.args or {})) for call in function_calls], step
+        )
+        response_parts = [
+            types.Part.from_function_response(name=call.name, response={"result": result_text})
+            for call, result_text in zip(function_calls, results, strict=True)
+        ]
         contents.append(types.Content(role="user", parts=response_parts))
 
-    return "Xin lỗi, câu hỏi này cần nhiều bước quá, em dừng lại để không lặp vô hạn - anh hỏi cụ thể/ngắn hơn giúp em nhé."
+    return _STEP_LIMIT_REPLY
 
 
-async def _run_router9(question: str) -> str:
-    """Agent loop qua router9 (function-calling chuẩn OpenAI). Cấu trúc
-    tương tự _run_one_provider() (cùng MAX_AGENT_STEPS, cùng _call_tool()),
-    chỉ khác định dạng messages/tool_calls theo chuẩn OpenAI thay vì
-    Content/Part của Google GenAI SDK."""
-    from ai import router9_client
-
-    conversation: list[dict] = [
-        {"role": "system", "content": _SYSTEM_INSTRUCTION},
-        {"role": "user", "content": question},
-    ]
+async def _run_openai_tools(
+    label: str,
+    call: Callable[[list[dict], list[dict]], Awaitable[Any]],
+    question: str,
+    own_timeout: float | None = None,
+    model: str | None = None,
+) -> str:
+    """Vòng lặp function-calling chuẩn OpenAI (Groq, OpenRouter, router9): cùng
+    MAX_AGENT_STEPS, cùng _call_tool(), mỗi bước qua bounded()/turn_deadline và
+    được ghi provider_calls (ai/call_log.py, giai đoạn "agent")."""
+    conversation = _openai_messages(question)
     tools = _build_openai_tools()
 
     for step in range(MAX_AGENT_STEPS):
-        result = await bounded(
-            lambda: router9_client.generate_with_tools(conversation, tools),
-            config.ROUTER9_CALL_TIMEOUT_SEC,
+        result = await call_log.timed(
+            label,
+            model,
+            lambda: bounded(lambda: call(conversation, tools), own_timeout),
+            stage=_STAGE,
         )
 
         if not result.tool_calls:
             return result.text or "Xin lỗi, em chưa tìm được câu trả lời."
 
         logger.info(
-            "Agent (router9) yêu cầu %d tool call(s) ở bước %d.", len(result.tool_calls), step + 1
+            "Agent (%s) yêu cầu %d tool call(s) ở bước %d.", label, len(result.tool_calls), step + 1
         )
+        if step == MAX_AGENT_STEPS - 1:
+            break  # bước cuối: không chạy thêm tool mà không còn bước dùng kết quả
         conversation.append(
             {
                 "role": "assistant",
                 "content": result.text or None,
                 "tool_calls": [
                     {
-                        "id": call["id"],
+                        "id": tool_call["id"],
                         "type": "function",
                         "function": {
-                            "name": call["name"],
-                            "arguments": json.dumps(call["arguments"], ensure_ascii=False),
+                            "name": tool_call["name"],
+                            "arguments": json.dumps(tool_call["arguments"], ensure_ascii=False),
                         },
                     }
-                    for call in result.tool_calls
+                    for tool_call in result.tool_calls
                 ],
             }
         )
-        for call in result.tool_calls:
-            logger.info(
-                "Agent (router9) gọi tool '%s' với args=%s", call["name"], call["arguments"]
-            )
-            result_text = await _call_tool(call["name"], call["arguments"])
+        results = await _call_tools_capped(
+            [(tool_call["name"], tool_call["arguments"]) for tool_call in result.tool_calls], step
+        )
+        for tool_call, result_text in zip(result.tool_calls, results, strict=True):
             conversation.append(
-                {"role": "tool", "tool_call_id": call["id"], "content": result_text}
+                {"role": "tool", "tool_call_id": tool_call["id"], "content": result_text}
             )
 
-    return "Xin lỗi, câu hỏi này cần nhiều bước quá, em dừng lại để không lặp vô hạn - anh hỏi cụ thể/ngắn hơn giúp em nhé."
+    return _STEP_LIMIT_REPLY
+
+
+async def _run_router9(question: str) -> str:
+    """Agent loop qua router9 (function-calling chuẩn OpenAI) - chỉ chạy khi bật
+    _ROUTER9_NATIVE_TOOLS_ENABLED."""
+    from ai import router9_client
+
+    return await _run_openai_tools(
+        "router9",
+        lambda messages, tools: router9_client.generate_with_tools(messages, tools),
+        question,
+        config.ROUTER9_CALL_TIMEOUT_SEC,
+        await _router9_model(),
+    )
+
+
+async def _router9_model() -> str:
+    from ai import router9_client
+
+    try:
+        return await router9_client.get_preferred_model_name() or config.ROUTER9_MODEL
+    except Exception:
+        return config.ROUTER9_MODEL
+
+
+async def _router9_generate(prompt: str, **kwargs):
+    """1 lượt router9 của nhánh JSON-router: bounded() + ghi provider_calls. 429
+    -> cooldown ngắn "router9" như provider-chain (KHÔNG khai tử router9), để
+    lượt sau của chat lẫn /agent không gọi thêm vào quota đang cạn."""
+    from ai import cooldown, openai_compatible, router9_client
+    from ai.provider_state import provider_state
+
+    try:
+        return await call_log.timed(
+            "router9",
+            await _router9_model(),
+            lambda: bounded(
+                lambda: router9_client.generate(prompt, **kwargs), config.ROUTER9_CALL_TIMEOUT_SEC
+            ),
+            stage=_STAGE,
+        )
+    except TurnTimeoutError:
+        raise
+    except Exception as exc:
+        if openai_compatible.is_rate_limited(exc):
+            seconds, reason = cooldown.cooldown_for("router9", exc)
+            await provider_state.mark_api_exhausted("router9", seconds, reason)
+        raise
+
+
+async def _tool_provider_usable(name: str) -> bool:
+    """Groq/OpenRouter dùng được cho agent: có key (env hoặc trang admin), đang bật,
+    không cooldown hết quota."""
+    from ai import groq_client, openrouter_client, provider_overrides
+    from ai.provider_state import provider_state
+
+    client = groq_client if name == "groq" else openrouter_client
+    try:
+        if not await client.api_key():
+            return False
+        if not await provider_overrides.is_enabled(name):
+            return False
+    except Exception:
+        logger.warning("Agent: không đọc được cấu hình %s, bỏ qua.", name, exc_info=True)
+        return False
+    return not provider_state.api_in_cooldown(name)
+
+
+async def _run_tool_provider(name: str, question: str) -> str:
+    from ai import groq_client, openrouter_client
+
+    client = groq_client if name == "groq" else openrouter_client
+    try:
+        model = await client.model_name()
+    except Exception:
+        model = None
+    return await _run_openai_tools(name, client.generate_with_tools, question, model=model)
 
 
 async def _run_router9_json_router(question: str) -> Optional[str]:
-    """Lưới an toàn TRUNG GIAN (Hướng A) - chỉ gọi khi _run_router9() (native
-    tool-calling) lỗi. KHÔNG dùng tham số `tools` của API - chỉ hỏi router9
-    bằng 1 prompt yêu cầu trả JSON (cùng kiểu services/tools.py::maybe_run_tool),
-    nên không phụ thuộc gateway có hỗ trợ đúng function-calling chuẩn OpenAI
-    hay không. Tối đa 1 tool (không đa bước). Trả về None nếu không xác định
-    được tool hợp lệ hoặc lỗi bất kỳ bước nào - caller (ask_agent) coi None
-    là "nhánh này không giải quyết được", rơi tiếp xuống api1/api2."""
-    from ai import router9_client
-
+    """Lưới an toàn TRUNG GIAN (Hướng A) - KHÔNG dùng tham số `tools` của API,
+    chỉ hỏi router9 bằng 1 prompt yêu cầu trả JSON (cùng kiểu
+    services/tools.py::maybe_run_tool), nên không phụ thuộc gateway có hỗ trợ
+    đúng function-calling chuẩn OpenAI hay không. Tối đa 1 tool (không đa
+    bước). Trả về None nếu không xác định được tool hợp lệ hoặc lỗi bất kỳ
+    bước nào - caller (ask_agent) coi None là "nhánh này không giải quyết
+    được", rơi tiếp xuống api1/api2."""
+    system = _current().system
     router_prompt = _JSON_ROUTER_INSTRUCTION_TEMPLATE.format(
         tool_list=_build_tool_list_text(), question=question
     )
     try:
-        router_response = await bounded(
-            lambda: router9_client.generate(router_prompt, temperature=0.1),
-            config.ROUTER9_CALL_TIMEOUT_SEC,
-        )
+        router_response = await _router9_generate(router_prompt, temperature=0.1)
     except TurnTimeoutError:
         raise
     except Exception:
@@ -536,15 +750,14 @@ async def _run_router9_json_router(question: str) -> Optional[str]:
         )
         return None
 
-    tool_name = str(data.get("tool", "none")).strip()
+    tool_name = str(data.get("tool", "none")).strip() if isinstance(data, dict) else "none"
 
-    if tool_name == "none" or tool_name not in _TOOLS:
+    if tool_name == "none" or tool_name not in {spec.name for spec in _specs()}:
         # Không cần tool - hỏi router9 trả lời trực tiếp bằng văn phong tự
         # nhiên (KHÔNG dùng lại text ép JSON ở trên).
         try:
-            reply = await bounded(
-                lambda: router9_client.generate(question, system_instruction=_SYSTEM_INSTRUCTION),
-                config.ROUTER9_CALL_TIMEOUT_SEC,
+            reply = await _router9_generate(
+                question, system_instruction=system, history=list(_current().history)
             )
             return (reply.text or "").strip() or None
         except TurnTimeoutError:
@@ -569,10 +782,7 @@ async def _run_router9_json_router(question: str) -> Optional[str]:
         "Không tự bịa thêm thông tin ngoài kết quả tool."
     )
     try:
-        final = await bounded(
-            lambda: router9_client.generate(synth_prompt, system_instruction=_SYSTEM_INSTRUCTION),
-            config.ROUTER9_CALL_TIMEOUT_SEC,
-        )
+        final = await _router9_generate(synth_prompt, system_instruction=system)
         return (final.text or "").strip() or tool_result
     except TurnTimeoutError:
         raise
@@ -584,26 +794,125 @@ async def _run_router9_json_router(question: str) -> Optional[str]:
         return tool_result
 
 
-async def ask_agent(question: str) -> tuple[str, str]:
-    """Chạy vòng lặp agent cho 1 câu hỏi, trả về (câu trả lời, provider đã
-    dùng). Thử router9 theo thứ tự 2 nhánh (native tool-calling rồi
-    JSON-router - xem docstring module), lỗi cả 2 thì rơi xuống api1/api2:
-    api1 trước, hết quota (429) thì rớt xuống api2 - giống mọi nhánh
-    api1/api2 khác trong ai/official_client.py.
+async def _build_turn(user_id: int | None, question: str, address_form: str | None) -> _Turn:
+    """Persona + trí nhớ + cách trả lời người dùng đã dặn + 4 dòng hội thoại gần
+    nhất của ĐÚNG user_id người hỏi (Zalo, kể cả Zalo của chủ bot, tách hẳn
+    Telegram). Lỗi DB -> lượt chạy không có ngữ cảnh, không chặn /agent."""
+    system = _persona(address_form)
+    if not user_id:
+        return _Turn(system=system)
+    role = reg.ROLE_OWNER if config.is_owner_user_id(user_id) else reg.ROLE_ADMIN
+    history: tuple[tuple[str, str], ...] = ()
+    try:
+        from core import database as db
+
+        # k là số DÒNG (hỏi và đáp mỗi bên 1 dòng), không phải số lượt.
+        rows = await db.get_session_messages(
+            user_id, _HISTORY_ROWS, config.CHAT_SESSION_TIMEOUT_SEC
+        )
+        history = tuple(
+            (role_, content[:_HISTORY_ROW_MAX_CHARS]) for role_, content in rows[-_HISTORY_ROWS:]
+        )
+    except Exception:
+        logger.warning("Agent: không đọc được lịch sử hội thoại.", exc_info=True)
+    try:
+        from services import memory_service
+
+        turn_memory = await memory_service.build_turn_memory(user_id, question)
+        memory = (turn_memory.context or "").strip()
+        if memory:
+            system += (
+                "\n\nĐiều đã biết về người dùng (trí nhớ dài hạn):\n" + memory[:_MEMORY_MAX_CHARS]
+            )
+        # "Cách trả lời" người dùng đã dặn (đã kèm tiêu đề, không đè quy tắc an toàn/
+        # xưng hô) - /agent theo cùng phong cách như chat.
+        style = (turn_memory.style_rules or "").strip()
+        if style:
+            system += "\n\n" + style[:_STYLE_MAX_CHARS]
+    except Exception:
+        logger.warning("Agent: không đọc được trí nhớ dài hạn.", exc_info=True)
+    return _Turn(user_id=user_id, role=role, system=system, history=history)
+
+
+async def _save_turn(user_id: int | None, question: str, answer: str) -> None:
+    """Lưu câu hỏi/đáp /agent vào lịch sử chat của người hỏi (best-effort) qua
+    conversation_log.record_exchange: kind 'agent' (trí nhớ chỉ đọc lời người
+    dùng của lượt này), câu trả lời được rút gọn như mọi lượt khác."""
+    if not user_id or not answer:
+        return
+    try:
+        from services import conversation_log
+
+        await conversation_log.record_exchange(
+            user_id, f"/agent {question}", answer, conversation_log.KIND_AGENT
+        )
+    except Exception:
+        logger.warning("Agent: không lưu được lịch sử hội thoại.", exc_info=True)
+
+
+async def ask_agent(
+    question: str, *, user_id: int | None = None, address_form: str | None = None
+) -> tuple[str, str]:
+    """Chạy vòng lặp agent cho 1 câu hỏi, trả về (câu trả lời, provider đã dùng).
+
+    Thứ tự: Groq rồi OpenRouter (function-calling đa bước, bỏ qua nếu chưa cấu
+    hình/đang tắt/cooldown; lỗi kể cả 429 thì chuyển tiếp mà KHÔNG đặt cooldown
+    cho chat) -> router9 (native tools nếu bật, rồi JSON-router 1 tool) ->
+    api1/api2 (Gemini function calling; hết quota thì rớt api2).
+
+    ``user_id`` (khuyến nghị): persona Lan Anh + trí nhớ + 4 dòng hội thoại gần
+    nhất của chính người đó; tool chỉ đọc dữ liệu của người đó; Q&A được lưu vào
+    lịch sử. ``address_form``: cách gọi riêng thành viên Zalo (core/address.py).
 
     Cả lượt chạy trong hạn chót CHAT_TURN_TIMEOUT_SEC (TurnTimeoutError khi
-    hết), api1/api2 tôn trọng công tắc bật/tắt của admin và cooldown hết quota,
-    doc_link/xem_rss chỉ đọc URL có sẵn trong câu hỏi/kết quả tìm kiếm."""
-    with turn_deadline(), agent_url_scope(question):
-        return await _ask_agent(question)
+    hết), doc_link/xem_rss chỉ đọc URL có sẵn trong câu hỏi/kết quả tìm kiếm,
+    tool ghi dữ liệu không bao giờ chạy trong /agent."""
+    with turn_deadline(), agent_url_scope(question) as allowed_urls, reg.taint_scope():
+        turn = await _build_turn(user_id, question, address_form)
+        token = _turn.set(turn)
+        try:
+            text, provider = await _ask_agent(question)
+        finally:
+            _turn.reset(token)
+    text = _filter_answer_links(text, question, allowed_urls)
+    await _save_turn(user_id, question, text)
+    return text, provider
+
+
+def _filter_answer_links(text: str, question: str, allowed_urls: set[str]) -> str:
+    """Vô hiệu hoá link lạ trong câu trả lời /agent (core/urls.py) - lớp phụ sau
+    rào dữ liệu ngoài: chỉ giữ link có trong câu hỏi hoặc kết quả tim_web/tim_gia
+    (KHÔNG lấy chữ trang doc_link làm nguồn), link model tự dựng để nhét dữ liệu
+    (list_notes, chi tiêu...) vào query string thành chữ thường trên mọi kênh."""
+    filtered, removed = urls.filter_reply_urls(text, [question, *sorted(allowed_urls)])
+    if removed:
+        logger.warning("Agent: đã vô hiệu hoá %d link lạ trong câu trả lời.", removed)
+    return filtered
 
 
 async def _ask_agent(question: str) -> tuple[str, str]:
+    for name in _TOOL_PROVIDERS:
+        if not await _tool_provider_usable(name):
+            continue
+        try:
+            return await _run_tool_provider(name, question), name
+        except TurnTimeoutError:
+            raise
+        except Exception as exc:
+            # Cố ý KHÔNG mark_api_exhausted: 429 của agent (TPM nhỏ) không được làm
+            # utility_json/chat mất Groq - agent chỉ chuyển sang provider kế.
+            logger.warning("Agent: %s (tools) lỗi (%s), thử provider kế.", name, exc)
+
     if _ROUTER9_AGENT_ENABLED:
         from ai.provider_state import provider_state
 
         await provider_state.ensure_loaded()
-        if provider_state.router9_enabled and provider_state.router9_dead_since is None:
+        if (
+            provider_state.router9_enabled
+            and provider_state.router9_dead_since is None
+            # 429 của router9 (chuỗi chat hoặc /agent đặt): không gọi thêm vào quota cạn.
+            and not provider_state.api_in_cooldown("router9")
+        ):
             if _ROUTER9_NATIVE_TOOLS_ENABLED:
                 try:
                     text = await _run_router9(question)

@@ -1,0 +1,109 @@
+# Golden set đánh giá chất lượng câu trả lời (tier B - gọi provider AI THẬT).
+#
+# - CHỈ chạy tay (workflow_dispatch), không theo lịch, không chặn deploy: quota free
+#   (OpenRouter :free 50 lượt/ngày khi chưa nạp 10 USD, Groq/Gemini theo ngày) dùng
+#   chung với bot nếu xài cùng key.
+# - Key RIÊNG cho đánh giá: secret EVAL_GROQ_API_KEY / EVAL_OPENROUTER_API_KEY /
+#   EVAL_GOOGLE_AI_STUDIO_API_KEY (Settings → Secrets → Actions). Chưa đặt secret nào
+#   thì job báo bỏ qua và vẫn xanh.
+# - KHÔNG có DATABASE_URL: harness thay core.database bằng bản giả trong RAM.
+# - Repo PUBLIC: log và artifact ai đăng nhập GitHub cũng xem được - báo cáo chỉ chứa
+#   case tổng hợp trong test/evals/*.yaml và câu trả lời của model, không có secret.
+# - Trần lượt gọi (max_calls) + cache kết quả (case/persona không đổi trong 24 giờ
+#   thì không gọi lại). Bộ kiểm tất định là cổng chặn; giám khảo LLM chỉ tham khảo.
+name: Evals (golden set)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_calls:
+        description: "Trần tổng lượt gọi provider (kể cả giám khảo)"
+        type: string
+        default: "80"
+      only:
+        description: "Chỉ chạy category/id (cách nhau dấu phẩy, trống = tất cả)"
+        type: string
+        default: ""
+      judge:
+        description: "Bật giám khảo LLM (tham khảo, tốn thêm lượt gọi)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RUN_LIVE_EVALS: "1"
+      DATABASE_URL: ""
+      GROQ_API_KEY: ${{ secrets.EVAL_GROQ_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.EVAL_OPENROUTER_API_KEY }}
+      GOOGLE_AI_STUDIO_API_KEY_1: ${{ secrets.EVAL_GOOGLE_AI_STUDIO_API_KEY }}
+      # Không có 9Router trên runner GitHub; thứ tự provider như production còn lại.
+      PROVIDER_ORDER: groq,openrouter,api1
+      EVAL_JUDGE_PROVIDER: ${{ vars.EVAL_JUDGE_PROVIDER || 'groq' }}
+      EVAL_JUDGE_MODEL: ${{ vars.EVAL_JUDGE_MODEL || 'openai/gpt-oss-120b' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kiểm tra secret đánh giá
+        id: keys
+        run: |
+          if [ -z "$GROQ_API_KEY$OPENROUTER_API_KEY$GOOGLE_AI_STUDIO_API_KEY_1" ]; then
+            echo "Chưa đặt secret EVAL_* nào - bỏ qua đánh giá."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.keys.outputs.skip != '1'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            requirements-vnstock.txt
+
+      - name: Install dependencies
+        if: steps.keys.outputs.skip != '1'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install --no-deps -r requirements-vnstock.txt
+          pip check
+
+      - name: Khôi phục cache kết quả
+        if: steps.keys.outputs.skip != '1'
+        uses: actions/cache@v4
+        with:
+          path: .eval-cache
+          key: evals-${{ github.run_id }}
+          restore-keys: evals-
+
+      - name: Chạy golden set
+        if: steps.keys.outputs.skip != '1'
+        env:
+          # Input đi qua biến môi trường (không ghép thẳng vào lệnh shell).
+          MAX_CALLS: ${{ inputs.max_calls }}
+          ONLY: ${{ inputs.only }}
+          JUDGE: ${{ inputs.judge }}
+        run: |
+          args=(--max-calls "$MAX_CALLS" --only "$ONLY" --out eval-report.json)
+          if [ "$JUDGE" = "true" ]; then args+=(--judge); fi
+          python scripts/run_evals.py "${args[@]}"
+
+      - name: Lưu báo cáo
+        if: always() && steps.keys.outputs.skip != '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-${{ github.run_id }}
+          path: eval-report.json
+          if-no-files-found: ignore
+          retention-days: 14

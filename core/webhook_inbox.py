@@ -109,6 +109,7 @@ def _notify_dead(channel: str, event_id: str, attempts: int, last_error: str | N
         event_id,
         attempts,
         last_error or "?",
+        extra={"alerted": True},  # đã báo chủ bot ngay dưới: error digest không báo lần 2
     )
     alerts.send(
         messages.WEBHOOK_DEAD_ALERT.format(
@@ -131,10 +132,63 @@ async def _mark_dead(row, error_name: str) -> bool:
     return result == "UPDATE 1"
 
 
+# Lỗi chắc chắn lặp lại nếu chạy lại cùng sự kiện: thử lại chỉ đốt thêm quota AI
+# (mỗi lần chạy lại gọi LLM từ đầu) và có thể gửi 1 câu trả lời trùng rất muộn.
+# Deny-list (không phải allowlist): mọi lỗi KHÁC vẫn được thử lại như cũ - kể
+# cả RuntimeError("Telegram application is not ready") lúc khởi động (tạm thời).
+# Không dùng ValueError trơn: JSONDecodeError (trang 502 HTML) là lớp con của nó.
+# So theo (module, tên lớp) để tầng core không phải import ai/ hay telegram.
+_NO_RETRY_BUILTINS: tuple[type[BaseException], ...] = (TypeError, KeyError, AttributeError)
+_NO_RETRY_CLASSES = frozenset(
+    {
+        ("ai.timeouts", "TurnTimeoutError"),
+        ("telegram.error", "BadRequest"),
+        ("telegram.error", "Forbidden"),
+    }
+)
+
+
+def is_non_retriable(error: BaseException) -> bool:
+    if isinstance(error, _NO_RETRY_BUILTINS):
+        return True
+    return any((cls.__module__, cls.__name__) in _NO_RETRY_CLASSES for cls in type(error).__mro__)
+
+
+@db.with_reconnect
+async def _finish_failed(row, error_name: str) -> bool:
+    """Kết thúc sự kiện (DONE, xoá payload) nhưng giữ last_error để tra cứu."""
+    result = await (await db.get_pool()).execute(
+        """UPDATE webhook_inbox SET status = 'DONE', payload = NULL, completed_at = now(),
+        lease_token = NULL, lease_until = NULL, last_error = $4
+        WHERE channel = $1 AND event_id = $2 AND lease_token = $3""",
+        row["channel"],
+        row["event_id"],
+        row["lease_token"],
+        error_name,
+    )
+    return result == "UPDATE 1"
+
+
 @db.with_reconnect
 async def retry(row, error: BaseException) -> None:
-    """Hẹn thử lại với backoff; hết lượt thử thì chuyển DEAD và báo chủ bot."""
+    """Hẹn thử lại với backoff; hết lượt thử thì chuyển DEAD và báo chủ bot.
+    Lỗi không đáng thử lại (is_non_retriable) thì kết thúc ngay + báo 1 lần."""
     error_name = type(error).__name__
+    if is_non_retriable(error):
+        if await _finish_failed(row, error_name):
+            logger.error(
+                "Webhook %s/%s lỗi %s (không thử lại): %s",
+                row["channel"],
+                row["event_id"],
+                error_name,
+                str(error)[:300],
+            )
+            alerts.send(
+                messages.WEBHOOK_NO_RETRY_ALERT.format(
+                    channel=row["channel"], event_id=row["event_id"], error=error_name
+                )
+            )
+        return
     if row["attempts"] >= max_attempts():
         if await _mark_dead(row, error_name):
             _notify_dead(row["channel"], row["event_id"], row["attempts"], error_name)

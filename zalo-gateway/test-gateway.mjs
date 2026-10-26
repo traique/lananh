@@ -1,19 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  DOCX_MIME,
+  MediaDownloadError,
   allowedMediaHost,
+  downloadAudio,
+  downloadDocument,
   downloadImage,
   imageCandidates,
   linkHref,
+  sniffAudio,
+  sniffDocument,
   sniffImage,
 } from "./dist/media.js";
-import { KnownSenders, SeenIds, isTransientNetworkError, splitForZalo } from "./dist/text.js";
+import {
+  KnownSenders,
+  SeenIds,
+  isTransientNetworkError,
+  splitForZalo,
+  userErrorReply,
+} from "./dist/text.js";
 import {
   FacebookPostBuffer,
   MAX_BUFFERED_MEDIA_BYTES,
   isPermanentPostError,
 } from "./dist/facebook-buffer.js";
-import { BridgeHttpError } from "./dist/bridge.js";
+import { BridgeHttpError, callFileBridge, callImageBridge } from "./dist/bridge.js";
+import { startControlServer } from "./dist/control-server.js";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
@@ -305,6 +318,62 @@ test("KnownSenders chỉ nhớ người đã được trả lời, LRU có trầ
   assert.equal(known.size, 2);
 });
 
+test("KnownSenders: Python báo paired=false (người lạ, đã bị /zaloxoa) thì quên ngay", () => {
+  const known = new KnownSenders(10);
+  known.mark("x");
+  assert.equal(known.forget("x"), true);
+  assert.equal(known.has("x"), false);
+  assert.equal(known.forget("x"), false);
+  // Theo trả lời của Python: false quên, true nhớ, thiếu (bản cache cũ) thì nhớ khi có trả lời.
+  known.noteReply("a", true, false);
+  assert.equal(known.has("a"), true);
+  known.noteReply("a", false, true);
+  assert.equal(known.has("a"), false, "paired=false thắng cả khi có chữ trả lời");
+  known.noteReply("b", undefined, false);
+  assert.equal(known.has("b"), false);
+  known.noteReply("b", null, true);
+  assert.equal(known.has("b"), true);
+  known.noteReply("b", undefined, false);
+  assert.equal(known.has("b"), true, "không có tin hiệu thì giữ nguyên");
+});
+
+test("control server: POST /known/forget {id} gọi forgetSender, body sai/quá lớn bị từ chối", async () => {
+  const forgotten = [];
+  const server = startControlServer(0, {
+    status: () => ({}),
+    startQr: async () => "idle",
+    startPairing: () => null,
+    logout: async () => undefined,
+    forgetSender: (id) => {
+      forgotten.push(id);
+      return id === "z-member";
+    },
+  });
+  try {
+    if (!server.listening) await new Promise((resolve) => server.once("listening", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const post = (body) =>
+      fetch(`${base}/known/forget`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+    const ok = await post(JSON.stringify({ id: "z-member" }));
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { ok: true, forgotten: true });
+    assert.deepEqual(await (await post(JSON.stringify({ id: "other" }))).json(), {
+      ok: true,
+      forgotten: false,
+    });
+    assert.equal((await post("không phải json")).status, 400);
+    assert.equal((await post(JSON.stringify({ id: "" }))).status, 400);
+    assert.equal((await post(JSON.stringify({ id: "x".repeat(5000) }))).status, 413);
+    assert.deepEqual(forgotten, ["z-member", "other"]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("linkHref chỉ nhận tin chia sẻ link có href http(s)", () => {
   const content = {
     title: "xem bài này",
@@ -320,4 +389,154 @@ test("linkHref chỉ nhận tin chia sẻ link có href http(s)", () => {
   assert.equal(linkHref("chat.photo", content), "");
   assert.equal(linkHref("chat.recommended", { href: "javascript:alert(1)" }), "");
   assert.equal(linkHref("chat.recommended", "text"), "");
+});
+
+test("userErrorReply: chỉ chủ bot thấy chi tiết lỗi, người khác nhận câu cố định", () => {
+  const error = new Error("Image prompt returned 500: {secret body} photo-stal.zadn.vn");
+  const reply = "⚠️ Bot chưa xử lý được ảnh.";
+  assert.equal(userErrorReply(error, "member", "owner", reply), reply);
+  assert.equal(userErrorReply(error, "owner", "", reply), reply);
+  const owner = userErrorReply(error, "owner", "owner", reply);
+  assert.ok(owner.startsWith(reply) && owner.includes("Image prompt returned 500"));
+  assert.ok(userErrorReply("lạ", "owner", "owner", reply).endsWith("🔎 lạ"));
+});
+
+const bytes = (text) => new Uint8Array([...text].map((c) => c.charCodeAt(0)));
+const M4A = new Uint8Array([0, 0, 0, 0x20, ...bytes("ftypM4A "), 0, 0, 0, 0]);
+const OGG = bytes("OggS\0\x02\0\0\0\0\0\0");
+const ADTS = new Uint8Array([0xff, 0xf1, 0x50, 0x80, 0, 0x1f, 0xfc]);
+
+test("sniffAudio nhận m4a/ogg/aac/mp3/wav, chặn trang lỗi HTML và AMR", () => {
+  assert.equal(sniffAudio(M4A), "audio/mp4");
+  assert.equal(sniffAudio(OGG), "audio/ogg");
+  assert.equal(sniffAudio(ADTS), "audio/aac");
+  assert.equal(sniffAudio(bytes("ID3\x04\0\0")), "audio/mpeg");
+  assert.equal(sniffAudio(new Uint8Array([0xff, 0xfb, 0x90, 0x64])), "audio/mpeg");
+  assert.equal(sniffAudio(bytes("RIFF\0\0\0\0WAVEfmt ")), "audio/wav");
+  assert.equal(sniffAudio(bytes("<!DOCTYPE html>")), null);
+  assert.equal(sniffAudio(bytes("#!AMR\n")), null);
+  assert.equal(sniffAudio(PNG), null);
+});
+
+test("sniffDocument: nội dung phải khớp đuôi", () => {
+  assert.equal(sniffDocument(bytes("%PDF-1.7 ..."), "pdf"), "application/pdf");
+  assert.equal(sniffDocument(bytes("<html>"), "pdf"), null);
+  assert.equal(sniffDocument(bytes("PK\x03\x04...."), "docx"), DOCX_MIME);
+  assert.equal(sniffDocument(bytes("Ghi chú\nDòng 2"), "txt"), "text/plain");
+  assert.equal(sniffDocument(bytes("# Tiêu đề"), "md"), "text/markdown");
+  assert.equal(sniffDocument(bytes("ab\0cd"), "txt"), null, "file nhị phân đội lốt .txt");
+  assert.equal(sniffDocument(new Uint8Array([0xff, 0xfe, 0x41, 0]), "txt"), "text/plain");
+  assert.equal(sniffDocument(bytes("PK\x03\x04"), "zip"), null);
+});
+
+test("downloadAudio: URL đầu là trang lỗi thì thử URL kế, trả MIME theo magic bytes", async () => {
+  const seen = [];
+  const fetchImpl = async (url) => {
+    seen.push(url);
+    if (url.endsWith(".m4a")) {
+      return new Response("<html>expired</html>", {
+        status: 200,
+        headers: { "content-type": "audio/mp4" },
+      });
+    }
+    return new Response(ADTS, { status: 200, headers: { "content-type": "audio/aac" } });
+  };
+  const audio = await downloadAudio(
+    ["https://voice-aac-dl.zdn.vn/a.m4a", "https://voice-aac-dl.zdn.vn/a.aac"],
+    { userAgent: "ua", fetchImpl },
+    1024,
+  );
+  assert.equal(audio.mime, "audio/aac");
+  assert.equal(seen.length, 2);
+});
+
+test("downloadAudio: vượt trần dung lượng -> MediaDownloadError.tooLarge, chặn domain lạ", async () => {
+  const big = async () =>
+    new Response(new Uint8Array(2048), { status: 200, headers: { "content-length": "2048" } });
+  const error = await downloadAudio(
+    ["https://voice-aac-dl.zdn.vn/a.m4a"],
+    { userAgent: "ua", fetchImpl: big },
+    1024,
+  ).catch((e) => e);
+  assert.ok(error instanceof MediaDownloadError);
+  assert.equal(error.tooLarge, true);
+  // Không khai báo Content-Length: vẫn dừng khi đọc quá trần.
+  const stream = async () => new Response(new Uint8Array(4096), { status: 200 });
+  const streamed = await downloadAudio(
+    ["https://voice-aac-dl.zdn.vn/a.m4a"],
+    { userAgent: "ua", fetchImpl: stream },
+    1024,
+  ).catch((e) => e);
+  assert.equal(streamed.tooLarge, true);
+  let called = false;
+  const blocked = await downloadAudio(
+    ["https://evil.com/a.m4a"],
+    {
+      userAgent: "ua",
+      fetchImpl: async () => {
+        called = true;
+        return new Response(M4A);
+      },
+    },
+    1024,
+  ).catch((e) => e);
+  assert.equal(called, false);
+  assert.match(blocked.message, /domain bị chặn/);
+  assert.equal(blocked.tooLarge, false);
+});
+
+test("downloadDocument kiểm nội dung theo đuôi file", async () => {
+  const fetchImpl = async () => new Response(bytes("%PDF-1.4 abc"), { status: 200 });
+  const doc = await downloadDocument(
+    ["https://f20-zfcloud.zdn.vn/a.pdf"],
+    "pdf",
+    { userAgent: "ua", fetchImpl },
+    1024,
+  );
+  assert.equal(doc.mime, "application/pdf");
+  await assert.rejects(
+    downloadDocument(
+      ["https://f20-zfcloud.zdn.vn/a.docx"],
+      "docx",
+      { userAgent: "ua", fetchImpl },
+      1024,
+    ),
+    /Không tải được file từ Zalo/,
+  );
+});
+
+test("downloadImage giữ câu lỗi cũ (ảnh)", async () => {
+  const fetchImpl = async () =>
+    new Response(bytes("not image"), { status: 200, headers: { "content-type": "text/html" } });
+  await assert.rejects(
+    downloadImage(["https://a.zdn.vn/x.png"], { userAgent: "ua", fetchImpl }),
+    /Không tải được ảnh từ Zalo \(a\.zdn\.vn: MIME text\/html\)/,
+  );
+});
+
+test("header tên file/caption cắt theo ký tự: emoji ở chỗ cắt không làm encodeURIComponent ném lỗi", async () => {
+  const seen = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), headers: init.headers });
+    return new Response(JSON.stringify({ messages: ["ok"] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const config = { bridgeBaseUrl: "http://bridge", bridgeSecret: "s", accountId: "acc" };
+  // 199 ký tự ASCII + emoji: cắt 200 đơn vị UTF-16 sẽ để lại nửa cặp surrogate.
+  const name = "a".repeat(199) + "😀b.pdf";
+  const caption = "c".repeat(499) + "😀 đuôi";
+  try {
+    await callFileBridge(config, "u1", "m1", name, caption, "application/pdf", bytes("%PDF"));
+    await callImageBridge(config, "u1", "m2", caption, "image/png", PNG);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(seen.length, 2);
+  const file = seen[0].headers;
+  assert.equal(decodeURIComponent(file["x-zalo-file-name"]), "a".repeat(199) + "😀");
+  assert.equal(decodeURIComponent(file["x-zalo-caption"]), "c".repeat(499) + "😀");
+  assert.equal(decodeURIComponent(seen[1].headers["x-zalo-caption"]), "c".repeat(499) + "😀");
 });

@@ -143,10 +143,15 @@ async def test_reset_clears_both_sessions(monkeypatch):
     async def clear(user_id):
         called.append(("db", user_id))
 
+    async def flush(user_id):
+        called.append(("flush", user_id))
+
     monkeypatch.setattr(service.orchestrator, "reset_chat", reset)
     monkeypatch.setattr(service.db, "clear_chat", clear)
+    monkeypatch.setattr(service.memory_service, "flush_before_reset", flush)
     result, _ = await service.maybe_handle_command(7, "/reset")
-    assert called == ["reset_chat", ("db", 7)]
+    # Trích nốt trí nhớ từ lượt chưa xử lý TRƯỚC khi xoá lịch sử.
+    assert called == [("flush", 7), "reset_chat", ("db", 7)]
     assert "Đã xoá" in result[0]
 
 

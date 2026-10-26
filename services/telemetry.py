@@ -15,6 +15,7 @@ failure() no-op với prompt_id=None. Trước đây start() raise xuyên qua ca
 (không nằm trong try) khiến 1 giây DB giật làm cả lượt chat//dich báo lỗi dù
 bản chất không cần DB.
 """
+
 import logging
 
 from core import database as db
@@ -23,18 +24,40 @@ logger = logging.getLogger(__name__)
 
 
 class TelemetryService:
-    async def start(self, telegram_user_id: int, action_type: str, prompt_text: str, channel: str = "telegram") -> int | None:
+    async def start(
+        self, telegram_user_id: int, action_type: str, prompt_text: str, channel: str = "telegram"
+    ) -> int | None:
         try:
             return await db.save_prompt(telegram_user_id, action_type, prompt_text, channel=channel)
         except Exception as exc:
-            logger.warning("Không ghi được prompt vào DB (telemetry fail-open): %s", type(exc).__name__)
+            logger.warning(
+                "Không ghi được prompt vào DB (telemetry fail-open): %s", type(exc).__name__
+            )
             return None
 
-    async def success(self, prompt_id: int | None, action_type: str, content_text: str) -> None:
+    async def success(
+        self,
+        prompt_id: int | None,
+        action_type: str,
+        content_text: str,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        """provider/model: ai đã trả lời (đánh giá 👍/👎 theo provider)."""
         if prompt_id is None:
             return
         try:
-            await db.save_result(prompt_id, action_type, content_text=content_text)
+            if provider or model:
+                await db.save_result(
+                    prompt_id,
+                    action_type,
+                    content_text=content_text,
+                    provider=provider,
+                    model=model,
+                )
+            else:
+                await db.save_result(prompt_id, action_type, content_text=content_text)
         except Exception:
             logger.warning("Không ghi được kết quả vào DB cho prompt_id=%s", prompt_id)
 
@@ -45,7 +68,9 @@ class TelemetryService:
         if prompt_id is None:
             return
         try:
-            await db.save_result(prompt_id, action_type, content_text=f"error: {type(error).__name__}")
+            await db.save_result(
+                prompt_id, action_type, content_text=f"error: {type(error).__name__}"
+            )
         except Exception:
             logger.exception("Không ghi được lỗi vào DB cho prompt_id=%s", prompt_id)
 

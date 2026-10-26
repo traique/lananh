@@ -19,6 +19,7 @@ docs
 tools
 scripts/benchmark_perf.py
 scripts/train_trend_model.py
+scripts/backup_drill.py
 .claude
 *.md
 !README.md

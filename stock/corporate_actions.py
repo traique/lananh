@@ -92,6 +92,10 @@ class AdjustmentOutcome:
     events_applied: int = 0
     unexplained_gaps: int = 0
     note: str = ""
+    # Đúng các sự kiện đã được gap giá XÁC NHẬN và áp vào chuỗi - danh mục dùng
+    # để quy đổi vị thế (stock/portfolio.py), không bao giờ dùng sự kiện chưa xác nhận.
+    applied_stock_events: list[StockEvent] = field(default_factory=list)
+    applied_dividends: list[DividendEvent] = field(default_factory=list)
 
 
 def normalize_dps(value: float | None) -> float | None:
@@ -366,6 +370,7 @@ def apply_corporate_adjustment(
             )
             continue
         _scale_before(outcome, i, 1 / (1 + ev.ratio), 1 + ev.ratio)
+        outcome.applied_stock_events.append(ev)
         applied.append(f"{ev.ex_date} (cổ phiếu, tỷ lệ {ev.ratio * 100:.4g}%)".replace(".", ","))
 
     for ev in dividends:
@@ -394,6 +399,7 @@ def apply_corporate_adjustment(
             )
             continue
         _scale_before(outcome, i, (prev_close - dps) / prev_close)
+        outcome.applied_dividends.append(ev)
         applied.append(f"{ev.ex_date} ({dps:,.0f} VND/cp)".replace(",", "."))
 
     # Chạy lại kiểm tra trên chuỗi ĐÃ điều chỉnh: gap còn lại là gap chưa

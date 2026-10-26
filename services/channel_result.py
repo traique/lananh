@@ -13,3 +13,5 @@ class ChannelResult:
     provider: str | None = None
     image_b64: str | None = None
     image_url: str | None = None
+    # Tin cổ phiếu/danh mục: Zalo tô xanh % tăng, đỏ % giảm (channels/zalo_text.py).
+    market: bool = False

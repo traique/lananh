@@ -10,7 +10,9 @@ RUN npm run build \
     && npm cache clean --force
 
 # Stage 2: runtime Python + binary node copy từ stage trên (không cài npm).
-FROM python:3.12-slim
+# Ghim distro (trixie = đích hiện tại của tag 3.12-slim) để base không tự nhảy
+# Debian khi Docker Hub đổi mặc định; Dependabot (ecosystem docker) theo dõi.
+FROM python:3.12-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -27,8 +29,13 @@ COPY --from=gateway /usr/local/bin/node /usr/local/bin/node
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN python -m pip install --extra-index-url https://vnstocks.com/api/simple -r requirements.txt
+# PyPI cho mọi package; kho riêng vnstocks.com CHỈ cho vnstock/vnai/vnstock_ezchart
+# (ghim ==, --no-deps - xem requirements-vnstock.txt). pip check bắt dependency
+# thiếu/lệch ngay lúc build thay vì lúc import trên Render.
+COPY requirements.txt requirements-vnstock.txt ./
+RUN python -m pip install -r requirements.txt \
+    && python -m pip install --no-deps -r requirements-vnstock.txt \
+    && python -m pip check
 
 COPY . .
 COPY --from=gateway /gw/dist ./zalo-gateway/dist

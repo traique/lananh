@@ -111,8 +111,27 @@ async def test_report_hien_thay_doi_trong_ngay_tung_ma_va_ca_danh_muc(monkeypatc
     assert "▼ -2.29% (-60.000đ)" in report
     assert "▲ +2.11% (+26.400đ)" in report
     # Tổng ngày: -60.000 + 26.400 = -33.600 trên giá trị phiên trước
-    # 200*13.100 + 22*57.000 = 3.874.000 -> -0,87%.
-    assert "Hôm nay: *-33.600đ (-0.87%)*" in report
+    # 200*13.100 + 22*57.000 = 3.874.000 -> -0,87%. Giá của phiên 16/10 (không
+    # phải hôm nay) -> nhãn ghi rõ phiên thay vì "Hôm nay".
+    assert "Phiên 16/10: *-33.600đ (-0.87%)*" in report
+
+
+@pytest.mark.asyncio
+async def test_report_nhan_hom_nay_chi_khi_gia_cua_phien_hom_nay(monkeypatch):
+    from datetime import datetime
+
+    today = datetime.now(portfolio._VN_TZ).date().isoformat()
+
+    async def fake_list(user_id):
+        return [portfolio.Holding(1, "FPT", 10, 100_000)]
+
+    async def fake_quote(symbol):
+        return providers.Quote("FPT", 110_000, 100_000, 10_000, 10.0, today, True)
+
+    monkeypatch.setattr(portfolio, "list_holdings", fake_list)
+    monkeypatch.setattr(portfolio.providers, "fetch_quote", fake_quote)
+    report = await portfolio.build_report(1, digest=True)
+    assert "Hôm nay: *+100.000đ" in report
 
 
 @pytest.mark.asyncio

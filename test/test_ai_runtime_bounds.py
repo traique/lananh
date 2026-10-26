@@ -298,8 +298,8 @@ async def test_chat_sends_owner_profile_only_to_owner(monkeypatch):
     async def preferred():
         return None
 
-    def fake_skill(force_reload=False, *, include_owner_profile=True):
-        return "PERSONA+PROFILE" if include_owner_profile else "PERSONA"
+    def fake_skill(force_reload=False, *, variant=None, **kwargs):
+        return "PERSONA+PROFILE" if variant == config.PERSONA_OWNER else "PERSONA"
 
     monkeypatch.setattr(config, "ALLOWED_USER_ID", 777)
     monkeypatch.setattr(config, "load_chat_skill", fake_skill)
@@ -309,3 +309,39 @@ async def test_chat_sends_owner_profile_only_to_owner(monkeypatch):
     await orchestrator.chat(777, "chào em")
     await orchestrator.chat(-3, "chào em")
     assert captured == ["PERSONA+PROFILE", "PERSONA"]
+
+
+@pytest.mark.asyncio
+async def test_chat_chon_bien_the_persona_va_goi_y_kenh(monkeypatch):
+    """Admin Zalo (id âm, is_admin) nhận biến thể "zalo_admin" - KHÔNG BAO GIỜ
+    "owner" chỉ vì có quyền admin; kênh được truyền xuống để gợi ý trình bày."""
+    seen = []
+
+    async def fake_router9(prompt, **kwargs):
+        return openai_compatible.Response("Dạ.")
+
+    async def no_history(*args):
+        return []
+
+    async def preferred():
+        return None
+
+    def fake_skill(force_reload=False, *, variant=None, channel=None, **kwargs):
+        seen.append((variant, channel))
+        return "PERSONA"
+
+    monkeypatch.setattr(config, "ALLOWED_USER_ID", 777)
+    monkeypatch.setattr(config, "load_chat_skill", fake_skill)
+    monkeypatch.setattr(orchestrator.router9_client, "generate", fake_router9)
+    monkeypatch.setattr(orchestrator.router9_client, "get_preferred_model_name", preferred)
+    monkeypatch.setattr(db, "get_session_messages", no_history)
+    await orchestrator.chat(-3, "chào em", channel="zalo", is_admin=True)
+    await orchestrator.chat(-4, "chào em", channel="zalo")
+    await orchestrator.chat(777, "chào em", channel="zoom", is_admin=True)
+    await orchestrator.chat(777, "chào em")
+    assert seen == [
+        (config.PERSONA_ZALO_ADMIN, "zalo"),
+        (config.PERSONA_MEMBER, "zalo"),
+        (config.PERSONA_OWNER, "zoom"),
+        (config.PERSONA_OWNER, "telegram"),
+    ]

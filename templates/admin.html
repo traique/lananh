@@ -384,6 +384,7 @@
       <a class="ext" href="/lich"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9.5h18M8 3v3M16 3v3"/></svg>Lịch</a>
       <a class="ext" href="/thoi-tiet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 1 1 1.2-8.84A6 6 0 0 1 19.5 11 3.5 3.5 0 0 1 18 18z"/></svg>Thời tiết</a>
       <a class="ext" href="/tu-vi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"/></svg>Tử vi</a>
+      <a class="ext" href="/ky-mon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2.2 4.8-4.8 2.2 2.2-4.8z"/></svg>Kỳ Môn</a>
       <a class="ext" href="/than-so-hoc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9h14M5 15h14M10 4L8 20M16 4l-2 16"/></svg>Thần số học</a>
     </nav>
     <div class="sidebar-foot">
@@ -458,6 +459,22 @@
             <div id="usage-models-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
           </div>
         </div>
+        <div class="grid cols-2">
+          <div class="card">
+            <div class="card-head"><h3>Provider: kết quả &amp; độ trễ</h3><span class="hint">p50 / p95 theo từng kết quả</span></div>
+            <div id="outcomes-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Quota miễn phí</h3><span class="hint" id="burn-hint">theo cửa sổ quota của từng provider</span></div>
+            <div id="burn-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Lượt trả lời gần đây</h3><span class="hint">24 giờ · bấm mã lượt để xem từng lượt gọi provider</span></div>
+          <div id="turns-summary" class="small"></div>
+          <div id="turns-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          <div id="turn-detail"></div>
+        </div>
       </section>
 
       <!-- ========== PROVIDER ========== -->
@@ -506,9 +523,15 @@
           </div>
           <div class="card">
             <div class="card-head"><h3>Trí nhớ dài hạn</h3></div>
-            <p class="note">Mỗi tin nhắn khi trí nhớ đang bật tốn thêm 2–3 lượt gọi Google AI Studio (trích xuất fact, tóm tắt, lưu/nhớ lại). Tắt cho người không cần cá nhân hoá để giảm lượt gọi.</p>
+            <p class="note">Trí nhớ trích theo lô (khoảng 1 lượt gọi AI phụ cho mỗi 3 lượt chat, bỏ qua câu "ok/cảm ơn"). Tắt cho người không cần cá nhân hoá để giảm lượt gọi. Bấm "Xem" để xem, ghim hoặc xoá từng mục - mục đã xoá không bị học lại.</p>
             <div id="memory-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+            <div id="memory-items" hidden></div>
           </div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-head"><h3>Giới hạn lượt của thành viên Zalo</h3><span class="hint">mỗi ngày, mở lại lúc 0h giờ VN · 0 = không giới hạn</span></div>
+          <p class="note">Chỉ áp cho thành viên (không áp cho chủ bot, admin Zalo). Lượt nặng = tạo ảnh /anh, luận giải chi tiết (/tuvi_chitiet, /kymon_chitiet, /tsh_chitiet) và lượt chat có tra web; hết lượt nặng thì vẫn trò chuyện được nhưng không tra web. Cổ phiếu tính như lượt thường.</p>
+          <div id="quota-box"><div class="skeleton"><i></i><i></i></div></div>
         </div>
       </section>
 
@@ -540,6 +563,10 @@
             <div class="card-head"><h3>Cơ sở dữ liệu</h3><span class="hint">bảng ảnh Facebook &amp; VACUUM FULL</span></div>
             <div id="db-box"><div class="skeleton"><i></i><i></i><i></i></div></div>
           </div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-head"><h3>Giám sát, sao lưu &amp; lỗi</h3><span class="hint">chỉ lưu loại lỗi + vị trí code · /loi trên Telegram</span></div>
+          <div id="watchdog-box"><div class="skeleton"><i></i><i></i><i></i></div></div>
         </div>
       </section>
     </main>
@@ -1018,7 +1045,11 @@ async function loadMemory() {
   renderTable($('memory-table'), [
     { label: 'User', cell: u => `${esc(u.label)}<div class="muted small mono">${esc(u.user_id)}</div>` },
     { label: 'Trí nhớ', cell: u => toggle(Boolean(u.enabled), 'Trí nhớ của ' + u.label, { cls: 'memory-toggle', extra: ` data-user="${esc(u.user_id)}" data-enabled="${u.enabled ? 'true' : 'false'}"` }) },
+    { label: '', cls: 'act', cell: u => `<button class="btn sm memory-view" type="button" data-user="${esc(u.user_id)}" data-label="${esc(u.label)}">Xem</button>` },
   ], users, 'Chưa có user nào.');
+  $('memory-table').querySelectorAll('.memory-view').forEach(btn => {
+    btn.addEventListener('click', () => loadMemoryItems(parseInt(btn.dataset.user, 10), btn.dataset.label));
+  });
   $('memory-table').querySelectorAll('.memory-toggle').forEach(btn => {
     btn.addEventListener('click', async () => {
       const userId = parseInt(btn.dataset.user, 10);
@@ -1032,6 +1063,69 @@ async function loadMemory() {
     });
   });
   renderZalo();
+}
+
+/* ---------- Giới hạn lượt thành viên Zalo (services/usage_quota.py) ---------- */
+async function loadQuota() {
+  const q = await api('/admin/api/quota');
+  const box = $('quota-box');
+  box.innerHTML = `
+    <div class="field">
+      <div class="field-row">
+        <label class="field-label" for="quota-turns">Lượt / ngày</label>
+        <input class="input mono" type="number" min="0" max="10000" id="quota-turns" value="${esc(q.turns)}">
+        <label class="field-label" for="quota-heavy">Lượt nặng / ngày</label>
+        <input class="input mono" type="number" min="0" max="10000" id="quota-heavy" value="${esc(q.heavy)}">
+        <button class="btn sm" type="button" id="quota-save">Lưu</button>
+      </div>
+      <div class="field-label">Mặc định từ biến môi trường: ${esc(q.default_turns)} lượt, ${esc(q.default_heavy)} lượt nặng.</div>
+    </div>
+    <div id="quota-members"></div>`;
+  renderTable($('quota-members'), [
+    { label: 'Thành viên', cell: x => `${esc(x.label)}<div class="muted small mono">${esc(x.user_id)}</div>` },
+    { label: 'Hôm nay', cls: 'num', cell: x => `${esc(fmtNum(x.turns))}${q.turns ? ` / ${esc(fmtNum(q.turns))}` : ''}` },
+    { label: 'Lượt nặng', cls: 'num', cell: x => `${esc(fmtNum(x.heavy))}${q.heavy ? ` / ${esc(fmtNum(q.heavy))}` : ''}` },
+  ], q.members, 'Chưa có thành viên Zalo nào.');
+  $('quota-save').addEventListener('click', async () => {
+    const btn = $('quota-save');
+    busy(btn);
+    try {
+      const saved = await post('/admin/api/quota', { turns: parseInt($('quota-turns').value, 10) || 0, heavy: parseInt($('quota-heavy').value, 10) || 0 });
+      msg(`Đã lưu giới hạn: ${saved.turns || 'không giới hạn'} lượt, ${saved.heavy || 'không giới hạn'} lượt nặng mỗi ngày.`);
+      loadQuota();
+    } catch (e) { msg('Lưu thất bại: ' + e.message, true); idle(btn); }
+  });
+}
+
+// Trình sửa trí nhớ: fact (ghim/bỏ ghim/quên) + chi tiết đáng nhớ (quên).
+async function loadMemoryItems(userId, label) {
+  const box = $('memory-items');
+  box.hidden = false;
+  skeleton(box);
+  let data;
+  try {
+    data = await api('/admin/api/memory/items?user_id=' + encodeURIComponent(userId));
+  } catch (e) { setState(box, 'error', 'Không tải được trí nhớ: ' + e.message); return; }
+  const factRows = data.facts.map(f => `<tr><td data-label="Thông tin">${f.pinned ? '📌 ' : ''}<b>${esc(f.key)}</b>: ${esc(f.value)}<div class="muted small">quan trọng ${esc(f.importance)} · ${f.source === 'user' ? 'người dùng nhập' : 'tự trích'}</div></td>`
+    + `<td class="act" data-label=""><button class="btn sm memory-act" type="button" data-kind="fact" data-id="${esc(f.id)}" data-action="${f.pinned ? 'unpin' : 'pin'}">${f.pinned ? 'Bỏ ghim' : 'Ghim'}</button> `
+    + `<button class="btn sm memory-act" type="button" data-kind="fact" data-id="${esc(f.id)}" data-action="forget">Quên</button></td></tr>`).join('');
+  const hlRows = data.highlights.map(h => `<tr><td data-label="Chi tiết">${esc(h.content)}</td>`
+    + `<td class="act" data-label=""><button class="btn sm memory-act" type="button" data-kind="highlight" data-id="${esc(h.id)}" data-action="forget">Quên</button></td></tr>`).join('');
+  box.innerHTML = `<h4>Trí nhớ của ${esc(label)}</h4>`
+    + (factRows || hlRows
+      ? `<table class="tbl responsive"><tbody>${factRows}${hlRows}</tbody></table>`
+      : '<div class="empty">Chưa nhớ gì.</div>');
+  box.querySelectorAll('.memory-act').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (btn.dataset.action === 'forget' && !window.confirm('Xoá hẳn mục này khỏi trí nhớ?')) return;
+      busy(btn);
+      try {
+        await post('/admin/api/memory/item', { user_id: userId, kind: btn.dataset.kind, id: parseInt(btn.dataset.id, 10), action: btn.dataset.action });
+        msg('Đã cập nhật trí nhớ.');
+        loadMemoryItems(userId, label);
+      } catch (e) { msg('Thao tác thất bại: ' + e.message, true); idle(btn); }
+    });
+  });
 }
 
 // Zalo: user_id âm = tài khoản Zalo đã ghép (xem channels/zalo_users.py);
@@ -1087,6 +1181,74 @@ async function loadUsageModels() {
   $('kpi-model').title = top ? top.model : '';
   $('kpi-model-sub').textContent = top ? `${top.provider} · ${fmtNum(top.calls)} lượt (${total ? Math.round(top.calls * 100 / total) : 0}%)` : 'chưa có lượt trả lời';
 }
+
+/* ---------- Kết quả provider, quota miễn phí, lượt trả lời (core/trace.py) ---------- */
+const OUTCOME_LABEL = { ok: 'thành công', error: 'lỗi', timeout: 'quá giờ', rate_limited: 'hết quota (429)', contaminated: 'lẫn chữ lạ', no_search: 'không tra được web', turn_timeout: 'hết hạn chót lượt' };
+const TURN_KIND_LABEL = { owner: 'chủ bot', admin: 'admin', member: 'thành viên', job: 'job nền' };
+function fmtMs(ms) { return ms == null ? '—' : (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`); }
+function fmtVnTime(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+}
+
+async function loadOutcomes() {
+  const rows = await api(`/admin/api/usage/outcomes?hours=${rangeHours()}`);
+  renderTable($('outcomes-table'), [
+    { label: 'Provider', cell: o => `<span class="mono">${esc(o.provider)}</span>` },
+    { label: 'Kết quả', cell: o => `<span class="pill ${o.outcome === 'ok' ? 'ok' : o.outcome === 'rate_limited' ? 'warn' : 'bad'}">${esc(OUTCOME_LABEL[o.outcome] || o.outcome)}</span>` },
+    { label: 'Lượt', cls: 'num', cell: o => esc(fmtNum(o.calls)) },
+    { label: 'p50 / p95', cls: 'num', cell: o => `${esc(fmtMs(o.p50_ms))} / ${esc(fmtMs(o.p95_ms))}` },
+    { label: 'Gần nhất', cell: o => fmtRel(o.last_at) },
+  ], rows, 'Chưa có lượt gọi provider nào trong khoảng thời gian này.');
+}
+
+async function loadBurn() {
+  const d = await api('/admin/api/usage/burn');
+  const warnAt = d.alert_pct || 80;
+  $('burn-hint').textContent = d.alert_pct ? `cảnh báo khi dùng ${d.alert_pct}% hạn mức` : 'cảnh báo đang tắt (QUOTA_BURN_ALERT_PCT=0)';
+  renderTable($('burn-table'), [
+    { label: 'Provider', cell: b => esc(b.label) },
+    { label: 'Đã dùng', cls: 'num', cell: b => `${esc(fmtNum(b.used))}${b.limit ? ` / ${esc(fmtNum(b.limit))}` : ''} ${esc(b.unit)}${b.pct == null ? '' : ` <span class="pill ${b.pct >= 90 ? 'bad' : b.pct >= warnAt ? 'warn' : 'ok'}">${esc(b.pct)}%</span>`}` },
+    { label: 'Token vào / ra', cls: 'num', cell: b => `${esc(fmtNum(b.prompt_tokens))} / ${esc(fmtNum(b.completion_tokens))}` },
+    { label: 'Bị 429', cls: 'num', cell: b => esc(fmtNum(b.rate_limited)) },
+    { label: 'Cửa sổ', cell: b => `<span class="muted small">${esc(b.period === 'month' ? 'tháng' : 'ngày')} từ ${esc(fmtVnTime(b.window_start))}${b.source === 'header' ? ' · header Groq' : ''}${b.limit ? '' : ' · chưa đặt hạn mức'}</span>` },
+  ], d.providers, 'Chưa có số liệu quota.');
+}
+
+async function loadTurns() {
+  const d = await api('/admin/api/usage/turns?hours=24');
+  $('turns-summary').innerHTML = d.summary.map(x => `<p><span class="pill neutral">${esc(x.channel)}</span> ${esc(fmtNum(x.turns))} lượt · tổng p50 ${esc(fmtMs(x.total_p50))}, p95 ${esc(fmtMs(x.total_p95))} · p95 chờ khoá ${esc(fmtMs(x.lock_p95))}, chờ slot ${esc(fmtMs(x.slot_p95))}, ngữ cảnh ${esc(fmtMs(x.context_p95))}, LLM ${esc(fmtMs(x.llm_p95))}, gửi ${esc(fmtMs(x.send_p95))} · lỗi ${esc(fmtNum(x.failed))} · đổi provider ${esc(fmtNum(x.fallback))}</p>`).join('');
+  renderTable($('turns-table'), [
+    { label: 'Lúc', cell: x => fmtRel(x.created_at) },
+    { label: 'Mã lượt', cell: x => `<button class="btn sm turn-btn" type="button" data-turn="${esc(x.turn_id)}">${esc(x.turn_id)}</button>` },
+    { label: 'Ai', cell: x => esc(TURN_KIND_LABEL[x.user_kind] || x.user_kind) },
+    { label: 'Tổng', cls: 'num', cell: x => esc(fmtMs(x.total_ms)) },
+    { label: 'Chờ khoá / slot', cls: 'num', cell: x => `${esc(fmtMs(x.lock_wait_ms))} / ${esc(fmtMs(x.slot_wait_ms))}` },
+    { label: 'Ngữ cảnh', cls: 'num', cell: x => esc(fmtMs(x.context_ms)) },
+    { label: 'LLM', cls: 'num', cell: x => esc(fmtMs(x.llm_ms)) },
+    { label: 'Gửi', cls: 'num', cell: x => esc(fmtMs(x.send_ms)) },
+    { label: 'Provider', cell: x => `<span class="mono">${esc(x.final_provider || '—')}</span>${x.fallback_used ? ' <span class="pill warn">đổi provider</span>' : ''}` },
+    { label: 'Kết quả', cell: x => `<span class="pill ${x.outcome === 'ok' ? 'ok' : 'bad'}">${esc(x.outcome)}</span>` },
+  ], d.recent, 'Chưa có lượt nào trong 24 giờ qua.');
+}
+
+$('turns-table').addEventListener('click', async ev => {
+  const btn = ev.target.closest('.turn-btn');
+  if (!btn) return;
+  const target = $('turn-detail');
+  try {
+    const d = await api('/admin/api/usage/turn?turn_id=' + encodeURIComponent(btn.dataset.turn));
+    const longest = Math.max(1, ...d.calls.map(c => c.latency_ms || 0));
+    renderTable(target, [
+      { label: 'Giai đoạn', cell: c => esc(c.stage || '—') },
+      { label: 'Provider', cell: c => `<span class="mono">${esc(c.provider)}</span> <span class="mono muted small">${esc(c.model)}</span>` },
+      { label: 'Kết quả', cell: c => `<span class="pill ${c.outcome === 'ok' ? 'ok' : 'bad'}">${esc(OUTCOME_LABEL[c.outcome] || c.outcome)}</span>` },
+      { label: 'Độ trễ', cls: 'num', cell: c => `<span class="share" aria-hidden="true"><i style="width:${Math.round((c.latency_ms || 0) * 100 / longest)}%"></i></span>${esc(fmtMs(c.latency_ms))}` },
+      { label: 'Token vào / ra', cls: 'num', cell: c => `${esc(c.prompt_tokens == null ? '—' : fmtNum(c.prompt_tokens))} / ${esc(c.completion_tokens == null ? '—' : fmtNum(c.completion_tokens))}` },
+      { label: 'Ký tự prompt', cls: 'num', cell: c => esc(c.prompt_chars == null ? '—' : fmtNum(c.prompt_chars)) },
+    ], d.calls, `Lượt ${d.turn_id} không có lượt gọi provider nào.`);
+  } catch (e) { setState(target, 'error', 'Không tải được: ' + e.message); }
+});
 
 /* ---------- Biểu đồ cột (SVG, không thư viện) ---------- */
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -1213,6 +1375,7 @@ function meterClass(percent) {
 async function loadMemoryUsage() {
   const s = await api('/admin/api/memory-usage');
   const c = s.container || {}, py = s.python || {};
+  const ws = c.working_set || {}, ev = c.events || {};
   const pct = c.used_percent;
   $('kpi-ram').textContent = c.used_mib == null ? (py.rss_mib == null ? '—' : fmtMib(py.rss_mib)) : fmtMib(c.used_mib);
   const meter = $('kpi-ram-meter');
@@ -1231,6 +1394,8 @@ async function loadMemoryUsage() {
       <tr><th>Đỉnh container</th><td>${esc(fmtMib(c.peak_mib))}</td></tr>
       <tr><th>Python RSS / đỉnh</th><td>${esc(fmtMib(py.rss_mib))} / ${esc(fmtMib(py.peak_rss_mib))}</td></tr>
       <tr><th>Thread · GC chờ</th><td>${esc(py.threads ?? '—')} · <span class="mono">${esc((py.gc_pending || []).join('/'))}</span></td></tr>
+      <tr><th>Working set</th><td>${ws.working_set_mib == null ? '<span class="muted">không đọc được</span>' : `${esc(fmtMib(ws.working_set_mib))}${ws.percent == null ? '' : ` <span class="pill ${ws.percent >= 85 ? 'bad' : ws.percent >= 75 ? 'warn' : 'ok'}">${esc(ws.percent)}%</span>`} <span class="muted small">(không tính page cache)</span>`}</td></tr>
+      <tr><th>Chạm trần · OOM kill</th><td><span class="mono">${esc(ev.max ?? '—')} · ${esc(ev.oom_kill ?? '—')}</span> <span class="muted small">(memory.events từ lúc container chạy)</span></td></tr>
     </table>
     <div class="card-head" style="margin:14px 0 6px"><h3>Tiến trình</h3></div>
     <div id="proc-table"></div>
@@ -1260,21 +1425,86 @@ async function loadDbUsage() {
     </table>`;
 }
 
+const RESTART_LABEL = { first: 'lần đầu', deploy: 'deploy', restart: 'khởi động lại', sleep: 'gián đoạn lâu', crash: 'tiến trình chết', oom: 'hết RAM (OOM)' };
+
+async function loadWatchdog() {
+  const d = await api('/admin/api/watchdog');
+  const e = d.errors || {}, r = d.restarts || {}, b = d.backup || {}, k = d.key_rotation || {};
+  const counts = Object.entries(r.counts || {});
+  const backupCell = b.error
+    ? `<span class="muted">không đọc được (${esc(b.error)})</span>`
+    : !b.configured
+      ? '<span class="muted">chưa thiết lập - xem docs/backup-restore.md</span>'
+      : `${pill(!b.stale, 'đang chạy', `quá ${b.stale_days} ngày`)} ${esc(b.last_backup_at ? fmtAbs(new Date(b.last_backup_at)) : '—')}${b.size_mib == null ? '' : ` <span class="muted small">· ${esc(b.size_mib)} MB đã mã hoá</span>`}`;
+  const keyCell = k.error
+    ? `<span class="muted">không đọc được (${esc(k.error)})</span>`
+    : `${esc(fmtNum(k.total))} giá trị mã hoá · ${k.remaining ? `<span class="pill warn">${esc(k.remaining)} còn khoá cũ</span>` : '<span class="pill ok">đều dùng khoá mới</span>'}${k.unreadable ? ` <span class="pill bad">${esc(k.unreadable)} không giải mã được</span>` : ''}${k.old_keys_configured && !k.remaining && !k.unreadable ? ' <span class="muted small">· xoá SETTINGS_ENC_KEY_OLD được rồi</span>' : ''}${k.remaining ? ' <button class="btn sm" type="button" id="rotate-keys-btn">Xoay khoá ngay</button>' : ''}`;
+  const z = d.zalo_gateway || {}, zs = z.stats || {}, zq = z.queue || {};
+  const zaloCell = z.error
+    ? `<span class="muted">không đọc được (${esc(z.error)})</span>`
+    : z.enabled === false
+      ? '<span class="muted">đang tắt (ZALO_ENABLED)</span>'
+      : !z.reachable
+        ? '<span class="pill bad">không trả lời</span>'
+        : `${pill(Boolean(z.connected), 'đã kết nối', z.state || 'mất kết nối')} <span class="muted small">đếm từ ${esc(zs.since ? fmtAbs(new Date(zs.since)) : '—')}</span>
+          <div class="small">${esc(fmtNum(zs.direct_messages))} tin riêng · ${esc(fmtNum(zs.merged_messages))} tin được gộp · ${esc(fmtNum(zs.fast_lane))} lệnh làn nhanh · ${esc(fmtNum(zs.voice_turns))} tin thoại · ${esc(fmtNum(zs.file_turns))} file · ${esc(fmtNum(zs.chunks_sent))} tin đã gửi${zs.plain_fallbacks ? ` · ${esc(fmtNum(zs.plain_fallbacks))} lần rơi về chữ thuần` : ''}${zs.send_failures ? ` <span class="pill bad">${esc(fmtNum(zs.send_failures))} lần gửi lỗi</span>` : ''}</div>
+          <div class="muted small">outbox ${esc(fmtNum(zs.outbox_sent))} gửi · ${esc(fmtNum(zs.outbox_failed))} lỗi · ${esc(fmtNum(zs.outbox_deferred))} lần hoãn (hết ngân sách giờ) · hàng đợi ${esc(fmtNum(zq.pending))} chờ, ${esc(fmtNum(zq.running))} đang chạy</div>`;
+  const drillCell = b.last_drill_at
+    ? `${pill(!b.drill_stale, 'đạt', 'quá hạn')} ${esc(fmtAbs(new Date(b.last_drill_at)))}`
+    : '<span class="muted">chưa có (ngày 2 hằng tháng)</span>';
+  $('watchdog-box').innerHTML = `
+    <table class="tbl kv">
+      <tr><th>Lỗi hôm nay</th><td><b>${esc(fmtNum(e.today_total))}</b> lần · ${esc(fmtNum(e.signatures_today))} loại <span class="muted small">(hôm qua ${esc(fmtNum(e.yesterday_total))} lần)</span></td></tr>
+      <tr><th>Khởi động lại ${esc(r.days ?? 7)} ngày</th><td>${counts.length
+        ? counts.map(([kind, n]) => `<span class="pill ${['crash', 'oom', 'sleep'].includes(kind) ? 'bad' : 'neutral'}">${esc(RESTART_LABEL[kind] || kind)}: ${esc(n)}</span>`).join(' ')
+        : '<span class="muted">không có</span>'}</td></tr>
+      <tr><th>Sao lưu DB</th><td>${backupCell}</td></tr>
+      <tr><th>Diễn tập khôi phục</th><td>${drillCell}</td></tr>
+      <tr><th>Khoá settings</th><td>${keyCell}</td></tr>
+      <tr><th>Gateway Zalo</th><td>${zaloCell}</td></tr>
+      <tr><th>Nhịp tim gần nhất</th><td>${r.enabled ? esc(r.heartbeat_at ? fmtAbs(new Date(r.heartbeat_at)) : '—') : '<span class="muted">chỉ chạy trên Render (WATCHDOG_ENABLED)</span>'} <span class="muted small">· uptime ${esc(r.uptime_min == null ? '—' : r.uptime_min >= 120 ? `${Math.round(r.uptime_min / 60)} giờ` : `${Math.round(r.uptime_min)} phút`)}${r.commit ? ` · commit <span class="mono">${esc(r.commit)}</span>` : ''}</span></td></tr>
+    </table>
+    <div class="card-head" style="margin:14px 0 6px"><h3>Lỗi hôm nay theo loại</h3></div>
+    <div id="error-table"></div>`;
+  renderTable($('error-table'), [
+    { label: 'Số lần', cls: 'num', cell: x => `${esc(fmtNum(x.count))}${x.level === 'WARNING' ? ' <span class="pill neutral">cảnh báo</span>' : ''}` },
+    { label: 'Loại', cell: x => `<span class="mono">${esc(x.exc_type)}</span>` },
+    { label: 'Vị trí', cell: x => `<span class="mono small">${esc(x.where)}:${esc(x.line)}</span><div class="muted small">${esc(x.logger)}</div>` },
+    { label: 'Lần cuối', cell: x => esc(x.last_at) },
+  ], e.today || [], 'Hôm nay chưa ghi nhận lỗi nào.');
+  const rotateBtn = $('rotate-keys-btn');
+  if (rotateBtn) rotateBtn.addEventListener('click', rotateKeys);
+}
+
+async function rotateKeys() {
+  busy($('rotate-keys-btn'));
+  try {
+    const res = await post('/admin/api/key-rotation/run', {});
+    msg(`Đã xoay ${res.rotated} giá trị; còn ${res.remaining} dùng khoá cũ.`, res.remaining > 0);
+  } catch (e) { msg('Xoay khoá thất bại: ' + e.message, true); }
+  loadWatchdog().catch(() => {});
+}
+
 /* ---------- Làm mới & tự làm mới ---------- */
 const LIVE_LOADERS = [
   ['state', loadState, 'cooldown-table'],
   ['market', loadMarket, 'market-box'],
   ['usage', loadUsage, 'usage-table'],
   ['models', loadUsageModels, 'usage-models-table'],
+  ['outcomes', loadOutcomes, 'outcomes-table'],
+  ['burn', loadBurn, 'burn-table'],
+  ['turns', loadTurns, 'turns-table'],
   ['daily', loadDaily, 'chart'],
   ['ram', loadMemoryUsage, 'ram-box'],
   ['db', loadDbUsage, 'db-box'],
+  ['watchdog', loadWatchdog, 'watchdog-box'],
 ];
 const CONFIG_LOADERS = [
   ['providers', loadProviders, 'providers-list'],
   ['tavily', loadTavily, 'tavily-box'],
   ['agnes', loadAgnes, 'agnes-box'],
   ['memory', loadMemory, 'memory-table'],
+  ['quota', loadQuota, 'quota-box'],
 ];
 let refreshing = false;
 
@@ -1319,8 +1549,8 @@ $('auto-refresh').addEventListener('change', applyAutoRefresh);
 function onRangeChange() {
   savePref('admin.hours', String(rangeHours()));
   updateRangeLabels();
-  ['usage-table', 'usage-models-table', 'chart'].forEach(id => { $(id).innerHTML = '<div class="skeleton"><i></i><i></i><i></i></div>'; });
-  runLoaders([['usage', loadUsage, 'usage-table'], ['models', loadUsageModels, 'usage-models-table'], ['daily', loadDaily, 'chart']]);
+  ['usage-table', 'usage-models-table', 'outcomes-table', 'chart'].forEach(id => { $(id).innerHTML = '<div class="skeleton"><i></i><i></i><i></i></div>'; });
+  runLoaders([['usage', loadUsage, 'usage-table'], ['models', loadUsageModels, 'usage-models-table'], ['outcomes', loadOutcomes, 'outcomes-table'], ['daily', loadDaily, 'chart']]);
 }
 $('range').addEventListener('click', ev => {
   const b = ev.target.closest('button');

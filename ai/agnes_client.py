@@ -15,7 +15,7 @@ from typing import Optional
 
 import httpx
 
-from ai import provider_overrides
+from ai import call_log, provider_overrides
 from ai.timeouts import bounded
 from core import config, database as db
 
@@ -122,38 +122,34 @@ async def generate_image(prompt: str, *, size: str = "1024x1024") -> GeneratedIm
             },
         )
 
-    # bounded(): không vượt phần thời gian còn lại của lượt (AGENTS.md: mọi
-    # lời gọi AI mới phải đi qua ai.timeouts.bounded()).
-    response_body = await bounded(_call, float(config.AGNES_CALL_TIMEOUT_SEC))
-    data = json.loads(response_body)
-    items = data.get("data") or []
-    if not items:
-        raise AgnesError("Agnes AI không trả về ảnh nào")
+    async def _generate() -> GeneratedImage:
+        # bounded(): không vượt phần thời gian còn lại của lượt (AGENTS.md: mọi
+        # lời gọi AI mới phải đi qua ai.timeouts.bounded()).
+        call_log.note_prompt_chars(len(prompt))
+        response_body = await bounded(_call, float(config.AGNES_CALL_TIMEOUT_SEC))
+        data = json.loads(response_body)
+        items = data.get("data") or []
+        if not items:
+            raise AgnesError("Agnes AI không trả về ảnh nào")
+        item = items[0]
+        image_url = item.get("url")
+        b64 = item.get("b64_json")
+        if image_url:
+            image = await _request_bytes("GET", image_url, _MAX_IMAGE_BYTES)
+            return GeneratedImage(data=image, url=image_url)
+        if b64:
+            import base64
 
-    async def _record_call() -> None:
-        try:
-            await db.record_provider_call("agnes", await _model())
-        except Exception:
-            logger.warning("Không ghi được lượt gọi Agnes AI vào DB.", exc_info=True)
+            if len(b64) > ((_MAX_IMAGE_BYTES + 2) // 3) * 4:
+                raise AgnesError("Ảnh base64 vượt giới hạn 8 MB.")
+            image = base64.b64decode(b64, validate=True)
+            if len(image) > _MAX_IMAGE_BYTES:
+                raise AgnesError("Ảnh base64 vượt giới hạn 8 MB.")
+            return GeneratedImage(data=image, url=None)
+        raise AgnesError("Agnes AI trả về ảnh không có url hoặc b64_json")
 
-    item = items[0]
-    image_url = item.get("url")
-    b64 = item.get("b64_json")
-    if image_url:
-        image = await _request_bytes("GET", image_url, _MAX_IMAGE_BYTES)
-        await _record_call()
-        return GeneratedImage(data=image, url=image_url)
-    if b64:
-        import base64
-
-        if len(b64) > ((_MAX_IMAGE_BYTES + 2) // 3) * 4:
-            raise AgnesError("Ảnh base64 vượt giới hạn 8 MB.")
-        image = base64.b64decode(b64, validate=True)
-        if len(image) > _MAX_IMAGE_BYTES:
-            raise AgnesError("Ảnh base64 vượt giới hạn 8 MB.")
-        await _record_call()
-        return GeneratedImage(data=image, url=None)
-    raise AgnesError("Agnes AI trả về ảnh không có url hoặc b64_json")
+    # Ghi provider_calls cả lượt lỗi lẫn lượt thành công (độ trễ, giai đoạn "image").
+    return await call_log.timed("agnes", model_name, _generate, stage="image")
 
 
 # Public accessors (dùng bởi web_admin) - tránh module khác gọi hàm private.

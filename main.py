@@ -1,6 +1,7 @@
 """Entrypoint chạy LOCAL bằng long polling - test nhanh, không cần webhook/HTTPS.
 Deploy lên Render thì dùng web.py (webhook) thay vì file này.
 """
+
 import logging
 
 import bot_app
@@ -23,7 +24,7 @@ def main() -> None:
     # đây (sẽ tạo 1 Event Loop khác, gây RuntimeError "Future attached to
     # a different loop" khi Pool DB được dùng lại trong loop của bot).
     logger.info("Bot đang khởi động (long polling, local)... Nhấn Ctrl+C để dừng.")
-    app.run_polling(allowed_updates=["message"])
+    app.run_polling(allowed_updates=["message", "callback_query"])
 
 
 if __name__ == "__main__":

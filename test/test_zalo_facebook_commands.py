@@ -47,9 +47,7 @@ async def test_fb_ok_requires_affiliate_for_original_shopee_link(monkeypatch):
         return {}
 
     monkeypatch.setattr(facebook_commands.facebook_repository, "get_post", fake_get_post)
-    monkeypatch.setattr(
-        facebook_commands.facebook_repository, "get_affiliate_links", fake_links
-    )
+    monkeypatch.setattr(facebook_commands.facebook_repository, "get_affiliate_links", fake_links)
 
     result = await facebook_commands.maybe_handle_facebook_command("B", "/fb_ok 7")
     assert "chưa có affiliate" in result.messages[0]
@@ -106,9 +104,10 @@ async def test_fb_link_saves_link_then_ai_rewrites_caption_without_link(monkeypa
     message = result.messages[0]
     assert "AI đã viết lại" in message
     fc = facebook_commands.facebook_caption
-    assert "💬 Bình luận đầu tiên:\n" + fc.build_comment(
-        ["https://s.shopee.vn/affiliate123"], seed=7
-    ) in message
+    assert (
+        "💬 Bình luận đầu tiên:\n" + fc.build_comment(["https://s.shopee.vn/affiliate123"], seed=7)
+        in message
+    )
     assert "Hời quá nè\n\n" + fc.COMMENT_CTAS[7 % len(fc.COMMENT_CTAS)] in message
     assert "/r/" not in message
 
@@ -137,9 +136,7 @@ async def test_preview_includes_original_shopee_link_for_easy_copy(monkeypatch):
 
     monkeypatch.setattr(facebook_commands.facebook_repository, "get_post", fake_get_post)
     monkeypatch.setattr(facebook_commands.facebook_repository, "get_media", fake_media)
-    monkeypatch.setattr(
-        facebook_commands.facebook_repository, "get_affiliate_links", fake_links
-    )
+    monkeypatch.setattr(facebook_commands.facebook_repository, "get_affiliate_links", fake_links)
 
     preview = await facebook_commands._preview("B", 25)
 
@@ -181,9 +178,7 @@ async def test_prepare_post_notifies_secondary_admin_channels(monkeypatch):
 
     monkeypatch.delenv("ZALO_CONTROLLER_ID", raising=False)
     monkeypatch.setattr(facebook_commands.facebook_repository, "get_post", fake_get_post)
-    monkeypatch.setattr(
-        facebook_commands.facebook_repository, "get_affiliate_links", fake_links
-    )
+    monkeypatch.setattr(facebook_commands.facebook_repository, "get_affiliate_links", fake_links)
     monkeypatch.setattr(facebook_commands.facebook_repository, "get_media", fake_media)
     from channels import zalo_session
 
@@ -197,6 +192,7 @@ async def test_prepare_post_notifies_secondary_admin_channels(monkeypatch):
     assert len(notifications) == 1
     assert "BÀI FACEBOOK CHỜ DUYỆT #25" in notifications[0]
 
+
 @pytest.mark.asyncio
 async def test_fb_reset_deletes_saved_posts_and_reports_sequence_reset(monkeypatch):
     seen = {}
@@ -207,11 +203,36 @@ async def test_fb_reset_deletes_saved_posts_and_reports_sequence_reset(monkeypat
 
     monkeypatch.setattr(facebook_commands.facebook_repository, "reset_posts", fake_reset)
 
-    result = await facebook_commands.maybe_handle_facebook_command("B", "/fb_reset")
+    result = await facebook_commands.maybe_handle_facebook_command("B", "/fb_reset xacnhan")
 
     assert seen == {"account_id": "B"}
     assert "12 bài" in result.messages[0]
     assert "#1" in result.messages[0]
+
+
+@pytest.mark.asyncio
+async def test_fb_reset_khong_xac_nhan_thi_chi_canh_bao_khong_xoa(monkeypatch):
+    """Chạm nhầm /fb_reset trong menu Telegram (không đối số) không được xoá gì."""
+
+    async def must_not_reset(account_id):
+        raise AssertionError("không được xoá khi chưa xác nhận")
+
+    async def pending(account_id):
+        return 7
+
+    monkeypatch.setattr(facebook_commands.facebook_repository, "reset_posts", must_not_reset)
+    monkeypatch.setattr(facebook_commands.facebook_repository, "count_pending", pending)
+
+    for text in ("/fb_reset", "/fb_reset ok", "/fb_reset xoa"):
+        result = await facebook_commands.maybe_handle_facebook_command("B", text)
+        assert "XOÁ TOÀN BỘ" in result.messages[0] and "7 bài chờ duyệt" in result.messages[0]
+        assert "/fb_reset xacnhan" in result.messages[0]
+
+
+@pytest.mark.parametrize("word", ["xacnhan", "XACNHAN", "xác nhận", "Xác Nhận"])
+def test_fb_reset_nhan_tu_xac_nhan_co_dau_hoac_khong(word):
+    assert facebook_commands._is_reset_confirmed(word)
+    assert not facebook_commands._is_reset_confirmed("xac")
 
 
 @pytest.mark.asyncio
@@ -232,8 +253,14 @@ async def test_fb_link_without_affiliate_url_shows_usage_and_never_touches_post(
     "command,expected",
     [
         ("/fb_link 9 https://s.shopee.vn/aff1 https://s.shopee.vn/aff2", "không thuộc bài"),
-        ("/fb_link 9 https://shopee.vn/product/1/2 https://evil.example/aff", "https://s.shopee.vn/"),
-        ("/fb_link 9 https://shopee.vn/product/1/2 https://s.shopee.vn.evil.example/x", "https://s.shopee.vn/"),
+        (
+            "/fb_link 9 https://shopee.vn/product/1/2 https://evil.example/aff",
+            "https://s.shopee.vn/",
+        ),
+        (
+            "/fb_link 9 https://shopee.vn/product/1/2 https://s.shopee.vn.evil.example/x",
+            "https://s.shopee.vn/",
+        ),
     ],
 )
 async def test_fb_link_rejects_wrong_source_or_non_shopee_affiliate_host(
@@ -343,7 +370,9 @@ async def test_fb_ok_posts_to_every_configured_page_and_retries_only_failed_one(
 
     async def fake_ensure_targets(post_id, page_keys):
         for key in page_keys:
-            targets.setdefault(key, {"page_key": key, "status": "PENDING", "facebook_post_id": None})
+            targets.setdefault(
+                key, {"page_key": key, "status": "PENDING", "facebook_post_id": None}
+            )
 
     async def fake_list_targets(post_id):
         return list(targets.values())
@@ -363,10 +392,19 @@ async def test_fb_ok_posts_to_every_configured_page_and_retries_only_failed_one(
         return published
 
     async def fake_record_posted(post_id, page_key, facebook_post_id, permalink_url, **claim):
-        targets[page_key] = {"page_key": page_key, "status": "POSTED", "facebook_post_id": facebook_post_id}
+        targets[page_key] = {
+            "page_key": page_key,
+            "status": "POSTED",
+            "facebook_post_id": facebook_post_id,
+        }
 
     async def fake_record_error(post_id, page_key, message, **claim):
-        targets[page_key] = {"page_key": page_key, "status": "ERROR", "facebook_post_id": None, "error_message": message}
+        targets[page_key] = {
+            "page_key": page_key,
+            "status": "ERROR",
+            "facebook_post_id": None,
+            "error_message": message,
+        }
 
     async def fake_finalize(account_id, post_id, **claim):
         if all(t["status"] == "POSTED" for t in targets.values()):
@@ -379,20 +417,33 @@ async def test_fb_ok_posts_to_every_configured_page_and_retries_only_failed_one(
     monkeypatch.setattr(facebook_commands.facebook_repository, "get_affiliate_links", fake_links)
     monkeypatch.setattr(facebook_commands.facebook_repository, "get_media", fake_media)
     from contextlib import asynccontextmanager
+
     @asynccontextmanager
     async def fake_keep(*args):
         yield
+
     async def fake_creating(post_id, page_key, token):
         assert token == "claim-42"
         targets[page_key]["status"] = "POSTING"
+
     monkeypatch.setattr(facebook_commands.facebook_repository, "keep_post_claim", fake_keep)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "mark_target_creating", fake_creating)
+    monkeypatch.setattr(
+        facebook_commands.facebook_repository, "mark_target_creating", fake_creating
+    )
     monkeypatch.setattr(facebook_commands.facebook_repository, "claim_post", fake_claim)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "ensure_targets", fake_ensure_targets)
+    monkeypatch.setattr(
+        facebook_commands.facebook_repository, "ensure_targets", fake_ensure_targets
+    )
     monkeypatch.setattr(facebook_commands.facebook_repository, "list_targets", fake_list_targets)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "record_target_posted", fake_record_posted)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "record_target_error", fake_record_error)
-    monkeypatch.setattr(facebook_commands.facebook_repository, "finalize_post_status", fake_finalize)
+    monkeypatch.setattr(
+        facebook_commands.facebook_repository, "record_target_posted", fake_record_posted
+    )
+    monkeypatch.setattr(
+        facebook_commands.facebook_repository, "record_target_error", fake_record_error
+    )
+    monkeypatch.setattr(
+        facebook_commands.facebook_repository, "finalize_post_status", fake_finalize
+    )
     monkeypatch.setattr(facebook_commands, "configured_page_keys", lambda: ["page1", "page2"])
     monkeypatch.setattr(facebook_commands, "publish_page_post", fake_publish)
 
@@ -473,7 +524,9 @@ def _comment_flow(monkeypatch, *, targets, comment_error=None):
 
 @pytest.mark.asyncio
 async def test_fb_ok_posts_link_free_caption_then_comments_affiliate_link(monkeypatch):
-    targets = [{"page_key": "default", "status": "PENDING", "facebook_post_id": None, "comment_id": None}]
+    targets = [
+        {"page_key": "default", "status": "PENDING", "facebook_post_id": None, "comment_id": None}
+    ]
     mocks, affiliate = _comment_flow(monkeypatch, targets=targets)
 
     result = await facebook_commands.maybe_handle_facebook_command("B", "/fb_ok 5")
@@ -492,9 +545,12 @@ async def test_fb_ok_posts_link_free_caption_then_comments_affiliate_link(monkey
 
 @pytest.mark.asyncio
 async def test_fb_ok_retry_only_comments_when_post_already_created(monkeypatch):
-    targets = [{"page_key": "default", "status": "POSTED", "facebook_post_id": "p1", "comment_id": None}]
+    targets = [
+        {"page_key": "default", "status": "POSTED", "facebook_post_id": "p1", "comment_id": None}
+    ]
     mocks, affiliate = _comment_flow(
-        monkeypatch, targets=targets,
+        monkeypatch,
+        targets=targets,
         comment_error=[facebook_commands.FacebookPublishError("thiếu quyền"), "c2"],
     )
 
@@ -511,9 +567,21 @@ async def test_fb_ok_retry_only_comments_when_post_already_created(monkeypatch):
 @pytest.mark.asyncio
 async def test_fb_loclai_rejects_pending_posts_that_fail_current_filter(monkeypatch):
     rows = [
-        {"id": 65, "original_content": "💸15H BACK MÃ BÁCH HÓA https://s.shopee.vn/7AeDHTeF5m", "media_count": 1},
-        {"id": 70, "original_content": "Áo khoác dù chống nắng 159k https://s.shopee.vn/x", "media_count": 1},
-        {"id": 71, "original_content": "Quạt mini để bàn siêu êm https://s.shopee.vn/y", "media_count": 0},
+        {
+            "id": 65,
+            "original_content": "💸15H BACK MÃ BÁCH HÓA https://s.shopee.vn/7AeDHTeF5m",
+            "media_count": 1,
+        },
+        {
+            "id": 70,
+            "original_content": "Áo khoác dù chống nắng 159k https://s.shopee.vn/x",
+            "media_count": 1,
+        },
+        {
+            "id": 71,
+            "original_content": "Quạt mini để bàn siêu êm https://s.shopee.vn/y",
+            "media_count": 0,
+        },
     ]
     rejected = []
 

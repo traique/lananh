@@ -7,8 +7,8 @@ import html
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from channels import zalo_users
-from core import config, database as db
+from channels import zalo_onboarding, zalo_users
+from core import address, config, database as db
 from handlers import common
 
 
@@ -66,43 +66,92 @@ async def zoomstatus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 _ZALO_ROLE_ICON = {"admin": "👑", "user": "👤"}
 _ZALO_STATUS_LABEL = {"active": "hoạt động", "suspended": "đã khóa"}
+_ADDRESS_CHOICES = "|".join(address.ADDRESS_FORMS)
+
+
+def _parse_pair_arg(arg: str) -> tuple[str, str, str | None]:
+    """ "<id> [tên] [xưng hô]" -> (id, tên, cách xưng hô). Xưng hô là token viết
+    thường cuối cùng thuộc core/address.ADDRESS_FORMS ("Mẹ cô" -> tên "Mẹ", gọi
+    "cô"); "Tuấn Anh" viết hoa vẫn là tên."""
+    external_id, _, rest = arg.strip().partition(" ")
+    display_name, form = address.split_trailing_form(rest)
+    return external_id.strip(), display_name, form
+
+
+def _address_note(user: zalo_users.ZaloUser) -> str:
+    if not user.address_form:
+        return ""
+    return (
+        f"\nLan Anh sẽ gọi người này là “{user.address_form}”, "
+        f"xưng “{address.self_word(user.address_form)}”."
+    )
+
+
+def pair_confirmation(result: zalo_onboarding.PairResult, *, admin: bool) -> str:
+    """Câu báo đã cấp quyền (lệnh /zalopair, /zaloadmin và nút trên cảnh báo)."""
+    user = result.user
+    label = f" ({user.display_name})" if user.display_name else ""
+    if admin:
+        head = (
+            f"👑 Đã cấp quyền ADMIN cho Zalo id: {html.escape(user.external_id)}"
+            f"{html.escape(label)} (dùng được lệnh nhóm và /fb_*)."
+        )
+    else:
+        head = (
+            f"✅ Đã cấp quyền THÀNH VIÊN cho Zalo id: {html.escape(user.external_id)}"
+            f"{html.escape(label)}"
+        )
+    return head + _address_note(user) + _welcome_note(result)
+
+
+def _welcome_note(result: zalo_onboarding.PairResult) -> str:
+    """Báo chủ bot lời chào (lần pair đầu) / câu báo nâng quyền đã đi đâu."""
+    if result.welcome == zalo_onboarding.WELCOME_QUEUED:
+        sent = "câu báo nâng quyền" if result.promoted else "lời chào kèm vài câu thử"
+        return f"\n💌 Đã xếp {sent} gửi tới người này qua Zalo."
+    if result.welcome == zalo_onboarding.WELCOME_NO_ACCOUNT:
+        return (
+            "\n⚠️ Chưa gửi được lời chào: Zalo bot chưa đăng nhập (/zalo). Anh nhắn người "
+            "này biết là đã dùng được bot nhé."
+        )
+    if result.welcome == zalo_onboarding.WELCOME_FAILED:
+        return "\n⚠️ Không xếp được lời chào qua Zalo (xem log)."
+    return ""
 
 
 @common.restricted
 async def zalopair_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/zalopair <id_zalo> [tên] — cấp quyền THÀNH VIÊN (chỉ tính năng bình
-    thường: chat, /prompt, /gia, /dich... KHÔNG có lệnh nhóm)."""
+    """/zalopair <id_zalo> [tên] [anh|chị|cô|chú|bạn|em] — cấp quyền THÀNH VIÊN
+    (chỉ tính năng bình thường: chat, /prompt, /gia, /dich... KHÔNG có lệnh
+    nhóm). Từ xưng hô cuối (viết thường) là cách Lan Anh gọi người này."""
     arg = common.extract_arg(context)
     if not arg:
         await update.message.reply_text(
-            "Cú pháp: /zalopair <id_zalo> [tên hiển thị]\n"
-            "Lấy id_zalo từ cảnh báo bot tự gửi khi có người lạ nhắn Zalo tới bot."
+            f"Cú pháp: /zalopair <id_zalo> [tên hiển thị] [{_ADDRESS_CHOICES}]\n"
+            "Lấy id_zalo từ cảnh báo bot tự gửi khi có người lạ nhắn Zalo tới bot.\n"
+            "Từ cuối (viết thường) là cách Lan Anh gọi người này, vd: /zalopair 123 Mẹ cô "
+            "(bỏ trống = gọi “anh”). Gõ lại lệnh để đổi tên hoặc cách gọi."
         )
         return
-    external_id, _, display_name = arg.partition(" ")
-    user = await zalo_users.pair(external_id.strip(), display_name.strip())
-    label = f" ({user.display_name})" if user.display_name else ""
-    await update.message.reply_text(
-        f"✅ Đã cấp quyền THÀNH VIÊN cho Zalo id: {html.escape(user.external_id)}{html.escape(label)}"
-    )
+    external_id, display_name, form = _parse_pair_arg(arg)
+    result = await zalo_onboarding.pair(external_id, display_name, address_form=form)
+    await update.message.reply_text(pair_confirmation(result, admin=False))
 
 
 @common.restricted
 async def zaloadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/zaloadmin <id_zalo> [tên] — cấp/nâng quyền ADMIN (dùng được lệnh nhóm
-    /nhom, /themnhom, /xoanhom, /tongket, /dangnoi và /fb_*). Hỗ trợ NHIỀU admin cùng
-    lúc, không giới hạn 1 admin duy nhất."""
+    """/zaloadmin <id_zalo> [tên] [xưng hô] — cấp/nâng quyền ADMIN (dùng được
+    lệnh nhóm /nhom, /themnhom, /xoanhom, /tongket, /dangnoi và /fb_*). Hỗ trợ
+    NHIỀU admin cùng lúc, không giới hạn 1 admin duy nhất."""
     arg = common.extract_arg(context)
     if not arg:
-        await update.message.reply_text("Cú pháp: /zaloadmin <id_zalo> [tên hiển thị]")
+        await update.message.reply_text(
+            f"Cú pháp: /zaloadmin <id_zalo> [tên hiển thị] [{_ADDRESS_CHOICES}]"
+        )
         return
-    external_id, _, display_name = arg.partition(" ")
-    user = await zalo_users.pair_as_admin(external_id.strip(), display_name.strip())
-    label = f" ({user.display_name})" if user.display_name else ""
-    await update.message.reply_text(
-        f"👑 Đã cấp quyền ADMIN cho Zalo id: {html.escape(user.external_id)}{html.escape(label)} "
-        f"(dùng được lệnh nhóm và /fb_*)."
-    )
+    external_id, display_name, form = _parse_pair_arg(arg)
+    result = await zalo_onboarding.pair(external_id, display_name, admin=True, address_form=form)
+    await update.message.reply_text(pair_confirmation(result, admin=True))
 
 
 @common.restricted
@@ -174,5 +223,6 @@ async def zalodanhsach_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         icon = _ZALO_ROLE_ICON.get(user.role, "👤")
         status = _ZALO_STATUS_LABEL.get(user.status, user.status)
         ten = html.escape(user.display_name) if user.display_name else "không tên"
-        lines.append(f"{icon} {html.escape(user.external_id)} ({ten}) — {status}")
+        goi = f", gọi “{user.address_form}”" if user.address_form else ""
+        lines.append(f"{icon} {html.escape(user.external_id)} ({ten}{goi}) — {status}")
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")

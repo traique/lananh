@@ -1,5 +1,5 @@
 """Lệnh Telegram đổi cấu hình AI toàn cục: /model, /status, /userouter9,
-/router9, /tavily và /anh (tạo ảnh Agnes AI + bật/tắt)."""
+/router9, /tavily và /anh (tạo ảnh Agnes AI + bật/tắt); /loi xem lỗi gom nhóm."""
 
 import asyncio
 import html
@@ -14,6 +14,7 @@ from ai import agnes_client, orchestrator, router9_client, tavily_client
 from core import config
 from core.text_utils import parse_on_off
 from handlers import common
+from services import error_digest, provider_health, search_status
 
 
 @common.restricted
@@ -83,15 +84,23 @@ async def tavily_toggle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     toggle = parse_on_off(common.extract_arg(context))
     if toggle is True:
         await tavily_client.set_enabled(True)
-        await update.message.reply_text("✅ Đã bật tra web Tavily trước khi trả lời.")
+        await update.message.reply_text(
+            f"✅ Đã bật tra web Tavily trước khi trả lời.\n{await search_status.search_mode_line()}"
+        )
         return
     if toggle is False:
         await tavily_client.set_enabled(False)
-        await update.message.reply_text("🔴 Đã tắt Tavily, chat trở lại luồng bình thường.")
+        await update.message.reply_text(
+            "🔴 Đã tắt Tavily. Câu cần thông tin mới em sẽ dùng web search của chính "
+            f"provider đang trả lời.\n{await search_status.search_mode_line()}"
+        )
         return
     enabled = await tavily_client.get_enabled()
     status = "🟢 đang BẬT" if enabled else "🔴 đang TẮT"
-    await update.message.reply_text(f"Tavily {status}.\nDùng /tavily on hoặc /tavily off để đổi.")
+    await update.message.reply_text(
+        f"Tavily {status}.\n{await search_status.search_mode_line()}\n"
+        "Dùng /tavily on hoặc /tavily off để đổi."
+    )
 
 
 @common.restricted
@@ -148,6 +157,13 @@ def _fmt_epoch_vn(ts: float) -> str:
     return datetime.fromtimestamp(ts, ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%H:%M %d/%m")
 
 
+def _cooldown_suffix(until: float, reason: str | None, now: float) -> str:
+    """Dòng phụ "cooldown tới HH:MM (còn N phút - lý do)" cho /status."""
+    minutes = max(1, int((until - now + 59) // 60))
+    detail = f"còn {minutes} phút" + (f" - {html.escape(reason)}" if reason else "")
+    return f"\n   ⥅ cooldown tới {_fmt_epoch_vn(until)} ({detail})"
+
+
 async def _noop_ai_status() -> tuple[bool, str]:
     return False, "Chưa cấu hình"
 
@@ -193,32 +209,61 @@ async def _build_status_text() -> str:
     )
     if not state["router9_enabled"]:
         router9_line += "\n   ⛔ đang TẮT thủ công (/router9 on để bật lại)"
+    reasons = state.get("cooldown_reasons") or {}
     if state["router9_dead_since"]:
         router9_line += f"\n   ⥅ chết lúc {_fmt_epoch_vn(state['router9_dead_since'])}"
+        if reasons.get("router9_dead"):
+            router9_line += f" ({html.escape(reasons['router9_dead'])})"
+    router9_until = state.get("router9_exhausted_until", 0.0)
+    if router9_until > now:
+        router9_line += _cooldown_suffix(router9_until, reasons.get("router9"), now)
+    router9_search_until = state.get("router9_search_exhausted_until", 0.0)
+    if router9_search_until > now:
+        router9_line += "\n   🔎 tra web (ROUTER9_WEB_SEARCH):" + _cooldown_suffix(
+            router9_search_until, reasons.get("router9_search"), now
+        ).replace("\n   ⥅", "", 1)
 
-    def _provider_line(label, key, status, exhausted_until):
+    def _provider_line(label, key, status, exhausted_until, reason=None):
         if not key:
             return f"⚪ {label}: chưa cấu hình"
         ok, detail = status
         line = f"✅ {label}: OK" if ok else f"❌ {label}: lỗi ({html.escape(detail)})"
         if exhausted_until > now:
-            line += f"\n   ⥅ cooldown tới {_fmt_epoch_vn(exhausted_until)}"
+            line += _cooldown_suffix(exhausted_until, reason, now)
         return line
 
     groq_line = _provider_line(
-        "Groq", config.GROQ_API_KEY, groq_status, state["groq_exhausted_until"]
+        "Groq",
+        config.GROQ_API_KEY,
+        groq_status,
+        state["groq_exhausted_until"],
+        reasons.get("groq"),
     )
+    groq_search_until = state.get("groq_search_exhausted_until", 0.0)
+    if config.GROQ_API_KEY and groq_search_until > now:
+        groq_line += "\n   🔎 tra web (browser_search):" + _cooldown_suffix(
+            groq_search_until, reasons.get("groq_search"), now
+        ).replace("\n   ⥅", "", 1)
     openrouter_line = _provider_line(
         "OpenRouter",
         config.OPENROUTER_API_KEY,
         openrouter_status,
         state["openrouter_exhausted_until"],
+        reasons.get("openrouter"),
     )
     api1_line = _provider_line(
-        "API 1", config.GOOGLE_AI_STUDIO_API_KEY_1, api1_status, state["api1_exhausted_until"]
+        "API 1",
+        config.GOOGLE_AI_STUDIO_API_KEY_1,
+        api1_status,
+        state["api1_exhausted_until"],
+        reasons.get("api1"),
     )
     api2_line = _provider_line(
-        "API 2", config.GOOGLE_AI_STUDIO_API_KEY_2, api2_status, state["api2_exhausted_until"]
+        "API 2",
+        config.GOOGLE_AI_STUDIO_API_KEY_2,
+        api2_status,
+        state["api2_exhausted_until"],
+        reasons.get("api2"),
     )
 
     preferred = await router9_client.get_preferred_model_name()
@@ -228,12 +273,14 @@ async def _build_status_text() -> str:
         f"OpenRouter: {html.escape(config.OPENROUTER_MODEL)}, API: {html.escape(config.GOOGLE_AI_STUDIO_MODEL)})"
     )
     order_line = "🔢 PROVIDER_ORDER: " + " → ".join(config.PROVIDER_ORDER)
+    search_line = html.escape(await search_status.search_mode_line())
 
     lines = [
         "📡 <b>Trạng thái bot</b>",
         "",
         active_line,
         order_line,
+        search_line,
         "",
         router9_line,
         groq_line,
@@ -243,6 +290,9 @@ async def _build_status_text() -> str:
         "",
         model_line,
     ]
+    latency = await provider_health.latency_lines(use_html=True)
+    if latency:
+        lines += ["", *latency]
     return "\n".join(lines)
 
 
@@ -268,3 +318,11 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"{text}\n\n<i>⏱️ Kiểm tra lúc {_fmt_epoch_vn(checked_at)}</i>",
         parse_mode="HTML",
     )
+
+
+@common.restricted
+async def loi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/loi - lỗi gom theo loại hôm nay/hôm qua + số lần khởi động lại 7 ngày.
+    Gửi plain text: đường dẫn code có dấu "_" sẽ bị Markdown hiểu nhầm."""
+    text = await error_digest.build_report()
+    await update.message.reply_text(text[: common.TELEGRAM_TEXT_MAX])

@@ -11,7 +11,9 @@ from services import rag_service
 def rag_dir(tmp_path, monkeypatch):
     """Trỏ RAG_DIR sang tmp_path để không đụng kho thật trong repo."""
     monkeypatch.setattr(rag_service, "RAG_DIR", tmp_path)
-    return tmp_path
+    rag_service.clear_index_cache()
+    yield tmp_path
+    rag_service.clear_index_cache()
 
 
 def _write(rag_dir: Path, name: str, text: str) -> None:
@@ -31,18 +33,22 @@ def test_tokenize_drops_stopwords_and_short_tokens():
     tokens = rag_service.tokenize("Chiến lược DCA vào cổ phiếu FPT")
     assert "dca" in tokens and "fpt" in tokens and "chien" in tokens
     assert "vao" not in tokens  # stopword
-    assert "a" not in tokens    # quá ngắn
+    assert "a" not in tokens  # quá ngắn
 
 
 def test_split_chunks_by_heading(rag_dir):
-    _write(rag_dir, "dautu.md", """# Đầu tư
+    _write(
+        rag_dir,
+        "dautu.md",
+        """# Đầu tư
 
 ## Chiến lược DCA
 Vào tiền 30% khi VNINDEX dưới MA200.
 
 ## Quản trị rủi ro
 Không all-in, tối đa 10% vốn cho một mã.
-""")
+""",
+    )
     chunks = rag_service._load_chunks()
     headings = {c.heading for c in chunks}
     assert headings == {"Đầu tư > Chiến lược DCA", "Đầu tư > Quản trị rủi ro"}
@@ -81,14 +87,18 @@ def test_split_chunks_raw_file_without_headings(rag_dir):
 
 
 def test_search_matches_without_diacritics(rag_dir):
-    _write(rag_dir, "dautu.md", """# Đầu tư
+    _write(
+        rag_dir,
+        "dautu.md",
+        """# Đầu tư
 
 ## Chiến lược DCA
 Vào tiền 30% khi VNINDEX dưới MA200.
 
 ## Nguyên tắc cắt lỗ
 Cắt lỗ khi giá giảm 7% so với giá vào.
-""")
+""",
+    )
     # Hỏi không dấu vẫn khớp heading có dấu.
     matches = rag_service.search("chiến lược dca vào tiền")
     assert matches, "Phải tìm thấy chunk Chiến lược DCA"
@@ -142,6 +152,7 @@ async def test_ask_falls_back_to_citations_when_llm_fails(rag_dir, monkeypatch):
         raise RuntimeError("provider sập")
 
     import ai.orchestrator as orchestrator
+
     monkeypatch.setattr(orchestrator, "chat", fail_chat)
 
     reply = await rag_service.ask(1, "dca")
@@ -160,8 +171,124 @@ async def test_ask_no_match_does_not_call_llm(rag_dir, monkeypatch):
         raise RuntimeError("không được gọi tới")
 
     import ai.orchestrator as orchestrator
+
     monkeypatch.setattr(orchestrator, "chat", fail_chat)
 
     reply = await rag_service.ask(1, "mon an sang nay")
     assert "không tìm thấy" in reply
     assert not called
+
+
+@pytest.mark.asyncio
+async def test_ask_luu_cau_hoi_goc_va_cau_tra_loi_vao_lich_su(rag_dir, monkeypatch):
+    _write(rag_dir, "dautu.md", "# Đầu tư\n\n## DCA\nVào tiền đều đặn hàng tháng.\n")
+    saved = []
+
+    async def fake_chat(*args, **kwargs):
+        return type("R", (), {"text": "DCA là vào tiền đều."})()
+
+    async def fake_record(user_id, user_text, reply, kind="chat", **kwargs):
+        saved.append((user_id, user_text, reply, kind))
+        return True
+
+    import ai.orchestrator as orchestrator
+    from services import conversation_log
+
+    monkeypatch.setattr(orchestrator, "chat", fake_chat)
+    monkeypatch.setattr(conversation_log, "record_exchange", fake_record)
+    assert await rag_service.ask(1, "dca là gì") == "DCA là vào tiền đều."
+    # Câu hỏi GỐC, không phải khung build_prompt.
+    assert saved == [(1, "/rag dca là gì", "DCA là vào tiền đều.", "rag")]
+
+
+# ─── BM25 + cặp âm tiết + stopword mở rộng ──────────────────────────────────
+
+_AGENT_DOC = """# AI Agent
+
+## Mở đầu
+Bạn đặt câu hỏi và nó trả lời. Bạn có thể giúp mình không? Có cách nào để bạn đặt
+lịch không? Bạn đặt vé, bạn đặt câu hỏi, bạn có cách làm của bạn.
+
+## Vòng lặp ReAct
+Vòng lặp ReAct gồm suy nghĩ, hành động, quan sát; vòng lặp lặp lại tới khi xong.
+
+## Guardrails
+Guardrails và an ninh cho agent: chặn công cụ nguy hiểm.
+"""
+
+
+def test_cau_khong_lien_quan_khong_con_khop_toi_da(rag_dir):
+    """Trước đây "có cách nào giúp mình bán đất không" đạt điểm tối đa 1,0 trên
+    các chunk về AI agent chỉ vì "có/không/bán/mình" xuất hiện khắp nơi."""
+    _write(rag_dir, "c1.md", _AGENT_DOC)
+    assert rag_service.search("có cách nào giúp mình bán đất không") == []
+    assert rag_service.auto_lookup("có cách nào giúp mình bán đất không") is None
+    # Câu đúng chủ đề vẫn ra đúng chunk đầu tiên, cả /rag lẫn tra tự động.
+    (top, *_) = rag_service.search("vòng lặp ReAct là gì")
+    assert top.chunk.heading == "AI Agent > Vòng lặp ReAct"
+    assert rag_service.auto_lookup("vòng lặp ReAct").chunk is top.chunk
+
+
+def test_token_chi_muc_co_cap_am_tiet_va_dang_con_dau():
+    terms = rag_service.index_terms("Đất nền Long An")
+    assert {"dat", "nen", "dat_nen", "~đất_nền"} <= set(terms)
+    query = rag_service.index_terms("bán đất", query=True)
+    assert query == ["~bán", "~đất", "~bán_đất"]  # gõ có dấu: so dạng còn dấu
+    assert rag_service.index_terms("ban dat", query=True) == ["ban", "dat", "ban_dat"]
+    # Stopword mở rộng: lời xưng hô/hư từ không còn là token nội dung.
+    assert rag_service.index_terms("anh ơi em có không gì giúp mình", query=True) == []
+
+
+def test_tokenize_cho_ragxuly_van_chi_am_tiet_don():
+    assert rag_service.tokenize("đất nền") == {"dat", "nen"}
+
+
+def test_chi_muc_cache_doc_lai_khi_file_doi(rag_dir, monkeypatch):
+    _write(rag_dir, "a.md", "# A\n\n## DCA\nVào tiền đều đặn.\n")
+    loads = []
+    real_load = rag_service._load_chunks
+
+    def counting_load():
+        loads.append(1)
+        return real_load()
+
+    monkeypatch.setattr(rag_service, "_load_chunks", counting_load)
+    rag_service.search("dca")
+    rag_service.search("dca vào tiền")
+    assert len(loads) == 1  # không đọc lại đĩa mỗi câu hỏi
+    _write(rag_dir, "a.md", "# A\n\n## DCA\nVào tiền đều đặn hàng tháng, kỷ luật.\n")
+    rag_service.search("dca")
+    assert len(loads) == 2
+
+
+@pytest.mark.asyncio
+async def test_rag_cua_admin_zalo_dung_persona_va_cach_xung_ho_rieng(rag_dir, monkeypatch):
+    """/rag trên Zalo (chỉ admin) trả lời bằng biến thể persona admin + cách gọi
+    chủ bot đặt, như lượt chat thường - không rơi về persona thành viên + "anh"."""
+    from services import channel_command_service, conversation_log, reply_audience
+
+    _write(rag_dir, "dautu.md", "# Đầu tư\n\n## DCA\nVào tiền đều đặn hàng tháng.\n")
+    seen = {}
+
+    async def fake_chat(user_id, prompt, **kwargs):
+        seen.update(kwargs)
+        return type("R", (), {"text": "DCA là vào tiền đều."})()
+
+    async def fake_record(*args, **kwargs):
+        return True
+
+    import ai.orchestrator as orchestrator
+
+    monkeypatch.setattr(orchestrator, "chat", fake_chat)
+    monkeypatch.setattr(conversation_log, "record_exchange", fake_record)
+    with reply_audience.use(reply_audience.ReplyAudience(address_form="chị")):
+        result = await channel_command_service.maybe_handle_command(
+            -7, "/rag dca", is_admin=True, channel="zalo"
+        )
+    assert result is not None and result[0] == ["DCA là vào tiền đều."]
+    assert seen["channel"] == "zalo" and seen["is_admin"] is True
+    assert seen["address_form"] == "chị" and seen["search_mode"] == "off"
+    # Telegram (chủ bot) giữ mặc định.
+    seen.clear()
+    await rag_service.ask(1, "dca")
+    assert seen.get("channel", "telegram") == "telegram" and not seen.get("is_admin")

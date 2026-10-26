@@ -7,6 +7,12 @@ services:
     region: singapore
     plan: free
     numInstances: 1
+    # Chỉ deploy khi MỌI check CI của commit xanh (ci.yml). Quét CVE nằm riêng ở
+    # audit.yml để advisory mới không chặn deploy. Deploy tay trên dashboard vẫn
+    # dùng được khi cần vượt qua; commit có [skip render] vẫn được bỏ qua.
+    autoDeployTrigger: checksPass
+    # Health check giữ GET / (nhẹ, không chạm DB); /healthz (có kiểm tra DB) để
+    # UptimeRobot cảnh báo, không để Render restart vì Supabase chập chờn.
     healthCheckPath: /
     envVars:
       - key: TELEGRAM_TOKEN
@@ -39,6 +45,19 @@ services:
         value: gemini-3.5-flash-lite
       - key: MAX_CONCURRENT_TURNS
         value: "2"
+      # 1 chỗ trong MAX_CONCURRENT_TURNS dành riêng cho chủ bot (Telegram/Zoom/web);
+      # mọi lượt Zalo dùng chỗ còn lại. 0 = tắt.
+      - key: OWNER_RESERVED_SLOTS
+        value: "1"
+      # Gateway Zalo xử lý song song = số chỗ của thành viên (MAX - OWNER_RESERVED_SLOTS)
+      # để tin chờ ở gateway, không chờ trong Python quá BRIDGE_TIMEOUT_MS.
+      - key: ZALO_DIRECT_CONCURRENCY
+        value: "1"
+      # Giới hạn mỗi ngày của thành viên Zalo (0 = không giới hạn; sửa được trên /admin).
+      - key: ZALO_MEMBER_DAILY_TURNS
+        value: "40"
+      - key: ZALO_MEMBER_DAILY_HEAVY
+        value: "5"
       - key: ZALO_ENABLED
         value: "true"
       - key: ZALO_COOKIE_JSON
@@ -63,6 +82,24 @@ services:
         value: "30"
       - key: ZALO_DAILY_SUMMARY_HOUR
         value: "9"
+      - key: ZALO_WELCOME_ON_PAIR
+        value: "1"
+      # Gateway: gộp tin chữ liên tiếp (ms), nghỉ giữa các tin gửi (ms), ngân sách
+      # outbox/giờ (vượt thì hoãn), typing/đã xem/reaction.
+      - key: ZALO_DIRECT_DEBOUNCE_MS
+        value: "2000"
+      - key: ZALO_DIRECT_DEBOUNCE_MAX_MS
+        value: "6000"
+      - key: ZALO_DIRECT_DEBOUNCE_MAX_MESSAGES
+        value: "4"
+      - key: ZALO_SEND_GAP_MIN_MS
+        value: "600"
+      - key: ZALO_SEND_GAP_MAX_MS
+        value: "1500"
+      - key: ZALO_OUTBOX_MAX_PER_HOUR
+        value: "60"
+      - key: ZALO_PRESENCE_EVENTS
+        value: "1"
       - key: TELEGRAM_CONNECT_TIMEOUT
         value: "30"
       - key: TELEGRAM_READ_TIMEOUT
@@ -73,21 +110,163 @@ services:
         value: "30"
       - key: TELEGRAM_MEDIA_RETRIES
         value: "3"
+      - key: TELEGRAM_STATUS_DELAY_SEC
+        value: "7"
+      - key: TELEGRAM_BUSY_REACTIONS
+        value: "true"
+      - key: TELEGRAM_ANSWER_BUTTONS
+        value: "true"
+      - key: TELEGRAM_STREAM_DRAFTS
+        value: "false"
+      - key: TELEGRAM_RICH_MESSAGES
+        value: "false"
       # Fine-grained GitHub token: chỉ cấp repo này + Contents: write.
       # /ragxuly dùng token này để commit rag/*.md với [skip render].
       - key: GITHUB_RAG_TOKEN
         sync: false
+      # Số LƯỢT hỏi-đáp (mỗi lượt 2 dòng lịch sử) đưa vào prompt.
       - key: CHAT_HISTORY_TURNS
-        value: "8"
+        value: "10"
       - key: CHAT_SESSION_TIMEOUT_SEC
         value: "21600"
+      # Trí nhớ: trích theo lô (>= 3 lượt chưa xử lý hoặc rảnh 30 phút), gộp fact khi gần đầy.
+      - key: MEMORY_FLUSH_EXCHANGES
+        value: "3"
+      - key: MEMORY_IDLE_FLUSH_SEC
+        value: "1800"
+      - key: MEMORY_CONSOLIDATION
+        value: "1"
+      # Vòng quét nền trích nhớ khi rảnh (cả lúc khởi động); 0 = tắt vòng quét.
+      - key: MEMORY_SWEEP_ENABLED
+        value: "1"
+      - key: MEMORY_SWEEP_SEC
+        value: "600"
+      - key: GROQ_HISTORY_MAX_CHARS
+        value: "3500"
+      # Đọc link trong chat (chủ bot/admin; thành viên khi =1) và tra tự động kho rag/.
+      - key: CHAT_READ_LINKS
+        value: "1"
+      - key: CHAT_READ_LINKS_MEMBERS
+        value: "0"
+      - key: CHAT_AUTO_RAG
+        value: "1"
+      # Hỏi thăm chủ động theo trí nhớ (chủ bot Telegram mặc định; Zalo tự /hoithan on).
+      - key: PROACTIVE_FOLLOWUPS
+        value: "1"
+      - key: PROACTIVE_ACTIVE_HOURS
+        value: "08:00-21:30"
+      - key: PROACTIVE_DAILY_CAP
+        value: "2"
+      - key: PROACTIVE_FOLLOWUP_HOUR
+        value: "18"
+      - key: PROACTIVE_IDLE_MIN
+        value: "20"
+      - key: PROACTIVE_TICK_SEC
+        value: "1800"
+      # Bản tin sáng cá nhân (/bantin): chỉ gửi cho người tự bật trên kênh của mình.
+      - key: MORNING_BRIEF_ENABLED
+        value: "true"
+      - key: MORNING_BRIEF_DEFAULT_HOUR
+        value: "7"
+      - key: MORNING_BRIEF_MAX_MEMBERS
+        value: "20"
+      - key: MORNING_BRIEF_ABSORB_NEWS
+        value: "true"
+      - key: MORNING_BRIEF_AI_INTRO
+        value: "false"
+      - key: MORNING_BRIEF_EXPENSES
+        value: "true"
+      # Chi tiêu: "cafe 45k" ghi bằng code (false = chỉ khi nói rõ hoặc /chitieu).
+      - key: EXPENSE_CHAT_CAPTURE
+        value: "true"
+      # Lịch sử chat mỗi người (tool search_history "hôm trước em nói gì...").
+      - key: CHAT_MESSAGES_RETENTION_LIMIT
+        value: "1000"
+      # Tin thoại (Groq Whisper -> Gemini), lượt chỉ đọc; ảnh kèm câu hỏi -> trả lời về
+      # ảnh (không caption vẫn viết prompt); file PDF/TXT/DOCX -> tóm tắt/hỏi đáp.
+      - key: VOICE_STT_ENABLED
+        value: "1"
+      - key: GROQ_STT_MODEL
+        value: "whisper-large-v3-turbo"
+      - key: VOICE_STT_LANGUAGE
+        value: "vi"
+      - key: VOICE_MAX_BYTES
+        value: "5242880"
+      - key: VOICE_MAX_SECONDS
+        value: "180"
+      - key: VISION_QA_ENABLED
+        value: "1"
+      - key: PHOTO_NO_CAPTION_MODE
+        value: "prompt"
+      - key: DOCUMENT_QA_ENABLED
+        value: "1"
+      - key: DOCUMENT_MAX_BYTES
+        value: "5242880"
+      - key: DOCUMENT_MAX_CHARS
+        value: "40000"
+      # Chỉ engine miễn phí; mistral-ocr/native (tính tiền) bị coi như tắt.
+      - key: OPENROUTER_PDF_ENGINE
+        value: "cloudflare-ai"
       # Heavy research jobs must never share the free web-service process.
       - key: STOCK_BACKTEST_ALLOW_ON_RENDER
         value: "false"
+      # Danh mục cổ phiếu: digest bỏ qua ngày không có phiên.
+      - key: DIGEST_ON_NON_TRADING_DAYS
+        value: "false"
+      # Sổ giao dịch: phí CTCK mỗi chiều, thuế TNCN khi bán.
+      - key: STOCK_FEE_RATE
+        value: "0.0015"
+      - key: STOCK_SELL_TAX_RATE
+        value: "0.001"
+      # Job danh mục hằng ngày + trần tin chủ động qua Zalo.
+      - key: PORTFOLIO_EVENTS_ENABLED
+        value: "1"
+      - key: PORTFOLIO_EVENTS_HOUR_VN
+        value: "8"
+      - key: PORTFOLIO_EVENTS_MAX_HOLDINGS
+        value: "60"
+      - key: PORTFOLIO_EVENT_NOTICES
+        value: "1"
+      - key: PORTFOLIO_EVENTS_MAX_SYMBOLS
+        value: "40"
+      - key: PORTFOLIO_PUSH_ZALO_DAILY_CAP
+        value: "5"
+      # Cảnh báo giá trong phiên (chỉ giờ giao dịch, tick hôm nay).
+      - key: PRICE_ALERTS_ENABLED
+        value: "1"
+      - key: PRICE_ALERTS_HOLDINGS_INTRADAY
+        value: "1"
+      - key: PRICE_ALERT_POLL_SEC
+        value: "300"
+      - key: PRICE_ALERT_MAX_SYMBOLS
+        value: "40"
+      - key: PRICE_ALERT_MAX_PER_USER
+        value: "10"
+      - key: WATCHLIST_MAX_SYMBOLS
+        value: "20"
       - key: ROUTER9_PROBE_INTERVAL_SEC
         value: "900"
       - key: API_QUOTA_COOLDOWN_SEC
         value: "3600"
+      # Provider tự tra web khi Tavily tắt/lỗi/mỏng. OpenRouter tốn credit,
+      # 9Router chưa xác minh được - cả 2 tắt mặc định.
+      - key: GROQ_REALTIME_MODEL
+        value: "openai/gpt-oss-120b"
+      - key: GROQ_WEB_SEARCH
+        value: "1"
+      - key: OPENROUTER_WEB_SEARCH
+        value: "0"
+      - key: ROUTER9_WEB_SEARCH
+        value: "0"
+      - key: REPLY_URL_FILTER
+        value: "untrusted"
+      - key: DB_CONNECT_TIMEOUT_SEC
+        value: "8"
+      - key: DB_BREAKER_OPEN_SEC
+        value: "30"
+      # Header HSTS cho web/admin (0 khi dùng tên miền riêng chưa có HTTPS).
+      - key: SECURITY_HSTS
+        value: "1"
       - key: ROUTER9_CALL_TIMEOUT_SEC
         value: "120"
       - key: ROUTER9_STEP_DELAY_SEC
@@ -191,3 +370,64 @@ services:
         value: "10"
       - key: MARKET_MAX_ATTEMPTS
         value: "4"
+      # Zoom làm kênh phụ cho cảnh báo chủ bot (critical|fallback|all|off).
+      - key: ALERT_ZOOM_MIRROR
+        value: critical
+      # Watchdog luật cố định: RAM working set, dung lượng DB, inbox ứ đọng, job quá hạn,
+      # nhịp tim/khởi động lại (services/watchdog.py). 0 = tắt.
+      - key: WATCHDOG_ENABLED
+        value: "1"
+      - key: WATCHDOG_MEMORY_PCT
+        value: "85"
+      - key: WATCHDOG_INBOX_STALE_MIN
+        value: "10"
+      - key: WATCHDOG_RESTART_GAP_MIN
+        value: "20"
+      - key: WATCHDOG_RESTART_BURST
+        value: "3"
+      # Gom lỗi theo loại + vị trí code, báo lỗi mới (tối đa N/giờ), tổng hợp hôm qua
+      # lúc ERROR_DIGEST_HOUR_VN giờ VN (-1 = tắt); lệnh /loi.
+      - key: ERROR_DIGEST_ENABLED
+        value: "1"
+      - key: ERROR_ALERT_IMMEDIATE
+        value: "1"
+      - key: ERROR_ALERT_MAX_PER_HOUR
+        value: "4"
+      - key: ERROR_DIGEST_HOUR_VN
+        value: "7"
+      # Báo khi bản sao lưu DB (GitHub Actions backup.yml) mới nhất quá N ngày; 0 = tắt.
+      - key: BACKUP_STALE_DAYS
+        value: "3"
+      # Có SETTINGS_ENC_KEY_OLD: tự mã hoá lại giá trị settings còn ở khoá cũ lúc khởi
+      # động rồi báo số còn lại (0 = chỉ báo, bấm nút trên /admin).
+      - key: SETTINGS_AUTO_ROTATE
+        value: "1"
+      # Quota miễn phí từng provider (services/quota_burn.py): cảnh báo khi dùng >= N%
+      # hạn mức trong cửa sổ quota (0 = tắt). Hạn mức 0 = chưa đặt (chỉ hiển thị trên
+      # /admin). Gemini tính theo PROJECT và reset 0h giờ Thái Bình Dương; 2 key cùng
+      # project thì GEMINI_KEYS_SAME_PROJECT=1. Groq đọc số còn lại từ header response.
+      - key: QUOTA_BURN_ALERT_PCT
+        value: "80"
+      - key: GEMINI_KEYS_SAME_PROJECT
+        value: "0"
+      - key: FREE_TIER_RPD_GEMINI
+        value: "0"
+      - key: FREE_TIER_RPD_GROQ
+        value: "0"
+      - key: FREE_TIER_RPD_OPENROUTER
+        value: "50"
+      - key: FREE_TIER_TAVILY_MONTHLY
+        value: "1000"
+      # Groq stream kèm token (stream_options.include_usage) cho thống kê; 0 = tắt.
+      - key: GROQ_STREAM_USAGE
+        value: "1"
+      # Số đo từng lượt trả lời (bảng turn_metrics, /admin → Thống kê AI) giữ N ngày.
+      - key: RETENTION_TURN_METRICS_DAYS
+        value: "14"
+      # Dọn ghi chú phiên, sự kiện hỏi thăm và đánh giá 👍/👎 cũ hằng ngày (0 = tắt).
+      - key: RETENTION_SESSION_NOTES_DAYS
+        value: "365"
+      - key: RETENTION_USER_EVENTS_DAYS
+        value: "90"
+      - key: RETENTION_ANSWER_FEEDBACK_DAYS
+        value: "180"

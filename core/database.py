@@ -4,6 +4,7 @@ import asyncio
 import contextvars
 import functools
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -17,6 +18,77 @@ _pool: Optional[asyncpg.pool.Pool] = None
 _pool_lock = asyncio.Lock()
 
 _CONNECTION_ERRORS = (asyncpg.PostgresConnectionError, asyncpg.InterfaceError, OSError)
+
+
+class DatabaseUnavailableError(ConnectionError):
+    """DB đang được coi là sập (circuit breaker mở): lệnh DB báo lỗi NGAY thay vì
+    treo tới timeout - caller degrade trong vài ms (đọc trí nhớ/lịch sử trả
+    rỗng, webhook trả 503 để Telegram tự gửi lại)."""
+
+
+# ─── Circuit breaker ─────────────────────────────────────────────────────────
+# CHỈ mở khi lần thử lại sau reconnect CŨNG mất kết nối, hoặc mở kết nối mới
+# quá DB_CONNECT_TIMEOUT_SEC. Một connection bị Supavisor cắt lúc rảnh (chuyện
+# thường ngày, max_inactive_connection_lifetime=60) chỉ là 1 lỗi đơn lẻ được
+# _with_reconnect tự chữa, KHÔNG làm mở breaker. Hết DB_BREAKER_OPEN_SEC thì
+# cho đúng 1 lệnh thăm dò đi qua: thành công -> đóng, lỗi kết nối -> mở tiếp.
+_breaker_open_until = 0.0
+_breaker_probe_inflight = False
+_in_db_call: contextvars.ContextVar[bool] = contextvars.ContextVar("db_in_call", default=False)
+
+
+def reset_circuit_breaker() -> None:
+    global _breaker_open_until, _breaker_probe_inflight
+    _breaker_open_until = 0.0
+    _breaker_probe_inflight = False
+
+
+def circuit_open() -> bool:
+    return _breaker_open_until > 0 and time.monotonic() < _breaker_open_until
+
+
+def _breaker_enter() -> bool:
+    """Gọi trước mỗi lệnh DB. Trả True nếu lệnh này là lệnh thăm dò."""
+    global _breaker_probe_inflight
+    if _breaker_open_until <= 0:
+        return False
+    if time.monotonic() < _breaker_open_until or _breaker_probe_inflight:
+        raise DatabaseUnavailableError("DB tạm thời không kết nối được (circuit breaker mở)")
+    _breaker_probe_inflight = True
+    return True
+
+
+def _release_probe() -> None:
+    global _breaker_probe_inflight
+    _breaker_probe_inflight = False
+
+
+def _breaker_trip(exc: BaseException) -> None:
+    global _breaker_open_until, _breaker_probe_inflight
+    open_sec = config.DB_BREAKER_OPEN_SEC
+    _breaker_probe_inflight = False
+    if open_sec <= 0:
+        return
+    if not circuit_open():
+        logger.warning(
+            "DB mất kết nối cả sau khi reconnect (%s: %s) - fail nhanh trong %ss.",
+            type(exc).__name__,
+            exc,
+            open_sec,
+        )
+    _breaker_open_until = time.monotonic() + open_sec
+
+
+def _breaker_ok() -> None:
+    global _breaker_open_until, _breaker_probe_inflight
+    if _breaker_open_until > 0:
+        logger.info("DB kết nối lại được, đóng circuit breaker.")
+    _breaker_open_until = 0.0
+    _breaker_probe_inflight = False
+
+
+def _is_command_timeout(exc: BaseException) -> bool:
+    return isinstance(exc, TimeoutError) and not isinstance(exc, DatabaseUnavailableError)
 
 
 async def _reset_pool(failed_pool: Optional[asyncpg.pool.Pool]) -> None:
@@ -68,21 +140,52 @@ def _with_reconnect(func=None, *, idempotent: bool = True):
     def decorate(fn):
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
+            # Lệnh lồng trong 1 lệnh DB khác (vd enqueue -> ensure_migrations) đi
+            # theo quyết định breaker của lệnh ngoài, không tự kiểm lại (nếu
+            # không, lệnh thăm dò sẽ tự chặn chính lệnh con của nó).
+            nested = _in_db_call.get()
+            probe = False if nested else _breaker_enter()
+            nested_token = _in_db_call.set(True)
             token = _pool_in_use.set(None)
             try:
-                return await fn(*args, **kwargs)
+                try:
+                    result = await fn(*args, **kwargs)
+                except _CONNECTION_ERRORS as exc:
+                    # TimeoutError là lớp con của OSError (Python 3.11+): câu lệnh
+                    # chạy quá command_timeout KHÔNG phải mất kết nối - đóng cả pool
+                    # rồi chạy lại chỉ nhân đôi thời gian chờ.
+                    if isinstance(exc, DatabaseUnavailableError) or _is_command_timeout(exc):
+                        raise
+                    await _reset_pool(_pool_in_use.get())
+                    if not _safe_to_retry(exc, idempotent):
+                        raise
+                    try:
+                        result = await fn(*args, **kwargs)
+                    except _CONNECTION_ERRORS as retry_exc:
+                        if not _is_command_timeout(retry_exc):
+                            _breaker_trip(retry_exc)
+                        raise
             except _CONNECTION_ERRORS as exc:
-                # TimeoutError là lớp con của OSError (Python 3.11+): câu lệnh
-                # chạy quá command_timeout KHÔNG phải mất kết nối - đóng cả pool
-                # rồi chạy lại chỉ nhân đôi thời gian chờ.
-                if isinstance(exc, TimeoutError):
-                    raise
-                await _reset_pool(_pool_in_use.get())
-                if not _safe_to_retry(exc, idempotent):
-                    raise
-                return await fn(*args, **kwargs)
+                if probe and not _is_command_timeout(exc):
+                    _breaker_trip(exc)
+                elif probe:
+                    _breaker_ok()
+                raise
+            except Exception:
+                # Lỗi SQL/dữ liệu: DB vẫn trả lời được -> breaker đóng.
+                if probe:
+                    _breaker_ok()
+                raise
             finally:
                 _pool_in_use.reset(token)
+                _in_db_call.reset(nested_token)
+                if probe:
+                    # Lệnh thăm dò bị huỷ (CancelledError) giữa chừng: nhả cờ để
+                    # lệnh sau được thăm dò lại, không kẹt breaker mãi mãi.
+                    _release_probe()
+            if probe or (_breaker_open_until and not nested):
+                _breaker_ok()
+            return result
 
         return wrapper
 
@@ -134,20 +237,34 @@ async def _get_or_create_pool() -> asyncpg.pool.Pool:
         return _pool
     async with _pool_lock:
         if _pool is None:
-            _pool = await asyncpg.create_pool(
-                config.DATABASE_URL,
-                min_size=1,
-                max_size=5,
-                # Đóng connection rảnh sau 60s: Supavisor/Supabase hay cắt
-                # connection idle, giữ lại chỉ tạo lỗi "connection is closed" ở
-                # lượt kế tiếp (và tốn RAM vô ích).
-                max_inactive_connection_lifetime=60,
-                command_timeout=30,
-                ssl=_ssl_setting(),
-                # PgBouncer/Supavisor transaction mode không giữ prepared statement
-                statement_cache_size=0,
-            )
+            try:
+                _pool = await _create_pool()
+            except TimeoutError as exc:
+                # Mở kết nối quá DB_CONNECT_TIMEOUT_SEC: DB treo/mất mạng ->
+                # mở breaker ngay (không đợi thêm 1 lần timeout nữa).
+                _breaker_trip(exc)
+                raise DatabaseUnavailableError(
+                    f"Không mở được kết nối DB trong {config.DB_CONNECT_TIMEOUT_SEC}s"
+                ) from exc
     return _pool
+
+
+async def _create_pool() -> asyncpg.pool.Pool:
+    return await asyncpg.create_pool(
+        config.DATABASE_URL,
+        min_size=1,
+        max_size=5,
+        # Trần thời gian mở 1 kết nối (asyncpg mặc định 60s).
+        timeout=config.DB_CONNECT_TIMEOUT_SEC,
+        # Đóng connection rảnh sau 60s: Supavisor/Supabase hay cắt
+        # connection idle, giữ lại chỉ tạo lỗi "connection is closed" ở
+        # lượt kế tiếp (và tốn RAM vô ích).
+        max_inactive_connection_lifetime=60,
+        command_timeout=30,
+        ssl=_ssl_setting(),
+        # PgBouncer/Supavisor transaction mode không giữ prepared statement
+        statement_cache_size=0,
+    )
 
 
 @_with_reconnect
@@ -200,9 +317,10 @@ async def save_prompt(
             # usage_by_user()/`/thongke`, xem docstring bảng user_calls trong
             # init_db().
             await conn.execute(
-                "INSERT INTO user_calls (channel, telegram_user_id) VALUES ($1, $2)",
+                "INSERT INTO user_calls (channel, telegram_user_id, kind) VALUES ($1, $2, $3)",
                 channel,
                 telegram_user_id,
+                command_type,
             )
             # Chỉ giữ HISTORY_RETENTION_LIMIT prompt gần nhất của user này -
             # chạy ngay sau mỗi insert nên bảng không bao giờ phình quá giới
@@ -248,6 +366,49 @@ async def usage_by_user(since_hours: int = 24 * 7) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+# ─── Quota ngày thành viên Zalo (services/usage_quota.py, migrations/025) ───
+# SQL ở core/repositories/quota.py.
+
+
+@_with_reconnect
+async def user_calls_since(
+    channel: str, telegram_user_id: int, since: datetime, heavy_kinds: list[str]
+) -> tuple[int, int]:
+    """(số lượt, số lượt nặng) của 1 người từ ``since`` (bảng user_calls)."""
+    from core.repositories import quota
+
+    return await quota.count_since(await get_pool(), channel, telegram_user_id, since, heavy_kinds)
+
+
+@_with_reconnect
+async def user_calls_by_user_since(
+    channel: str, since: datetime, heavy_kinds: list[str], limit: int = 100
+) -> list[dict]:
+    from core.repositories import quota
+
+    return await quota.counts_by_user_since(await get_pool(), channel, since, heavy_kinds, limit)
+
+
+@_with_reconnect(idempotent=False)
+async def record_user_call(channel: str, telegram_user_id: int, kind: str) -> None:
+    from core.repositories import quota
+
+    await quota.insert(await get_pool(), channel, telegram_user_id, kind)
+
+
+# Không idempotent: UPDATE chọn lượt from_kind MỚI NHẤT, chạy lại sau khi đã commit
+# sẽ đổi luôn lượt trước đó (lượt nặng +2) - chỉ retry khi lệnh chưa gửi đi.
+@_with_reconnect(idempotent=False)
+async def relabel_last_user_call(
+    channel: str, telegram_user_id: int, from_kind: str, to_kind: str, since: datetime
+) -> bool:
+    from core.repositories import quota
+
+    return await quota.relabel_latest(
+        await get_pool(), channel, telegram_user_id, from_kind, to_kind, since
+    )
+
+
 @_with_reconnect(idempotent=False)
 async def record_provider_call(
     provider: str,
@@ -257,21 +418,29 @@ async def record_provider_call(
     latency_ms: Optional[int] = None,
     stage: Optional[str] = None,
     prompt_chars: Optional[int] = None,
+    turn_id: Optional[str] = None,
+    prompt_tokens: Optional[int] = None,
+    completion_tokens: Optional[int] = None,
 ) -> None:
     """Ghi 1 lượt gọi provider/model (bảng provider_calls). ``outcome``: ok |
-    error | timeout | rate_limited | contaminated. Lỗi DB ở đây KHÔNG được để
-    văng lên caller (chỉ là số liệu thống kê, không phải luồng chính) - caller
-    (orchestrator) tự bọc try/except khi gọi hàm này."""
+    error | timeout | rate_limited | contaminated. ``turn_id`` (mã lượt
+    core/trace.py) và token (provider tự báo) - migrations/025. Lỗi DB ở đây
+    KHÔNG được để văng lên caller (chỉ là số liệu thống kê, không phải luồng
+    chính) - caller (ai/call_log.py) tự bọc try/except khi gọi hàm này."""
     pool = await get_pool()
     await pool.execute(
-        """INSERT INTO provider_calls (provider, model, outcome, latency_ms, stage, prompt_chars)
-        VALUES ($1, $2, $3, $4, $5, $6)""",
+        """INSERT INTO provider_calls (provider, model, outcome, latency_ms, stage, prompt_chars,
+                                       turn_id, prompt_tokens, completion_tokens)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
         provider,
         model,
         outcome,
         latency_ms,
         stage,
         prompt_chars,
+        turn_id,
+        prompt_tokens,
+        completion_tokens,
     )
 
 
@@ -294,6 +463,55 @@ async def provider_outcomes(since_hours: int = 24 * 7) -> list[dict]:
         str(since_hours),
     )
     return [dict(row) for row in rows]
+
+
+# ─── Truy vết lượt trả lời (core/trace.py, migrations/025) ──────────────────
+# SQL ở core/repositories/observability.py.
+
+
+@_with_reconnect
+async def provider_latency_summary(since_hours: int = 24) -> list[dict]:
+    """Mỗi provider: số lượt, số lượt lỗi, p50/p95 độ trễ lượt thành công (/status)."""
+    from core.repositories import observability
+
+    return await observability.latency_by_provider(await get_pool(), since_hours)
+
+
+@_with_reconnect(idempotent=False)
+async def record_turn_metrics(**row) -> None:
+    """1 dòng turn_metrics khi 1 lượt kết thúc (core/trace.py ghi ở nền)."""
+    from core.repositories import observability
+
+    await observability.insert_turn_metrics(await get_pool(), **row)
+
+
+@_with_reconnect
+async def recent_turn_metrics(since_hours: int = 24, limit: int = 50) -> list[dict]:
+    from core.repositories import observability
+
+    return await observability.recent_turns(await get_pool(), since_hours, limit)
+
+
+@_with_reconnect
+async def turn_stage_summary(since_hours: int = 24) -> list[dict]:
+    from core.repositories import observability
+
+    return await observability.turn_stage_summary(await get_pool(), since_hours)
+
+
+@_with_reconnect
+async def provider_calls_for_turn(turn_id: str, limit: int = 50) -> list[dict]:
+    from core.repositories import observability
+
+    return await observability.provider_calls_for_turn(await get_pool(), turn_id, limit)
+
+
+@_with_reconnect
+async def provider_burn_since(providers: list[str], since: datetime) -> list[dict]:
+    """Lượt/token/credit đã dùng từ ``since`` (services/quota_burn.py)."""
+    from core.repositories import observability
+
+    return await observability.burn_since(await get_pool(), providers, since)
 
 
 @_with_reconnect
@@ -322,16 +540,80 @@ async def save_result(
     result_type: str,
     content_text: Optional[str] = None,
     file_path: Optional[str] = None,
+    *,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> None:
+    """``provider``/``model`` (migrations/021): ai trả lời lượt này - đánh giá 👍/👎
+    sau đó (services/answer_feedback.py) biết câu trả lời của provider nào."""
     pool = await get_pool()
     await pool.execute(
-        "INSERT INTO results (prompt_id, result_type, content_text, file_path) "
-        "VALUES ($1, $2, $3, $4)",
+        "INSERT INTO results (prompt_id, result_type, content_text, file_path, provider, model) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
         prompt_id,
         result_type,
         content_text,
         file_path,
+        provider,
+        model,
     )
+
+
+# ─── Đánh giá câu trả lời (services/answer_feedback.py, migrations/021) ─────
+# SQL ở core/repositories/feedback.py. Ghi đánh giá là UPSERT theo (người, prompt)
+# nên thử lại an toàn.
+
+
+@_with_reconnect
+async def answer_feedback_upsert(**kw) -> int:
+    from core.repositories import feedback
+
+    return await feedback.upsert(await get_pool(), **kw)
+
+
+@_with_reconnect
+async def answer_feedback_turn(
+    telegram_user_id: int, prompt_id: int, max_chars: int = 2000
+) -> dict | None:
+    from core.repositories import feedback
+
+    return await feedback.turn_snapshot(await get_pool(), telegram_user_id, prompt_id, max_chars)
+
+
+@_with_reconnect
+async def answer_feedback_last_chat(telegram_user_id: int, max_chars: int = 2000) -> dict | None:
+    from core.repositories import feedback
+
+    return await feedback.last_chat_snapshot(await get_pool(), telegram_user_id, max_chars)
+
+
+@_with_reconnect
+async def answer_feedback_stats(days: int) -> list[dict]:
+    from core.repositories import feedback
+
+    return await feedback.stats(await get_pool(), days)
+
+
+@_with_reconnect
+async def answer_feedback_recent_down(telegram_user_id: int, days: int, limit: int = 5) -> list:
+    from core.repositories import feedback
+
+    return await feedback.recent_down(await get_pool(), telegram_user_id, days, limit)
+
+
+@_with_reconnect
+async def answer_feedback_owner_down(telegram_user_id: int, days: int, limit: int = 50) -> list:
+    """👎 trên Telegram của chủ bot -> case đánh giá ứng viên (services/eval_export.py)."""
+    from core.repositories import feedback
+
+    return await feedback.owner_down_for_evals(await get_pool(), telegram_user_id, days, limit)
+
+
+@_with_reconnect
+async def answer_feedback_clear(telegram_user_id: int) -> None:
+    from core.repositories import feedback
+
+    await feedback.clear(await get_pool(), telegram_user_id)
 
 
 @_with_reconnect
@@ -358,9 +640,11 @@ async def get_history(telegram_user_id: int, limit: int = 10):
 
 
 # Giữ tối đa N tin nhắn gần nhất / user trong chat_messages, để bảng không
-# phình vô hạn (K lượt trượt tối đa cần dùng chỉ CHAT_HISTORY_TURNS*2 dòng,
-# nhưng giữ dư một chút phòng khi anh tăng CHAT_HISTORY_TURNS sau này).
-CHAT_MESSAGES_RETENTION_LIMIT = 200
+# phình vô hạn (prompt chỉ cần CHAT_HISTORY_TURNS*2 dòng - CHAT_HISTORY_TURNS là
+# số LƯỢT; phần dư là bộ đệm cho trích trí nhớ theo lô, services/memory_service,
+# và cho tool search_history tìm lại câu đã trao đổi). Mặc định 1000, env
+# CHAT_MESSAGES_RETENTION_LIMIT (kẹp 200-2000).
+CHAT_MESSAGES_RETENTION_LIMIT = config.CHAT_MESSAGES_RETENTION_LIMIT
 
 
 @_with_reconnect(idempotent=False)
@@ -388,6 +672,99 @@ async def add_chat_message(telegram_user_id: int, role: str, content: str) -> No
                 telegram_user_id,
                 CHAT_MESSAGES_RETENTION_LIMIT,
             )
+
+
+@_with_reconnect(idempotent=False)
+async def add_chat_turn(
+    telegram_user_id: int, user_text: str, model_text: str, *, kind: str = "chat"
+) -> list[int]:
+    """Lưu CẢ lượt (tin người dùng + câu trả lời) trong 1 transaction - không
+    bao giờ còn nửa lượt (chỉ có câu hỏi) khi DB lỗi giữa 2 lệnh INSERT.
+    ``kind``: loại lượt (services/conversation_log.py) - trích nhớ chỉ đọc lượt
+    chat/rag/agent, lượt "stock" giúp chặn câu chat sau mâu thuẫn policy. Trả
+    id 2 dòng vừa lưu (🔄/✂️ xoá đúng cặp này sau khi làm lại)."""
+    from core.repositories import chat_history
+
+    return await chat_history.add_turn(
+        await get_pool(),
+        telegram_user_id,
+        user_text,
+        model_text,
+        retention=CHAT_MESSAGES_RETENTION_LIMIT,
+        kind=kind,
+    )
+
+
+@_with_reconnect
+async def delete_chat_rows(telegram_user_id: int, ids: list[int] | tuple[int, ...]) -> int:
+    """Xoá các dòng lịch sử theo id (của chính người dùng) - nút 🔄 Thử lại/✂️
+    Ngắn hơn bỏ cặp cũ SAU khi lượt làm lại đã lưu cặp mới, không để 2 câu trả
+    lời trong lịch sử. Lặp lại an toàn: lần 2 không còn dòng nào để xoá."""
+    from core.repositories import chat_history
+
+    return await chat_history.delete_rows(await get_pool(), telegram_user_id, list(ids))
+
+
+@_with_reconnect
+async def get_chat_rows_after(
+    telegram_user_id: int, after_id: int, limit: int = 60, max_chars: int = 1500
+) -> list[dict]:
+    """Dòng lịch sử có id > after_id (cũ -> mới) - cửa sổ chưa trích nhớ."""
+    from core.repositories import memory
+
+    rows = await memory.chat_rows_after(
+        await get_pool(), telegram_user_id, after_id, limit, max_chars
+    )
+    return [dict(row) for row in rows]
+
+
+@_with_reconnect
+async def get_recent_chat_rows(
+    telegram_user_id: int, limit: int = 40, max_chars: int = 1500
+) -> list[dict]:
+    """``limit`` dòng gần nhất, mới -> cũ (kèm id, kind, created_at)."""
+    from core.repositories import memory
+
+    rows = await memory.recent_chat_rows(await get_pool(), telegram_user_id, limit, max_chars)
+    return [dict(row) for row in rows]
+
+
+@_with_reconnect
+async def search_chat_history(
+    telegram_user_id: int, terms: list[str], *, scan_limit: int = 300, max_chars: int = 600
+) -> list[dict]:
+    """Tìm trong lịch sử chat CỦA CHÍNH người này (tool search_history): dòng
+    chứa ít nhất 1 từ trong ``terms`` (đã bỏ dấu, chữ thường; từ không phải
+    a-z0-9 bị bỏ - không có ký tự đại diện LIKE), kèm câu cùng lượt; mới -> cũ."""
+    from core.repositories import chat_history
+
+    patterns = [f"%{term}%" for term in terms if term.isascii() and term.isalnum()]
+    if not patterns:
+        return []
+    rows = await chat_history.search(
+        await get_pool(),
+        telegram_user_id,
+        patterns,
+        scan_limit=scan_limit,
+        max_chars=max_chars,
+    )
+    return [dict(row) for row in rows]
+
+
+@_with_reconnect
+async def get_last_model_row(telegram_user_id: int, max_chars: int = 4000) -> dict | None:
+    """Câu trả lời gần nhất của bot (id, kind, content, created_at) hoặc None."""
+    from core.repositories import memory
+
+    row = await memory.last_model_row(await get_pool(), telegram_user_id, max_chars)
+    return dict(row) if row else None
+
+
+@_with_reconnect
+async def users_with_chat_since(since: datetime, limit: int = 50) -> list[int]:
+    from core.repositories import memory
+
+    return await memory.users_with_chat_after(await get_pool(), since, limit)
 
 
 @_with_reconnect
@@ -439,64 +816,124 @@ async def clear_chat(telegram_user_id: int) -> None:
     await pool.execute("DELETE FROM chat_messages WHERE telegram_user_id = $1", telegram_user_id)
 
 
-# ─── Trí nhớ dài hạn: user_facts + rolling summary (xem services/memory_service.py) ─────────
+# ─── Trí nhớ dài hạn: user_facts + highlights + ghi chú phiên ─────────────────
+# (xem services/memory_service.py; SQL ở core/repositories/memory.py). Từ
+# migrations/017: fact có ghim/độ quan trọng/nguồn, giá trị cũ được vô hiệu hoá
+# (invalid_at) thay vì xoá - mọi hàm đọc "fact" dưới đây chỉ trả dòng hiện hành.
+
+# Trần giá trị cũ giữ lại (cho câu hỏi "trước đây..."): theo từng key và tổng.
+SUPERSEDED_FACTS_PER_KEY = 3
+SUPERSEDED_FACTS_TOTAL = 60
 
 
 @_with_reconnect
 async def upsert_fact(telegram_user_id: int, key: str, value: str) -> None:
-    pool = await get_pool()
-    await pool.execute(
-        """
-        INSERT INTO user_facts (telegram_user_id, key, value, updated_at)
-        VALUES ($1, $2, $3, now())
-        ON CONFLICT (telegram_user_id, key)
-        DO UPDATE SET value = EXCLUDED.value, updated_at = now()
-        """,
+    """Tương thích cũ: ghi fact tự động (nguồn 'auto', không ghim)."""
+    await save_fact(telegram_user_id, key, value)
+
+
+@_with_reconnect
+async def save_fact(
+    telegram_user_id: int,
+    key: str,
+    value: str,
+    *,
+    importance: int = 2,
+    category: str = "",
+    source: str = "auto",
+    pinned: bool = False,
+    protect: bool = True,
+) -> str:
+    """Thêm/cập nhật fact (giá trị đổi -> bản cũ vô hiệu hoá, giữ làm lịch sử).
+    Trả "added" | "updated" | "unchanged" | "protected" (protect=True và fact
+    đang ghim/do người dùng tự nhập). Chạy lại sau lỗi kết nối an toàn: lần 2
+    thấy đúng giá trị đã ghi -> "unchanged"."""
+    from core.repositories import memory
+
+    return await memory.save_fact(
+        await get_pool(),
         telegram_user_id,
         key,
         value,
+        importance=importance,
+        category=category,
+        source=source,
+        pinned=pinned,
+        protect=protect,
     )
 
 
 @_with_reconnect
 async def get_facts(telegram_user_id: int) -> list[tuple[str, str]]:
-    """Trả về [(key, value), ...] mới cập nhật nhất trước."""
-    pool = await get_pool()
-    rows = await pool.fetch(
-        "SELECT key, value FROM user_facts WHERE telegram_user_id = $1 ORDER BY updated_at DESC",
-        telegram_user_id,
-    )
+    """[(key, value), ...] fact HIỆN HÀNH theo thứ tự ưu tiên (ghim > quan trọng >
+    mới cập nhật)."""
+    from core.repositories import memory
+
+    rows = await memory.current_facts(await get_pool(), telegram_user_id)
     return [(r["key"], r["value"]) for r in rows]
 
 
 @_with_reconnect
-async def delete_fact(telegram_user_id: int, key: str) -> None:
-    pool = await get_pool()
-    await pool.execute(
-        "DELETE FROM user_facts WHERE telegram_user_id = $1 AND key = $2",
-        telegram_user_id,
-        key,
+async def get_fact_rows(telegram_user_id: int) -> list[dict]:
+    """Fact hiện hành kèm id/ghim/độ quan trọng/nhóm/nguồn/mốc thời gian."""
+    from core.repositories import memory
+
+    return [dict(r) for r in await memory.current_facts(await get_pool(), telegram_user_id)]
+
+
+@_with_reconnect
+async def get_superseded_facts(telegram_user_id: int, limit: int = 20) -> list[dict]:
+    from core.repositories import memory
+
+    rows = await memory.superseded_facts(await get_pool(), telegram_user_id, limit)
+    return [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def invalidate_fact(
+    telegram_user_id: int, fact_id: int, *, protect: bool = True
+) -> str | None:
+    """Vô hiệu hoá 1 fact theo id (giữ lịch sử); trả key hoặc None."""
+    from core.repositories import memory
+
+    return await memory.invalidate_fact(
+        await get_pool(), telegram_user_id, fact_id, protect=protect
     )
 
 
 @_with_reconnect
-async def trim_facts(telegram_user_id: int, keep_n: int) -> None:
-    """Giữ lại tối đa `keep_n` fact mới cập nhật nhất / user, xoá phần dư -
-    chặn user_facts phình vô hạn nếu Gemini trích xuất quá tay qua thời gian."""
-    pool = await get_pool()
-    await pool.execute(
-        """
-        DELETE FROM user_facts
-        WHERE telegram_user_id = $1
-          AND id NOT IN (
-              SELECT id FROM user_facts
-              WHERE telegram_user_id = $1
-              ORDER BY updated_at DESC
-              LIMIT $2
-          )
-        """,
+async def delete_fact(telegram_user_id: int, key: str) -> None:
+    """XOÁ HẲN mọi phiên bản của 1 key (người dùng chủ động bảo quên)."""
+    from core.repositories import memory
+
+    await memory.forget_key(await get_pool(), telegram_user_id, key)
+
+
+@_with_reconnect
+async def set_fact_pinned(telegram_user_id: int, fact_id: int, pinned: bool) -> bool:
+    from core.repositories import memory
+
+    return await memory.set_pinned(await get_pool(), telegram_user_id, fact_id, pinned)
+
+
+@_with_reconnect
+async def trim_facts(
+    telegram_user_id: int,
+    keep_n: int,
+    *,
+    superseded_per_key: int = SUPERSEDED_FACTS_PER_KEY,
+    superseded_total: int = SUPERSEDED_FACTS_TOTAL,
+) -> None:
+    """Giữ tối đa ``keep_n`` fact hiện hành theo thứ tự ưu tiên (fact ghim không
+    bị cắt), kèm trần riêng cho giá trị cũ - chặn user_facts phình vô hạn."""
+    from core.repositories import memory
+
+    await memory.trim_facts(
+        await get_pool(),
         telegram_user_id,
-        keep_n,
+        keep_current=keep_n,
+        keep_superseded_per_key=superseded_per_key,
+        keep_superseded_total=superseded_total,
     )
 
 
@@ -548,6 +985,22 @@ async def get_highlights(telegram_user_id: int, limit: int) -> list[str]:
 
 
 @_with_reconnect
+async def get_highlight_rows(telegram_user_id: int, limit: int) -> list[dict]:
+    """(id, content, created_at) mới nhất trước - /memory đánh số, /quen xoá theo id."""
+    from core.repositories import memory
+
+    rows = await memory.highlight_rows(await get_pool(), telegram_user_id, limit)
+    return [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def delete_highlights(telegram_user_id: int, ids: list[int]) -> int:
+    from core.repositories import memory
+
+    return await memory.delete_highlights(await get_pool(), telegram_user_id, ids)
+
+
+@_with_reconnect
 async def clear_highlights(telegram_user_id: int) -> None:
     pool = await get_pool()
     await pool.execute(
@@ -580,6 +1033,78 @@ async def set_summary(telegram_user_id: int, summary: str) -> None:
     )
 
 
+# Ghi chú theo phiên: tối đa N phiên gần nhất / người (cắt khi ghi).
+SESSION_NOTES_RETENTION = 100
+
+
+@_with_reconnect
+async def upsert_session_note(
+    telegram_user_id: int,
+    session_key: int,
+    *,
+    title: str = "",
+    bullets: str = "",
+    summary: str = "",
+    started_at: datetime,
+) -> None:
+    from core.repositories import memory
+
+    await memory.upsert_session_note(
+        await get_pool(),
+        telegram_user_id,
+        session_key,
+        title=title,
+        bullets=bullets,
+        summary=summary,
+        started_at=started_at,
+        keep_n=SESSION_NOTES_RETENTION,
+    )
+
+
+@_with_reconnect
+async def get_session_notes(
+    telegram_user_id: int, limit: int = 10, *, exclude_session_key: int | None = None
+) -> list[dict]:
+    from core.repositories import memory
+
+    rows = await memory.session_notes(
+        await get_pool(), telegram_user_id, limit, exclude_session_key=exclude_session_key
+    )
+    return [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def get_session_note(telegram_user_id: int, session_key: int) -> dict | None:
+    from core.repositories import memory
+
+    row = await memory.session_note(await get_pool(), telegram_user_id, session_key)
+    return dict(row) if row else None
+
+
+@_with_reconnect
+async def rewrite_session_note(
+    telegram_user_id: int, session_key: int, *, title: str, bullets: str, summary: str
+) -> None:
+    """Ghi đè (kể cả rỗng) ghi chú 1 phiên; cả 3 trường rỗng thì xoá phiên đó."""
+    from core.repositories import memory
+
+    await memory.rewrite_session_note(
+        await get_pool(),
+        telegram_user_id,
+        session_key,
+        title=title,
+        bullets=bullets,
+        summary=summary,
+    )
+
+
+@_with_reconnect
+async def clear_session_notes(telegram_user_id: int) -> None:
+    from core.repositories import memory
+
+    await memory.clear_session_notes(await get_pool(), telegram_user_id)
+
+
 # ─── Function calling: notes + reminders (xem services/tools.py, scheduler.py) ──────
 
 
@@ -609,6 +1134,126 @@ async def get_notes(telegram_user_id: int, limit: int = 10) -> list[tuple[str, d
         limit,
     )
     return [(r["content"], r["created_at"]) for r in rows]
+
+
+@_with_reconnect
+async def get_recent_notes(
+    telegram_user_id: int, limit: int = 200, max_chars: int = 400
+) -> list[dict]:
+    """(id, content, created_at) mới nhất trước, có trần - tìm/xoá ghi chú."""
+    from core.repositories import memory
+
+    rows = await memory.recent_notes(await get_pool(), telegram_user_id, limit, max_chars)
+    return [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def delete_note(telegram_user_id: int, note_id: int) -> bool:
+    from core.repositories import memory
+
+    return await memory.delete_note(await get_pool(), telegram_user_id, note_id)
+
+
+@_with_reconnect
+async def clear_notes(telegram_user_id: int) -> int:
+    from core.repositories import memory
+
+    return await memory.clear_notes(await get_pool(), telegram_user_id)
+
+
+# ─── Sự kiện hỏi thăm chủ động (migrations/018, services/proactive_service.py) ──
+
+USER_EVENTS_PER_USER = 50
+
+
+@_with_reconnect
+async def add_user_event(telegram_user_id: int, title: str, when_text: str, event_date) -> bool:
+    """Thêm sự kiện (trùng người + ngày + tiêu đề thì bỏ qua - chạy lại an toàn)."""
+    from core.repositories import memory
+
+    return await memory.add_event(
+        await get_pool(),
+        telegram_user_id,
+        title,
+        when_text,
+        event_date,
+        keep_n=USER_EVENTS_PER_USER,
+    )
+
+
+@_with_reconnect
+async def expire_user_events(before) -> int:
+    from core.repositories import memory
+
+    return await memory.expire_events(await get_pool(), before)
+
+
+@_with_reconnect
+async def users_with_due_events(on_or_before, limit: int = 20) -> list[int]:
+    from core.repositories import memory
+
+    return await memory.users_with_due_events(await get_pool(), on_or_before, limit)
+
+
+@_with_reconnect(idempotent=False)
+async def claim_due_user_event(telegram_user_id: int, on_or_before) -> dict | None:
+    """Claim 1 sự kiện tới hạn (pending -> asked). Không retry sau khi mất kết nối
+    giữa chừng: lần 2 sẽ claim THÊM 1 sự kiện khác."""
+    from core.repositories import memory
+
+    row = await memory.claim_due_event(await get_pool(), telegram_user_id, on_or_before)
+    return dict(row) if row else None
+
+
+@_with_reconnect
+async def release_user_event(event_id: int) -> None:
+    from core.repositories import memory
+
+    await memory.release_event(await get_pool(), event_id)
+
+
+@_with_reconnect
+async def mark_user_event_asked(event_id: int) -> None:
+    from core.repositories import memory
+
+    await memory.mark_event_asked(await get_pool(), event_id)
+
+
+@_with_reconnect
+async def finish_user_events(telegram_user_id: int) -> int:
+    from core.repositories import memory
+
+    return await memory.finish_events(await get_pool(), telegram_user_id)
+
+
+@_with_reconnect
+async def finish_user_event_ids(telegram_user_id: int, ids: list[int]) -> int:
+    """Sự kiện còn chờ trong ``ids`` -> done (lặp lại an toàn)."""
+    from core.repositories import memory
+
+    return await memory.finish_event_ids(await get_pool(), telegram_user_id, ids)
+
+
+@_with_reconnect
+async def list_user_events(telegram_user_id: int, limit: int = 20) -> list[dict]:
+    from core.repositories import memory
+
+    return [dict(r) for r in await memory.list_events(await get_pool(), telegram_user_id, limit)]
+
+
+@_with_reconnect
+async def user_events_on(telegram_user_id: int, day, limit: int = 5) -> list[dict]:
+    from core.repositories import memory
+
+    rows = await memory.events_on(await get_pool(), telegram_user_id, day, limit)
+    return [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def clear_user_events(telegram_user_id: int) -> None:
+    from core.repositories import memory
+
+    await memory.clear_events(await get_pool(), telegram_user_id)
 
 
 @_with_reconnect(idempotent=False)
@@ -649,7 +1294,176 @@ async def add_reminder(
 @_with_reconnect
 async def mark_reminder_sent(reminder_id: int) -> None:
     pool = await get_pool()
-    await pool.execute("UPDATE reminders SET sent = true WHERE id = $1", reminder_id)
+    # fired_at: lúc nhắc thật - "hoãn 10p"/"xong" trong 30 phút tìm theo cột này.
+    await pool.execute(
+        "UPDATE reminders SET sent = true, fired_at = COALESCE(fired_at, now()) WHERE id = $1",
+        reminder_id,
+    )
+
+
+# ─── Nhắc việc v2: lặp lại, ngày nhớ, huỷ/hoãn (services/reminder_service.py) ──
+# SQL ở core/repositories/reminders.py. Tạo chuỗi INSERT nhiều dòng trong 1
+# transaction -> idempotent=False; chèn lần kế tiếp dùng ON CONFLICT nên thử lại an toàn.
+
+
+@_with_reconnect
+async def reminder_count_pending_once(telegram_user_id: int) -> int:
+    from core.repositories import reminders
+
+    return await reminders.count_pending_once(await get_pool(), telegram_user_id)
+
+
+@_with_reconnect
+async def reminder_count_series(telegram_user_id: int) -> int:
+    from core.repositories import reminders
+
+    return await reminders.count_series(await get_pool(), telegram_user_id)
+
+
+@_with_reconnect(idempotent=False)
+async def reminder_create_series(telegram_user_id: int, message: str, **kw) -> tuple[int, bool]:
+    from core.repositories import reminders
+
+    return await reminders.create_series(await get_pool(), telegram_user_id, message, **kw)
+
+
+@_with_reconnect
+async def reminder_get_series(series_id: int) -> dict | None:
+    from core.repositories import reminders
+
+    return await reminders.get_series(await get_pool(), series_id)
+
+
+@_with_reconnect
+async def reminder_add_occurrence(series: dict, due_at, message: str) -> bool:
+    from core.repositories import reminders
+
+    return await reminders.add_occurrence(await get_pool(), series, due_at, message)
+
+
+@_with_reconnect
+async def reminder_list_pending_once(telegram_user_id: int, limit: int = 20) -> list[dict]:
+    from core.repositories import reminders
+
+    return await reminders.list_pending_once(await get_pool(), telegram_user_id, limit)
+
+
+@_with_reconnect
+async def reminder_list_series(
+    telegram_user_id: int, kind: str = "reminder", limit: int = 50
+) -> list[dict]:
+    from core.repositories import reminders
+
+    return await reminders.list_series(await get_pool(), telegram_user_id, kind, limit)
+
+
+@_with_reconnect
+async def reminder_delete(telegram_user_id: int, reminder_id: int) -> bool:
+    from core.repositories import reminders
+
+    return await reminders.delete_reminder(await get_pool(), telegram_user_id, reminder_id)
+
+
+@_with_reconnect
+async def reminder_delete_series(telegram_user_id: int, series_id: int) -> bool:
+    from core.repositories import reminders
+
+    return await reminders.delete_series(await get_pool(), telegram_user_id, series_id)
+
+
+@_with_reconnect
+async def reminder_reschedule(telegram_user_id: int, reminder_id: int, due_at) -> bool:
+    from core.repositories import reminders
+
+    return await reminders.reschedule(await get_pool(), telegram_user_id, reminder_id, due_at)
+
+
+@_with_reconnect
+async def reminder_last_fired(telegram_user_id: int, within) -> dict | None:
+    from core.repositories import reminders
+
+    return await reminders.last_fired(await get_pool(), telegram_user_id, within)
+
+
+@_with_reconnect
+async def reminder_get(telegram_user_id: int, reminder_id: int) -> dict | None:
+    """1 nhắc việc của chính người đó (nút hoãn dưới tin nhắc Telegram)."""
+    from core.repositories import reminders
+
+    return await reminders.get_owned(await get_pool(), telegram_user_id, reminder_id)
+
+
+@_with_reconnect
+async def reminder_mark_done(reminder_id: int) -> None:
+    from core.repositories import reminders
+
+    await reminders.mark_done(await get_pool(), reminder_id)
+
+
+@_with_reconnect
+async def reminder_mark_fired(reminder_id: int) -> None:
+    from core.repositories import reminders
+
+    await reminders.mark_fired(await get_pool(), reminder_id)
+
+
+# ─── Chi tiêu cá nhân (services/expense_service.py) ─────────────────────────
+# SQL ở core/repositories/expenses.py; ngày truyền dạng text YYYY-MM-DD. Khoản chi
+# không có event_key (lệnh ngoài webhook) INSERT không idempotent -> không retry.
+
+
+@_with_reconnect(idempotent=False)
+async def expense_add(telegram_user_id: int, amount_vnd: int, **kw) -> tuple[int, bool]:
+    from core.repositories import expenses
+
+    return await expenses.insert(await get_pool(), telegram_user_id, amount_vnd, **kw)
+
+
+@_with_reconnect
+async def expense_count_since(telegram_user_id: int, within) -> int:
+    from core.repositories import expenses
+
+    return await expenses.count_since(await get_pool(), telegram_user_id, within)
+
+
+@_with_reconnect
+async def expense_delete(telegram_user_id: int, expense_id: int) -> dict | None:
+    from core.repositories import expenses
+
+    return await expenses.delete(await get_pool(), telegram_user_id, expense_id)
+
+
+@_with_reconnect
+async def expense_last(telegram_user_id: int, within) -> dict | None:
+    from core.repositories import expenses
+
+    return await expenses.last_created(await get_pool(), telegram_user_id, within)
+
+
+@_with_reconnect
+async def expense_totals(telegram_user_id: int, start: str, end: str) -> list[dict]:
+    from core.repositories import expenses
+
+    return await expenses.totals(await get_pool(), telegram_user_id, start, end)
+
+
+@_with_reconnect
+async def expense_recent(telegram_user_id: int, limit: int = 10) -> list[dict]:
+    from core.repositories import expenses
+
+    return await expenses.recent(await get_pool(), telegram_user_id, limit)
+
+
+@_with_reconnect
+async def list_reminders_between(
+    telegram_user_id: int, start: datetime, end: datetime, limit: int = 10
+) -> list[tuple[datetime, str]]:
+    """Nhắc việc chưa gửi đến hạn trong [start, end) - mục nhắc việc của bản tin sáng."""
+    from core.repositories import brief as brief_repository
+
+    return await brief_repository.list_reminders_between(
+        await get_pool(), telegram_user_id, start, end, limit
+    )
 
 
 @_with_reconnect
@@ -657,6 +1471,13 @@ async def get_setting(key: str) -> Optional[str]:
     pool = await get_pool()
     row = await pool.fetchrow("SELECT value FROM settings WHERE key = $1", key)
     return row["value"] if row else None
+
+
+@_with_reconnect
+async def list_settings_with_prefix(prefix: str, limit: int = 100) -> list[tuple[str, str]]:
+    from core.repositories import brief as brief_repository
+
+    return await brief_repository.list_settings_with_prefix(await get_pool(), prefix, limit)
 
 
 @_with_reconnect
@@ -670,6 +1491,238 @@ async def set_setting(key: str, value: str) -> None:
         key,
         value,
     )
+
+
+@_with_reconnect
+async def list_encrypted_settings(limit: int = 500) -> list[tuple[str, str]]:
+    """Các dòng settings đã mã hoá (xoay khoá - services/key_rotation.py)."""
+    from core.repositories import settings as settings_repository
+
+    return await settings_repository.list_encrypted(await get_pool(), limit)
+
+
+@_with_reconnect
+async def compare_and_set_setting(key: str, expected: str, value: str) -> bool:
+    from core.repositories import settings as settings_repository
+
+    return await settings_repository.compare_and_set(await get_pool(), key, expected, value)
+
+
+# ─── Danh mục cổ phiếu: vị thế, sổ giao dịch, theo dõi/cảnh báo giá ─────────
+# SQL ở core/repositories/portfolio.py. Hàm ghi vị thế INSERT dòng sổ giao dịch
+# trong cùng transaction -> idempotent=False (không retry khi lệnh có thể đã
+# commit). Ngày truyền dạng text YYYY-MM-DD.
+
+
+@_with_reconnect
+async def portfolio_list_holdings(user_id: int):
+    from core.repositories import portfolio
+
+    return await portfolio.list_holdings(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def portfolio_get_holding(user_id: int, symbol: str):
+    from core.repositories import portfolio
+
+    return await portfolio.get_holding(await get_pool(), user_id, symbol)
+
+
+@_with_reconnect
+async def portfolio_list_all_holdings(limit: int, *, after: tuple[int, str] | None = None):
+    from core.repositories import portfolio
+
+    return await portfolio.list_all_holdings(await get_pool(), limit, after=after)
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_replace_holding(
+    user_id: int, symbol: str, quantity: float, average_price: float, **kw
+):
+    from core.repositories import portfolio
+
+    return await portfolio.replace_holding(
+        await get_pool(), user_id, symbol, quantity, average_price, **kw
+    )
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_record_purchase(user_id: int, symbol: str, quantity: float, price: float, **kw):
+    from core.repositories import portfolio
+
+    return await portfolio.record_purchase(await get_pool(), user_id, symbol, quantity, price, **kw)
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_record_sale(
+    user_id: int, symbol: str, quantity: float | None, price: float | None, **kw
+):
+    from core.repositories import portfolio
+
+    return await portfolio.record_sale(await get_pool(), user_id, symbol, quantity, price, **kw)
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_update_alerts(user_id: int, symbol: str, **kw):
+    from core.repositories import portfolio
+
+    return await portfolio.update_alerts(await get_pool(), user_id, symbol, **kw)
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_rebase_holding(user_id: int, symbol: str, rebase):
+    from core.repositories import portfolio
+
+    return await portfolio.rebase_holding(await get_pool(), user_id, symbol, rebase)
+
+
+@_with_reconnect(idempotent=False)
+async def portfolio_delete_holding(user_id: int, symbol: str) -> bool:
+    from core.repositories import portfolio
+
+    return await portfolio.delete_holding(await get_pool(), user_id, symbol)
+
+
+@_with_reconnect
+async def portfolio_was_closed(user_id: int, symbol: str) -> bool:
+    from core.repositories import portfolio
+
+    return await portfolio.was_closed(await get_pool(), user_id, symbol)
+
+
+@_with_reconnect
+async def portfolio_list_transactions(user_id: int, *, symbol: str | None = None, limit: int = 15):
+    from core.repositories import portfolio
+
+    return await portfolio.list_transactions(await get_pool(), user_id, symbol=symbol, limit=limit)
+
+
+@_with_reconnect
+async def portfolio_transactions_between(user_id: int, start, end, *, limit: int = 2000):
+    from core.repositories import portfolio
+
+    return await portfolio.transactions_between(await get_pool(), user_id, start, end, limit=limit)
+
+
+# Không idempotent: chạy lại sau khi đã commit sẽ điền giá cho lệnh bán CŨ HƠN.
+@_with_reconnect(idempotent=False)
+async def portfolio_fill_sale_price(user_id: int, symbol: str, price: float, **kw):
+    from core.repositories import portfolio
+
+    return await portfolio.fill_sale_price(await get_pool(), user_id, symbol, price, **kw)
+
+
+@_with_reconnect
+async def portfolio_watchlist(user_id: int) -> list[str]:
+    from core.repositories import portfolio
+
+    return await portfolio.watchlist(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def portfolio_add_watch(user_id: int, symbols: list[str], max_symbols: int) -> list[str]:
+    from core.repositories import portfolio
+
+    return await portfolio.add_watch(await get_pool(), user_id, symbols, max_symbols)
+
+
+@_with_reconnect
+async def portfolio_remove_watch(user_id: int, symbol: str) -> tuple[bool, int]:
+    from core.repositories import portfolio
+
+    return await portfolio.remove_watch(await get_pool(), user_id, symbol)
+
+
+@_with_reconnect
+async def portfolio_list_price_alerts(user_id: int):
+    from core.repositories import portfolio
+
+    return await portfolio.list_price_alerts(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def portfolio_add_price_alert(user_id: int, symbol: str, direction: str, level: float, **kw):
+    from core.repositories import portfolio
+
+    return await portfolio.add_price_alert(
+        await get_pool(), user_id, symbol, direction, level, **kw
+    )
+
+
+@_with_reconnect
+async def portfolio_delete_price_alerts(user_id: int, symbol: str, level: float | None) -> int:
+    from core.repositories import portfolio
+
+    return await portfolio.delete_price_alerts(await get_pool(), user_id, symbol, level)
+
+
+@_with_reconnect
+async def portfolio_active_price_alerts(limit: int):
+    from core.repositories import portfolio
+
+    return await portfolio.active_price_alerts(await get_pool(), limit)
+
+
+@_with_reconnect
+async def portfolio_set_price_alert_state(alert_id: int, state: str, *, notified: bool) -> None:
+    from core.repositories import portfolio
+
+    await portfolio.set_price_alert_state(await get_pool(), alert_id, state, notified=notified)
+
+
+@_with_reconnect
+async def portfolio_alert_logged(
+    user_id: int, kind: str, ref_key: str, sent_on: str | None = None
+) -> bool:
+    from core.repositories import portfolio
+
+    return await portfolio.alert_logged(await get_pool(), user_id, kind, ref_key, sent_on)
+
+
+@_with_reconnect
+async def portfolio_log_alert(user_id: int, kind: str, ref_key: str, sent_on: str) -> None:
+    from core.repositories import portfolio
+
+    await portfolio.log_alert(await get_pool(), user_id, kind, ref_key, sent_on)
+
+
+@_with_reconnect
+async def portfolio_count_alerts_on(user_id: int, sent_on: str) -> int:
+    from core.repositories import portfolio
+
+    return await portfolio.count_alerts_on(await get_pool(), user_id, sent_on)
+
+
+@_with_reconnect
+async def portfolio_prune_alert_log(keep_days: int, batch: int = 5000) -> int:
+    from core.repositories import portfolio
+
+    return await portfolio.prune_alert_log(await get_pool(), keep_days, batch)
+
+
+# ─── Giám sát vận hành / sao lưu (services/watchdog.py, backup_status.py) ───
+# SQL nằm ở core/repositories/ops.py; đây chỉ là wrapper có retry kết nối.
+
+
+@_with_reconnect
+async def database_bytes() -> int:
+    from core.repositories import ops
+
+    return await ops.database_bytes(await get_pool())
+
+
+@_with_reconnect
+async def webhook_backlog(stale_after) -> tuple[int, float | None]:
+    from core.repositories import ops
+
+    return await ops.webhook_backlog(await get_pool(), stale_after)
+
+
+@_with_reconnect
+async def latest_backup_run(kind: str = "backup") -> dict | None:
+    from core.repositories import ops
+
+    return await ops.latest_backup_run(await get_pool(), kind)
 
 
 async def close_pool() -> None:

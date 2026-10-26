@@ -4,6 +4,7 @@ Không thuộc provider-chain. Module giữ cả structured result để caller 
 giá chất lượng trước khi quyết định dùng/fallback, đồng thời giữ ``search()``
 trả ``str`` để tương thích các call site cũ.
 """
+
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -11,8 +12,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from ai import provider_overrides
-from core import config, database as db
+from ai import call_log, provider_overrides
+from core import config, settings_cache, untrusted
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,12 @@ _client: Optional[httpx.AsyncClient] = None
 
 
 class TavilyError(RuntimeError):
-    """Lỗi khi gọi Tavily (chưa cấu hình key, HTTP lỗi, payload rỗng)."""
+    """Lỗi khi gọi Tavily (chưa cấu hình key, HTTP lỗi, payload rỗng).
+    ``status_code``: mã HTTP (429 = hết credit/rate-limit) cho cột outcome."""
+
+    def __init__(self, message: str, *, status_code: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass(frozen=True)
@@ -66,11 +72,12 @@ async def close() -> None:
 
 
 async def get_enabled() -> bool:
-    return await db.get_setting(_SETTING_ENABLED) == "1"
+    # Cache RAM ghi-xuyên (core.settings_cache): đọc ở mọi tin nhắn chat.
+    return await settings_cache.get(_SETTING_ENABLED) == "1"
 
 
 async def set_enabled(enabled: bool) -> None:
-    await db.set_setting(_SETTING_ENABLED, "1" if enabled else "0")
+    await settings_cache.set(_SETTING_ENABLED, "1" if enabled else "0")
     logger.info("Tavily search %s.", "bật" if enabled else "tắt")
 
 
@@ -90,9 +97,9 @@ def _domain_of(url: str) -> str:
 # kiếm/kết quả anh gửi" - đọc gượng gạo, lộ rõ đây là raw search dump thay vì
 # câu trả lời tự nhiên.
 _GROUNDING_USAGE_NOTE = (
-    "Dùng thông tin bên dưới để trả lời tự nhiên như thể tự biết, KHÔNG kể "
-    "lể quá trình tìm kiếm (không viết \"theo kết quả tìm kiếm\", \"theo các "
-    "kết quả anh gửi\", \"nguồn tìm được\" hay tương tự), KHÔNG chèn số thứ tự "
+    "Dùng thông tin trong khối dữ liệu tra cứu bên dưới để trả lời tự nhiên, "
+    'KHÔNG kể lể quá trình tìm kiếm (không viết "theo kết quả tìm kiếm", "theo các '
+    'kết quả anh gửi", "nguồn tìm được" hay tương tự), KHÔNG chèn số thứ tự '
     "trích dẫn kiểu [1][2]. Nếu cần nêu nguồn thì nói tên nguồn tự nhiên "
     "trong câu (vd: theo VnExpress, theo Reuters). CHỈ nêu đúng phần trả lời "
     "điều người dùng hỏi, KHÔNG kể thêm thông tin phụ trong kết quả mà họ "
@@ -104,15 +111,24 @@ _GROUNDING_USAGE_NOTE = (
 )
 
 
+# Trần ký tự cho phần kết quả (bên trong rào) - cắt TRƯỚC khi bọc để marker
+# đóng không bao giờ bị prompt_budget cắt mất (GROUNDING_MAX_CHARS mặc định 9000).
+_RESULTS_MAX_CHARS = 7000
+
+
 def format_search_results(response: TavilySearchResponse) -> str:
-    lines = [f"[Kết quả tìm kiếm web (Tavily) cho: {response.query}]", _GROUNDING_USAGE_NOTE]
+    """Grounding cho LLM: câu hỏi + chỉ dẫn dùng kết quả (tin cậy, ngoài rào) rồi
+    tới kết quả Tavily (KHÔNG tin cậy, bọc bằng core.untrusted.wrap_untrusted)."""
+    lines: list[str] = []
     if response.answer:
         lines.append(f"Tóm tắt: {response.answer}")
     for i, item in enumerate(response.results, start=1):
         title = item.title or item.url or "?"
         date_suffix = f" - đăng {item.published_date}" if item.published_date else ""
         lines.append(f"{i}. {title}{date_suffix} ({item.url})\n{item.content}")
-    return "\n\n".join(lines)
+    fenced = untrusted.wrap_untrusted("\n\n".join(lines), "Tavily", max_chars=_RESULTS_MAX_CHARS)
+    header = f"[Kết quả tìm kiếm web (Tavily) cho: {response.query}]"
+    return "\n\n".join(part for part in (header, _GROUNDING_USAGE_NOTE, fenced) if part)
 
 
 async def search_results(
@@ -158,18 +174,26 @@ async def search_results(
     if time_range:
         payload["time_range"] = time_range
 
-    response = await _get_client().post(
-        f"{config.TAVILY_BASE_URL}/search",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json=payload,
-    )
-    if response.status_code != 200:
-        raise TavilyError(f"Tavily trả lỗi HTTP {response.status_code}: {response.text[:250]}")
+    async def _search() -> dict:
+        response = await _get_client().post(
+            f"{config.TAVILY_BASE_URL}/search",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+        )
+        if response.status_code != 200:
+            raise TavilyError(
+                f"Tavily trả lỗi HTTP {response.status_code}: {response.text[:250]}",
+                status_code=response.status_code,
+            )
+        body = response.json()
+        if not (body.get("results") or body.get("answer")):
+            raise TavilyError("Tavily không trả về kết quả nào")
+        return body
 
-    data = response.json()
+    # provider_calls (ai/call_log.py): model = search_depth - trang quota tính
+    # credit Tavily theo đó (advanced = 2, basic = 1); ghi cả lượt lỗi/429.
+    data = await call_log.timed("tavily", search_depth, _search, stage="search_tavily")
     raw_results = data.get("results") or []
-    if not raw_results and not data.get("answer"):
-        raise TavilyError("Tavily không trả về kết quả nào")
 
     results: list[TavilyResult] = []
     domain_count: dict[str, int] = {}
@@ -189,11 +213,6 @@ async def search_results(
                 published_date=item.get("published_date"),
             )
         )
-
-    try:
-        await db.record_provider_call("tavily", search_depth)
-    except Exception:
-        logger.warning("Không ghi được lượt gọi Tavily vào DB.", exc_info=True)
 
     return TavilySearchResponse(
         query=str(data.get("query") or query),

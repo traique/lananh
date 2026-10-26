@@ -383,3 +383,28 @@ def test_trang_admin_dung_logo_co_phien_ban_va_chung_lua_chon_giao_dien():
     login = web_admin._login_page("", 200).body.decode()
     assert f"logo-dark.webp?v={v}" in login and "lcta.theme" in login
     assert "savePref('lcta.theme'" in page
+
+
+async def test_admin_sua_tri_nho_can_dang_nhap_va_kiem_tham_so(client, monkeypatch):
+    calls = []
+
+    async def items(user_id):
+        return {"user_id": user_id, "facts": [], "highlights": [], "enabled": True}
+
+    async def edit(user_id, action, kind, item_id):
+        calls.append((user_id, action, kind, item_id))
+        return item_id == 7
+
+    monkeypatch.setattr(web_admin.memory_control, "admin_items", items)
+    monkeypatch.setattr(web_admin.memory_control, "admin_edit", edit)
+    assert (await client.get("/admin/api/memory/items?user_id=1")).status_code == 403
+    await _login(client)
+    assert (await client.get("/admin/api/memory/items?user_id=abc")).status_code == 400
+    assert (await client.get("/admin/api/memory/items?user_id=-3")).json()["user_id"] == -3
+    body = {"user_id": -3, "kind": "fact", "id": 7, "action": "forget"}
+    assert (await client.post("/admin/api/memory/item", json=body)).json() == {"changed": True}
+    bad = {**body, "action": "drop"}
+    assert (await client.post("/admin/api/memory/item", json=bad)).status_code == 400
+    missing = {**body, "id": 8}
+    assert (await client.post("/admin/api/memory/item", json=missing)).status_code == 404
+    assert calls == [(-3, "forget", "fact", 7), (-3, "forget", "fact", 8)]

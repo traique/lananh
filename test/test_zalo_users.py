@@ -39,15 +39,17 @@ class FakePool:
     async def fetchrow(self, query, *args):
         query_lower = query.lower()
         if (
-            "select external_id, internal_user_id, display_name, role, status from zalo_users where"
-            in query_lower
+            "select external_id, internal_user_id, display_name, role, status, address_form "
+            "from zalo_users where" in query_lower
         ):
             return self.rows.get(args[0])
         if "insert into zalo_users" in query_lower:
-            external_id, display_name, role = args
+            external_id, display_name, role, address_form = args
             existing = self.rows.get(external_id)
             if existing and not display_name:
                 display_name = existing["display_name"]
+            if existing and address_form is None:
+                address_form = existing["address_form"]
             internal_user_id = existing["internal_user_id"] if existing else self._next_uid
             if not existing:
                 self._next_uid -= 1
@@ -57,6 +59,7 @@ class FakePool:
                 "display_name": display_name,
                 "role": role,
                 "status": "active",
+                "address_form": address_form,
             }
             self.rows[external_id] = row
             return row
@@ -168,11 +171,25 @@ async def test_set_status_invalid_raises():
 
 
 @pytest.mark.asyncio
-async def test_remove_user(patched_db):
+async def test_remove_user(patched_db, monkeypatch):
+    forgotten = []
+
+    async def forget_sender(external_id):
+        forgotten.append(external_id)
+        return True
+
+    monkeypatch.setattr(zalo_users.zalo_gateway_status, "forget_sender", forget_sender)
     user = await zalo_users.pair("z6", "")
+    from services import weather_home
+
+    weather_home._remember(user.internal_user_id, "Hà Nội")
     assert await zalo_users.remove("z6") is True
+    assert user.internal_user_id not in weather_home._cache  # RAM quên cùng DB
     assert await zalo_users.resolve("z6") is None
     assert await zalo_users.remove("z6") is False
+    # Gỡ pairing xong báo gateway quên người này ngay (thôi "đã xem"/typing từ tin kế
+    # tiếp); không tìm thấy thì không báo.
+    assert forgotten == ["z6"]
     # Xoá pairing kéo theo xoá dữ liệu cá nhân, đúng internal_user_id, cùng transaction.
     tables = {q.split()[2] for q, _ in patched_db.data_deletes}
     assert {
@@ -182,6 +199,8 @@ async def test_remove_user(patched_db):
         "user_facts",
         "user_memory_summary",
         "user_memory_highlights",
+        "user_session_notes",
+        "user_events",
         "notes",
         "prompts",
         "stock_holdings",
@@ -192,6 +211,24 @@ async def test_remove_user(patched_db):
     assert (
         "delete from settings where key = $1",
         (f"memory_enabled_{user.internal_user_id}",),
+    ) in [(q, a) for q, a in patched_db.data_deletes]
+    # Thành phố thời tiết + bản tin sáng cá nhân cũng là dữ liệu cá nhân.
+    uid = user.internal_user_id
+    assert (
+        "delete from settings where key = any($1::text[])",
+        (
+            [
+                f"weather_home:{uid}",
+                f"brief:zalo:{uid}",
+                f"brief_sent:zalo:{uid}",
+                # Trí nhớ/hỏi thăm (services/personal_settings.memory_user_keys).
+                f"memory_wm:{uid}",
+                f"memory_forget:{uid}",
+                f"memory_consolidated:{uid}",
+                f"followup:{uid}",
+                f"followup_sent:{uid}",
+            ],
+        ),
     ) in [(q, a) for q, a in patched_db.data_deletes]
 
 
@@ -262,3 +299,34 @@ async def test_notify_unpaired_calls_alert_once():
     assert len(calls) == 1
     assert "zX" in calls[0]
     assert "zX" in zalo_users._notified_unpaired
+
+
+@pytest.mark.asyncio
+async def test_cach_xung_ho_luu_va_giu_nguyen_khi_pair_lai():
+    user = await zalo_users.pair("zm", "Mẹ", address_form="cô")
+    assert user.address_form == "cô"
+    # Pair lại / nâng quyền không truyền cách xưng hô -> giữ nguyên.
+    again = await zalo_users.pair("zm", "")
+    promoted = await zalo_users.pair_as_admin("zm", "")
+    assert again.address_form == "cô" and promoted.address_form == "cô"
+    changed = await zalo_users.pair("zm", "", address_form="Chị")
+    assert changed.address_form == "chị"
+    assert (await zalo_users.resolve("zm")).address_form == "chị"
+    assert (await zalo_users.pair("zn", "")).address_form is None
+
+
+@pytest.mark.asyncio
+async def test_cach_xung_ho_ngoai_danh_sach_bi_tu_choi():
+    with pytest.raises(ValueError):
+        await zalo_users.pair("zq", "", address_form="sếp")
+
+
+@pytest.mark.asyncio
+async def test_thanh_vien_tu_xoa_du_lieu_giu_pairing(patched_db):
+    user = await zalo_users.pair("z8", "")
+    await zalo_users.delete_own_data(user.internal_user_id)
+    assert await zalo_users.resolve("z8") is not None  # vẫn chat tiếp được
+    tables = {q.split()[2] for q, _ in patched_db.data_deletes}
+    assert {"user_facts", "notes", "chat_messages", "user_session_notes"} <= tables
+    with pytest.raises(ValueError):
+        await zalo_users.delete_own_data(42)  # id chủ bot (dương) bị từ chối

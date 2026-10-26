@@ -179,3 +179,38 @@ async def test_error_reply_is_sent_only_on_first_attempt(monkeypatch, attempt, r
     finally:
         webhook_inbox._current_attempt.reset(token)
     assert message.reply_text.await_count == replies
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [TypeError("x"), KeyError("k"), AttributeError("a")])
+async def test_loi_lap_trinh_khong_thu_lai_ket_thuc_va_bao_1_lan(pool, alerts, error):
+    await webhook_inbox.retry(_row(1), error)
+    query, args = pool.queries[-1]
+    assert "status = 'DONE'" in query and "payload = NULL" in query
+    assert args[3] == type(error).__name__
+    assert len(alerts) == 1 and type(error).__name__ in alerts[0]
+
+
+@pytest.mark.asyncio
+async def test_turn_timeout_va_telegram_bad_request_khong_thu_lai(pool, alerts):
+    from telegram.error import BadRequest, Forbidden, TimedOut
+
+    from ai.timeouts import TurnTimeoutError
+
+    assert webhook_inbox.is_non_retriable(TurnTimeoutError("hết giờ"))
+    assert webhook_inbox.is_non_retriable(BadRequest("Message is too long"))
+    assert webhook_inbox.is_non_retriable(Forbidden("bot was blocked"))
+    # Lỗi tạm thời vẫn được thử lại.
+    assert not webhook_inbox.is_non_retriable(TimedOut())
+    assert not webhook_inbox.is_non_retriable(RuntimeError("Telegram application is not ready"))
+    assert not webhook_inbox.is_non_retriable(ValueError("Expecting value"))
+    assert not webhook_inbox.is_non_retriable(ConnectionError("db"))
+
+
+@pytest.mark.asyncio
+async def test_loi_tam_thoi_van_hen_thu_lai(pool, alerts, monkeypatch):
+    monkeypatch.setattr(webhook_inbox.config, "WEBHOOK_MAX_ATTEMPTS", 3)
+    await webhook_inbox.retry(_row(1), RuntimeError("Telegram application is not ready"))
+    query, _args = pool.queries[-1]
+    assert "status = 'PENDING'" in query
+    assert alerts == []

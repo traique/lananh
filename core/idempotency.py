@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, NamedTuple
 
 from core import config
@@ -79,6 +79,10 @@ class DueReminder(NamedTuple):
     recipient_id: str = ""
     account_id: str = ""
     user_jid: str = ""
+    # Thêm ở cuối, có mặc định: nơi dựng theo vị trí (tuple 3 phần tử) vẫn chạy.
+    due_at: datetime | None = None  # giờ hẹn gốc - nhãn "(nhắc trễ, lịch gốc HH:MM)"
+    series_id: int | None = None  # lần của 1 chuỗi lặp/ngày nhớ (migrations/019)
+    kind: str = "reminder"  # "reminder" | "ngay_nho"
 
 
 @db.with_reconnect(idempotent=False)
@@ -92,7 +96,7 @@ async def claim_due_reminders(
     rows = await (await db.get_pool()).fetch(
         """
         WITH due AS (
-            SELECT id
+            SELECT id, series_id
             FROM reminders
             WHERE due_at <= now()
               AND sent = false
@@ -103,10 +107,11 @@ async def claim_due_reminders(
         )
         UPDATE reminders AS reminder
         SET claimed_at = now()
-        FROM due
+        FROM due LEFT JOIN reminder_series AS series ON series.id = due.series_id
         WHERE reminder.id = due.id
         RETURNING reminder.id, reminder.telegram_user_id, reminder.message,
-                  reminder.channel, reminder.recipient_id, reminder.account_id, reminder.user_jid
+                  reminder.channel, reminder.recipient_id, reminder.account_id, reminder.user_jid,
+                  reminder.due_at, reminder.series_id, COALESCE(series.kind, 'reminder') AS kind
         """,
         limit,
         lease,
@@ -120,6 +125,9 @@ async def claim_due_reminders(
             row["recipient_id"],
             row["account_id"],
             row["user_jid"],
+            row["due_at"],
+            row["series_id"],
+            row["kind"],
         )
         for row in rows
     ]

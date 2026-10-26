@@ -33,3 +33,9 @@ def current_target(user_id: int) -> NotificationTarget:
     if user_id <= 0:
         raise ValueError("Thiếu địa chỉ kênh nhận nhắc việc.")
     return NotificationTarget("telegram", str(user_id))
+
+
+def current_event_key() -> str | None:
+    """Khoá sự kiện webhook đang xử lý (vd "telegram:<update_id>"), None ngoài inbox."""
+    target = _target.get()
+    return target.event_key if target is not None else None

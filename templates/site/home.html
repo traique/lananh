@@ -57,7 +57,7 @@
 </div>
 
 <div class="grid">
-  <section class="panel s3" aria-labelledby="holiday-title">
+  <section class="panel s4" aria-labelledby="holiday-title">
     <header>
       <h2 id="holiday-title">Ngày lễ tới</h2>
       <a class="card-link" href="/lich/ngay-le">Tất cả</a>
@@ -72,7 +72,7 @@
     </ul>
   </section>
 
-  <section class="panel s3" aria-labelledby="ask-title">
+  <section class="panel s4" aria-labelledby="ask-title">
     <header><h2 id="ask-title">Hỏi lịch</h2></header>
     <form class="form" action="/lich/hoi" method="get" role="search">
       <div class="field">
@@ -84,7 +84,7 @@
     </form>
   </section>
 
-  <section class="panel s3" aria-labelledby="tsh-title">
+  <section class="panel s4" aria-labelledby="tsh-title">
     <header><h2 id="tsh-title">Thần số học</h2></header>
     <form class="form" action="/than-so-hoc" method="post">
       <div class="field">
@@ -95,10 +95,16 @@
     </form>
   </section>
 
-  <section class="panel s3" aria-labelledby="tuvi-title">
+  <section class="panel s6" aria-labelledby="tuvi-title">
     <header><h2 id="tuvi-title">Lá số tử vi</h2></header>
     <p class="muted">12 cung với chính tinh kèm độ sáng, phụ tinh, Tứ hóa, Tuần Triệt và đại hạn. Cần ngày, giờ sinh và giới tính.</p>
     <div class="form-actions"><a class="btn" href="/tu-vi">Lập lá số</a></div>
+  </section>
+
+  <section class="panel s6" aria-labelledby="kymon-title">
+    <header><h2 id="kymon-title">Kỳ Môn Độn Giáp</h2></header>
+    <p class="muted">Bàn 9 cung theo giờ: tứ trụ, cục, Trực phù, Trực sử, cửa tốt và cách cục. Mặc định lập cho lúc này, đổi được ngày giờ.</p>
+    <div class="form-actions"><a class="btn" href="/ky-mon">Xem bàn lúc này</a></div>
   </section>
 </div>
 {% endblock %}

@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   BoundedSerialQueue,
+  KeyedMutex,
   KeyedRateLimiter,
   KeyedSerialQueue,
   QueueFullError,
+  SlidingWindowBudget,
   readLimitedBody,
 } from "./dist/limits.js";
 test("queue bounds waiting events, preserves order, and recovers after failures", async () => {
@@ -141,4 +143,83 @@ test("KeyedRateLimiter cho phép 1 lần mỗi khoảng và giới hạn số kh
   limiter.allow("c", 1500);
   assert.equal(limiter.size, 2);
   assert.equal(limiter.allow("a", 1600), true, "khoá cũ nhất đã bị đẩy ra");
+});
+
+test("KeyedSerialQueue.isRunning: chỉ true khi khoá đang chạy việc", async () => {
+  const q = new KeyedSerialQueue({ concurrency: 1, perKeyCapacity: 4, capacity: 8 });
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  assert.equal(q.isRunning("a"), false);
+  const job = q.add("a", () => gate);
+  const waiting = q.add("b", async () => undefined);
+  assert.equal(q.isRunning("a"), true);
+  assert.equal(q.isRunning("b"), false, "b đang chờ slot, chưa chạy");
+  release();
+  await job;
+  await waiting;
+  assert.equal(q.isRunning("a"), false);
+});
+
+test("SlidingWindowBudget: trần theo cửa sổ trượt, 0 = không giới hạn", () => {
+  const budget = new SlidingWindowBudget(2, 1000);
+  assert.equal(budget.tryTake(0), true);
+  assert.equal(budget.tryTake(100), true);
+  assert.equal(budget.tryTake(200), false);
+  assert.equal(budget.remaining(500), 0);
+  assert.equal(budget.tryTake(1000), true, "mốc 0 đã ra khỏi cửa sổ");
+  assert.equal(budget.remaining(1050), 0);
+  assert.equal(budget.remaining(1100), 1, "mốc 100 cũng hết hạn");
+  assert.equal(budget.remaining(2200), 2);
+  const unlimited = new SlidingWindowBudget(0, 1000);
+  for (let i = 0; i < 100; i++) assert.equal(unlimited.tryTake(i), true);
+  assert.equal(unlimited.remaining(), Infinity);
+});
+
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test("KeyedMutex: 2 câu trả lời cho cùng người nhận không xen đoạn, người khác chạy song song", async () => {
+  const lock = new KeyedMutex(5000);
+  const log = [];
+  const reply = (key, name, parts, gap) =>
+    lock.run(key, async () => {
+      for (let i = 1; i <= parts; i++) {
+        log.push(`${name}${i}`);
+        await sleepMs(gap);
+      }
+      return name;
+    });
+  // Câu trả lời 4 đoạn có nghỉ giữa đoạn; /help tới giữa chừng phải chờ hết.
+  const answer = reply("S", "answer#", 4, 5);
+  await sleepMs(2);
+  const help = reply("S", "help#", 2, 1);
+  const other = reply("T", "other#", 1, 0);
+  assert.deepEqual(await Promise.all([answer, help, other]), ["answer#", "help#", "other#"]);
+  const forS = log.filter((x) => !x.startsWith("other"));
+  assert.deepEqual(forS, ["answer#1", "answer#2", "answer#3", "answer#4", "help#1", "help#2"]);
+  assert.ok(log.indexOf("other#1") < log.indexOf("answer#4"), "người nhận khác không phải chờ");
+  assert.equal(lock.size, 0, "khoá rảnh bị xoá: Map không phình theo người nhận");
+});
+
+test("KeyedMutex: việc lỗi vẫn nhả khoá, lỗi trả về đúng nơi gọi", async () => {
+  const lock = new KeyedMutex(5000);
+  const failed = lock.run("S", async () => {
+    throw new Error("gửi lỗi");
+  });
+  const next = lock.run("S", async () => "ok");
+  await assert.rejects(failed, /gửi lỗi/);
+  assert.equal(await next, "ok");
+  await sleepMs(0);
+  assert.equal(lock.size, 0);
+});
+
+test("KeyedMutex: việc trước treo thì việc sau chỉ chờ tối đa maxWaitMs", async () => {
+  const lock = new KeyedMutex(20);
+  void lock.run("S", () => new Promise(() => undefined)); // zca-js treo, không bao giờ xong
+  const started = Date.now();
+  assert.equal(await lock.run("S", async () => "vẫn gửi"), "vẫn gửi");
+  assert.ok(Date.now() - started < 1000);
+  await sleepMs(0);
+  assert.equal(lock.size, 0, "việc treo không giữ khoá mãi");
 });

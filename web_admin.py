@@ -22,6 +22,7 @@ import os
 import secrets
 import time
 from collections import deque
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -40,16 +41,18 @@ from ai import (
     tavily_client,
 )
 from ai.provider_state import provider_state
-from channels import zalo_users
+from channels import zalo_gateway_status, zalo_users
 from core import config, database as db
-from services import db_maintenance, market_page, memory_service, memory_stats
+from services import db_maintenance, market_page, memory_control, memory_service, memory_stats
+from services import backup_status, error_digest, key_rotation, quota_burn, usage_quota
+from services import watchdog
 
 logger = logging.getLogger(__name__)
 
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
 _ADMIN_TEMPLATE_PATH = _TEMPLATES / "admin.html"
 _ADMIN_LOGIN_PATH = _TEMPLATES / "admin_login.html"
-_ADMIN_COOLDOWN_PROVIDERS = ("groq", "openrouter", "api1", "api2")
+_ADMIN_COOLDOWN_PROVIDERS = ("groq", "openrouter", "api1", "api2", "router9")
 _ADMIN_SESSION_COOKIE = "admin_session"
 _CHANNEL_LABELS = {"telegram": "Telegram", "zoom": "Zoom", "zalo": "Zalo"}
 # Key bảng settings giữ epoch phiên admin (xem SessionEpoch).
@@ -647,6 +650,40 @@ async def admin_memory_update(request: Request) -> Response:
     return JSONResponse({"user_id": user_id, "enabled": await memory_service.is_enabled(user_id)})
 
 
+def _int_param(raw) -> int | None:
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+@api_router.get("/memory/items")
+async def admin_memory_items(request: Request) -> Response:
+    """Fact + highlight của 1 người (?user_id=) để xem/quên/ghim từ trang admin."""
+    user_id = _int_param(request.query_params.get("user_id"))
+    if user_id is None:
+        return Response(status_code=400)
+    return JSONResponse(await memory_control.admin_items(user_id))
+
+
+@api_router.post("/memory/item")
+async def admin_memory_item(request: Request) -> Response:
+    """Body: {"user_id": int, "kind": "fact"|"highlight", "id": int,
+    "action": "forget"|"pin"|"unpin"}. Quên = xoá hẳn + không học lại."""
+    body = await request.json()
+    user_id, item_id = body.get("user_id"), body.get("id")
+    action, kind = body.get("action"), body.get("kind")
+    if (
+        not isinstance(user_id, int)
+        or not isinstance(item_id, int)
+        or action not in ("forget", "pin", "unpin")
+        or kind not in ("fact", "highlight")
+    ):
+        return Response(status_code=400)
+    changed = await memory_control.admin_edit(user_id, action, kind, item_id)
+    return JSONResponse({"changed": changed}, status_code=200 if changed else 404)
+
+
 @api_router.get("/usage")
 async def admin_usage(request: Request) -> Response:
     since_hours = _hours_param(request)
@@ -693,6 +730,102 @@ async def admin_usage_models(request: Request) -> Response:
             }
             for row in rows
         ]
+    )
+
+
+def _ms(value) -> int | None:
+    return None if value is None else int(round(float(value)))
+
+
+@api_router.get("/usage/outcomes")
+async def admin_usage_outcomes(request: Request) -> Response:
+    """Lượt gọi theo (provider, kết quả) kèm độ trễ p50/p95 - thấy provider nào
+    chậm/lỗi/hết quota (core.database.provider_outcomes), không chỉ lượt thành công."""
+    rows = await db.provider_outcomes(_hours_param(request))
+    return JSONResponse(
+        [
+            {
+                "provider": row["provider"],
+                "outcome": row["outcome"],
+                "calls": row["calls"],
+                "p50_ms": _ms(row["p50_ms"]),
+                "p95_ms": _ms(row["p95_ms"]),
+                "last_at": row["last_at"].isoformat() if row["last_at"] else None,
+            }
+            for row in rows
+        ]
+    )
+
+
+def _iso(value) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+@api_router.get("/usage/turns")
+async def admin_usage_turns(request: Request) -> Response:
+    """Lượt trả lời gần đây (turn_metrics): chờ khoá, chờ slot, gom ngữ cảnh, LLM,
+    gửi tin + p95 từng giai đoạn theo kênh (core/trace.py)."""
+    hours = min(_hours_param(request, 24), 24 * 14)
+    recent = await db.recent_turn_metrics(hours, 50)
+    summary = await db.turn_stage_summary(hours)
+    return JSONResponse(
+        {
+            "recent": [{**row, "created_at": _iso(row["created_at"])} for row in recent],
+            "summary": [
+                {k: (_ms(v) if k.endswith(("_p50", "_p95")) else v) for k, v in row.items()}
+                for row in summary
+            ],
+        }
+    )
+
+
+@api_router.get("/usage/turn")
+async def admin_usage_turn(request: Request) -> Response:
+    """Các lượt gọi provider của 1 lượt trả lời (thác thời gian) theo mã lượt."""
+    turn_id = (request.query_params.get("turn_id") or "").strip()
+    if not turn_id or len(turn_id) > 120:
+        return Response(status_code=400)
+    rows = await db.provider_calls_for_turn(turn_id)
+    return JSONResponse(
+        {
+            "turn_id": turn_id,
+            "calls": [{**row, "created_at": _iso(row["created_at"])} for row in rows],
+        }
+    )
+
+
+@api_router.get("/quota")
+async def admin_quota() -> Response:
+    """Trần lượt/ngày của thành viên Zalo + số đã dùng hôm nay (services/usage_quota.py)."""
+    return JSONResponse(await usage_quota.today_overview())
+
+
+@api_router.post("/quota")
+async def admin_quota_update(request: Request) -> Response:
+    """Body: {"turns"?: int, "heavy"?: int} - 0 = không giới hạn."""
+    body = await request.json()
+    values: dict[str, int] = {}
+    for field in ("turns", "heavy"):
+        if field not in body:
+            continue
+        try:
+            values[field] = int(body[field])
+        except (TypeError, ValueError):
+            return Response(status_code=400)
+        if not 0 <= values[field] <= usage_quota.MAX_CAP:
+            return Response(status_code=400)
+    if not values:
+        return Response(status_code=400)
+    limits = await usage_quota.set_caps(values.get("turns"), values.get("heavy"))
+    return JSONResponse({"turns": limits.turns, "heavy": limits.heavy})
+
+
+@api_router.get("/usage/burn")
+async def admin_usage_burn() -> Response:
+    """Quota miễn phí đã dùng theo cửa sổ của từng provider (services/quota_burn.py)."""
+    burns = await quota_burn.snapshot()
+    return JSONResponse(
+        {"alert_pct": quota_burn.alert_pct(), "providers": [b.as_dict() for b in burns]}
     )
 
 
@@ -743,6 +876,45 @@ async def admin_memory_usage() -> Response:
     """RAM của container (giới hạn Render free 512 MB), từng tiến trình và các
     thư viện nặng đã nạp. Mở trực tiếp trên trình duyệt khi đã đăng nhập /admin."""
     return JSONResponse(await asyncio.to_thread(memory_stats.snapshot))
+
+
+async def _safe_section(label: str, factory) -> dict:
+    """1 phần của trang giám sát lỗi không được làm hỏng cả trang."""
+    try:
+        return await factory()
+    except Exception as exc:
+        logger.warning("Admin watchdog: không đọc được %s.", label, exc_info=True)
+        return {"error": type(exc).__name__}
+
+
+@api_router.get("/watchdog")
+async def admin_watchdog() -> Response:
+    """Giám sát vận hành: lỗi gom theo loại hôm nay (chỉ loại + vị trí code), số lần
+    khởi động lại 7 ngày qua, trạng thái sao lưu DB (services/watchdog.py,
+    error_digest.py, backup_status.py), bộ đếm gateway Zalo
+    (channels/zalo_gateway_status.py)."""
+    return JSONResponse(
+        {
+            "errors": error_digest.summary(),
+            "restarts": await _safe_section("khởi động lại", watchdog.restart_summary),
+            "backup": await _safe_section("sao lưu", backup_status.status),
+            "key_rotation": await _safe_section("xoay khoá", key_rotation.status),
+            "zalo_gateway": await _safe_section("gateway Zalo", zalo_gateway_status.snapshot),
+        }
+    )
+
+
+@api_router.post("/key-rotation/run")
+async def admin_key_rotation_run() -> Response:
+    """Mã hoá lại mọi giá trị settings còn dùng SETTINGS_ENC_KEY_OLD (compare-and-swap,
+    xem services/key_rotation.py). Trả số đã xoay / còn lại; không trả giá trị nào."""
+    try:
+        report = await key_rotation.rotate_all()
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse(
+        {"old_keys_configured": key_rotation.old_keys_configured(), **asdict(report)}
+    )
 
 
 @api_router.get("/db-usage")

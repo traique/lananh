@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { OutboxDelivery } from "./dist/outbox.js";
 import { splitForZalo } from "./dist/text.js";
 
-function harness(items, { sendFails = () => null, ackFails = () => false } = {}) {
+function harness(items, { sendFails = () => null, ackFails = () => false, pace, takeBudget } = {}) {
   const calls = { sent: [], acked: [], failed: [] };
   let connected = true;
   const deps = {
@@ -22,6 +22,8 @@ function harness(items, { sendFails = () => null, ackFails = () => false } = {})
     },
     connected: () => connected,
     log: () => undefined,
+    pace,
+    takeBudget,
   };
   return {
     calls,
@@ -153,4 +155,55 @@ test("bộ nhớ tiến độ có trần", async () => {
     await delivery.runOnce();
   }
   assert.equal(delivery.tracked, 2);
+});
+
+test("hết ngân sách gửi theo giờ: tin còn lại HOÃN (không ack, không báo lỗi), lượt sau gửi tiếp", async () => {
+  let budget = 1;
+  const items = [
+    { id: 1, recipient_id: "a", content: "tin 1" },
+    { id: 2, recipient_id: "b", content: "tin 2" },
+    { id: 3, recipient_id: "c", content: "tin 3" },
+  ];
+  const { calls, delivery } = harness(items, {
+    takeBudget: () => (budget > 0 ? (budget--, true) : false),
+  });
+  const first = await delivery.runOnce();
+  assert.deepEqual(first, { sent: 1, failed: 0, deferred: 2 });
+  assert.deepEqual(calls.acked, [1]);
+  assert.deepEqual(calls.failed, []);
+  budget = 5;
+  const second = await delivery.runOnce();
+  assert.deepEqual(second, { sent: 2, failed: 0 });
+  assert.deepEqual(calls.acked, [1, 2, 3]);
+});
+
+test("tin đã gửi đủ ở lượt trước (chỉ chờ ack) không tốn ngân sách", async () => {
+  const item = { id: 5, recipient_id: "a", content: "tin" };
+  let acks = 0;
+  const { delivery } = harness([item], {
+    ackFails: () => acks++ === 0,
+    takeBudget: (() => {
+      let left = 1;
+      return () => (left > 0 ? (left--, true) : false);
+    })(),
+  });
+  await delivery.runOnce(); // gửi xong, ack lỗi
+  const result = await delivery.runOnce(); // hết ngân sách nhưng chỉ cần ack lại
+  assert.deepEqual(result, { sent: 1, failed: 0 });
+});
+
+test("nghỉ giữa các đoạn và giữa các tin, không nghỉ trước lần gửi đầu", async () => {
+  const content = Array.from({ length: 300 }, (_, i) => `dòng ${i} của tin dài`).join("\n");
+  const chunks = splitForZalo(content);
+  let paces = 0;
+  const { calls, delivery } = harness(
+    [
+      { id: 1, recipient_id: "a", content },
+      { id: 2, recipient_id: "b", content: "ngắn" },
+    ],
+    { pace: async () => void paces++ },
+  );
+  await delivery.runOnce();
+  assert.equal(calls.sent.length, chunks.length + 1);
+  assert.equal(paces, calls.sent.length - 1);
 });

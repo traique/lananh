@@ -36,7 +36,9 @@ import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
-from core import database as db
+from channels import zalo_gateway_status
+from core import address, database as db
+from services import personal_settings
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +51,16 @@ VALID_ROLES = {ROLE_ADMIN, ROLE_USER}
 VALID_STATUSES = {STATUS_ACTIVE, STATUS_SUSPENDED}
 
 _alert_callback: Optional[Callable[[str], Awaitable[None]]] = None
+# Cảnh báo kèm nút [Cấp thành viên][Cấp admin] (bot_app gửi Telegram có nút);
+# chưa đặt hoặc gửi lỗi thì dùng cảnh báo chữ như cũ.
+_pair_prompt_callback: Optional[Callable[[str, list], Awaitable[None]]] = None
 _background_tasks: set[asyncio.Task] = set()
 # id chưa pair đã báo owner (dict dùng như set có thứ tự chèn) - có trần để
 # 1 đợt spam từ hàng nghìn id lạ không làm phình RAM; vượt trần thì quên id cũ
 # nhất (cùng lắm owner nhận lại 1 cảnh báo cho id đó).
 _NOTIFIED_UNPAIRED_MAX = 1000
-_notified_unpaired: dict[str, None] = {}
+# external_id -> tên hiển thị lúc nhắn (nút cấp quyền dùng làm tên mặc định).
+_notified_unpaired: dict[str, str] = {}
 
 # Dữ liệu cá nhân khoá theo internal_user_id (cột telegram_user_id) - /zaloxoa
 # xoá sạch cùng lúc với pairing (chat, trí nhớ, ghi chú, lịch sử, danh mục).
@@ -64,16 +70,50 @@ _USER_DATA_TABLES = (
     "user_facts",
     "user_memory_summary",
     "user_memory_highlights",
+    # migrations/017-018: ghi chú theo phiên, sự kiện hỏi thăm chủ động.
+    "user_session_notes",
+    "user_events",
     "notes",
     "prompts",
     "stock_holdings",
     "stock_closed_positions",
+    # migrations/022: sổ giao dịch, theo dõi/cảnh báo giá, nhật ký thông báo.
+    "stock_transactions",
+    "stock_watchlist",
+    "stock_price_alerts",
+    # migrations/020: chi tiêu cá nhân.
+    "expenses",
+    # migrations/021: đánh giá câu trả lời (có bản chụp câu hỏi/câu trả lời).
+    "answer_feedback",
+    "stock_alert_log",
 )
 
 
 def set_alert_callback(fn: Callable[[str], Awaitable[None]]) -> None:
-    global _alert_callback
+    """Đặt callback cảnh báo chữ; xoá luôn bản kèm nút (đặt lại bằng
+    set_pair_prompt_callback SAU lệnh này nếu muốn có nút cấp quyền)."""
+    global _alert_callback, _pair_prompt_callback
     _alert_callback = fn
+    _pair_prompt_callback = None
+
+
+def set_pair_prompt_callback(fn: Optional[Callable[[str, list], Awaitable[None]]]) -> None:
+    global _pair_prompt_callback
+    _pair_prompt_callback = fn
+
+
+def pending_name(external_id: str) -> str:
+    """Tên hiển thị của id lạ vừa báo chủ bot ("" nếu không còn nhớ)."""
+    return _notified_unpaired.get(external_id) or ""
+
+
+async def _send_pair_prompt(callback, text: str, buttons: list) -> None:
+    try:
+        await callback(text, buttons)
+    except Exception:
+        logger.warning("Không gửi được cảnh báo có nút cấp quyền; gửi bản chữ.", exc_info=True)
+        if _alert_callback is not None:
+            await _alert_callback(text)
 
 
 def _send_alert(text: str) -> None:
@@ -94,7 +134,7 @@ def notify_unpaired(external_id: str, display_name: str = "") -> None:
     luôn bị chặn ở tầng resolve())."""
     if not external_id or external_id in _notified_unpaired:
         return
-    _notified_unpaired[external_id] = None
+    _notified_unpaired[external_id] = (display_name or "")[:100]
     while len(_notified_unpaired) > _NOTIFIED_UNPAIRED_MAX:
         _notified_unpaired.pop(next(iter(_notified_unpaired)))
     ten = f" ({display_name})" if display_name else ""
@@ -103,6 +143,17 @@ def notify_unpaired(external_id: str, display_name: str = "") -> None:
         f"Dùng /zalopair {external_id} để cấp quyền thành viên, hoặc "
         f"/zaloadmin {external_id} để cấp quyền admin (dùng được lệnh nhóm và /fb_*)."
     )
+    from services import action_buttons
+
+    buttons = action_buttons.zalo_pair_rows(external_id)
+    if buttons and _pair_prompt_callback is not None:
+        try:
+            task = asyncio.create_task(_send_pair_prompt(_pair_prompt_callback, text, buttons))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+            return
+        except Exception:
+            logger.warning("Không tạo được task cảnh báo có nút.", exc_info=True)
     _send_alert(text)
 
 
@@ -113,6 +164,8 @@ class ZaloUser:
     display_name: str
     role: str  # "admin" | "user"
     status: str  # "active" | "suspended"
+    # Cách gọi người này do chủ bot đặt (core/address.py); None = mặc định persona.
+    address_form: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -134,55 +187,78 @@ def _row_to_user(row) -> ZaloUser:
         display_name=row["display_name"] or "",
         role=row["role"],
         status=row["status"],
+        address_form=address.normalize(row.get("address_form")),
     )
+
+
+_USER_COLUMNS = "external_id, internal_user_id, display_name, role, status, address_form"
 
 
 @db.with_reconnect
 async def resolve(external_id: str) -> Optional[ZaloUser]:
     await ensure_schema()
     row = await (await db.get_pool()).fetchrow(
-        "SELECT external_id, internal_user_id, display_name, role, status "
-        "FROM zalo_users WHERE external_id = $1",
+        f"SELECT {_USER_COLUMNS} FROM zalo_users WHERE external_id = $1",
         external_id,
     )
     return _row_to_user(row) if row else None
 
 
+def _checked_address_form(address_form: str | None) -> str | None:
+    if address_form is None:
+        return None
+    form = address.normalize(address_form)
+    if form is None:
+        raise ValueError(f"cách xưng hô không hợp lệ: {address_form!r}")
+    return form
+
+
 @db.with_reconnect
-async def _upsert(external_id: str, display_name: str, role: str) -> ZaloUser:
+async def _upsert(
+    external_id: str, display_name: str, role: str, address_form: str | None = None
+) -> ZaloUser:
+    """address_form=None giữ nguyên cách xưng hô đã đặt trước đó (nếu có)."""
     await ensure_schema()
     row = await (await db.get_pool()).fetchrow(
-        """
-        INSERT INTO zalo_users (external_id, display_name, role, status)
-        VALUES ($1, $2, $3, 'active')
+        f"""
+        INSERT INTO zalo_users (external_id, display_name, role, status, address_form)
+        VALUES ($1, $2, $3, 'active', $4)
         ON CONFLICT (external_id) DO UPDATE SET
             display_name = CASE WHEN EXCLUDED.display_name <> '' THEN EXCLUDED.display_name
                                  ELSE zalo_users.display_name END,
             role = $3,
             status = 'active',
+            address_form = COALESCE(EXCLUDED.address_form, zalo_users.address_form),
             updated_at = now()
-        RETURNING external_id, internal_user_id, display_name, role, status
+        RETURNING {_USER_COLUMNS}
         """,
         external_id,
         display_name.strip()[:500],
         role,
+        _checked_address_form(address_form),
     )
     return _row_to_user(row)
 
 
-async def pair(external_id: str, display_name: str = "") -> ZaloUser:
+async def pair(
+    external_id: str, display_name: str = "", *, address_form: str | None = None
+) -> ZaloUser:
     """Pair 1 id Zalo với quyền THÀNH VIÊN (chỉ tính năng bình thường). Nếu id
     đã pair sẵn (kể cả admin), gọi lại KHÔNG hạ quyền - dùng /zalohaquyen nếu
-    thật sự muốn hạ quyền admin xuống user."""
+    thật sự muốn hạ quyền admin xuống user.
+
+    ``address_form`` (core/address.py): cách gọi người này; None = giữ nguyên."""
     existing = await resolve(external_id)
     role = existing.role if existing else ROLE_USER
-    return await _upsert(external_id, display_name, role)
+    return await _upsert(external_id, display_name, role, address_form)
 
 
-async def pair_as_admin(external_id: str, display_name: str = "") -> ZaloUser:
+async def pair_as_admin(
+    external_id: str, display_name: str = "", *, address_form: str | None = None
+) -> ZaloUser:
     """Pair (hoặc nâng quyền id đã pair) thành ADMIN — dùng được tính năng
     nhóm. Hỗ trợ NHIỀU admin cùng lúc (không giới hạn 1 admin duy nhất)."""
-    return await _upsert(external_id, display_name, ROLE_ADMIN)
+    return await _upsert(external_id, display_name, ROLE_ADMIN, address_form)
 
 
 @db.with_reconnect
@@ -222,14 +298,50 @@ async def _delete_user_data(conn, internal_user_id: int) -> None:
         internal_user_id,
     )
     await conn.execute("DELETE FROM reminders WHERE telegram_user_id = $1", internal_user_id)
+    # Chuỗi nhắc lặp + ngày nhớ (migrations/019) - xoá SAU reminders vì FK cascade.
+    await conn.execute("DELETE FROM reminder_series WHERE telegram_user_id = $1", internal_user_id)
     for table in _USER_DATA_TABLES:
         await conn.execute(f"DELETE FROM {table} WHERE telegram_user_id = $1", internal_user_id)
     await conn.execute("DELETE FROM settings WHERE key = $1", f"memory_enabled_{internal_user_id}")
+    # Thành phố thời tiết + bản tin sáng cá nhân (services/personal_settings.py).
+    await conn.execute(
+        "DELETE FROM settings WHERE key = ANY($1::text[])",
+        personal_settings.zalo_user_keys(internal_user_id),
+    )
+
+
+@db.with_reconnect
+async def delete_own_data(internal_user_id: int) -> None:
+    """Thành viên tự xoá dữ liệu cá nhân (/xoadulieu xacnhan): như /zaloxoa nhưng
+    GIỮ pairing để vẫn nhắn tiếp được. Chỉ nhận id ÂM (dải Zalo) - id chủ bot bị
+    _delete_user_data từ chối."""
+    await ensure_schema()
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _delete_user_data(conn, internal_user_id)
+
+
+async def remove(external_id: str) -> bool:
+    """Gỡ pairing VÀ xoá toàn bộ dữ liệu cá nhân của user đó (1 transaction), rồi
+    báo zalo-gateway quên người này (best-effort, ngoài transaction và ngoài
+    with_reconnect) - không thì gateway vẫn coi họ là người quen tới lần khởi động
+    lại và gửi "đã xem"/typing trước khi Python im lặng với họ."""
+    internal_user_id = await _remove_pairing(external_id)
+    if internal_user_id is None:
+        return False
+    from services import weather_home
+
+    # Cache RAM thành phố thời tiết của người vừa xoá (dòng DB đã xoá ở trên).
+    weather_home.forget(internal_user_id)
+    await zalo_gateway_status.forget_sender(external_id)
+    return True
 
 
 @db.with_reconnect(idempotent=False)
-async def remove(external_id: str) -> bool:
-    """Gỡ pairing VÀ xoá toàn bộ dữ liệu cá nhân của user đó (1 transaction)."""
+async def _remove_pairing(external_id: str) -> int | None:
+    """Phần DB của remove(): xoá pairing + dữ liệu cá nhân trong 1 transaction.
+    Trả internal_user_id đã xoá, None nếu chưa pair."""
     await ensure_schema()
     pool = await db.get_pool()
     async with pool.acquire() as conn:
@@ -241,14 +353,14 @@ async def remove(external_id: str) -> bool:
             if internal_user_id is not None:
                 await _delete_user_data(conn, int(internal_user_id))
     _notified_unpaired.pop(external_id, None)
-    return internal_user_id is not None
+    return None if internal_user_id is None else int(internal_user_id)
 
 
 @db.with_reconnect
 async def list_users() -> list[ZaloUser]:
     await ensure_schema()
     rows = await (await db.get_pool()).fetch(
-        "SELECT external_id, internal_user_id, display_name, role, status FROM zalo_users "
+        f"SELECT {_USER_COLUMNS} FROM zalo_users "
         "ORDER BY (role = 'admin') DESC, display_name, external_id"
     )
     return [_row_to_user(row) for row in rows]

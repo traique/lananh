@@ -1,11 +1,18 @@
-"""Channel-neutral image-to-prompt pipeline used by the Zalo bridge."""
+"""Channel-neutral image-to-prompt pipeline used by the Zalo bridge.
+
+Ảnh có caption "hoá đơn"/"bill"/"chi tiêu": đọc hoá đơn, ghi khoản chi nháp
+(services/expense_service.py) thay vì viết prompt. Caption là câu hỏi/yêu cầu rõ
+về ảnh: trả lời về ảnh (services/vision_service.py) theo cách gọi riêng của
+thành viên; không caption vẫn viết prompt."""
 
 import os
 from pathlib import Path
 
+import messages
 from ai import orchestrator
 from core import config
 from core.fileutil import safe_delete
+from services import conversation_log, expense_service, reply_audience, vision_service
 from services.prompt_identity import resolve_prompt_identity
 from services.prompt_templates import build_image_instruction
 from services.telemetry import telemetry
@@ -32,6 +39,20 @@ async def handle_channel_image(
 
     config.ensure_media_dir()
     safe_id = "".join(ch for ch in message_id if ch.isalnum())[:48] or "image"
+    if expense_service.is_receipt_caption(caption):
+        receipt: Path = config.MEDIA_DIR / f"zalo_receipt_{safe_id}{_ALLOWED_TYPES[mime]}"
+        try:
+            receipt.write_bytes(image)
+            reply = await expense_service.analyze_receipt(user_id, str(receipt))
+            await conversation_log.record_exchange(
+                user_id, f"[Gửi ảnh] {caption}".strip(), reply, conversation_log.KIND_EXPENSE
+            )
+            return [reply], None
+        finally:
+            await safe_delete(receipt)
+    intent = vision_service.classify_caption(caption)
+    if intent.mode == vision_service.MODE_QA:
+        return await _vision_reply(user_id, image, caption, intent, safe_id, mime)
     path: Path = config.MEDIA_DIR / f"zalo_prompt_{safe_id}{_ALLOWED_TYPES[mime]}"
     prompt_id = await telemetry.start(
         user_id, "promptify", caption or "(ảnh Zalo không caption)", channel="zalo"
@@ -43,11 +64,36 @@ async def handle_channel_image(
         output = (getattr(response, "text", None) or "").strip()
         await telemetry.success(prompt_id, "promptify", output or "(không có nội dung)")
         if not output:
-            return ["Gemini không trả về prompt. Hãy thử ảnh khác."], None
+            return [await reply_audience.error_text("image_empty", user_id)], None
         fallback = bool(getattr(response, "used_fallback", False))
+        # Lịch sử chỉ lưu 1 dòng tóm tắt, không lưu prompt tiếng Anh.
+        await conversation_log.record_exchange(
+            user_id, f"[Gửi ảnh] {caption}".strip(), "-", conversation_log.KIND_IMAGE
+        )
         return [f"📝 Prompt gợi ý\n{hint}\n\n{output}"], "api" if fallback else None
     except Exception as exc:
         await telemetry.failure(prompt_id, "promptify", exc)
-        return [f"❌ Gemini không phân tích được ảnh: {type(exc).__name__}: {str(exc)[:220]}"], None
+        # Thông điệp lỗi có thể mang thân response upstream: chỉ chủ bot (Zalo
+        # controller) được xem, thành viên nhận câu giọng Lan Anh không chi tiết.
+        detail = messages.exception_detail(exc, limit=250)
+        return [await reply_audience.error_text("image", user_id, detail)], None
     finally:
         await safe_delete(path)
+
+
+async def _vision_reply(
+    user_id: int, image: bytes, caption: str, intent, safe_id: str, mime: str
+) -> tuple[list[str], str | None]:
+    """Hỏi đáp về ảnh (vision_service đã lưu lịch sử); lỗi -> câu giọng Lan Anh."""
+    path: Path = config.MEDIA_DIR / f"zalo_vision_{safe_id}{_ALLOWED_TYPES[mime]}"
+    try:
+        path.write_bytes(image)
+        result = await vision_service.answer(user_id, str(path), caption, intent, channel="zalo")
+    except Exception as exc:
+        detail = messages.exception_detail(exc, limit=250)
+        return [await reply_audience.error_text("image", user_id, detail)], None
+    finally:
+        await safe_delete(path)
+    if not result.text:
+        return [await reply_audience.error_text("empty", user_id)], None
+    return [result.text], "api" if result.used_fallback else None

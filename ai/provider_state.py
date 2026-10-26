@@ -22,9 +22,28 @@ _STATE_ACTIVE_PROVIDER = "provider_active"
 _STATE_ROUTER9_DEAD_SINCE = "provider_router9_dead_since"
 _STATE_ROUTER9_ENABLED = "provider_router9_enabled"
 _STATE_API_EXHAUSTED_PREFIX = "provider_api_exhausted_until_"
-# 4 provider có cooldown-on-quota (mọi provider trừ router9, dùng cơ chế
-# dead/probe riêng - xem mark_router9_dead/alive bên dưới).
-_COOLDOWN_PROVIDERS = ("groq", "openrouter", "api1", "api2")
+# Lý do cooldown/chết gần nhất (hiện ở /status): "rate limit theo phút...",
+# "hết quota NGÀY...", "timeout"... Lưu bảng settings, không cần cột mới.
+_STATE_COOLDOWN_REASON_PREFIX = "provider_cooldown_reason_"
+# Provider có cooldown-on-quota. router9 dùng cơ chế dead/probe riêng (xem
+# mark_router9_dead/alive bên dưới) nhưng lỗi 429 của router9 chỉ là cooldown
+# ngắn theo Retry-After, KHÔNG khai tử.
+# "groq_search"/"router9_search": cooldown RIÊNG của model tự tra web
+# (GROQ_REALTIME_MODEL, ROUTER9_WEB_SEARCH_MODEL - bucket rate-limit khác model
+# chat) - 429 lúc tra web không khoá luôn chat/utility, và ngược lại.
+_COOLDOWN_PROVIDERS = (
+    "groq",
+    "openrouter",
+    "api1",
+    "api2",
+    "router9",
+    "groq_search",
+    "router9_search",
+)
+# router9 lỗi 5xx/mất kết nối: chỉ khai tử khi đủ ROUTER9_HEALTH_STRIKES lỗi
+# trong ROUTER9_HEALTH_WINDOW_SEC (timeout và 401/403 vẫn khai tử ngay).
+ROUTER9_HEALTH_STRIKES = 2
+ROUTER9_HEALTH_WINDOW_SEC = 300.0
 
 
 class ProviderStateSnapshot(TypedDict):
@@ -35,6 +54,10 @@ class ProviderStateSnapshot(TypedDict):
     openrouter_exhausted_until: float
     api1_exhausted_until: float
     api2_exhausted_until: float
+    router9_exhausted_until: float
+    groq_search_exhausted_until: float
+    router9_search_exhausted_until: float
+    cooldown_reasons: dict[str, str]
 
 
 # ─── Cảnh báo Telegram khi 9Router chết/sống lại ─────────────────────────────
@@ -59,8 +82,11 @@ class ProviderChainState:
         self.active_provider: str = "router9"
         self.router9_dead_since: Optional[float] = None  # epoch seconds, None = sống/chưa biết
         self.router9_enabled: bool = True  # tắt thủ công qua /router9 off, độc lập với dead_since
-        # key: "groq"|"openrouter"|"api1"|"api2", value: epoch seconds
+        # key: "groq"|"openrouter"|"api1"|"api2"|"router9", value: epoch seconds
         self.api_exhausted_until: dict[str, float] = {name: 0.0 for name in _COOLDOWN_PROVIDERS}
+        self.cooldown_reasons: dict[str, str] = {}
+        # Mốc (monotonic) các lỗi sức khoẻ gần đây của router9 - chỉ trong RAM.
+        self._router9_strikes: list[float] = []
         self._lock = asyncio.Lock()
         self._loaded = False
 
@@ -95,6 +121,9 @@ class ProviderChainState:
                     self.api_exhausted_until[name] = float(raw) if raw else 0.0
                 except ValueError:
                     self.api_exhausted_until[name] = 0.0
+                reason = await db.get_setting(f"{_STATE_COOLDOWN_REASON_PREFIX}{name}")
+                if reason:
+                    self.cooldown_reasons[name] = reason
 
             raw_enabled = await db.get_setting(_STATE_ROUTER9_ENABLED)
             self.router9_enabled = raw_enabled != "0"
@@ -108,40 +137,88 @@ class ProviderChainState:
                 self.api_exhausted_until,
             )
 
-    async def set_active_provider(self, name: str) -> None:
-        if self.active_provider != name:
-            logger.info("Provider-chain: chuyển active_provider -> %s", name)
-        self.active_provider = name
-        await db.set_setting(_STATE_ACTIVE_PROVIDER, name)
+    async def _persist(self, key: str, value: str) -> None:
+        """Ghi state xuống DB kiểu best-effort: state trong RAM mới là nguồn
+        quyết định của provider-chain. Supabase chập chờn KHÔNG được biến 1 câu
+        trả lời đã sinh xong thành "provider lỗi" (trước đây set_setting raise
+        ngay sau lượt gọi thành công -> chain gọi tiếp provider khác, đốt quota
+        nhiều lần rồi vẫn báo lỗi)."""
+        try:
+            await db.set_setting(key, value)
+        except Exception:
+            logger.warning(
+                "Không ghi được state provider %s xuống DB (bỏ qua).", key, exc_info=True
+            )
 
-    async def mark_router9_dead(self) -> None:
+    async def set_active_provider(self, name: str) -> None:
+        if self.active_provider == name:
+            return  # không đổi -> không ghi DB mỗi lượt gọi
+        logger.info("Provider-chain: chuyển active_provider -> %s", name)
+        self.active_provider = name
+        await self._persist(_STATE_ACTIVE_PROVIDER, name)
+
+    async def mark_router9_dead(self, reason: str = "") -> None:
         just_died = self.router9_dead_since is None
+        if not just_died:
+            return
         now = time.time()
         self.router9_dead_since = now
-        await db.set_setting(_STATE_ROUTER9_DEAD_SINCE, str(now))
-        if just_died:
-            send_alert(messages.ROUTER9_DEAD_ALERT)
+        self._router9_strikes.clear()
+        if reason:
+            self.cooldown_reasons["router9_dead"] = reason
+        logger.warning("Provider-chain: khai tử 9Router (%s).", reason or "lỗi")
+        await self._persist(_STATE_ROUTER9_DEAD_SINCE, str(now))
+        send_alert(messages.ROUTER9_DEAD_ALERT)
 
     async def mark_router9_alive(self) -> None:
-        was_dead = self.router9_dead_since is not None
+        self._router9_strikes.clear()
+        if self.router9_dead_since is None:
+            return  # đang sống -> không ghi DB mỗi lượt gọi
         self.router9_dead_since = None
-        await db.set_setting(_STATE_ROUTER9_DEAD_SINCE, "")
-        if was_dead:
-            send_alert(messages.ROUTER9_ALIVE_ALERT)
+        self.cooldown_reasons.pop("router9_dead", None)
+        await self._persist(_STATE_ROUTER9_DEAD_SINCE, "")
+        send_alert(messages.ROUTER9_ALIVE_ALERT)
+
+    def note_router9_health_failure(self) -> bool:
+        """Ghi 1 lỗi sức khoẻ (5xx, mất kết nối, lỗi lạ) của router9; True nếu
+        đã đủ ROUTER9_HEALTH_STRIKES lỗi trong ROUTER9_HEALTH_WINDOW_SEC -> nên
+        khai tử. Lỗi theo REQUEST (400/413/422, nội dung bị lọc, output lẫn
+        CJK...) không đi qua hàm này."""
+        now = time.monotonic()
+        self._router9_strikes = [
+            ts for ts in self._router9_strikes if now - ts <= ROUTER9_HEALTH_WINDOW_SEC
+        ]
+        self._router9_strikes.append(now)
+        return len(self._router9_strikes) >= ROUTER9_HEALTH_STRIKES
 
     async def set_router9_enabled(self, enabled: bool) -> None:
         self.router9_enabled = enabled
         await db.set_setting(_STATE_ROUTER9_ENABLED, "1" if enabled else "0")
         logger.info("Provider-chain: 9Router %s thủ công.", "bật" if enabled else "tắt")
 
-    async def mark_api_exhausted(self, provider: str) -> None:
-        until = time.time() + config.API_QUOTA_COOLDOWN_SEC
+    async def mark_api_exhausted(
+        self, provider: str, seconds: Optional[float] = None, reason: str = ""
+    ) -> None:
+        """Cooldown ``seconds`` giây (mặc định API_QUOTA_COOLDOWN_SEC) - caller
+        tính theo gợi ý của provider qua ai/cooldown.py::cooldown_for()."""
+        duration = float(config.API_QUOTA_COOLDOWN_SEC if seconds is None else seconds)
+        until = time.time() + max(0.0, duration)
         self.api_exhausted_until[provider] = until
-        await db.set_setting(f"{_STATE_API_EXHAUSTED_PREFIX}{provider}", str(until))
-        logger.warning("%s hết quota (429), cooldown %ss.", provider, config.API_QUOTA_COOLDOWN_SEC)
+        if reason:
+            self.cooldown_reasons[provider] = reason
+        logger.warning(
+            "%s hết quota/rate limit (429), cooldown %.0fs (%s).",
+            provider,
+            duration,
+            reason or "mặc định",
+        )
+        await self._persist(f"{_STATE_API_EXHAUSTED_PREFIX}{provider}", str(until))
+        if reason:
+            await self._persist(f"{_STATE_COOLDOWN_REASON_PREFIX}{provider}", reason)
 
     async def reset_api_cooldown(self, provider: str) -> None:
         self.api_exhausted_until[provider] = 0.0
+        self.cooldown_reasons.pop(provider, None)
         await db.set_setting(f"{_STATE_API_EXHAUSTED_PREFIX}{provider}", "")
         logger.info("%s: cooldown reset thủ công.", provider)
 
@@ -159,6 +236,10 @@ class ProviderChainState:
             openrouter_exhausted_until=self.api_exhausted_until.get("openrouter", 0.0),
             api1_exhausted_until=self.api_exhausted_until.get("api1", 0.0),
             api2_exhausted_until=self.api_exhausted_until.get("api2", 0.0),
+            router9_exhausted_until=self.api_exhausted_until.get("router9", 0.0),
+            groq_search_exhausted_until=self.api_exhausted_until.get("groq_search", 0.0),
+            router9_search_exhausted_until=self.api_exhausted_until.get("router9_search", 0.0),
+            cooldown_reasons=dict(self.cooldown_reasons),
         )
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 
 class Pool:
@@ -44,7 +44,7 @@ class Pool:
 
     async def query(self, sql, params):
         def encode(v):
-            if isinstance(v, datetime):
+            if isinstance(v, (datetime, date)):
                 return v.isoformat()
             if isinstance(v, timedelta):
                 return f"{v.total_seconds()} seconds"

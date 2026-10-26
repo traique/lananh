@@ -7,6 +7,8 @@ provider_commands.py, chat_router.py, stock_handler.py, media_handler.py...) đ�
 import asyncio
 import functools
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from telegram import Update
@@ -22,6 +24,37 @@ from core.text_normalize import nfc
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TEXT_MAX = 4096
+# Telegram tự tắt trạng thái "đang nhập..." sau ~5 giây: gửi lại mỗi 4 giây, tối
+# đa 60 lần (~4 phút, trên CHAT_TURN_TIMEOUT_SEC mặc định).
+TYPING_INTERVAL_SEC = 4.0
+TYPING_MAX_REFRESHES = 60
+
+
+@asynccontextmanager
+async def typing_keepalive(
+    bot,
+    chat_id: int,
+    *,
+    interval: float = TYPING_INTERVAL_SEC,
+    max_refreshes: int = TYPING_MAX_REFRESHES,
+) -> AsyncIterator[None]:
+    """Giữ "đang nhập..." suốt lượt dài (1 lần send_chat_action chỉ sống ~5 giây).
+    Chạy nền, lỗi mạng bỏ qua; ra khỏi khối là dừng ngay."""
+
+    async def _loop() -> None:
+        for _ in range(max(1, max_refreshes)):
+            try:
+                await bot.send_chat_action(chat_id=chat_id, action="typing")
+            except Exception:
+                logger.debug("Không gửi được typing (bỏ qua).", exc_info=True)
+            await asyncio.sleep(interval)
+
+    task = asyncio.create_task(_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def check_access(update: Update) -> bool:
@@ -62,8 +95,14 @@ def extract_arg(context: ContextTypes.DEFAULT_TYPE) -> str:
     return nfc(" ".join(context.args).strip()) if context.args else ""
 
 
-async def reply_long_text(message, text: str) -> None:
-    await tg_format.reply_rich(message, text, max_len=TELEGRAM_TEXT_MAX)
+async def reply_long_text(message, text: str, *, reply_markup=None):
+    """reply_markup (nút bấm) chỉ gắn vào đoạn cuối của câu trả lời dài. Trả tin
+    cuối đã gửi (để gỡ nút về sau), có thể None."""
+    if reply_markup is None:
+        return await tg_format.reply_rich(message, text, max_len=TELEGRAM_TEXT_MAX)
+    return await tg_format.reply_rich(
+        message, text, max_len=TELEGRAM_TEXT_MAX, reply_markup=reply_markup
+    )
 
 
 async def reply_code_block(message, text: str) -> None:
@@ -74,10 +113,12 @@ async def reply_code_block(message, text: str) -> None:
     await tg_format_codeblock.reply_code_block(message, text, max_len=TELEGRAM_TEXT_MAX)
 
 
-async def reply_long_text_edit_first(status_message, text: str) -> None:
+async def reply_long_text_edit_first(status_message, text: str, *, reply_markup=None):
     """Như reply_long_text, nhưng edit vào status_message có sẵn thay vì
     gửi tin mới - dùng khi đã có 1 tin nhắn trạng thái "đang xử lý..."."""
-    await tg_format.reply_rich_edit_first(status_message, text, max_len=TELEGRAM_TEXT_MAX)
+    return await tg_format.reply_rich_edit_first(
+        status_message, text, max_len=TELEGRAM_TEXT_MAX, reply_markup=reply_markup
+    )
 
 
 async def download_telegram_photo_with_retry(photo, local_path: Path) -> None:

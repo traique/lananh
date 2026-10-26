@@ -2,9 +2,20 @@
 # - python-format: ruff check toàn repo + ruff format --check CHỈ trên file .py
 #   thay đổi (repo cũ chưa format toàn bộ; pyproject bật force-exclude để
 #   [tool.ruff.format].exclude vẫn áp dụng cho đường dẫn tường minh).
-# - python-test: pytest -q.
+# - python-test: pytest -q (gồm test/test_migration_lock.py: sửa migration đã áp
+#   bị bắt ngay ở PR).
 # - sql-pglite: test SQL state-transition trên PGlite (Node 22).
 # - zalo-gateway: tsc + prettier + node --test.
+# - docker-build: build image rồi CHẠY thử trong image (import, pip check, node,
+#   zca-js) - lỗi đóng gói không lọt lên Render.
+#
+# Render deploy với autoDeployTrigger: checksPass (render.yaml) = chờ MỌI check
+# của commit xanh. Vì vậy quét CVE (pip-audit/npm audit, đỏ bất cứ lúc nào có
+# advisory mới, không phụ thuộc commit) nằm riêng ở audit.yml (PR + lịch tuần),
+# không chặn deploy hotfix.
+#
+# Cài Python: PyPI cho mọi package; kho riêng vnstocks.com chỉ cho 3 package ghim
+# trong requirements-vnstock.txt (--no-deps), rồi pip check.
 name: CI
 
 on:
@@ -15,9 +26,12 @@ on:
 permissions:
   contents: read
 
+# Chỉ huỷ run cũ của PR. Trên main KHÔNG huỷ: checksPass cần check của commit
+# xanh, nếu run bị huỷ (vd commit bot "[skip render]" từ /ragxuly đẩy ngay sau)
+# thì commit của chủ bot không bao giờ deploy, còn commit bot thì Render bỏ qua.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   python-format:
@@ -34,11 +48,14 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+            requirements-vnstock.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --extra-index-url https://vnstocks.com/api/simple -r requirements-dev.txt
+          pip install -r requirements-dev.txt
+          pip install --no-deps -r requirements-vnstock.txt
+          pip check
 
       - name: Ruff lint
         run: ruff check .
@@ -86,11 +103,14 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+            requirements-vnstock.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --extra-index-url https://vnstocks.com/api/simple -r requirements-dev.txt
+          pip install -r requirements-dev.txt
+          pip install --no-deps -r requirements-vnstock.txt
+          pip check
 
       - name: Pytest
         run: pytest -q
@@ -107,6 +127,7 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+            requirements-vnstock.txt
 
       - uses: actions/setup-node@v4
         with:
@@ -115,36 +136,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --extra-index-url https://vnstocks.com/api/simple -r requirements-dev.txt
+          pip install -r requirements-dev.txt
+          pip install --no-deps -r requirements-vnstock.txt
+          pip check
 
       # pyrightconfig.json: mức basic, phần lớn rule ở mức warning - job này chỉ
       # fail khi có error (reportUnusedCoroutine, lỗi cú pháp kiểu...).
       - name: Pyright
         run: pyright
-
-  dependency-audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: pip-audit (requirements.txt)
-        run: |
-          python -m pip install --upgrade pip pip-audit
-          # vnstock/vnai ở kho riêng không có trong PyPI advisory DB -> bỏ qua 2 dòng đó.
-          grep -v '^vnstock\|^vnai\|^#' requirements.txt > /tmp/req-audit.txt
-          pip-audit -r /tmp/req-audit.txt --strict
-
-      - name: npm audit (zalo-gateway, production deps)
-        working-directory: zalo-gateway
-        run: npm audit --omit=dev --audit-level=high
 
   docker-build:
     runs-on: ubuntu-latest
@@ -153,13 +152,30 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Chỉ kiểm tra image build được (multi-stage Node 22 + Python 3.12), không push.
+      # Build image (multi-stage Node 22 + Python 3.12), không push; load vào
+      # docker local để chạy thử bước dưới.
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: false
+          load: true
+          tags: lananh:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Chạy thử TRONG image (không phải venv CI): .dockerignore loại test/, binary
+      # node chép từ stage bookworm sang python slim, node_modules đã prune - lỗi ở
+      # các bước đó chỉ lộ ra khi chạy image. Không gọi mạng, không cần secret.
+      - name: Smoke test image
+        run: |
+          docker run --rm -e TELEGRAM_TOKEN=ci-dummy -e ALLOWED_USER_ID=1 lananh:ci sh -euc '
+            python -c "import web, bot_app, scheduler, main"
+            pip check
+            node --version
+            node --check zalo-gateway/dist/index.js
+            cd zalo-gateway
+            node --input-type=module -e "await import(\"zca-js\")"
+          '
 
   sql-pglite:
     runs-on: ubuntu-latest
@@ -173,6 +189,7 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+            requirements-vnstock.txt
 
       - uses: actions/setup-node@v4
         with:
@@ -183,7 +200,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --extra-index-url https://vnstocks.com/api/simple -r requirements-dev.txt
+          pip install -r requirements-dev.txt
+          pip install --no-deps -r requirements-vnstock.txt
+          pip check
 
       - name: Install PGlite
         working-directory: test/sql_support
@@ -192,7 +211,7 @@ jobs:
       - name: SQL tests on PGlite
         env:
           TEST_PGLITE: "1"
-        run: pytest -q test/test_delivery_sql.py test/test_migrations.py test/test_zalo_outbox_sql.py
+        run: pytest -q test/test_delivery_sql.py test/test_migrations.py test/test_zalo_outbox_sql.py test/test_ops_sql.py test/test_observability_sql.py
 
   zalo-gateway:
     runs-on: ubuntu-latest

@@ -266,7 +266,10 @@ async def test_thoi_tiet_gioi_han_dia_diem_la(client, monkeypatch):
     assert "°C" in (await client.get("/thoi-tiet", params={"noi": "đà lạt"})).text
     assert "°C" in (await client.get("/thoi-tiet")).text
     assert len(calls) == 5
-    assert web_site._new_place_allowed(now=10_000.0)  # cửa sổ 10 phút đã qua
+    # Cửa sổ 10 phút đã qua. Tính từ đồng hồ thật: hằng số cố định (10_000) sai
+    # khi máy chạy test đã bật quá ~2,6 giờ (time.monotonic() lớn hơn).
+    later = web_site.time.monotonic() + web_site._NEW_PLACE_WINDOW_SEC + 1
+    assert web_site._new_place_allowed(now=later)
 
 
 async def test_trang_than_so_hoc_escape_ho_ten(client):
@@ -602,3 +605,16 @@ def test_trang_chu_co_dai_12_gio():
         len(re.findall(r'class="hour[ "]', html)) == 12 and html.count('aria-current="time"') == 1
     )
     assert 'href="/" aria-current="page"' in html  # mục Hôm nay trên thanh bên
+
+
+def test_trang_chu_va_admin_co_link_ky_mon():
+    from pathlib import Path
+
+    html = bytes(web_site.home_page().body).decode()
+    assert 'href="/ky-mon"' in html and 'id="kymon-title"' in html
+    assert html.index('id="tuvi-title"') < html.index('id="kymon-title"')  # cạnh Tử vi
+    admin = (Path(__file__).resolve().parent.parent / "templates" / "admin.html").read_text("utf-8")
+    nav = admin[admin.index("Công cụ web") :]
+    assert (
+        nav.index('href="/tu-vi"') < nav.index('href="/ky-mon"') < nav.index('href="/than-so-hoc"')
+    )

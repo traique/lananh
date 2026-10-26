@@ -1,5 +1,7 @@
 """Test services/weather.py với HTTP giả lập (httpx.MockTransport), không gọi mạng."""
 
+import datetime as dt
+
 import httpx
 import pytest
 
@@ -148,3 +150,101 @@ async def test_cache_co_tran(mock_http):
     for i in range(weather._GEO_CACHE_MAX + 10):
         await weather.get_weather(f"noi-{i}")
     assert len(weather._geo_cache) == weather._GEO_CACHE_MAX
+
+
+# ─── Theo giờ + chất lượng không khí ────────────────────────────────────────
+
+_HOURLY = {
+    "hourly": {
+        "time": [f"2026-10-21T{h:02d}:00" for h in range(24)]
+        + [f"2026-10-22T{h:02d}:00" for h in range(24)],
+        "precipitation_probability": list(range(48)),
+        "precipitation": [0.0] * 47 + [1.2],
+        "temperature_2m": [28.0] * 48,
+        "weather_code": [61] * 48,
+    }
+}
+
+
+@pytest.fixture
+def clear_extra_caches():
+    weather._hourly_cache.clear()
+    weather._air_cache.clear()
+    yield
+    weather._hourly_cache.clear()
+    weather._air_cache.clear()
+
+
+async def test_get_hourly_parse_va_cache(mock_http, clear_extra_caches):
+    sent, routes = mock_http
+    routes["api.open-meteo.com"] = lambda r: httpx.Response(200, json=_HOURLY)
+
+    data = await weather.get_hourly("")
+    again = await weather.get_hourly("Sài Gòn")
+
+    assert data["location"] == weather.DEFAULT_LABEL and len(data["hours"]) == 48
+    first = data["hours"][0]
+    assert first.time == dt.datetime(2026, 10, 21, 0, 0)
+    assert data["hours"][47].precip_mm == 1.2 and data["hours"][47].rain_chance == 47
+    assert sent[0].url.params["hourly"].startswith("precipitation_probability")
+    assert sent[0].url.params["forecast_days"] == "3"  # đủ cả "đêm mai" (tới 6h ngày kia)
+    assert again["hours"] is data["hours"] and len(sent) == 1  # cache theo toạ độ
+
+
+async def test_get_hourly_loi_raise(mock_http, clear_extra_caches):
+    _sent, routes = mock_http
+    routes["api.open-meteo.com"] = lambda r: httpx.Response(200, json={"hourly": {}})
+    with pytest.raises(weather.WeatherError):
+        await weather.get_hourly("")
+
+
+async def test_get_air_quality_va_canh_bao(mock_http, clear_extra_caches):
+    sent, routes = mock_http
+    routes["air-quality-api.open-meteo.com"] = lambda r: httpx.Response(
+        200, json={"current": {"us_aqi": 152.4, "pm2_5": 61.3}}
+    )
+
+    air = await weather.get_air_quality("")
+    await weather.get_air_quality("")
+
+    assert air["us_aqi"] == 152 and len(sent) == 1
+    assert sent[0].url.params["current"] == "us_aqi,pm2_5"
+    assert weather.describe_air(air) == "US AQI 152 (xấu), PM2.5 61 µg/m³"
+    assert "CAMS" in weather.air_warning(air)
+    assert weather.air_warning({"us_aqi": 100}) is None  # đúng ngưỡng: chưa cảnh báo
+    assert weather.air_warning(None) is None
+
+
+async def test_get_air_quality_thieu_aqi_raise(mock_http, clear_extra_caches):
+    _sent, routes = mock_http
+    routes["air-quality-api.open-meteo.com"] = lambda r: httpx.Response(
+        200, json={"current": {"us_aqi": None}}
+    )
+    with pytest.raises(weather.WeatherError):
+        await weather.get_air_quality("")
+
+
+@pytest.mark.parametrize(
+    "aqi,label", [(0, "tốt"), (75, "trung bình"), (101, "kém"), (250, "rất xấu"), (400, "nguy hại")]
+)
+def test_aqi_level(aqi, label):
+    assert weather.aqi_level(aqi).startswith(label)
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("chiều nay mấy giờ mưa", True),
+        ("mưa lúc mấy giờ vậy em", True),
+        ("hôm nay giờ nào có mưa", True),
+        ("mấy giờ rồi em", False),
+    ],
+)
+def test_cau_hoi_gio_mua_la_cau_thoi_tiet(text, expected):
+    assert weather.looks_like_weather_question(text) is expected
+
+
+def test_cau_hoi_chat_luong_khong_khi():
+    assert weather.looks_like_air_question("chỉ số AQI hôm nay")
+    assert weather.looks_like_air_question("bụi mịn pm2.5 cao không")
+    assert not weather.looks_like_air_question("mua máy lọc nước")

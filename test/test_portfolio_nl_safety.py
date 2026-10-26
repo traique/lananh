@@ -24,8 +24,8 @@ def recorder(monkeypatch):
             return portfolio.Holding(user_id, symbol.upper(), 1000, 25_000)
         return None
 
-    async def fake_sell(user_id, symbol, quantity):
-        calls["sell"].append((symbol, quantity))
+    async def fake_sell(user_id, symbol, quantity, price=None):
+        calls["sell"].append((symbol, quantity) if price is None else (symbol, quantity, price))
         return f"sold {symbol} {quantity}"
 
     async def fake_add(user_id, symbol, quantity, price, **kwargs):
@@ -80,6 +80,55 @@ async def test_cau_ke_da_ban_co_so_luong_moi_ghi(recorder):
         "sold HPG"
     )
     assert recorder["sell"] == [("FPT", 200), ("HPG", 100)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Câu "giả sử" về lãi/lỗ đã chốt từng ghi 1 dòng SELL thật vào sổ.
+        "nếu đã bán HPG 1000 giá 27 thì lãi bao nhiêu",
+        "giả sử đã bán HPG 1000 giá 27",
+        "sắp bán HPG 1000 giá 30 rồi",
+        "mai bán HPG 1000 giá 30 rồi",
+        "ngày mai bán hết FPT rồi",
+        "tuần sau bán VNM 500 rồi",
+        "chuẩn bị bán HPG 1000 rồi",
+        "nếu đã mua HPG 1000 giá 25 thì giá vốn bao nhiêu",
+        "mai đặt HPG stop 24",
+    ],
+)
+async def test_cau_gia_dinh_tuong_lai_khong_ghi_danh_muc(recorder, text):
+    assert not portfolio_service.looks_like_write_statement(text)
+    assert await portfolio_service.maybe_handle_natural_language(1, text) is None
+    assert recorder["sell"] == [] and recorder["add"] == [] and recorder["alerts"] == []
+
+
+@pytest.mark.asyncio
+async def test_cau_ke_co_moc_thoi_gian_qua_van_ghi(recorder):
+    assert portfolio_service.looks_like_write_statement("hôm qua đã bán HPG 1000 giá 27")
+    await portfolio_service.maybe_handle_natural_language(1, "hôm qua đã bán HPG 1000 giá 27")
+    await portfolio_service.maybe_handle_natural_language(1, "sáng nay vừa bán FPT 500")
+    assert recorder["sell"] == [("HPG", 1000, 27_000), ("FPT", 500)]
+
+
+@pytest.mark.asyncio
+async def test_bao_khi_nao_neu_gia_cham_van_dat_nguong(recorder, monkeypatch):
+    """ "báo anh nếu HPG về 25" là đặt ngưỡng (không ghi danh mục) - chữ "nếu"
+    chặn ghi mua/bán nhưng không được chặn lệnh đặt cảnh báo."""
+    from services import watchlist_service
+
+    added = []
+
+    async def fake_add_alert(user_id, symbol, level, word=None):
+        added.append((symbol, level))
+        return "alert set"
+
+    monkeypatch.setattr(watchlist_service, "add_alert", fake_add_alert)
+    assert await portfolio_service.maybe_handle_natural_language(1, "báo anh nếu HPG về 25") == (
+        "alert set"
+    )
+    assert added == [("HPG", 25_000)]
 
 
 @pytest.mark.asyncio

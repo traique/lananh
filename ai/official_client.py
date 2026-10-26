@@ -4,8 +4,9 @@ import asyncio
 import json
 import logging
 import mimetypes
+import re
 from datetime import datetime
-from typing import Optional
+from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from ai.timeouts import (
@@ -17,7 +18,7 @@ from ai.timeouts import (
     bounded,
     with_timeout,
 )
-from ai import provider_overrides
+from ai import call_log, provider_overrides
 from ai.provider_state import provider_state
 from core import config
 from core.text_utils import strip_json_fence
@@ -107,10 +108,14 @@ async def usable_indices() -> list[int]:
 
 
 async def note_failure(idx: int, exc: BaseException) -> None:
-    """Lỗi hết quota (429) -> đặt cooldown dùng chung với provider-chain."""
+    """Lỗi hết quota (429) -> đặt cooldown dùng chung với provider-chain, dài
+    ngắn theo loại quota Gemini báo (theo ngày/theo phút - ai/cooldown.py)."""
     if is_quota_exhausted_error(exc):
+        from ai import cooldown
+
         try:
-            await provider_state.mark_api_exhausted(f"api{idx}")
+            seconds, reason = cooldown.cooldown_for(f"api{idx}", exc)
+            await provider_state.mark_api_exhausted(f"api{idx}", seconds, reason)
         except Exception:
             logger.warning("Không ghi được cooldown api%s.", idx, exc_info=True)
 
@@ -121,9 +126,54 @@ def now_vn_context() -> str:
 
 
 class FallbackResponse:
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, *, searched: bool = False, citations: Iterable[str] = ()) -> None:
         self.text = text
         self.used_fallback = True
+        # Gemini đã THẬT SỰ gọi Google Search trong lượt này (có grounding metadata).
+        self.searched = searched
+        # Nguồn grounding theo TÊN MIỀN (web.uri là link chuyển hướng vertexaisearch,
+        # không phải URL thật) - nguồn được phép của bộ lọc link câu trả lời.
+        self.citations = list(citations)[:_MAX_GROUNDING_SOURCES]
+
+
+def _used_google_search(response) -> bool:
+    """True nếu response có grounding metadata của Google Search (truy vấn đã
+    chạy hoặc trang nguồn) - bằng chứng Gemini đã tra web, không chỉ "được phép"
+    tra (bật tool google_search thì model vẫn tự quyết có tra hay không)."""
+    for candidate in getattr(response, "candidates", None) or []:
+        meta = getattr(candidate, "grounding_metadata", None)
+        if meta is None:
+            continue
+        if getattr(meta, "web_search_queries", None) or getattr(meta, "grounding_chunks", None):
+            return True
+    return False
+
+
+_MAX_GROUNDING_SOURCES = 40
+_HOSTNAME_RE = re.compile(
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$", re.IGNORECASE
+)
+
+
+def _grounding_sources(response) -> list[str]:
+    """``https://<tên miền>`` của từng nguồn Google Search grounding (web.domain,
+    hoặc web.title khi title là tên miền - kiểu "vnexpress.net"). Bộ lọc link cho
+    phép trang chủ/tên miền đó, link có đường dẫn/query vẫn phải khớp nguồn khác."""
+    found: list[str] = []
+    for candidate in getattr(response, "candidates", None) or []:
+        meta = getattr(candidate, "grounding_metadata", None)
+        for chunk in getattr(meta, "grounding_chunks", None) or []:
+            web = getattr(chunk, "web", None)
+            for value in (getattr(web, "domain", None), getattr(web, "title", None)):
+                host = str(value or "").strip().lower().removeprefix("www.")
+                if host and _HOSTNAME_RE.match(host):
+                    source = f"https://{host}"
+                    if source not in found:
+                        found.append(source)
+                    break
+            if len(found) >= _MAX_GROUNDING_SOURCES:
+                return found
+    return found
 
 
 def is_quota_exhausted_error(exc: BaseException) -> bool:
@@ -150,7 +200,13 @@ async def generate(
     persona_generation_config: bool = False,
     enable_search: bool = False,
     model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    require_search_evidence: bool = False,
 ) -> FallbackResponse:
+    """``temperature``: ghi đè nhiệt độ persona (lượt có dữ liệu tra cứu dùng
+    thấp hơn để giữ đúng số liệu). ``require_search_evidence``: lượt bắt buộc
+    tự tra web - Gemini trả lời mà không có grounding metadata thì raise
+    NoSearchEvidenceError (provider-chain chuyển provider kế tiếp)."""
     from google.genai import types
 
     client = await _get_official_client(idx)
@@ -172,9 +228,16 @@ async def generate(
     cfg_kwargs = {"system_instruction": system_instruction or None}
     if persona_generation_config:
         cfg_kwargs.update(temperature=_PERSONA_TEMPERATURE, top_p=_PERSONA_TOP_P)
+    if temperature is not None:
+        cfg_kwargs["temperature"] = temperature
     if enable_search:
         cfg_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
 
+    call_log.note_prompt_chars(
+        len(prompt_with_time)
+        + len(system_instruction or "")
+        + sum(len(content) for _role, content in history or ())
+    )
     response = await with_timeout(
         client.aio.models.generate_content(
             model=model or await _model_for(idx),
@@ -184,7 +247,17 @@ async def generate(
         OFFICIAL_CHAT_TIMEOUT_SEC,
         f"api{idx} generate_content",
     )
-    return FallbackResponse((response.text or "").strip())
+    call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
+    searched = bool(enable_search) and _used_google_search(response)
+    if require_search_evidence and not searched:
+        from ai.openai_compatible import NoSearchEvidenceError
+
+        raise NoSearchEvidenceError(f"api{idx} trả lời nhưng không gọi Google Search")
+    return FallbackResponse(
+        (response.text or "").strip(),
+        searched=searched,
+        citations=_grounding_sources(response) if searched else (),
+    )
 
 
 async def generate_image_prompt(idx: int, instruction: str, image_path: str) -> FallbackResponse:
@@ -198,6 +271,7 @@ async def generate_image_prompt(idx: int, instruction: str, image_path: str) -> 
 
     image_bytes = await asyncio.to_thread(_read_bytes)
     mime_type = mimetypes.guess_type(image_path)[0] or "image/jpeg"
+    call_log.note_prompt_chars(len(instruction))
     response = await with_timeout(
         client.aio.models.generate_content(
             model=await _model_for(idx),
@@ -206,10 +280,56 @@ async def generate_image_prompt(idx: int, instruction: str, image_path: str) -> 
         OFFICIAL_VISION_TIMEOUT_SEC,
         f"api{idx} image prompt",
     )
+    call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
     return FallbackResponse((response.text or "").strip())
 
 
+async def generate_from_bytes(
+    idx: int, instruction: str, data: bytes, mime_type: str, *, label: str
+) -> FallbackResponse:
+    """1 lượt Gemini nhận file inline (Part.from_bytes) + chỉ dẫn: nghe audio, đọc
+    PDF. Gemini giới hạn cả request inline 20 MB - caller đã chặn kích thước
+    file nhỏ hơn nhiều (VOICE_MAX_BYTES, DOCUMENT_MAX_BYTES)."""
+    from google.genai import types
+
+    client = await _get_official_client(idx)
+    call_log.note_prompt_chars(len(instruction))
+    response = await with_timeout(
+        client.aio.models.generate_content(
+            model=await _model_for(idx),
+            contents=[types.Part.from_bytes(data=data, mime_type=mime_type), instruction],
+        ),
+        OFFICIAL_VISION_TIMEOUT_SEC,
+        f"api{idx} {label}",
+    )
+    call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
+    return FallbackResponse((response.text or "").strip())
+
+
+async def transcribe_audio(
+    idx: int, audio: bytes, mime_type: str, instruction: str
+) -> FallbackResponse:
+    """Gemini nghe audio inline (audio/ogg, audio/m4a, audio/aac...) và chép lời."""
+    return await generate_from_bytes(idx, instruction, audio, mime_type, label="audio")
+
+
+async def analyze_document(
+    idx: int, instruction: str, path: str, mime_type: str = "application/pdf"
+) -> FallbackResponse:
+    """Gemini đọc tài liệu (PDF) từ file tạm trên đĩa - chỉ đọc vào RAM lúc gọi."""
+
+    def _read_bytes() -> bytes:
+        with open(path, "rb") as file:
+            return file.read()
+
+    data = await asyncio.to_thread(_read_bytes)
+    return await generate_from_bytes(idx, instruction, data, mime_type, label="document")
+
+
 async def generate_utility_json(prompt: str) -> Optional[dict]:
+    """Lượt phụ trả JSON qua Gemini (dự phòng của orchestrator.utility_json). Mỗi
+    key thử được ghi provider_calls (ai/call_log.py, giai đoạn mặc định "utility")
+    kèm độ trễ, kết quả và token như provider-chain."""
     if not config.HAS_ANY_AI_STUDIO_KEY:
         return None
     from google.genai import types
@@ -230,10 +350,21 @@ async def generate_utility_json(prompt: str) -> Optional[dict]:
                     ),
                 )
 
-            # bounded(): tôn trọng hạn chót còn lại của lượt (hoặc của task nền
-            # đặt riêng) thay vì 45s cố định ngoài mọi ngân sách thời gian.
-            response = await bounded(_call, OFFICIAL_UTILITY_TIMEOUT_SEC)
-            return json.loads(strip_json_fence(response.text))
+            async def _attempt(_call=_call):
+                # bounded(): tôn trọng hạn chót còn lại của lượt (hoặc của task nền
+                # đặt riêng) thay vì 45s cố định ngoài mọi ngân sách thời gian.
+                call_log.note_prompt_chars(len(prompt))
+                response = await bounded(_call, OFFICIAL_UTILITY_TIMEOUT_SEC)
+                call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
+                return json.loads(strip_json_fence(response.text))
+
+            return await call_log.timed(
+                f"api{idx}",
+                model_name,
+                _attempt,
+                stage=call_log.current_stage() or "utility",
+                classify_error=classify_error,
+            )
         except TurnTimeoutError:
             raise
         except Exception as exc:
@@ -243,6 +374,16 @@ async def generate_utility_json(prompt: str) -> Optional[dict]:
     if last_exc is not None:
         logger.warning("generate_utility_json: hết key khả dụng, bỏ qua tác vụ.")
     return None
+
+
+def classify_error(exc: BaseException) -> str:
+    if isinstance(exc, TurnTimeoutError):
+        return "turn_timeout"
+    if is_quota_exhausted_error(exc):
+        return "rate_limited"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    return "error"
 
 
 async def check_ai_studio_status(idx: int) -> tuple[bool, str]:

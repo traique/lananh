@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from ai import openai_compatible, provider_overrides
 from ai.openai_compatible import Response
-from core import config, database as db
+from core import config, settings_cache
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,8 @@ def normalize_base_url(value: Optional[str]) -> Optional[str]:
 
 
 async def get_base_url_override() -> Optional[str]:
-    raw = await db.get_setting(_SETTING_BASE_URL)
+    # Cache RAM ghi-xuyên (core.settings_cache): đọc ở MỌI lượt gọi 9Router.
+    raw = await settings_cache.get(_SETTING_BASE_URL)
     if not raw:
         return None
     normalized = normalize_base_url(raw)
@@ -92,13 +93,13 @@ async def set_base_url_override(value: Optional[str]) -> bool:
     """
     raw = (value or "").strip()
     if not raw:
-        await db.set_setting(_SETTING_BASE_URL, "")
+        await settings_cache.set(_SETTING_BASE_URL, "")
         return True
     normalized = normalize_base_url(raw)
     if normalized is None:
-        await db.set_setting(_SETTING_BASE_URL, "")
+        await settings_cache.set(_SETTING_BASE_URL, "")
         return False
-    await db.set_setting(_SETTING_BASE_URL, normalized)
+    await settings_cache.set(_SETTING_BASE_URL, normalized)
     return True
 
 
@@ -136,6 +137,69 @@ async def generate(
                 raise Router9Error(str(exc)) from exc
 
     return Response(await _pool.bounded("9Router", _call))
+
+
+def supports_web_search() -> bool:
+    return config.ROUTER9_WEB_SEARCH
+
+
+async def generate_search(
+    prompt: str,
+    *,
+    system_instruction: Optional[str] = None,
+    history: Optional[list[tuple[str, str]]] = None,
+    model: Optional[str] = None,
+    temperature: float = 0.5,
+    max_tokens: int = 4096,
+) -> Response:
+    """1 lượt 9Router TỰ tra web qua ``web_search_options`` (chuẩn OpenAI Chat
+    Completions cho model search). Chỉ bật qua ROUTER9_WEB_SEARCH: tài liệu
+    9Router không mô tả tính năng này, và gateway từng âm thầm bỏ qua `tools`
+    - nên CHỈ tin khi response kèm annotations url_citation (URL trong chữ có
+    thể là model tự bịa từ trí nhớ)."""
+    if not supports_web_search():
+        raise Router9Error("9Router web search đang tắt") from (
+            openai_compatible.NoSearchEvidenceError("9Router web search đang tắt")
+        )
+    api_key = await _api_key()
+    if not api_key:
+        raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
+    messages = openai_compatible.build_messages(prompt, system_instruction, history)
+    base_url = await get_base_url()
+    model_name = (
+        config.ROUTER9_WEB_SEARCH_MODEL
+        or model
+        or await get_preferred_model_name()
+        or config.ROUTER9_MODEL
+    )
+
+    async def _call() -> openai_compatible.CompletionResult:
+        async with _pool.get_semaphore():
+            try:
+                return await openai_compatible.post_chat_completion_full(
+                    _pool.get_client(),
+                    base_url=base_url,
+                    api_key=api_key,
+                    messages=messages,
+                    model=model_name,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    provider_label="9Router web search",
+                    extra_payload={"web_search_options": {"search_context_size": "low"}},
+                    # Qua proxy Render: phải stream để không bị cắt 504 (xem
+                    # openai_compatible.post_chat_completion).
+                    stream=True,
+                )
+            except openai_compatible.OpenAICompatibleError as exc:
+                raise Router9Error(str(exc)) from exc
+
+    result = await _pool.bounded("9Router web search", _call)
+    if not result.url_citations:
+        evidence = openai_compatible.NoSearchEvidenceError(
+            "9Router trả lời nhưng không kèm url_citation - không tin là đã tra web"
+        )
+        raise Router9Error(str(evidence)) from evidence
+    return Response(result.text, searched=True, citations=result.source_urls)
 
 
 async def generate_with_tools(
@@ -229,12 +293,12 @@ async def find_model(query: str) -> Optional[str]:
 
 
 async def get_preferred_model_name() -> Optional[str]:
-    value = await db.get_setting(_SETTING_PREFERRED_MODEL)
+    value = await settings_cache.get(_SETTING_PREFERRED_MODEL)
     return value or None
 
 
 async def set_preferred_model_name(name: Optional[str]) -> None:
-    await db.set_setting(_SETTING_PREFERRED_MODEL, name or "")
+    await settings_cache.set(_SETTING_PREFERRED_MODEL, name or "")
 
 
 async def check_status() -> tuple[bool, str]:

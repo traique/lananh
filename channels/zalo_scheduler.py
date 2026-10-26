@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from channels import zalo_repository, zalo_session
 from channels.zalo_summary import summarize_group
+from core import trace
 
 logger = logging.getLogger(__name__)
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -70,9 +71,11 @@ async def _run_due_digest() -> None:
 
 
 async def _loop() -> None:
+    trace.detach()
     while True:
         try:
-            await _run_due_digest()
+            with trace.job("zalo_summary"):
+                await _run_due_digest()
         except asyncio.CancelledError:
             raise
         except Exception:

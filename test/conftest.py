@@ -20,6 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "network: test được phép mở kết nối mạng thật")
+    # Golden set gọi LLM thật (test/test_evals_live.py): luôn skip trừ khi
+    # RUN_LIVE_EVALS=1 và có key provider - không bao giờ chạy trong CI mặc định.
+    config.addinivalue_line("markers", "live_llm: đánh giá gọi provider AI thật (opt-in)")
 
 
 class _NetworkBlocked(RuntimeError):
@@ -44,3 +47,17 @@ def _block_real_network(request, monkeypatch):
     _real_connect = socket.socket.connect
     monkeypatch.setattr(socket.socket, "connect", _blocked_connect)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_state():
+    """Xoá state sống theo process giữa các test: cache settings ghi-xuyên
+    (core.settings_cache - giá trị db.get_setting giả của test này không được
+    rò sang test khác) và circuit breaker DB (core.database)."""
+    from core import database, settings_cache
+
+    settings_cache.clear()
+    database.reset_circuit_breaker()
+    yield
+    settings_cache.clear()
+    database.reset_circuit_breaker()

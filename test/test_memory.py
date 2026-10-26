@@ -1,376 +1,484 @@
-"""Unit test cho services/memory_service.py (trí nhớ dài hạn: user_facts +
-rolling summary + highlights - xem docstring đầu services/memory_service.py)."""
+"""Unit test cho services/memory_service.py (trí nhớ v2: trích theo lô có
+watermark, ADD/UPDATE/INVALIDATE/FORGET, chặn bí mật, cách trả lời, ghi chú/tóm
+tắt phiên, ráp khối trí nhớ trong ngân sách) - xem docstring đầu module."""
 
 import asyncio
-import sys
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _memory_fakes import FakeMemoryDB
+from core import database as db
+from services import memory_guard, memory_service, personal_settings
 
-from core import database as db  # noqa: E402
-from ai import official_client  # noqa: E402
-from services import memory_service  # noqa: E402
+UID = 1
 
 
-@pytest.fixture(autouse=True)
-def _memory_defaults(monkeypatch):
-    """Mặc định cho mọi test trong file này: trí nhớ dài hạn đang BẬT, và
-    đang ở ĐẦU 1 phiên chat mới (session rỗng) - override riêng ở từng test
-    khi cần kiểm tra ngược lại."""
+@pytest.fixture
+def mem(monkeypatch):
+    fake = FakeMemoryDB()
+    fake.install(monkeypatch, db)
+    fake.prompts = []
+    fake.responses = []
 
-    async def fake_get_setting(key):
-        return None  # is_enabled() coi None là "bật" (mặc định)
+    async def fake_utility(prompt):
+        fake.prompts.append(prompt)
+        return fake.responses.pop(0) if fake.responses else {"facts": []}
 
-    async def fake_get_session_messages(uid, k, timeout_sec):
-        return []  # _is_new_session() coi [] là "phiên mới"
+    monkeypatch.setattr(memory_service, "_utility_json", fake_utility)
+    return fake
 
-    monkeypatch.setattr(db, "get_setting", fake_get_setting)
-    monkeypatch.setattr(db, "get_session_messages", fake_get_session_messages)
+
+def _wm(fake, uid=UID):
+    return int(fake.settings.get(personal_settings.memory_watermark_key(uid), "0"))
+
+
+# ─── Buffer + flush ──────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_update_memory_upsert_delete_trim_va_highlight(monkeypatch):
-    calls: list[tuple] = []
-
-    async def fake_get_facts(uid):
-        return [("ten", "Trai_cu"), ("nghe_nghiep", "ky_su")]
-
-    async def fake_get_summary(uid):
-        return "Tom tat cu"
-
-    async def fake_upsert_fact(uid, k, v):
-        calls.append(("upsert", k, v))
-
-    async def fake_delete_fact(uid, k):
-        calls.append(("delete", k))
-
-    async def fake_trim_facts(uid, n):
-        calls.append(("trim", n))
-
-    async def fake_set_summary(uid, s):
-        calls.append(("summary", s))
-
-    async def fake_add_highlight(uid, content, keep_n):
-        calls.append(("highlight", content, keep_n))
-
-    async def fake_generate_utility_json(prompt):
-        return {
+async def test_flush_doi_du_luot_moi_goi_ai_mot_lan_cho_ca_cua_so(mem):
+    mem.add_turn(UID, "anh làm kỹ sư phần mềm", "dạ")
+    mem.add_turn(UID, "ok em", "dạ")  # tầm thường: không tính
+    mem.add_turn(UID, "vợ anh tên Lan", "dạ")
+    assert await memory_service.maybe_flush(UID) is False
+    assert mem.prompts == []
+    mem.add_turn(UID, "anh thích chạy bộ buổi sáng", "hay quá")
+    mem.responses.append(
+        {
             "facts": [
-                {"key": "ten", "value": "Trai", "delete": False},
-                {"key": "so_thich", "value": "ca phe", "delete": False},
-                {"key": "nghe_nghiep", "delete": True},
+                {"op": "add", "key": "cong_viec", "value": "kỹ sư phần mềm", "importance": 3},
+                {"op": "add", "key": "ten_vo", "value": "Lan", "category": "gia_dinh"},
             ],
-            "summary": "Tom tat moi hop nhat",
-            "highlight": "Ngay 15/8 ban chot loi HPG quanh gia 28",
+            "highlights": ["Anh tập chạy bộ buổi sáng"],
+            "session": {"title": "Làm quen", "bullets": ["Kể về gia đình"], "summary": "Anh kể."},
         }
-
-    monkeypatch.setattr(db, "get_facts", fake_get_facts)
-    monkeypatch.setattr(db, "get_summary", fake_get_summary)
-    monkeypatch.setattr(db, "upsert_fact", fake_upsert_fact)
-    monkeypatch.setattr(db, "delete_fact", fake_delete_fact)
-    monkeypatch.setattr(db, "trim_facts", fake_trim_facts)
-    monkeypatch.setattr(db, "set_summary", fake_set_summary)
-    monkeypatch.setattr(db, "add_highlight", fake_add_highlight)
-    monkeypatch.setattr(official_client, "generate_utility_json", fake_generate_utility_json)
-
-    await memory_service.update_memory(1, "anh la ky su, thich ca phe", "da anh")
-
-    assert ("upsert", "ten", "Trai") in calls
-    assert ("upsert", "so_thich", "ca phe") in calls
-    assert ("delete", "nghe_nghiep") in calls
-    assert ("trim", memory_service.MAX_FACTS_PER_USER) in calls
-    assert ("summary", "Tom tat moi hop nhat") in calls
-    assert (
-        "highlight",
-        "Ngay 15/8 ban chot loi HPG quanh gia 28",
-        memory_service.MAX_HIGHLIGHTS_PER_USER,
-    ) in calls
+    )
+    assert await memory_service.maybe_flush(UID) is True
+    assert len(mem.prompts) == 1
+    prompt = mem.prompts[0]
+    assert "kỹ sư phần mềm" in prompt and "vợ anh tên Lan" in prompt and "chạy bộ" in prompt
+    facts = {f["key"]: f for f in mem.current(UID)}
+    assert facts["cong_viec"]["importance"] == 3
+    assert facts["ten_vo"]["category"] == "gia_dinh"
+    assert [h["content"] for h in mem.highlights] == ["Anh tập chạy bộ buổi sáng"]
+    assert _wm(mem) == mem.chat[-1]["id"]
+    note = next(iter(mem.session_notes.values()))
+    assert note["title"] == "Làm quen" and note["summary"] == "Anh kể."
+    # Đã xử lý hết: lần sau không gọi AI.
+    assert await memory_service.maybe_flush(UID) is False and len(mem.prompts) == 1
 
 
 @pytest.mark.asyncio
-async def test_update_memory_khong_luu_highlight_khi_null(monkeypatch):
-    """Phần lớn lượt hội thoại không có gì đáng highlight -> Gemini trả
-    highlight=null -> KHÔNG được gọi db.add_highlight."""
-    called = []
-
-    async def fake_get_facts(uid):
-        return []
-
-    async def fake_get_summary(uid):
-        return ""
-
-    async def fake_add_highlight(*a, **kw):
-        called.append((a, kw))
-
-    async def fake_generate_utility_json(prompt):
-        return {"facts": [], "summary": "", "highlight": None}
-
-    monkeypatch.setattr(db, "get_facts", fake_get_facts)
-    monkeypatch.setattr(db, "get_summary", fake_get_summary)
-    monkeypatch.setattr(db, "add_highlight", fake_add_highlight)
-    monkeypatch.setattr(official_client, "generate_utility_json", fake_generate_utility_json)
-
-    await memory_service.update_memory(1, "chào em", "chào anh")
-    assert called == []
+async def test_toan_luot_tam_thuong_hoac_khong_phai_chat_tien_watermark_khong_goi_ai(mem):
+    mem.add_turn(UID, "phân tích FPT", "📊 FPT", kind="stock")
+    mem.add_turn(UID, "cảm ơn em", "dạ")
+    mem.add_turn(UID, "👍", "dạ")
+    assert await memory_service.maybe_flush(UID, explicit=True) is True
+    assert mem.prompts == [] and _wm(mem) == mem.chat[-1]["id"]
 
 
 @pytest.mark.asyncio
-async def test_update_memory_khong_raise_khi_gemini_loi(monkeypatch):
-    """Lỗi ở tác vụ nền KHÔNG được raise ra ngoài - chat chính phải luôn
-    tiếp tục bình thường dù trí nhớ dài hạn cập nhật thất bại."""
+async def test_luot_chi_doc_khong_dua_loi_nguoi_dung_cho_bo_trich(mem):
+    """Lượt chỉ đọc "nhớ giúp..." bị chặn ghi: bộ trích chỉ thấy nhãn, không thấy chữ."""
+    from services import conversation_log
 
-    async def fake_get_facts(uid):
-        return []
-
-    async def fake_get_summary(uid):
-        return ""
-
-    async def fake_raise(prompt):
-        raise RuntimeError("mô phỏng lỗi API")
-
-    monkeypatch.setattr(db, "get_facts", fake_get_facts)
-    monkeypatch.setattr(db, "get_summary", fake_get_summary)
-    monkeypatch.setattr(official_client, "generate_utility_json", fake_raise)
-
-    await memory_service.update_memory(1, "xin chào", "chào anh")  # không được raise
+    mem.add_turn(UID, "nhớ giúp anh là sinh nhật vợ 12/5", "⚠️ Em chưa lưu", kind="chat_readonly")
+    mem.add_turn(UID, "anh làm kỹ sư phần mềm", "dạ")
+    assert conversation_log.KIND_CHAT_READONLY == "chat_readonly"
+    assert await memory_service.maybe_flush(UID, explicit=True) is True
+    assert len(mem.prompts) == 1
+    assert "sinh nhật vợ" not in mem.prompts[0] and "kỹ sư phần mềm" in mem.prompts[0]
 
 
 @pytest.mark.asyncio
-async def test_update_memory_khong_lam_gi_khi_chua_co_api_key(monkeypatch):
-    """generate_utility_json trả None (chưa cấu hình API key) -> không gọi
-    bất kỳ hàm ghi DB nào."""
-    write_calls = []
+async def test_highlight_trung_khong_chen_lai(mem):
+    """Chạy lại cùng cửa sổ (watermark ghi lỗi, làm lại câu trả lời...) không làm
+    đầy 25 highlight bằng bản trùng."""
+    await db.add_highlight(UID, "Anh tập chạy bộ buổi sáng", 25)
+    mem.add_turn(UID, "anh thích chạy bộ buổi sáng", "hay quá")
+    mem.responses.append(
+        {
+            "highlights": [
+                "anh tập chạy bộ buổi sáng.",
+                "Anh tập chạy bộ buổi sáng ở hồ Tây",
+            ],
+            "facts": [],
+        }
+    )
+    assert await memory_service.maybe_flush(UID, explicit=True) is True
+    mem.add_turn(UID, "vợ anh sắp sinh em bé", "chúc mừng anh")
+    mem.responses.append({"highlights": ["Vợ anh sắp sinh", "Vợ anh sắp sinh"], "facts": []})
+    assert await memory_service.maybe_flush(UID, explicit=True) is True
+    assert [h["content"] for h in mem.highlights] == [
+        "Anh tập chạy bộ buổi sáng",
+        "Vợ anh sắp sinh",
+    ]
 
-    async def fake_get_facts(uid):
-        return []
 
-    async def fake_get_summary(uid):
-        return ""
-
-    async def fake_none(prompt):
+@pytest.mark.asyncio
+async def test_ai_loi_giu_watermark_de_lan_sau_thu_lai(mem, monkeypatch):
+    async def none(prompt):
         return None
 
-    async def fail_if_called(*a, **kw):
-        write_calls.append((a, kw))
-
-    monkeypatch.setattr(db, "get_facts", fake_get_facts)
-    monkeypatch.setattr(db, "get_summary", fake_get_summary)
-    monkeypatch.setattr(official_client, "generate_utility_json", fake_none)
-    monkeypatch.setattr(db, "upsert_fact", fail_if_called)
-    monkeypatch.setattr(db, "set_summary", fail_if_called)
-    monkeypatch.setattr(db, "add_highlight", fail_if_called)
-
-    await memory_service.update_memory(1, "xin chào", "chào anh")
-    assert write_calls == []
+    monkeypatch.setattr(memory_service, "_utility_json", none)
+    mem.add_turn(UID, "anh tên Trai", "dạ")
+    assert await memory_service.maybe_flush(UID, explicit=True) is False
+    assert _wm(mem) == 0
 
 
 @pytest.mark.asyncio
-async def test_build_memory_context_dinh_dang_dung(monkeypatch):
-    async def fake_get_facts(uid):
-        return [("ten", "Trai"), ("danh_muc", "FPT, HPG")]
-
-    async def fake_get_summary(uid):
-        return "Đã trò chuyện vài lần về đầu tư chứng khoán."
-
-    async def fake_get_highlights(uid, limit):
-        return ["Ngày 15/8 đã bàn chốt lời HPG quanh giá 28"]
-
-    monkeypatch.setattr(db, "get_facts", fake_get_facts)
-    monkeypatch.setattr(db, "get_summary", fake_get_summary)
-    monkeypatch.setattr(db, "get_highlights", fake_get_highlights)
-
-    ctx = await memory_service.build_memory_context(1)
-    assert "TRÍ NHỚ VỀ NGƯỜI DÙNG" in ctx
-    assert "ten=Trai" in ctx
-    assert "danh_muc=FPT, HPG" in ctx
-    assert "Đã trò chuyện vài lần" in ctx
-    assert "chốt lời HPG quanh giá 28" in ctx
+async def test_phien_cu_ket_thuc_thi_flush_du_chua_du_nguong(mem):
+    mem.add_turn(UID, "anh sắp chuyển nhà ra Hà Nội", "dạ", minutes_ago=60 * 8)
+    mem.add_turn(UID, "chào em", "chào anh")
+    assert await memory_service.maybe_flush(UID) is True
+    assert len(mem.prompts) == 1 and "chuyển nhà" in mem.prompts[0]
 
 
 @pytest.mark.asyncio
-async def test_build_memory_context_rong_khi_chua_co_gi(monkeypatch):
-    async def fake_empty(uid):
-        return []
-
-    async def fake_empty_summary(uid):
-        return ""
-
-    async def fake_empty_highlights(uid, limit):
-        return []
-
-    monkeypatch.setattr(db, "get_facts", fake_empty)
-    monkeypatch.setattr(db, "get_summary", fake_empty_summary)
-    monkeypatch.setattr(db, "get_highlights", fake_empty_highlights)
-
-    ctx = await memory_service.build_memory_context(1)
-    assert ctx == ""
+async def test_cua_so_qua_2_phien_tach_2_luot_ghi_chu_rieng(mem):
+    for i in range(3):
+        mem.add_turn(UID, f"phiên cũ chuyện số {i} về đầu tư", "dạ", minutes_ago=60 * 10)
+    for i in range(3):
+        mem.add_turn(UID, f"phiên mới chuyện số {i} về du lịch", "dạ")
+    mem.responses += [{"session": {"title": "Cũ"}}, {"session": {"title": "Mới"}}]
+    assert await memory_service.maybe_flush(UID) is True
+    assert len(mem.prompts) == 2
+    assert "đầu tư" in mem.prompts[0] and "du lịch" not in mem.prompts[0]
+    titles = sorted(n["title"] for n in mem.session_notes.values())
+    assert titles == ["Cũ", "Mới"]
 
 
 @pytest.mark.asyncio
-async def test_build_memory_context_rong_khi_giua_phien_chat(monkeypatch):
-    """Đang ở giữa 1 phiên chat (session đã có tin nhắn trước đó) -> KHÔNG
-    được chèn lại trí nhớ dài hạn, kể cả khi đã có facts/summary/highlights -
-    tránh nhồi lại mỗi tin nhắn làm lệch ý đang hỏi (xem docstring module)."""
-
-    async def fake_get_session_messages(uid, k, timeout_sec):
-        return [("user", "câu trước đó trong cùng phiên")]
-
-    async def fail_if_called(*a, **kw):
-        raise AssertionError("không được đọc facts/summary/highlights giữa phiên chat")
-
-    monkeypatch.setattr(db, "get_session_messages", fake_get_session_messages)
-    monkeypatch.setattr(db, "get_facts", fail_if_called)
-    monkeypatch.setattr(db, "get_summary", fail_if_called)
-    monkeypatch.setattr(db, "get_highlights", fail_if_called)
-
-    assert await memory_service.build_memory_context(1) == ""
-
-
-# ─── clear_memory: phải xoá cả highlights, không chỉ facts/summary ─────────
+async def test_tri_nho_tat_bo_qua_va_khong_goi_ai(mem):
+    mem.settings["memory_enabled_1"] = "0"
+    mem.add_turn(UID, "anh tên Trai", "dạ")
+    assert await memory_service.maybe_flush(UID, explicit=True) is True
+    assert mem.prompts == [] and _wm(mem) == mem.chat[-1]["id"]
+    assert await memory_service.build_memory_context(UID, "tên anh") == ""
 
 
 @pytest.mark.asyncio
-async def test_clear_memory_xoa_ca_highlights(monkeypatch):
-    calls = []
+async def test_after_exchange_moi_nguoi_toi_da_mot_task(mem, monkeypatch):
+    started = []
+    gate = asyncio.Event()
 
-    async def fake_clear_facts(uid):
-        calls.append(("clear_facts", uid))
+    async def slow(user_id, **kwargs):
+        started.append(user_id)
+        await gate.wait()
+        return True
 
-    async def fake_set_summary(uid, s):
-        calls.append(("set_summary", uid, s))
-
-    async def fake_clear_highlights(uid):
-        calls.append(("clear_highlights", uid))
-
-    monkeypatch.setattr(db, "clear_facts", fake_clear_facts)
-    monkeypatch.setattr(db, "set_summary", fake_set_summary)
-    monkeypatch.setattr(db, "clear_highlights", fake_clear_highlights)
-
-    await memory_service.clear_memory(7)
-
-    assert ("clear_facts", 7) in calls
-    assert ("set_summary", 7, "") in calls
-    assert ("clear_highlights", 7) in calls
+    monkeypatch.setattr(memory_service, "maybe_flush", slow)
+    memory_service.after_exchange(UID)
+    memory_service.after_exchange(UID)
+    memory_service.after_exchange(2)
+    await asyncio.sleep(0)
+    assert sorted(started) == [1, 2]
+    gate.set()
+    await memory_service.stop_background_tasks()
 
 
-# ─── update_memory: khoá theo user_id, 2 lượt cùng user không chồng nhau ───
+# ─── Thao tác trên fact ──────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_update_memory_khoa_theo_user_khong_chay_chong_nhau(monkeypatch):
+async def test_update_giu_gia_tri_cu_invalidate_va_bao_ve_fact_nguoi_dung(mem):
+    await db.save_fact(UID, "cong_viec", "PM ở A")
+    await db.save_fact(UID, "que", "Huế")
+    await db.save_fact(UID, "ten", "Trai", source="user", pinned=True)
+    ids = {f["key"]: f["id"] for f in mem.current(UID)}
+    mem.add_turn(UID, "anh chuyển sang làm PM ở B rồi", "dạ")
+    mem.responses.append(
+        {
+            "facts": [
+                {"op": "update", "id": ids["cong_viec"], "value": "PM ở B"},
+                {"op": "invalidate", "id": ids["que"]},
+                {"op": "update", "id": ids["ten"], "value": "Tên khác"},  # bị bảo vệ
+                {"op": "forget", "id": ids["ten"]},  # không có ý bảo quên -> bỏ
+                {"op": "update", "id": 99999, "value": "id lạ"},  # id không hiển thị -> bỏ
+            ]
+        }
+    )
+    await memory_service.maybe_flush(UID, explicit=True)
+    facts = {f["key"]: f["value"] for f in mem.current(UID)}
+    assert facts == {"cong_viec": "PM ở B", "ten": "Trai"}
+    old = await db.get_superseded_facts(UID)
+    assert {f["value"] for f in old} == {"PM ở A", "Huế"}
+    # Prompt hiển thị id + đánh dấu fact người dùng tự nhập.
+    assert f"id {ids['ten']} | ten = Trai (người dùng tự nhập" in mem.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_forget_chi_khi_nguoi_dung_chu_dong_bao_quen_va_khong_hoc_lai(mem):
+    await db.save_fact(UID, "so_thich", "uống bia")
+    fact_id = mem.current(UID)[0]["id"]
+    mem.add_turn(UID, "quên chuyện anh thích uống bia đi nhé", "dạ")
+    mem.responses.append({"facts": [{"op": "forget", "id": fact_id}]})
+    await memory_service.maybe_flush(UID, explicit=True)
+    assert mem.current(UID) == [] and await db.get_superseded_facts(UID) == []
+    # Lượt sau AI định học lại -> bị chặn bởi danh sách "đừng học lại".
+    mem.add_turn(UID, "hôm qua anh đi nhậu", "dạ")
+    mem.responses.append({"facts": [{"op": "add", "key": "so_thich", "value": "uống bia"}]})
+    await memory_service.maybe_flush(UID, explicit=True)
+    assert mem.current(UID) == []
+    assert "so_thich" in mem.prompts[-1].split("### Người dùng đã yêu cầu quên")[1]
+
+
+@pytest.mark.asyncio
+async def test_forget_cua_bo_trich_xoa_ca_ghi_chu_phien_nhac_toi(mem):
+    """Op FORGET của bộ trích: ghi chú phiên (kể cả bản tóm tắt AI vừa viết lại
+    trong cùng lượt) và highlight nhắc tới giá trị đó cũng bị xoá."""
+    from datetime import datetime, timezone
+
+    await db.save_fact(UID, "suc_khoe", "tiểu đường type 2")
+    await db.add_highlight(UID, "Anh bị tiểu đường type 2 nên kiêng ngọt", 25)
+    await db.upsert_session_note(
+        UID, 5, bullets="Anh kể bị tiểu đường type 2", started_at=datetime.now(timezone.utc)
+    )
+    fact_id = mem.current(UID)[0]["id"]
+    mem.add_turn(UID, "em quên chuyện anh bị bệnh đi", "dạ em quên rồi")
+    mem.responses.append(
+        {
+            "facts": [{"op": "forget", "id": fact_id}],
+            "session": {"summary": "Anh nhắc chuyện tiểu đường type 2 rồi bảo em quên đi."},
+        }
+    )
+    assert await memory_service.maybe_flush(UID, explicit=True) is True
+    assert mem.current(UID) == [] and mem.highlights == []
+    for note in mem.session_notes.values():
+        assert "tiểu đường" not in " ".join(str(v) for v in note.values())
+
+
+@pytest.mark.asyncio
+async def test_dinh_dang_cu_delete_thanh_invalidate_va_chan_bi_mat(mem):
+    await db.save_fact(UID, "nghe_nghiep", "kỹ sư")
+    mem.add_turn(UID, "mật khẩu wifi nhà anh là abc12345", "dạ")
+    mem.responses.append(
+        {
+            "facts": [
+                {"key": "nghe_nghiep", "delete": True},
+                {"key": "mat_khau_wifi", "value": "abc12345"},
+                {"key": "wifi", "value": "mật khẩu là abc12345"},
+                {"key": "so_the", "value": "4111 1111 1111 1111"},
+            ],
+            "highlights": ["OTP 123456 để đăng nhập"],
+            "session": {"title": "Wifi", "summary": "Anh nói mật khẩu: abc12345 cho em."},
+        }
+    )
+    await memory_service.maybe_flush(UID, explicit=True)
+    assert mem.current(UID) == []  # nghe_nghiep bị vô hiệu hoá (vẫn còn trong lịch sử)
+    assert [f["value"] for f in await db.get_superseded_facts(UID)] == ["kỹ sư"]
+    assert mem.highlights == []
+    note = next(iter(mem.session_notes.values()))
+    assert "abc12345" not in note["summary"] and "[đã ẩn mật khẩu]" in note["summary"]
+    # Cửa sổ gửi AI cũng đã ẩn bí mật.
+    assert "abc12345" not in mem.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_style_rules_luu_cach_tra_loi_va_chen_moi_luot(mem):
+    mem.add_turn(UID, "trả lời ngắn thôi em, đừng chèn emoji", "dạ")
+    mem.responses.append({"style_rules": "- Trả lời ngắn gọn\n- Không dùng emoji"})
+    await memory_service.maybe_flush(UID, explicit=True)
+    row = next(f for f in mem.current(UID) if f["key"] == memory_service.STYLE_KEY)
+    assert row["category"] == memory_service.STYLE_KEY and row["importance"] == 3
+    turn = await memory_service.build_turn_memory(UID, "giá vàng hôm nay")
+    assert "Không dùng emoji" in turn.style_rules and "KHÔNG đổi cách xưng hô" in turn.style_rules
+    # Không nằm trong khối trí nhớ (có thể bị cắt giữa chừng).
+    assert "Không dùng emoji" not in turn.context
+
+
+@pytest.mark.asyncio
+async def test_trim_giu_fact_ghim_va_quan_trong(mem, monkeypatch):
+    monkeypatch.setattr(memory_service, "MAX_FACTS_PER_USER", 3)
+    await db.save_fact(UID, "ngay_sinh", "15/3/1990", importance=3)
+    await db.save_fact(UID, "ghim", "x", pinned=True, importance=1, source="user")
+    mem.add_turn(UID, "chuyện vặt", "dạ")
+    mem.responses.append(
+        {
+            "facts": [
+                {"op": "add", "key": f"vat_{i}", "value": "y", "importance": 1} for i in range(4)
+            ]
+        }
+    )
+    await memory_service.maybe_flush(UID, explicit=True)
+    keys = {f["key"] for f in mem.current(UID)}
+    assert {"ngay_sinh", "ghim"} <= keys and len(keys) == 3
+
+
+# ─── Đọc: ráp khối trí nhớ ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dau_phien_trong_ngan_sach_khong_cat_giua_va_uu_tien_fact_ben(mem, monkeypatch):
+    from ai import prompt_budget
+
+    monkeypatch.setattr(prompt_budget, "MEMORY_MAX_CHARS", 900)
+    for i in range(30):
+        await db.save_fact(UID, f"chuyen_{i}", "một chi tiết vụn vặt khá dài " * 2, importance=1)
+    await db.save_fact(UID, "ten", "Trai", importance=3)
+    await db.save_fact(UID, "ngay_sinh", "15/3/1990", importance=3)
+    mem.summary[UID] = "Câu một rất dài. " * 80
+    for i in range(25):
+        await db.add_highlight(UID, f"Chi tiết số {i}", 25)
+    ctx = await memory_service.build_memory_context(UID, "")
+    assert len(ctx) <= 900
+    assert "ten = Trai" in ctx and "ngay_sinh = 15/3/1990" in ctx
+    assert "(từ " in ctx  # mốc thời gian của fact bền
+    assert "[... đã lược bớt" not in prompt_budget.truncate_middle(ctx, 900)
+    for line in ctx.splitlines():
+        if line.startswith("Tóm tắt cũ:"):
+            assert line.endswith(".") or line.endswith("…")
+
+
+@pytest.mark.asyncio
+async def test_dau_phien_co_ghi_chu_lien_quan_va_cac_phien_truoc(mem):
+    await db.add_note(UID, "size giày của vợ là 38")
+    await db.add_note(UID, "mua sữa cho bé")
+    await db.upsert_session_note(
+        UID, 5, title="Bàn chuyện FPT", bullets="- Hỏi giá FPT", started_at=mem.now
+    )
+    ctx = await memory_service.build_memory_context(UID, "size giày vợ anh bao nhiêu nhỉ")
+    assert "size giày của vợ là 38" in ctx and "sữa" not in ctx
+    assert "Bàn chuyện FPT" in ctx
+
+
+@pytest.mark.asyncio
+async def test_giua_phien_co_tom_tat_phien_va_noi_dung_lien_quan(mem):
+    mem.add_turn(UID, "chuyện đầu phiên", "dạ")
+    first_id = mem.chat[0]["id"]
+    await db.upsert_session_note(
+        UID, first_id, summary="Đầu phiên anh hỏi về FPT.", started_at=mem.now
+    )
+    await db.save_fact(UID, "mon_an_thich", "phở bò")
+    await db.save_fact(UID, "xe", "Vinfast VF8")
+    await db.add_note(UID, "size giày của vợ là 38")
+    ctx = await memory_service.build_memory_context(UID, "tối nay ăn phở không")
+    assert "TÓM TẮT PHIÊN NÀY" in ctx and "Đầu phiên anh hỏi về FPT." in ctx
+    assert "mon_an_thich=phở bò" in ctx and "Vinfast" not in ctx and "giày" not in ctx
+    ctx = await memory_service.build_memory_context(UID, "size giày của vợ")
+    assert "size giày của vợ là 38" in ctx
+
+
+@pytest.mark.asyncio
+async def test_giua_phien_hoi_truoc_day_co_gia_tri_cu(mem):
+    mem.add_turn(UID, "chào", "chào anh")
+    await db.save_fact(UID, "cong_viec", "PM ở A")
+    await db.save_fact(UID, "cong_viec", "PM ở B")
+    ctx = await memory_service.build_memory_context(UID, "trước đây anh làm công việc gì")
+    assert "Trước đây: cong_viec = PM ở A" in ctx
+
+
+@pytest.mark.asyncio
+async def test_doc_tri_nho_db_loi_tra_rong(monkeypatch):
+    async def broken(*args, **kwargs):
+        raise ConnectionError("db down")
+
+    monkeypatch.setattr(db, "get_setting", broken)
+    turn = await memory_service.build_turn_memory(1, "hỏi")
+    assert turn == memory_service.TurnMemory()
+
+
+@pytest.mark.asyncio
+async def test_clear_memory_xoa_het_va_bo_qua_lich_su_cu(mem):
+    await db.save_fact(UID, "ten", "Trai")
+    await db.add_highlight(UID, "x", 25)
+    await db.upsert_session_note(UID, 1, title="t", started_at=mem.now)
+    mem.summary[UID] = "cũ"
+    mem.add_turn(UID, "anh tên Trai", "dạ")
+    await memory_service.clear_memory(UID)
+    assert mem.facts == [] and mem.highlights == [] and mem.session_notes == {}
+    assert mem.summary[UID] == "" and _wm(mem) == mem.chat[-1]["id"]
+
+
+# ─── Khoá theo user ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_flush_khoa_theo_user_khong_chay_chong_nhau(mem, monkeypatch):
     order: list[str] = []
     release_first = asyncio.Event()
 
-    async def fake_get_facts(uid):
-        return []
-
-    async def fake_get_summary(uid):
-        return ""
-
-    async def fake_generate_utility_json(prompt):
-        # Lượt đầu tiên cố ý "chạy chậm" (đợi tín hiệu) để lượt thứ 2 (cùng
-        # user) có cơ hội chen vào NẾU không có lock - nếu lock hoạt động
-        # đúng, lượt 2 phải đợi lượt 1 xong hoàn toàn mới được bắt đầu.
-        if "cham" in prompt:
+    async def fake_utility(prompt):
+        if "cham" in prompt.split("Các lượt CHƯA xử lý")[1]:
             order.append("bat_dau_cham")
             await release_first.wait()
             order.append("ket_thuc_cham")
         else:
             order.append("bat_dau_nhanh")
-            order.append("ket_thuc_nhanh")
-        return {"facts": [], "summary": ""}
+        return {"facts": []}
 
-    monkeypatch.setattr(db, "get_facts", fake_get_facts)
-    monkeypatch.setattr(db, "get_summary", fake_get_summary)
-    monkeypatch.setattr(official_client, "generate_utility_json", fake_generate_utility_json)
-
-    task_cham = asyncio.create_task(memory_service.update_memory(1, "cham", "phan hoi"))
-    await asyncio.sleep(0.01)  # đảm bảo lượt "chậm" đã vào lock trước
-    task_nhanh = asyncio.create_task(memory_service.update_memory(1, "nhanh", "phan hoi"))
+    monkeypatch.setattr(memory_service, "_utility_json", fake_utility)
+    mem.add_turn(UID, "cham", "phan hoi")
+    task_cham = asyncio.create_task(memory_service.maybe_flush(UID, explicit=True))
     await asyncio.sleep(0.01)
-
+    mem.add_turn(UID, "nhanh", "phan hoi")
+    task_nhanh = asyncio.create_task(memory_service.maybe_flush(UID, explicit=True))
+    await asyncio.sleep(0.01)
+    assert order == ["bat_dau_cham"]
     release_first.set()
     await asyncio.gather(task_cham, task_nhanh)
-
-    # Lượt "nhanh" phải đợi "chậm" kết thúc hoàn toàn mới được bắt đầu.
-    assert order == ["bat_dau_cham", "ket_thuc_cham", "bat_dau_nhanh", "ket_thuc_nhanh"]
+    assert order == ["bat_dau_cham", "ket_thuc_cham", "bat_dau_nhanh"]
 
 
 @pytest.mark.asyncio
-async def test_update_memory_khac_user_khong_bi_chan_nhau(monkeypatch):
-    order: list[str] = []
-    release_user_1 = asyncio.Event()
+async def test_flush_khac_user_khong_bi_chan_nhau(mem, monkeypatch):
+    release = asyncio.Event()
+    done: list[int] = []
 
-    async def fake_get_facts(uid):
-        return []
-
-    async def fake_get_summary(uid):
-        return ""
-
-    async def fake_generate_utility_json(prompt):
-        if "user1" in prompt:
-            order.append("bat_dau_user1")
-            await release_user_1.wait()
-            order.append("ket_thuc_user1")
+    async def fake_utility(prompt):
+        if "user1" in prompt.split("Các lượt CHƯA xử lý")[1]:
+            await release.wait()
+            done.append(1)
         else:
-            order.append("bat_dau_user2")
-            order.append("ket_thuc_user2")
-        return {"facts": [], "summary": ""}
+            done.append(2)
+        return {"facts": []}
 
-    monkeypatch.setattr(db, "get_facts", fake_get_facts)
-    monkeypatch.setattr(db, "get_summary", fake_get_summary)
-    monkeypatch.setattr(official_client, "generate_utility_json", fake_generate_utility_json)
-
-    task_user1 = asyncio.create_task(memory_service.update_memory(1, "user1", "phan hoi"))
+    monkeypatch.setattr(memory_service, "_utility_json", fake_utility)
+    mem.add_turn(1, "user1 nói", "x")
+    mem.add_turn(2, "user2 nói", "x")
+    t1 = asyncio.create_task(memory_service.maybe_flush(1, explicit=True))
     await asyncio.sleep(0.01)
-    task_user2 = asyncio.create_task(memory_service.update_memory(2, "user2", "phan hoi"))
-    # user2 không dùng chung lock với user1 nên phải chạy xong NGAY, không
-    # cần đợi release_user_1.set().
+    t2 = asyncio.create_task(memory_service.maybe_flush(2, explicit=True))
     await asyncio.sleep(0.01)
-    assert "ket_thuc_user2" in order
-    assert "ket_thuc_user1" not in order  # user1 vẫn đang bị chặn ở await
-
-    release_user_1.set()
-    await asyncio.gather(task_user1, task_user2)
+    assert done == [2]
+    release.set()
+    await asyncio.gather(t1, t2)
 
 
-@pytest.mark.asyncio
-async def test_update_memory_khong_goi_gi_khi_user_da_tat(monkeypatch):
-    """Tắt trí nhớ dài hạn cho user -> update_memory() return sớm, KHÔNG được
-    gọi generate_utility_json (tiết kiệm lượt gọi official_client)."""
-    called = []
-
-    async def fake_get_setting(key):
-        return "0" if key == "memory_enabled_1" else None
-
-    async def fake_generate_utility_json(prompt):
-        called.append(prompt)
-        return {"facts": [], "summary": ""}
-
-    monkeypatch.setattr(db, "get_setting", fake_get_setting)
-    monkeypatch.setattr(official_client, "generate_utility_json", fake_generate_utility_json)
-
-    await memory_service.update_memory(1, "xin chao", "da anh")
-
-    assert called == []
+# ─── Chặn bí mật, câu tầm thường ─────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_build_memory_context_rong_khi_user_da_tat(monkeypatch):
-    async def fake_get_setting(key):
-        return "0" if key == "memory_enabled_1" else None
+def test_memory_guard_bat_bi_mat_theo_tu_khoa_khong_bat_so_tran():
+    assert memory_guard.find_secret("mật khẩu wifi là abc12345") == "mật khẩu"
+    assert memory_guard.find_secret("mk: hoa1234") == "mật khẩu"
+    assert memory_guard.find_secret("OTP của anh 482913") == "mã OTP"
+    assert memory_guard.find_secret("stk 0123456789 Vietcombank") == "số tài khoản"
+    assert memory_guard.find_secret("cccd 079090001234") == "số giấy tờ tuỳ thân"
+    assert memory_guard.find_secret("thẻ 4111 1111 1111 1111") == "số thẻ"
+    assert memory_guard.find_secret("key sk-proj-abcdefghijklmnopqrstu") == "API key"
+    # Không bắt nhầm giá, khối lượng, số điện thoại, "mk" = "mình".
+    for text in (
+        "FPT giá 120.500, khối lượng 2.345.678 cp",
+        "số điện thoại 0912345678",
+        "mk thích cà phê muối",
+        "anh quên mật khẩu rồi",
+        "doanh thu 1234567890123 đồng",
+    ):
+        assert memory_guard.find_secret(text) is None, text
+    assert memory_guard.redact("OTP 482913 nhé") == "[đã ẩn mã OTP] nhé"
 
-    async def fail_if_called(*a, **kw):
-        raise AssertionError("không được đọc facts/summary/highlights khi trí nhớ đang tắt")
 
-    monkeypatch.setattr(db, "get_setting", fake_get_setting)
-    monkeypatch.setattr(db, "get_facts", fail_if_called)
-    monkeypatch.setattr(db, "get_summary", fail_if_called)
-    monkeypatch.setattr(db, "get_highlights", fail_if_called)
+def test_cau_tam_thuong():
+    for text in ("ok", "Ok em", "ừm", "cảm ơn em", "👍", "hihi", "Dạ"):
+        assert memory_service.is_trivial(text), text
+    for text in ("ok mai anh đi phỏng vấn", "anh tên Trai"):
+        assert not memory_service.is_trivial(text), text
 
-    assert await memory_service.build_memory_context(1) == ""
+
+def test_cat_o_ranh_gioi_cau():
+    text = "Câu một ngắn. Câu hai dài hơn chút. Câu ba."
+    assert memory_service.cut_at_sentence(text, 30) == "Câu một ngắn."
+    assert memory_service.cut_at_sentence("không có dấu chấm nào cả", 12).endswith("…")
 
 
 def test_select_relevant_memory_chon_theo_token_trung_va_ngan_sach():
@@ -385,29 +493,119 @@ def test_select_relevant_memory_chon_theo_token_trung_va_ngan_sach():
     )
     assert chosen_facts == [("so_thich", "chạy bộ buổi sáng")]
     assert chosen_hl == ["Anh đang tập chạy half marathon tháng 11"]
-    # Không trùng gì -> rỗng; câu quá ngắn -> rỗng.
     assert memory_service.select_relevant_memory("thời tiết Hà Nội", facts, highlights) == ([], [])
     assert memory_service.select_relevant_memory("ừ", facts, highlights) == ([], [])
-    # Ngân sách ký tự chặn bớt.
     many = [(f"k{i}", "chạy bộ " * 20) for i in range(10)]
     chosen, _ = memory_service.select_relevant_memory("chạy bộ", many, [], max_chars=400)
     assert 0 < len(chosen) < 10
 
 
-async def _async_return(value):
-    return value
+# ─── Vòng quét nền, gộp fact, /reset ─────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_build_memory_context_giua_phien_chen_fact_lien_quan(monkeypatch):
-    monkeypatch.setattr(memory_service, "is_enabled", lambda user_id: _async_return(True))
-    monkeypatch.setattr(memory_service, "_is_new_session", lambda user_id: _async_return(False))
-    monkeypatch.setattr(
-        db,
-        "get_facts",
-        lambda uid: _async_return([("mon_an_thich", "phở bò"), ("xe", "Vinfast VF8")]),
+async def test_quet_nen_flush_khi_ranh_va_gop_fact_moi_ngay_mot_lan(mem, monkeypatch):
+    monkeypatch.setattr(memory_service, "MAX_FACTS_PER_USER", 5)
+    for i in range(4):
+        await db.save_fact(UID, f"so_thich_{i}", "cà phê")
+    ids = [f["id"] for f in mem.current(UID)]
+    mem.add_turn(UID, "anh mới mua xe máy điện", "dạ", minutes_ago=45)
+    mem.responses += [
+        {"facts": []},
+        {
+            "ops": [
+                {"op": "update", "id": ids[0], "value": "cà phê"},
+                {"op": "invalidate", "id": ids[1]},
+            ]
+        },
+    ]
+    await memory_service.sweep_once()
+    assert len(mem.prompts) == 2
+    assert "mua xe máy điện" in mem.prompts[0]  # rảnh > MEMORY_IDLE_FLUSH_SEC
+    assert "TRÙNG NGHĨA" in mem.prompts[1]
+    assert len(mem.current(UID)) == 3
+    await memory_service.sweep_once()  # đã gộp hôm nay, không còn lượt chưa xử lý
+    assert len(mem.prompts) == 2
+
+
+@pytest.mark.asyncio
+async def test_gop_fact_tat_bang_bien_moi_truong(mem, monkeypatch):
+    monkeypatch.setenv("MEMORY_CONSOLIDATION", "0")
+    monkeypatch.setattr(memory_service, "MAX_FACTS_PER_USER", 2)
+    await db.save_fact(UID, "a", "x")
+    await db.save_fact(UID, "b", "y")
+    await memory_service._consolidate_if_due(UID)
+    assert mem.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_flush_truoc_reset_co_tran_thoi_gian(mem, monkeypatch):
+    async def slow(prompt):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(memory_service, "_utility_json", slow)
+    mem.add_turn(UID, "anh tên Trai", "dạ")
+    started = asyncio.get_running_loop().time()
+    await memory_service.flush_before_reset(UID, timeout_sec=0.05)
+    assert asyncio.get_running_loop().time() - started < 2
+    assert _wm(mem) == 0
+
+
+def test_loi_xung_ho_khong_con_keo_tri_nho_giua_phien():
+    """Chủ bot gần như luôn viết "anh"/"em": trước đây mỗi câu đều khớp fact có
+    chữ "anh" và nhồi trí nhớ vào giữa phiên."""
+    facts = [("anh_trai", "anh Tuấn ở Đà Nẵng"), ("thoi_quen", "anh hay dậy sớm")]
+    assert memory_service.select_relevant_memory("anh ơi em có nhớ gì không", facts, []) == (
+        [],
+        [],
     )
-    monkeypatch.setattr(db, "get_highlights", lambda uid, limit: _async_return(["Anh ghét ăn cay"]))
-    ctx = await memory_service.build_memory_context(1, "tối nay ăn phở không anh")
-    assert "mon_an_thich=phở bò" in ctx and "Vinfast" not in ctx and "LIÊN QUAN" in ctx
-    assert await memory_service.build_memory_context(1, "") == ""
+    assert memory_service.select_relevant_memory("anh trai anh ở đâu", facts, [])[0] == [
+        ("anh_trai", "anh Tuấn ở Đà Nẵng")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_su_kien_hoi_tham_chi_trich_cho_nguoi_duoc_phep(mem, monkeypatch):
+    from services import proactive_service
+
+    captured = []
+    allowed = {"value": False}
+
+    async def enabled(user_id, **kwargs):
+        return allowed["value"]
+
+    async def add(user_id, events, user_rows):
+        captured.append((user_id, events, [r["content"] for r in user_rows]))
+        return len(events)
+
+    monkeypatch.setattr(proactive_service, "events_enabled", enabled)
+    monkeypatch.setattr(proactive_service, "add_extracted_events", add)
+    mem.add_turn(UID, "mai anh đi phỏng vấn", "chúc anh may mắn")
+    mem.responses.append({"events": [{"title": "phỏng vấn", "when_text": "mai"}]})
+    await memory_service.maybe_flush(UID, explicit=True)
+    assert "events: luôn trả []" in mem.prompts[-1] and captured == []
+    allowed["value"] = True
+    mem.add_turn(UID, "thứ 6 anh đi khám răng", "dạ")
+    mem.responses.append({"events": [{"title": "khám răng", "when_text": "thứ 6"}]})
+    await memory_service.maybe_flush(UID, explicit=True)
+    assert "CHÉP NGUYÊN VĂN" in mem.prompts[-1]
+    assert captured == [
+        (UID, [{"title": "khám răng", "when_text": "thứ 6"}], ["thứ 6 anh đi khám răng"])
+    ]
+
+
+@pytest.mark.asyncio
+async def test_task_trich_nho_nen_khong_thua_huong_han_chot_cua_luot_chat(mem, monkeypatch):
+    from ai import timeouts
+
+    seen = []
+
+    async def probe(user_id, **kwargs):
+        seen.append(timeouts.remaining_turn_seconds())
+        return True
+
+    monkeypatch.setattr(memory_service, "maybe_flush", probe)
+    with timeouts.turn_deadline(5):
+        memory_service.after_exchange(UID)
+    await memory_service.stop_background_tasks()
+    assert seen == [None]

@@ -5,6 +5,7 @@ from typing import NamedTuple
 import messages
 import tg_format
 from handlers import common
+from services import stock_turn
 from services.telemetry import telemetry
 from stock import analysis as stock_analysis
 
@@ -14,6 +15,9 @@ logger = logging.getLogger(__name__)
 class StockRouteResult(NamedTuple):
     handled: bool
     grounding: str
+    # Các tin đã gửi (bản số liệu, diễn giải, giá) - chat_router lưu vào lịch sử
+    # để câu hỏi nối tiếp ("sao em bảo giữ?") có ngữ cảnh.
+    replies: tuple[str, ...] = ()
 
 
 async def maybe_handle(update, user_id: int, text: str) -> StockRouteResult:
@@ -25,21 +29,21 @@ async def maybe_handle(update, user_id: int, text: str) -> StockRouteResult:
         return StockRouteResult(handled=False, grounding="")
 
     if stock_analysis.wants_portfolio_analysis(text, symbols):
-        await _handle_portfolio_analysis(update, user_id, symbols, text)
-        return StockRouteResult(handled=True, grounding="")
+        sent = await _handle_portfolio_analysis(update, user_id, symbols, text)
+        return StockRouteResult(handled=True, grounding="", replies=tuple(sent))
 
     persona_ids = stock_analysis.stock_personas.detect_personas(text)
     if persona_ids:
-        await _handle_persona_view(update, user_id, symbols, persona_ids, text)
-        return StockRouteResult(handled=True, grounding="")
+        sent = await _handle_persona_view(update, user_id, symbols, persona_ids, text)
+        return StockRouteResult(handled=True, grounding="", replies=tuple(sent))
 
     if stock_analysis.wants_full_analysis(text, symbols):
-        await _handle_full_analysis(update, user_id, symbols, text)
-        return StockRouteResult(handled=True, grounding="")
+        sent = await _handle_full_analysis(update, user_id, symbols, text)
+        return StockRouteResult(handled=True, grounding="", replies=tuple(sent))
 
     if stock_analysis.wants_price_quote(text, symbols):
-        await _handle_price_quote(update, user_id, symbols)
-        return StockRouteResult(handled=True, grounding="")
+        sent = await _handle_price_quote(update, user_id, symbols)
+        return StockRouteResult(handled=True, grounding="", replies=tuple(sent))
 
     grounding = await stock_analysis.build_price_grounding(symbols)
     return StockRouteResult(handled=False, grounding=grounding)
@@ -47,7 +51,8 @@ async def maybe_handle(update, user_id: int, text: str) -> StockRouteResult:
 
 async def _handle_portfolio_analysis(
     update, user_id: int, symbols: list[str], user_text: str
-) -> None:
+) -> list[str]:
+    sent: list[str] = []
     prompt_id = await telemetry.start(user_id, "portfolio_analysis", ",".join(symbols))
     status = await update.message.reply_text("🔍 Đang soi danh mục cho anh, đợi em xíu nha...")
     try:
@@ -57,6 +62,7 @@ async def _handle_portfolio_analysis(
         )
         await telemetry.success(prompt_id, "portfolio_analysis", result_text)
         await common.reply_long_text(update.message, result_text)
+        sent.append(result_text)
     except Exception as exc:
         logger.exception("Lỗi phân tích danh mục")
         await telemetry.failure(prompt_id, "portfolio_analysis", exc)
@@ -66,16 +72,28 @@ async def _handle_portfolio_analysis(
             await status.delete()
         except Exception:
             logger.debug("Không xóa được status phân tích danh mục", exc_info=True)
+    return sent
 
 
-async def _handle_full_analysis(update, user_id: int, symbols: list[str], user_text: str) -> None:
+async def _handle_full_analysis(
+    update, user_id: int, symbols: list[str], user_text: str
+) -> list[str]:
+    # Mã đã gửi bản số liệu rule-based nhưng không có phần diễn giải AI (LLM lỗi
+    # hoặc hết hạn chót lượt): báo 1 câu sau vòng lặp. KHÔNG dừng vòng lặp khi
+    # hết giờ - các mã sau vẫn gửi bản số liệu (không tốn lượt AI nào).
+    skipped: list[str] = []
+    sent: list[str] = []
     for symbol in symbols:
         prompt_id = await telemetry.start(user_id, "stock_analysis", symbol)
         status = await update.message.reply_text(f"🔍 Đang phân tích {symbol}...")
         try:
+            rule_report_sent = False
 
             async def send_rule_report(text: str) -> None:
+                nonlocal rule_report_sent
                 await common.reply_long_text(update.message, text)
+                rule_report_sent = True
+                sent.append(text)
 
             result_text = await stock_analysis.analyze_symbol(
                 symbol,
@@ -87,10 +105,13 @@ async def _handle_full_analysis(update, user_id: int, symbols: list[str], user_t
             if result_text:
                 await telemetry.success(prompt_id, "stock_analysis", result_text)
                 await common.reply_long_text(update.message, result_text)
+                sent.append(result_text)
             else:
                 # Bản rule-based đã gửi làm tin nhắn đầu, LLM không trả thêm
                 # được gì mới - telemetry ghi nhận để vẫn có số liệu theo dõi.
                 await telemetry.success(prompt_id, "stock_analysis", "(đã gửi bản rule-based)")
+                if rule_report_sent:
+                    skipped.append(symbol)
         except Exception as exc:
             logger.exception("Lỗi phân tích %s", symbol)
             await telemetry.failure(prompt_id, "stock_analysis", exc)
@@ -100,11 +121,14 @@ async def _handle_full_analysis(update, user_id: int, symbols: list[str], user_t
                 await status.delete()
             except Exception:
                 logger.debug("Không xóa được status phân tích %s", symbol, exc_info=True)
+    if skipped:
+        await update.message.reply_text(stock_turn.commentary_skipped_note(skipped))
+    return sent
 
 
 async def _handle_persona_view(
     update, user_id: int, symbols: list[str], persona_ids: list[str], user_text: str
-) -> None:
+) -> list[str]:
     prompt_id = await telemetry.start(user_id, "persona_view", ",".join(symbols))
     try:
         results = [
@@ -113,24 +137,28 @@ async def _handle_persona_view(
             )
             for symbol in symbols
         ]
-        text = "\n\n".join(r for r in results if r)
+        # Mã lỗi/hết hạn chót lượt gom thành 1 dòng, không lặp N câu lỗi.
+        kept, failed = stock_turn.split_persona_results(symbols, results)
+        text = "\n\n".join(kept)
         if text:
+            if failed:
+                text += "\n\n" + stock_turn.persona_failure_note(failed)
             await telemetry.success(prompt_id, "persona_view", text)
             await common.reply_long_text(update.message, text)
+            return [text]
         else:
             await telemetry.failure(prompt_id, "persona_view", RuntimeError("empty persona view"))
-            await update.message.reply_text(
-                messages.STOCK_ANALYZE_FAILED.format(symbol=", ".join(symbols))
-            )
+            await update.message.reply_text(stock_turn.persona_failure_note(failed or symbols))
     except Exception as exc:
         logger.exception("Lỗi góc nhìn persona %s", ", ".join(symbols))
         await telemetry.failure(prompt_id, "persona_view", exc)
         await update.message.reply_text(
             messages.STOCK_ANALYZE_FAILED.format(symbol=", ".join(symbols))
         )
+    return []
 
 
-async def _handle_price_quote(update, user_id: int, symbols: list[str]) -> None:
+async def _handle_price_quote(update, user_id: int, symbols: list[str]) -> list[str]:
     prompt_ids = [await telemetry.start(user_id, "stock_price", symbol) for symbol in symbols]
     results = await asyncio.gather(
         *(stock_analysis.quick_quote(symbol) for symbol in symbols),
@@ -147,3 +175,4 @@ async def _handle_price_quote(update, user_id: int, symbols: list[str]) -> None:
         ok_results.append(result)
     if ok_results:
         await tg_format.reply_rich(update.message, "\n\n".join(ok_results))
+    return ok_results

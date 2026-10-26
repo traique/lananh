@@ -1,4 +1,4 @@
-"""Dữ liệu cho web công khai (trang /lich, /tu-vi, /than-so-hoc và /api/v1/*).
+"""Dữ liệu cho web công khai (trang /lich, /tu-vi, /than-so-hoc, /ky-mon và /api/v1/*).
 
 Hàm thuần, không gọi AI, không đụng DB. Kết quả là dict khoá camelCase (hợp
 đồng JSON công khai của /api/v1 - chỉ THÊM trường mới, không đổi/bỏ trường
@@ -12,7 +12,7 @@ import datetime as dt
 import re
 from zoneinfo import ZoneInfo
 
-from services import calendar_query, can_chi, lunar, numerology, tuvi
+from services import calendar_query, can_chi, kymon, lunar, numerology, tuvi
 
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 MIN_YEAR, MAX_YEAR = 1900, 2100
@@ -163,6 +163,54 @@ def parse_ymd(raw: str) -> tuple[int, int, int]:
     if m.group("y"):
         return int(m.group("y")), int(m.group("m")), int(m.group("d"))
     return int(m.group("y2")), int(m.group("m2")), int(m.group("d2"))
+
+
+_TIME_RE = re.compile(r"\s*(\d{1,2}):(\d{2})(?::\d{2})?\s*")
+_ISO_DATETIME_RE = re.compile(
+    r"\s*\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?\s*"
+)
+
+
+def parse_time(raw: str) -> tuple[int, int]:
+    """'HH:MM' (input type=time, có thể kèm giây) -> (giờ, phút)."""
+    m = _TIME_RE.fullmatch(raw or "")
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        raise InputError("INVALID_TIME", "Giờ có dạng HH:MM (00:00-23:59).")
+    return int(m.group(1)), int(m.group(2))
+
+
+def qimen_moment(date_raw: str = "", time_raw: str = "") -> dt.datetime:
+    """Thời điểm lập bàn Kỳ Môn (giờ VN) từ ô ngày + ô giờ của trang /ky-mon;
+    bỏ trống ngày = hôm nay, bỏ trống giờ = giờ hiện tại."""
+    current = now()
+    day = parse_date(date_raw) if (date_raw or "").strip() else current.date()
+    hour, minute = (
+        parse_time(time_raw) if (time_raw or "").strip() else (current.hour, current.minute)
+    )
+    return dt.datetime(day.year, day.month, day.day, hour, minute, tzinfo=_VN_TZ)
+
+
+def parse_datetime(raw: str) -> dt.datetime:
+    """'YYYY-MM-DDTHH:MM[:SS][Z|±HH:MM]' (ISO 8601) cho JSON API. Không có múi giờ
+    hiểu là giờ Việt Nam; có múi giờ thì giữ (lập bàn theo giờ đồng hồ múi đó)."""
+    if not _ISO_DATETIME_RE.fullmatch(raw or ""):
+        raise InputError(
+            "INVALID_DATETIME", "dateTime có dạng YYYY-MM-DDTHH:MM, có thể kèm múi giờ (+07:00)."
+        )
+    try:
+        value = dt.datetime.fromisoformat(raw.strip())
+    except ValueError:
+        raise InputError("INVALID_DATETIME", "dateTime không tồn tại trên lịch.") from None
+    _check_year(value.year)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=_VN_TZ)
+    return value.replace(second=0, microsecond=0)
+
+
+def qimen_chart(moment: dt.datetime) -> dict:
+    """Bàn Kỳ Môn dạng dict (trang web/JSON API) cho thời điểm có múi giờ."""
+    _check_year(moment.year)
+    return kymon.chart_data(kymon.build_chart(moment))
 
 
 def build_tuvi(

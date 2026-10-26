@@ -11,6 +11,7 @@ import time
 import httpx
 
 from ai import orchestrator, tavily_client
+from ai.timeouts import turn_deadline
 from services import web_search
 from services.public_http import public_status
 
@@ -173,7 +174,7 @@ KẾT QUẢ TÌM KIẾM (Tavily):
 {search_results}"""
 
 
-# Tavily yếu/lỗi -> Groq Compound web search trước, rồi Google Search grounding.
+# Tavily yếu/lỗi -> Groq browser_search trước, rồi Google Search grounding.
 # Không dùng OpenRouter ở nhánh /gia vì không có đảm bảo tool search thật.
 _PRICE_FALLBACK_PROVIDERS = ["groq", "api1", "api2"]
 
@@ -182,13 +183,24 @@ async def search_price(product_name: str) -> tuple[str, bool]:
     """Tìm giá sản phẩm: Tavily trước (1 request duy nhất, search_depth="advanced"
     để có nguồn đa dạng hơn basic, kèm giới hạn tối đa 2 kết quả/domain để 1
     shop SEO mạnh không chiếm hết top-N - xem tavily_client.search()), lỗi/
-    rỗng/yếu thì fallback Groq Compound -> Google Search (api1 -> api2). Dùng
+    rỗng/yếu thì fallback Groq browser_search -> Google Search (api1 -> api2). Dùng
     chung cho Telegram (handlers/commands.py::price_cmd), Zalo/Zoom
     (services/channel_command_service.py::_price) và tool tim_gia của /agent.
 
     Trả về (text, used_fallback); caller giữ contract cũ để gắn nhãn API khi
     response provider có đánh dấu fallback.
+
+    MỘT hạn chót CHAT_TURN_TIMEOUT_SEC cho cả lượt (Tavily rồi tối đa 2 lượt hỏi
+    AI): trước đây mỗi orchestrator.ask tự mở 200s riêng nên /gia có thể giữ khoá
+    lượt gấp đôi. Hết hạn -> TurnTimeoutError (caller báo "⏱️ ..."). Gọi lồng
+    trong lượt khác (tool tim_gia của /agent) thì giữ hạn SỚM hơn của lượt ngoài.
+    verify_links() chạy sau, ngoài hạn này (mỗi link có timeout riêng).
     """
+    with turn_deadline():
+        return await _search_price(product_name)
+
+
+async def _search_price(product_name: str) -> tuple[str, bool]:
     search_results: str | None = None
     try:
         tavily_response = await tavily_client.search_results(
