@@ -123,10 +123,13 @@ _SCALES = {
     "triệu": 1e6, "trieu": 1e6, "tr": 1e6, "củ": 1e6, "cu": 1e6, "tỷ": 1e9, "ty": 1e9,
 }  # fmt: skip
 
+# Bỏ dấu thì "vé số" trùng "về số" ("nói về số liệu"), "dò vé" trùng "đổ về": các
+# cụm đó chỉ so trên chữ CÓ DẤU; bản không dấu phải kèm số vé hoặc miền/ngày.
 _LOTTERY_RE = re.compile(
-    r"\bxo so\b|\bso xo\b|\bxs(?:mb|mn|mt|kt|hcm|tphcm)\b|\bkqxs\b|\bdo ve\b|\bve so\b|"
-    r"\b(?:ve|do|do so) \d{5,6}\b"
+    r"\bxo so\b|\bso xo\b|\bxs(?:mb|mn|mt|kt|hcm|tphcm)\b|\bkqxs\b|"
+    r"\b(?:ve|do ve|do so|ve so) \d{5,6}\b|\bve so (?:mien|hom|xs|dai)"
 )
+_LOTTERY_ACCENTED_RE = re.compile(r"\bvé số\b|\bdò vé\b|\bdò số\b")
 # Câu hỏi kiến thức/ý kiến về xổ số (không hỏi số) -> để AI, cấm nêu số.
 _LOTTERY_BROAD_RE = re.compile(
     r"\b(?:la gi|nghia la|tai sao|vi sao|co nen|nen mua|nen choi|lam sao|cach choi|y nghia|"
@@ -257,8 +260,9 @@ def parse_fx(text: str) -> FxQuery | None:
 
 def parse_lottery(text: str, today: dt.date | None = None) -> LotteryQuery | None:
     """Câu hỏi xổ số/dò vé, hoặc None."""
-    folded = fold(_low(text))
-    if not _LOTTERY_RE.search(folded):
+    low = _low(text)
+    folded = fold(low)
+    if not _LOTTERY_RE.search(folded) and not _LOTTERY_ACCENTED_RE.search(low):
         return None
     today = today or _today()
     ticket_match = _TICKET_RE.search(folded)

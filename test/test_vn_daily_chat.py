@@ -79,6 +79,8 @@ async def test_ty_gia_gon_tra_thang(sources, text, expected):
         "nhiệt độ hôm nay bao nhiêu độ",
         "anh yên tâm nha",
         "xin chào em",
+        "em nói về số liệu kinh tế đi",  # bỏ dấu "về số" = "vé số"
+        "nước lũ đổ về số đông hộ dân",
     ],
 )
 async def test_khong_phai_cau_hoi_gon_thi_none(sources, text):
@@ -111,6 +113,8 @@ async def test_xo_so_hom_nay_chua_quay(sources):
 async def test_do_ve_bang_code(sources):
     reply = await daily.maybe_handle("dò vé 729510")
     assert "Kiên Giang: 🎉 TRÚNG Giải Đặc biệt" in reply
+    assert "TRÚNG" in await daily.maybe_handle("do ve so 729510 giup anh")  # gõ không dấu
+    assert "[Kiên Giang]" in await daily.maybe_handle("ve so mien nam")
     mb = await daily.maybe_handle("vé 30328 có trúng không")  # 5 số -> miền Bắc
     assert "Giải Đặc biệt" in mb and sources["calls"][-1] == ("xs", "mb")
 
