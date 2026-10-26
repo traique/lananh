@@ -1,8 +1,9 @@
 """Chi tiêu cá nhân: ghi bằng chat, ảnh hoá đơn, /chitieu - tiền luôn do code đọc/cộng.
 
 - Chat: "cafe 45k", "đổ xăng 1tr2", "2 củ tiền điện", "hôm qua ăn phở 50k" được
-  đọc TẤT ĐỊNH bằng Python (k, nghìn, tr, triệu, củ, m, 1tr2, 1m5, 1.200.000đ) -
-  không tốn lượt AI. Bộ lọc chặt (câu ngắn, đúng 1 số tiền có đơn vị, không phải
+  đọc TẤT ĐỊNH bằng Python (k, nghìn, tr, triệu, củ, 1tr2, 1m5, 1 triệu 2, 3 triệu
+  rưỡi, 1.200.000đ) - không tốn lượt AI; "cao 1m7", "bơi 500m", "chạy bộ 5k" là số
+  đo, không phải tiền. Bộ lọc chặt (câu ngắn, đúng 1 số tiền có đơn vị, không phải
   câu hỏi, không dính cổ phiếu/thu nhập) để không nuốt nhầm tin trò chuyện; tắt
   bằng EXPENSE_CHAT_CAPTURE=false (khi đó router AI vẫn ghi được khi người dùng
   nói rõ "ghi chi tiêu ...").
@@ -185,12 +186,27 @@ _CATEGORY_WORDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# 1tr2, 1m5, 2k5, 45k, 45 nghìn, 2 củ, 1.5 triệu, 50.000đ, 1.200.000, 120000.
+# Lượng từ sau số: "2 triệu 3 tháng" là 2 triệu cho 3 tháng, không phải 2,3 triệu.
+_COUNTERS = (
+    r"cái|chiếc|con|người|tháng|ngày|tuần|năm|lần|ly|cốc|hộp|gói|kg|ký|cân|buổi|tiếng|"
+    r"giờ|phút|đêm|bữa|suất|phần|vé|bộ|đôi|quyển|cuốn|tô|bát|chai|lon|thùng|đứa|bạn"
+)
+# 1tr2, 1m5, 2k5, 45k, 45 nghìn, 2 củ, 1.5 triệu, 50.000đ, 1.200.000, 120000; sau
+# đơn vị triệu còn đọc phần lẻ nói rời: 1 triệu 2, 2 triệu 500, 3 triệu rưỡi,
+# 1 triệu 200 nghìn.
 _AMOUNT_RE = re.compile(
     r"(?<![\w.,])(?P<n>\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)\s*"
-    r"(?:(?P<u>k|nghìn|ngàn|ng|tr|triệu|củ|m|đ|vnđ|vnd|đồng)(?P<frac>\d{1,3})?(?![\w])|(?![\w]))",
+    r"(?:(?P<u>k|nghìn|ngàn|ng|tr|triệu|củ|m|đ|vnđ|vnd|đồng)(?P<frac>\d{1,3})?(?![\w])"
+    r"(?:(?:(?<=tr|củ)|(?<=triệu))\s+(?:(?P<frac2>\d{1,3})(?:\s*(?P<u2>nghìn|ngàn|k)(?![\w]))?"
+    rf"(?![\w]|[.,]\d)(?!\s+(?:{_COUNTERS})\b)|(?P<ruoi>rưỡi|ruoi)(?![\w])))?"
+    r"|(?![\w]))",
     re.IGNORECASE,
 )
+# Số đo/quãng đường, không phải tiền: "cao 1m7", "chạy bộ 5k" (chỉ xét khi bắt từ chat).
+_MEASURE_RE = re.compile(r"\b(?:cao|nặng|dài|rộng|bơi|chạy|đi bộ|bước|km|mét|cm|kg)\b")
+_MEASURE_PLAIN_RE = re.compile(r"\b(?:cao|nang|dai|rong|boi|chay|di bo|buoc|km|met|cm|kg)\b")
+_RUN_RE = re.compile(r"\b(?:bơi|chạy|đi bộ|bước|km|marathon)\b")
+_RUN_PLAIN_RE = re.compile(r"\b(?:boi|chay|di bo|buoc|km|marathon)\b")
 _UNIT_VALUE = {
     "k": 1_000,
     "nghìn": 1_000,
@@ -269,13 +285,34 @@ def _amount_value(match: re.Match) -> int | None:
         value = float(re.sub(r"[.,]", "", raw))  # 1.200.000 / 50,000
     else:
         value = float(raw.replace(",", "."))
+    if unit == "m" and not frac:
+        return None  # "500m" là mét; "m" chỉ là triệu khi viết liền kiểu 1m5
     if frac:
         if unit not in ("tr", "triệu", "củ", "m", "k"):
             return None
         value += float(f"0.{frac}")  # 1tr2 = 1,2 triệu; 2k5 = 2.500
+    frac2 = match.group("frac2")
+    if match.group("ruoi"):
+        value += 0.5  # 3 triệu rưỡi
+    elif frac2 and not match.group("u2"):
+        value += float(f"0.{frac2}")  # 1 triệu 2 = 1,2 triệu; 2 triệu 500 = 2,5 triệu
     multiplier = _UNIT_VALUE.get(unit, 1)
     amount = int(round(value * multiplier))
+    if frac2 and match.group("u2"):
+        amount += int(frac2) * 1_000  # 1 triệu 200 nghìn
     return amount if MIN_AMOUNT <= amount <= MAX_AMOUNT else None
+
+
+def _is_measurement(text: str, amount_text: str) -> bool:
+    """ "cao 1m7", "bơi 500m", "chạy bộ 5k": số đo/quãng đường, không phải khoản chi."""
+    token = amount_text.lower()
+    low = text.lower()
+    plain = fold(low) == low
+    if re.search(r"\dm\d", token):
+        return bool((_MEASURE_PLAIN_RE if plain else _MEASURE_RE).search(low))
+    if re.search(r"\dk(?:\d|$)", token.replace(" ", "")):
+        return bool((_RUN_PLAIN_RE if plain else _RUN_RE).search(low))
+    return False
 
 
 def parse_amount(text: str, *, bare_thousands: bool = False) -> tuple[int, tuple[int, int]] | None:
@@ -393,6 +430,8 @@ def parse_expense(
     if found is None:
         return None
     amount, (start, end) = found
+    if strict and _is_measurement(clean, clean[start:end]):
+        return None
     rest = (clean[:start] + " " + clean[end:]).strip()
     spent_on, rest = _spent_on(rest, today)
     rest = _SPEND_VERB_RE.sub("", rest.strip())

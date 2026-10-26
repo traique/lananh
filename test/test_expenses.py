@@ -297,3 +297,31 @@ def test_hom_qua_viet_hoa_dau_cau_van_tinh_dung_ngay():
 def test_hoa_don_doc_tong_tien_dung_kieu_so(raw, amount):
     parsed = ex.parse_receipt_json(f'{{"amount_vnd": {raw}}}', TODAY)
     assert (parsed.amount if parsed else None) == amount
+
+
+@pytest.mark.parametrize(
+    ("text", "amount", "note"),
+    [
+        ("tiền điện 1 triệu 2", 1_200_000, "Tiền điện"),
+        ("học phí 2 triệu 500", 2_500_000, "Học phí"),
+        ("tiền nhà 3 triệu rưỡi", 3_500_000, "Tiền nhà"),
+        ("tiền nhà 3tr rưỡi", 3_500_000, "Tiền nhà"),
+        ("sửa xe 1 triệu 200 nghìn", 1_200_000, "Sửa xe"),
+        ("tiền điện 1 triệu 2 nghìn", 1_002_000, "Tiền điện"),
+        ("học phí 2 triệu 3 tháng", 2_000_000, "Học phí 3 tháng"),  # "3 tháng" không phải phần lẻ
+        ("taxi 1m5", 1_500_000, "Taxi"),
+    ],
+)
+def test_tien_noi_kieu_1_trieu_2_va_ruoi(text, amount, note):
+    parsed = ex.parse_expense(text, today=TODAY)
+    assert parsed is not None and (parsed.amount, parsed.note) == (amount, note)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    ["con trai anh giờ cao 1m7 rồi", "bơi 500m", "chạy bộ 5k sáng nay", "nay chạy 10k mệt quá"],
+)
+async def test_chieu_cao_quang_duong_khong_phai_tien(fake, text):
+    assert ex.parse_expense(text, today=TODAY) is None
+    assert await ex.maybe_handle_chat(1, text) is None and not fake.rows
