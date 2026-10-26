@@ -70,6 +70,7 @@ async def generate(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 provider_label="Groq",
+                include_usage=True,
             )
 
     return Response(await _pool.bounded("Groq", _call))
@@ -103,6 +104,7 @@ async def generate_json(prompt: str, *, max_tokens: int = 1024) -> Optional[dict
                 max_tokens=max_tokens,
                 provider_label="Groq JSON",
                 extra_payload={"response_format": {"type": "json_object"}},
+                include_usage=True,
             )
 
     raw = await _pool.bounded("Groq JSON", _call)
@@ -147,6 +149,7 @@ async def generate_with_tools(
                 max_tokens=max_tokens,
                 provider_label="Groq tools",
                 extra_payload={"parallel_tool_calls": False},
+                include_usage=True,
             )
 
     return await _pool.bounded("Groq tools", _call)
@@ -164,6 +167,7 @@ async def generate_image_prompt(instruction: str, image_path: str) -> Response:
         provider_label="Groq vision",
         instruction=instruction,
         image_path=image_path,
+        include_usage=True,
     )
 
 

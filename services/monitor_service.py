@@ -28,7 +28,7 @@ import time
 import messages
 from ai.provider_state import provider_state, send_alert
 from core import config
-from services import error_digest, key_rotation, watchdog
+from services import error_digest, key_rotation, quota_burn, watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,8 @@ async def _monitor_loop() -> None:
         except Exception:
             logger.warning("Lỗi trong vòng giám sát provider-chain.", exc_info=True)
         await _run_step("watchdog", watchdog.run_checks)
+        # Quota miễn phí từng provider >= QUOTA_BURN_ALERT_PCT (tối đa 15 phút/lần).
+        await _run_step("quota miễn phí", quota_burn.check_and_alert)
         await _run_step("lưu bộ đếm lỗi", error_digest.persist)
         await _run_step("tổng hợp lỗi hằng ngày", error_digest.send_daily_digest_if_due)
 

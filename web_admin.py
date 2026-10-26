@@ -44,7 +44,7 @@ from ai.provider_state import provider_state
 from channels import zalo_users
 from core import config, database as db
 from services import db_maintenance, market_page, memory_control, memory_service, memory_stats
-from services import backup_status, error_digest, key_rotation, watchdog
+from services import backup_status, error_digest, key_rotation, quota_burn, watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -753,6 +753,52 @@ async def admin_usage_outcomes(request: Request) -> Response:
             }
             for row in rows
         ]
+    )
+
+
+def _iso(value) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+@api_router.get("/usage/turns")
+async def admin_usage_turns(request: Request) -> Response:
+    """Lượt trả lời gần đây (turn_metrics): chờ khoá, chờ slot, gom ngữ cảnh, LLM,
+    gửi tin + p95 từng giai đoạn theo kênh (core/trace.py)."""
+    hours = min(_hours_param(request, 24), 24 * 14)
+    recent = await db.recent_turn_metrics(hours, 50)
+    summary = await db.turn_stage_summary(hours)
+    return JSONResponse(
+        {
+            "recent": [{**row, "created_at": _iso(row["created_at"])} for row in recent],
+            "summary": [
+                {k: (_ms(v) if k.endswith(("_p50", "_p95")) else v) for k, v in row.items()}
+                for row in summary
+            ],
+        }
+    )
+
+
+@api_router.get("/usage/turn")
+async def admin_usage_turn(request: Request) -> Response:
+    """Các lượt gọi provider của 1 lượt trả lời (thác thời gian) theo mã lượt."""
+    turn_id = (request.query_params.get("turn_id") or "").strip()
+    if not turn_id or len(turn_id) > 120:
+        return Response(status_code=400)
+    rows = await db.provider_calls_for_turn(turn_id)
+    return JSONResponse(
+        {
+            "turn_id": turn_id,
+            "calls": [{**row, "created_at": _iso(row["created_at"])} for row in rows],
+        }
+    )
+
+
+@api_router.get("/usage/burn")
+async def admin_usage_burn() -> Response:
+    """Quota miễn phí đã dùng theo cửa sổ của từng provider (services/quota_burn.py)."""
+    burns = await quota_burn.snapshot()
+    return JSONResponse(
+        {"alert_pct": quota_burn.alert_pct(), "providers": [b.as_dict() for b in burns]}
     )
 
 

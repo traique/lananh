@@ -582,6 +582,10 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "INSERT INTO answer_feedback (channel,telegram_user_id,prompt_id,rating,created_at) "
         "VALUES ('telegram',1,1,-1,now()-interval '200 days'),('telegram',1,2,1,now())"
     )
+    await pool.execute(
+        "INSERT INTO turn_metrics (turn_id,created_at) "
+        "VALUES ('telegram:1',now()-interval '20 days'),('telegram:2',now())"
+    )
     result = await db_maintenance.prune_retention()
     assert result == {
         "user_calls": 1,
@@ -591,6 +595,7 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "reminders": 1,
         "user_session_notes": 1,
         "user_events": 1,
+        "turn_metrics": 1,
         "answer_feedback": 1,
     }
     assert await pool.fetchval("SELECT prompt_id FROM answer_feedback") == 2

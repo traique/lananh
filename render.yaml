@@ -359,3 +359,22 @@ services:
       # động rồi báo số còn lại (0 = chỉ báo, bấm nút trên /admin).
       - key: SETTINGS_AUTO_ROTATE
         value: "1"
+      # Quota miễn phí từng provider (services/quota_burn.py): cảnh báo khi dùng >= N%
+      # hạn mức trong cửa sổ quota (0 = tắt). Hạn mức 0 = chưa đặt (chỉ hiển thị trên
+      # /admin). Gemini tính theo PROJECT và reset 0h giờ Thái Bình Dương; 2 key cùng
+      # project thì GEMINI_KEYS_SAME_PROJECT=1. Groq đọc số còn lại từ header response.
+      - key: QUOTA_BURN_ALERT_PCT
+        value: "80"
+      - key: GEMINI_KEYS_SAME_PROJECT
+        value: "0"
+      - key: FREE_TIER_RPD_GEMINI
+        value: "0"
+      - key: FREE_TIER_RPD_GROQ
+        value: "0"
+      - key: FREE_TIER_RPD_OPENROUTER
+        value: "50"
+      - key: FREE_TIER_TAVILY_MONTHLY
+        value: "1000"
+      # Số đo từng lượt trả lời (bảng turn_metrics, /admin → Thống kê AI) giữ N ngày.
+      - key: RETENTION_TURN_METRICS_DAYS
+        value: "14"

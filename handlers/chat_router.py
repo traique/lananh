@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 import messages
 from ai import drafts
 from ai.timeouts import turn_deadline
-from core import config
+from core import config, trace
 from core.text_normalize import nfc
 from handlers import callbacks, common, stock_handler, turn_feedback
 from services import (
@@ -290,7 +290,9 @@ def _event_key(update) -> str | None:
 
 
 async def _send_answer(send, target, text: str, keyboard):
-    """Gửi câu trả lời; có bàn phím thì gắn vào đoạn cuối và trả tin cuối đã gửi."""
-    if keyboard is None:
-        return await send(target, text)
-    return await send(target, text, reply_markup=keyboard)
+    """Gửi câu trả lời; có bàn phím thì gắn vào đoạn cuối và trả tin cuối đã gửi.
+    Thời gian gửi vào turn_metrics.send_ms của lượt (core/trace.py)."""
+    with trace.stage("send"):
+        if keyboard is None:
+            return await send(target, text)
+        return await send(target, text, reply_markup=keyboard)

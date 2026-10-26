@@ -458,6 +458,22 @@
             <div id="usage-models-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
           </div>
         </div>
+        <div class="grid cols-2">
+          <div class="card">
+            <div class="card-head"><h3>Provider: kết quả &amp; độ trễ</h3><span class="hint">p50 / p95 theo từng kết quả</span></div>
+            <div id="outcomes-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Quota miễn phí</h3><span class="hint" id="burn-hint">theo cửa sổ quota của từng provider</span></div>
+            <div id="burn-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Lượt trả lời gần đây</h3><span class="hint">24 giờ · bấm mã lượt để xem từng lượt gọi provider</span></div>
+          <div id="turns-summary" class="small"></div>
+          <div id="turns-table"><div class="skeleton"><i></i><i></i><i></i></div></div>
+          <div id="turn-detail"></div>
+        </div>
       </section>
 
       <!-- ========== PROVIDER ========== -->
@@ -1128,6 +1144,74 @@ async function loadUsageModels() {
   $('kpi-model-sub').textContent = top ? `${top.provider} · ${fmtNum(top.calls)} lượt (${total ? Math.round(top.calls * 100 / total) : 0}%)` : 'chưa có lượt trả lời';
 }
 
+/* ---------- Kết quả provider, quota miễn phí, lượt trả lời (core/trace.py) ---------- */
+const OUTCOME_LABEL = { ok: 'thành công', error: 'lỗi', timeout: 'quá giờ', rate_limited: 'hết quota (429)', contaminated: 'lẫn chữ lạ', no_search: 'không tra được web', turn_timeout: 'hết hạn chót lượt' };
+const TURN_KIND_LABEL = { owner: 'chủ bot', admin: 'admin', member: 'thành viên', job: 'job nền' };
+function fmtMs(ms) { return ms == null ? '—' : (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`); }
+function fmtVnTime(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+}
+
+async function loadOutcomes() {
+  const rows = await api(`/admin/api/usage/outcomes?hours=${rangeHours()}`);
+  renderTable($('outcomes-table'), [
+    { label: 'Provider', cell: o => `<span class="mono">${esc(o.provider)}</span>` },
+    { label: 'Kết quả', cell: o => `<span class="pill ${o.outcome === 'ok' ? 'ok' : o.outcome === 'rate_limited' ? 'warn' : 'bad'}">${esc(OUTCOME_LABEL[o.outcome] || o.outcome)}</span>` },
+    { label: 'Lượt', cls: 'num', cell: o => esc(fmtNum(o.calls)) },
+    { label: 'p50 / p95', cls: 'num', cell: o => `${esc(fmtMs(o.p50_ms))} / ${esc(fmtMs(o.p95_ms))}` },
+    { label: 'Gần nhất', cell: o => fmtRel(o.last_at) },
+  ], rows, 'Chưa có lượt gọi provider nào trong khoảng thời gian này.');
+}
+
+async function loadBurn() {
+  const d = await api('/admin/api/usage/burn');
+  const warnAt = d.alert_pct || 80;
+  $('burn-hint').textContent = d.alert_pct ? `cảnh báo khi dùng ${d.alert_pct}% hạn mức` : 'cảnh báo đang tắt (QUOTA_BURN_ALERT_PCT=0)';
+  renderTable($('burn-table'), [
+    { label: 'Provider', cell: b => esc(b.label) },
+    { label: 'Đã dùng', cls: 'num', cell: b => `${esc(fmtNum(b.used))}${b.limit ? ` / ${esc(fmtNum(b.limit))}` : ''} ${esc(b.unit)}${b.pct == null ? '' : ` <span class="pill ${b.pct >= 90 ? 'bad' : b.pct >= warnAt ? 'warn' : 'ok'}">${esc(b.pct)}%</span>`}` },
+    { label: 'Token vào / ra', cls: 'num', cell: b => `${esc(fmtNum(b.prompt_tokens))} / ${esc(fmtNum(b.completion_tokens))}` },
+    { label: 'Bị 429', cls: 'num', cell: b => esc(fmtNum(b.rate_limited)) },
+    { label: 'Cửa sổ', cell: b => `<span class="muted small">${esc(b.period === 'month' ? 'tháng' : 'ngày')} từ ${esc(fmtVnTime(b.window_start))}${b.source === 'header' ? ' · header Groq' : ''}${b.limit ? '' : ' · chưa đặt hạn mức'}</span>` },
+  ], d.providers, 'Chưa có số liệu quota.');
+}
+
+async function loadTurns() {
+  const d = await api('/admin/api/usage/turns?hours=24');
+  $('turns-summary').innerHTML = d.summary.map(x => `<p><span class="pill neutral">${esc(x.channel)}</span> ${esc(fmtNum(x.turns))} lượt · tổng p50 ${esc(fmtMs(x.total_p50))}, p95 ${esc(fmtMs(x.total_p95))} · p95 chờ khoá ${esc(fmtMs(x.lock_p95))}, chờ slot ${esc(fmtMs(x.slot_p95))}, ngữ cảnh ${esc(fmtMs(x.context_p95))}, LLM ${esc(fmtMs(x.llm_p95))}, gửi ${esc(fmtMs(x.send_p95))} · lỗi ${esc(fmtNum(x.failed))} · đổi provider ${esc(fmtNum(x.fallback))}</p>`).join('');
+  renderTable($('turns-table'), [
+    { label: 'Lúc', cell: x => fmtRel(x.created_at) },
+    { label: 'Mã lượt', cell: x => `<button class="btn sm turn-btn" type="button" data-turn="${esc(x.turn_id)}">${esc(x.turn_id)}</button>` },
+    { label: 'Ai', cell: x => esc(TURN_KIND_LABEL[x.user_kind] || x.user_kind) },
+    { label: 'Tổng', cls: 'num', cell: x => esc(fmtMs(x.total_ms)) },
+    { label: 'Chờ khoá / slot', cls: 'num', cell: x => `${esc(fmtMs(x.lock_wait_ms))} / ${esc(fmtMs(x.slot_wait_ms))}` },
+    { label: 'Ngữ cảnh', cls: 'num', cell: x => esc(fmtMs(x.context_ms)) },
+    { label: 'LLM', cls: 'num', cell: x => esc(fmtMs(x.llm_ms)) },
+    { label: 'Gửi', cls: 'num', cell: x => esc(fmtMs(x.send_ms)) },
+    { label: 'Provider', cell: x => `<span class="mono">${esc(x.final_provider || '—')}</span>${x.fallback_used ? ' <span class="pill warn">đổi provider</span>' : ''}` },
+    { label: 'Kết quả', cell: x => `<span class="pill ${x.outcome === 'ok' ? 'ok' : 'bad'}">${esc(x.outcome)}</span>` },
+  ], d.recent, 'Chưa có lượt nào trong 24 giờ qua.');
+}
+
+$('turns-table').addEventListener('click', async ev => {
+  const btn = ev.target.closest('.turn-btn');
+  if (!btn) return;
+  const target = $('turn-detail');
+  try {
+    const d = await api('/admin/api/usage/turn?turn_id=' + encodeURIComponent(btn.dataset.turn));
+    const longest = Math.max(1, ...d.calls.map(c => c.latency_ms || 0));
+    renderTable(target, [
+      { label: 'Giai đoạn', cell: c => esc(c.stage || '—') },
+      { label: 'Provider', cell: c => `<span class="mono">${esc(c.provider)}</span> <span class="mono muted small">${esc(c.model)}</span>` },
+      { label: 'Kết quả', cell: c => `<span class="pill ${c.outcome === 'ok' ? 'ok' : 'bad'}">${esc(OUTCOME_LABEL[c.outcome] || c.outcome)}</span>` },
+      { label: 'Độ trễ', cls: 'num', cell: c => `<span class="share" aria-hidden="true"><i style="width:${Math.round((c.latency_ms || 0) * 100 / longest)}%"></i></span>${esc(fmtMs(c.latency_ms))}` },
+      { label: 'Token vào / ra', cls: 'num', cell: c => `${esc(c.prompt_tokens == null ? '—' : fmtNum(c.prompt_tokens))} / ${esc(c.completion_tokens == null ? '—' : fmtNum(c.completion_tokens))}` },
+      { label: 'Ký tự prompt', cls: 'num', cell: c => esc(c.prompt_chars == null ? '—' : fmtNum(c.prompt_chars)) },
+    ], d.calls, `Lượt ${d.turn_id} không có lượt gọi provider nào.`);
+  } catch (e) { setState(target, 'error', 'Không tải được: ' + e.message); }
+});
+
 /* ---------- Biểu đồ cột (SVG, không thư viện) ---------- */
 const SVG_NS = 'http://www.w3.org/2000/svg';
 function svgEl(tag, attrs) {
@@ -1358,6 +1442,9 @@ const LIVE_LOADERS = [
   ['market', loadMarket, 'market-box'],
   ['usage', loadUsage, 'usage-table'],
   ['models', loadUsageModels, 'usage-models-table'],
+  ['outcomes', loadOutcomes, 'outcomes-table'],
+  ['burn', loadBurn, 'burn-table'],
+  ['turns', loadTurns, 'turns-table'],
   ['daily', loadDaily, 'chart'],
   ['ram', loadMemoryUsage, 'ram-box'],
   ['db', loadDbUsage, 'db-box'],
@@ -1412,8 +1499,8 @@ $('auto-refresh').addEventListener('change', applyAutoRefresh);
 function onRangeChange() {
   savePref('admin.hours', String(rangeHours()));
   updateRangeLabels();
-  ['usage-table', 'usage-models-table', 'chart'].forEach(id => { $(id).innerHTML = '<div class="skeleton"><i></i><i></i><i></i></div>'; });
-  runLoaders([['usage', loadUsage, 'usage-table'], ['models', loadUsageModels, 'usage-models-table'], ['daily', loadDaily, 'chart']]);
+  ['usage-table', 'usage-models-table', 'outcomes-table', 'chart'].forEach(id => { $(id).innerHTML = '<div class="skeleton"><i></i><i></i><i></i></div>'; });
+  runLoaders([['usage', loadUsage, 'usage-table'], ['models', loadUsageModels, 'usage-models-table'], ['outcomes', loadOutcomes, 'outcomes-table'], ['daily', loadDaily, 'chart']]);
 }
 $('range').addEventListener('click', ev => {
   const b = ev.target.closest('button');

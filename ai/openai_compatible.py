@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import httpx
 
-from ai import drafts
+from ai import call_log, drafts
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +261,39 @@ def parse_sse_content(raw: str) -> str:
     return _parse_sse_stream(raw)[0]
 
 
+def note_sse_usage(raw: str) -> None:
+    """Token của 1 response SSE (ai/call_log.py): OpenRouter luôn gửi ``usage`` ở
+    chunk cuối; Groq chỉ gửi khi xin stream_options.include_usage, nằm trong
+    ``x_groq.usage`` của chunk cuối có choices rỗng. Lấy chunk cuối có usage."""
+    found: Optional[dict[str, Any]] = None
+    for line in reversed(raw.splitlines()):
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[len("data:") :].strip()
+        if not payload or payload == "[DONE]" or "usage" not in payload:
+            continue
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if call_log.openai_usage(chunk):
+            found = chunk
+            break
+    if found is not None:
+        call_log.note_openai_usage(found)
+
+
+def _note_request(messages: list[dict[str, Any]]) -> None:
+    call_log.note_prompt_chars(call_log.messages_chars(messages))
+
+
+def _usage_payload(include_usage: bool) -> dict[str, Any]:
+    """Groq stream chỉ trả token khi xin stream_options.include_usage (OpenRouter
+    luôn trả; 9Router chưa rõ nên không gửi tham số lạ cho nó)."""
+    return {"stream_options": {"include_usage": True}} if include_usage else {}
+
+
 def _parse_sse_stream(raw: str) -> tuple[str, list[dict[str, Any]]]:
     """Gom 1 response SSE (chat.completion.chunk chuẩn OpenAI) thành
     (text, tool_calls đã parse JSON). Tool_calls dạng delta: chunk đầu mang
@@ -338,6 +371,7 @@ async def post_chat_completion(
     max_tokens: int,
     provider_label: str,
     extra_payload: Optional[dict[str, Any]] = None,
+    include_usage: bool = False,
 ) -> str:
     """LUÔN xin stream (SSE) kể cả khi chỉ cần text cuối: 9Router/chatgpt-
     gateway với request stream:false phải GỘP toàn bộ stream upstream xong
@@ -350,7 +384,10 @@ async def post_chat_completion(
     stream, gateway không bao giờ tự trả 504). Với stream:true, gateway
     forward chunk ngay khi có delta -> proxy thấy byte chảy, không cắt.
     parse_sse_content() gom delta thành text; nếu gateway vẫn trả JSON
-    thường (bỏ qua stream) thì nhánh else xử lý như cũ."""
+    thường (bỏ qua stream) thì nhánh else xử lý như cũ.
+
+    Token (``usage``) và header x-ratelimit-* đi qua kênh phụ ai/call_log.py, kiểu
+    trả về vẫn là str. ``include_usage``: xin stream_options.include_usage (Groq)."""
     headers = {"Authorization": f"Bearer {api_key}"}
     payload = {
         "model": model,
@@ -358,9 +395,11 @@ async def post_chat_completion(
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": True,
+        **_usage_payload(include_usage),
     }
     if extra_payload:
         payload.update(extra_payload)
+    _note_request(messages)
     try:
         if drafts.partial_sink() is not None:
             # Lượt chat có bản nháp Telegram (ai/drafts.py): đọc SSE theo dòng.
@@ -374,11 +413,14 @@ async def post_chat_completion(
                 json=payload,
             )
             response.raise_for_status()
+            call_log.note_ratelimit_headers(response.headers)
             content_type = response.headers.get("content-type", "")
             if "text/event-stream" in content_type or response.text.lstrip().startswith("data:"):
                 text = parse_sse_content(response.text)
+                note_sse_usage(response.text)
             else:
                 completion_payload = response.json()
+                call_log.note_openai_usage(completion_payload)
                 text = ((completion_payload.get("choices") or [{}])[0].get("message") or {}).get(
                     "content", ""
                 )
@@ -422,12 +464,15 @@ async def _post_streaming_text(
         if response.status_code >= 400:
             await response.aread()
         response.raise_for_status()
+        call_log.note_ratelimit_headers(response.headers)
         content_type = response.headers.get("content-type", "")
         if "text/event-stream" not in content_type:
             body = (await response.aread()).decode("utf-8", errors="replace")
             if body.lstrip().startswith("data:"):
+                note_sse_usage(body)
                 return parse_sse_content(body)
             completion = json.loads(body)
+            call_log.note_openai_usage(completion)
             return ((completion.get("choices") or [{}])[0].get("message") or {}).get("content", "")
         lines: list[str] = []
         pieces: list[str] = []
@@ -440,7 +485,9 @@ async def _post_streaming_text(
             if delta:
                 pieces.append(delta)
                 drafts.push("".join(pieces))
-    return parse_sse_content("\n".join(lines))
+    raw = "\n".join(lines)
+    note_sse_usage(raw)
+    return parse_sse_content(raw)
 
 
 def _http_error(provider_label: str, exc: httpx.HTTPStatusError) -> OpenAICompatibleError:
@@ -507,17 +554,21 @@ async def post_chat_completion_full(
     }
     if extra_payload:
         payload.update(extra_payload)
+    _note_request(messages)
     try:
         response = await client.post(
             f"{base_url.rstrip('/')}/chat/completions", headers=headers, json=payload
         )
         response.raise_for_status()
+        call_log.note_ratelimit_headers(response.headers)
         content_type = response.headers.get("content-type", "")
         if "text/event-stream" in content_type or response.text.lstrip().startswith("data:"):
             text = parse_sse_content(response.text)
             annotations, executed = _parse_sse_extras(response.text)
+            note_sse_usage(response.text)
         else:
             body = response.json()
+            call_log.note_openai_usage(body)
             message = ((body.get("choices") or [{}])[0].get("message")) or {}
             text = message.get("content") or ""
             annotations = [a for a in message.get("annotations") or [] if isinstance(a, dict)]
@@ -568,6 +619,7 @@ async def post_chat_completion_with_tools(
     max_tokens: int,
     provider_label: str,
     extra_payload: Optional[dict[str, Any]] = None,
+    include_usage: bool = False,
 ) -> ToolCallResponse:
     """Giống post_chat_completion() nhưng gửi kèm `tools` (function-calling
     chuẩn OpenAI) và trả về ToolCallResponse (text + tool_calls) thay vì chỉ
@@ -604,11 +656,13 @@ async def post_chat_completion_with_tools(
         "max_tokens": max_tokens,
         "stream": True,
         "tools": tools,
+        **_usage_payload(include_usage),
     }
     # Groq: parallel_tool_calls=false (gpt-oss không gọi song song); OpenRouter:
     # provider.require_parameters=true (chỉ đi tới nhà cung cấp hỗ trợ tools).
     if extra_payload:
         payload.update(extra_payload)
+    _note_request(messages)
     try:
         response = await client.post(
             f"{base_url.rstrip('/')}/chat/completions",
@@ -616,12 +670,15 @@ async def post_chat_completion_with_tools(
             json=payload,
         )
         response.raise_for_status()
+        call_log.note_ratelimit_headers(response.headers)
         content_type = response.headers.get("content-type", "")
         if "text/event-stream" in content_type or response.text.lstrip().startswith("data:"):
             text, tool_calls = _parse_sse_stream(response.text)
             text = text.strip()
+            note_sse_usage(response.text)
         else:
             completion_payload = response.json()
+            call_log.note_openai_usage(completion_payload)
             message = ((completion_payload.get("choices") or [{}])[0]).get("message") or {}
             text = (message.get("content") or "").strip()
             tool_calls = _parse_tool_calls(message.get("tool_calls"))
@@ -698,6 +755,7 @@ async def generate_image_prompt(
     image_path: str,
     temperature: float = 0.7,
     max_tokens: int = 4096,
+    include_usage: bool = False,
 ) -> Response:
     """Gửi ảnh dạng base64 data URL theo chuẩn nội dung đa phương tiện OpenAI
     (image_url). Chỉ hoạt động nếu vision_model hỗ trợ vision - nếu không,
@@ -732,6 +790,7 @@ async def generate_image_prompt(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 provider_label=provider_label,
+                include_usage=include_usage,
             )
 
     return Response(await pool.bounded(provider_label, _call))

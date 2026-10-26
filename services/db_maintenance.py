@@ -13,7 +13,7 @@ lượng tạm bằng phần dữ liệu còn sống, nên job này chỉ chạy
 Kết quả (trước/sau) được báo cho admin qua Telegram/Zoom.
 
 Ngoài ra mỗi ngày 1 lần dọn dữ liệu cũ của các bảng chỉ-thêm-không-bớt (xem
-``prune_retention``): user_calls/provider_calls (thống kê), zalo_outbox đã gửi,
+``prune_retention``): user_calls/provider_calls/turn_metrics (thống kê), zalo_outbox đã gửi,
 reminders đã gửi, ghi chú phiên và sự kiện hỏi thăm cũ. Xoá theo lô nhỏ để không khoá bảng lâu; số ngày giữ chỉnh qua
 biến môi trường, đặt 0 để tắt từng loại.
 
@@ -111,6 +111,15 @@ RETENTION_RULES = (
         "RETENTION_USER_EVENTS_DAYS",
         90,
         "DELETE FROM user_events WHERE id IN (SELECT id FROM user_events "
+        "WHERE created_at < now() - $1::interval LIMIT $2)",
+    ),
+    # Số đo từng lượt trả lời (migrations/025, core/trace.py) - chỉ để soi lượt
+    # chậm gần đây, ~200 byte/dòng.
+    RetentionRule(
+        "turn_metrics",
+        "RETENTION_TURN_METRICS_DAYS",
+        14,
+        "DELETE FROM turn_metrics WHERE id IN (SELECT id FROM turn_metrics "
         "WHERE created_at < now() - $1::interval LIMIT $2)",
     ),
     # Đánh giá 👍/👎 câu trả lời (migrations/021, có bản chụp câu hỏi/câu trả lời).

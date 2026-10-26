@@ -49,7 +49,7 @@ env:
   # Bảng chỉ giữ cấu trúc, bỏ dữ liệu (ngăn cách bằng dấu cách).
   EXCLUDE_TABLE_DATA: >-
     facebook_post_media webhook_inbox zalo_direct_responses zoom_processed_events
-    provider_calls user_calls
+    provider_calls user_calls turn_metrics
   # Số dòng từng bảng lúc sao lưu (mã hoá cùng bản dump) - diễn tập chỉ dùng để
   # kiểm tra bảng có dữ liệu thì khôi phục xong vẫn có, không in ra.
   COUNT_SQL: >-

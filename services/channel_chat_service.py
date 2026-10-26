@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import messages
 from ai import drafts, orchestrator
 from ai.timeouts import TurnTimeoutError, turn_deadline
-from core import address, untrusted, urls
+from core import address, trace, untrusted, urls
 from services import (
     article_reader,
     chat_context,
@@ -225,7 +225,11 @@ async def run_chat_turn(
             # chủ bot/admin/thành viên): router không được chọn tool read_link đọc
             # lại lần 2, hay đọc giúp người không được phép đọc link.
             excluded = ("read_link",) if (page_turn or not links_ok) else ()
-            with tools.admin_scope(is_admin), tools.exclude_scope(excluded):
+            with (
+                tools.admin_scope(is_admin),
+                tools.exclude_scope(excluded),
+                trace.stage("context"),  # turn_metrics.context_ms
+            ):
                 tool_result, plan, memory, last_row, page, kb = await asyncio.gather(
                     tools.maybe_run_tool(user_id, text, **tool_kwargs),
                     search,
@@ -276,7 +280,7 @@ async def run_chat_turn(
             turn_progress.report(turn_progress.SEARCH if searching else turn_progress.THINK)
             # Bản nháp chữ đang sinh (Telegram) chỉ cho chat thường: lượt có số liệu
             # cổ phiếu còn qua bước chặn câu nói ngược policy nên không phát nháp.
-            with drafts.drafting(not grounding):
+            with drafts.drafting(not grounding), trace.stage("llm"):
                 response = await orchestrator.chat(
                     user_id,
                     text,
@@ -301,6 +305,7 @@ async def run_chat_turn(
         reply = _honesty_suffix(reply, outcome, address_form)
     except TurnTimeoutError as exc:
         logger.warning("Lượt chat hết hạn chót (kênh %s): %s", channel, exc)
+        trace.set_outcome("timeout")
         await telemetry.failure(prompt_id, "chat", exc)
         return ChatTurn(
             failed=True,
@@ -311,6 +316,7 @@ async def run_chat_turn(
         )
     except Exception as exc:
         logger.exception("Lỗi lượt chat (kênh %s)", channel)
+        trace.set_outcome("error")
         await telemetry.failure(prompt_id, "chat", exc)
         return ChatTurn(
             failed=True,
