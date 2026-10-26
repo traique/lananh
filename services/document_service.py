@@ -62,6 +62,10 @@ _DOCX_MAX_ENTRIES = 2000
 _DOCX_XML_MAX_BYTES = 30 * _MB
 _DOCX_MAX_RATIO = 120
 _XML_PROLOG_SCAN_BYTES = 64 * 1024
+# Trần số phần tử XML và độ lồng của word/document.xml (chặn file nhỏ toàn phần
+# tử rỗng ngốn RAM/CPU); văn bản Word 100 trang thật còn dưới xa các mức này.
+_DOCX_MAX_ELEMENTS = 1_000_000
+_DOCX_MAX_DEPTH = 256
 # Lưu vào kho: trần chữ của 1 file .md trong rag/ (rag_clean_service dùng 500k).
 RAG_SAVE_MAX_CHARS = 300_000
 RAG_SAVE_SUBDIR = "tailieu"
@@ -185,21 +189,37 @@ def extract_docx(path: Path, limit: int) -> tuple[str, bool]:
 
 
 def _docx_text(stream: _CappedXml, limit: int) -> tuple[str, bool]:
+    """Không giữ cây XML: phần tử nào đã xong (sự kiện "end") thì xoá nội dung và
+    gỡ khỏi phần tử cha (``del parent[:]`` - mọi anh em trước đó đã xử lý xong ở
+    "end" của chúng), nên RAM chỉ cỡ độ lồng thay vì số phần tử."""
     parts: list[str] = []
     size = 0
     truncated = False
-    for _event, element in ElementTree.iterparse(stream, events=("end",)):
+    stack: list[ElementTree.Element] = []
+    count = 0
+    for event, element in ElementTree.iterparse(stream, events=("start", "end")):
+        if event == "start":
+            count += 1
+            if count > _DOCX_MAX_ELEMENTS:
+                raise DocumentError("broken", "quá nhiều phần tử XML")
+            stack.append(element)
+            if len(stack) > _DOCX_MAX_DEPTH:
+                raise DocumentError("broken", "XML lồng quá sâu")
+            continue
+        stack.pop()
         tag = element.tag.rsplit("}", 1)[-1]
         if tag == "t":
             piece = element.text or ""
         elif tag == "tab":
             piece = "\t"
-        elif tag in ("br", "cr"):
+        elif tag in ("br", "cr", "p"):
             piece = "\n"
-        elif tag == "p":
-            piece = "\n"
-            element.clear()
         else:
+            piece = ""
+        element.clear()
+        if stack:
+            del stack[-1][:]
+        if not piece:
             continue
         parts.append(piece)
         size += len(piece)

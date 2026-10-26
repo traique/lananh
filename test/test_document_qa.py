@@ -115,6 +115,50 @@ def test_docx_doctype_zip_bomb_va_file_hong_bi_tu_choi(tmp_path):
         ds.extract_docx(no_doc, 1000)
 
 
+def _stored_docx(tmp_path: Path, body: str, name: str) -> Path:
+    """DOCX không nén (tỉ lệ 1) - lọt qua trần zip bomb, chỉ còn trần của bộ parse."""
+    xml = f'<?xml version="1.0"?><w:document {_W}><w:body>{body}</w:body></w:document>'
+    path = tmp_path / name
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr("word/document.xml", xml)
+    return path
+
+
+def test_docx_toan_phan_tu_rong_khong_giu_ca_cay_xml_trong_ram(tmp_path):
+    """File nhỏ chỉ toàn phần tử rỗng (không chữ): bộ parse không được giữ cả cây
+    XML (máy 512 MB) - cả 1 <w:p> chứa rất nhiều <w:r/> lẫn phần tử rỗng ngay dưới
+    <w:body>."""
+    import tracemalloc
+
+    count = 100_000
+    path = _stored_docx(
+        tmp_path, "<w:p>" + "<w:r/>" * count + "</w:p>" + "<w:bookmarkEnd/>" * count, "e.docx"
+    )
+    tracemalloc.start()
+    try:
+        assert ds.extract_docx(path, 1000) == ("", False)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 3 * 1024 * 1024  # giữ cả cây: ~8 MB cho 200k phần tử
+
+
+def test_docx_qua_nhieu_phan_tu_hoac_long_qua_sau_bi_tu_choi(tmp_path, monkeypatch):
+    monkeypatch.setattr(ds, "_DOCX_MAX_ELEMENTS", 5_000)
+    many = _stored_docx(tmp_path, "<w:p>" + "<w:r/>" * 6_000 + "</w:p>", "m.docx")
+    with pytest.raises(ds.DocumentError, match="phần tử") as info:
+        ds.extract_docx(many, 1000)
+    assert info.value.kind == "broken"
+    deep = _stored_docx(tmp_path, "<w:x>" * 2_000 + "</w:x>" * 2_000, "d.docx")
+    with pytest.raises(ds.DocumentError, match="lồng") as info:
+        ds.extract_docx(deep, 1000)
+    assert info.value.kind == "broken"
+    # Tài liệu bình thường dưới trần vẫn đọc được.
+    ok = _stored_docx(tmp_path, "<w:p><w:r><w:t>Điều 1</w:t></w:r></w:p>" * 100, "ok.docx")
+    text, truncated = ds.extract_docx(ok, 100_000)
+    assert text.splitlines()[:2] == ["Điều 1", "Điều 1"] and truncated is False
+
+
 @pytest.mark.parametrize(
     ("caption", "save", "question"),
     [
