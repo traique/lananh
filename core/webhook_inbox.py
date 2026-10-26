@@ -109,6 +109,7 @@ def _notify_dead(channel: str, event_id: str, attempts: int, last_error: str | N
         event_id,
         attempts,
         last_error or "?",
+        extra={"alerted": True},  # đã báo chủ bot ngay dưới: error digest không báo lần 2
     )
     alerts.send(
         messages.WEBHOOK_DEAD_ALERT.format(

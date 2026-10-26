@@ -804,6 +804,21 @@ async def set_setting(key: str, value: str) -> None:
     )
 
 
+@_with_reconnect
+async def list_encrypted_settings(limit: int = 500) -> list[tuple[str, str]]:
+    """Các dòng settings đã mã hoá (xoay khoá - services/key_rotation.py)."""
+    from core.repositories import settings as settings_repository
+
+    return await settings_repository.list_encrypted(await get_pool(), limit)
+
+
+@_with_reconnect
+async def compare_and_set_setting(key: str, expected: str, value: str) -> bool:
+    from core.repositories import settings as settings_repository
+
+    return await settings_repository.compare_and_set(await get_pool(), key, expected, value)
+
+
 # ─── Danh mục cổ phiếu: vị thế, sổ giao dịch, theo dõi/cảnh báo giá ─────────
 # SQL ở core/repositories/portfolio.py. Hàm ghi vị thế INSERT dòng sổ giao dịch
 # trong cùng transaction -> idempotent=False (không retry khi lệnh có thể đã
@@ -993,6 +1008,31 @@ async def portfolio_prune_alert_log(keep_days: int, batch: int = 5000) -> int:
     from core.repositories import portfolio
 
     return await portfolio.prune_alert_log(await get_pool(), keep_days, batch)
+
+
+# ─── Giám sát vận hành / sao lưu (services/watchdog.py, backup_status.py) ───
+# SQL nằm ở core/repositories/ops.py; đây chỉ là wrapper có retry kết nối.
+
+
+@_with_reconnect
+async def database_bytes() -> int:
+    from core.repositories import ops
+
+    return await ops.database_bytes(await get_pool())
+
+
+@_with_reconnect
+async def webhook_backlog(stale_after) -> tuple[int, float | None]:
+    from core.repositories import ops
+
+    return await ops.webhook_backlog(await get_pool(), stale_after)
+
+
+@_with_reconnect
+async def latest_backup_run(kind: str = "backup") -> dict | None:
+    from core.repositories import ops
+
+    return await ops.latest_backup_run(await get_pool(), kind)
 
 
 async def close_pool() -> None:

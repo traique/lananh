@@ -1,0 +1,48 @@
+# Quét CVE dependency (pip-audit + npm audit), tách khỏi ci.yml.
+#
+# Render deploy với autoDeployTrigger: checksPass - chờ MỌI check của commit trên
+# main xanh. Job này đỏ bất cứ khi nào có advisory mới được công bố, kể cả khi
+# commit không đổi gì; để trong CI push thì 1 CVE mới sẽ chặn mọi lần deploy (cả
+# hotfix). Nên ở đây nó chỉ chạy cho PR (chặn merge dependency có lỗ hổng) và theo
+# lịch hằng tuần (GitHub gửi email khi lượt chạy theo lịch thất bại).
+#
+# Lưu ý: lượt chạy theo lịch gắn check vào commit mới nhất của main. Nếu đúng lúc
+# đó vừa push commit mới mà audit đỏ, commit đó không tự deploy - deploy tay trên
+# dashboard Render hoặc push commit kế tiếp.
+name: Dependency audit
+
+on:
+  pull_request:
+  schedule:
+    - cron: "23 1 * * 1" # 08:23 sáng thứ 2 giờ VN
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # requirements.txt chỉ chứa package PyPI (kể cả dependency thật của vnstock).
+      # vnstock/vnai/vnstock_ezchart ở requirements-vnstock.txt (kho riêng, không có
+      # trong PyPI advisory DB) nên không quét.
+      - name: pip-audit (requirements.txt)
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit -r requirements.txt --strict
+
+      - name: npm audit (zalo-gateway, production deps)
+        working-directory: zalo-gateway
+        run: npm audit --omit=dev --audit-level=high

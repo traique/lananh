@@ -33,6 +33,7 @@ from services import channel_chat_service
 from services import portfolio_alerts, rag_clean_service
 from services import portfolio_events, portfolio_push, price_alerts
 from services import monitor_service
+from services import owner_alerts
 from services import db_maintenance
 from services import http_client
 from services import web_reader
@@ -73,6 +74,7 @@ COMMANDS = [
     BotCommand("notes", "Xem ghi chú"),
     BotCommand("model", "Xem/đổi model"),
     BotCommand("status", "Xem provider"),
+    BotCommand("loi", "Xem lỗi gom nhóm hôm nay"),
     BotCommand("thongke", "Thống kê lượt gọi theo user/model"),
     BotCommand("agent", "Hỏi agent tự tra cứu nhiều bước (thử nghiệm)"),
     BotCommand("rag", "Tra cứu kiến thức trong thư mục rag/"),
@@ -225,6 +227,7 @@ def build_application():
         ("notes", commands.notes_cmd),
         ("model", provider_commands.model_cmd),
         ("status", provider_commands.status_cmd),
+        ("loi", provider_commands.loi_cmd),
         ("thongke", commands.thongke_cmd),
         ("lich", commands.lich_cmd),
         ("tsh", commands.tsh_cmd),
@@ -283,12 +286,11 @@ def build_application():
     app.add_handler(MessageHandler(filters.COMMAND, commands.unknown_cmd))
     app.add_error_handler(commands.error_handler)
 
-    async def alert(text):
-        try:
-            await app.bot.send_message(chat_id=config.ALLOWED_USER_ID, text=text)
-        except Exception:
-            logger.warning("Không gửi được cảnh báo.", exc_info=True)
+    async def send_telegram_alert(text):
+        await app.bot.send_message(chat_id=config.ALLOWED_USER_ID, text=text)
 
+    # Telegram trước, Zoom dự phòng/nhân bản (ALERT_ZOOM_MIRROR) - xem services/owner_alerts.py.
+    alert = owner_alerts.make_alert_callback(send_telegram_alert)
     orchestrator.set_alert_callback(alert)
     zalo_users.set_alert_callback(alert)
 

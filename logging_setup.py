@@ -1,10 +1,13 @@
 """Cấu hình logging dùng chung cho main.py và web.py.
 
 Gồm 1 logging.Filter để che các secret (API key 9Router, webhook secret,
-diagnose secret) nếu chúng vô tình lọt vào message log.
+diagnose secret) nếu chúng vô tình lọt vào message log, và handler gom lỗi theo
+chữ ký (services/error_digest.py: báo chủ bot lỗi mới + tổng hợp hằng ngày;
+tắt bằng ERROR_DIGEST_ENABLED=0).
 """
 
 import logging
+import os
 from typing import Optional
 
 from core import config
@@ -117,3 +120,13 @@ def configure_logging() -> None:
     # chạy cho bất kỳ log thực tế nào trước đây.
     for handler in logging.getLogger().handlers:
         handler.addFilter(_active_filter)
+    if os.getenv("ERROR_DIGEST_ENABLED", "1").strip() != "0":
+        from services import error_digest
+
+        digest = error_digest.handler()
+        root = logging.getLogger()
+        if digest not in root.handlers:
+            # Handler chỉ lưu tên loại lỗi + vị trí code, nhưng vẫn gắn filter che
+            # secret cho chắc nếu sau này có trường nào đọc message.
+            digest.addFilter(_active_filter)
+            root.addHandler(digest)

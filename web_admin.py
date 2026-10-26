@@ -22,6 +22,7 @@ import os
 import secrets
 import time
 from collections import deque
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -43,6 +44,7 @@ from ai.provider_state import provider_state
 from channels import zalo_users
 from core import config, database as db
 from services import db_maintenance, market_page, memory_service, memory_stats
+from services import backup_status, error_digest, key_rotation, watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -743,6 +745,43 @@ async def admin_memory_usage() -> Response:
     """RAM của container (giới hạn Render free 512 MB), từng tiến trình và các
     thư viện nặng đã nạp. Mở trực tiếp trên trình duyệt khi đã đăng nhập /admin."""
     return JSONResponse(await asyncio.to_thread(memory_stats.snapshot))
+
+
+async def _safe_section(label: str, factory) -> dict:
+    """1 phần của trang giám sát lỗi không được làm hỏng cả trang."""
+    try:
+        return await factory()
+    except Exception as exc:
+        logger.warning("Admin watchdog: không đọc được %s.", label, exc_info=True)
+        return {"error": type(exc).__name__}
+
+
+@api_router.get("/watchdog")
+async def admin_watchdog() -> Response:
+    """Giám sát vận hành: lỗi gom theo loại hôm nay (chỉ loại + vị trí code), số lần
+    khởi động lại 7 ngày qua, trạng thái sao lưu DB (services/watchdog.py,
+    error_digest.py, backup_status.py)."""
+    return JSONResponse(
+        {
+            "errors": error_digest.summary(),
+            "restarts": await _safe_section("khởi động lại", watchdog.restart_summary),
+            "backup": await _safe_section("sao lưu", backup_status.status),
+            "key_rotation": await _safe_section("xoay khoá", key_rotation.status),
+        }
+    )
+
+
+@api_router.post("/key-rotation/run")
+async def admin_key_rotation_run() -> Response:
+    """Mã hoá lại mọi giá trị settings còn dùng SETTINGS_ENC_KEY_OLD (compare-and-swap,
+    xem services/key_rotation.py). Trả số đã xoay / còn lại; không trả giá trị nào."""
+    try:
+        report = await key_rotation.rotate_all()
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse(
+        {"old_keys_configured": key_rotation.old_keys_configured(), **asdict(report)}
+    )
 
 
 @api_router.get("/db-usage")

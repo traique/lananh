@@ -1,0 +1,231 @@
+# Sao lưu DB Supabase hằng đêm - bản free không có backup tải về được.
+#
+# - Chưa cấu hình secret BACKUP_DATABASE_URL / BACKUP_PASSPHRASE thì bỏ qua (job vẫn
+#   xanh, có dòng thông báo rõ).
+# - pg_dump CHỈ schema public qua Session Pooler (:5432 - runner GitHub chỉ có IPv4,
+#   host trực tiếp của Supabase là IPv6) bằng role chỉ-đọc lananh_backup.
+# - Bỏ DỮ LIỆU (giữ cấu trúc) của bảng lớn/tạm: ảnh Facebook, webhook inbox, cache
+#   chống trùng, thống kê lượt gọi. prompts/results giữ lại (phục vụ /history).
+# - Dump đi thẳng qua pipe vào gpg AES256 - bản rõ không chạm đĩa. Repo PUBLIC:
+#   artifact và log ai đăng nhập GitHub cũng xem được nên KHÔNG BAO GIỜ in dữ liệu,
+#   chỉ in kích thước/sha256 của file đã mã hoá.
+# - Xong thì ghi 1 dòng backup_runs (nhịp tim, migration 023) để bot cảnh báo khi
+#   lịch bị GitHub tự tắt (repo public 60 ngày không commit).
+# - Ngày 2 hằng tháng (hoặc chạy tay với drill = true): diễn tập khôi phục bản vừa
+#   tạo vào Postgres tạm, chạy migration runner thật, đối chiếu bảng.
+#
+# Thiết lập (role chỉ-đọc, secret) và cách khôi phục: docs/backup-restore.md.
+# Biến repo (Settings → Variables, tuỳ chọn): BACKUP_PG_MAJOR (mặc định 17, phải >=
+# major của server - xem SELECT version()), BACKUP_RETENTION_DAYS (mặc định 30).
+name: Backup DB
+
+on:
+  schedule:
+    - cron: "47 21 * * *" # 04:47 giờ VN, ngoài khung VACUUM FULL 03:xx sáng Chủ nhật
+    - cron: "17 22 1 * *" # 05:17 giờ VN ngày 2 hằng tháng: sao lưu + diễn tập khôi phục
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: "Diễn tập khôi phục ngay sau khi sao lưu"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-db
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PG_MAJOR: ${{ vars.BACKUP_PG_MAJOR || '17' }}
+  # Không kèm run_attempt: "Re-run failed jobs" chỉ chạy lại job diễn tập vẫn tìm
+  # thấy artifact của lượt sao lưu trước (chạy lại job sao lưu thì ghi đè).
+  ARTIFACT: lananh-db-${{ github.run_id }}
+  # Bảng chỉ giữ cấu trúc, bỏ dữ liệu (ngăn cách bằng dấu cách).
+  EXCLUDE_TABLE_DATA: >-
+    facebook_post_media webhook_inbox zalo_direct_responses zoom_processed_events
+    provider_calls user_calls
+  # Số dòng từng bảng lúc sao lưu (mã hoá cùng bản dump) - diễn tập chỉ dùng để
+  # kiểm tra bảng có dữ liệu thì khôi phục xong vẫn có, không in ra.
+  COUNT_SQL: >-
+    SELECT COALESCE(json_object_agg(table_name,
+    (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM public.%I', table_name),
+    false, true, '')))[1]::text::bigint), '{}'::json)
+    FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      configured: ${{ steps.cfg.outputs.configured }}
+    env:
+      BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    steps:
+      - name: Kiểm tra cấu hình
+        id: cfg
+        run: |
+          set -euo pipefail
+          if [ -z "$BACKUP_DATABASE_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::notice title=Backup DB::Chưa cấu hình secret BACKUP_DATABASE_URL / BACKUP_PASSPHRASE - bỏ qua sao lưu (xem docs/backup-restore.md)."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${#BACKUP_PASSPHRASE}" -lt 20 ]; then
+            echo "::error title=Backup DB::BACKUP_PASSPHRASE quá ngắn (cần >= 20 ký tự ngẫu nhiên)."
+            exit 1
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Tải image postgres
+        if: steps.cfg.outputs.configured == 'true'
+        run: docker pull --quiet "postgres:${PG_MAJOR}"
+
+      - name: Dump + mã hoá
+        id: dump
+        if: steps.cfg.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          umask 077
+          out="$RUNNER_TEMP/backup"
+          mkdir -p "$out"
+          excludes=()
+          for table in $EXCLUDE_TABLE_DATA; do
+            excludes+=("--exclude-table-data=public.${table}")
+          done
+          # URL chỉ được mở rộng BÊN TRONG container (không nằm trên dòng lệnh docker).
+          docker run --rm -e BACKUP_DATABASE_URL -e PGCONNECT_TIMEOUT=20 "postgres:${PG_MAJOR}" \
+            sh -c 'exec pg_dump --dbname="$BACKUP_DATABASE_URL" "$@"' pg_dump \
+              --format=custom --schema=public --no-owner --no-privileges \
+              --lock-wait-timeout=30s "${excludes[@]}" \
+            | gpg --batch --yes --quiet --pinentry-mode loopback \
+                --passphrase-file <(printf '%s' "$BACKUP_PASSPHRASE") \
+                --symmetric --cipher-algo AES256 -z 0 --output "$out/lananh.dump.gpg"
+          docker run --rm -e BACKUP_DATABASE_URL -e PGCONNECT_TIMEOUT=20 "postgres:${PG_MAJOR}" \
+            sh -c 'exec psql --dbname="$BACKUP_DATABASE_URL" -X -A -t -v ON_ERROR_STOP=1 -c "$1"' \
+              psql "$COUNT_SQL" \
+            | gpg --batch --yes --quiet --pinentry-mode loopback \
+                --passphrase-file <(printf '%s' "$BACKUP_PASSPHRASE") \
+                --symmetric --cipher-algo AES256 --output "$out/row_counts.json.gpg"
+          size=$(stat -c %s "$out/lananh.dump.gpg")
+          if [ "$size" -lt 1024 ]; then
+            echo "::error title=Backup DB::Bản dump quá nhỏ (${size} byte) - có thể rỗng."
+            exit 1
+          fi
+          echo "size=$size" >> "$GITHUB_OUTPUT"
+          # Chỉ in metadata của file ĐÃ mã hoá.
+          echo "Bản sao lưu đã mã hoá: $((size / 1024)) KiB, sha256 $(sha256sum "$out/lananh.dump.gpg" | cut -d' ' -f1)"
+
+      - name: Lưu artifact (đã mã hoá)
+        if: steps.cfg.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: ${{ runner.temp }}/backup/*.gpg
+          retention-days: ${{ vars.BACKUP_RETENTION_DAYS || 30 }}
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
+
+      # Role chỉ có INSERT trên backup_runs. Lỗi ở bước này không làm hỏng bản sao
+      # lưu đã lưu, nhưng bot sẽ không biết - kiểm tra GRANT (docs/backup-restore.md).
+      - name: Ghi nhịp tim backup_runs
+        if: steps.cfg.outputs.configured == 'true'
+        continue-on-error: true
+        env:
+          SIZE: ${{ steps.dump.outputs.size }}
+        run: |
+          set -euo pipefail
+          run_key="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-backup"
+          [[ "$run_key" =~ ^[0-9]+-[0-9]+-backup$ && "$SIZE" =~ ^[0-9]+$ ]]
+          sql="INSERT INTO backup_runs (run_key, kind, size_bytes) VALUES ('${run_key}', 'backup', ${SIZE}) ON CONFLICT (run_key) DO NOTHING"
+          docker run --rm -e BACKUP_DATABASE_URL -e PGCONNECT_TIMEOUT=20 "postgres:${PG_MAJOR}" \
+            sh -c 'exec psql --dbname="$BACKUP_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -c "$1"' psql "$sql" \
+            || { echo "::warning title=Backup DB::Không ghi được backup_runs - bot sẽ báo backup cũ. Kiểm tra GRANT INSERT ON backup_runs TO lananh_backup."; exit 1; }
+
+      - name: Dọn file tạm
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/backup"
+
+  restore-drill:
+    needs: backup
+    if: needs.backup.outputs.configured == 'true' && (github.event.schedule == '17 22 1 * *' || inputs.drill == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+      DRILL_URL: postgresql://postgres:drill@127.0.0.1:5432/drill
+    services:
+      postgres:
+        image: postgres:${{ vars.BACKUP_PG_MAJOR || '17' }}
+        env:
+          POSTGRES_PASSWORD: drill
+          POSTGRES_DB: drill
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d drill"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: ${{ runner.temp }}/backup
+
+      - name: Giải mã
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/drill"
+          for name in lananh.dump row_counts.json; do
+            gpg --batch --yes --quiet --pinentry-mode loopback \
+              --passphrase-file <(printf '%s' "$BACKUP_PASSPHRASE") \
+              --decrypt --output "$RUNNER_TEMP/drill/$name" "$RUNNER_TEMP/backup/$name.gpg"
+          done
+
+      # Bỏ mục "SCHEMA public" (Postgres mới đã có sẵn) khỏi danh sách restore; tạo
+      # rỗng các role Supabase mà policy RLS (nếu có) tham chiếu.
+      - name: pg_restore vào Postgres tạm
+        run: |
+          set -euo pipefail
+          docker run --rm --network host -e DRILL_URL "postgres:${PG_MAJOR}" \
+            sh -c 'exec psql "$DRILL_URL" -X -q -v ON_ERROR_STOP=1 -c "CREATE ROLE anon NOLOGIN" -c "CREATE ROLE authenticated NOLOGIN" -c "CREATE ROLE service_role NOLOGIN"'
+          docker run --rm --network host -e DRILL_URL -v "$RUNNER_TEMP/drill:/drill" "postgres:${PG_MAJOR}" sh -euc '
+            pg_restore --list /drill/lananh.dump | grep -vE " (SCHEMA - public|COMMENT - SCHEMA public) " > /drill/toc.list
+            pg_restore --dbname="$DRILL_URL" --no-owner --no-privileges --exit-on-error \
+              --use-list=/drill/toc.list /drill/lananh.dump
+          '
+
+      - name: Chạy migration + đối chiếu bảng
+        run: |
+          set -euo pipefail
+          grep '^asyncpg==' requirements.txt | xargs python -m pip install --quiet
+          python -m scripts.backup_drill --dsn "$DRILL_URL" \
+            --counts "$RUNNER_TEMP/drill/row_counts.json" --exclude "$EXCLUDE_TABLE_DATA"
+
+      - name: Ghi nhịp tim diễn tập
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          run_key="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-drill"
+          [[ "$run_key" =~ ^[0-9]+-[0-9]+-drill$ ]]
+          sql="INSERT INTO backup_runs (run_key, kind) VALUES ('${run_key}', 'drill') ON CONFLICT (run_key) DO NOTHING"
+          docker run --rm -e BACKUP_DATABASE_URL -e PGCONNECT_TIMEOUT=20 "postgres:${PG_MAJOR}" \
+            sh -c 'exec psql --dbname="$BACKUP_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -c "$1"' psql "$sql"
+
+      - name: Dọn file tạm
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/drill" "$RUNNER_TEMP/backup"
