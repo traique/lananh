@@ -788,3 +788,66 @@ async def test_sau_bao_cao_co_phieu_cau_noi_nguoc_bi_thay_nhung_van_noi_xac_nhan
     await ccs.stop_background_tasks()
     assert turn.text.startswith("⚠️ Bản diễn giải AI lần này") and "nên bán" not in turn.text
     assert turn.text.endswith("✅ Đã đặt nhắc lúc 14:00: xem FPT")
+
+
+@pytest.mark.asyncio
+async def test_kenh_zalo_luu_lich_su_loi_tat_nhac_va_chi_tieu(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+
+    async def no_command(*args, **kwargs):
+        return None
+
+    async def shortcut(user_id, text):
+        return "✅ Dạ xong: uống thuốc" if text == "xong" else None
+
+    async def expense(user_id, text):
+        return "✅ Đã ghi #3: cafe 45.000đ" if "45k" in text else None
+
+    monkeypatch.setattr(ccs.portfolio_service, "handle_command", no_command)
+    monkeypatch.setattr(ccs.portfolio_service, "maybe_handle_natural_language", no_command)
+    monkeypatch.setattr(ccs.channel_command_service, "maybe_handle_command", no_command)
+    monkeypatch.setattr(ccs.reminder_service, "maybe_handle_shortcut", shortcut)
+    monkeypatch.setattr(ccs.expense_service, "maybe_handle_chat", expense)
+
+    await ccs.handle_channel_text(-5, "xong", is_admin=False)
+    await ccs.handle_channel_text(-5, "cafe 45k", is_admin=False)
+
+    assert chat_fakes["kinds"] == ["reminder", "expense"]
+    assert ("model", "✅ Đã ghi #3: cafe 45.000đ") in chat_fakes["saved"]
+    assert chat_fakes.get("flush") is None  # lượt code không kích trích trí nhớ
+
+
+@pytest.mark.asyncio
+async def test_telegram_luu_lich_su_loi_tat_nhac_va_chi_tieu(telegram_chat, monkeypatch):
+    from services import channel_chat_service as ccs
+    from services import conversation_log
+
+    chat_router, sent, _ = telegram_chat
+    recorded = []
+
+    async def shortcut(user_id, text):
+        return "✅ Dạ xong: uống thuốc" if text == "xong" else None
+
+    async def expense(user_id, text):
+        return "✅ Đã ghi #3: cafe 45.000đ" if "45k" in text else None
+
+    async def record(user_id, user_text, reply, kind="chat", **kwargs):
+        recorded.append((user_text, reply, kind))
+        return True
+
+    async def turn_must_not_run(*args, **kwargs):
+        raise AssertionError("lối tắt/chi tiêu không được gọi AI")
+
+    monkeypatch.setattr(chat_router.reminder_service, "maybe_handle_shortcut", shortcut)
+    monkeypatch.setattr(chat_router.expense_service, "maybe_handle_chat", expense)
+    monkeypatch.setattr(conversation_log, "record_exchange", record)
+    monkeypatch.setattr(ccs, "run_chat_turn", turn_must_not_run)
+
+    await chat_router.chat_msg(_TgUpdate("xong"), _TgContext())
+    await chat_router.chat_msg(_TgUpdate("cafe 45k"), _TgContext())
+
+    assert sent == ["✅ Dạ xong: uống thuốc", "✅ Đã ghi #3: cafe 45.000đ"]
+    assert recorded == [
+        ("xong", "✅ Dạ xong: uống thuốc", "reminder"),
+        ("cafe 45k", "✅ Đã ghi #3: cafe 45.000đ", "expense"),
+    ]

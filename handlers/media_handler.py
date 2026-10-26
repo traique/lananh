@@ -54,6 +54,13 @@ async def _receipt_msg(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
         text = messages.PHOTO_TIMEOUT_ERROR
     finally:
         await common.safe_delete(local_path)
+    caption = nfc((update.message.caption or "").strip())
+    await conversation_log.record_exchange(
+        update.effective_user.id,
+        f"[Gửi ảnh] {caption}".strip(),
+        text,
+        conversation_log.KIND_EXPENSE,
+    )
     await common.reply_long_text(update.message, text)
 
 

@@ -52,6 +52,10 @@ KIND_RAG = "rag"
 KIND_AGENT = "agent"
 KIND_TRANSLATE = "translate"
 KIND_IMAGE = "image"
+# Câu trả lời bằng code của nhắc việc ("hoãn 10p"/"xong") và ghi chi tiêu
+# ("cafe 45k"): vào lịch sử cho câu hỏi nối tiếp, không trích trí nhớ.
+KIND_REMINDER = "reminder"
+KIND_EXPENSE = "expense"
 # Tin hỏi thăm chủ động (services/proactive_service.py) - dòng "user" là nhãn
 # hệ thống, không phải lời người dùng.
 KIND_FOLLOWUP = "followup"

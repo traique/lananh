@@ -57,6 +57,7 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # "hoãn 10p" / "xong" ngay sau tin nhắc việc: code xử lý, không tốn lượt AI.
     shortcut = await reminder_service.maybe_handle_shortcut(user_id, text)
     if shortcut is not None:
+        await record(user_id, text, shortcut, conversation_log.KIND_REMINDER)
         await common.reply_long_text(update.message, shortcut)
         return
 
@@ -68,6 +69,7 @@ async def chat_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     expense_reply = await expense_service.maybe_handle_chat(user_id, text)
     if expense_reply is not None:
+        await record(user_id, text, expense_reply, conversation_log.KIND_EXPENSE)
         await common.reply_long_text(update.message, expense_reply)
         return
 

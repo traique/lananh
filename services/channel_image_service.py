@@ -41,7 +41,11 @@ async def handle_channel_image(
         receipt: Path = config.MEDIA_DIR / f"zalo_receipt_{safe_id}{_ALLOWED_TYPES[mime]}"
         try:
             receipt.write_bytes(image)
-            return [await expense_service.analyze_receipt(user_id, str(receipt))], None
+            reply = await expense_service.analyze_receipt(user_id, str(receipt))
+            await conversation_log.record_exchange(
+                user_id, f"[Gửi ảnh] {caption}".strip(), reply, conversation_log.KIND_EXPENSE
+            )
+            return [reply], None
         finally:
             await safe_delete(receipt)
     path: Path = config.MEDIA_DIR / f"zalo_prompt_{safe_id}{_ALLOWED_TYPES[mime]}"

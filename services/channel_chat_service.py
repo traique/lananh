@@ -494,6 +494,7 @@ async def _side_effect_paths(
     # "hoãn 10p" / "xong" ngay sau tin nhắc việc: code xử lý, không tốn lượt AI.
     shortcut = await reminder_service.maybe_handle_shortcut(user_id, text)
     if shortcut is not None:
+        await record(user_id, text, shortcut, conversation_log.KIND_REMINDER)
         return ChannelResult([shortcut])
     portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
     if portfolio_result is not None:
@@ -502,6 +503,7 @@ async def _side_effect_paths(
     # "cafe 45k", "đổ xăng 1tr2" (hoặc "huỷ" ngay sau đó): ghi chi tiêu bằng code.
     expense_reply = await expense_service.maybe_handle_chat(user_id, text)
     if expense_reply is not None:
+        await record(user_id, text, expense_reply, conversation_log.KIND_EXPENSE)
         return ChannelResult([expense_reply])
     return None
 
