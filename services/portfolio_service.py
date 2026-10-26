@@ -319,6 +319,16 @@ _QUESTION_RE = re.compile(
     r"|(?<![\w])(?:không|khong|ko|chưa|chua|nhỉ|nhi|hả|ha|à)\s*[.!]*\s*$",
     re.IGNORECASE,
 )
+# Câu giả định / dự định tương lai cũng KHÔNG được ghi: "nếu đã bán HPG 1000 giá
+# 27 thì lãi bao nhiêu" (không có "?") từng ghi 1 dòng SELL thật vào sổ. Chặn
+# nhầm chỉ làm lượt rơi về chat AI (an toàn). Kiểm tra SAU lệnh đặt cảnh báo giá
+# vì "báo anh nếu HPG về 25" là đặt ngưỡng hợp lệ, không ghi danh mục.
+_HYPOTHETICAL_RE = re.compile(
+    r"(?<![\w])(?:nếu|neu|giả sử|gia su|giả như|gia nhu|giả dụ|gia du|bao nhiêu|bao nhieu|"
+    r"sắp|sap|chuẩn bị|chuan bi|sẽ|mai|tuần sau|tuan sau|tuần tới|tuan toi|tháng sau|thang sau)"
+    r"(?![\w])",
+    re.IGNORECASE,
+)
 # Đánh dấu câu KỂ việc đã làm (đã/vừa/mới ...) - chỉ câu kể mới được ghi.
 _DONE_PREFIX = r"(?:đã|da|vừa|vua|mới|moi|vừa mới|vua moi)\s+"
 _DONE_SUFFIX_RE = re.compile(r"(?<![\w])(?:rồi|roi)(?![\w])\s*[.!]*\s*$", re.IGNORECASE)
@@ -327,6 +337,10 @@ _ALL_WORDS = {"hết", "het", "all", "toàn bộ", "toan bo"}
 
 def _is_question_or_advice(text: str) -> bool:
     return bool(_QUESTION_RE.search(text))
+
+
+def _is_hypothetical(text: str) -> bool:
+    return bool(_HYPOTHETICAL_RE.search(re.sub(r"\s+", " ", text)))
 
 
 def _is_known_symbol(symbol: str) -> bool:
@@ -436,7 +450,7 @@ def looks_like_write_statement(text: str) -> bool:
     nhận dạng, không ghi gì. Lượt chỉ đọc (chữ chép từ tin nhắn thoại, có thể nghe
     nhầm số) dùng để nhắc người dùng gõ lại bằng chữ thay vì im lặng bỏ qua."""
     stripped = (text or "").strip()
-    if not stripped or _is_question_or_advice(stripped):
+    if not stripped or _is_question_or_advice(stripped) or _is_hypothetical(stripped):
         return False
     if any(pattern.search(stripped) for pattern in _BUY_PATTERNS):
         return True
@@ -486,6 +500,8 @@ async def maybe_handle_natural_language(user_id: int, text: str) -> str | None:
     alert_reply = await watchlist_service.maybe_handle_alert_request(user_id, stripped)
     if alert_reply is not None:
         return alert_reply
+    if _is_hypothetical(stripped):
+        return None
 
     for index, pattern in enumerate(_BUY_PATTERNS):
         match = pattern.search(stripped)
