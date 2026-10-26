@@ -307,59 +307,50 @@ def _agent_spec(name, description, parameters, fn, *, untrusted_output=False, st
     )
 
 
+# Mô tả/schema NGẮN (kiểu EasyTool) - 4 bước /agent gửi lại toàn bộ danh sách tool
+# mỗi bước, Groq free chỉ 8K token/phút (test_tool_catalog_budget đặt trần).
 _AGENT_ONLY = (
     _agent_spec(
         "tim_web",
-        "Tìm kiếm web theo từ khóa/câu hỏi, ưu tiên nguồn Việt Nam và trả kèm URL nguồn thật.",
-        reg.object_schema(
-            {"query": reg.string("Từ khóa hoặc câu hỏi cần tìm trên web")}, required=["query"]
-        ),
+        "Tìm web (ưu tiên nguồn VN), trả kèm URL nguồn.",
+        reg.object_schema({"query": reg.string("từ khoá/câu hỏi")}, required=["query"]),
         _tool_tim_web,
         untrusted_output=True,
     ),
     _agent_spec(
         "tim_gia",
-        "Tìm giá bán thực tế của 1 sản phẩm tại Việt Nam (tìm web thật, không bịa).",
+        "Tìm giá bán thực tế 1 sản phẩm ở VN.",
         reg.object_schema(
-            {"ten_san_pham": reg.string("Tên sản phẩm cần tìm giá, vd 'iPhone 15 128GB'")},
-            required=["ten_san_pham"],
+            {"ten_san_pham": reg.string("vd 'iPhone 15 128GB'")}, required=["ten_san_pham"]
         ),
         _tool_tim_gia,
         untrusted_output=True,
     ),
     _agent_spec(
         "xem_thong_ke",
-        "Xem thống kê lượt gọi AI của bot (theo user/kênh và theo model) trong N giờ gần nhất.",
-        reg.object_schema(
-            {"so_gio": reg.integer("Số giờ gần nhất muốn xem, mặc định 168 (7 ngày)")}
-        ),
+        "Thống kê lượt gọi AI của bot (theo user/kênh, model) trong N giờ.",
+        reg.object_schema({"so_gio": reg.integer("mặc định 168")}),
         _tool_xem_thong_ke,
         staff=True,
     ),
     _agent_spec(
         "xem_gia_co_phieu",
-        "Xem giá cổ phiếu Việt Nam hiện tại theo mã (vd 'FPT', 'VNM'), lấy trực tiếp từ DNSE.",
-        reg.object_schema({"ma_co_phieu": reg.string("Mã cổ phiếu, vd 'FPT'")}, ["ma_co_phieu"]),
+        "Giá cổ phiếu VN hiện tại theo mã (DNSE).",
+        reg.object_schema({"ma_co_phieu": reg.string("vd 'FPT'")}, ["ma_co_phieu"]),
         _tool_xem_gia_co_phieu,
     ),
     _agent_spec(
         "doc_link",
-        "Đọc nội dung 1 trang web/bài báo cụ thể theo URL người dùng đưa, trả về text sạch để tóm tắt/trả lời.",
-        reg.object_schema(
-            {"url": reg.string("URL đầy đủ (bắt đầu bằng http:// hoặc https://) cần đọc")},
-            required=["url"],
-        ),
+        "Đọc 1 trang web theo URL có trong câu hỏi/kết quả tim_web.",
+        reg.object_schema({"url": reg.string("URL http(s) đầy đủ")}, required=["url"]),
         _tool_doc_link,
         untrusted_output=True,
     ),
     _agent_spec(
         "xem_rss",
-        "Đọc các mục mới nhất từ 1 feed RSS/Atom theo URL người dùng đưa.",
+        "Đọc các mục mới nhất của 1 feed RSS/Atom người dùng đưa.",
         reg.object_schema(
-            {
-                "url": reg.string("URL feed RSS/Atom"),
-                "so_muc": reg.integer("Số mục mới nhất muốn xem, mặc định 8"),
-            },
+            {"url": reg.string("URL feed"), "so_muc": reg.integer("mặc định 8")},
             required=["url"],
         ),
         _tool_xem_rss,
@@ -418,23 +409,16 @@ def _build_openai_tools() -> list[dict]:
     return reg.openai_tools(_specs())
 
 
-_JSON_ROUTER_INSTRUCTION_TEMPLATE = """Bạn là bộ định tuyến tool (function router) nội bộ cho agent của lananh.
-Đọc câu hỏi của người dùng và quyết định có cần gọi 1 trong các tool sau
-không. Trả về DUY NHẤT 1 object JSON (không markdown, không code fence,
-không thêm chữ nào khác) đúng định dạng:
-
+_JSON_ROUTER_INSTRUCTION_TEMPLATE = """Bạn là bộ định tuyến tool nội bộ của agent. Đọc câu hỏi, chọn
+tối đa 1 tool. Trả DUY NHẤT 1 object JSON (không markdown/code fence):
 {{"tool": "ten_tool_hoac_none", "args": {{...}}}}
 
-Danh sách tool khả dụng:
+Tool:
 {tool_list}
-- "none": câu hỏi KHÔNG cần tool nào (chuyện phiếm, hỏi đáp không cần tra
-  cứu dữ liệu thật). args: {{}}.
+- "none": không cần tra dữ liệu thật (chuyện phiếm, hỏi đáp thường). args {{}}.
 
-Quy tắc: CHỈ chọn 1 tool khi câu hỏi có ý định RÕ RÀNG khớp mô tả trên. Nếu
-câu hỏi cần NHIỀU tool hoặc nhiều bước (vd so sánh 2 sản phẩm), vẫn chỉ được
-chọn ĐÚNG 1 tool phù hợp nhất cho bước đầu tiên (nhánh này không hỗ trợ đa
-bước) - hoặc chọn "none" nếu không có tool nào giải quyết được 1 phần rõ
-ràng của câu hỏi.
+Chỉ chọn tool khi ý định RÕ RÀNG khớp mô tả. Câu cần nhiều tool/nhiều bước (vd so
+sánh 2 sản phẩm): chọn ĐÚNG 1 tool cho bước đầu (nhánh này 1 bước), không có thì "none".
 
 Câu hỏi của người dùng: {question}"""
 

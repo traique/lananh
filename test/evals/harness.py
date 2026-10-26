@@ -509,11 +509,17 @@ async def _run_chat(case: Case, fake: FakeDatabase):
 
 async def _run_router(case: Case):
     from ai import orchestrator
-    from services import tools
+    from services import prompt_redaction, tools
 
     role = tools._role(case.user_id, case.is_admin)
     history = "\n".join(f"{role_}: {text}" for role_, text in case.history)
-    return await orchestrator.utility_json(tools._build_router_prompt(case.prompt, history, role))
+    # Như services/tools._route_and_run: provider thấy nhãn [đã ẩn: ...], tham số
+    # tool được khôi phục giá trị gốc (case ghi chú mật khẩu wifi).
+    with prompt_redaction.scope() as redactor:
+        data = await orchestrator.utility_json(
+            tools._build_router_prompt(case.prompt, history, role)
+        )
+    return redactor.restore_obj(data) if isinstance(data, dict) else data
 
 
 async def run_case(case: Case, fake: FakeDatabase, *, judge: bool = False) -> CaseResult:
