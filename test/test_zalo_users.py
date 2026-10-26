@@ -171,11 +171,21 @@ async def test_set_status_invalid_raises():
 
 
 @pytest.mark.asyncio
-async def test_remove_user(patched_db):
+async def test_remove_user(patched_db, monkeypatch):
+    forgotten = []
+
+    async def forget_sender(external_id):
+        forgotten.append(external_id)
+        return True
+
+    monkeypatch.setattr(zalo_users.zalo_gateway_status, "forget_sender", forget_sender)
     user = await zalo_users.pair("z6", "")
     assert await zalo_users.remove("z6") is True
     assert await zalo_users.resolve("z6") is None
     assert await zalo_users.remove("z6") is False
+    # Gỡ pairing xong báo gateway quên người này ngay (thôi "đã xem"/typing từ tin kế
+    # tiếp); không tìm thấy thì không báo.
+    assert forgotten == ["z6"]
     # Xoá pairing kéo theo xoá dữ liệu cá nhân, đúng internal_user_id, cùng transaction.
     tables = {q.split()[2] for q, _ in patched_db.data_deletes}
     assert {

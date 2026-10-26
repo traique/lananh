@@ -63,6 +63,11 @@ class ZaloMessageResponse(BaseModel):
     # trong messages đã là bản thuần đầy đủ. Bản cache idempotency cũ không có
     # trường này vẫn đọc được.
     styles: list[list[ZaloTextStyle]] | None = None
+    # Người gửi đã pair chưa, để zalo-gateway nhớ/quên người quen (typing, "đã
+    # xem", câu báo bận/sự cố chỉ cho người quen): False = người lạ (chưa pair,
+    # hoặc vừa bị /zaloxoa) -> gateway quên; True = đã pair; None = không nói
+    # (bản cache idempotency cũ) -> gateway giữ cách cũ.
+    paired: bool | None = None
 
 
 # Câu báo gateway xin dựng sẵn (POST /internal/zalo/notice, channels/zalo_media.py)
@@ -86,8 +91,10 @@ class ZaloNoticeRequest(BaseModel):
 
 
 class ZaloNoticeResponse(BaseModel):
-    # None = người lạ chưa pair / bị khoá: gateway im lặng.
+    # None = người lạ chưa pair / bị khoá / hết lượt: gateway im lặng.
     text: str | None = None
+    # Như ZaloMessageResponse.paired: False = người lạ -> gateway quên người này.
+    paired: bool | None = None
 
 
 class ZaloGroupMessageRequest(BaseModel):

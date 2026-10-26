@@ -387,7 +387,8 @@ async def test_cau_bao_anh_cua_gateway_im_lang_khi_thanh_vien_het_luot(
     assert allowed is None and decision.applied  # lượt thứ 40 chạy
 
     silent = await _gateway._post_notice({"sender_id": "chi-lan", "kind": "image"})
-    assert silent.json() == {"text": None}
+    # Vẫn là thành viên đã pair: gateway không được quên người này.
+    assert silent.json() == {"text": None, "paired": True}
     blocked, decision = await router.media_quota_gate(member, "acc", "img-2", "image")
     assert blocked is not None and "chị" in blocked.messages[0] and not decision.allowed
     video = (await _gateway._post_notice({"sender_id": "chi-lan", "kind": "video"})).json()

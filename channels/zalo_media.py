@@ -114,14 +114,15 @@ def _duration_ms(raw: str) -> int | None:
 async def _resolve_sender(
     sender_id: str,
 ) -> tuple[zalo_users.ZaloUser | None, ZaloMessageResponse | None]:
-    """(người dùng đã pair, None) hoặc (None, câu trả lời dừng sớm)."""
+    """(người dùng đã pair, None) hoặc (None, câu trả lời dừng sớm). Người lạ:
+    paired=False để gateway quên người này (như /message)."""
     zalo_user = await zalo_users.resolve(sender_id)
     if zalo_user is None:
         zalo_users.notify_unpaired(sender_id)
-        return None, ZaloMessageResponse(messages=[], provider=None)
+        return None, ZaloMessageResponse(messages=[], provider=None, paired=False)
     if not zalo_user.is_active:
         return None, ZaloMessageResponse(
-            messages=[messages_module.ZALO_LOCKED_REPLY], provider=None
+            messages=[messages_module.ZALO_LOCKED_REPLY], provider=None, paired=True
         )
     return zalo_user, None
 
@@ -284,19 +285,22 @@ async def notice(
     (danh sách người quen của gateway trống sau mỗi lần khởi động lại)."""
     _auth(x_zalo_bridge_secret)
     zalo_user = await zalo_users.resolve(payload.sender_id)
-    if zalo_user is None or not zalo_user.is_active:
-        return ZaloNoticeResponse(text=None)
+    if zalo_user is None:
+        # paired=False: gateway quên người này (vd vừa bị /zaloxoa).
+        return ZaloNoticeResponse(text=None, paired=False)
+    if not zalo_user.is_active:
+        return ZaloNoticeResponse(text=None, paired=True)
     # Thành viên đã hết lượt hôm nay (services/usage_quota.py): không hứa "đợi em
     # xem xíu" - lượt ảnh ngay sau đó sẽ bị chặn và tự trả câu báo hết lượt (tối
     # đa 1 lần/giờ) hoặc im lặng.
     if payload.kind == "image" and await usage_quota.turns_exhausted(
         zalo_user.internal_user_id, channel="zalo", is_admin=zalo_user.is_admin
     ):
-        return ZaloNoticeResponse(text=None)
+        return ZaloNoticeResponse(text=None, paired=True)
     text = media_text.zalo_notice_text(
         payload.kind,
         owner=await _is_controller(payload.sender_id),
         address_form=getattr(zalo_user, "address_form", None),
         mb=max(1, document_service.max_bytes() // (1024 * 1024)),
     )
-    return ZaloNoticeResponse(text=text)
+    return ZaloNoticeResponse(text=text, paired=True)

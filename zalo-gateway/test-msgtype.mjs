@@ -231,30 +231,62 @@ test("lệnh làn nhanh khớp services/turn_control.py", () => {
 
 test("câu báo: Python dựng câu; người lạ im lặng kể cả khi Python lỗi; người quen có câu dự phòng", async () => {
   const paired = [];
+  const strangers = [];
   const deps = (fetch, known) => ({
     fetch,
     isKnown: () => known,
     onPaired: (sender) => paired.push(sender),
+    onStranger: (sender) => strangers.push(sender),
     log: () => undefined,
   });
   assert.equal(
     await noticeText(
       "u1",
       "video",
-      deps(async () => "🎬 Chị ơi em chưa xem được video", false),
+      deps(async () => ({ text: "🎬 Chị ơi em chưa xem được video", paired: true }), false),
     ),
     "🎬 Chị ơi em chưa xem được video",
   );
   assert.deepEqual(paired, ["u1"]);
-  // Người lạ chưa pair: Python trả null.
+  // Người lạ chưa pair (hoặc vừa bị /zaloxoa): Python trả null + paired=false -> quên.
   assert.equal(
     await noticeText(
       "stranger",
       "video",
-      deps(async () => null, false),
+      deps(async () => ({ text: null, paired: false }), true),
     ),
     null,
   );
+  assert.deepEqual(strangers, ["stranger"]);
+  // Thành viên hết lượt: null nhưng vẫn đã pair -> nhớ, không quên.
+  assert.equal(
+    await noticeText(
+      "u2",
+      "image",
+      deps(async () => ({ text: null, paired: true }), true),
+    ),
+    null,
+  );
+  assert.deepEqual(paired, ["u1", "u2"]);
+  // Python cũ (không có paired): có chữ thì nhớ, null thì giữ nguyên.
+  assert.equal(
+    await noticeText(
+      "u3",
+      "video",
+      deps(async () => ({ text: "🎬 x", paired: null }), false),
+    ),
+    "🎬 x",
+  );
+  assert.equal(
+    await noticeText(
+      "u4",
+      "video",
+      deps(async () => ({ text: null, paired: null }), false),
+    ),
+    null,
+  );
+  assert.deepEqual(paired, ["u1", "u2", "u3"]);
+  assert.deepEqual(strangers, ["stranger"]);
   const down = async () => {
     throw new Error("fetch failed");
   };

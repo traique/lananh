@@ -158,6 +158,7 @@ async def test_notice_thanh_vien_theo_cach_goi_rieng(notice_bridge):
     assert response.status_code == 200
     text = response.json()["text"]
     assert text.startswith("🎬") and "chị" in text and " anh" not in text
+    assert response.json()["paired"] is True
 
 
 @pytest.mark.asyncio
@@ -170,10 +171,11 @@ async def test_notice_chu_bot_goi_anh_va_bao_dung_tran_file(notice_bridge, monke
 
 @pytest.mark.asyncio
 async def test_notice_nguoi_la_va_bi_khoa_im_lang_khong_bao_chu_bot(notice_bridge):
-    for sender in ("stranger", "locked"):
+    for sender, paired in (("stranger", False), ("locked", True)):
         response = await _post_notice({"sender_id": sender, "kind": "image"})
         assert response.status_code == 200
-        assert response.json() == {"text": None}
+        # paired=False: gateway quên người này (người lạ / đã bị /zaloxoa).
+        assert response.json() == {"text": None, "paired": paired}
     # Câu báo không thay cho lượt thật: không báo chủ bot (lượt ảnh/thoại tự báo).
     assert notice_bridge == []
 
@@ -229,3 +231,59 @@ def test_trang_admin_hien_bo_dem_gateway():
     root = Path(__file__).resolve().parent.parent
     html = (root / "templates" / "admin.html").read_text(encoding="utf-8")
     assert "d.zalo_gateway" in html and "<th>Gateway Zalo</th>" in html
+
+
+def test_gateway_doc_truong_paired_va_co_route_quen_nguoi_gui():
+    """Python báo người lạ bằng paired=False (ZaloMessageResponse/ZaloNoticeResponse)
+    và báo gateway quên người bị /zaloxoa qua POST /known/forget - tên trường/route
+    phải khớp hai bên."""
+    from channels import zalo_gateway_status
+
+    assert "paired" in contracts.ZaloMessageResponse.model_fields
+    assert "paired" in contracts.ZaloNoticeResponse.model_fields
+    bridge = (GATEWAY_SRC / "bridge.ts").read_text(encoding="utf-8")
+    assert re.search(r"paired\?: boolean \| null", bridge)
+    control = (GATEWAY_SRC / "control-server.ts").read_text(encoding="utf-8")
+    assert f'"{zalo_gateway_status.FORGET_PATH}"' in control
+
+
+@pytest.mark.asyncio
+async def test_bao_gateway_quen_nguoi_gui(monkeypatch):
+    from channels import zalo_gateway_status
+
+    posted = []
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json):
+            posted.append((url, json))
+            return _Response()
+
+    monkeypatch.setattr(zalo_gateway_status.httpx, "AsyncClient", _Client)
+    monkeypatch.setenv("ZALO_CONTROL_PORT", "9911")
+    monkeypatch.delenv("ZALO_ENABLED", raising=False)
+    assert await zalo_gateway_status.forget_sender("z-member") is False
+    assert posted == []
+
+    monkeypatch.setenv("ZALO_ENABLED", "1")
+    assert await zalo_gateway_status.forget_sender("z-member") is True
+    assert posted == [("http://127.0.0.1:9911/known/forget", {"id": "z-member"})]
+
+    async def refused(self, url, json):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(_Client, "post", refused)
+    # Gateway tắt/không trả lời: chỉ log, không làm hỏng /zaloxoa.
+    assert await zalo_gateway_status.forget_sender("z-member") is False

@@ -26,6 +26,7 @@ import {
   isPermanentPostError,
 } from "./dist/facebook-buffer.js";
 import { BridgeHttpError, callFileBridge, callImageBridge } from "./dist/bridge.js";
+import { startControlServer } from "./dist/control-server.js";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
@@ -315,6 +316,62 @@ test("KnownSenders chỉ nhớ người đã được trả lời, LRU có trầ
   assert.equal(known.size, 2);
   known.mark("");
   assert.equal(known.size, 2);
+});
+
+test("KnownSenders: Python báo paired=false (người lạ, đã bị /zaloxoa) thì quên ngay", () => {
+  const known = new KnownSenders(10);
+  known.mark("x");
+  assert.equal(known.forget("x"), true);
+  assert.equal(known.has("x"), false);
+  assert.equal(known.forget("x"), false);
+  // Theo trả lời của Python: false quên, true nhớ, thiếu (bản cache cũ) thì nhớ khi có trả lời.
+  known.noteReply("a", true, false);
+  assert.equal(known.has("a"), true);
+  known.noteReply("a", false, true);
+  assert.equal(known.has("a"), false, "paired=false thắng cả khi có chữ trả lời");
+  known.noteReply("b", undefined, false);
+  assert.equal(known.has("b"), false);
+  known.noteReply("b", null, true);
+  assert.equal(known.has("b"), true);
+  known.noteReply("b", undefined, false);
+  assert.equal(known.has("b"), true, "không có tin hiệu thì giữ nguyên");
+});
+
+test("control server: POST /known/forget {id} gọi forgetSender, body sai/quá lớn bị từ chối", async () => {
+  const forgotten = [];
+  const server = startControlServer(0, {
+    status: () => ({}),
+    startQr: async () => "idle",
+    startPairing: () => null,
+    logout: async () => undefined,
+    forgetSender: (id) => {
+      forgotten.push(id);
+      return id === "z-member";
+    },
+  });
+  try {
+    if (!server.listening) await new Promise((resolve) => server.once("listening", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const post = (body) =>
+      fetch(`${base}/known/forget`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+    const ok = await post(JSON.stringify({ id: "z-member" }));
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { ok: true, forgotten: true });
+    assert.deepEqual(await (await post(JSON.stringify({ id: "other" }))).json(), {
+      ok: true,
+      forgotten: false,
+    });
+    assert.equal((await post("không phải json")).status, 400);
+    assert.equal((await post(JSON.stringify({ id: "" }))).status, 400);
+    assert.equal((await post(JSON.stringify({ id: "x".repeat(5000) }))).status, 413);
+    assert.deepEqual(forgotten, ["z-member", "other"]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test("linkHref chỉ nhận tin chia sẻ link có href http(s)", () => {

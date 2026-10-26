@@ -44,6 +44,12 @@ export type BridgeResponse = {
   provider?: string | null;
   image_b64?: string | null;
   styles?: (ZaloTextStyle[] | null)[] | null;
+  /**
+   * false = người gửi chưa pair (người lạ, hoặc vừa bị /zaloxoa): gateway quên
+   * người này (KnownSenders.noteReply); true = đã pair; thiếu/null = không nói
+   * (bản cache idempotency cũ).
+   */
+  paired?: boolean | null;
 };
 /**
  * Thời gian chờ Python trả lời 1 tin. Phải LỚN HƠN hạn chót mỗi lượt bên Python
@@ -253,12 +259,18 @@ export type NoticeKind =
   | "file_unsupported"
   | "video"
   | "location";
+/** Trả lời POST /notice: chữ câu báo (null = im lặng) và người gửi đã pair chưa. */
+export type NoticeReply = { text: string | null; paired: boolean | null };
 /**
- * Câu báo giọng Lan Anh theo đúng cách gọi riêng của người gửi; null = người lạ
- * chưa pair hoặc bị khoá (gateway im lặng). Lỗi/timeout -> ném (nơi gọi dùng câu
- * trung tính dự phòng cho người quen).
+ * Câu báo giọng Lan Anh theo đúng cách gọi riêng của người gửi; text null = người
+ * lạ chưa pair, bị khoá hoặc hết lượt (gateway im lặng); paired như BridgeResponse.
+ * Lỗi/timeout -> ném (nơi gọi dùng câu trung tính dự phòng cho người quen).
  */
-export async function fetchNotice(c: GatewayConfig, senderId: string, kind: NoticeKind) {
+export async function fetchNotice(
+  c: GatewayConfig,
+  senderId: string,
+  kind: NoticeKind,
+): Promise<NoticeReply> {
   const r = (await (
     await ok(
       await fetch(`${c.bridgeBaseUrl}/notice`, {
@@ -269,8 +281,11 @@ export async function fetchNotice(c: GatewayConfig, senderId: string, kind: Noti
       }),
       "Notice",
     )
-  ).json()) as { text?: unknown };
-  return typeof r.text === "string" && r.text.trim() ? r.text : null;
+  ).json()) as { text?: unknown; paired?: unknown };
+  return {
+    text: typeof r.text === "string" && r.text.trim() ? r.text : null,
+    paired: typeof r.paired === "boolean" ? r.paired : null,
+  };
 }
 export async function fetchAllowedGroups(c: GatewayConfig) {
   const g = (await (

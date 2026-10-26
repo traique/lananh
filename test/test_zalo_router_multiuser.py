@@ -58,6 +58,8 @@ async def test_unpaired_sender_gets_silent_reply_and_owner_notified(monkeypatch)
 
     response = await zalo_router.receive(_payload(sender_id="stranger"), "s3cr3t")
     assert response.messages == []
+    # Báo gateway đây là người lạ: gateway quên người này (thôi typing/"đã xem").
+    assert response.paired is False
     assert notified == [("stranger", "Người dùng")]
 
 
@@ -75,6 +77,7 @@ async def test_suspended_sender_gets_locked_reply(monkeypatch):
 
     response = await zalo_router.receive(_payload(), "s3cr3t")
     assert response.messages == [zalo_router.messages_module.ZALO_LOCKED_REPLY]
+    assert response.paired is True
 
 
 @pytest.mark.asyncio
@@ -103,6 +106,7 @@ async def test_regular_user_never_gets_group_command_checked(monkeypatch):
     response = await zalo_router.receive(_payload(text="/tongket sale"), "s3cr3t")
     assert called["group"] is False
     assert response.messages == ["trả lời bình thường"]
+    assert response.paired is True
 
 
 @pytest.mark.asyncio

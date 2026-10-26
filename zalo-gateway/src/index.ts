@@ -149,6 +149,11 @@ function isKnown(sender: string): boolean {
   return knownSenders.has(sender) || (!!config.controllerId && sender === config.controllerId);
 }
 
+/** Nhớ/quên người gửi theo trả lời của Python (paired=false = người lạ: quên). */
+function notePaired(sender: string, reply: BridgeResponse): void {
+  knownSenders.noteReply(sender, reply.paired, !!(reply.messages.length || reply.image_b64));
+}
+
 // ─── Gửi tin ────────────────────────────────────────────────────────────────
 
 async function sendImage(client: ZaloApi, target: string, imageB64: string): Promise<void> {
@@ -352,6 +357,7 @@ async function sendNotice(msg: ParsedMessage, kind: NoticeKind): Promise<boolean
     fetch: (sender, noticeKind) => fetchNotice(config, sender, noticeKind),
     isKnown,
     onPaired: (sender) => knownSenders.mark(sender),
+    onStranger: (sender) => knownSenders.forget(sender),
   });
   if (!text) return false;
   stats.inc("notices");
@@ -562,7 +568,7 @@ async function handleTextTurn(items: ParsedMessage[]): Promise<void> {
     return;
   }
   feedback.stop();
-  if (reply.messages.length || reply.image_b64) knownSenders.mark(last.sender);
+  notePaired(last.sender, reply);
   await sendReply(last, reply.messages, reply.image_b64, reply.styles);
   if (GROUP_ADMIN_COMMAND.test(text)) await refreshGroups();
 }
@@ -586,10 +592,8 @@ async function handleImage(msg: ParsedMessage): Promise<void> {
       image.bytes,
     );
     feedback.stop();
-    if (reply.messages.length) {
-      knownSenders.mark(msg.sender);
-      await sendReply(msg, reply.messages, null, reply.styles);
-    }
+    notePaired(msg.sender, reply);
+    if (reply.messages.length) await sendReply(msg, reply.messages, null, reply.styles);
   } catch (error) {
     feedback.stop();
     console.error(`[zalo] image bridge failed for message ${msg.id}`, error);
@@ -642,7 +646,7 @@ async function handleVoice(msg: ParsedMessage): Promise<void> {
     return;
   }
   feedback.stop();
-  if (reply.messages.length || reply.image_b64) knownSenders.mark(msg.sender);
+  notePaired(msg.sender, reply);
   await sendReply(msg, reply.messages, reply.image_b64, reply.styles);
 }
 
@@ -691,7 +695,7 @@ async function handleFile(msg: ParsedMessage): Promise<void> {
     return;
   }
   feedback.stop();
-  if (reply.messages.length || reply.image_b64) knownSenders.mark(msg.sender);
+  notePaired(msg.sender, reply);
   await sendReply(msg, reply.messages, reply.image_b64, reply.styles);
 }
 
@@ -782,7 +786,7 @@ async function callFastLane(msg: ParsedMessage): Promise<void> {
       },
       FAST_LANE_TIMEOUT_MS,
     );
-    if (reply.messages.length || reply.image_b64) knownSenders.mark(msg.sender);
+    notePaired(msg.sender, reply);
     await sendReply(msg, reply.messages, reply.image_b64, reply.styles);
   } catch (error) {
     console.error(`[zalo] fast-lane command ${msg.id} failed`, error);
@@ -1072,6 +1076,13 @@ startControlServer(config.controlPort, {
     },
   }),
   startQr,
+  // Python gỡ pairing (/zaloxoa): quên ngay, để từ tin kế tiếp người này không còn
+  // nhận "đã xem", typing, reaction hay câu báo bận/sự cố của gateway.
+  forgetSender: (id) => {
+    const forgotten = knownSenders.forget(id);
+    console.log(`[zalo] quên người gửi ${id} (Python gỡ pairing)${forgotten ? "" : " - chưa nhớ"}`);
+    return forgotten;
+  },
   startPairing: () => {
     if (!api) return null;
     pairing = { code: String(randomInt(100000, 1000000)), expires: Date.now() + 300000 };

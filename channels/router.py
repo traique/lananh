@@ -371,18 +371,28 @@ def _chat_for(zalo_user: zalo_users.ZaloUser, sender_id: str):
     return chat
 
 
-async def _receive_text(payload: ZaloMessageRequest):
+async def _receive_text(payload: ZaloMessageRequest) -> ZaloMessageResponse:
     zalo_user = await zalo_users.resolve(payload.sender_id)
     if zalo_user is None:
         # Người lạ CHƯA pair: im lặng với sender (không lộ ra là bot chưa
         # cấu hình xong), chỉ âm thầm báo owner Telegram. KHÔNG cache
         # response rỗng - nếu owner pair xong rồi người này nhắn lại
         # (message_id mới) vẫn xử lý bình thường như mọi tin nhắn khác.
+        # paired=False: gateway quên người này (vd vừa bị /zaloxoa) - thôi gửi
+        # typing/"đã xem"/câu báo bận cho họ.
         cached = await idempotency.get_zalo_response(payload.account_id, payload.message_id, "text")
         if cached is not None:
-            return ZaloMessageResponse.model_validate(cached)
+            return ZaloMessageResponse.model_validate(cached).model_copy(update={"paired": False})
         zalo_users.notify_unpaired(payload.sender_id, payload.sender_name)
-        return ZaloMessageResponse(messages=[], provider=None)
+        return ZaloMessageResponse(messages=[], provider=None, paired=False)
+    response = await _receive_paired_text(payload, zalo_user)
+    # Đã pair (kể cả bị khoá, /huy huỷ xong trả rỗng, hết lượt im lặng): gateway nhớ.
+    return response.model_copy(update={"paired": True})
+
+
+async def _receive_paired_text(
+    payload: ZaloMessageRequest, zalo_user: zalo_users.ZaloUser
+) -> ZaloMessageResponse:
     if not zalo_user.is_active:
         return ZaloMessageResponse(messages=[messages_module.ZALO_LOCKED_REPLY], provider=None)
     audience = _audience(zalo_user, payload.sender_id)
@@ -453,9 +463,12 @@ async def image_prompt(
     zalo_user = await zalo_users.resolve(x_zalo_sender_id)
     if zalo_user is None:
         zalo_users.notify_unpaired(x_zalo_sender_id)
-        return ZaloMessageResponse(messages=[], provider=None)
+        # paired=False: gateway quên người này (như /message).
+        return ZaloMessageResponse(messages=[], provider=None, paired=False)
     if not zalo_user.is_active:
-        return ZaloMessageResponse(messages=[messages_module.ZALO_LOCKED_REPLY], provider=None)
+        return ZaloMessageResponse(
+            messages=[messages_module.ZALO_LOCKED_REPLY], provider=None, paired=True
+        )
 
     blocked, decision = await media_quota_gate(
         zalo_user, x_zalo_account_id, x_zalo_message_id, "image-prompt"

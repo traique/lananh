@@ -21,6 +21,11 @@ Node adapter dùng `zca-js` cho tài khoản B, chạy cùng container với Fas
   Câu báo do Python dựng (`POST /notice`: giọng Lan Anh, đúng cách gọi riêng,
   người lạ chưa pair -> im lặng); Python lỗi thì chỉ người quen nhận câu trung
   tính. Nhóm/Facebook giữ nguyên danh sách URL như trước.
+- "Người quen" (nhận typing, "đã xem", reaction, câu báo bận/sự cố của gateway)
+  là người Python đã trả lời hoặc chủ bot. Python trả `paired: false` cho người
+  lạ (mọi endpoint tin riêng và `/notice`) thì gateway quên người đó; `/zaloxoa`
+  còn báo thẳng control server `POST /known/forget {"id": ...}` để từ tin kế
+  tiếp người bị gỡ pairing không còn thấy dấu hiệu bot đang đọc.
 - Group text chỉ được forward khi group ID nằm trong allowlist Supabase.
 - Summary outbox được gửi riêng từ B sang A. Tin gửi lỗi được báo về Python
   (`POST /internal/zalo/outbox/{id}/failed`), thử lại theo backoff và bỏ cuộc sau

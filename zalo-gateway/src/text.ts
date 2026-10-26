@@ -84,6 +84,21 @@ export class KnownSenders {
     }
   }
 
+  /** Quên 1 người (chủ bot /zaloxoa, hoặc Python báo paired=false); true nếu đang nhớ. */
+  forget(id: string): boolean {
+    return this.ids.delete(id);
+  }
+
+  /**
+   * Cập nhật theo trả lời của Python: `paired` false = người lạ (chưa pair / vừa bị
+   * gỡ pairing) -> quên; true -> nhớ; thiếu (Python/bản cache idempotency cũ) ->
+   * nhớ khi Python có trả lời (`replied`), không thì giữ nguyên.
+   */
+  noteReply(id: string, paired: boolean | null | undefined, replied: boolean): void {
+    if (paired === false) this.forget(id);
+    else if (paired === true || replied) this.mark(id);
+  }
+
   has(id: string): boolean {
     return this.ids.has(id);
   }

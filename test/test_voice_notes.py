@@ -468,6 +468,7 @@ async def test_endpoint_voice_tra_loi_va_cache(voice_bridge):
 async def test_endpoint_voice_nguoi_la_im_lang_va_body_qua_lon(voice_bridge, monkeypatch):
     stranger = await _post_voice(M4A, sender="stranger")
     assert stranger.json()["messages"] == []
+    assert stranger.json()["paired"] is False
     monkeypatch.setenv("VOICE_MAX_BYTES", str(64 * 1024))
     too_big = await _post_voice(b"x" * (64 * 1024 + 1))
     assert too_big.status_code == 413

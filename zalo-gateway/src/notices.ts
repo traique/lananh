@@ -1,4 +1,4 @@
-import type { NoticeKind } from "./bridge.js";
+import type { NoticeKind, NoticeReply } from "./bridge.js";
 import { errorMessage } from "./text.js";
 
 /**
@@ -20,12 +20,14 @@ export const LOCAL_NOTICES: Record<NoticeKind, string> = {
 };
 
 export type NoticeDeps = {
-  /** Python dựng câu (bridge.fetchNotice): null = người lạ/bị khoá; ném = không hỏi được. */
-  fetch(sender: string, kind: NoticeKind): Promise<string | null>;
+  /** Python dựng câu (bridge.fetchNotice): text null = im lặng; ném = không hỏi được. */
+  fetch(sender: string, kind: NoticeKind): Promise<NoticeReply>;
   /** Người gửi chắc chắn đã pair (Python từng trả lời / là chủ bot). */
   isKnown(sender: string): boolean;
-  /** Python xác nhận người này đã pair (trả câu báo) - nhớ để lần sau khỏi hỏi. */
+  /** Python xác nhận người này đã pair - nhớ để lần sau khỏi hỏi. */
   onPaired?(sender: string): void;
+  /** Python báo người lạ (paired=false: chưa pair / vừa bị /zaloxoa) - quên người này. */
+  onStranger?(sender: string): void;
   log?(message: string): void;
 };
 
@@ -40,8 +42,9 @@ export async function noticeText(
   deps: NoticeDeps,
 ): Promise<string | null> {
   try {
-    const text = await deps.fetch(sender, kind);
-    if (text) deps.onPaired?.(sender);
+    const { text, paired } = await deps.fetch(sender, kind);
+    if (paired === false) deps.onStranger?.(sender);
+    else if (paired === true || text) deps.onPaired?.(sender);
     return text;
   } catch (error) {
     (deps.log ?? console.warn)(

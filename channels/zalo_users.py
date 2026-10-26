@@ -36,6 +36,7 @@ import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
+from channels import zalo_gateway_status
 from core import address, database as db
 from services import personal_settings
 
@@ -321,9 +322,20 @@ async def delete_own_data(internal_user_id: int) -> None:
             await _delete_user_data(conn, internal_user_id)
 
 
-@db.with_reconnect(idempotent=False)
 async def remove(external_id: str) -> bool:
-    """Gỡ pairing VÀ xoá toàn bộ dữ liệu cá nhân của user đó (1 transaction)."""
+    """Gỡ pairing VÀ xoá toàn bộ dữ liệu cá nhân của user đó (1 transaction), rồi
+    báo zalo-gateway quên người này (best-effort, ngoài transaction và ngoài
+    with_reconnect) - không thì gateway vẫn coi họ là người quen tới lần khởi động
+    lại và gửi "đã xem"/typing trước khi Python im lặng với họ."""
+    found = await _remove_pairing(external_id)
+    if found:
+        await zalo_gateway_status.forget_sender(external_id)
+    return found
+
+
+@db.with_reconnect(idempotent=False)
+async def _remove_pairing(external_id: str) -> bool:
+    """Phần DB của remove(): xoá pairing + dữ liệu cá nhân trong 1 transaction."""
     await ensure_schema()
     pool = await db.get_pool()
     async with pool.acquire() as conn:
