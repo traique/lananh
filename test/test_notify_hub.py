@@ -556,3 +556,16 @@ async def test_dispatch_zalo_bao_hub_nguoi_dung_vua_nhan(monkeypatch):
         req, channel_dispatch.DispatchHandlers(chat=chat, get_cached=cached, save_cached=save)
     )
     assert payload["messages"] == ["đã trả lời"] and seen == [-5]
+
+
+@pytest.mark.asyncio
+async def test_khoi_dong_lai_van_xa_tin_da_xep(q, monkeypatch):
+    q.clock = NIGHT
+    await hub.offer("telegram", OWNER, "⚠️ DB 80%", source="system", now=NIGHT)
+    # Process mới: RAM của hub trống, hàng đợi còn nguyên trong DB.
+    monkeypatch.setattr(hub, "_pending_hint", set())
+    assert not hub.note_activity(OWNER)  # chưa nạp gợi ý thì không đoán mò
+    morning = dt.datetime(2026, 10, 27, 6, 40, tzinfo=VN)
+    q.clock = morning
+    assert await hub.run_tick(morning) == 1
+    assert q.sent == [(OWNER, "⚠️ DB 80%")]

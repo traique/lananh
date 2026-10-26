@@ -302,11 +302,9 @@ def compose(items: list[dict], dropped: int = 0, *, you: str = "anh") -> str | N
     if len(texts) == 1 and not note:
         return texts[0]
     me = address.self_word(you)
-    first = min(
-        (item["created_at"] for item in items if isinstance(item.get("created_at"), dt.datetime)),
-        default=None,
-    )
-    since = f" từ {first.astimezone(VN_TZ):%H:%M}" if first else ""
+    stamps = [_as_vn(item.get("created_at")) for item in items]
+    first = min((s for s in stamps if s is not None), default=None)
+    since = f" từ {first:%H:%M}" if first else ""
     held = sum(1 for item in items if item.get("level") == URGENT)
     head = f"🔔 {me.capitalize()} gom {len(texts)} thông báo{since} cho {you} nè:"
     if held:
