@@ -20,6 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "network: test được phép mở kết nối mạng thật")
+    # Golden set gọi LLM thật (test/test_evals_live.py): luôn skip trừ khi
+    # RUN_LIVE_EVALS=1 và có key provider - không bao giờ chạy trong CI mặc định.
+    config.addinivalue_line("markers", "live_llm: đánh giá gọi provider AI thật (opt-in)")
 
 
 class _NetworkBlocked(RuntimeError):

@@ -145,3 +145,21 @@ async def test_quota_dem_luot_va_luot_nang_tu_dau_ngay(delivery_db):
         )
         == "chat"
     )
+
+
+@pytest.mark.asyncio
+async def test_xuat_eval_chi_lay_thumbs_down_telegram_cua_dung_nguoi(delivery_db):
+    await delivery_db.execute(
+        """
+        INSERT INTO answer_feedback (channel, telegram_user_id, prompt_id, rating, reason,
+                                     prompt_text, answer_text) VALUES
+            ('telegram', 777, 1, -1, 'bịa số', 'giá vàng?', 'khoảng 149 triệu'),
+            ('telegram', 777, 2, 1, NULL, 'chào', 'dạ'),
+            ('zoom', 777, 3, -1, NULL, 'zoom hỏi', 'x'),
+            ('zalo', -5, 4, -1, NULL, 'thành viên hỏi', 'y'),
+            ('telegram', 778, 5, -1, NULL, 'người khác', 'z')
+        """
+    )
+    rows = await db.answer_feedback_owner_down(777, 30)
+    assert [r["prompt_text"] for r in rows] == ["giá vàng?"]
+    assert rows[0]["reason"] == "bịa số"

@@ -120,5 +120,24 @@ async def recent_down(pool: Any, user_id: int, days: int, limit: int) -> list[di
     return [dict(row) for row in rows]
 
 
+async def owner_down_for_evals(pool: Any, user_id: int, days: int, limit: int) -> list[dict]:
+    """👎 của ĐÚNG 1 người trên kênh Telegram (chủ bot) để làm case đánh giá ứng viên
+    (services/eval_export.py) - không bao giờ lấy dòng Zalo/Zoom hay của người khác."""
+    rows = await pool.fetch(
+        """
+        SELECT id, prompt_text, answer_text, reason, provider, model, created_at
+        FROM answer_feedback
+        WHERE telegram_user_id = $1 AND channel = 'telegram' AND rating < 0
+          AND created_at >= now() - make_interval(days => $2)
+        ORDER BY created_at DESC
+        LIMIT $3
+        """,
+        user_id,
+        days,
+        limit,
+    )
+    return [dict(row) for row in rows]
+
+
 async def clear(pool: Any, user_id: int) -> None:
     await pool.execute("DELETE FROM answer_feedback WHERE telegram_user_id = $1", user_id)

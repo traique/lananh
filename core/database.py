@@ -600,6 +600,14 @@ async def answer_feedback_recent_down(telegram_user_id: int, days: int, limit: i
 
 
 @_with_reconnect
+async def answer_feedback_owner_down(telegram_user_id: int, days: int, limit: int = 50) -> list:
+    """👎 trên Telegram của chủ bot -> case đánh giá ứng viên (services/eval_export.py)."""
+    from core.repositories import feedback
+
+    return await feedback.owner_down_for_evals(await get_pool(), telegram_user_id, days, limit)
+
+
+@_with_reconnect
 async def answer_feedback_clear(telegram_user_id: int) -> None:
     from core.repositories import feedback
 

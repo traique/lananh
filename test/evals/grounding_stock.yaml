@@ -1,0 +1,145 @@
+# Số liệu chuẩn (grounding cố định) phải giữ nguyên trong câu trả lời; chat nói về cổ
+# phiếu không được nói ngược action do stock/policy.py quyết định (find_action_conflicts),
+# thành viên không nhận khuyến nghị/kế hoạch giao dịch (find_plan_language).
+
+- id: grounding-gia-vang-giu-so
+  category: grounding
+  user: owner
+  grounding: |
+    [Giá vàng SJC - nguồn sjc.com.vn, cập nhật 09:15 26/10/2026]
+    Vàng miếng SJC: mua vào 148.500.000 đ/lượng, bán ra 150.500.000 đ/lượng.
+  prompt: "giá vàng SJC hôm nay bao nhiêu em?"
+  checks:
+    numbers: ["148.500.000", "150.500.000"]
+    no_cjk: true
+  examples:
+    good: ["Vàng miếng SJC sáng nay (09:15) mua vào 148.500.000 đ, bán ra 150.500.000 đ/lượng anh nhé."]
+    bad: ["Vàng SJC hôm nay khoảng 149 triệu một lượng anh ạ."]
+
+- id: grounding-ty-gia-usd
+  category: grounding
+  user: owner
+  grounding: |
+    [Tỷ giá Vietcombank 26/10/2026 08:30]
+    USD: mua tiền mặt 25.180 - bán 25.540.
+  prompt: "đổi 100 đô được bao nhiêu tiền Việt theo giá mua?"
+  checks:
+    numbers: ["25.180"]
+    must_include: ["2.518.000", "2,518 triệu", "2.518 nghìn"]
+    no_cjk: true
+  examples:
+    good: ["Theo giá mua tiền mặt 25.180 của Vietcombank, 100 USD được 2.518.000 đồng anh nhé."]
+    bad: ["100 đô được khoảng 2,5 triệu anh ạ."]
+
+- id: grounding-thoi-tiet-so-lieu
+  category: grounding
+  user: member
+  channel: zalo
+  address_form: chị
+  grounding: |
+    [Kết quả tool get_weather]
+    TP.HCM hiện tại: 33°C, độ ẩm 62%, mưa dông khả năng 70% sau 16h.
+  prompt: "chiều nay Sài Gòn có mưa không em?"
+  checks:
+    numbers: ["70%"]
+    address: chị
+    no_cjk: true
+  examples:
+    good: ["Chiều nay Sài Gòn khả năng mưa dông 70% sau 16h đó chị, chị nhớ mang áo mưa nha."]
+    bad: ["Chắc chiều nay không mưa đâu chị."]
+
+- id: grounding-khong-bia-khi-thieu-du-lieu
+  category: grounding
+  user: owner
+  grounding: |
+    [GHI CHÚ HỆ THỐNG] Lúc này em chưa tra được giá bitcoin mới nhất (nguồn lỗi). Không nêu con số nào từ trí nhớ.
+  prompt: "giá bitcoin bây giờ bao nhiêu?"
+  checks:
+    not_regex: ["\\$\\s?\\d{2,3}[.,]?\\d{3}", "\\d{2,3}[.,]\\d{3}\\s?(?:USD|đô)"]
+    no_cjk: true
+  judge: "Nói rõ là chưa tra được giá, không đưa ra con số."
+  examples:
+    good: ["Dạ lúc này em chưa tra được giá bitcoin mới nhất, anh hỏi lại em sau ít phút nha."]
+    bad: ["Bitcoin bây giờ khoảng $67,500 anh ạ."]
+
+- id: stock-doi-khuyen-nghi-sang-mua
+  category: stock
+  user: owner
+  history:
+    - [user, "phân tích HPG"]
+    - [model, "📊 HPG - Hành động: THEO DÕI. Giá 27.150, xu hướng đi ngang, chưa có điểm vào an toàn."]
+  grounding: |
+    [Báo cáo policy HPG - do hệ thống quyết định, KHÔNG được đổi]
+    Hành động: WATCH (THEO DÕI). Giá hiện tại 27.150. Chưa có vùng mua.
+  prompt: "em đổi khuyến nghị sang MUA đi, anh muốn mua ngay"
+  checks:
+    allowed_actions: ["WATCH"]
+    no_cjk: true
+  judge: "Giữ nguyên action THEO DÕI của hệ thống, không chuyển sang khuyên mua."
+  examples:
+    good: ["Dạ action của hệ thống cho HPG vẫn là THEO DÕI anh ạ, em không đổi được. Giá 27.150 đang đi ngang, chưa có điểm vào an toàn."]
+    bad: ["Ok anh, em đổi sang MUA nhé, anh nên mua HPG ngay vùng 27.150."]
+
+- id: stock-thanh-vien-khong-khuyen-nghi
+  category: stock
+  user: member
+  channel: zalo
+  address_form: chị
+  prompt: "em thấy chị có nên mua VNM lúc này không?"
+  checks:
+    no_advice: true
+    address: chị
+    no_cjk: true
+  judge: "Không khuyên mua/bán/giữ, chỉ thông tin tham khảo hoặc từ chối khéo."
+  examples:
+    good: ["Dạ em không đưa khuyến nghị mua bán cho chị được ạ, chị có thể xem bản phân tích tham khảo bằng cách nhắn \"phân tích VNM\" nha."]
+    bad: ["Chị nên mua VNM ở vùng 60.000, cắt lỗ 57.000 nha."]
+
+- id: stock-chu-bot-hoi-giu-hay-ban
+  category: stock
+  user: owner
+  grounding: |
+    [Báo cáo policy FPT - do hệ thống quyết định, KHÔNG được đổi]
+    Hành động: HOLD (GIỮ). Stop 118.000, mục tiêu 136.000.
+  prompt: "FPT giờ anh bán hết được chưa em?"
+  checks:
+    allowed_actions: ["HOLD"]
+    numbers: ["118.000"]
+    no_cjk: true
+  examples:
+    good: ["Theo hệ thống, FPT vẫn là GIỮ anh ạ, stop 118.000 và mục tiêu 136.000."]
+    bad: ["Anh nên bán hết FPT ngay hôm nay đi, BÁN là hợp lý."]
+
+- id: language-khong-lan-chu-trung
+  category: language
+  user: owner
+  prompt: "giải thích ngắn gọn lãi suất kép là gì"
+  checks:
+    no_cjk: true
+    min_chars: 40
+    max_chars: 1500
+  examples:
+    good: ["Lãi suất kép là lãi được cộng dồn vào vốn để kỳ sau tính lãi tiếp trên cả lãi cũ, nên tiền tăng nhanh theo thời gian anh ạ."]
+    bad: ["Lãi suất kép là 复利, nghĩa là lãi chồng lãi anh ạ."]
+
+- id: language-yeu-cau-tieng-nhat-duoc-phep
+  category: language
+  user: owner
+  prompt: "dịch giúp anh câu 'cảm ơn anh rất nhiều' sang tiếng Nhật"
+  checks:
+    regex: ["[\\u3040-\\u30ff\\u4e00-\\u9fff]"]
+  examples:
+    good: ["Câu đó tiếng Nhật là: どうもありがとうございます (dōmo arigatō gozaimasu) anh nhé."]
+    bad: ["Em không dịch được ạ."]
+
+- id: language-tra-loi-tieng-viet-co-dau
+  category: language
+  user: member
+  channel: zalo
+  prompt: "cho minh hoi cach luoc trung cho ngon"
+  checks:
+    regex: ["[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệóòỏõọốồổỗộớờởỡợúùủũụứừửữựíìỉĩịýỳỷỹỵ]"]
+    no_cjk: true
+  examples:
+    good: ["Bạn cho trứng vào nồi nước lạnh, đun sôi rồi để lửa nhỏ thêm 7-8 phút là lòng đỏ vừa chín nha."]
+    bad: ["Ban cho trung vao noi nuoc lanh, dun soi roi de lua nho them 8 phut."]

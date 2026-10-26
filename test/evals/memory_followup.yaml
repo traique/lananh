@@ -1,0 +1,117 @@
+# Nhớ điều đã gieo trong trí nhớ dài hạn + hiểu câu hỏi nối tiếp theo lịch sử phiên.
+
+- id: memory-nho-ten-va-so-thich
+  category: memory
+  user: owner
+  memory:
+    - "Anh tên Tuấn, làm kỹ sư phần mềm ở Đà Nẵng."
+    - "Anh dị ứng hải sản."
+  prompt: "tối nay anh nên ăn gì nhỉ, gợi ý 2 món"
+  checks:
+    address: anh
+    not_regex: ["(?<!\\w)(tôm|cua|ghẹ|mực|hàu|sò)(?!\\w)(?![^.]*(?:không|tránh|kiêng))"]
+    no_cjk: true
+  judge: "Gợi ý món ăn KHÔNG có hải sản (anh dị ứng hải sản)."
+  examples:
+    good: ["Anh thử bún bò hoặc cơm gà nha, em tránh hải sản vì anh dị ứng đó."]
+    bad: ["Anh ăn lẩu tôm với cua rang me đi, ngon lắm."]
+
+- id: memory-nho-thanh-pho
+  category: memory
+  user: owner
+  memory: ["Anh đang sống ở Đà Nẵng."]
+  prompt: "anh đang ở thành phố nào em còn nhớ không?"
+  checks:
+    must_include: ["Đà Nẵng"]
+    no_cjk: true
+  examples:
+    good: ["Dạ em nhớ chứ, anh đang ở Đà Nẵng mà."]
+    bad: ["Em không biết anh ở đâu ạ."]
+
+- id: memory-thanh-vien-nho-con-gai
+  category: memory
+  user: member
+  channel: zalo
+  address_form: chị
+  memory: ["Chị có con gái tên Bông, học lớp 3."]
+  prompt: "con chị học lớp mấy ấy nhỉ, chị quên mất định hỏi em"
+  checks:
+    must_include: ["lớp 3"]
+    address: chị
+    no_cjk: true
+  examples:
+    good: ["Bé Bông nhà chị đang học lớp 3 đó chị."]
+    bad: ["Em không có thông tin đó ạ."]
+
+- id: memory-khong-bia-dieu-chua-biet
+  category: memory
+  user: owner
+  memory: ["Anh thích uống cà phê đen."]
+  prompt: "em có biết sinh nhật anh ngày nào không?"
+  checks:
+    not_regex: ["sinh nhật anh (?:là |vào )?(?:ngày )?\\d{1,2}"]
+    no_cjk: true
+  judge: "Thừa nhận chưa biết ngày sinh nhật thay vì bịa ra một ngày."
+  examples:
+    good: ["Dạ em chưa được anh kể ngày sinh nhật, anh nói em nghe để em nhớ nha."]
+    bad: ["Sinh nhật anh là ngày 12/5 đó anh."]
+
+- id: followup-thoi-tiet-ngay-mai
+  category: followup
+  user: owner
+  history:
+    - [user, "hôm nay Hà Nội thời tiết sao em"]
+    - [model, "Dạ hôm nay Hà Nội nhiều mây, 24-29°C, chiều tối có mưa rào rải rác anh nhé."]
+  grounding: |
+    [Kết quả tool get_weather]
+    Hà Nội ngày mai: trời nắng, nhiệt độ 22-31°C, khả năng mưa 10%.
+  prompt: "thế còn mai?"
+  checks:
+    must_include: ["31", "nắng"]
+    numbers: ["31"]
+    no_cjk: true
+  examples:
+    good: ["Mai Hà Nội nắng anh ơi, 22-31°C, gần như không mưa."]
+    bad: ["Anh muốn hỏi mai về việc gì ạ?"]
+
+- id: followup-co-phieu-tham-chieu
+  category: followup
+  user: owner
+  history:
+    - [user, "giá FPT hôm nay"]
+    - [model, "FPT đang ở 125.300 đồng, +1,2% so với tham chiếu, khối lượng 2,1 triệu cp."]
+  prompt: "so với hôm qua thì tăng bao nhiêu phần trăm?"
+  checks:
+    numbers: ["1,2%"]
+    no_cjk: true
+  examples:
+    good: ["FPT tăng 1,2% so với giá tham chiếu hôm qua anh ạ."]
+    bad: ["Anh hỏi mã nào ạ?"]
+
+- id: followup-dai-tu-chi-nguoi
+  category: followup
+  user: owner
+  history:
+    - [user, "kể anh nghe về Võ Nguyên Giáp"]
+    - [model, "Đại tướng Võ Nguyên Giáp (1911-2013) là vị tướng huyền thoại, chỉ huy chiến dịch Điện Biên Phủ năm 1954."]
+  prompt: "ông ấy sinh ở tỉnh nào?"
+  checks:
+    must_include: ["Quảng Bình"]
+    no_cjk: true
+  examples:
+    good: ["Đại tướng sinh ở làng An Xá, huyện Lệ Thủy, tỉnh Quảng Bình anh ạ."]
+    bad: ["Anh hỏi ai ạ?"]
+
+- id: followup-nhac-viec-vua-dat
+  category: followup
+  user: owner
+  history:
+    - [user, "nhắc anh 7h sáng mai đi khám răng"]
+    - [model, "Dạ em đã đặt nhắc lúc 07:00 sáng mai: đi khám răng."]
+  prompt: "mấy giờ em nhắc anh nhỉ?"
+  checks:
+    must_include: ["7h", "07:00", "7 giờ"]
+    no_cjk: true
+  examples:
+    good: ["Dạ 07:00 sáng mai em nhắc anh đi khám răng nha."]
+    bad: ["Em chưa đặt nhắc nào cho anh cả."]

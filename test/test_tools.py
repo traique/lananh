@@ -503,3 +503,69 @@ def test_router_prompt_co_remember_fact_va_save_note_khong_nhan_nho_giup():
     assert '"remember_fact"' in prompt
     save_note_line = next(line for line in prompt.splitlines() if '"save_note"' in line)
     assert "nhớ giúp" not in save_note_line
+
+
+# ─── Golden set tier A: bộ lọc từ khoá trước router (không gọi AI) ───────────
+# Câu cần tool PHẢI đi tiếp tới router; câu chuyện phiếm KHÔNG được tốn 1 lượt router.
+_ROUTER_PHRASINGS = [
+    "nhắc anh 8h tối gọi mẹ",
+    "nhớ giùm anh mai đóng tiền điện",
+    "ghi chú: mật khẩu wifi nhà ngoại là 123",
+    "ghi lại giúp anh số tài khoản này",
+    "đặt lịch họp 3h chiều thứ 6",
+    "hẹn giờ 30 phút nữa nhắc anh tắt bếp",
+    "remind me to call Hoa tomorrow",
+    "mai Hà Nội có mưa không em",
+    "thời tiết Đà Nẵng cuối tuần thế nào",
+    "nhiệt độ Sài Gòn bây giờ bao nhiêu",
+    "dự báo bão tuần này",
+    "hôm nay ngày âm bao nhiêu",
+    "rằm tháng 7 năm nay vào thứ mấy",
+    "mùng 1 tháng sau là ngày nào dương lịch",
+    "tết năm nay còn bao nhiêu ngày",
+    "ngày mai có phải ngày hoàng đạo không",
+    "giỗ ông nội năm nay rơi vào hôm nào",
+    "sinh nhật vợ anh là ngày bao nhiêu nhỉ",
+    "tháng này anh tiêu bao nhiêu rồi",
+    "tuần trước xài hết bao nhiêu tiền ăn uống",
+    "danh mục của anh đang lãi hay lỗ",
+    "lần trước em nói gì về quỹ ETF",
+    "hôm trước anh hỏi em về bảo hiểm gì ấy nhỉ",
+    "trong tài liệu hợp đồng có điều khoản phạt không",
+    "đọc giúp anh https://vnexpress.net/bai-viet-123.html",
+]
+_SMALL_TALK = [
+    "chào em",
+    "em ăn cơm chưa",
+    "kể chuyện cười đi",
+    "giải thích lạm phát là gì",
+    "dịch câu này sang tiếng Anh: tôi yêu Việt Nam",
+    "viết giúp anh bài thơ về mùa thu",
+    "em nghĩ sao về trí tuệ nhân tạo",
+    "cách nấu phở bò",
+]
+
+
+@pytest.mark.parametrize("text", _ROUTER_PHRASINGS)
+def test_cau_can_tool_luon_toi_router(text):
+    assert tools._looks_like_tool_intent(text)
+
+
+@pytest.mark.parametrize("text", _SMALL_TALK)
+def test_chuyen_phiem_khong_ton_luot_router(text):
+    assert not tools._looks_like_tool_intent(text)
+    assert tools.side_effect_intent(text) == ""
+
+
+@pytest.mark.parametrize(
+    ("text", "intent"),
+    [
+        ("nhắc anh 8h tối gọi mẹ", "reminder"),
+        ("đặt lịch họp 3h chiều thứ 6", "reminder"),
+        ("remind me to call Hoa tomorrow", "reminder"),
+        ("ghi chú: mật khẩu wifi nhà ngoại là 123", "note"),
+        ("ghi lại giúp anh số tài khoản này", "note"),
+    ],
+)
+def test_y_dinh_ghi_du_lieu(text, intent):
+    assert tools.side_effect_intent(text) == intent
