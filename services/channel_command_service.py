@@ -55,10 +55,14 @@ _HELP_COMMON = """Lịch, thần số học, tử vi, kỳ môn
 /kymon_chitiet [thời điểm] <việc cần xem> — AI luận giải bàn Kỳ Môn cho việc đó
 
 Đời sống (số liệu thật, không tốn AI)
-/vang — giá vàng SJC; /tygia [mã|100 usd] — tỷ giá Vietcombank, đổi tiền
-/xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé] — kết quả xổ số, dò vé
+/vang [sjc|nhẫn|doji|pnj|bảo tín|thế giới] — giá vàng SJC, DOJI, PNJ, Bảo Tín, thế giới
+/tygia [mã|100 usd] — tỷ giá Vietcombank, đổi tiền
+/xang [xăng|diesel|dầu hỏa] — giá xăng dầu Petrolimex vùng 1/vùng 2, PVOIL
+/xoso [mb|mn|mt|tỉnh] [hôm nay|hôm qua|dd/mm|chủ nhật] [số vé] — kết quả xổ số, dò vé
+  (vd /xoso tây ninh, /xoso đà lạt 123456); /xoso tinh — lịch các đài, đài quay hôm nay
 /thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của riêng mình
-/bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, danh mục, tin)
+/bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, danh mục, tin);
+  /bantin xang on|off — thêm giá xăng dầu
 /chuy — có gì cần mình chú ý: nhắc việc hôm nay, ngày nhớ, cảnh báo danh mục, hỏi thăm đang chờ
   (hoặc hỏi "hôm nay có gì cần lo")
 /yenlang on|off|22-7 — giờ yên lặng: ban đêm chỉ nhắn ngay nhắc việc đã đặt, tin khác gom lại sáng gửi
@@ -517,7 +521,7 @@ async def maybe_handle_command(
     divination = await divination_commands.handle(command, argument, user_id, channel)
     if divination is not None:
         return divination, None
-    # /vang, /tygia, /xoso, /thoitiet, /bantin: số liệu thật tính bằng code.
+    # /vang, /tygia, /xang, /xoso, /thoitiet, /bantin: số liệu thật tính bằng code.
     daily = await daily_commands.handle(command, argument, user_id, channel)
     if daily is not None:
         return daily, None

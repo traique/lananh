@@ -1,11 +1,13 @@
 """Lệnh đời sống dùng chung mọi kênh, tính bằng code (không gọi AI):
 
-- /vang — giá vàng SJC.
+- /vang [sjc|nhẫn|doji|pnj|bảo tín|thế giới] — giá vàng (vang.today, SJC dự phòng).
 - /tygia [mã|số tiền mã] — tỷ giá Vietcombank, đổi tiền (/tygia 100 usd).
-- /xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé] — kết quả xổ số, dò vé.
+- /xang [xăng|dầu|diesel] — giá xăng dầu Petrolimex/PVOIL.
+- /xoso [mb|mn|mt|tỉnh] [hôm nay|hôm qua|dd/mm|thứ] [số vé] — kết quả xổ số, dò vé;
+  /xoso tinh — danh sách đài theo miền (đánh dấu đài quay hôm nay).
 - /thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> đặt thành phố mặc định
   riêng (/thoitiet nha xem, /thoitiet nha xoa).
-- /bantin [on|off|giờ|tin on|off|xem] — bản tin sáng cá nhân.
+- /bantin [on|off|giờ|tin on|off|xang on|off|xem] — bản tin sáng cá nhân.
 
 Handler Telegram và channel_command_service (Zalo/Zoom) chỉ chuyển lệnh vào đây.
 """
@@ -14,16 +16,27 @@ from __future__ import annotations
 
 import re
 
+import datetime as dt
+
 from core.text_normalize import fold
 from core.text_utils import parse_on_off
-from services import morning_brief, reply_audience, vn_daily_chat, weather_chat, weather_home
+from services import action_buttons, morning_brief, reply_audience, vn_daily_chat
+from services import lottery_provinces as provinces
+from services import weather_chat, weather_home
 from services import vn_market_data as market
 
 XOSO_USAGE = (
     "🎰 /xoso — kết quả xổ số (mặc định miền Nam, kỳ mới nhất). Ví dụ:\n"
-    "/xoso mb · /xoso mt hôm qua · /xoso tiền giang · /xoso mn 25/10\n"
-    "/xoso 123456 (dò vé miền Nam) · /xoso mb 12345 (dò vé miền Bắc)"
+    "/xoso mb · /xoso mt hôm qua · /xoso mn 25/10\n"
+    "/xoso tây ninh · /xoso đà lạt chủ nhật · /xoso huế hôm nay · /xoso tinh (danh sách đài)\n"
+    "/xoso 123456 (dò vé miền Nam) · /xoso mb 12345 (dò vé miền Bắc) · "
+    "/xoso đồng nai 123456 (dò đúng đài)"
 )
+_PROVINCE_LIST_ARGS = {"tinh", "ds tinh", "danh sach", "dai", "ds", "lich", "lich quay", "list"}
+
+
+def _today() -> dt.date:
+    return vn_daily_chat._today()
 
 
 # Câu do code viết dựng theo từng lượt: xưng hô theo người nhận (reply_audience).
@@ -35,11 +48,21 @@ def _source_down(what: str, source: str, example: str) -> str:
     )
 
 
-async def vang() -> str:
+async def vang(argument: str = "") -> str:
     try:
-        return await vn_daily_chat.gold_text()
+        return await vn_daily_chat.gold_text(f"giá vàng {argument}".strip())
     except market.MarketDataError:
-        return _source_down("giá vàng SJC", " (nguồn sjc.com.vn lỗi)", "giá vàng hôm nay")
+        return _source_down(
+            "giá vàng", " (nguồn vang.today và sjc.com.vn đều lỗi)", "giá vàng hôm nay"
+        )
+
+
+async def xang(argument: str = "") -> str:
+    query = vn_daily_chat.parse_fuel(f"giá {argument or 'xăng dầu'} hôm nay")
+    try:
+        return await vn_daily_chat.fuel_text(query)
+    except market.MarketDataError:
+        return _source_down("giá xăng dầu", " (nguồn giaxanghomnay.com lỗi)", "giá xăng hôm nay")
 
 
 async def tygia(argument: str) -> str:
@@ -50,14 +73,73 @@ async def tygia(argument: str) -> str:
         return _source_down("tỷ giá Vietcombank", "", "tỷ giá hôm nay")
 
 
-async def xoso(argument: str) -> str:
-    if fold(argument.strip()) in {"help", "huong dan", "?"}:
+def province_list(today: dt.date | None = None) -> str:
+    """/xoso tinh: các đài theo miền, ⭐ = quay hôm nay (lịch cố định)."""
+    today = today or _today()
+    lines = [
+        f"🎰 Đài xổ số theo miền (⭐ = quay hôm nay, {provinces.WEEKDAYS[today.weekday()]} "
+        f"{today:%d/%m})"
+    ]
+    for region in provinces.REGION_ORDER:
+        label = f"{provinces.REGION_LABELS[region]} ({provinces.DRAW_TIMES[region]})"
+        if region == "mb":
+            lines.append(f"\n{label}: quay hằng ngày - /xoso mb")
+            continue
+        items = []
+        for p in provinces.in_region(region):
+            days = "/".join(provinces.SHORT_WEEKDAYS[d] for d in p.weekdays)
+            items.append(f"{'⭐ ' if p.draws_on(today) else ''}{p.name} ({days})")
+        lines.append(f"\n{label}:\n" + ", ".join(items))
+    lines.append(
+        "\nGõ /xoso <tên đài> [hôm nay|hôm qua|dd/mm] [số vé], vd /xoso tây ninh, "
+        "/xoso đà lạt 123456. Lịch có thể đổi dịp lễ Tết - kết quả luôn lấy từ nguồn."
+    )
+    return "\n".join(lines)
+
+
+def today_hint(today: dt.date | None = None) -> str:
+    """Dòng gợi ý cho Zalo/Zoom (Telegram có nút bấm thay thế)."""
+    today = today or _today()
+    names = [p.name for p in provinces.drawing_on(today) if p.region != "mb"]
+    return (
+        "👉 Xem riêng 1 đài: /xoso <tên tỉnh>"
+        + (f" - hôm nay quay: {', '.join(names)}" if names else "")
+        + " · /xoso tinh xem lịch các đài"
+    )
+
+
+def today_rows(today: dt.date | None = None) -> action_buttons.Rows:
+    """Nút Telegram chọn đài quay hôm nay (callback "xs:<chỉ số đài>")."""
+    return action_buttons.lottery_rows(
+        [(p.name, p.index) for p in provinces.drawing_on(today or _today()) if p.region != "mb"]
+    )
+
+
+async def xoso(argument: str, channel: str = "telegram") -> str:
+    folded = fold(argument.strip())
+    if folded in {"help", "huong dan", "?"}:
         return XOSO_USAGE
+    if folded in _PROVINCE_LIST_ARGS:
+        return province_list()
     query = vn_daily_chat.parse_lottery(f"xổ số {argument}".strip())
     if query is None:  # không xảy ra: luôn có chữ "xổ số"
         return XOSO_USAGE
     try:
-        return await vn_daily_chat.lottery_text(query, argument)
+        text = await vn_daily_chat.lottery_text(query, argument)
+    except market.MarketDataError:
+        return vn_daily_chat.lottery_down()
+    if not folded and channel != "telegram":
+        text += "\n\n" + today_hint()
+    return text
+
+
+async def xoso_province(index: int) -> str:
+    """Nút chọn đài (Telegram): kỳ mới nhất của đài thứ ``index`` trong danh mục."""
+    province = provinces.by_index(index)
+    if province is None:
+        return "Đài này không còn trong danh mục, gõ /xoso tinh để xem lại nha."
+    try:
+        return await vn_daily_chat.province_text(province, None)
     except market.MarketDataError:
         return vn_daily_chat.lottery_down()
 
@@ -116,6 +198,8 @@ def _brief_status(settings: morning_brief.BriefSettings, channel: str, home: str
         "danh mục (ngày giao dịch)",
         "chi tiêu tháng (nếu có ghi)",
     ]
+    if settings.fuel:
+        sections.append("giá xăng dầu")
     if settings.news_enabled(channel):
         sections.append("tin đáng chú ý")
     lines = [f"☀️ Bản tin sáng: {state}", "Gồm: " + ", ".join(sections) + "."]
@@ -123,8 +207,8 @@ def _brief_status(settings: morning_brief.BriefSettings, channel: str, home: str
         lines.append("Bật trên Telegram thì bản tin thay luôn digest danh mục 8h.")
     lines.append(
         f"Lệnh: /bantin on|off · /bantin 6 (giờ {morning_brief.MIN_HOUR}-"
-        f"{morning_brief.MAX_HOUR}h) · /bantin tin on|off · /bantin xem (xem thử) · "
-        "/thoitiet nha <tỉnh>"
+        f"{morning_brief.MAX_HOUR}h) · /bantin tin on|off · /bantin xang on|off (giá xăng) · "
+        "/bantin xem (xem thử) · /thoitiet nha <tỉnh>"
     )
     return "\n".join(lines)
 
@@ -138,6 +222,7 @@ async def bantin(user_id: int, argument: str, channel: str) -> str:
     toggle = parse_on_off(arg)
     hour_match = re.fullmatch(r"(\d{1,2})\s*(?:h|g|gio|:00)?", arg)
     news_match = re.fullmatch(r"tin\s+(\S+)", arg)
+    fuel_match = re.fullmatch(r"(?:xang|xang dau|gia xang)\s+(\S+)", arg)
     error = None
     if toggle is not None:
         error = await morning_brief.set_enabled(channel, user_id, toggle)
@@ -152,6 +237,8 @@ async def bantin(user_id: int, argument: str, channel: str) -> str:
         error = await morning_brief.set_enabled(channel, user_id, True, hour)
     elif news_match and parse_on_off(news_match.group(1)) is not None:
         await morning_brief.set_news(channel, user_id, bool(parse_on_off(news_match.group(1))))
+    elif fuel_match and parse_on_off(fuel_match.group(1)) is not None:
+        await morning_brief.set_fuel(channel, user_id, bool(parse_on_off(fuel_match.group(1))))
     elif arg:
         return _brief_status(await morning_brief.get_settings(channel, user_id), channel, "").split(
             "\n"
@@ -165,11 +252,13 @@ async def bantin(user_id: int, argument: str, channel: str) -> str:
 async def handle(command: str, argument: str, user_id: int, channel: str) -> list[str] | None:
     """Kết quả 1 lệnh đời sống, None nếu không phải lệnh của module này."""
     if command == "/vang":
-        return [await vang()]
+        return [await vang(argument)]
     if command == "/tygia":
         return [await tygia(argument)]
+    if command == "/xang":
+        return [await xang(argument)]
     if command == "/xoso":
-        return [await xoso(argument)]
+        return [await xoso(argument, channel)]
     if command == "/thoitiet":
         return [await thoitiet(user_id, argument)]
     if command == "/bantin":

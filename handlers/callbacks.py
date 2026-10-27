@@ -5,7 +5,8 @@ rồi gọi service: đánh giá 👍/👎 (services/answer_feedback), 🔄 Th�
 hơn câu trả lời mới nhất, duyệt/bỏ bài Facebook chờ (cùng dispatcher /fb_ok,
 /fb_boqua có claim nguyên tử), cấp quyền người Zalo lạ (channels.zalo_onboarding),
 hoãn nhắc việc vừa tới (services/reminder_service), [Ghi nhớ]/[Bỏ] cách trả lời
-em tự rút ra (services/style_approval).
+em tự rút ra (services/style_approval), chọn đài xổ số dưới /xoso
+(services/daily_commands.xoso_province - tính bằng code, không AI).
 
 Chỉ chủ bot bấm được (ALLOWED_USER_ID) - lỗ hổng bỏ qua kiểm quyền ở callback
 từng xảy ra ở dự án khác (OpenClaw CVE-2026-35661). Luôn trả lời callback (tắt
@@ -33,6 +34,7 @@ from services import (
     answer_feedback,
     channel_chat_service,
     concurrency,
+    daily_commands,
     reminder_service,
     reply_cache,
     style_approval,
@@ -257,6 +259,14 @@ async def _style(update, context, query, action: action_buttons.Action) -> None:
         await query.message.reply_text(reply)
 
 
+async def _lottery(update, context, query, action: action_buttons.Action) -> None:
+    """🎰 <đài>: kỳ mới nhất của đài đó (giữ nguyên nút để bấm đài khác)."""
+    await answer_query(query, "🎰 Em tra kết quả đài đó nha…")
+    reply = await daily_commands.xoso_province(int(action.target))
+    if query.message is not None:
+        await common.reply_long_text(query.message, reply)
+
+
 _HANDLERS = {
     action_buttons.RATE: _rate,
     action_buttons.REGEN: _regen,
@@ -265,4 +275,5 @@ _HANDLERS = {
     action_buttons.ZALO_PAIR: _zalo_pair,
     action_buttons.SNOOZE: _snooze,
     action_buttons.STYLE: _style,
+    action_buttons.LOTTERY: _lottery,
 }

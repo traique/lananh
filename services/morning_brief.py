@@ -11,8 +11,9 @@ ngày nhớ, lịch...) thêm mục mới mà không phải sửa file này::
 
 (module đăng ký phải được import lúc khởi động, vd từ bot_app). Mục có sẵn đều
 tính bằng code, không gọi AI: thời tiết thành phố riêng (mưa theo giờ, cảnh báo
-AQI > 100), âm lịch + lễ/rằm/mùng 1 sắp tới, nhắc việc còn lại hôm nay, vàng SJC
-+ USD Vietcombank, danh mục (chỉ ngày giao dịch, build_report(digest=True)), tin.
+AQI > 100), âm lịch + lễ/rằm/mùng 1 sắp tới, nhắc việc còn lại hôm nay, vàng
+(vang.today, SJC dự phòng) + USD Vietcombank, giá xăng dầu Petrolimex (TẮT mặc định,
+bật bằng /bantin xang on), danh mục (chỉ ngày giao dịch, build_report(digest=True)), tin.
 
 Ai nhận: người tự bật ``/bantin`` trên kênh của mình (mặc định không ai nhận).
 - Telegram chủ bot: thay digest danh mục 8h của scheduler (không gửi 2 tin);
@@ -74,6 +75,7 @@ class BriefSettings:
     on: bool = False
     hour: int = 7
     news: bool | None = None  # None = theo mặc định kênh
+    fuel: bool = False  # mục giá xăng dầu (mặc định tắt)
 
     def news_enabled(self, channel: str) -> bool:
         # Telegram: tin RSS tắt mặc định (lựa chọn của chủ bot), bật bằng /bantin tin on.
@@ -92,12 +94,17 @@ def parse_settings(raw: str | None) -> BriefSettings:
         hour = config.MORNING_BRIEF_DEFAULT_HOUR
     news = data.get("news")
     return BriefSettings(
-        on=data.get("on") is True, hour=hour, news=news if isinstance(news, bool) else None
+        on=data.get("on") is True,
+        hour=hour,
+        news=news if isinstance(news, bool) else None,
+        fuel=data.get("fuel") is True,
     )
 
 
 def dump_settings(settings: BriefSettings) -> str:
-    return json.dumps({"on": settings.on, "hour": settings.hour, "news": settings.news})
+    return json.dumps(
+        {"on": settings.on, "hour": settings.hour, "news": settings.news, "fuel": settings.fuel}
+    )
 
 
 async def get_settings(channel: str, user_id: int) -> BriefSettings:
@@ -169,6 +176,11 @@ async def set_enabled(channel: str, user_id: int, on: bool, hour: int | None = N
 async def set_news(channel: str, user_id: int, news: bool) -> None:
     current = await get_settings(channel, user_id)
     await save_settings(channel, user_id, replace(current, news=news))
+
+
+async def set_fuel(channel: str, user_id: int, fuel: bool) -> None:
+    current = await get_settings(channel, user_id)
+    await save_settings(channel, user_id, replace(current, fuel=fuel))
 
 
 async def replaces_telegram_digest(user_id: int) -> bool:
@@ -371,13 +383,27 @@ async def _reminders_section(ctx: BriefContext) -> str | None:
 async def _market_section(ctx: BriefContext) -> str | None:
     from services import vn_market_data as market
 
-    gold, fx = await asyncio.gather(market.get_gold(), market.get_fx(), return_exceptions=True)
+    live, fx = await asyncio.gather(market.get_gold_live(), market.get_fx(), return_exceptions=True)
     lines = []
-    if isinstance(gold, market.GoldTable):
-        lines.append("🪙 " + market.gold_headline(gold))
+    if isinstance(live, market.LiveGoldTable):
+        lines.append("🪙 " + market.gold_live_headline(live))
+    else:
+        try:
+            lines.append("🪙 " + market.gold_headline(await market.get_gold()))
+        except market.MarketDataError:
+            pass
     if isinstance(fx, market.FxTable) and market.fx_headline(fx):
         lines.append("💱 " + market.fx_headline(fx))
     return "\n".join(lines) or None
+
+
+@register_section("fuel", 45, timeout=15)
+async def _fuel_section(ctx: BriefContext) -> str | None:
+    from services import fuel_prices
+
+    if not ctx.settings.fuel:
+        return None
+    return "⛽ " + fuel_prices.fuel_headline(await fuel_prices.get_fuel())
 
 
 @register_section("portfolio", 50, timeout=40)

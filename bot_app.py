@@ -66,6 +66,9 @@ from stock import providers as stock_providers
 
 logger = logging.getLogger(__name__)
 
+# Menu Telegram tối đa 100 lệnh (setMyCommands). Lệnh hiếm dùng chỉ bỏ khỏi MENU,
+# handler vẫn đăng ký bên dưới: /userouter9 (ép thử lại 9Router - em đã tự thử lại
+# định kỳ, cảnh báo provider tự gợi ý lệnh này) nhường chỗ cho /xang.
 COMMANDS = [
     BotCommand("start", "Bắt đầu"),
     BotCommand("help", "Xem hướng dẫn"),
@@ -89,9 +92,10 @@ COMMANDS = [
     BotCommand("tuvi_chitiet", "Lá số tử vi + AI luận giải"),
     BotCommand("kymon", "Lập bàn Kỳ Môn Độn Giáp (mặc định lúc này)"),
     BotCommand("kymon_chitiet", "Bàn Kỳ Môn + AI luận giải việc cần xem"),
-    BotCommand("vang", "Giá vàng SJC"),
+    BotCommand("vang", "Giá vàng SJC, DOJI, PNJ, thế giới"),
     BotCommand("tygia", "Tỷ giá Vietcombank, đổi tiền"),
-    BotCommand("xoso", "Kết quả xổ số, dò vé"),
+    BotCommand("xang", "Giá xăng dầu Petrolimex/PVOIL"),
+    BotCommand("xoso", "Kết quả xổ số theo miền/tỉnh, dò vé"),
     BotCommand("thoitiet", "Thời tiết; /thoitiet nha <tỉnh> đặt nơi ở"),
     BotCommand("bantin", "Bản tin sáng cá nhân (on|off|giờ|xem)"),
     BotCommand("chuy", "Có gì cần anh chú ý hôm nay"),
@@ -132,7 +136,6 @@ COMMANDS = [
     BotCommand("ragxuly", "Dọn file md OCR trong rag/ (AI thêm heading)"),
     BotCommand("bangtinsang", "Gửi ngay Bản tin sáng tới Zalo + Zoom"),
     BotCommand("tintuc", "Đọc Điểm tin mới ngay trong Telegram"),
-    BotCommand("userouter9", "Thử lại 9Router"),
     BotCommand("router9", "Bật/tắt 9Router (on|off)"),
     BotCommand("tavily", "Bật/tắt tra web Tavily (on|off)"),
     BotCommand("anh", "Tạo ảnh thật từ mô tả (Agnes AI)"),
@@ -315,6 +318,7 @@ def build_application():
         ("kymon_chitiet", commands.kymon_chitiet_cmd),
         ("vang", daily_data_commands.vang_cmd),
         ("tygia", daily_data_commands.tygia_cmd),
+        ("xang", daily_data_commands.xang_cmd),
         ("xoso", daily_data_commands.xoso_cmd),
         ("thoitiet", daily_data_commands.thoitiet_cmd),
         ("bantin", daily_data_commands.bantin_cmd),

@@ -549,9 +549,16 @@ async def test_run_chat_turn_tavily_tat_cau_can_tin_moi_dung_native(turn_fakes):
 
 
 @pytest.mark.asyncio
-async def test_run_chat_turn_chon_che_do_theo_nguon_du_lieu(turn_fakes):
+async def test_run_chat_turn_chon_che_do_theo_nguon_du_lieu(turn_fakes, monkeypatch):
     from services import channel_chat_service as ccs
+    from services import vn_market_data as market
 
+    async def gold_down():
+        raise market.MarketDataError("nguồn vàng lỗi")
+
+    # Không có số liệu vàng tra bằng code -> phải tra web thật (forced).
+    monkeypatch.setattr(market, "get_gold_live", gold_down)
+    monkeypatch.setattr(market, "get_gold", gold_down)
     turn_fakes["plan"] = web_search.SearchPlan(mode="native")
     await ccs.run_chat_turn(1, "giá vàng SJC hôm nay thế nào?")
     assert turn_fakes["chat"]["search_mode"] == "forced"

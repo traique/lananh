@@ -1,5 +1,5 @@
-"""Số liệu đời sống Việt Nam tính bằng code: giá vàng SJC, tỷ giá Vietcombank,
-kết quả xổ số 3 miền (kèm dò vé).
+"""Số liệu đời sống Việt Nam tính bằng code: giá vàng (vang.today + SJC dự phòng),
+tỷ giá Vietcombank, kết quả xổ số 3 miền và từng tỉnh (kèm dò vé).
 
 Trước đây "giá vàng hôm nay", "tỷ giá đô" đi đường tra web: viết lại truy vấn
 (1 lượt AI), Tavily, đọc sâu 2 trang (2 lượt AI) rồi chat bị ép sang Groq
@@ -8,13 +8,18 @@ câu nào kích hoạt tra web nên model có thể bịa số trúng thưởng.
 lấy thẳng từ nguồn công khai, parse bằng thư viện chuẩn, KHÔNG gọi AI:
 
 - Tỷ giá: XML Vietcombank (feed tự ghi "1 request mỗi 5 phút" -> TTL 10 phút).
-- Vàng: SJC (POST PriceService.ashx). BTMC không dùng vì API cần key.
-- Xổ số: RSS xskt.com.vn theo miền; dò vé làm bằng code, không qua LLM.
+- Vàng: nguồn chính vang.today (/api/prices: SJC miếng, nhẫn SJC, DOJI, PNJ, Bảo
+  Tín, Viettin, VN Gold, XAU/USD kèm tăng giảm so với hôm trước - như repo tham khảo
+  traique/stock-portfolio); SJC (POST PriceService.ashx) giữ làm dự phòng.
+- Xổ số: RSS xskt.com.vn theo miền và theo từng tỉnh (services/lottery_provinces.py);
+  dò vé làm bằng code, không qua LLM.
+- Xăng dầu: services/fuel_prices.py (dùng chung cache/fetch ở đây).
 
 Giới hạn tài nguyên (RAM 512 MB): HTTP qua client chung (services.http_client),
 timeout ngắn, body có trần byte, mỗi nguồn giữ ĐÚNG 1 bản đã parse trong RAM
-(5 khoá cố định) và cache lỗi 60 giây để nguồn chết không bị gọi dồn. Lỗi thì
-raise MarketDataError; nơi gọi tự rơi về đường tra web cũ, ghi rõ "tham khảo".
+(khoá cố định: 3 miền + 36 đài + vàng/tỷ giá/xăng, trần _MAX_CACHE_KEYS) và cache
+lỗi 60 giây để nguồn chết không bị gọi dồn. Lỗi thì raise MarketDataError; nơi gọi
+tự rơi về đường tra web cũ, ghi rõ "tham khảo".
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ import httpx
 
 from core.text_normalize import fold
 from services import http_client, reply_audience
+from services import lottery_provinces as provinces
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +48,7 @@ T = TypeVar("T")
 
 FX_URL = "https://portal.vietcombank.com.vn/Usercontrols/TVPortal.TyGia/pXML.aspx"
 SJC_URL = "https://sjc.com.vn/GoldPrice/Services/PriceService.ashx"
+GOLD_LIVE_URL = "https://www.vang.today/api/prices"
 LOTTERY_FEEDS = {
     "mb": "https://xskt.com.vn/rss-feed/mien-bac-xsmb.rss",
     "mn": "https://xskt.com.vn/rss-feed/mien-nam-xsmn.rss",
@@ -49,7 +56,7 @@ LOTTERY_FEEDS = {
 }
 REGION_NAMES = {"mb": "miền Bắc", "mn": "miền Nam", "mt": "miền Trung"}
 # Giờ quay thưởng (giờ VN) - hỏi "hôm nay" trước giờ này thì chưa có kết quả.
-DRAW_TIMES = {"mn": "16h15", "mt": "17h15", "mb": "18h15"}
+DRAW_TIMES = provinces.DRAW_TIMES
 
 _TIMEOUT = httpx.Timeout(6.0, connect=4.0)
 _TOTAL_TIMEOUT_SEC = 10.0
@@ -58,7 +65,11 @@ _FX_TTL_SEC = 600
 _GOLD_TTL_SEC = 600
 _LOTTERY_TTL_SEC = 300
 _ERROR_TTL_SEC = 60
+# 3 miền + 36 đài + fx/gold/gold_live/fuel = 43 khoá cố định; trần phòng khi thêm nguồn.
+_MAX_CACHE_KEYS = 64
 _MAX_DRAWS = 10
+_MAX_AGE = dt.timedelta(days=366)
+_ONE_DAY = dt.timedelta(days=1)
 _MAX_GOLD_ROWS = 60
 _HEADERS = {
     "User-Agent": (
@@ -127,6 +138,7 @@ _locks: dict[str, asyncio.Lock] = {}
 
 def clear_cache() -> None:
     _cache.clear()
+    _locks.clear()
 
 
 async def _cached(key: str, ttl: float, loader: Callable[[], Awaitable[T]]) -> T:
@@ -161,14 +173,29 @@ async def _cached(key: str, ttl: float, loader: Callable[[], Awaitable[T]]) -> T
             ET.ParseError,
         ) as exc:
             logger.warning("vn_market_data: nguồn %s lỗi: %r", key, exc)
-            _cache[key] = (time.monotonic(), None)
+            _store(key, None)
             raise MarketDataError(f"Nguồn {key} lỗi: {exc}") from exc
-        _cache[key] = (time.monotonic(), loaded)
+        _store(key, loaded)
         return loaded
 
 
-async def _fetch(method: str, url: str, *, data: dict | None = None) -> bytes:
-    """Tải body dạng stream, dừng ngay khi vượt _MAX_BYTES (kể cả sau giải nén)."""
+def _store(key: str, value: object | None) -> None:
+    _cache[key] = (time.monotonic(), value)
+    while len(_cache) > _MAX_CACHE_KEYS:  # bỏ bản cũ nhất (không xảy ra với khoá cố định)
+        oldest = min(_cache, key=lambda k: _cache[k][0])
+        _cache.pop(oldest, None)
+        _locks.pop(oldest, None)
+
+
+async def cached(key: str, ttl: float, loader: Callable[[], Awaitable[T]]) -> T:
+    """Cache dùng chung cho nguồn khác (services/fuel_prices.py): 1 bản/khoá, cache lỗi."""
+    return await _cached(key, ttl, loader)
+
+
+async def _fetch(
+    method: str, url: str, *, data: dict | None = None, max_bytes: int = _MAX_BYTES
+) -> bytes:
+    """Tải body dạng stream, dừng ngay khi vượt ``max_bytes`` (kể cả sau giải nén)."""
     client = http_client.get_client()
     async with client.stream(method, url, data=data, headers=_HEADERS, timeout=_TIMEOUT) as resp:
         if resp.status_code != 200:
@@ -177,10 +204,13 @@ async def _fetch(method: str, url: str, *, data: dict | None = None) -> bytes:
         size = 0
         async for chunk in resp.aiter_bytes():
             size += len(chunk)
-            if size > _MAX_BYTES:
-                raise MarketDataError(f"Phản hồi quá lớn (> {_MAX_BYTES // 1024} KB)")
+            if size > max_bytes:
+                raise MarketDataError(f"Phản hồi quá lớn (> {max_bytes // 1024} KB)")
             chunks.append(chunk)
     return b"".join(chunks)
+
+
+fetch = _fetch
 
 
 def _xml_root(content: bytes) -> ET.Element:
@@ -286,6 +316,238 @@ async def get_gold() -> GoldTable:
     return await _cached("gold", _GOLD_TTL_SEC, _load_gold)
 
 
+# ─── Giá vàng nhiều thương hiệu (vang.today) ────────────────────────────────
+
+# Mã vang.today -> (nhãn tiếng Việt, thương hiệu dùng để lọc). Thứ tự = thứ tự hiển thị.
+GOLD_CODES: dict[str, tuple[str, str]] = {
+    "SJL1L10": ("SJC miếng 9999", "sjc"),
+    "SJ9999": ("Nhẫn SJC 9999", "nhan"),
+    "DOHNL": ("DOJI Hà Nội", "doji"),
+    "DOHCML": ("DOJI TP.HCM", "doji"),
+    "DOJINHTV": ("DOJI nữ trang", "doji"),
+    "PQHNVM": ("PNJ Hà Nội", "pnj"),
+    "PQHN24NTT": ("PNJ 24K", "pnj"),
+    "BTSJC": ("Bảo Tín SJC", "baotin"),
+    "BT9999NTT": ("Bảo Tín 9999", "baotin"),
+    "VIETTINMSJC": ("Viettin SJC", "viettin"),
+    "VNGSJC": ("VN Gold SJC", "vngold"),
+    "XAUUSD": ("Vàng thế giới XAU/USD", "world"),
+}
+# Mặc định /vang: đủ SJC miếng, nhẫn, DOJI, PNJ, Bảo Tín, thế giới - không quá dài.
+GOLD_DEFAULT = ("SJL1L10", "SJ9999", "DOHNL", "PQHNVM", "PQHN24NTT", "BTSJC", "BT9999NTT")
+GOLD_BRAND_NAMES = {
+    "sjc": "SJC",
+    "nhan": "nhẫn",
+    "doji": "DOJI",
+    "pnj": "PNJ",
+    "baotin": "Bảo Tín",
+    "viettin": "Viettin",
+    "vngold": "VN Gold",
+    "world": "thế giới",
+}
+GRAMS_PER_TAEL = 37.5  # 1 lượng (cây)
+GRAMS_PER_OUNCE = 31.1034768  # 1 troy ounce
+
+
+@dataclass(frozen=True)
+class LiveGoldRow:
+    code: str
+    label: str
+    brand: str
+    buy: float | None  # VND/lượng (XAUUSD: USD/oz)
+    sell: float | None
+    change_buy: float | None  # so với hôm trước, cùng đơn vị
+    change_sell: float | None
+    currency: str = "VND"
+
+
+@dataclass(frozen=True)
+class LiveGoldTable:
+    updated: str  # "07:30 27/10/2026" (giờ nguồn ghi)
+    rows: tuple[LiveGoldRow, ...]
+    source: str = "vang.today"
+
+    def get(self, code: str) -> LiveGoldRow | None:
+        return next((r for r in self.rows if r.code == code), None)
+
+
+def _signed(raw) -> float | None:
+    """Số có dấu (tăng giảm); rỗng/không phải số -> None."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    text = str(raw or "").strip().replace(",", "")
+    try:
+        return float(text) if text else None
+    except ValueError:
+        return None
+
+
+def parse_vang_today_json(content: bytes) -> LiveGoldTable:
+    """JSON https://www.vang.today/api/prices: success, timestamp, time, date, count,
+    prices = danh sách {type_code, name, buy, sell, change_buy, change_sell} HOẶC
+    object {mã: {...}} (nguồn từng trả cả 2 dạng)."""
+    data = json.loads(content)
+    if not isinstance(data, dict) or data.get("success") is False:
+        raise MarketDataError("vang.today trả success=false")
+    raw = data.get("prices")
+    if isinstance(raw, dict):
+        items = [{**v, "type_code": k} for k, v in raw.items() if isinstance(v, dict)]
+    elif isinstance(raw, list):
+        items = [v for v in raw if isinstance(v, dict)]
+    else:
+        raise MarketDataError("vang.today không có prices")
+    rows: dict[str, LiveGoldRow] = {}
+    for item in items[:_MAX_GOLD_ROWS]:
+        code = str(item.get("type_code") or item.get("code") or "").strip().upper()
+        if code not in GOLD_CODES or code in rows:
+            continue
+        label, brand = GOLD_CODES[code]
+        buy, sell = _num(item.get("buy")), _num(item.get("sell"))
+        if buy is None and sell is None:
+            continue
+        rows[code] = LiveGoldRow(
+            code=code,
+            label=label,
+            brand=brand,
+            buy=buy,
+            sell=sell,
+            change_buy=_signed(item.get("change_buy")),
+            change_sell=_signed(item.get("change_sell")),
+            currency=str(item.get("currency") or ("USD" if code == "XAUUSD" else "VND"))[:4],
+        )
+    if not any(r.currency == "VND" for r in rows.values()):
+        raise MarketDataError("vang.today không có dòng giá vàng trong nước nào")
+    updated = ""
+    day, clock = str(data.get("date") or "").strip(), str(data.get("time") or "").strip()
+    try:
+        if day:
+            updated = f"{clock} {dt.date.fromisoformat(day):%d/%m/%Y}".strip()
+    except ValueError:
+        updated = ""
+    if not updated and _signed(data.get("timestamp")):
+        stamp = dt.datetime.fromtimestamp(float(data["timestamp"]), _VN_TZ)
+        updated = f"{stamp:%H:%M %d/%m/%Y}"
+    ordered = tuple(rows[c] for c in GOLD_CODES if c in rows)
+    return LiveGoldTable(updated=updated[:40], rows=ordered)
+
+
+async def _load_gold_live() -> LiveGoldTable:
+    return parse_vang_today_json(await _fetch("GET", GOLD_LIVE_URL))
+
+
+async def get_gold_live() -> LiveGoldTable:
+    return await _cached("gold_live", _GOLD_TTL_SEC, _load_gold_live)
+
+
+def trieu(value: float | None) -> str:
+    """Đồng -> triệu, tối đa 2 số lẻ, bỏ số 0 thừa: 138700000 -> "138,7"."""
+    if value is None:
+        return "-"
+    text = vnd(value / 1_000_000, 2)
+    return text.rstrip("0").rstrip(",") if "," in text else text
+
+
+def _arrow(change: float | None, unit: Callable[[float], str]) -> str:
+    if not change:
+        return ""
+    return f" ({'▲' if change > 0 else '▼'}{unit(abs(change))})"
+
+
+def world_gold_vnd(usd_per_oz: float, usd_vnd: float) -> float:
+    """USD/oz -> VND/lượng (37,5 g / 31,1035 g), chưa gồm thuế phí."""
+    return usd_per_oz * usd_vnd * GRAMS_PER_TAEL / GRAMS_PER_OUNCE
+
+
+def _usd_rate(fx: FxTable | None) -> float | None:
+    usd = fx.rates.get("USD") if fx is not None else None
+    return (usd.sell or usd.transfer) if usd is not None else None
+
+
+def format_gold_live(
+    table: LiveGoldTable,
+    brands: set[str] | None = None,
+    *,
+    fx: FxTable | None = None,
+    per_chi: bool = False,
+) -> str:
+    """Bảng giá vàng: mua/bán triệu đồng/lượng, ▲▼ so với hôm trước; vàng thế giới
+    kèm quy đổi tham khảo theo giá bán USD Vietcombank. ``brands`` lọc thương hiệu."""
+    wanted = set(brands or ())
+    domestic = [r for r in table.rows if r.currency == "VND"]
+    if wanted - {"world"}:
+        domestic = [
+            r for r in domestic if r.brand in wanted or (r.brand == "nhan" and "sjc" in wanted)
+        ]
+    elif wanted == {"world"}:
+        domestic = [r for r in domestic if r.code == "SJL1L10"]
+    else:
+        domestic = [r for r in domestic if r.code in GOLD_DEFAULT]
+    title = "🪙 Giá vàng" + (
+        " " + ", ".join(GOLD_BRAND_NAMES[b] for b in sorted(wanted) if b in GOLD_BRAND_NAMES)
+        if wanted
+        else " hôm nay"
+    )
+    lines = [title + (f" (cập nhật {table.updated})" if table.updated else "")]
+    for r in domestic:
+        lines.append(
+            f"• {r.label}: mua {trieu(r.buy)}{_arrow(r.change_buy, trieu)} · "
+            f"bán {trieu(r.sell)}{_arrow(r.change_sell, trieu)}"
+        )
+    world = table.get("XAUUSD")
+    show_world = not wanted or "world" in wanted
+    if world is not None and show_world:
+        price = world.buy or world.sell
+        lines.append(
+            f"• Thế giới XAU/USD: {vnd(price, 1 if price and price % 1 else 0)} USD/oz"
+            + _arrow(world.change_buy, lambda v: vnd(v, 1 if v % 1 else 0))
+        )
+        rate = _usd_rate(fx)
+        if price and rate:
+            converted = world_gold_vnd(price, rate)
+            note = (
+                f"  ≈ {trieu(converted)} triệu/lượng nếu quy đổi theo giá bán USD Vietcombank "
+                f"{vnd(rate)} đ (tham khảo, chưa gồm thuế, phí)"
+            )
+            sjc = table.get("SJL1L10")
+            if sjc is not None and sjc.sell:
+                gap = sjc.sell - converted
+                note += (
+                    f"; SJC miếng bán {'cao' if gap >= 0 else 'thấp'} hơn ≈ {trieu(abs(gap))} "
+                    "triệu/lượng"
+                )
+            lines.append(note)
+    elif show_world and wanted == {"world"}:
+        lines.append("• Nguồn chưa có giá vàng thế giới lúc này.")
+    if per_chi:
+        first = next((r for r in domestic if r.sell), None)
+        if first is not None:
+            lines.append(
+                f"1 chỉ = 1/10 lượng: {first.label} bán ≈ {trieu((first.sell or 0) / 10)} triệu/chỉ."
+            )
+    lines.append(
+        "(Nguồn vang.today; trong nước đơn vị triệu đồng/lượng, ▲▼ = tăng/giảm so với hôm "
+        "trước, không ghi là đứng giá)"
+    )
+    return "\n".join(lines)
+
+
+def gold_live_headline(table: LiveGoldTable) -> str:
+    row = table.get("SJL1L10") or next(r for r in table.rows if r.currency == "VND")
+    text = (
+        f"Vàng {row.label} mua {trieu(row.buy)} · bán {trieu(row.sell)}"
+        f"{_arrow(row.change_sell, trieu)} triệu/lượng"
+    )
+    ring = table.get("SJ9999")
+    if ring is not None and row.code != "SJ9999":
+        text += f"; nhẫn bán {trieu(ring.sell)}"
+    world = table.get("XAUUSD")
+    if world is not None and (world.buy or world.sell):
+        text += f"; thế giới {vnd(world.buy or world.sell)} USD/oz"
+    return text
+
+
 # ─── Xổ số (RSS xskt.com.vn) ────────────────────────────────────────────────
 
 # Nhãn giải: "ĐB" hoặc 1 chữ số đứng NGAY trước dấu ":". Feed có lúc dính dòng
@@ -308,9 +570,9 @@ def _parse_prizes(block: str) -> dict[str, tuple[str, ...]]:
     return prizes
 
 
-def parse_draw_text(text: str, region: str) -> tuple[ProvinceResult, ...]:
-    """Kết quả 1 kỳ quay: "[Tỉnh]" + các dòng "ĐB: ...", "1: ..."; miền Bắc
-    không có tên tỉnh."""
+def parse_draw_text(text: str, region: str, name: str = "") -> tuple[ProvinceResult, ...]:
+    """Kết quả 1 kỳ quay: "[Tỉnh]" + các dòng "ĐB: ...", "1: ..."; miền Bắc và
+    feed riêng từng tỉnh không có tên tỉnh (dùng ``name`` hoặc tên miền)."""
     headers = list(_PROVINCE_HEADER_RE.finditer(text or ""))
     blocks: list[tuple[str, str]] = []
     if headers:
@@ -318,8 +580,9 @@ def parse_draw_text(text: str, region: str) -> tuple[ProvinceResult, ...]:
             end = headers[i + 1].start() if i + 1 < len(headers) else len(text)
             blocks.append((match.group(1).strip(), text[match.end() : end]))
     else:
-        name = REGION_NAMES.get(region, "")
-        blocks.append((name[:1].upper() + name[1:] or "Kết quả", text or ""))
+        region_name = REGION_NAMES.get(region, "")
+        label = name or region_name[:1].upper() + region_name[1:]
+        blocks.append((label or "Kết quả", text or ""))
     out: list[ProvinceResult] = []
     for name, block in blocks[:6]:
         prizes = _parse_prizes(block)
@@ -349,8 +612,9 @@ def _draw_date(link: str, title: str, today: dt.date) -> dt.date | None:
 
 
 def parse_lottery_rss(
-    content: bytes, region: str, today: dt.date | None = None
+    content: bytes, region: str, today: dt.date | None = None, name: str = ""
 ) -> list[LotteryDraw]:
+    """Các kỳ trong 1 feed (miền hoặc 1 tỉnh - ``name`` là tên tỉnh của feed riêng)."""
     today = today or dt.datetime.now(_VN_TZ).date()
     root = _xml_root(content)
     draws: list[LotteryDraw] = []
@@ -358,10 +622,11 @@ def parse_lottery_rss(
         title = (item.findtext("title") or "").strip()
         link = (item.findtext("link") or "").strip()
         day = _draw_date(link, title, today)
-        provinces = parse_draw_text(item.findtext("description") or "", region)
-        if day is None or not provinces:
+        found = parse_draw_text(item.findtext("description") or "", region, name)
+        # Feed có lúc lẫn 1 kỳ ngày lạ (link "26-1-2007"): bỏ kỳ ở tương lai/quá cũ.
+        if day is None or not found or not (today - _MAX_AGE <= day <= today + _ONE_DAY):
             continue
-        draws.append(LotteryDraw(region=region, date=day, provinces=provinces, link=link))
+        draws.append(LotteryDraw(region=region, date=day, provinces=found, link=link))
         if len(draws) >= _MAX_DRAWS:
             break
     if not draws:
@@ -379,6 +644,21 @@ async def get_lottery(region: str) -> list[LotteryDraw]:
         return parse_lottery_rss(await _fetch("GET", LOTTERY_FEEDS[region]), region)
 
     return await _cached(f"xs:{region}", _LOTTERY_TTL_SEC, load)
+
+
+async def get_province_lottery(province: provinces.Province) -> list[LotteryDraw]:
+    """Các kỳ gần nhất (khoảng 9 kỳ) của ĐÚNG 1 đài, từ feed riêng của tỉnh đó.
+    Miền Bắc quay chung 1 kỳ nên dùng luôn feed miền."""
+    if province.region == "mb":
+        return await get_lottery("mb")
+    if provinces.BY_KEY.get(province.key) is not province:
+        raise MarketDataError(f"Đài xổ số không có trong danh mục: {province.key}")
+
+    async def load() -> list[LotteryDraw]:
+        body = await _fetch("GET", province.feed_url)
+        return parse_lottery_rss(body, province.region, name=province.name)
+
+    return await _cached(f"xst:{province.key}", _LOTTERY_TTL_SEC, load)
 
 
 def pick_draw(draws: list[LotteryDraw], day: dt.date | None) -> LotteryDraw | None:
@@ -539,11 +819,10 @@ def fx_headline(table: FxTable) -> str:
 
 
 def _draw_heading(draw: LotteryDraw) -> str:
-    weekdays = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
-    return (
-        f"🎰 Xổ số {REGION_NAMES.get(draw.region, draw.region)} - "
-        f"{weekdays[draw.date.weekday()]} {draw.date:%d/%m/%Y}"
-    )
+    region = REGION_NAMES.get(draw.region, draw.region)
+    if len(draw.provinces) == 1 and draw.region != "mb":
+        region = f"{draw.provinces[0].name} ({region})"
+    return f"🎰 Xổ số {region} - {provinces.WEEKDAYS[draw.date.weekday()]} {draw.date:%d/%m/%Y}"
 
 
 def format_draw(draw: LotteryDraw) -> str:
@@ -560,32 +839,21 @@ def format_draw(draw: LotteryDraw) -> str:
     return "\n".join(lines)
 
 
-# Tên khác của cùng 1 đài (bỏ dấu, dấu câu thành khoảng trắng): nguồn ghi "TP.HCM"
-# hay "Hồ Chí Minh", người dùng gõ "sài gòn"; xổ số Lâm Đồng mang tên "Đà Lạt".
-_PROVINCE_ALIASES = (
-    ("ho chi minh", "tp ho chi minh", "tp hcm", "tphcm", "hcm", "sai gon"),
-    ("da lat", "lam dong"),
-    ("hue", "thua thien hue", "tt hue"),
-    ("vung tau", "ba ria vung tau", "brvt"),
-    ("dak lak", "daklak", "dac lac"),
-    ("dak nong", "daknong", "dac nong"),
-)
-
-
 def _name_key(text: str) -> str:
     return " ".join(re.sub(r"[^\w]+", " ", fold(text)).split())
 
 
-def _province_keys(name: str) -> tuple[str, ...]:
-    key = _name_key(name)
-    return next((group for group in _PROVINCE_ALIASES if key in group), (key,))
-
-
 def find_province(draw: LotteryDraw, text: str) -> ProvinceResult | None:
-    """Tỉnh trong kỳ quay được nhắc tới trong câu (so bỏ dấu, nhận tên khác)."""
+    """Tỉnh trong kỳ quay được nhắc tới trong câu (so bỏ dấu, nhận tên khác theo
+    danh mục services/lottery_provinces; tên lạ ngoài danh mục so nguyên văn)."""
+    for named in provinces.find_all(text):
+        hit = next((p for p in draw.provinces if provinces.same(p.name, named)), None)
+        if hit is not None:
+            return hit
     folded = f" {_name_key(text)} "
     for province in draw.provinces:
-        if any(key and f" {key} " in folded for key in _province_keys(province.name)):
+        key = _name_key(province.name)
+        if key and f" {key} " in folded:
             return province
     return None
 
@@ -629,12 +897,21 @@ def format_ticket(
             f"{digits} số giúp {me} nha (vd /xoso {'mb 12345' if digits == 5 else 'mn 123456'})."
         )
     target = find_province(draw, province_hint) if province_hint else None
-    provinces = [target] if target else list(draw.provinces)
+    named = provinces.match(province_hint) if province_hint and target is None else None
+    if named is not None and named.region != "mb" and len(draw.provinces) > 1:
+        # Câu nhắc 1 đài không có trong kỳ này: KHÔNG dò sang đài khác rồi phán trượt.
+        have = ", ".join(p.name for p in draw.provinces)
+        return (
+            f"Kỳ {draw.date:%d/%m/%Y} không có đài {named.name} (kỳ đó có: {have}), "
+            f"{me} chưa dò vé này được. {you.capitalize()} nhắn /xoso "
+            f"{named.name.lower()} {ticket} để {me} dò đúng kỳ của đài đó nha."
+        )
+    checked = [target] if target else list(draw.provinces)
     if target is not None:
         incomplete = None  # đúng đài người dùng hỏi đã có kết quả
     lines = [f"🎫 Dò vé {ticket} - {_draw_heading(draw)[2:]}"]
     any_win = False
-    for province in provinces:
+    for province in checked:
         wins = check_ticket(ticket, province.prizes, draw.region)
         if not wins:
             lines.append(f"• {province.name}: không trúng")
