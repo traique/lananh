@@ -172,6 +172,8 @@ jobs:
             python -c "import web, bot_app, scheduler, main"
             pip check
             node --version
+            ffmpeg -hide_banner -encoders | grep -q libopus
+            ffmpeg -hide_banner -encoders | grep -qw aac
             node --check zalo-gateway/dist/index.js
             cd zalo-gateway
             node --input-type=module -e "await import(\"zca-js\")"

@@ -442,11 +442,11 @@ một lần sau khi deploy.
    `VOICE_TTS_MODEL=gemini-3.8-flash-tts`, `VOICE_TTS_VOICE=Kore`,
    `VOICE_REPLY_URL_TTL_MIN=10`, `VOICE_REPLY_STORE_MB=8`, `NUTRITION_NL=0`,
    `NUTRITION_AI_ESTIMATE=0`.
-3. **ffmpeg - quyết định của chủ repo.** Image hiện KHÔNG có ffmpeg: Telegram nhận
-   file WAV (bấm mở để nghe), Zalo không có tin thoại. Muốn tin thoại thật trên cả
-   2 kênh thì thêm `ffmpeg` vào dòng `apt-get install` của `Dockerfile` (~+80 MB
-   image, RAM chỉ khi đổi định dạng, mỗi lần vài chục MB trong <1 giây). Chưa làm vì
-   AGENTS.md cấm tự thêm apt.
+3. **ffmpeg - đã thêm vào `Dockerfile`** (chủ repo duyệt 27/10/2026): Telegram nhận
+   tin thoại OGG/Opus thật, Zalo có tin thoại M4A. Image nặng thêm (thư viện của
+   ffmpeg), RAM chỉ tốn khi đổi định dạng (1 tiến trình, vài chục MB, <1 giây). CI
+   smoke test kiểm image có encoder `libopus` và `aac`. Chạy nơi không có ffmpeg thì
+   Telegram tự rơi về file WAV, Zalo tắt tin thoại.
 4. Menu Telegram có thêm `/an`, `/noi` (tự cập nhật lúc khởi động; menu đang 99/100
    lệnh nếu gộp cả P2 - Telegram tối đa 100). Gateway Zalo cần build lại (đã nằm
    trong image).
