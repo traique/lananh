@@ -105,7 +105,7 @@
 {% endif %}
 {% if data.availableDates %}
 <section class="panel" aria-labelledby="dates-title">
-  <header><h2 id="dates-title">Các kỳ nguồn còn giữ</h2></header>
+  <header><h2 id="dates-title">Kỳ quay gần đây</h2></header>
   <ul class="links" role="list">
     {% for d in data.availableDates %}
     <li><a href="/xo-so?dai={{ data.target.key | urlencode }}&amp;ngay={{ d }}"{% if data.draw and d == data.draw.date %} aria-current="page"{% endif %}>{{ d | vn_date }}</a></li>

@@ -69,6 +69,7 @@ from fastapi.responses import (
     Response,
 )
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup, escape
 
 import web_admin
 from core import config
@@ -273,6 +274,40 @@ api_router = APIRouter(prefix="/api/v1")
 static_router = APIRouter(include_in_schema=False)
 
 
+# Câu trả lời Hỏi lịch là chữ của lệnh /lich (dùng chung với chat). Trên web: bỏ emoji đầu
+# dòng, đổi dấu đánh dấu emoji/chấm giữa sang ký hiệu chữ, " - " thành dấu phẩy, dòng "• "
+# thành danh sách thật; đoạn cách nhau bằng dòng trống.
+_ANSWER_LEAD = re.compile(r"^(?:📅|🎉|✅|⚠️|ℹ️|❌)\s*")
+_ANSWER_MARKS = (("⭐", "★"), ("🌕", "●"), ("·hđ", "(hđ)"), (" - ", ", "))
+
+
+def _answer_html(text: str) -> Markup:
+    html = []
+    for chunk in re.split(r"\n\s*\n", str(text).strip()):
+        lines: list[str] = []
+        items: list[str] = []
+        for raw in chunk.splitlines():
+            line = _ANSWER_LEAD.sub("", raw.strip())
+            for old, new in _ANSWER_MARKS:
+                line = line.replace(old, new)
+            if line.startswith("• "):
+                if lines:
+                    html.append(f"<p>{'<br>'.join(lines)}</p>")
+                    lines = []
+                items.append(f"<li>{escape(line[2:])}</li>")
+                continue
+            if items:
+                html.append(f"<ul>{''.join(items)}</ul>")
+                items = []
+            if line:
+                lines.append(str(escape(line)))
+        if lines:
+            html.append(f"<p>{'<br>'.join(lines)}</p>")
+        if items:
+            html.append(f"<ul>{''.join(items)}</ul>")
+    return Markup("".join(html))
+
+
 @functools.lru_cache(maxsize=1)
 def _env() -> Environment:
     env = Environment(
@@ -290,6 +325,7 @@ def _env() -> Environment:
     # Ý nghĩa trong assets/*.yaml (dùng chung với chat) viết "nhãn - giải thích"; trên web
     # gạch nối có cách thành dấu hai chấm (hoặc phẩy), không để gạch làm dấu câu.
     env.filters["clause"] = lambda text, sep=": ": str(text).replace(" - ", sep)
+    env.filters["answer_html"] = _answer_html
     return env
 
 

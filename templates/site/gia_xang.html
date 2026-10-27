@@ -22,8 +22,8 @@
         <th scope="row">{{ r.name }}</th>
         <td class="n" data-label="Vùng 1"><span class="price">{{ r.zone1 | vnd }}</span></td>
         <td class="n" data-label="Vùng 2">{{ r.zone2 | vnd }}</td>
-        <td class="n" data-label="Kỳ này">{{ delta(r.change, zero="0") }}</td>
-        <td class="n" data-label="Kỳ trước">{{ delta(r.prevChange, zero="0") }}</td>
+        <td class="n" data-label="Kỳ này">{{ delta(r.change, zero="Giữ nguyên") }}</td>
+        <td class="n" data-label="Kỳ trước">{{ delta(r.prevChange, zero="Giữ nguyên") }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -39,14 +39,14 @@
       <tr>
         <th scope="row">{{ r.name }}</th>
         <td class="n" data-label="Giá"><span class="price">{{ r.price | vnd }}</span></td>
-        <td class="n" data-label="Kỳ này">{{ delta(r.change, zero="0") }}</td>
-        <td class="n" data-label="Kỳ trước">{{ delta(r.prevChange, zero="0") }}</td>
+        <td class="n" data-label="Kỳ này">{{ delta(r.change, zero="Giữ nguyên") }}</td>
+        <td class="n" data-label="Kỳ trước">{{ delta(r.prevChange, zero="Giữ nguyên") }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 {% endif %}
-<p class="note-line">Nguồn: {{ data.source }} theo bảng giá Petrolimex và PVOIL; cập nhật khoảng 1 giờ một lần, trang không tự đoán giá. ▲▼ là tăng, giảm (đồng/lít), 0 là giữ nguyên. Dữ liệu JSON: <a href="/api/v1/fuel">/api/v1/fuel</a>.</p>
+<p class="note-line">Nguồn: {{ data.source }} theo bảng giá Petrolimex và PVOIL; cập nhật khoảng 1 giờ một lần, trang không tự đoán giá. ▲▼ là tăng, giảm (đồng/lít). Dữ liệu JSON: <a href="/api/v1/fuel">/api/v1/fuel</a>.</p>
 {% endif %}
 {% endblock %}

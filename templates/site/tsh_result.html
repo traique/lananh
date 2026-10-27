@@ -63,8 +63,8 @@
   <ol class="stages" role="list">
     {% for s in reading.pinnacles %}
     <li{% if s.isCurrent %} class="is-now"{% endif %}>
-      <span class="age">Đỉnh {{ loop.index }}: {{ s.label }}{% if s.isCurrent %} (hiện tại){% endif %}</span>
-      <span class="n">{{ s.value }}</span>
+      <span class="age">Đỉnh {{ loop.index }}: {{ s.label }}</span>
+      <span class="n">{{ s.value }}{% if s.isCurrent %}<span class="pill sm pos">Hiện tại</span>{% endif %}</span>
       <p>{{ s.meaning | clause }}</p>
     </li>
     {% endfor %}
@@ -73,8 +73,8 @@
   <ol class="stages" role="list">
     {% for s in reading.challenges %}
     <li{% if s.isCurrent %} class="is-now"{% endif %}>
-      <span class="age">Thử thách {{ loop.index }}: {{ s.label }}{% if s.isCurrent %} (hiện tại){% endif %}</span>
-      <span class="n">{{ s.value }}</span>
+      <span class="age">Thử thách {{ loop.index }}: {{ s.label }}</span>
+      <span class="n">{{ s.value }}{% if s.isCurrent %}<span class="pill sm pos">Hiện tại</span>{% endif %}</span>
       <p>{{ s.meaning | clause }}</p>
     </li>
     {% endfor %}

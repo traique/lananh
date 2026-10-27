@@ -274,10 +274,18 @@ async def test_hoi_lich_tren_web_khong_lo_giong_bot(client):
     """Câu không hiểu: gợi ý cách hỏi kiểu web, không có cú pháp /lich hay "Em chưa hiểu"."""
     for q in ("abc", "help", "tuổi ty hợp tuổi nào"):
         html = (await client.get("/lich/hoi", params={"q": q})).text
-        answer = html.split('<p class="answer">')[1].split("</p>")[0]
+        answer = html.split('<div class="answer-body">')[1].split("</div>")[0]
         assert "/lich" not in answer and "Em chưa" not in answer, q
     html = (await client.get("/lich/hoi", params={"q": "abc"})).text
     assert "Chưa hiểu câu hỏi này" in html and "xem ngày động thổ" in html
+    # Chữ kiểu tin nhắn chat thành chữ của trang: không emoji đầu dòng, "• " là danh sách.
+    html = (await client.get("/lich/hoi", params={"q": "các ngày lễ"})).text
+    answer = html.split('<div class="answer-body">')[1].split("</div>")[0]
+    assert "🎉" not in answer and "•" not in answer and " - " not in answer
+    assert answer.startswith("<p>Các ngày lễ sắp tới:</p><ul><li>")
+    assert web_site._answer_html("📅 Tháng 10:\n10 T7 | âm 1/9 ⭐ ·hđ\n<b>") == (
+        "<p>Tháng 10:<br>10 T7 | âm 1/9 ★ (hđ)<br>&lt;b&gt;</p>"
+    )
     api = await client.get("/api/v1/calendar/answers", params={"q": "29/2/2027"})
     assert api.json()["answer"].startswith("Năm 2027 không có ngày 29/2")
 
