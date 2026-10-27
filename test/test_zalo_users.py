@@ -234,6 +234,8 @@ async def test_remove_user(patched_db, monkeypatch):
                 f"quiet:{uid}",
                 # Trả lời kèm giọng nói riêng (/noi, services/voice_reply.py).
                 f"voice_reply:{uid}",
+                # Giọng đọc riêng (/noi giong <tên>).
+                f"voice_name:{uid}",
             ],
         ),
     ) in [(q, a) for q, a in patched_db.data_deletes]

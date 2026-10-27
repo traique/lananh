@@ -43,7 +43,7 @@ from dataclasses import dataclass, replace
 from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
-from core import address, config, trace
+from core import address, config, memtrim, trace
 from core import database as db
 from services import personal_settings, reply_audience, weather_home
 
@@ -644,6 +644,9 @@ async def run_due(now: dt.datetime | None = None) -> int:
             raise
         except Exception:
             logger.exception("morning_brief: lỗi gửi bản tin %s:%s", target.channel, target.user_id)
+    if sent:
+        # Bản tin gom thời tiết, danh mục, tin RSS, lời chào AI: dọn heap khi xong.
+        memtrim.request("bản tin sáng")
     return sent
 
 

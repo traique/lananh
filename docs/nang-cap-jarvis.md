@@ -562,6 +562,35 @@ AI nào cho câu hỏi gọn). Không migration, không env mới.
 - Bản tin sáng: mục `fuel` (order 45) TẮT mặc định, bật `/bantin xang on` (lưu trong JSON
   cài đặt bản tin, khoá `fuel`).
 
+### 4. Giá vàng, giá xăng trên web công khai
+
+- Trang `/gia-vang` và `/gia-xang` (link "Giá vàng", "Giá xăng" ở thanh bên nhóm Tra cứu,
+  ngay sau Xổ số - cùng danh mục cho menu điện thoại; thêm 2 thẻ trên trang chủ, thẻ chỉ là
+  link nên trang chủ không gọi nguồn giá).
+- `/gia-vang`: bảng mua/bán triệu đồng/lượng kèm ▲▼ so với hôm trước (▲ xanh = màu nhấn,
+  ▼ đỏ = màu lỗi của site, ≥ 5.5:1 ở cả sáng/tối, có chữ ẩn "tăng/giảm" cho trình đọc màn
+  hình; tăng giảm 0 ghi "–" chứ không ghi "đứng giá" như chat) cho SJC miếng, nhẫn SJC,
+  DOJI Hà Nội/TP.HCM/nữ trang, PNJ Hà Nội/24K, Bảo Tín SJC/9999, Viettin, VN Gold; mục vàng
+  thế giới XAU/USD + quy đổi tham khảo theo giá bán USD Vietcombank (ghi rõ chưa gồm thuế,
+  phí gia công, vận chuyển) + chênh lệch với giá bán SJC miếng; mục nhỏ tỷ giá Vietcombank
+  9 ngoại tệ chính (tên tiếng Việt). Không làm trang `/ty-gia` riêng: tỷ giá đã tải để quy
+  đổi vàng nên hiện luôn ở đây, API có `/api/v1/fx`.
+- `/gia-xang`: bảng Petrolimex (vùng 1, vùng 2, tăng giảm kỳ này, kỳ trước) và PVOIL.
+- API `GET /api/v1/gold`, `/api/v1/fuel`, `/api/v1/fx` (khoá camelCase, số thô kèm `unit`,
+  nguồn lỗi 503 `SOURCE_UNAVAILABLE` dạng `{"error": {...}}`). Dữ liệu dựng ở
+  `services/price_lookup.py`, gọi đúng `vn_market_data.get_gold_live/get_gold/get_fx` và
+  `fuel_prices.get_fuel` - chung cache 1 bản/nguồn với chat và bản tin sáng, không parser
+  mới, không gọi AI/DB. vang.today lỗi thì rơi về bảng SJC (`fallback: true`, chỉ chi nhánh
+  đầu, tối đa 12 dòng); tỷ giá lỗi thì chỉ bỏ phần quy đổi.
+- Tài nguyên: tối đa 3 lượt tải nguồn giá song song (semaphore riêng như `/xo-so`), hạn
+  chót 15 giây tính cả lúc chờ slot (vàng có thể phải thử vang.today rồi mới tới SJC); quá
+  hạn hoặc nguồn lỗi thì trang hiện thông báo lịch sự (HTTP 200, `role="alert"`), không
+  đoán số. Render ở server, không cần JS; mọi chữ từ nguồn được Jinja escape.
+- Điện thoại: bảng gập thành thẻ theo bề rộng khối (container query ≤ 560px): tên mặt
+  hàng một dòng, các ô số xếp 2 cột kèm nhãn lấy từ `data-label` - 360px không cuộn ngang.
+- Test: `test/test_web_site.py` (dữ liệu giả từ `_vn_data_samples.py`: trang 200, dự phòng
+  SJC, nguồn lỗi/quá hạn, escape, schema 3 API, link thanh bên + thẻ trang chủ).
+
 ### Menu Telegram
 
 Menu có 99/100 lệnh. Thêm `/xang` thì bỏ `/userouter9` khỏi MENU (lệnh vẫn chạy, vẫn có
@@ -571,7 +600,7 @@ nên ít khi phải gõ. Test kiểm menu ≤ 100 lệnh, không trùng.
 ### Việc chủ bot cần làm
 
 - Không cần migration hay env mới. Sau deploy thử `/xoso tinh`, `/xoso tây ninh`,
-  `/vang`, `/xang`, trang `/xo-so` trên điện thoại.
+  `/vang`, `/xang`, trang `/xo-so`, `/gia-vang`, `/gia-xang` trên điện thoại.
 - Nếu Telegram vẫn hiện menu cũ, gửi lại menu bằng cách khởi động lại bot (`set_my_commands`
   chạy lúc khởi động).
 
@@ -947,3 +976,196 @@ Bảng đầy đủ (sinh từ `services/command_catalog.py`; "code" = đường
   trần lượt nặng của thành viên Zalo trước khi chạy; nhưng bộ đếm nhanh 60 giây của
   quota chỉ cộng khi lượt ghi `user_calls`, 2 câu liền nhau sát trần có thể vượt 1 lượt.
 - "Đang chờ bổ sung" giữ trong RAM: redeploy thì mất (người dùng nói lại là được).
+
+## Sửa sau khi chạy thật 27/10
+
+Chủ bot báo từ production (Render free 512 MB) sau 52 phút chạy: container 467/512 MB
+(91%, gồm page cache), working set 418 MB (81,6%), Python RSS 277 MB (đỉnh 284), node
+gateway 93 MB, supervisord 28 MB, 0 OOM. Cùng đợt: Zoom không có tin thoại khi bật
+`/noi`, tin thoại không đọc được viết tắt và giọng nghe "rất AI", câu "giá samsung s24
+plus cũ" bị trả "chưa tra ra mã cổ phiếu".
+
+### 1. RAM
+
+**Đường giá nhẹ, không nạp pandas/vnstock.** `pandas` không được import trực tiếp ở
+đâu cả - nó bị kéo vào qua `vnstock` ở 2 chỗ chạy cả trong việc NỀN:
+
+- `stock/corporate_actions.fetch_corporate_events` (lịch quyền để điều chỉnh chuỗi
+  giá) dùng `vnstock.explorer.vci.Company.events()` - chạy cho MỌI chuỗi >= 60 phiên:
+  cảnh báo danh mục (`services/portfolio_alerts.py`), cảnh báo giá trong phiên
+  (`services/price_alerts.py` qua `portfolio.corporate_views`), báo cáo danh mục của
+  bản tin sáng. Nay gọi thẳng REST `/v1/events` của VCI (`stock/vci_direct.
+  fetch_event_history`, cùng endpoint vnstock dùng, chỉ lấy DIV + ISS, 100 dòng/10 năm),
+  `_parse_events_frame` nhận list dict (vẫn nhận DataFrame cho tương thích).
+- `stock/providers.fetch_ohlcv`: DNSE lỗi 1 lần là rơi sang `vnstock` Quote.history.
+  Nay dự phòng gọi thẳng VCI gap-chart bằng httpx (`_fetch_ohlcv_vci`, cùng semaphore
+  `VNSTOCK_MAX_CONCURRENCY`), nguồn ghi `vci`.
+
+`vnstock` (và pandas) giờ chỉ nạp khi thật sự phân tích đầy đủ (`stock/fundamentals.py`
+- định giá, khối ngoại, tin công ty; danh sách sàn) hoặc backtest. Test
+`test/test_memtrim.py::test_viec_nen_gia_khong_nap_pandas_vnstock` chạy tiến trình mới
+và khẳng định đường việc nền không nạp 2 thư viện này. sklearn: trend model không qua
+gate nên không bao giờ import (đã kiểm: `stock/trend_model.py` chỉ import sklearn khi
+train/load model đạt gate).
+
+**Trả heap rảnh về hệ điều hành** (`core/memtrim.py`): `gc.collect()` rồi
+`malloc_trim(0)` của glibc qua ctypes (không có glibc thì chỉ gc). Chạy:
+
+- định kỳ mỗi `MEMORY_TRIM_INTERVAL_SEC` (600 s) trong vòng giám sát (`services/
+  monitor_service.py`);
+- hẹn sau 3 giây khi lượt trả lời cuối cùng xong (`assistant_turn` - bao cả phân tích cổ
+  phiếu, đọc tài liệu, tin thoại), khi việc nền xong (`background_slot`), sau tin thoại
+  (TTS + ffmpeg), trang thị trường, bản tin sáng, tin sáng, cảnh báo danh mục; gộp các
+  yêu cầu liền nhau, tối đa 1 lần mỗi `MEMORY_TRIM_MIN_GAP_SEC` (30 s);
+  `MEMORY_TRIM_AFTER_WORK=0` tắt phần này.
+- `/admin` → Hệ thống → RAM có dòng "Dọn heap (malloc_trim)": số lần, RSS trước/sau lần
+  gần nhất, tổng đã nhả.
+
+**Số đo** (`python scripts/benchmark_memory.py`, máy dev Python 3.12, mỗi kịch bản 1
+tiến trình mới, HTTP giả lập, không mạng/DB; đo 2 lần, chênh < 0,5 MB):
+
+| Kịch bản | RSS |
+|---|---:|
+| Chỉ `import web` | 95,8 MB |
+| Việc nền giá/danh mục, bản sửa (DNSE lỗi -> VCI httpx, lịch quyền REST) | 96,6 MB (pandas/vnstock không nạp) |
+| Cùng việc nền, đường cũ (nạp `vnstock.explorer.vci` Quote + Company) | 146,1 MB (+50 MB, giữ suốt đời tiến trình) |
+| Việc nặng giả lập (JSON 25 MB + 1500 buffer 48 KB xen object sống sót), đã giải phóng | 131,7 MB (đỉnh 268 MB) |
+| ... chỉ `gc.collect()` | 130,3 MB |
+| ... `gc.collect()` + `malloc_trim(0)` (`memtrim.trim_now`, 54-63 ms) | 98,6 MB (-33 MB) |
+
+Kết luận cho production: phần 277 MB RSS Python gồm ~96 MB nền + ~50 MB vnstock/pandas
+(nạp từ việc nền đầu tiên) + heap phân mảnh sau các lượt nặng. Bản sửa bỏ hẳn phần
+50 MB ở chế độ chạy nền và nhả phần heap rảnh sau mỗi việc nặng; lần phân tích đầy đủ
+đầu tiên vẫn nạp vnstock/pandas (chấp nhận - cần cho dữ liệu cơ bản). Chưa đo trên
+Render; chủ bot xem lại thẻ RAM sau 1-2 giờ chạy.
+
+**Trần cache/hàng đợi đã rà:**
+
+| Thành phần | Trước | Sau | Ghi chú |
+|---|---|---|---|
+| Chỉ mục BM25 kho `rag/` | 2000 chunk | 600 chunk VÀ 400 nghìn ký tự | Đo kho thật: ~44 KB/chunk (~55 byte/ký tự) -> trần cũ có thể 90-200 MB khi `/doc` lưu nhiều tài liệu vào `rag/` (tới 20 MB đĩa); trần mới ~22 MB tệ nhất, vượt thì log cảnh báo |
+| Kho clip tin thoại (Zalo/Zoom) | 20 file / 8 MB | 12 file / 4 MB (`VOICE_REPLY_STORE_MB`) | M4A 48 kbps ~0,35 MB/phút |
+| Cache trang link (`chat_context`) | 20 × 5000 ký tự | giữ | ~0,2 MB |
+| Giá sản phẩm `/gia`, vàng/xăng/xổ số (`vn_market_data`, 64 khoá đã parse) | giữ | giữ | đều có trần + TTL, < 1 MB |
+| Trí nhớ, notify hub, tìm lịch sử | trong DB | giữ | RAM chỉ khoá/hàng đợi nhỏ có trần |
+| Cache settings, alerts, reply_cache, answer_feedback | giữ | giữ | 32-256 mục, có trần |
+
+**Gateway Node** (`scripts/run-zalo-gateway.sh`): đã có `--max-old-space-size=96
+--max-semi-space-size=8`; thêm `--optimize-for-size` (`ZALO_NODE_OPTIMIZE_SIZE=1`, 0 =
+tắt) và `ZALO_NODE_EXTRA_FLAGS` cho cờ thêm. `NODE_OPTIONS` KHÔNG dùng được vì Node
+không cho `--optimize-for-size` trong `NODE_OPTIONS`, nên cờ truyền trên dòng lệnh. Đo
+Node 22 nạp zca-js 2.1.2: RSS 86,4 -> 75,2 MB, heap limit V8 120 -> 99 MB. 114 test
+gateway pass khi chạy với đúng các cờ này.
+
+**supervisord 28 MB:** là 1 tiến trình Python + supervisor. Thay bằng script shell/tini
+sẽ mất autorestart, startretries, stopasgroup và drain 40 s đã cấu hình - không đổi.
+
+**Watchdog:** đã dùng working set (`memory.current - inactive_file`, cách kubelet tính)
+cho ngưỡng `WATCHDOG_MEMORY_PCT` 85%, và chỉ báo "chạm trần cgroup" khi working set đã
+>= 75% - page cache không gây báo động giả. Số production (418 MB = 81,6%) dưới ngưỡng
+nên không có cảnh báo, đúng. KPI RAM trên `/admin` trước đây hiện số cgroup (gồm page
+cache, 91%) dễ gây hiểu nhầm; nay hiện working set, số cgroup ở dòng phụ.
+
+### 2. Zoom: link nghe thay cho tin thoại
+
+Tài liệu Zoom Team Chat (developers.zoom.us, chatbot "Message with attachments"):
+chatbot chỉ gửi được tin chữ/thẻ; kiểu `attachments` chỉ hiện ảnh + LINK tới
+`resource_url`, không tải file lên; không có API gửi âm thanh/tin thoại cho chatbot
+(forum Zoom cũng xác nhận không gửi được file từ chatbot IM). Vì vậy khi `/noi` bật,
+câu trả lời Zoom kèm 1 dòng `🔊 Nghe giọng Lan Anh: <link>` tới endpoint công khai có ký
+HMAC `/media/tts/<tên>` (`channels/tts_media.py`, TTL `VOICE_REPLY_URL_TTL_MIN` 10 phút),
+clip M4A (không có ffmpeg thì WAV) trong cùng kho RAM có trần. Cần
+`WEBHOOK_BASE_URL`/`RENDER_EXTERNAL_URL` https; không có thì chỉ gửi chữ. Chạy trong
+cùng hạn chót lượt (`web._zoom_chat`), không đọc lệnh "/", tin cổ phiếu, ảnh.
+
+### 3. Tin thoại: đọc được viết tắt, giọng tự nhiên hơn
+
+**(a) Chuẩn hoá chữ trước khi đọc** (`services/tts_normalize.py`, từ điển sửa được
+`assets/tts_viet_tat.yaml`), chỉ cho bản ĐỌC - tin chữ không đổi:
+
+- tiền: 150k, 1tr2, 1tr250, 3 tỷ, 2ty5, 1.299.000đ, 24.900 VND, 25,5 nghìn, $5, 10 USD;
+  %, +/- trước số, khoảng "10-20%", ▲ ▼ ± ≥ ≤ ~;
+- số lớn/thập phân kiểu Việt ("mốt", "tư", "lăm", "linh", "không trăm", "phẩy"); số bắt
+  đầu bằng 0 hoặc quá 15 chữ số (điện thoại) đọc từng chữ số;
+- ngày giờ: 26/10, 26/10/2026, 2026-10-27, 10/2026, 8h30, 8h, 15:05; tỷ lệ 100:25;
+- đơn vị: km, kg, cm, mm, ml, mg, m, m²/m2, m³, km/h, °C, ha, GB, kWh...;
+- viết tắt: TP.HCM, HN, VN, CK (chứng khoán) / ck (chuyển khoản), BĐS, NĐT, LNST, P/E,
+  ROE, EPS, ĐHCĐ, HĐQT, CTCK, KQKD, BCTC, YoY, QoQ, ko/k/kh (không), dc/đc, vs, vd...;
+  "k" sau số là nghìn, đứng riêng là "không";
+- mã cổ phiếu/chữ in hoa 2-3 ký tự không có trong từ điển đọc từng chữ cái kiểu Việt
+  (FPT -> "ép pê tê", HPG -> "hát pê giê"); VN-Index/VNINDEX/VN30/HNX-Index; câu viết
+  HOA nhấn mạnh và từ không dấu như "ANH" không bị đánh vần.
+
+Thứ tự trong `make_clip`: che bí mật -> lọc markdown/emoji (`speakable_text`, nay giữ
+▲▼±°$ cho bước sau) -> cắt `VOICE_REPLY_MAX_CHARS` -> chuẩn hoá -> đọc. Live so bản
+chép lời với chính bản ĐÃ chuẩn hoá (so với bản gốc thì "FPT"/"150k" luôn lệch); test
+`test_live_doc_voi_chi_dan_phong_cach_va_so_voi_ban_chuan_hoa`. 85 case trong
+`test/test_tts_normalize.py`.
+
+**(b) Giọng tự nhiên hơn.** Tài liệu ai.google.dev/gemini-api/docs/speech-generation
+(10/2026): Gemini 3.8 TTS coi chữ là bản chép NGUYÊN VĂN; phong cách (cảm xúc, nhịp,
+ngắt nghỉ) đặt trong annotation `speech_metadata.style` của Interactions API
+(`POST /v1beta/interactions`); viết chỉ dẫn lẫn vào chữ sẽ bị đọc to. Nên:
+
+- `ai/official_client.synthesize_speech(style=...)` gọi REST Interactions bằng httpx
+  (SDK google-genai 2.11 chưa có kiểu annotation này), `generation_config.speech_config
+  = [{"voice": ...}]`, lấy khối audio cuối (`steps[].content[].data`, base64). 429 ->
+  lỗi quota như cũ (cooldown `tts_api*`); lỗi khác -> rơi về `generate_content` không
+  phong cách (4xx thì thôi thử Interactions 6 giờ).
+- Live (`VOICE_ENGINE=auto|live`): cùng chỉ dẫn nối vào `SPEAK_INSTRUCTION`
+  (`live_client.speak_instruction`), không lẫn vào chữ cần đọc.
+- `VOICE_STYLE_PROMPT` (trống = mặc định "giọng nữ trẻ miền Nam, ấm áp, thân mật như
+  nhắn tin thoại cho người nhà, nhịp tự nhiên, có ngắt nghỉ, không đọc đều đều như
+  máy..."; `off` = không gửi).
+- Giọng mặc định đổi Kore ("Firm" - cứng) -> **Sulafat** ("Warm"). 30 giọng dựng sẵn
+  theo tài liệu; `/noi giong` liệt kê gợi ý giọng nữ (Sulafat ấm, Leda trẻ trung, Aoede
+  nhẹ nhàng, Vindemiatrix dịu dàng, Achernar mềm, Despina mượt, Kore), `/noi giong
+  <tên>` đổi giọng riêng từng người (khoá settings `voice_name:<id>`, xoá cùng
+  `/zaloxoa`), `/noi giong mac dinh` về mặc định.
+
+### 4. Hỏi giá sản phẩm bị chặn nhầm thành "chưa tra ra mã"
+
+Nguyên nhân: `looks_like_price_question` chặn mọi câu có chữ "giá" + token 3-4 chữ cái
+không thuộc danh sách từ thông dụng ("PLUS", "PRO", "MAX"). Nay chỉ chặn khi câu RÕ
+RÀNG hỏi cổ phiếu: có "cổ phiếu/mã/CK/chứng khoán" kèm từ cần tra, hoặc ngoài từ hỏi
+giá/thời gian/xưng hô ra chỉ còn token dạng mã ("giá xyz bao nhiêu", "giá ABCD").
+Câu hỏi giá sản phẩm/hàng hoá đi tiếp xuống chat và `run_chat_turn` BẮT tra web thật
+(`stock.analysis.wants_product_price` -> `require_real_search`) để LLM không tự nghĩ
+ra giá. Áp cho cả Telegram (`handlers/stock_handler.py`) và Zalo/Zoom
+(`services/channel_chat_service.py`). Test: "giá samsung s24 plus cũ", "giá iphone 15
+pro max", "giá xe sh 2024", "giá sầu riêng hôm nay" -> chat có tra web; "giá FPT" vẫn
+là cổ phiếu; "giá cổ phiếu ABCXYZ", "giá xyz bao nhiêu" vẫn báo chưa tra ra mã; "giá
+vàng"/"giá xăng" giữ đường riêng (`vn_daily_chat`).
+
+### Env mới
+
+`MEMORY_TRIM_INTERVAL_SEC` (600), `MEMORY_TRIM_AFTER_WORK` (1),
+`MEMORY_TRIM_MIN_GAP_SEC` (30), `ZALO_NODE_OPTIMIZE_SIZE` (1), `ZALO_NODE_EXTRA_FLAGS`
+(trống), `VOICE_STYLE_PROMPT` (trống = mặc định). Đổi mặc định: `VOICE_TTS_VOICE`
+Kore -> Sulafat, `VOICE_REPLY_STORE_MB` 8 -> 4.
+
+### Việc chủ bot cần làm
+
+- Deploy (render.yaml đã đổi `VOICE_TTS_VOICE=Sulafat`, `VOICE_REPLY_STORE_MB=4`, thêm
+  `ZALO_NODE_OPTIMIZE_SIZE`, `MEMORY_TRIM_INTERVAL_SEC`). Nếu dashboard Render đang đặt
+  tay `VOICE_TTS_VOICE=Kore` thì sửa hoặc xoá để dùng giọng mới.
+- Sau 1-2 giờ chạy, xem `/admin` → RAM: working set, Python RSS, "Dọn heap", danh sách
+  "Thư viện nặng đã nạp" (pandas/vnstock chỉ nên xuất hiện sau khi có lượt phân tích).
+- Nghe thử `/noi on` trên Telegram và Zoom; nếu giọng phong cách không có tác dụng (log
+  "TTS có phong cách lỗi"), báo lại - bot đã tự rơi về TTS không phong cách.
+
+### Rủi ro
+
+- Interactions API cho TTS 3.8 và cấu trúc JSON trả về làm theo tài liệu, CHƯA gọi thật
+  (sandbox chặn mạng); có đường lui generate_content nên tệ nhất là giọng như trước.
+- VCI gap-chart/`/v1/events` là API không chính thức: đổi schema thì dự phòng OHLCV rỗng
+  (DNSE vẫn là nguồn chính) và lịch quyền rỗng (chuỗi giá chỉ cảnh báo gap như trước).
+  Lịch quyền nay chỉ lấy DIV+ISS 100 dòng (trước: mọi loại, 50 dòng) - nhiều sự kiện
+  liên quan hơn, nhưng chưa đối chiếu với API thật.
+- Chuẩn hoá chữ là luật cố định: "1/2" đọc thành "ngày một tháng hai", "5m" luôn là
+  "mét", viết tắt lạ không có trong từ điển vẫn đọc như chữ thường - thêm vào
+  `assets/tts_viet_tat.yaml`.
+- Câu hỏi giá mơ hồ không dấu/không chữ "mã" với mã viết thường không có thật (vd "giá
+  abc hôm nay") nay xuống chat có tra web thay vì báo "chưa tra ra mã"; mã thật viết
+  thường vẫn được nhận qua danh sách mã/DNSE như cũ.
+- Lượt hỏi giá sản phẩm giờ luôn tra web thật (tốn 1 lượt search như `/gia`).

@@ -282,12 +282,88 @@ def looks_like_price_question(text: str) -> bool:
         return False
     if not _PRICE_KEYWORDS_RE.search(text):
         return False
+    # Sửa 27/10 ("giá samsung s24 plus cũ" bị báo "chưa tra ra mã" vì token PLUS):
+    # chỉ chặn khi câu RÕ RÀNG là hỏi cổ phiếu - có chữ "cổ phiếu/mã/CK/chứng khoán"
+    # kèm một từ còn lại để tra, hoặc ngoài từ hỏi giá/thời gian ra CHỈ còn token
+    # dạng mã ("giá xyz bao nhiêu", "giá ABCD"). Còn tên sản phẩm/hàng hoá khác
+    # (samsung, iphone 15, sầu riêng...) thì để lượt đi tiếp xuống chat có tra web
+    # thật (wants_product_price -> require_real_search), không chặn.
+    leftover = _price_leftover_words(text)
+    if _has_explicit_stock_word(text):
+        return bool(leftover)
+    candidates = _symbol_like_tokens(text)
+    return bool(candidates) and all(word.upper() in candidates for word in leftover)
+
+
+# Từ "cổ phiếu/mã/CK/chứng khoán" (có dấu, biên từ): "mã" không dấu trùng "mà/ma"
+# nên chỉ nhận dạng có dấu; "ck" chữ thường là "chuyển khoản" nên chỉ nhận "CK".
+_EXPLICIT_STOCK_RE = re.compile(
+    r"(?<!\w)(?:cổ phiếu|co phieu|chứng khoán|chung khoan|mã|cp)(?!\w)|(?<!\w)CK(?!\w)",
+    re.IGNORECASE,
+)
+# Từ đệm của câu hỏi giá (đã bỏ dấu) - không tính là "tên sản phẩm".
+_PRICE_FILLER_WORDS = frozenset(
+    """gia price bao nhieu bn bnhieu hom nay hien tai bay gio gio luc nay sao the nao
+    the nao a ah nhi nhe nha vay oi anh em chi ban minh cua cho xem tra giup voi di
+    duoc ko khong k hok la bi dang tang giam phien ma co phieu chung khoan ck cp cai
+    con hon may mot""".split()
+)
+_WORD_RE = re.compile(r"[^\W_]+")
+
+
+def _has_explicit_stock_word(text: str) -> bool:
+    # "ck" chữ thường = chuyển khoản ("giá ck bao nhiêu" không phải cổ phiếu).
+    return any(m.group(0) != "ck" for m in _EXPLICIT_STOCK_RE.finditer(text))
+
+
+def _price_leftover_words(text: str) -> list[str]:
+    """Các từ còn lại (bỏ dấu, giữ hoa/thường) sau khi bỏ từ hỏi giá/thời gian/xưng hô."""
+    from core.text_normalize import fold
+
+    words = []
+    for raw in _WORD_RE.findall(text):
+        folded = fold(raw)
+        if folded in _PRICE_FILLER_WORDS:
+            continue
+        words.append(raw)
+    return words
+
+
+def _symbol_like_tokens(text: str) -> set[str]:
+    """Token có thể là mã: 3-4 chữ ASCII không thuộc từ thông dụng, hoặc chữ in HOA
+    nguyên bản 3-6 ký tự ("ABCXYZ")."""
+    found = set()
     for tok in _SYMBOL_TOKEN_RE.findall(text):
         upper = tok.upper()
         if upper in _COMMON_WORD_EXCLUDE or upper in _LOWERCASE_NOISE_EXCLUDE:
             continue
-        return True
-    return False
+        found.add(upper)
+    found.update(re.findall(r"\b[A-Z]{3,6}\b", text))
+    return found
+
+
+def wants_product_price(text: str) -> bool:
+    """Câu hỏi giá sản phẩm/hàng hoá (không phải cổ phiếu, không phải vàng/xăng/tỷ
+    giá đã có đường riêng): lượt chat phải TRA WEB THẬT (require_real_search) thay vì
+    để LLM tự nghĩ ra giá. Gọi khi nhánh cổ phiếu không nhận ra mã nào."""
+    text = _strip_urls(text)
+    if not _PRICE_KEYWORDS_RE.search(text) or _WHY_QUESTION_RE.search(text):
+        return False
+    if _NON_PRICE_GIA_RE.search(text) and not _PRICE_ASK_RE.search(text):
+        return False
+    if _has_explicit_stock_word(text):
+        return False
+    return bool(_price_leftover_words(text))
+
+
+# "giá trị", "đánh giá", "giá như"... không phải hỏi giá; trừ khi câu vẫn hỏi
+# "giá ... bao nhiêu".
+_NON_PRICE_GIA_RE = re.compile(
+    r"(?<!\w)(?:giá trị|gia tri|đánh giá|danh gia|định giá|dinh gia|giá như|gia nhu|giá mà|"
+    r"gia ma|tăng giá trị|vô giá|vo gia|trị giá|tri gia|giá đỡ|gia do)(?!\w)",
+    re.IGNORECASE,
+)
+_PRICE_ASK_RE = re.compile(r"(?<!\w)(?:bao nhiêu|bao nhieu|bn|mấy tiền|may tien)(?!\w)", re.IGNORECASE)
 
 
 # Dữ liệu thị trường KHÔNG thuộc sàn chứng khoán VN: bot không có provider nào

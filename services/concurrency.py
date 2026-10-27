@@ -35,7 +35,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, nullcontext
 from typing import AsyncIterator, TypeVar
 
-from core import trace
+from core import memtrim, trace
 
 T = TypeVar("T")
 
@@ -113,6 +113,10 @@ async def assistant_turn(key: str = OWNER_TURN_KEY) -> AsyncIterator[None]:
             del _turn_locks[key]
         else:
             _turn_locks[key] = (lock, users - 1)
+        # Lượt xong (phân tích cổ phiếu, đọc tài liệu, tin thoại...): hẹn trả heap
+        # rảnh về hệ điều hành sau vài giây, gộp nhiều lượt liền nhau (core/memtrim.py).
+        if not _turn_locks:
+            memtrim.request("lượt trả lời")
 
 
 @asynccontextmanager
@@ -124,9 +128,12 @@ async def background_slot(key: str = OWNER_TURN_KEY) -> AsyncIterator[None]:
     chỗ dành riêng cho chủ bot; việc của chủ bot dùng chính chỗ của chủ bot. Tổng
     số lượt AI (chat + nền) vẫn không vượt MAX_CONCURRENT_TURNS - RAM đỉnh không đổi."""
     member_slots = None if key == OWNER_TURN_KEY else _member_slots
-    async with member_slots if member_slots is not None else nullcontext():
-        async with _turn_slots:
-            yield
+    try:
+        async with member_slots if member_slots is not None else nullcontext():
+            async with _turn_slots:
+                yield
+    finally:
+        memtrim.request("việc nền")
 
 
 def _ms(seconds: float) -> int:

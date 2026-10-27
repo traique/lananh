@@ -1381,8 +1381,11 @@ async def synthesize_speech(
     voice: str,
     timeout_sec: float,
     engine: str = VOICE_ENGINE_TTS,
+    style: str = "",
 ) -> Speech:
-    """Đọc ``text`` thành giọng theo ``engine`` (VOICE_ENGINE):
+    """Đọc ``text`` thành giọng theo ``engine`` (VOICE_ENGINE). ``style``: chỉ dẫn
+    phong cách đọc bằng lời (VOICE_STYLE_PROMPT) - Live nhận trong chỉ dẫn hệ thống,
+    Gemini TTS nhận qua annotation speech_metadata (không lẫn vào chữ cần đọc):
 
     - "tts": Gemini TTS api1 -> api2 (model ``model``).
     - "live": chỉ Gemini Live (ai/live_client.speak) - đọc nguyên văn, bản chép lời
@@ -1393,7 +1396,9 @@ async def synthesize_speech(
     (hết hạn lượt) hoặc lỗi cuối cùng."""
     if engine in (VOICE_ENGINE_AUTO, VOICE_ENGINE_LIVE):
         try:
-            turn = await live_client.speak(text, voice=voice, timeout_sec=timeout_sec)
+            turn = await live_client.speak(
+                text, voice=voice, timeout_sec=timeout_sec, style=style or None
+            )
             return Speech(turn.audio, turn.mime, turn.provider)
         except TurnTimeoutError:
             raise
@@ -1401,10 +1406,14 @@ async def synthesize_speech(
             if engine == VOICE_ENGINE_LIVE:
                 raise
             logger.info("Gemini Live không đọc được (%s) - dùng Gemini TTS.", _short_error(exc))
-    return await _synthesize_tts(text, model=model, voice=voice, timeout_sec=timeout_sec)
+    return await _synthesize_tts(
+        text, model=model, voice=voice, timeout_sec=timeout_sec, style=style
+    )
 
 
-async def _synthesize_tts(text: str, *, model: str, voice: str, timeout_sec: float) -> Speech:
+async def _synthesize_tts(
+    text: str, *, model: str, voice: str, timeout_sec: float, style: str = ""
+) -> Speech:
     await provider_state.ensure_loaded()
     last_exc: Optional[BaseException] = None
     for idx in (1, 2):
@@ -1420,7 +1429,7 @@ async def _synthesize_tts(text: str, *, model: str, voice: str, timeout_sec: flo
         try:
             audio, mime = await bounded(
                 lambda idx=idx: official_client.synthesize_speech(
-                    idx, text, model=model, voice=voice
+                    idx, text, model=model, voice=voice, **({"style": style} if style else {})
                 ),
                 timeout_sec,
             )

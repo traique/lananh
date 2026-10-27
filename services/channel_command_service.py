@@ -92,7 +92,8 @@ Chat và tiện ích
   "dịch giúp chữ trong ảnh") thì Lan Anh trả lời về ảnh
 🎙️ Gửi tin thoại — Lan Anh nghe rồi trả lời như tin chữ (tin thoại không tự ghi danh mục, chi tiêu,
   nhắc việc - muốn ghi thì gõ chữ)
-/noi on|off|auto — trả lời kèm tin thoại (auto: chỉ khi mình vừa gửi tin thoại)
+/noi on|off|auto — trả lời kèm tin thoại (auto: chỉ khi mình vừa gửi tin thoại; Zoom: kèm link nghe)
+/noi giong <tên> — đổi giọng đọc (/noi giong: xem gợi ý)
 📄 Gửi file PDF, TXT, Word (.docx) — tóm tắt hoặc trả lời câu hỏi kèm theo
 /gia <sản phẩm> — tìm và so sánh giá
 /dich [ja>vi|vi>ja] <nội dung> — dịch chat công việc Nhật-Việt

@@ -16,6 +16,9 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Không hẹn task dọn RAM sau mỗi lượt trong test (core/memtrim.py): task hẹn giờ
+# sống qua vòng đời event loop của test. Test riêng của memtrim tự bật lại.
+os.environ.setdefault("MEMORY_TRIM_AFTER_WORK", "0")
 
 
 def pytest_configure(config):

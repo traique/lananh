@@ -7,6 +7,9 @@ thật và bị trả lời bằng số bịa.
 Xem thêm test/test_market_data_guard.py cho vòng sửa thứ hai (tin nhắn trơ
 trọi dạng mã, nhãn realtime ngoài giờ, dữ liệu thị trường ngoài sàn VN).
 """
+
+import pytest
+
 from stock import analysis as stock_analysis
 
 
@@ -64,10 +67,51 @@ def test_why_question_about_nonstock_prices_is_not_guarded():
     năm 2026" bị chặn trả lời cứng vì token tiếng Việt có dấu bị regex ASCII
     cắt thành mảnh giả mã ("liên quan" -> QUAN, "điện thoại" -> THO). Câu hỏi
     lý giải không phải yêu cầu đọc giá, phải đi xuống chat thường."""
-    assert stock_analysis.looks_like_price_question(
-        "tại sao giá điện thoại và các thiết bị điện tử liên quan lại tăng giá mạnh trong năm 2026"
-    ) is False
+    assert (
+        stock_analysis.looks_like_price_question(
+            "tại sao giá điện thoại và các thiết bị điện tử liên quan lại tăng giá mạnh trong năm 2026"
+        )
+        is False
+    )
 
 
 def test_why_question_without_diacritics_is_not_guarded():
     assert stock_analysis.looks_like_price_question("tai sao gia dien thoai tang manh") is False
+
+
+# ─── Sửa 27/10: chỉ báo "chưa tra ra mã" khi rõ ràng hỏi cổ phiếu ───────────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "giá samsung s24 plus cũ",
+        "giá iphone 15 pro max",
+        "giá xe sh 2024",
+        "giá sầu riêng hôm nay",
+        "giá vàng",
+        "giá xăng",
+    ],
+)
+def test_hoi_gia_san_pham_khong_bi_chan_va_bat_tra_web(text):
+    assert stock_analysis.looks_like_price_question(text) is False
+    assert stock_analysis.wants_product_price(text) is True
+
+
+@pytest.mark.parametrize(
+    "text", ["giá cổ phiếu ABCXYZ", "giá mã abc", "giá xyz bao nhiêu", "giá ABCD", "Xyz"]
+)
+def test_hoi_co_phieu_ro_rang_van_bao_chua_tra_ra_ma(text):
+    assert stock_analysis.looks_like_price_question(text) is True
+
+
+def test_gia_fpt_van_la_co_phieu():
+    known, _ = stock_analysis.detect_symbol_candidates("giá FPT")
+    assert known == ["FPT"]
+
+
+@pytest.mark.parametrize(
+    "text", ["đánh giá phim này", "giá trị cuộc sống", "giá như anh ở đây", "giá cổ phiếu hôm nay"]
+)
+def test_khong_phai_hoi_gia_san_pham(text):
+    assert stock_analysis.wants_product_price(text) is False

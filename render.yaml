@@ -259,7 +259,7 @@ services:
       - key: VOICE_TTS_MODEL
         value: "gemini-3.8-flash-tts"
       - key: VOICE_TTS_VOICE
-        value: "Kore"
+        value: "Sulafat"
       # auto = Gemini Live trước, lỗi/quota/đọc lệch chữ thì Gemini TTS; live | tts.
       - key: VOICE_ENGINE
         value: "auto"
@@ -268,7 +268,7 @@ services:
       - key: VOICE_REPLY_URL_TTL_MIN
         value: "10"
       - key: VOICE_REPLY_STORE_MB
-        value: "8"
+        value: "4"
       - key: VISION_QA_ENABLED
         value: "1"
       - key: PHOTO_NO_CAPTION_MODE
@@ -356,6 +356,13 @@ services:
         value: "1"
       - key: ZALO_NODE_HEAP_MB
         value: "96"
+      # --optimize-for-size cho node gateway (scripts/run-zalo-gateway.sh); 0 = tắt.
+      - key: ZALO_NODE_OPTIMIZE_SIZE
+        value: "1"
+      # Trả heap rảnh của Python về hệ điều hành mỗi 10 phút + sau việc nặng
+      # (core/memtrim.py: gc.collect + malloc_trim); 0 = tắt phần định kỳ.
+      - key: MEMORY_TRIM_INTERVAL_SEC
+        value: "600"
       - key: VNSTOCK_API_KEY
         sync: false
       - key: GROQ_API_KEY

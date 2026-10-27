@@ -26,6 +26,8 @@ QUIET_PREFIX = "quiet:"
 STYLE_PENDING_PREFIX = "style_pending:"
 # Trả lời kèm giọng nói (services/voice_reply.py, lệnh /noi): "on" | "off" | "auto".
 VOICE_REPLY_PREFIX = "voice_reply:"
+# Giọng đọc riêng (/noi giong <tên>): tên giọng Gemini TTS, trống = mặc định của bot.
+VOICE_NAME_PREFIX = "voice_name:"
 
 
 def weather_home_key(user_id: int) -> str:
@@ -74,6 +76,10 @@ def voice_reply_key(user_id: int) -> str:
     return f"{VOICE_REPLY_PREFIX}{user_id}"
 
 
+def voice_name_key(user_id: int) -> str:
+    return f"{VOICE_NAME_PREFIX}{user_id}"
+
+
 def memory_user_keys(user_id: int) -> list[str]:
     """Khoá trí nhớ/hỏi thăm của 1 người (dùng chung cho /zaloxoa và /xoadulieu)."""
     return [
@@ -95,4 +101,5 @@ def zalo_user_keys(user_id: int) -> list[str]:
         *memory_user_keys(user_id),
         quiet_key(user_id),
         voice_reply_key(user_id),
+        voice_name_key(user_id),
     ]

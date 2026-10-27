@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from ai import orchestrator
-from core import config, untrusted
+from core import config, memtrim, untrusted
 from core import database as db
 from services import article_reader, web_reader
 
@@ -469,6 +469,8 @@ async def run_once(force: bool = False) -> RunResult:
 
     sent_zalo = "zalo" not in absorbed and await _send_to_zalo(content)
     sent_zoom = "zoom" not in absorbed and await _send_to_zoom(content)
+    # Tải RSS + đọc bài: dọn heap khi xong (core/memtrim.py).
+    memtrim.request("tin sáng")
     if sent_zalo or sent_zoom or absorbed:
         await _mark_sent(now)
     else:

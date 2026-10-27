@@ -34,7 +34,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from core import alerts, config, database as db
+from core import alerts, config, memtrim
+from core import database as db
 from stock import calendar as trading_calendar
 from stock import corporate_actions
 from stock import features as feat
@@ -469,6 +470,8 @@ async def run_once(user_id: int, *, force: bool = False) -> bool:
     if not force and not is_due(now, last):
         return False
     scan = await scan_portfolio(user_id, today)
+    # Quét giữ OHLCV 90 phiên của mọi mã danh mục: dọn heap khi lượt xong.
+    memtrim.request("cảnh báo danh mục")
     # Xét "vòng cuối" theo giờ SAU khi quét: lượt quét ngày mất dữ liệu có thể
     # mất cả phút (timeout lịch quyền/nguồn giá), vòng kế tiếp bắt đầu sau đó
     # thêm _POLL_SEC - xét theo giờ bắt đầu thì vòng kế tiếp có thể đã quá khung.

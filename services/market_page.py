@@ -38,7 +38,7 @@ from services import http_client
 
 import messages
 from ai import orchestrator
-from core import alerts, config, trace
+from core import alerts, config, memtrim, trace
 from core import database as db
 from core.envutil import env_int
 from core.untrusted import wrap_untrusted
@@ -1290,6 +1290,9 @@ async def run_once(job: str, when: datetime, *, force: bool = False) -> bool:
     except MarketSkip as skip:
         logger.info("market_page: %s bỏ qua - %s.", job, skip)
         done = not skip.retry
+    finally:
+        # Bài thị trường giữ OHLCV, ảnh biểu đồ, bài báo trong RAM: dọn heap khi xong.
+        memtrim.request("trang thị trường")
     if done:
         await db.set_setting(key, "1")
     return done

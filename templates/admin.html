@@ -1516,14 +1516,18 @@ async function loadMemoryUsage() {
   const s = await api('/admin/api/memory-usage');
   const c = s.container || {}, py = s.python || {};
   const ws = c.working_set || {}, ev = c.events || {};
-  const pct = c.used_percent;
-  $('kpi-ram').textContent = c.used_mib == null ? (py.rss_mib == null ? '—' : fmtMib(py.rss_mib)) : fmtMib(c.used_mib);
+  // KPI theo working set (không tính page cache kernel thu hồi được) - cùng số
+  // watchdog dùng để báo RAM cao; số cgroup gồm cả cache để ở dòng phụ.
+  const pct = ws.percent ?? c.used_percent;
+  const main = ws.working_set_mib ?? c.used_mib;
+  $('kpi-ram').textContent = main == null ? (py.rss_mib == null ? '—' : fmtMib(py.rss_mib)) : fmtMib(main);
   const meter = $('kpi-ram-meter');
   meter.className = 'meter ' + meterClass(pct);
   meter.firstElementChild.style.width = `${Math.min(100, pct || 0)}%`;
   $('kpi-ram-sub').textContent = pct == null
     ? `Python RSS ${fmtMib(py.rss_mib)} (không đọc được cgroup)`
-    : `${pct}% của ${fmtMib(c.limit_mib)} · đỉnh ${fmtMib(c.peak_mib)}`;
+    : `${pct}% của ${fmtMib(c.limit_mib)} (không tính page cache) · cgroup ${fmtMib(c.used_mib)} · đỉnh ${fmtMib(c.peak_mib)}`;
+  const trim = s.trim || {};
   $('ram-uptime').textContent = py.uptime_min == null ? '' : `uptime ${py.uptime_min >= 120 ? `${Math.round(py.uptime_min / 60)} giờ` : `${Math.round(py.uptime_min)} phút`}`;
 
   const heavy = Object.entries(s.heavy_modules_loaded || {});
@@ -1535,6 +1539,7 @@ async function loadMemoryUsage() {
       <tr><th>Python RSS / đỉnh</th><td>${esc(fmtMib(py.rss_mib))} / ${esc(fmtMib(py.peak_rss_mib))}</td></tr>
       <tr><th>Thread · GC chờ</th><td>${esc(py.threads ?? '—')} · <span class="mono">${esc((py.gc_pending || []).join('/'))}</span></td></tr>
       <tr><th>Working set</th><td>${ws.working_set_mib == null ? '<span class="muted">không đọc được</span>' : `${esc(fmtMib(ws.working_set_mib))}${ws.percent == null ? '' : ` <span class="pill ${ws.percent >= 85 ? 'bad' : ws.percent >= 75 ? 'warn' : 'ok'}">${esc(ws.percent)}%</span>`} <span class="muted small">(không tính page cache)</span>`}</td></tr>
+      <tr><th>Dọn heap (malloc_trim)</th><td>${trim.runs ? `${esc(trim.runs)} lần · gần nhất ${esc(trim.last_reason || '')}: ${esc(fmtMib(trim.last_before_mib))} → ${esc(fmtMib(trim.last_after_mib))} · tổng nhả ${esc(fmtMib(trim.total_freed_mib))}` : '<span class="muted">chưa chạy</span>'}${trim.malloc_trim === false ? ' <span class="muted small">(không có glibc, chỉ gc)</span>' : ''}</td></tr>
       <tr><th>Chạm trần · OOM kill</th><td><span class="mono">${esc(ev.max ?? '—')} · ${esc(ev.oom_kill ?? '—')}</span> <span class="muted small">(memory.events từ lúc container chạy)</span></td></tr>
     </table>
     <div class="card-head" style="margin:14px 0 6px"><h3>Tiến trình</h3></div>

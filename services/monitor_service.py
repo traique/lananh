@@ -27,7 +27,7 @@ import time
 
 import messages
 from ai.provider_state import provider_state, send_alert
-from core import config
+from core import config, memtrim
 from services import error_digest, key_rotation, quota_burn, watchdog
 
 logger = logging.getLogger(__name__)
@@ -114,6 +114,11 @@ async def _monitor_loop() -> None:
         await _run_step("quota miễn phí", quota_burn.check_and_alert)
         await _run_step("lưu bộ đếm lỗi", error_digest.persist)
         await _run_step("tổng hợp lỗi hằng ngày", error_digest.send_daily_digest_if_due)
+        # Trả heap rảnh về hệ điều hành mỗi MEMORY_TRIM_INTERVAL_SEC (core/memtrim.py).
+        try:
+            memtrim.maybe_periodic()
+        except Exception:
+            logger.debug("monitor: dọn RAM định kỳ lỗi.", exc_info=True)
 
 
 def start() -> None:

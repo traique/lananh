@@ -3,7 +3,7 @@ from services import memory_stats
 
 def test_snapshot_has_core_fields_and_never_raises():
     snap = memory_stats.snapshot()
-    assert set(snap) == {"python", "container", "processes", "heavy_modules_loaded"}
+    assert set(snap) == {"python", "container", "processes", "heavy_modules_loaded", "trim"}
     assert snap["python"]["rss_mib"] is None or snap["python"]["rss_mib"] > 0
     assert any(p["name"] == "web (python)" for p in snap["processes"]) or not snap["processes"]
 

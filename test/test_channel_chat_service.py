@@ -1072,3 +1072,52 @@ async def test_luot_chi_doc_nho_giup_khong_de_bo_trich_nho_tu_luu(chat_fakes, mo
     await ccs.run_chat_turn(1, "hôm nay anh mệt quá", allow_side_effects=False)
     assert chat_fakes["kinds"][-1] == conversation_log.KIND_CHAT
     assert flushes == [{"explicit": False}]
+
+
+# ─── Sửa 27/10: hỏi giá sản phẩm không bị nhánh cổ phiếu chặn ───────────────
+
+
+@pytest.mark.asyncio
+async def test_hoi_gia_san_pham_di_xuong_chat_co_tra_web_that(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+
+    seen = {}
+
+    async def fake_chat(user_id, text, *, grounding, memory_context, require_real_search, **kw):
+        seen["forced"] = require_real_search
+        return _FakeResponse("Giá tham khảo...")
+
+    async def no_symbols(text):
+        return []
+
+    monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
+    monkeypatch.setattr(ccs.stock_analysis, "find_valid_symbols", no_symbols)
+    stock, grounding = await ccs._handle_stock(1, "giá samsung s24 plus cũ")
+    assert stock is None and grounding == ""
+    turn = await ccs.run_chat_turn(1, "giá samsung s24 plus cũ", channel="zoom")
+    await ccs.stop_background_tasks()
+    assert turn.text == "Giá tham khảo..." and seen["forced"] is True
+    # Hỏi cổ phiếu rõ ràng mà không ra mã: vẫn báo "chưa tra ra mã".
+    blocked, _ = await ccs._handle_stock(1, "giá cổ phiếu ABCXYZ")
+    assert blocked is not None and "chưa tra ra mã" in blocked.messages[0]
+
+
+@pytest.mark.asyncio
+async def test_telegram_hoi_gia_san_pham_khong_bao_loi_ma(monkeypatch):
+    from handlers import stock_handler
+
+    async def no_symbols(text):
+        return []
+
+    sent = []
+
+    class Msg:
+        async def reply_text(self, text, **kwargs):
+            sent.append(text)
+
+    update = type("U", (), {"message": Msg()})()
+    monkeypatch.setattr(stock_handler.stock_analysis, "find_valid_symbols", no_symbols)
+    route = await stock_handler.maybe_handle(update, 1, "giá samsung s24 plus cũ")
+    assert route.handled is False and sent == []
+    route = await stock_handler.maybe_handle(update, 1, "giá cổ phiếu ABCXYZ")
+    assert route.handled is True and "chưa tra ra mã" in sent[0]

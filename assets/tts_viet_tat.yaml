@@ -1,0 +1,145 @@
+# Từ điển đọc giọng cho tin thoại /noi (services/tts_normalize.py).
+#
+# Bộ đọc Gemini TTS/Live đọc NGUYÊN VĂN chữ được gửi: "LNST", "ko", "P/E" mà để
+# nguyên thì bị đọc lướt, đọc kiểu tiếng Anh hoặc bỏ qua. Bảng này đổi chữ viết tắt
+# thành chữ đọc được TRƯỚC khi gửi đi; bản tin chữ không đổi.
+#
+# - chinh_xac: khớp NGUYÊN TỪ, phân biệt hoa/thường đúng như khoá ("CK" = chứng
+#   khoán, "ck" = chuyển khoản).
+# - khong_phan_biet: khớp nguyên từ, không phân biệt hoa/thường.
+# - chu_cai: cách đọc từng chữ cái cho mã cổ phiếu/chữ viết tắt in hoa 2-3 ký tự
+#   không có trong bảng (FPT -> "ép pê tê").
+# - doc_nguyen: từ in hoa KHÔNG đánh vần (tiếng Việt không dấu hay gặp: "ANH ơi").
+#
+# Khoá dài được ưu tiên trước khoá ngắn ("TP.HCM" trước "TP"). Sửa thoải mái,
+# không cần đổi code (đọc lại khi khởi động).
+
+chinh_xac:
+  TP.HCM: thành phố Hồ Chí Minh
+  TP. HCM: thành phố Hồ Chí Minh
+  TP HCM: thành phố Hồ Chí Minh
+  TPHCM: thành phố Hồ Chí Minh
+  TP.HN: thành phố Hà Nội
+  HCM: Hồ Chí Minh
+  HN: Hà Nội
+  VN: Việt Nam
+  TP: thành phố
+  CK: chứng khoán
+  ck: chuyển khoản
+  TTCK: thị trường chứng khoán
+  CTCK: công ty chứng khoán
+  BĐS: bất động sản
+  BDS: bất động sản
+  NĐT: nhà đầu tư
+  NDT: nhà đầu tư
+  LNST: lợi nhuận sau thuế
+  LNTT: lợi nhuận trước thuế
+  LNG: lợi nhuận gộp
+  DT: doanh thu
+  DTT: doanh thu thuần
+  KQKD: kết quả kinh doanh
+  BCTC: báo cáo tài chính
+  ĐHCĐ: đại hội cổ đông
+  ĐHĐCĐ: đại hội đồng cổ đông
+  HĐQT: hội đồng quản trị
+  GDKHQ: giao dịch không hưởng quyền
+  CP: cổ phiếu
+  CPI: xê pê i
+  GDP: giê đê pê
+  P/E: pê trên e
+  P/B: pê trên bê
+  EPS: e pê ét
+  ROE: rô e
+  ROA: rô a
+  EV/EBITDA: e vê trên e bít đa
+  YoY: so với cùng kỳ năm trước
+  QoQ: so với quý trước
+  MoM: so với tháng trước
+  YTD: từ đầu năm
+  NHNN: Ngân hàng Nhà nước
+  TCTD: tổ chức tín dụng
+  DN: doanh nghiệp
+  KL: khối lượng
+  GTGD: giá trị giao dịch
+  TB: trung bình
+  SL: số lượng
+  NN: nước ngoài
+  OK: ô kê
+  AI: ây ai
+  USD: đô la Mỹ
+  VND: đồng
+  VNĐ: đồng
+  EUR: ơ rô
+  HOSE: hô se
+  HSX: hát ét ích
+  HNX: hát en ích
+  UPCOM: úp com
+  UPCoM: úp com
+  ETF: e tê ép
+  CW: chứng quyền
+  TV: ti vi
+  SJC: ét giây xê
+  PNJ: pê en giây
+  RON: rôn
+
+khong_phan_biet:
+  ko: không
+  k: không
+  kh: không
+  khg: không
+  hok: không
+  dc: được
+  đc: được
+  đk: được
+  vs: so với
+  vd: ví dụ
+  v.v.: vân vân
+  v.v: vân vân
+  vv: vân vân
+  sđt: số điện thoại
+  sdt: số điện thoại
+  ntn: như thế nào
+  bn: bao nhiêu
+  bnh: bao nhiêu
+  j: gì
+  mn: mọi người
+  ng: người
+  tks: cảm ơn
+  thx: cảm ơn
+  ok: ô kê
+  oke: ô kê
+  okie: ô kê
+  vk: vợ
+
+chu_cai:
+  A: a
+  B: bê
+  C: xê
+  D: dê
+  Đ: đê
+  E: e
+  F: ép
+  G: giê
+  H: hát
+  I: i
+  J: giây
+  K: ca
+  L: e lờ
+  M: em
+  N: en
+  O: ô
+  P: pê
+  Q: quy
+  R: e rờ
+  S: ét
+  T: tê
+  U: u
+  V: vê
+  W: vê kép
+  X: ích
+  Y: i dài
+  Z: dét
+
+doc_nguyen: [ANH, EM, OI, CHO, CON, KHI, NAY, ROI, VOI, SAO, VAY, NAO, LAM, XEM, GIO, MOT,
+  HAI, BA, NAM, NGAY, MAI, QUA, HOM, BAO, HAY, VAN, THI, MOI, BAY, MUA, BAN, GIU, SAN, CHI,
+  CAM, ON, DA, VANG, NHA, NHE, LA, VA, CO, MA, THE, KO, GIA, TOI, DEP, YEU, HEN, VUI]

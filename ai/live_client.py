@@ -574,16 +574,30 @@ async def converse(
     return official_client.FallbackResponse(result.transcript)
 
 
+def speak_instruction(style: str | None = None) -> str:
+    """SPEAK_INSTRUCTION + chỉ dẫn phong cách đọc (VOICE_STYLE_PROMPT) nếu có."""
+    style = " ".join((style or "").split())
+    if not style:
+        return SPEAK_INSTRUCTION
+    return (
+        f"{SPEAK_INSTRUCTION}\n\nPhong cách giọng đọc (chỉ áp cho CÁCH đọc, không đổi "
+        f"chữ nào): {style}"
+    )
+
+
 async def speak(
     text: str,
     *,
     voice: str | None,
     timeout_sec: float,
     threshold: float | None = None,
+    style: str | None = None,
 ) -> LiveTurn:
     """Đọc NGUYÊN VĂN ``text`` qua Live -> LiveTurn (PCM 24 kHz + bản chép lời).
     Bản chép lời giống văn bản dưới ``threshold`` (mặc định LIVE_VOICE_MIN_MATCH)
-    -> LiveMismatchError (ghi provider_calls outcome "mismatch")."""
+    -> LiveMismatchError (ghi provider_calls outcome "mismatch"). ``text`` là bản
+    ĐÃ chuẩn hoá để đọc (services/tts_normalize.py) nên so khớp với chính bản đó;
+    ``style`` chỉ vào chỉ dẫn hệ thống, không tính vào phần so khớp."""
     limit = min_match() if threshold is None else threshold
 
     def _check(transcript: str) -> float:
@@ -593,7 +607,7 @@ async def speak(
         return score
 
     result = await _run(
-        system_instruction=SPEAK_INSTRUCTION,
+        system_instruction=speak_instruction(style),
         history=[],
         prompt=text,
         voice=voice,

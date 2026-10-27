@@ -1,11 +1,14 @@
 """Web LCTA: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le), /tu-vi,
-/than-so-hoc (form -> trang kết quả riêng), /ky-mon, /thoi-tiet, /xo-so và JSON API /api/v1.
+/than-so-hoc (form -> trang kết quả riêng), /ky-mon, /thoi-tiet, /xo-so, /gia-vang,
+/gia-xang và JSON API /api/v1.
 
 Xem nội dung KHÔNG cần đăng nhập: lịch, tử vi, thần số học tính bằng code
 (services/site_data.py), không gọi AI, không đụng DB. /thoi-tiet tra Open-Meteo
 qua services/weather.py (cache có trần), giới hạn số lượt tra song song. /xo-so đọc
 feed xskt.com.vn qua services/lottery_lookup.py (cache có trần theo đài, dò vé bằng
-code). Trang render sẵn ở server nên chạy được cả khi tắt JavaScript.
+code). /gia-vang, /gia-xang đọc bảng giá qua services/price_lookup.py (dùng lại cache
+1 bản/nguồn của vn_market_data + fuel_prices). Trang render sẵn ở server nên chạy được
+cả khi tắt JavaScript.
 
 Cần đăng nhập (tài khoản admin, chung phiên với /admin) cho việc tốn quota hoặc
 đổi dữ liệu chung: nút "AI luận giải" ở kết quả tử vi/thần số học/kỳ môn, thêm/xoá địa
@@ -19,6 +22,11 @@ JSON API (chỉ thêm trường mới, không đổi/bỏ trường cũ):
   GET  /api/v1/lottery?province=mn|mt|mb|<khoá đài, vd tay-ninh>&date=YYYY-MM-DD&ticket=
                                     (bỏ trống province = miền Nam, bỏ trống date = kỳ mới nhất;
                                      nguồn lỗi -> 503 SOURCE_UNAVAILABLE)
+  GET  /api/v1/gold                 (vang.today, lỗi thì bảng SJC với fallback=true; kèm
+                                     quy đổi XAU/USD theo tỷ giá Vietcombank)
+  GET  /api/v1/fuel                 (Petrolimex vùng 1/vùng 2 + PVOIL, giaxanghomnay.com)
+  GET  /api/v1/fx                   (tỷ giá Vietcombank các ngoại tệ chính)
+                                    (3 API giá: nguồn lỗi -> 503 SOURCE_UNAVAILABLE)
   POST /api/v1/numerology/readings  {"birthDate": "YYYY-MM-DD"|"DD/MM/YYYY", "name"?: str}
   POST /api/v1/tuvi/charts          {"birthDate": "YYYY-MM-DD"|"DD/MM/YYYY",
                                      "calendar": "solar"|"lunar", "isLeapMonth"?: bool (chỉ lunar),
@@ -62,6 +70,7 @@ from services import (
     lottery_provinces,
     lunar,
     numerology,
+    price_lookup,
     site_data,
     tuvi,
     vn_market_data,
@@ -94,6 +103,8 @@ _NAV = [
         [
             ("/thoi-tiet", "Thời tiết", "cloud"),
             ("/xo-so", "Xổ số", "ticket"),
+            ("/gia-vang", "Giá vàng", "gold"),
+            ("/gia-xang", "Giá xăng", "fuel"),
             ("/tu-vi", "Lá số tử vi", "chart"),
             ("/ky-mon", "Kỳ Môn Độn Giáp", "compass"),
             ("/than-so-hoc", "Thần số học", "number"),
@@ -150,6 +161,10 @@ _MAX_JSON_BYTES = 4096
 # để người lạ đổi đài liên tục không chiếm hết kết nối của worker.
 _lottery_slots = asyncio.Semaphore(3)
 _LOTTERY_TIMEOUT_SEC = 12
+# Giá vàng/xăng/tỷ giá: cache sẵn có (vàng, tỷ giá 10 phút; xăng 1 giờ), cùng trần lượt
+# tải song song. Hạn chót 15 giây vì vàng có thể phải thử vang.today rồi mới tới SJC.
+_price_slots = asyncio.Semaphore(3)
+_PRICE_TIMEOUT_SEC = 15
 
 
 # (đã đăng nhập, đường dẫn đang xem) của request hiện tại - để header hiện nút
@@ -202,6 +217,11 @@ def _env() -> Environment:
         lstrip_blocks=True,
     )
     env.filters["vn_date"] = lambda iso: dt.date.fromisoformat(iso).strftime("%d/%m/%Y")
+    # Số kiểu Việt Nam: 25.060 / 4.015,1; đồng -> triệu: 141700000 -> "141,7".
+    env.filters["vnd"] = vn_market_data.vnd
+    env.filters["trieu"] = vn_market_data.trieu
+    env.filters["fx_rate"] = lambda v: vn_market_data.vnd(v, 0 if v is None or v >= 1000 else 2)
+    env.filters["usd"] = lambda v: vn_market_data.vnd(v, 1 if v is not None and v % 1 else 0)
     return env
 
 
@@ -549,6 +569,62 @@ async def lottery_page(request: Request) -> HTMLResponse:
         prize_labels=lottery_lookup.PRIZE_LABELS,
     )
     page.headers["Cache-Control"] = "no-cache"  # kỳ hôm nay cập nhật dần theo giờ quay
+    return page
+
+
+async def _price_data(load) -> dict:
+    async with _price_slots:
+        return await load()
+
+
+async def _limited_prices(load) -> dict:
+    """Bảng giá qua services/price_lookup (``load`` = gold/fuel/fx). Raise
+    MarketDataError khi nguồn lỗi/chậm - kể cả hết hạn chót lúc chờ slot."""
+    try:
+        return await asyncio.wait_for(_price_data(load), _PRICE_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        raise vn_market_data.MarketDataError("Nguồn giá chậm") from None
+
+
+@router.get("/gia-vang", response_class=HTMLResponse)
+async def gold_page() -> HTMLResponse:
+    error, data = "", None
+    try:
+        data = await _limited_prices(price_lookup.gold)
+    except vn_market_data.MarketDataError:
+        error = "Nguồn giá vàng đang lỗi hoặc chậm, thử lại sau ít phút. Trang không tự đoán giá."
+    page = _render(
+        "gia_vang.html",
+        title="Giá vàng hôm nay",
+        description="Giá vàng SJC, nhẫn, DOJI, PNJ, Bảo Tín, vàng thế giới quy đổi và tỷ giá "
+        "Vietcombank - nguồn vang.today, SJC dự phòng.",
+        active="/gia-vang",
+        data=data,
+        error=error,
+    )
+    page.headers["Cache-Control"] = "no-cache"  # giá đổi trong ngày, cache ở server
+    return page
+
+
+@router.get("/gia-xang", response_class=HTMLResponse)
+async def fuel_page() -> HTMLResponse:
+    error, data = "", None
+    try:
+        data = await _limited_prices(price_lookup.fuel)
+    except vn_market_data.MarketDataError:
+        error = (
+            "Nguồn giá xăng dầu đang lỗi hoặc chậm, thử lại sau ít phút. Trang không tự đoán giá."
+        )
+    page = _render(
+        "gia_xang.html",
+        title="Giá xăng dầu hôm nay",
+        description="Giá xăng dầu Petrolimex (vùng 1, vùng 2) và PVOIL theo kỳ điều hành - "
+        "nguồn giaxanghomnay.com.",
+        active="/gia-xang",
+        data=data,
+        error=error,
+    )
+    page.headers["Cache-Control"] = "no-cache"
     return page
 
 
@@ -926,3 +1002,25 @@ async def api_lottery(province: str = "", date: str = "", ticket: str = "") -> J
         return _error(422, exc.code, exc.message)
     except vn_market_data.MarketDataError:
         return _error(503, "SOURCE_UNAVAILABLE", "Nguồn kết quả xổ số đang lỗi, thử lại sau.")
+
+
+async def _api_prices(load, label: str) -> JSONResponse:
+    try:
+        return _ok(await _limited_prices(load))
+    except vn_market_data.MarketDataError:
+        return _error(503, "SOURCE_UNAVAILABLE", f"Nguồn {label} đang lỗi, thử lại sau.")
+
+
+@api_router.get("/gold")
+async def api_gold() -> JSONResponse:
+    return await _api_prices(price_lookup.gold, "giá vàng")
+
+
+@api_router.get("/fuel")
+async def api_fuel() -> JSONResponse:
+    return await _api_prices(price_lookup.fuel, "giá xăng dầu")
+
+
+@api_router.get("/fx")
+async def api_fx() -> JSONResponse:
+    return await _api_prices(price_lookup.fx, "tỷ giá")

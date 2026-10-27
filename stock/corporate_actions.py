@@ -2,7 +2,7 @@
 tức bằng cổ phiếu, cổ phiếu thưởng, chia tách).
 
 Bối cảnh: stock/price_adjust.py chỉ PHÁT HIỆN gap nghi GDKHQ (không sửa số).
-Module này dùng tiếp bước đó: lấy lịch sự kiện quyền từ vnstock/VCI (nguồn
+Module này dùng tiếp bước đó: lấy lịch sự kiện quyền từ VCI (REST trực tiếp, nguồn
 không chính thức, không SLA), và CHỈ khi dữ liệu sự kiện CÙNG THỜI ĐIỂM lẫn
 ĐỘ LỚN gap khớp nhau mới điều chỉnh ngược chuỗi giá trước ngày GDKHQ.
 
@@ -217,14 +217,25 @@ def _find_ex_index(dates: list[str], ex_date: str) -> int | None:
 
 
 def _parse_events_frame(df) -> tuple[list[DividendEvent], list[StockEvent]]:
-    """Tách DataFrame events() của VCI thành cổ tức tiền và sự kiện cổ phiếu.
+    """Tách danh sách sự kiện của VCI thành cổ tức tiền và sự kiện cổ phiếu.
 
-    Không phụ thuộc tên cột cứng: tìm cột theo từ khoá. event_code DIV = cổ
-    tức tiền, ISS = phát hành (thưởng/cổ tức cổ phiếu/chia tách/quyền mua -
-    phân loại tiếp bằng tiêu đề)."""
-    if df is None or getattr(df, "empty", True):
+    Nhận list dict (stock/vci_direct.fetch_event_history - đường chính, không cần
+    pandas) hoặc DataFrame events() của vnstock (giữ tương thích). Không phụ thuộc
+    tên cột cứng: tìm cột theo từ khoá. event_code DIV = cổ tức tiền, ISS = phát
+    hành (thưởng/cổ tức cổ phiếu/chia tách/quyền mua - phân loại tiếp bằng tiêu đề)."""
+    if df is None:
         return [], []
-    cols = {str(c).strip().lower(): c for c in df.columns}
+    if isinstance(df, list):
+        rows = [r for r in df if isinstance(r, dict)]
+        columns: list = list(dict.fromkeys(k for r in rows for k in r))
+    else:
+        if getattr(df, "empty", True):
+            return [], []
+        rows = df.to_dict("records")
+        columns = list(df.columns)
+    if not rows:
+        return [], []
+    cols = {str(c).strip().lower(): c for c in columns}
 
     def pick(*keywords: str):
         for kw in keywords:
@@ -241,17 +252,17 @@ def _parse_events_frame(df) -> tuple[list[DividendEvent], list[StockEvent]]:
 
     dividends: list[DividendEvent] = []
     stock_events: list[StockEvent] = []
-    for _, row in df.iterrows():
+    for row in rows:
         code = ""
-        if code_col is not None and row[code_col] is not None:
-            code = str(row[code_col]).strip().upper()
+        if code_col is not None and row.get(code_col) is not None:
+            code = str(row.get(code_col)).strip().upper()
         title = (
-            str(row[title_col]).strip()
-            if title_col is not None and row[title_col] is not None
+            str(row.get(title_col)).strip()
+            if title_col is not None and row.get(title_col) is not None
             else ""
         )
         lowered_title = title.lower()
-        ex_date = _to_date_str(row[ex_col]) if ex_col is not None else ""
+        ex_date = _to_date_str(row.get(ex_col)) if ex_col is not None else ""
 
         is_stock_event = code == "ISS" or any(kw in lowered_title for kw in _STOCK_EVENT_KEYWORDS)
         if code in ("", "DIV") and not is_stock_event:
@@ -259,9 +270,12 @@ def _parse_events_frame(df) -> tuple[list[DividendEvent], list[StockEvent]]:
                 continue
             if code == "" and ex_col is None:
                 continue
+            raw_value = row.get(cash_col)
+            if raw_value is None:
+                continue
             try:
-                value = float(row[cash_col])
-            except (TypeError, ValueError, KeyError):
+                value = float(raw_value)
+            except (TypeError, ValueError):
                 continue
             dividends.append(DividendEvent(ex_date=ex_date, cash_value=value))
             continue
@@ -269,7 +283,7 @@ def _parse_events_frame(df) -> tuple[list[DividendEvent], list[StockEvent]]:
             continue
         if any(kw in lowered_title for kw in _RIGHTS_KEYWORDS):
             continue
-        ratio = parse_stock_ratio(row[ratio_col]) if ratio_col is not None else None
+        ratio = parse_stock_ratio(row.get(ratio_col)) if ratio_col is not None else None
         if ratio is None and title:
             ratio = parse_stock_ratio(title)
         if ratio is None or not ex_date:
@@ -279,26 +293,20 @@ def _parse_events_frame(df) -> tuple[list[DividendEvent], list[StockEvent]]:
 
 
 async def fetch_corporate_events(symbol: str) -> tuple[list[DividendEvent], list[StockEvent]]:
-    """Lịch cổ tức tiền + sự kiện cổ phiếu qua vnstock/VCI. Không bao giờ
-    raise - lỗi chỉ trả ([], []) (khi đó module này vô hiệu, hệ thống quay về
-    hành vi chỉ cảnh báo của price_adjust)."""
-    from stock.providers import ensure_vnstock_api_key, get_vnstock_semaphore
-
-    try:
-        ensure_vnstock_api_key()
-        from vnstock.explorer.vci import Company
-    except ImportError:
-        return [], []
+    """Lịch cổ tức tiền + sự kiện cổ phiếu qua REST /v1/events của VCI
+    (stock/vci_direct.py, không nạp vnstock/pandas). Không bao giờ raise - lỗi chỉ
+    trả ([], []) (khi đó module này vô hiệu, hệ thống quay về hành vi chỉ cảnh báo
+    của price_adjust)."""
+    from stock import vci_direct
+    from stock.providers import get_vnstock_semaphore
 
     def _sync() -> tuple[list[DividendEvent], list[StockEvent]]:
         try:
-            # vnstock 4.x: lịch quyền nằm trong Company.events() (event_code
-            # DIV = cổ tức tiền, ISS = phát hành cổ phiếu), kèm exright_date.
-            df = Company(symbol=symbol, show_log=False).events()
+            rows = vci_direct.fetch_event_history(symbol)
         except Exception:
-            logger.warning("vnstock: events lỗi cho %s", symbol, exc_info=True)
+            logger.warning("VCI: lịch sự kiện quyền lỗi cho %s", symbol, exc_info=True)
             return [], []
-        return _parse_events_frame(df)
+        return _parse_events_frame(rows)
 
     try:
         async with get_vnstock_semaphore():
