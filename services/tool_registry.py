@@ -50,6 +50,9 @@ from typing import Any, Awaitable, Callable, Iterable, Iterator
 
 CHAT = "chat"
 AGENT = "agent"
+# ToolSpec "chạy lệnh" (services/nl_commands.py): KHÔNG nằm sẵn trong danh bạ router
+# chat - chỉ nhóm khớp câu hỏi mới được đưa vào prompt (giữ trần token).
+COMMAND = "command"
 
 ROLE_OWNER = "owner"
 ROLE_ADMIN = "admin"
@@ -83,6 +86,8 @@ class ToolResult:
     status: str = STATUS_OK
     confirmation: str = ""
     confirmation_key: str = ""
+    # Dữ liệu kèm cho lượt chat (tool "chạy lệnh": danh sách tin, ảnh /anh...).
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -99,6 +104,10 @@ class ToolSpec:
     router_hint: str = ""
     # Tên việc ghi dữ liệu cho câu báo "chưa lưu được ..." ("nhắc việc", "ghi chú"...).
     effect_label: str = ""
+    # Kết quả gửi NGUYÊN VĂN cho người dùng (không qua AI viết lại) - tool "chạy lệnh".
+    verbatim: bool = False
+    # Nhóm câu hỏi của tool "chạy lệnh" (services/nl_commands.py chọn nhóm theo câu).
+    group: str = ""
 
     def allowed_args(self, args: dict[str, Any]) -> dict[str, Any]:
         """Chỉ giữ tham số khai báo trong schema (bỏ "user_id" model tự thêm và
@@ -124,6 +133,8 @@ class ToolOutcome:
     # không chạy được: lượt chat phải nói thật là chưa tra được, không đoán.
     lookup: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+    # Tool "chạy lệnh": text là câu trả lời gửi thẳng, lượt chat không gọi AI nữa.
+    verbatim: bool = False
 
     @property
     def saved(self) -> bool:

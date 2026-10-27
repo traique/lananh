@@ -43,7 +43,7 @@ from core.text_utils import strip_json_fence
 from services import history_search  # noqa: F401 - đăng ký tool search_history
 from services import lunar, prompt_redaction, turn_progress, weather
 from services import tool_registry as reg
-from services import write_intent
+from services import nl_commands, write_intent
 from services.reminder_delivery import current_target
 from stock import analysis as stock_analysis
 
@@ -61,6 +61,8 @@ _turn_admin: contextvars.ContextVar[bool] = contextvars.ContextVar("tool_turn_ad
 _turn_excluded: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
     "tool_turn_excluded", default=frozenset()
 )
+# Người gọi của lượt (ToolSpec "chạy lệnh" đang chờ bổ sung tham số theo người này).
+_turn_user: contextvars.ContextVar[int] = contextvars.ContextVar("tool_turn_user", default=0)
 _HISTORY_TURNS = 3
 _HISTORY_LINE_MAX = 300
 
@@ -751,6 +753,16 @@ _HANDLERS = {spec.name: spec.handler for spec in _CHAT_TOOLS}
 
 
 @contextmanager
+def turn_text_scope(text: str) -> Iterator[None]:
+    """Câu người dùng của lượt cho handler đọc lại (đường code của nl_commands)."""
+    token = _turn_text.set(text)
+    try:
+        yield
+    finally:
+        _turn_text.reset(token)
+
+
+@contextmanager
 def admin_scope(is_admin: bool) -> Iterator[None]:
     token = _turn_admin.set(bool(is_admin))
     try:
@@ -775,6 +787,14 @@ def _chat_specs(role: str) -> list[reg.ToolSpec]:
     return [spec for spec in reg.specs(reg.CHAT, role) if spec.name not in excluded]
 
 
+def _turn_specs(user_text: str, role: str) -> list[reg.ToolSpec]:
+    """Tool router chat của lượt + ToolSpec "chạy lệnh" của nhóm khớp câu này
+    (services/nl_commands.py - chỉ nhóm khớp mới vào prompt, giữ trần token)."""
+    extra = nl_commands.router_specs(_turn_user.get(), user_text, role)
+    excluded = _turn_excluded.get()
+    return _chat_specs(role) + [spec for spec in extra if spec.name not in excluded]
+
+
 def _role(user_id: int, is_admin: bool) -> str:
     if config.is_owner_user_id(user_id):
         return reg.ROLE_OWNER
@@ -783,7 +803,11 @@ def _role(user_id: int, is_admin: bool) -> str:
 
 def _build_router_prompt(user_text: str, history_text: str = "", role: str | None = None) -> str:
     now = datetime.now(_VN_TZ)
-    tools = reg.router_tool_list(_chat_specs(role or reg.ROLE_OWNER))
+    specs = _turn_specs(user_text, role or reg.ROLE_OWNER)
+    tools = reg.router_tool_list(specs)
+    rules = _ROUTER_RULES
+    if any(spec.verbatim for spec in specs):
+        rules += "\n" + nl_commands.ROUTER_RULE
     history = ""
     if history_text:
         history = (
@@ -791,7 +815,7 @@ def _build_router_prompt(user_text: str, history_text: str = "", role: str | Non
             f"{history_text}\n\n"
         )
     return (
-        f"{_ROUTER_HEADER}\n{tools}\n{_ROUTER_RULES}\n\n"
+        f"{_ROUTER_HEADER}\n{tools}\n{rules}\n\n"
         f"[Thời điểm hiện tại: {now:%H:%M} {lunar.WEEKDAYS[now.weekday()]} ngày "
         f"{now:%d/%m/%Y}, giờ Việt Nam]\n\n"
         f"{history}### Tin nhắn mới của người dùng\n{user_text}\n\n"
@@ -1007,6 +1031,7 @@ async def execute(
         "router_ran": True,
         "effect_label": spec.effect_label,
         "untrusted": spec.untrusted_output,
+        "verbatim": spec.verbatim,
     }
     if spec.side_effect and not allow_side_effects:
         return reg.ToolOutcome(
@@ -1038,6 +1063,7 @@ async def execute(
         text=result.text,
         confirmation=result.confirmation,
         confirmation_key=result.confirmation_key,
+        extra=dict(result.extra),
         **base,
     )
 
@@ -1060,7 +1086,13 @@ async def maybe_run_tool(
     if is_admin is None:
         is_admin = _turn_admin.get()
     intent = side_effect_intent(user_text)
-    if not intent and not _looks_like_tool_intent(user_text):
+    user_token = _turn_user.set(user_id)
+    if (
+        not intent
+        and not _looks_like_tool_intent(user_text)
+        and not nl_commands.router_groups(user_id, user_text, _role(user_id, is_admin))
+    ):
+        _turn_user.reset(user_token)
         return reg.ToolOutcome()
     token = _turn_text.set(user_text)
     try:
@@ -1072,6 +1104,14 @@ async def maybe_run_tool(
         return reg.ToolOutcome(status=reg.STATUS_FAILED, intent=intent, lookup=lookup)
     finally:
         _turn_text.reset(token)
+        _turn_user.reset(user_token)
+
+
+def wants_command_router(user_id: int, user_text: str, is_admin: bool) -> bool:
+    """Câu có thể là yêu cầu chạy lệnh (nhóm lệnh khớp) - run_chat_turn chạy router
+    TRƯỚC (không song song tra web/trí nhớ): router chọn lệnh thì gửi nguyên văn kết
+    quả, khỏi tốn lượt tra web và lượt chat AI."""
+    return bool(nl_commands.router_groups(user_id, user_text, _role(user_id, is_admin)))
 
 
 async def _route_and_run(
@@ -1111,7 +1151,7 @@ async def _route_and_run(
 
     tool_name = str(data.get("tool", "none")).strip()
     spec = reg.get(tool_name)
-    allowed = {s.name for s in _chat_specs(role)}
+    allowed = {s.name for s in _turn_specs(user_text, role)}
     if tool_name == "none" or spec is None or tool_name not in allowed:
         return reg.ToolOutcome(status=reg.STATUS_NONE, intent=intent, router_ran=True)
     args = data.get("args") or {}

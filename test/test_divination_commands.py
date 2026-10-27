@@ -85,7 +85,7 @@ def test_help_va_menu_telegram_co_lenh_moi():
     import bot_app
     from handlers import commands
 
-    names = {c.command for c in bot_app.COMMANDS}
+    names = {c.command for c in bot_app.ALL_COMMANDS}
     assert {"lich", "tsh", "tsh_chitiet", "tuvi", "tuvi_chitiet"} <= names
     for cmd in ("/lich", "/tsh", "/tuvi"):
         assert cmd in commands.HELP_TEXT

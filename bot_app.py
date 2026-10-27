@@ -66,12 +66,13 @@ from stock import providers as stock_providers
 
 logger = logging.getLogger(__name__)
 
-# Menu Telegram tối đa 100 lệnh (setMyCommands). Lệnh hiếm dùng chỉ bỏ khỏi MENU,
-# handler vẫn đăng ký bên dưới: /userouter9 (ép thử lại 9Router - em đã tự thử lại
-# định kỳ, cảnh báo provider tự gợi ý lệnh này) nhường chỗ cho /xang.
-COMMANDS = [
+# Mô tả MỌI lệnh Telegram (tối đa 100 như giới hạn setMyCommands) - tài liệu/test. Menu
+# thật (COMMANDS bên dưới) chỉ còn ~18 lệnh hay dùng: người dùng cứ nhắn tự nhiên
+# (services/nl_commands.py), bỏ khỏi MENU không có nghĩa là bỏ lệnh - handler vẫn
+# đăng ký đủ trong build_application(). /userouter9 không có trong danh sách này.
+ALL_COMMANDS = [
     BotCommand("start", "Bắt đầu"),
-    BotCommand("help", "Xem hướng dẫn"),
+    BotCommand("help", "Hướng dẫn ngắn; /help all xem đủ lệnh"),
     BotCommand("huy", "Dừng câu trả lời đang chạy dở"),
     BotCommand("sai", "Báo câu trả lời vừa rồi chưa ổn (kèm lý do)"),
     BotCommand("danhmuc", "Xem danh mục cổ phiếu"),
@@ -170,6 +171,30 @@ COMMANDS = [
     BotCommand("zaloxoa", "Xoá pairing 1 user Zalo"),
     BotCommand("zalodanhsach", "Xem danh sách user Zalo"),
 ]
+# Menu "/" của Telegram: lệnh hay dùng nhất (bot chỉ phục vụ chủ bot nên 1 menu chung,
+# không cần BotCommandScope). Thứ tự = thứ tự hiện trong menu.
+MENU_COMMANDS = (
+    "help",
+    "huy",
+    "chuy",
+    "nhac",
+    "chitieu",
+    "danhmuc",
+    "theodoi",
+    "vang",
+    "xoso",
+    "thoitiet",
+    "lich",
+    "tuvi",
+    "dich",
+    "notes",
+    "memory",
+    "viec",
+    "sai",
+    "status",
+)
+_DESCRIPTIONS = {c.command: c.description for c in ALL_COMMANDS}
+COMMANDS = [BotCommand(name, _DESCRIPTIONS[name]) for name in MENU_COMMANDS]
 
 
 async def _post_init(app):

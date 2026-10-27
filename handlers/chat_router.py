@@ -5,6 +5,7 @@ bản số liệu trước qua handlers/stock_handler.py, gửi rich text); lư�
 dùng chung pipeline với Zalo/Zoom: services/channel_chat_service.run_chat_turn.
 """
 
+import base64
 import logging
 
 from telegram import InputFile, Update
@@ -35,7 +36,7 @@ from services import (
     voice_reply,
     weather_chat,
 )
-from services import attention, routines, vn_daily_chat
+from services import attention, nl_commands, routines, vn_daily_chat
 from services.concurrency import OWNER_TURN_KEY
 from services.telemetry import telemetry
 
@@ -206,6 +207,16 @@ async def _quick_reply(
         await common.reply_long_text(update.message, reply)
         return reply
 
+    # "em làm được gì", "xem tử vi 15/3/1990 9h30 nam", "bật giọng nói"...: lệnh chạy
+    # từ câu tự nhiên bằng code (services/nl_commands.py). Không đọc kèm /noi.
+    command_reply = await nl_commands.maybe_handle(
+        user_id, text, channel="telegram", is_admin=True, allow_side_effects=allow_side_effects
+    )
+    if command_reply is not None:
+        await record(user_id, text, command_reply.text, conversation_log.KIND_COMMAND)
+        await send_command_output(update.message, command_reply)
+        return ""
+
     # Giá vàng/tỷ giá/xổ số, thời tiết và âm lịch: trả lời thẳng bằng code,
     # không tốn lượt AI nào.
     # Lượt chỉ đọc: không lưu thành phố thời tiết mặc định ("anh ở Đà Nẵng").
@@ -227,6 +238,26 @@ async def _quick_reply(
         await common.reply_long_text(update.message, lunar_reply)
         return lunar_reply
     return None
+
+
+async def send_command_output(message, run, status_message=None) -> None:
+    """Gửi kết quả lệnh chạy từ câu tự nhiên y như khi gõ lệnh: từng tin chữ thô (không
+    nút 👍/👎/🔄), ảnh /anh gửi dạng ảnh. Có dòng trạng thái thì sửa đè tin đầu."""
+    texts = [m for m in run.messages if m]
+    for index, text in enumerate(texts):
+        if index == 0 and status_message is not None:
+            await common.reply_long_text_edit_first(status_message, text)
+        else:
+            await common.reply_long_text(message, text)
+    if run.image_b64:
+        await message.reply_photo(photo=base64.b64decode(run.image_b64))
+    elif run.image_url:
+        await message.reply_photo(photo=run.image_url)
+    if not texts and status_message is not None:
+        try:
+            await status_message.delete()
+        except Exception:
+            logger.debug("Không xoá được dòng trạng thái.", exc_info=True)
 
 
 async def _reply_or_edit(message, status_message, text: str) -> None:
@@ -327,6 +358,10 @@ async def _ai_reply(
         await _reply_or_edit(
             update.message, status_message, channel_chat_service.failure_message(turn, owner=True)
         )
+        return
+    if turn.verbatim:
+        # Lệnh chạy từ câu tự nhiên (services/nl_commands.py): gửi nguyên văn như gõ lệnh.
+        await send_command_output(update.message, turn, status_message)
         return
     reply_out = turn.text
     if reply_out and turn.used_fallback:

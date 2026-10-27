@@ -25,6 +25,7 @@ from services import (
     memory_commands,
     memory_control,
     memory_service,
+    nl_commands,
     price_search,
     prompt_templates,
     rag_clean_service,
@@ -179,7 +180,8 @@ HELP_TEXT = (
     "Facebook chờ duyệt, người Zalo lạ và tin nhắc việc cũng có nút bấm.\n"
     "/huy — dừng câu trả lời đang chạy dở; trong lúc chờ vẫn dùng được /help, /notes, /lich, "
     "/tsh, /tuvi, /kymon, /history, /memory (tin phải chờ lượt trước được thả 👀)\n"
-    "/start — lời chào; /help — hiển thị hướng dẫn này\n"
+    "/start — lời chào; /help — hướng dẫn ngắn; /help <chủ đề> (vd /help vàng); "
+    "/help all — bản đầy đủ này\n"
     "Trang quản trị: /admin trên URL dịch vụ (thống kê, provider, RAM, DB)."
 )
 
@@ -193,8 +195,9 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• nhắc anh 8h tối gọi mẹ\n"
         "• giá vàng hôm nay\n"
         "• phân tích FPT\n"
+        "• em làm được gì?\n"
         "Gửi 1 ảnh là em viết prompt tạo ảnh từ ảnh đó. "
-        "Gõ /help xem đầy đủ lệnh nha anh."
+        "Gõ /help xem gợi ý theo chủ đề, /help all xem đầy đủ lệnh nha anh."
     )
 
 
@@ -213,6 +216,12 @@ def help_chunks(text: str = HELP_TEXT, limit: int = 3500) -> list[str]:
 
 @common.restricted
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/help: bản ngắn (cứ nhắn tự nhiên + danh sách chủ đề); /help <chủ đề>: lệnh của
+    chủ đề đó; /help all: HELP_TEXT đầy đủ (services/nl_commands.help_reply)."""
+    text = nl_commands.help_reply(common.extract_arg(context), "owner", "telegram")
+    if text is not None:
+        await common.reply_long_text(update.message, text)
+        return
     for chunk in help_chunks():
         await update.message.reply_text(chunk, parse_mode="Markdown")
 

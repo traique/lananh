@@ -263,10 +263,10 @@ def test_help_va_menu_co_lenh_moi():
     import bot_app
     from handlers import commands
 
-    names = {c.command for c in bot_app.COMMANDS}
+    names = {c.command for c in bot_app.ALL_COMMANDS}
     assert {"vang", "tygia", "xang", "xoso", "thoitiet", "bantin"} <= names
     for cmd in ("/vang", "/tygia", "/xang", "/xoso", "/thoitiet", "/bantin"):
         assert cmd in commands.HELP_TEXT and cmd in ccs.HELP
     # Telegram nhận tối đa 100 lệnh menu; /userouter9 rời menu nhưng vẫn chạy.
-    assert len(bot_app.COMMANDS) <= 100 and len(names) == len(bot_app.COMMANDS)
+    assert len(bot_app.ALL_COMMANDS) <= 100 and len(names) == len(bot_app.ALL_COMMANDS)
     assert "userouter9" not in names and "/userouter9" in commands.HELP_TEXT

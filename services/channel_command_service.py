@@ -161,7 +161,7 @@ _HELP_FOOTER = (
     "/huy — dừng câu trả lời đang chạy dở (trong lúc chờ vẫn dùng được /help, /notes, "
     "/lich, /tsh, /tuvi, /kymon, /history)\n"
     "/sai [lý do] — báo câu trả lời vừa rồi chưa ổn để Lan Anh rút kinh nghiệm\n"
-    "/help — hiển thị hướng dẫn này"
+    "/help — hướng dẫn ngắn; /help <chủ đề> (vd /help vàng); /help all — bản đầy đủ này"
 )
 
 HELP_MEMBER = "\n\n".join((_HELP_INTRO_MEMBER, _HELP_COMMON, _HELP_FOOTER))
@@ -200,6 +200,20 @@ def take_pending_image_url() -> str | None:
     if url is not None:
         _pending_image_url.set(None)
     return url
+
+
+def help_text(user_id: int, argument: str, is_admin: bool, channel: str) -> str:
+    """/help: bản ngắn "cứ nhắn tự nhiên như..." + danh sách chủ đề; /help <chủ đề>:
+    lệnh của chủ đề đó (services/command_catalog.py); /help all: bản đầy đủ cũ. Thành
+    viên Zalo không thấy lệnh/chủ đề admin."""
+    from services import nl_commands
+
+    role = nl_commands.role_for(user_id, is_admin)
+    you = reply_audience.forms()[0]
+    text = nl_commands.help_reply(argument, role, channel, you)
+    if text is None:
+        return HELP_ADMIN if is_admin else HELP_MEMBER
+    return text
 
 
 def _about(user_id: int) -> str:
@@ -491,7 +505,7 @@ async def maybe_handle_command(
     argument = _arg(text)
 
     if command in {"/start", "/help"}:
-        return [HELP_ADMIN if is_admin else HELP_MEMBER], None
+        return [help_text(user_id, argument if command == "/help" else "", is_admin, channel)], None
     # /sai [lý do], /danhgia: đánh giá câu trả lời (services/answer_feedback.py).
     feedback = await answer_feedback.handle_command(command, argument, user_id, channel)
     if feedback is not None:
@@ -620,6 +634,14 @@ async def maybe_handle_command(
             + (f"\n{live}" if live else "")
             + (f"\n\n{latency}" if latency else "")
         ], None
+    if command == "/loi":
+        # Lỗi gom theo loại (services/error_digest.py) - chỉ chủ bot (Zoom; Telegram có
+        # handler riêng), admin Zalo không xem log hệ thống.
+        if not await reply_audience.is_owner(user_id):
+            return ["Lệnh này chỉ dành cho chủ bot."], None
+        from services import error_digest
+
+        return [await error_digest.build_report()], None
     if command == "/thongke":
         # Dùng chung logic/format với Telegram - xem services/usage_stats.py.
         hours = usage_stats.parse_thongke_hours(argument)

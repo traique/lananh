@@ -226,6 +226,11 @@ services:
       # Chi tiêu: "cafe 45k" ghi bằng code (false = chỉ khi nói rõ hoặc /chitieu).
       - key: EXPENSE_CHAT_CAPTURE
         value: "true"
+      # Hỏi tự nhiên thay cho lệnh (services/nl_commands.py) + lệnh trong router tool.
+      - key: NL_COMMANDS_ENABLED
+        value: "1"
+      - key: NL_COMMANDS_LLM
+        value: "1"
       # Ăn uống /an: câu tự nhiên tắt, không ước lượng kcal bằng AI (bảng soạn sẵn).
       - key: NUTRITION_NL
         value: "0"

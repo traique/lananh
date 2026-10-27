@@ -375,7 +375,7 @@ def test_lenh_xuateval_co_trong_menu_va_help():
     import bot_app
     from handlers import commands
 
-    assert any(cmd.command == "xuateval" for cmd in bot_app.COMMANDS)
+    assert any(cmd.command == "xuateval" for cmd in bot_app.ALL_COMMANDS)
     assert "/xuateval" in commands.HELP_TEXT
 
 

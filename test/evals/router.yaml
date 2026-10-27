@@ -94,3 +94,47 @@
   prompt: "anh đang có những nhắc việc nào?"
   expect:
     tool: list_reminders
+
+# Hỏi tự nhiên thay cho lệnh (services/nl_commands.py): ToolSpec "chạy lệnh" chỉ vào
+# prompt khi câu khớp nhóm từ khoá; kết quả lệnh gửi nguyên văn.
+- id: router-lenh-tu-vi-chi-tiet
+  category: router
+  kind: router
+  prompt: "luận giải tử vi chi tiết giúp anh, anh sinh ngày 15/3/1990 lúc 9h30 sáng, nam"
+  expect:
+    tool: cmd_tuvi
+    args:
+      date: {contains: "1990"}
+      gender: {contains: "nam"}
+
+- id: router-lenh-provider
+  category: router
+  kind: router
+  prompt: "provider đang chạy cái nào vậy em?"
+  expect:
+    tool: cmd_status
+
+- id: router-lenh-tong-ket-nhom
+  category: router
+  kind: router
+  prompt: "tóm tắt nhóm Gia đình hôm nay cho anh"
+  expect:
+    tool: cmd_tongket
+    args:
+      group: {contains: "Gia đình"}
+
+- id: router-lenh-nguy-hiem-chi-goi-y
+  category: router
+  kind: router
+  prompt: "khoá zalo user 12345 giúp anh"
+  expect:
+    tool: suggest_command
+    args:
+      command: {contains: "zalokhoa"}
+
+- id: router-lenh-hoi-kien-thuc
+  category: router
+  kind: router
+  prompt: "tử vi là gì vậy em, có khoa học không?"
+  expect:
+    tool: none
