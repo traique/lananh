@@ -530,7 +530,7 @@
         </div>
         <div class="card" style="margin-top:14px">
           <div class="card-head"><h3>Giới hạn lượt của thành viên Zalo</h3><span class="hint">mỗi ngày, mở lại lúc 0h giờ VN · 0 = không giới hạn</span></div>
-          <p class="note">Chỉ áp cho thành viên (không áp cho chủ bot, admin Zalo). Lượt nặng = tạo ảnh /anh, luận giải chi tiết (/tuvi_chitiet, /kymon_chitiet, /tsh_chitiet) và lượt chat có tra web; hết lượt nặng thì vẫn trò chuyện được nhưng không tra web. Cổ phiếu tính như lượt thường.</p>
+          <p class="note">Chỉ áp cho thành viên (không áp cho chủ bot, admin Zalo). Lượt nặng = tạo ảnh /anh, luận giải chi tiết (/tuvi_chitiet, /kymon_chitiet, /tsh_chitiet), lượt chat có tra web, việc nền /viec và lần chạy tác vụ định kỳ; hết lượt nặng thì vẫn trò chuyện được nhưng không tra web. Cổ phiếu tính như lượt thường.</p>
           <div id="quota-box"><div class="skeleton"><i></i><i></i></div></div>
         </div>
       </section>
@@ -563,6 +563,10 @@
             <div class="card-head"><h3>Cơ sở dữ liệu</h3><span class="hint">bảng ảnh Facebook &amp; VACUUM FULL</span></div>
             <div id="db-box"><div class="skeleton"><i></i><i></i><i></i></div></div>
           </div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-head"><h3>Việc nền &amp; tác vụ định kỳ</h3><span class="hint">/viec, /lichtacvu · chạy ngoài khoá lượt, vẫn tính vào MAX_CONCURRENT_TURNS</span></div>
+          <div id="jobs-box"><div class="skeleton"><i></i><i></i><i></i></div></div>
         </div>
         <div class="card" style="margin-top:14px">
           <div class="card-head"><h3>Giám sát, sao lưu &amp; lỗi</h3><span class="hint">chỉ lưu loại lỗi + vị trí code · /loi trên Telegram</span></div>
@@ -1425,6 +1429,32 @@ async function loadDbUsage() {
     </table>`;
 }
 
+/* ---------- Việc nền + tác vụ định kỳ (services/background_jobs.py) ---------- */
+const JOB_STATUS = { queued: ['chờ', 'neutral'], running: ['đang chạy', 'warn'], succeeded: ['xong', 'ok'], failed: ['lỗi', 'bad'], cancelled: ['đã huỷ', 'neutral'], timed_out: ['quá giờ', 'bad'] };
+async function loadJobs() {
+  const d = await api('/admin/api/jobs');
+  const box = $('jobs-box');
+  box.innerHTML = `
+    <div class="field-label">${d.enabled ? '' : '<span class="pill bad">đang tắt (BACKGROUND_JOBS_ENABLED=0)</span> '}Chạy cùng lúc tối đa ${esc(d.concurrency)} việc · hạn chót ${esc(Math.round(d.timeout_sec / 60))} phút/việc · đang chạy ở process này: ${esc(d.running_here)} · tác vụ định kỳ hôm nay ${esc(fmtNum(d.routine_runs_today))}/${esc(fmtNum(d.routine_max_runs_per_day))} lần</div>
+    <div id="jobs-table"></div>
+    <div class="card-head" style="margin:14px 0 6px"><h3>Tác vụ định kỳ</h3></div>
+    <div id="routines-table"></div>`;
+  renderTable($('jobs-table'), [
+    { label: 'Việc', cell: x => `#${esc(x.id)} ${x.kind === 'routine' ? `<span class="pill neutral">định kỳ #${esc(x.routine_id ?? '?')}</span>` : ''}<div class="small">${esc(x.prompt)}</div>` },
+    { label: 'Người', cell: x => `<span class="mono small">${esc(x.user_id)}</span><div class="muted small">${esc(x.channel)}</div>` },
+    { label: 'Trạng thái', cell: x => { const [label, cls] = JOB_STATUS[x.status] || [x.status, 'neutral']; return `<span class="pill ${cls}">${esc(label)}</span>${x.no_reply ? ' <span class="muted small">không có gì đáng báo</span>' : ''}${x.error ? `<div class="muted small">${esc(x.error)}</div>` : ''}`; } },
+    { label: 'Tạo lúc', cell: x => esc(x.created_at ? fmtAbs(new Date(x.created_at)) : '—') },
+    { label: 'Thời gian', cls: 'num', cell: x => esc(x.duration_sec == null ? '—' : `${x.duration_sec}s`) },
+    { label: 'Token', cls: 'num', cell: x => esc(x.tokens == null ? '—' : fmtNum(x.tokens)) },
+  ], d.jobs || [], 'Chưa có việc nền nào.');
+  renderTable($('routines-table'), [
+    { label: 'Tác vụ', cell: x => `#${esc(x.id)}<div class="small">${esc(x.prompt)}</div>` },
+    { label: 'Người', cell: x => `<span class="mono small">${esc(x.user_id)}</span><div class="muted small">${esc(x.channel)}</div>` },
+    { label: 'Lịch', cell: x => esc(x.schedule) },
+    { label: 'Lần tới', cell: x => x.status === 'paused' ? '<span class="pill neutral">tạm dừng</span>' : esc(x.next_run_at ? fmtAbs(new Date(x.next_run_at)) : '—') },
+  ], d.routines || [], 'Chưa có tác vụ định kỳ nào.');
+}
+
 const RESTART_LABEL = { first: 'lần đầu', deploy: 'deploy', restart: 'khởi động lại', sleep: 'gián đoạn lâu', crash: 'tiến trình chết', oom: 'hết RAM (OOM)' };
 
 async function loadWatchdog() {
@@ -1498,6 +1528,7 @@ const LIVE_LOADERS = [
   ['ram', loadMemoryUsage, 'ram-box'],
   ['db', loadDbUsage, 'db-box'],
   ['watchdog', loadWatchdog, 'watchdog-box'],
+  ['jobs', loadJobs, 'jobs-box'],
 ];
 const CONFIG_LOADERS = [
   ['providers', loadProviders, 'providers-list'],

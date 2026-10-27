@@ -19,7 +19,7 @@ from services import reply_audience
 CANCEL_COMMANDS = frozenset({"/huy"})
 # Lệnh chỉ đọc khi KHÔNG có tham số (có tham số thì ghi dữ liệu: /memory on|off,
 # /nhac 8h mai..., /danhgia không có biến thể ghi).
-_READONLY_BARE = frozenset({"/memory", "/nhac", "/yenlang"})
+_READONLY_BARE = frozenset({"/memory", "/nhac", "/yenlang", "/viec", "/lichtacvu"})
 # Lệnh chỉ đọc với mọi tham số (tính bằng code / đọc DB, không gọi AI).
 _READONLY_ANY = frozenset(
     {

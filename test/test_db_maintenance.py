@@ -99,6 +99,7 @@ async def test_retention_deletes_in_bounded_batches_with_configured_windows(monk
         "user_events": 0,
         "turn_metrics": 0,
         "notify_queue": 0,
+        "bg_jobs": 0,
         "answer_feedback": 0,
     }
     labels = [label for label, _, _ in pool.calls]

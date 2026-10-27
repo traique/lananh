@@ -178,6 +178,23 @@ services:
         value: "22:30-06:30"
       - key: NOTIFY_QUEUE_MAX_PER_USER
         value: "30"
+      # Việc nền /viec + tác vụ định kỳ /lichtacvu (services/background_jobs.py).
+      - key: BACKGROUND_JOBS_ENABLED
+        value: "1"
+      - key: BACKGROUND_JOB_TIMEOUT_SEC
+        value: "600"
+      - key: BACKGROUND_JOBS_CONCURRENCY
+        value: "1"
+      - key: BACKGROUND_JOBS_MAX_PER_USER
+        value: "3"
+      - key: BACKGROUND_JOBS_MEMBERS
+        value: "1"
+      - key: ROUTINES_ENABLED
+        value: "1"
+      - key: ROUTINES_MEMBERS
+        value: "0"
+      - key: ROUTINE_MAX_RUNS_PER_DAY
+        value: "20"
       # Bản tin sáng cá nhân (/bantin): chỉ gửi cho người tự bật trên kênh của mình.
       - key: MORNING_BRIEF_ENABLED
         value: "true"
@@ -448,3 +465,5 @@ services:
         value: "180"
       - key: RETENTION_NOTIFY_QUEUE_DAYS
         value: "7"
+      - key: RETENTION_BG_JOBS_DAYS
+        value: "30"

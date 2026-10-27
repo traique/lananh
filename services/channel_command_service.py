@@ -23,7 +23,7 @@ from services import (
     usage_stats,
 )
 from services import answer_feedback, daily_commands, expense_service, reminder_commands
-from services import attention, notify_hub
+from services import attention, background_jobs, notify_hub, routines
 from services import turn_control
 from services.telemetry import telemetry
 
@@ -55,6 +55,8 @@ _HELP_COMMON = """Lịch, thần số học, tử vi, kỳ môn
 /chuy — có gì cần mình chú ý: nhắc việc hôm nay, ngày nhớ, cảnh báo danh mục, hỏi thăm đang chờ
   (hoặc hỏi "hôm nay có gì cần lo")
 /yenlang on|off|22-7 — giờ yên lặng: ban đêm chỉ nhắn ngay nhắc việc đã đặt, tin khác gom lại sáng gửi
+/viec <yêu cầu> — giao việc cho Lan Anh làm ở nền, vẫn nhắn bình thường được, xong em báo;
+  /viec — xem việc; /viec xem <số> — xem kết quả; /viec huy <số> — huỷ
 
 Nhắc việc và ngày nhớ (giờ tính bằng code)
 /nhac — xem nhắc việc đang chờ; /nhac 8h tối mai gọi mẹ — đặt nhắc;
@@ -100,6 +102,8 @@ Danh mục cổ phiếu (riêng từng người)
 /canhbaogia <MÃ> [về|lên] <GIÁ> — báo khi giá chạm ngưỡng đã đặt; /xoacanhbao <MÃ> [GIÁ]"""
 _HELP_ADMIN_ONLY = """Chỉ admin
 /chuy — admin thấy thêm bài Facebook chờ duyệt; chủ bot thấy thêm lỗi mới, provider, giám sát
+/lichtacvu mỗi sáng thứ 2 8h tóm tắt tin về VNM cho anh — tác vụ định kỳ: đến giờ em chạy yêu cầu
+  rồi gửi kết quả (khác /nhac chỉ nhắc câu cố định); /lichtacvu — xem; huy|tam dung|tiep <số>
 /model [tên|auto] — xem hoặc đổi model
 /status — xem trạng thái provider
 /thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày
@@ -482,6 +486,17 @@ async def maybe_handle_command(
     if command == "/yenlang":
         you = reply_audience.forms()[0]
         return [await notify_hub.yenlang(user_id, argument, you=you)], None
+    # /viec: giao việc chạy nền; /lichtacvu: tác vụ định kỳ chạy 1 yêu cầu AI theo lịch.
+    jobs_reply = await background_jobs.handle_command(
+        command, argument, user_id, channel, is_admin=is_admin
+    )
+    if jobs_reply is not None:
+        return jobs_reply, None
+    routine_reply = await routines.handle_command(
+        command, argument, user_id, channel, is_admin=is_admin
+    )
+    if routine_reply is not None:
+        return routine_reply, None
     if command == "/huy":
         # /huy thật được xử lý TRƯỚC khoá lượt (bridge Zalo, webhook Zoom); tới
         # được đây nghĩa là không còn việc gì đang chạy để dừng.

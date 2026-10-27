@@ -34,6 +34,7 @@ from handlers import (
     expense_commands,
     document_handler,
     feedback_commands,
+    job_commands,
     media_handler,
     voice_handler,
     pairing_commands,
@@ -52,6 +53,8 @@ from services import portfolio_alerts, rag_clean_service
 from services import portfolio_events, portfolio_push, price_alerts
 from services import monitor_service
 from services import notify_hub
+from services import background_jobs
+from services import routines  # noqa: F401 - đăng ký vòng xếp tác vụ định kỳ + mục /chuy
 from services import owner_alerts
 from services import db_maintenance
 from services import http_client
@@ -92,6 +95,8 @@ COMMANDS = [
     BotCommand("bantin", "Bản tin sáng cá nhân (on|off|giờ|xem)"),
     BotCommand("chuy", "Có gì cần anh chú ý hôm nay"),
     BotCommand("yenlang", "Giờ yên lặng, gom thông báo (on|off|22-7)"),
+    BotCommand("viec", "Giao việc chạy nền; xem, huỷ việc"),
+    BotCommand("lichtacvu", "Tác vụ định kỳ: em tự chạy yêu cầu theo lịch"),
     BotCommand("nhac", "Nhắc việc: xem, đặt, huỷ, hoãn"),
     BotCommand("ngaynho", "Ngày nhớ: giỗ, sinh nhật, kỷ niệm"),
     BotCommand("chitieu", "Chi tiêu: tổng theo danh mục, ghi khoản"),
@@ -181,6 +186,8 @@ async def _post_init(app):
     morning_brief.start()
     memory_service.start()
     proactive_service.start()
+    # Việc nền /viec + tác vụ định kỳ (routines đăng ký vòng xếp lịch vào bộ chạy nền).
+    background_jobs.start()
 
 
 async def _post_shutdown(app):
@@ -190,6 +197,7 @@ async def _post_shutdown(app):
         except Exception:
             logger.exception("Shutdown step lỗi: %s", label)
 
+    await run_step("background jobs", background_jobs.stop())
     await run_step("notify hub", notify_hub.stop())
     await run_step("Telegram scheduler", scheduler.stop())
     await run_step("portfolio alerts", portfolio_alerts.stop())
@@ -309,6 +317,8 @@ def build_application():
         ("bantin", daily_data_commands.bantin_cmd),
         ("chuy", daily_data_commands.chuy_cmd),
         ("yenlang", daily_data_commands.yenlang_cmd),
+        ("viec", job_commands.viec_cmd),
+        ("lichtacvu", job_commands.lichtacvu_cmd),
         ("nhac", reminder_commands.nhac_cmd),
         ("ngaynho", reminder_commands.ngaynho_cmd),
         ("chitieu", expense_commands.chitieu_cmd),

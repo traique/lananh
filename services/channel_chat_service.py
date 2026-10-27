@@ -35,7 +35,7 @@ from services import (
     web_search,
 )
 from services import channel_command_service, reply_audience, style_approval
-from services import attention, vn_daily_chat
+from services import attention, routines, vn_daily_chat
 from services.channel_result import ChannelResult
 from services.telemetry import telemetry
 from stock import analysis as stock_analysis
@@ -179,6 +179,9 @@ async def run_chat_turn(
     quote_text: str | None = None,
     allow_side_effects: bool = True,
     style_hint: str = "",
+    deadline_sec: float | None = None,
+    record_history: bool = True,
+    telemetry_kind: str = "chat",
 ) -> ChatTurn:
     """Pipeline chat chung: gom ngữ cảnh -> orchestrator.chat -> lưu lịch sử.
 
@@ -191,9 +194,12 @@ async def run_chat_turn(
     (nhắc việc, ghi chú, chi tiêu, danh mục, điều cần nhớ) không chạy và câu trả
     lời nói rõ chưa lưu. style_hint: yêu cầu trình bày riêng của lượt này (nút
     ✂️ Ngắn hơn/🔄 Thử lại - services/answer_feedback.py), nối sau "cách trả lời"
-    người dùng đã dặn. Không raise: lỗi trả ChatTurn(failed=True) sau khi đã
-    log và ghi telemetry."""
-    prompt_id = await telemetry.start(user_id, "chat", text, channel=channel)
+    người dùng đã dặn. Lượt AI nền (services/background_jobs.py): deadline_sec thay
+    CHAT_TURN_TIMEOUT_SEC (BACKGROUND_JOB_TIMEOUT_SEC), record_history=False (bộ
+    chạy nền tự lưu lịch sử sau khi lọc NO_REPLY), telemetry_kind là loại lượt
+    trong prompts/user_calls ("viec", "routine" - quota thành viên tính lượt nặng).
+    Không raise: lỗi trả ChatTurn(failed=True) sau khi đã log và ghi telemetry."""
+    prompt_id = await telemetry.start(user_id, telemetry_kind, text, channel=channel)
     outcome = tool_registry.ToolOutcome()
     # Chỉ truyền tham số khác mặc định: chỗ giả lập maybe_run_tool(user_id, text) cũ vẫn
     # chạy; vai trò admin Zalo đi qua tools.admin_scope().
@@ -203,7 +209,7 @@ async def run_chat_turn(
         # AI 2-3 lần + orchestrator.chat), không phải từng lượt gọi AI riêng lẻ -
         # nếu không, tổng thời gian vượt mức gateway Zalo chờ (240s). Task con của
         # asyncio.gather thừa hưởng cùng hạn chót qua ContextVar.
-        with turn_deadline():
+        with turn_deadline(deadline_sec):
             # Giá vàng/tỷ giá/xổ số: số liệu tra bằng code (thường đã nằm sẵn
             # cache từ nhánh trả lời nhanh). Có đủ số liệu thì bỏ tra web và
             # forced search của lượt này - khỏi trả 2 lần và khỏi chỉ thị mâu
@@ -331,7 +337,7 @@ async def run_chat_turn(
     except TurnTimeoutError as exc:
         logger.warning("Lượt chat hết hạn chót (kênh %s): %s", channel, exc)
         trace.set_outcome("timeout")
-        await telemetry.failure(prompt_id, "chat", exc)
+        await telemetry.failure(prompt_id, telemetry_kind, exc)
         return ChatTurn(
             failed=True,
             prompt_id=prompt_id,
@@ -342,7 +348,7 @@ async def run_chat_turn(
     except Exception as exc:
         logger.exception("Lỗi lượt chat (kênh %s)", channel)
         trace.set_outcome("error")
-        await telemetry.failure(prompt_id, "chat", exc)
+        await telemetry.failure(prompt_id, telemetry_kind, exc)
         return ChatTurn(
             failed=True,
             prompt_id=prompt_id,
@@ -357,11 +363,15 @@ async def run_chat_turn(
     model = str(getattr(response, "model", "") or "")
     if provider:
         await telemetry.success(
-            prompt_id, "chat", reply or "(không có nội dung)", provider=provider, model=model
+            prompt_id,
+            telemetry_kind,
+            reply or "(không có nội dung)",
+            provider=provider,
+            model=model,
         )
     else:
-        await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
-    if reply:
+        await telemetry.success(prompt_id, telemetry_kind, reply or "(không có nội dung)")
+    if reply and record_history:
         # Lượt trả lời dựa trên dữ liệu ngoài (Tavily, provider tự tra web, trang
         # người dùng gửi...): câu trả lời có thể mang nội dung bị prompt injection
         # -> kind chat_ext, trích nhớ chỉ đọc lời người dùng. Lưu lịch sử (1
@@ -603,6 +613,12 @@ async def _side_effect_paths(
     if shortcut is not None:
         await record(user_id, text, shortcut, conversation_log.KIND_REMINDER)
         return ChannelResult([shortcut])
+    # "mỗi sáng thứ 2 8h tóm tắt tin VNM cho anh": tác vụ định kỳ (services/routines) -
+    # TRƯỚC router AI để không thành nhắc việc gửi câu cố định.
+    routine_reply = await routines.maybe_handle_chat(user_id, text, channel, is_admin=is_admin)
+    if routine_reply is not None:
+        await record(user_id, text, routine_reply, conversation_log.KIND_REMINDER)
+        return ChannelResult([routine_reply])
     portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
     if portfolio_result is not None:
         await record(user_id, text, portfolio_result, conversation_log.KIND_PORTFOLIO)

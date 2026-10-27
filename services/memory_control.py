@@ -638,6 +638,9 @@ async def delete_own_data(user_id: int, argument: str = "") -> str:
             await db.notify_clear_user(user_id)
             # Đánh giá 👍/👎 có bản chụp câu hỏi/câu trả lời (migrations/021).
             await db.answer_feedback_clear(user_id)
+            # Việc nền đã xong (prompt + kết quả, migrations/027); tác vụ định kỳ giữ
+            # như nhắc việc.
+            await db.bg_job_clear_user(user_id)
             for key in personal_settings.memory_user_keys(user_id):
                 await db.set_setting(key, "")
     from services import chat_context

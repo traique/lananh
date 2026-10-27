@@ -76,6 +76,12 @@ HELP_TEXT = (
     'provider, giám sát; hoặc hỏi "hôm nay có gì cần lo")\n'
     "/yenlang on|off|22-7 — giờ yên lặng: ban đêm chỉ nhắn ngay nhắc việc và cảnh báo nghiêm "
     "trọng, tin khác em gom lại gửi 1 tin\n\n"
+    "*Việc nền và tác vụ định kỳ*\n"
+    "/viec <yêu cầu> — giao việc cho em làm ở nền (anh vẫn chat bình thường), xong em báo; "
+    "/viec — xem việc; /viec xem <số> — xem kết quả; /viec huy <số> — huỷ\n"
+    "/lichtacvu mỗi sáng thứ 2 8h tóm tắt tin về VNM cho anh — đến giờ em tự chạy yêu cầu rồi "
+    'gửi kết quả (khác /nhac chỉ nhắc 1 câu cố định; nhắn thẳng câu có "mỗi ..." và "... cho anh" '
+    "cũng được); /lichtacvu — xem; /lichtacvu huy|tam dung|tiep <số>\n\n"
     "*Nhắc việc và ngày nhớ (giờ tính bằng code)*\n"
     "/nhac — xem nhắc việc đang chờ; /nhac 8h tối mai gọi mẹ — đặt nhắc; "
     "/nhac 7h sáng mỗi ngày uống thuốc, /nhac mùng 1 và rằm 6h thắp hương — nhắc lặp\n"

@@ -27,6 +27,10 @@ system                 NORMAL  Cảnh báo nhẹ core.alerts (watchdog ⚠️/�
 morning_brief          NORMAL  Bản tin sáng; tin TỔNG HỢP hẹn giờ: vào hàng đợi rồi
                                xả NGAY (kèm tin NORMAL đang chờ) nếu ngoài giờ yên
 portfolio_digest       NORMAL  lặng. Digest danh mục 8h cũng vậy.
+background_job         URGENT  Kết quả /viec (services/background_jobs.py) - người
+                               dùng đang chờ; giờ yên lặng thì giữ như URGENT khác.
+routine                NORMAL  Kết quả tác vụ định kỳ (services/routines.py): tin
+                               tổng hợp hẹn giờ như bản tin sáng.
 =====================  ======  =================================================
 
 Không qua hub (gửi như cũ): nhắc việc (trên), câu hỏi cấp quyền người Zalo lạ (kèm
@@ -116,6 +120,8 @@ SOURCES: dict[str, SourceSpec] = {
     "system": SourceSpec("Cảnh báo hệ thống", NORMAL),
     "morning_brief": SourceSpec("Bản tin sáng", NORMAL, digest=True),
     "portfolio_digest": SourceSpec("Digest danh mục", NORMAL, digest=True),
+    "background_job": SourceSpec("Kết quả việc nền", URGENT),
+    "routine": SourceSpec("Tác vụ định kỳ", NORMAL, digest=True),
 }
 _DIGEST_SOURCES = [name for name, spec in SOURCES.items() if spec.digest]
 
@@ -272,6 +278,53 @@ async def offer(
             logger.warning(
                 "notify_hub: xả ngay tin %s lỗi, vòng sau thử lại.", source, exc_info=True
             )
+    return True
+
+
+async def send(
+    channel: str,
+    user_id: int,
+    text: str,
+    *,
+    source: str,
+    level: str | None = None,
+    dedup: str | None = None,
+) -> bool:
+    """Giao 1 tin chủ động cho nguồn KHÔNG có đường gửi riêng (việc nền, tác vụ định
+    kỳ): ``offer`` trước; hub không nhận (URGENT ngoài giờ yên lặng, hub tắt, DB
+    lỗi) thì gửi thẳng - Telegram/Zoom qua đường của hub, Zalo xếp zalo_outbox
+    (gateway tự cắt tin dài). Zoom chưa pair/tắt thì về Telegram. True nếu đã giao
+    hoặc đã xếp hàng. Không raise."""
+    if not text:
+        return False
+    if channel == "zoom" and not config.ZOOM_ENABLED:
+        channel = "telegram"
+    if await offer(channel, user_id, text, source=source, level=level, dedup=dedup):
+        return True
+    try:
+        if channel == "zalo":
+            return await _send_zalo_now(user_id, text)
+        if not config.is_owner_user_id(user_id):
+            return False
+        if channel == "zoom" and await _send_lease_channel("zoom", user_id, text):
+            return True
+        return await _send_lease_channel("telegram", user_id, text)
+    except Exception:
+        logger.warning("notify_hub: gửi thẳng tin %s cho %s lỗi.", source, channel, exc_info=True)
+        return False
+
+
+async def _send_zalo_now(user_id: int, text: str) -> bool:
+    if user_id >= 0 or not _zalo_enabled():
+        return False
+    from channels import zalo_repository
+    from channels.zalo_text import to_plain_text
+
+    user = await _zalo_user(user_id)
+    if user is None or not user.is_active:
+        return False
+    account_id = await zalo_repository.resolve_active_account_id()
+    await zalo_repository.enqueue_outbox(account_id, user.external_id, to_plain_text(text))
     return True
 
 

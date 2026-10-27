@@ -14,7 +14,8 @@ Kết quả (trước/sau) được báo cho admin qua Telegram/Zoom.
 
 Ngoài ra mỗi ngày 1 lần dọn dữ liệu cũ của các bảng chỉ-thêm-không-bớt (xem
 ``prune_retention``): user_calls/provider_calls/turn_metrics (thống kê), zalo_outbox đã gửi,
-reminders đã gửi, ghi chú phiên, sự kiện hỏi thăm cũ và tin gom đã gửi (notify_queue). Xoá theo lô nhỏ để không khoá bảng lâu; số ngày giữ chỉnh qua
+reminders đã gửi, ghi chú phiên, sự kiện hỏi thăm cũ, tin gom đã gửi (notify_queue) và
+việc nền đã xong (bg_jobs). Xoá theo lô nhỏ để không khoá bảng lâu; số ngày giữ chỉnh qua
 biến môi trường, đặt 0 để tắt từng loại.
 
 Cùng vòng lặp, mỗi ngày kiểm tra bản sao lưu DB (workflow GitHub Actions) còn
@@ -131,6 +132,16 @@ RETENTION_RULES = (
         7,
         "DELETE FROM notify_queue WHERE id IN (SELECT id FROM notify_queue "
         "WHERE status <> 'pending' AND created_at < now() - $1::interval LIMIT $2)",
+    ),
+    # Việc nền đã xong (migrations/027, services/background_jobs.py): prompt + kết quả
+    # có trần; việc đang chờ/chạy không bao giờ bị xoá ở đây.
+    RetentionRule(
+        "bg_jobs",
+        "RETENTION_BG_JOBS_DAYS",
+        30,
+        "DELETE FROM bg_jobs WHERE id IN (SELECT id FROM bg_jobs "
+        "WHERE status NOT IN ('queued', 'running') AND created_at < now() - $1::interval "
+        "LIMIT $2)",
     ),
     # Đánh giá 👍/👎 câu trả lời (migrations/021, có bản chụp câu hỏi/câu trả lời).
     RetentionRule(

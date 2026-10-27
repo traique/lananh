@@ -74,6 +74,15 @@ def world(monkeypatch):
     monkeypatch.setattr(db, "list_user_events", events)
     monkeypatch.setattr(db, "notify_count_pending", count_pending)
     monkeypatch.setattr(db, "get_setting", get_setting)
+
+    async def none(*args, **kwargs):
+        return []
+
+    # Mục việc nền/tác vụ định kỳ (services/background_jobs, routines) - test riêng
+    # ở test_background_jobs.py.
+    monkeypatch.setattr(db, "bg_job_active", none)
+    monkeypatch.setattr(db, "routine_jobs_since", none)
+    monkeypatch.setattr(db, "routine_list", none)
     monkeypatch.setattr(ngay_nho, "items", ngay)
     monkeypatch.setattr(attention, "_facebook_account", fb_account)
     monkeypatch.setattr("channels.facebook_repository.count_pending", fb_count)

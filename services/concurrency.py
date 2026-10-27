@@ -42,6 +42,11 @@ T = TypeVar("T")
 OWNER_TURN_KEY = "owner"
 
 
+def max_turns() -> int:
+    """MAX_CONCURRENT_TURNS đang áp dụng trong process."""
+    return _max_turns
+
+
 def _max_concurrent_turns() -> int:
     try:
         return max(1, int(os.getenv("MAX_CONCURRENT_TURNS", "2").strip()))
@@ -108,6 +113,20 @@ async def assistant_turn(key: str = OWNER_TURN_KEY) -> AsyncIterator[None]:
             del _turn_locks[key]
         else:
             _turn_locks[key] = (lock, users - 1)
+
+
+@asynccontextmanager
+async def background_slot(key: str = OWNER_TURN_KEY) -> AsyncIterator[None]:
+    """Chỗ trong semaphore tổng cho 1 lượt AI NỀN (services/background_jobs.py:
+    /viec, tác vụ định kỳ) - KHÔNG lấy khoá lượt của người dùng (họ vẫn chat được
+    trong lúc việc chạy), nhưng tính như 1 lượt của chính người đó: thành viên Zalo
+    lấy cả chỗ thành viên như ``assistant_turn``, nên việc nền không bao giờ đụng
+    chỗ dành riêng cho chủ bot; việc của chủ bot dùng chính chỗ của chủ bot. Tổng
+    số lượt AI (chat + nền) vẫn không vượt MAX_CONCURRENT_TURNS - RAM đỉnh không đổi."""
+    member_slots = None if key == OWNER_TURN_KEY else _member_slots
+    async with member_slots if member_slots is not None else nullcontext():
+        async with _turn_slots:
+            yield
 
 
 def _ms(seconds: float) -> int:

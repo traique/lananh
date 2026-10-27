@@ -33,7 +33,7 @@ from services import (
     turn_progress,
     weather_chat,
 )
-from services import attention, vn_daily_chat
+from services import attention, routines, vn_daily_chat
 from services.concurrency import OWNER_TURN_KEY
 from services.telemetry import telemetry
 
@@ -101,6 +101,16 @@ async def _quick_reply(
     if shortcut is not None:
         await record(user_id, text, shortcut, conversation_log.KIND_REMINDER)
         await common.reply_long_text(update.message, shortcut)
+        return True
+
+    # "mỗi sáng thứ 2 8h tóm tắt tin VNM cho anh": tác vụ định kỳ (services/routines) -
+    # TRƯỚC router AI để không thành nhắc việc gửi câu cố định.
+    routine_reply = (
+        await routines.maybe_handle_chat(user_id, text, "telegram") if allow_side_effects else None
+    )
+    if routine_reply is not None:
+        await record(user_id, text, routine_reply, conversation_log.KIND_REMINDER)
+        await common.reply_long_text(update.message, routine_reply)
         return True
 
     portfolio_result = (

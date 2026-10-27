@@ -1791,6 +1791,184 @@ async def notify_clear_user(user_id: int) -> None:
     await notify.clear_user(await get_pool(), user_id)
 
 
+# ─── Việc nền + tác vụ định kỳ (migrations/027, services/background_jobs.py,
+# services/routines.py). SQL ở core/repositories/jobs.py.
+
+
+@_with_reconnect(idempotent=False)
+async def bg_job_insert(
+    user_id: int, channel: str, prompt: str, *, user_cap: int, global_cap: int
+) -> tuple[int | None, str]:
+    from core.repositories import jobs
+
+    return await jobs.insert_job(
+        await get_pool(), user_id, channel, prompt, user_cap=user_cap, global_cap=global_cap
+    )
+
+
+@_with_reconnect(idempotent=False)
+async def bg_job_claim(lease_sec: int) -> dict | None:
+    from core.repositories import jobs
+
+    return await jobs.claim_next(await get_pool(), lease_sec)
+
+
+@_with_reconnect
+async def bg_job_renew(job_id: int, lease_sec: int) -> bool:
+    from core.repositories import jobs
+
+    return await jobs.renew_lease(await get_pool(), job_id, lease_sec)
+
+
+@_with_reconnect
+async def bg_job_finish(job_id: int, status: str, **fields) -> bool:
+    from core.repositories import jobs
+
+    return await jobs.finish(await get_pool(), job_id, status, **fields)
+
+
+@_with_reconnect(idempotent=False)
+async def bg_job_recover(max_attempts: int) -> list[dict]:
+    from core.repositories import jobs
+
+    return await jobs.recover_stale(await get_pool(), max_attempts)
+
+
+@_with_reconnect
+async def bg_job_cancel(user_id: int, job_id: int) -> str | None:
+    from core.repositories import jobs
+
+    return await jobs.cancel(await get_pool(), user_id, job_id)
+
+
+@_with_reconnect
+async def bg_job_get(user_id: int, job_id: int) -> dict | None:
+    from core.repositories import jobs
+
+    return await jobs.get_job(await get_pool(), user_id, job_id)
+
+
+@_with_reconnect
+async def bg_job_list(user_id: int, limit: int = 10) -> list[dict]:
+    from core.repositories import jobs
+
+    return await jobs.list_jobs(await get_pool(), user_id, limit)
+
+
+@_with_reconnect
+async def bg_job_active(user_id: int) -> list[dict]:
+    from core.repositories import jobs
+
+    return await jobs.active_jobs(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def bg_job_position(job_id: int) -> int:
+    from core.repositories import jobs
+
+    return await jobs.queue_position(await get_pool(), job_id)
+
+
+@_with_reconnect
+async def bg_job_recent_all(limit: int = 30) -> list[dict]:
+    from core.repositories import jobs
+
+    return await jobs.recent_all(await get_pool(), limit)
+
+
+@_with_reconnect
+async def bg_job_clear_user(user_id: int) -> None:
+    from core.repositories import jobs
+
+    await jobs.clear_user(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def routine_count(user_id: int) -> int:
+    from core.repositories import jobs
+
+    return await jobs.count_routines(await get_pool(), user_id)
+
+
+@_with_reconnect(idempotent=False)
+async def routine_insert(
+    user_id: int, channel: str, prompt: str, rule: dict, next_run_at: datetime
+) -> int:
+    from core.repositories import jobs
+
+    return await jobs.insert_routine(await get_pool(), user_id, channel, prompt, rule, next_run_at)
+
+
+@_with_reconnect
+async def routine_list(user_id: int) -> list[dict]:
+    from core.repositories import jobs
+
+    return await jobs.list_routines(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def routine_all(limit: int = 50) -> list[dict]:
+    from core.repositories import jobs
+
+    return await jobs.all_routines(await get_pool(), limit)
+
+
+@_with_reconnect
+async def routine_get(user_id: int, routine_id: int) -> dict | None:
+    from core.repositories import jobs
+
+    return await jobs.get_routine(await get_pool(), user_id, routine_id)
+
+
+@_with_reconnect
+async def routine_delete(user_id: int, routine_id: int) -> bool:
+    from core.repositories import jobs
+
+    return await jobs.delete_routine(await get_pool(), user_id, routine_id)
+
+
+@_with_reconnect
+async def routine_set_status(
+    user_id: int, routine_id: int, status: str, next_run_at: datetime | None = None
+) -> bool:
+    from core.repositories import jobs
+
+    return await jobs.set_routine_status(await get_pool(), user_id, routine_id, status, next_run_at)
+
+
+@_with_reconnect
+async def routine_due(now: datetime, limit: int = 20) -> list[dict]:
+    from core.repositories import jobs
+
+    return await jobs.due_routines(await get_pool(), now, limit)
+
+
+# Idempotent nhờ điều kiện next_run_at = giá trị cũ + dedup_key của bg_jobs.
+@_with_reconnect
+async def routine_fire(
+    routine: dict, scheduled: datetime, next_run_at: datetime | None, *, enqueue: bool
+) -> int | None:
+    from core.repositories import jobs
+
+    return await jobs.fire_routine(
+        await get_pool(), routine, scheduled, next_run_at, enqueue=enqueue
+    )
+
+
+@_with_reconnect
+async def routine_runs_since(since: datetime) -> int:
+    from core.repositories import jobs
+
+    return await jobs.routine_runs_since(await get_pool(), since)
+
+
+@_with_reconnect
+async def routine_jobs_since(user_id: int, since: datetime) -> list[dict]:
+    from core.repositories import jobs
+
+    return await jobs.routine_jobs_since(await get_pool(), user_id, since)
+
+
 @_with_reconnect
 async def portfolio_alert_log_since(user_id: int, since: str) -> list[tuple[str, str, str]]:
     """(kind, ref_key, ngày) nhật ký thông báo danh mục từ ngày ``since``."""

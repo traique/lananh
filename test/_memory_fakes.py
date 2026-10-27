@@ -93,6 +93,7 @@ class FakeMemoryDB:
             "finish_user_event_ids",
             "clear_user_events",
             "notify_clear_user",
+            "bg_job_clear_user",
         ):
             monkeypatch.setattr(db_module, name, getattr(self, name))
 
@@ -318,6 +319,10 @@ class FakeMemoryDB:
 
     async def notify_clear_user(self, uid):
         self.notify_cleared = [*getattr(self, "notify_cleared", []), uid]
+
+    async def bg_job_clear_user(self, uid):
+        # Việc nền đã xong (migrations/027) - fake chỉ ghi nhận đã xoá.
+        self.jobs_cleared = [*getattr(self, "jobs_cleared", []), uid]
 
     # ─── notes ───
     async def add_note(self, uid, content, *, event_key=None):

@@ -820,6 +820,14 @@ async def admin_quota_update(request: Request) -> Response:
     return JSONResponse({"turns": limits.turns, "heavy": limits.heavy})
 
 
+@api_router.get("/jobs")
+async def admin_jobs() -> Response:
+    """Việc nền /viec + tác vụ định kỳ (services/background_jobs.py, routines.py)."""
+    from services import background_jobs
+
+    return JSONResponse(await background_jobs.admin_overview())
+
+
 @api_router.get("/usage/burn")
 async def admin_usage_burn() -> Response:
     """Quota miễn phí đã dùng theo cửa sổ của từng provider (services/quota_burn.py)."""

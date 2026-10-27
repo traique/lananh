@@ -593,6 +593,13 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "('telegram',1,'normal','system','old pending','pending',now()-interval '10 days'),"
         "('telegram',1,'normal','system','new sent','sent',now())"
     )
+    # Việc nền (migrations/027): chỉ xoá việc đã xong đủ cũ, việc còn chờ/chạy giữ nguyên.
+    await pool.execute(
+        "INSERT INTO bg_jobs (telegram_user_id,channel,prompt,status,created_at) VALUES "
+        "(1,'telegram','old done','succeeded',now()-interval '40 days'),"
+        "(1,'telegram','old queued','queued',now()-interval '40 days'),"
+        "(1,'telegram','new done','failed',now())"
+    )
     result = await db_maintenance.prune_retention()
     assert result == {
         "user_calls": 1,
@@ -604,8 +611,13 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "user_events": 1,
         "turn_metrics": 1,
         "notify_queue": 1,
+        "bg_jobs": 1,
         "answer_feedback": 1,
     }
+    assert [r["prompt"] for r in await pool.fetch("SELECT prompt FROM bg_jobs ORDER BY id")] == [
+        "old queued",
+        "new done",
+    ]
     assert [
         r["content"] for r in await pool.fetch("SELECT content FROM notify_queue ORDER BY id")
     ] == ["old pending", "new sent"]

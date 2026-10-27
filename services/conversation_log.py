@@ -77,6 +77,11 @@ KIND_FOLLOWUP = "followup"
 # ghi bị chặn: câu trả lời đã nói "chưa lưu" -> bộ trích nhớ không được tự lưu
 # từ lượt này (chữ chép có thể nghe nhầm).
 KIND_CHAT_READONLY = "chat_readonly"
+# Kết quả việc nền /viec và tác vụ định kỳ (services/background_jobs.py): dòng
+# "user" là nhãn "[Việc nền #12] <yêu cầu>", câu trả lời có thể chép tin web -> lưu
+# bản đã làm sạch cho câu hỏi nối tiếp, KHÔNG trích trí nhớ (yêu cầu lặp lại hằng
+# tuần không được thành "sở thích").
+KIND_BACKGROUND = "background"
 
 # Lượt được trích trí nhớ (lời người dùng) / được đọc cả câu trả lời của bot.
 MEMORY_KINDS = frozenset({KIND_CHAT, KIND_CHAT_EXT, KIND_RAG, KIND_AGENT})
@@ -184,6 +189,8 @@ def compact_reply(reply: str, kind: str, user_text: str = "") -> str:
         return "[Đã trả lời về ảnh người dùng gửi] " + _clip(untrusted.sanitize(reply), 1200)
     if kind == KIND_DOCUMENT:
         return "[Đã trả lời về tài liệu người dùng gửi] " + _clip(untrusted.sanitize(reply), 1200)
+    if kind == KIND_BACKGROUND:
+        return "[Kết quả việc chạy nền đã gửi người dùng] " + _clip(untrusted.sanitize(reply), 1200)
     return _clip(reply, REPLY_MAX_CHARS)
 
 

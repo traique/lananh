@@ -86,6 +86,9 @@ _USER_DATA_TABLES = (
     # migrations/021: đánh giá câu trả lời (có bản chụp câu hỏi/câu trả lời).
     "answer_feedback",
     "stock_alert_log",
+    # migrations/027: việc nền /viec (prompt + kết quả) và tác vụ định kỳ.
+    "bg_jobs",
+    "routines",
 )
 
 

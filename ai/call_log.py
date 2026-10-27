@@ -217,6 +217,8 @@ async def record(
     Không bao giờ raise."""
     stage = stage if stage is not None else _call_stage.get()
     trace.note_call(provider, outcome, latency_ms, stage)
+    if usage is not None:
+        trace.note_tokens(usage.prompt_tokens, usage.completion_tokens)
     if usage is not None and usage.ratelimit and provider in _RATELIMIT_PROVIDERS:
         _keep_ratelimit(provider, model or provider, usage.ratelimit)
     try:
