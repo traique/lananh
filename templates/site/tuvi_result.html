@@ -16,6 +16,7 @@
 </div>
 <section class="panel chart-panel" aria-label="Lá số 12 cung">
   <nav class="chart-map" aria-label="Sơ đồ 12 cung, bấm để xem chi tiết">
+    <div class="c"><b>{{ chart.yinYang }}</b><span>{{ chart.napAm }}</span><span>{{ chart.cuc }}</span><span>Bấm một cung để xem</span></div>
     {% for p in chart.palaces %}
     {% set mains = p.stars | selectattr("isMain") | map(attribute="name") | list %}
     <a class="b{{ p.branchIndex }}{% if loop.first %} is-menh{% endif %}" href="#cung-{{ p.branchIndex }}"><b>{{ p.name }}</b><span>{{ mains | join(", ") if mains else "Vô chính diệu" }}</span></a>

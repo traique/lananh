@@ -4,7 +4,8 @@
 
 Xem nội dung KHÔNG cần đăng nhập: lịch, tử vi, thần số học tính bằng code
 (services/site_data.py), không gọi AI, không đụng DB. /thoi-tiet tra Open-Meteo
-qua services/weather.py (cache có trần), giới hạn số lượt tra song song. /xo-so đọc
+qua services/weather.py (cache có trần), giới hạn số lượt tra song song và số lượt tra
+địa điểm mới theo từng IP. /xo-so đọc
 feed xskt.com.vn qua services/lottery_lookup.py (cache có trần theo đài, dò vé bằng
 code). /gia-vang, /gia-xang đọc bảng giá qua services/price_lookup.py (dùng lại cache
 1 bản/nguồn của vn_market_data + fuel_prices). Trang render sẵn ở server nên chạy được
@@ -12,7 +13,11 @@ cả khi tắt JavaScript.
 
 Cần đăng nhập (tài khoản admin, chung phiên với /admin) cho việc tốn quota hoặc
 đổi dữ liệu chung: nút "AI luận giải" ở kết quả tử vi/thần số học/kỳ môn, thêm/xoá địa
-điểm thời tiết. Đăng nhập rồi header mới hiện nút "Quản trị".
+điểm thời tiết. Khách chỉ thấy link nhỏ "Chủ trang đăng nhập" ở chân trang; đăng nhập
+rồi thanh bên mới hiện nút "Quản trị".
+
+SEO/chia sẻ link: mọi trang có canonical + thẻ og:/twitter:, /robots.txt, /sitemap.xml;
+trình duyệt gặp đường dẫn không có nhận trang 404 HTML (web.py gọi ``not_found``).
 
 JSON API (chỉ thêm trường mới, không đổi/bỏ trường cũ):
   GET  /api/v1/calendar/days/{YYYY-MM-DD}
@@ -51,13 +56,19 @@ import json
 import re
 import time
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode
 
 from fastapi import APIRouter, Request
 from fastapi.routing import APIRoute
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from markupsafe import Markup
 
 import web_admin
 from core import config
@@ -82,10 +93,34 @@ from services.site_data import InputError
 _ROOT = Path(__file__).resolve().parent
 _STATIC = _ROOT / "static"
 _STATIC_FILES = {
+    "site.css": "text/css; charset=utf-8",
     "logo-light.webp": "image/webp",
     "logo-dark.webp": "image/webp",
     "favicon.png": "image/png",
+    "og-image.png": "image/png",
 }
+# Trang công khai cho robots.txt / sitemap.xml (trang có form POST vẫn có bản GET).
+_SITEMAP_PATHS = (
+    "/",
+    "/lich",
+    "/lich/hoi",
+    "/lich/doi-ngay",
+    "/lich/ngay-le",
+    "/thoi-tiet",
+    "/xo-so",
+    "/gia-vang",
+    "/gia-xang",
+    "/tu-vi",
+    "/ky-mon",
+    "/than-so-hoc",
+)
+# Tham số làm nên nội dung trang - link canonical/og:url chỉ giữ các tham số này (bỏ
+# fbclid/utm_* do Facebook/Zalo gắn, mã thông báo tạm ?tb=, số vé dò).
+_CANONICAL_PARAMS = frozenset({"thang", "ngay", "q", "am", "nhuan", "noi", "dai", "gio"})
+# Health check (Render, UptimeRobot...) chỉ cần mã 200: GET / trả JSON nhẹ cho các client
+# này; mọi client khác (trình duyệt, trình đọc link Facebook/Zalo gửi Accept: */*)
+# nhận trang chủ HTML có thẻ og:.
+_HEALTH_AGENTS = re.compile(r"\bRender/|UptimeRobot|kube-probe|ELB-HealthChecker|GoogleHC")
 # Thanh bên: (nhóm, [(đường dẫn, nhãn, biểu tượng)]); biểu tượng là lớp .i-* trong site.css.
 _NAV = [
     ("", [("/", "Hôm nay", "home")]),
@@ -130,6 +165,7 @@ _ASK_EXAMPLES = [
     "rằm tháng 8",
     "còn mấy ngày nữa Tết",
     "ngày tốt tháng này",
+    "xem ngày động thổ",
     "tuổi 15/3/1990",
     "sao hạn 1990 nam năm 2027",
     "1990 và 1995 có hợp không",
@@ -151,11 +187,14 @@ _WEATHER_TIMEOUT_SEC = 15
 # Trang công khai: chặn số lượt gọi Open-Meteo song song để người lạ spam
 # địa danh không chiếm hết kết nối/RAM của 1 worker (webhook Telegram/Zalo).
 _weather_slots = asyncio.Semaphore(3)
-# Địa điểm LẠ (không có trong danh sách hay xem) tốn 3-4 request Open-Meteo mỗi
-# lượt (geocoding + dự báo) và dùng chung hạn mức miễn phí với tool thời tiết
-# của chat: giới hạn tổng số lượt tra địa điểm lạ toàn site trong 10 phút.
-_NEW_PLACE_LIMIT, _NEW_PLACE_WINDOW_SEC = 30, 600
+# Địa điểm LẠ (không có trong danh sách hay xem, chưa có trong cache toạ độ) tốn 3-4
+# request Open-Meteo mỗi lượt (geocoding + dự báo) và dùng chung hạn mức miễn phí với
+# tool thời tiết của chat. Giới hạn theo từng IP (một người gõ liên tục không khoá được
+# người khác) cộng một trần chung toàn site trong 10 phút. Bảng IP có trần.
+_NEW_PLACE_PER_IP, _NEW_PLACE_LIMIT, _NEW_PLACE_WINDOW_SEC = 10, 60, 600
+_NEW_PLACE_MAX_IPS = 512
 _new_place_times: collections.deque[float] = collections.deque()
+_new_place_by_ip: collections.OrderedDict[str, collections.deque[float]] = collections.OrderedDict()
 _MAX_JSON_BYTES = 4096
 # Xổ số: mỗi đài/miền 1 bản cache 5 phút (vn_market_data), thêm trần lượt tải song song
 # để người lạ đổi đài liên tục không chiếm hết kết nối của worker.
@@ -167,10 +206,11 @@ _price_slots = asyncio.Semaphore(3)
 _PRICE_TIMEOUT_SEC = 15
 
 
-# (đã đăng nhập, đường dẫn đang xem) của request hiện tại - để header hiện nút
-# Quản trị/Đăng xuất hay Đăng nhập mà không phải truyền request qua mọi hàm.
-_viewer: contextvars.ContextVar[tuple[bool, str]] = contextvars.ContextVar(
-    "site_viewer", default=(False, "/")
+# (đã đăng nhập, đường dẫn đang xem, gốc URL công khai) của request hiện tại - để thanh
+# bên hiện nút Quản trị/Đăng xuất và trang có link canonical/og:url mà không phải truyền
+# request qua mọi hàm.
+_viewer: contextvars.ContextVar[tuple[bool, str, str]] = contextvars.ContextVar(
+    "site_viewer", default=(False, "/", "")
 )
 
 
@@ -182,12 +222,23 @@ def _login_url(path: str) -> str:
     return "/admin?" + urlencode({"next": web_admin.safe_next(path)})
 
 
+def _base_url(request: Request) -> str:
+    return config.SITE_BASE_URL or str(request.base_url).rstrip("/")
+
+
 async def _set_viewer(request: Request) -> bool:
     logged_in = await web_admin.is_logged_in(request)
     # POST (kết quả form) không mở lại được bằng link: đăng nhập xong về trang form.
     path = _current_path(request) if request.method == "GET" else request.url.path
-    _viewer.set((logged_in, path))
+    _viewer.set((logged_in, path, _base_url(request)))
     return logged_in
+
+
+def _canonical_path(path: str) -> str:
+    """Đường dẫn đang xem chỉ giữ tham số nội dung (_CANONICAL_PARAMS) - cho canonical/og:url."""
+    base, _, query = path.partition("?")
+    pairs = [(k, v) for k, v in parse_qsl(query) if k in _CANONICAL_PARAMS]
+    return base + (f"?{urlencode(pairs)}" if pairs else "")
 
 
 class _ViewerRoute(APIRoute):
@@ -226,18 +277,22 @@ def _env() -> Environment:
 
 
 @functools.lru_cache(maxsize=1)
-def _assets() -> tuple[Markup, str]:
-    """(CSS nhúng thẳng vào HTML, phiên bản ảnh). CSS inline để trang không kéo
-    thêm request song song: uvicorn chạy --limit-concurrency (đếm cả kết nối
-    keep-alive rảnh), nhiều request phụ từng làm webhook Telegram/Zalo nhận 503.
-    Logo/favicon vẫn là file riêng nhưng cache 1 năm theo phiên bản nội dung."""
-    css = Markup((_STATIC / "site.css").read_text(encoding="utf-8"))
-    digest = hashlib.sha256(b"".join((_STATIC / n).read_bytes() for n in sorted(_STATIC_FILES)))
-    return css, digest.hexdigest()[:10]
+def _assets() -> tuple[str, str]:
+    """(phiên bản CSS, phiên bản ảnh) = hash nội dung, gắn vào URL dạng ?v=<hash>.
+    CSS là file riêng cache 1 năm (immutable): chỉ lượt xem đầu tiên tải thêm 1
+    request, các trang sau trình duyệt dùng bản đã lưu, không hỏi lại server - nên
+    không đè lên --limit-concurrency của uvicorn (webhook Telegram/Zalo dùng chung)."""
+
+    def digest(names: list[str]) -> str:
+        data = b"".join((_STATIC / n).read_bytes() for n in names)
+        return hashlib.sha256(data).hexdigest()[:10]
+
+    return digest(["site.css"]), digest(sorted(n for n in _STATIC_FILES if n != "site.css"))
 
 
 def _render(name: str, *, title: str, description: str, active: str, **ctx) -> HTMLResponse:
-    css, version = _assets()
+    css_version, version = _assets()
+    logged_in, path, base = _viewer.get()
     html = (
         _env()
         .get_template(name)
@@ -246,10 +301,13 @@ def _render(name: str, *, title: str, description: str, active: str, **ctx) -> H
             description=description,
             active=active,
             nav=_NAV,
-            inline_css=css,
+            css_v=css_version,
             v=version,
-            logged_in=_viewer.get()[0],
-            login_url=_login_url(_viewer.get()[1]),
+            logged_in=logged_in,
+            login_url=_login_url(path),
+            # Link tuyệt đối cho canonical/og: (chưa biết gốc URL thì bỏ các thẻ này).
+            page_url=f"{base}{_canonical_path(path)}" if base else "",
+            site_url=base,
             **ctx,
         )
     )
@@ -262,8 +320,17 @@ def _render_lich(name: str, *, tab: str, title: str, description: str, **ctx) ->
     return _render(name, title=title, description=description, active=tab, **ctx)
 
 
-def wants_html(request: Request) -> bool:
+def is_browser(request: Request) -> bool:
     return "text/html" in request.headers.get("accept", "")
+
+
+def wants_html(request: Request) -> bool:
+    """GET /: trang chủ HTML cho mọi client trừ health check và client chỉ xin JSON."""
+    if is_browser(request):
+        return True
+    if "application/json" in request.headers.get("accept", ""):
+        return False
+    return not _HEALTH_AGENTS.search(request.headers.get("user-agent", ""))
 
 
 # ─── Trang ───────────────────────────────────────────────────────────────────
@@ -367,13 +434,18 @@ async def lich_page(request: Request) -> Response:
     error = ""
     selected_date = today
     month_year, month = today.year, today.month
-    raw_month = params.get("thang", "")
+    raw_month = params.get("thang", "").strip()[:20]
     if raw_month:
-        m = re.fullmatch(r"(\d{4})-(\d{1,2})", raw_month)
+        # Link của trang là 2026-10; người gõ tay hay viết 10/2026.
+        m = re.fullmatch(r"(\d{4})-(\d{1,2})|(\d{1,2})[/-](\d{4})", raw_month)
         if m:
-            month_year, month = int(m.group(1)), int(m.group(2))
+            month_year = int(m.group(1) or m.group(4))
+            month = int(m.group(2) or m.group(3))
         else:
-            error = "Tháng phải có dạng YYYY-MM."
+            error = (
+                f"Không đọc được tháng “{raw_month}”. Bấm Tháng trước/Tháng sau, "
+                "hoặc ghi tháng/năm như 10/2026."
+            )
     raw_day = params.get("ngay", "")
     try:
         if raw_day:
@@ -420,7 +492,10 @@ async def lich_convert_page(request: Request) -> HTMLResponse:
     if am:
         m = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", am)
         if not m:
-            error = "Ngày âm phải có dạng ngày/tháng hoặc ngày/tháng/năm, ví dụ 15/8/2027."
+            error = (
+                f"“{am}” không phải ngày âm lịch. Nhập ngày/tháng hoặc ngày/tháng/năm, "
+                "ví dụ 15/8 hoặc 15/8/2027."
+            )
         else:
             day, _, msg = lunar.find_lunar_date(
                 int(m.group(1)),
@@ -461,15 +536,31 @@ async def _limited_weather(place: str) -> dict:
         return await weather.get_weather(place, days=_WEATHER_DAYS)
 
 
-def _new_place_allowed(now: float | None = None) -> bool:
-    """Lấy 1 lượt trong ngân sách tra địa điểm lạ; hết thì False (không gọi API)."""
+def _expire(times: collections.deque[float], now: float) -> None:
+    while times and now - times[0] > _NEW_PLACE_WINDOW_SEC:
+        times.popleft()
+
+
+def _new_place_allowed(ip: str, now: float | None = None) -> str:
+    """Lấy 1 lượt tra địa điểm lạ cho ``ip``: "" = được tra, "ip" = IP này hết lượt,
+    "site" = cả site hết lượt (không gọi API)."""
     now = time.monotonic() if now is None else now
-    while _new_place_times and now - _new_place_times[0] > _NEW_PLACE_WINDOW_SEC:
-        _new_place_times.popleft()
-    if len(_new_place_times) >= _NEW_PLACE_LIMIT:
-        return False
-    _new_place_times.append(now)
-    return True
+    mine = _new_place_by_ip.pop(ip, None) or collections.deque()
+    _expire(mine, now)
+    _expire(_new_place_times, now)
+    if len(mine) >= _NEW_PLACE_PER_IP:
+        verdict = "ip"
+    elif len(_new_place_times) >= _NEW_PLACE_LIMIT:
+        verdict = "site"
+    else:
+        verdict = ""
+        mine.append(now)
+        _new_place_times.append(now)
+    if mine:
+        _new_place_by_ip[ip] = mine  # đưa về cuối: IP vừa dùng
+        while len(_new_place_by_ip) > _NEW_PLACE_MAX_IPS:
+            _new_place_by_ip.popitem(last=False)
+    return verdict
 
 
 @router.get("/thoi-tiet", response_class=HTMLResponse)
@@ -478,8 +569,16 @@ async def weather_page(request: Request) -> HTMLResponse:
     places = await weather_places.get()
     error, data = "", None
     known = {weather_places.fold(p) for p in places}
-    if place and weather_places.fold(place) not in known and not _new_place_allowed():
-        error = "Đang tạm giới hạn tra địa điểm mới, chọn một địa điểm trong danh sách."
+    limited = ""
+    if place and weather_places.fold(place) not in known and not weather.location_cached(place):
+        limited = _new_place_allowed(web_admin.client_ip(request))
+    if limited:
+        error = (
+            "Bạn vừa tra nhiều địa điểm mới, thử lại sau ít phút hoặc chọn một địa điểm "
+            "trong danh sách."
+            if limited == "ip"
+            else "Đang tạm giới hạn tra địa điểm mới, chọn một địa điểm trong danh sách."
+        )
     else:
         try:
             # Hạn chót tính cả lúc xếp hàng chờ slot, không chỉ lúc tra.
@@ -500,13 +599,15 @@ async def weather_page(request: Request) -> HTMLResponse:
                 left = (float(day["min_c"]) - low) / span * 100
                 width = (float(day["max_c"]) - low) / span * 100 - left
                 day["bar"] = (round(left), max(round(width), 4))
+    days = len(data["daily"]) if data and data.get("daily") else _WEATHER_DAYS
     return _render(
         "thoi_tiet.html",
         title=f"Thời tiết {data['location']}" if data else "Thời tiết",
-        description="Thời tiết hiện tại và dự báo 7 ngày cho các tỉnh thành Việt Nam.",
+        description=f"Thời tiết hiện tại và dự báo {days} ngày cho các tỉnh thành Việt Nam.",
         active="/thoi-tiet",
         place=place,
         data=data,
+        days=days,
         error=error,
         places=places,
         notice=_PLACE_NOTICES.get(request.query_params.get("tb", "")),
@@ -535,11 +636,13 @@ async def lottery_page(request: Request) -> HTMLResponse:
     raw_day = params.get("ngay", "").strip()[:20]
     raw_ticket = params.get("ve", "").strip()[:12]
     today = site_data.today()
-    error, data = "", None
+    error, error_field, data = "", "", None
     try:
         data = await _limited_lottery(selector, raw_day, raw_ticket)
     except lottery_lookup.LookupInputError as exc:
         error = exc.message
+        # Ô nhập sai được tô đỏ và ghi lỗi ngay bên dưới (trang vẫn hiện kỳ mới nhất).
+        error_field = {"INVALID_TICKET": "ve", "INVALID_DATE": "ngay"}.get(exc.code, "dai")
         if exc.code != "INVALID_PROVINCE":  # đài đúng mà ngày/vé sai: vẫn hiện kỳ mới nhất
             try:
                 data = await _limited_lottery(selector, "", "")
@@ -561,6 +664,7 @@ async def lottery_page(request: Request) -> HTMLResponse:
         active="/xo-so",
         data=data,
         error=error,
+        error_field=error_field,
         form={"dai": current, "ngay": raw_day, "ve": raw_ticket},
         groups=lottery_lookup.selector_groups(today),
         today_iso=today.isoformat(),
@@ -866,6 +970,52 @@ async def static_file(name: str) -> Response:
 @static_router.get("/favicon.ico", include_in_schema=False)
 async def favicon() -> Response:
     return await static_file("favicon.png")
+
+
+@static_router.get("/robots.txt", include_in_schema=False)
+async def robots(request: Request) -> Response:
+    """Cho máy tìm kiếm đọc trang công khai; chặn trang quản trị, API và webhook."""
+    lines = [
+        "User-agent: *",
+        "Allow: /",
+        "Disallow: /admin",
+        "Disallow: /api/",
+        "Disallow: /internal/",
+        "Disallow: /webhook",
+        f"Sitemap: {_base_url(request)}/sitemap.xml",
+    ]
+    return PlainTextResponse(
+        "\n".join(lines) + "\n", headers={"Cache-Control": "public, max-age=86400"}
+    )
+
+
+@static_router.get("/sitemap.xml", include_in_schema=False)
+async def sitemap(request: Request) -> Response:
+    base = _base_url(request)
+    urls = "".join(f"<url><loc>{base}{path}</loc></url>" for path in _SITEMAP_PATHS)
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>'
+    )
+    return Response(
+        body,
+        media_type="application/xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+async def not_found(request: Request) -> HTMLResponse:
+    """Trang 404 cho trình duyệt (web.py gọi khi đường dẫn không tồn tại)."""
+    await _set_viewer(request)
+    page = _render(
+        "404.html",
+        title="Không tìm thấy trang",
+        description="Trang bạn tìm không có hoặc đã đổi địa chỉ.",
+        active="",
+        noindex=True,
+    )
+    page.status_code = 404
+    return page
 
 
 # ─── JSON API ───────────────────────────────────────────────────────────────

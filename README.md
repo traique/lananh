@@ -1413,7 +1413,7 @@ Telegram chỉ còn 18 lệnh hay dùng; mọi lệnh khác vẫn gõ được.
 | `/canhbaogia <MÃ> [về\|lên] <GIÁ>`, `/xoacanhbao <MÃ> [GIÁ]` | Ngưỡng giá tự đặt, báo trong giờ giao dịch (hoặc nhắn "báo anh khi HPG về 25") |
 | `/anh <mô tả>` / `/anh on\|off` | Tạo ảnh thật (Agnes AI) / bật tắt |
 | `/tintuc` | Điểm tin mới ngay tại kênh đang gọi (không broadcast) |
-| `/lich <câu hỏi>` | Tra lịch tự do bằng code, KHÔNG tốn AI (`services/calendar_query.py`): âm ↔ dương, bảng tháng, ngày lễ, đếm ngày, ngày hoàng đạo/Tam nương, tuổi - mệnh - hợp xung, sao hạn/Tam tai/Kim lâu/Hoang ốc (`services/can_chi.py`); không hiểu thì gợi ý cách hỏi |
+| `/lich <câu hỏi>` | Tra lịch tự do bằng code, KHÔNG tốn AI (`services/calendar_query.py`): âm ↔ dương, bảng tháng, ngày lễ (kèm năm: "Tết 2028"), đếm ngày, ngày hoàng đạo/Tam nương (tháng này chỉ từ hôm nay; cuối tuần đủ Thứ Bảy + Chủ Nhật), xem ngày theo việc ("xem ngày cưới tháng 12", "ngày khai trương", "xem ngày động thổ", "20/12 cưới được không": hoàng đạo + không Tam nương/Nguyệt kỵ + Thập nhị trực hợp việc, `can_chi.day_truc`), tuổi - mệnh - hợp xung, sao hạn/Tam tai/Kim lâu/Hoang ốc (`services/can_chi.py`); ngày không có thật ("29/2/2027", "32/12") báo đúng lỗi; không hiểu thì gợi ý cách hỏi |
 | `/tsh <ngày sinh> [họ tên]` | Thần số học (`services/numerology.py`, hệ Pythagoras phổ biến ở VN - số chủ đạo có 10, không có 1; số theo tên rút gọn từng từ, Y là nguyên âm khi không kề nguyên âm khác): số chủ đạo, ngày sinh, thái độ, năm/tháng cá nhân, 4 đỉnh cao + 4 thử thách theo tuổi (kim tự tháp 36 − số chủ đạo), biểu đồ ngày sinh + mũi tên; có họ tên thì thêm sứ mệnh/linh hồn/nhân cách/trưởng thành và biểu đồ tổng hợp; ý nghĩa soạn sẵn ở `assets/than_so_hoc.yaml` |
 | `/tuvi <ngày sinh> <giờ> <nam\|nữ>` | An lá số Tử Vi Đẩu Số (`services/tuvi.py`, cách Thái Thứ Lang): 12 cung, 14 chính tinh kèm độ sáng miếu/vượng/đắc/bình/hãm, ~70 phụ tinh (Lộc Tồn Kình Đà, Khôi Việt, Xương Khúc, Tả Hữu, Không Kiếp, Hỏa Linh, Thiên Quan Thiên Phúc, Lưu Hà Thiên Trù, Quốc Ấn Đường Phù, Lưu Niên Văn Tinh, Đẩu Quân, Thiên Không, Giải Thần...), Tứ hóa, vòng Tràng sinh / Lộc Tồn / Thái Tuế, Tuần/Triệt, đại hạn; ý nghĩa sao thủ Mệnh và bảng độ sáng ở `assets/tu_vi.yaml` |
 | `/tsh_chitiet` (hoặc `/ths_chitiet`), `/tuvi_chitiet` | Như trên + AI diễn giải (1 lượt AI; AI chỉ diễn giải số/lá số đã tính, không tính lại). Ngày sinh, họ tên không lưu DB |
@@ -1571,9 +1571,12 @@ Cần đăng nhập bằng tài khoản admin (`ADMIN_USER`/`ADMIN_PASS`, chung 
 - thêm/xoá địa điểm hay xem ở `/thoi-tiet` (lưu trong bảng `settings`, key
   `web_weather_places`, tối đa 16 mục, cache RAM - `services/weather_places.py`).
 
-Chưa đăng nhập thì cuối thanh bên có "Đăng nhập" (về lại đúng trang sau khi đăng
-nhập); đăng nhập rồi mới hiện "Quản trị" và "Đăng xuất". Menu admin có nhóm
-"Công cụ web" sang các trang này.
+Khách xem mọi trang không cần tài khoản nên thanh bên KHÔNG mời "Đăng nhập" (trang đó
+là trang admin, khách vào sẽ cụt đường). Chủ trang có link nhỏ "Chủ trang đăng nhập" ở
+chân trang và trong khối AI luận giải (về lại đúng trang sau khi đăng nhập); trang đăng
+nhập ghi rõ chỉ dành cho chủ trang và có link "← Quay lại trang đang xem". Đăng nhập rồi
+mới hiện "Quản trị" và "Đăng xuất" ở thanh bên. Menu admin có nhóm "Công cụ web" sang
+các trang này.
 
 Giao diện dạng ứng dụng (thanh bên trái nhóm Lịch / Tra cứu, cột nội dung 1100px
 lưới 12 cột), dựng theo skill ui-craft: khối nội dung tông xanh lá xám (sage) trên
@@ -1593,8 +1596,9 @@ trong admin), một nút chính xanh đen mỗi màn, nút phụ nền trắng v
 giá trị bằng segmented (âm/dương lịch, nam/nữ, khoảng 24 giờ/7 ngày/30 ngày); mọi bật/tắt là
 công tắc `role="switch"` 32x20 (xanh đen khi bật); ô nhập + nút Lưu/Tra dính liền; nút bị khoá
 vẫn đọc được. Chuyển động chỉ là phản hồi: bấm 120ms, rê chuột 150ms, công tắc/bảng 200ms.
-CSS `static/site.css` được nhúng thẳng vào HTML (không tốn thêm request tới server;
-phông chữ tải từ Google). Nút đổi sáng/tối ở cuối thanh bên (lưu `localStorage` key
+CSS `static/site.css` là file riêng `/static/site.css?v=<hash nội dung>` cache 1 năm
+(`immutable`): chỉ lượt xem đầu tiên tải thêm 1 request, các trang sau trình duyệt dùng
+bản đã lưu, không hỏi lại server (HTML mỗi trang nhẹ đi ~50 KB; phông chữ tải từ Google). Nút đổi sáng/tối ở cuối thanh bên (lưu `localStorage` key
 `lcta.theme`, không JS thì theo hệ máy); trang `/admin`, trang đăng nhập admin và
 các trang Quyền riêng tư / Điều khoản / Xoá dữ liệu dùng cùng bảng màu và key này.
 Mọi chữ đạt ≥ 4.5:1 trên nền của nó, viền ô nhập ≥ 3:1, ở cả sáng lẫn tối. Logo
@@ -1603,12 +1607,13 @@ LCTA có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo n
 
 | Đường dẫn | Nội dung |
 |---|---|
-| `/` | Trang chủ cho trình duyệt (`Accept: text/html`); health check/Render vẫn nhận `{"status":"ok"}` |
+| `/` | Trang chủ HTML cho trình duyệt VÀ trình đọc link Facebook/Zalo (gửi `Accept: */*`) để link chia sẻ có tiêu đề, mô tả, ảnh; chỉ health check (User-Agent `Render/…`, `UptimeRobot`…) và client gửi `Accept: application/json` nhận `{"status":"ok"}` (`web_site.wants_html`) |
+| `/robots.txt`, `/sitemap.xml` | Cho máy tìm kiếm đọc trang công khai, chặn `/admin`, `/api/`, `/internal/`, `/webhook`; sitemap liệt kê các trang công khai. Mọi trang có `<link rel="canonical">`, thẻ `og:`/`twitter:` (ảnh `static/og-image.png` 1200x630, tạo bằng `scripts/make_og_image.py`); link tuyệt đối theo `SITE_BASE_URL` (trống = `WEBHOOK_BASE_URL`), canonical chỉ giữ tham số nội dung (bỏ `fbclid`, `utm_*`, `?tb=`, số vé). Đường dẫn không có: trình duyệt nhận trang 404 cùng giao diện (`noindex`), client khác và `/api` vẫn nhận JSON |
 | `/lich?thang=YYYY-MM&ngay=YYYY-MM-DD` | Lịch tháng dương-âm + chi tiết ngày (link cũ `?q=`/`?am=` tự chuyển sang trang mới) |
-| `/lich/hoi?q=...` | Hỏi lịch tự do (như lệnh `/lich`) |
+| `/lich/hoi?q=...` | Hỏi lịch tự do (như lệnh `/lich`); câu không hiểu thì gợi ý cách hỏi kiểu web (`calendar_query.WEB_HELP`, không có cú pháp lệnh chat) |
 | `/lich/doi-ngay?am=15/8/2027&nhuan=1` | Đổi ngày âm sang dương |
 | `/lich/ngay-le` | Ngày lễ âm/dương trong 12 tháng tới |
-| `/thoi-tiet?noi=Đà Lạt` | Thời tiết hiện tại + dự báo 7 ngày (Open-Meteo, mặc định TP.HCM; tối đa 3 lượt tra song song, cache có trần trong `services/weather.py`) |
+| `/thoi-tiet?noi=Đà Lạt` | Thời tiết hiện tại + dự báo 7 ngày (Open-Meteo, mặc định TP.HCM; tối đa 3 lượt tra song song, cache có trần trong `services/weather.py`). Open-Meteo lỗi thì dùng wttr.in: trang ghi rõ nguồn dự phòng và số ngày thật (3), chủ bot nhận cảnh báo nhẹ (tối đa 1 lần/6 giờ); mô tả wttr.in dịch theo mã thời tiết, không lẫn tiếng Anh; tên địa điểm sửa "Ð" -> "Đ" và tên tỉnh có dấu. Tra địa điểm MỚI (không trong danh sách hay xem, chưa có trong cache toạ độ - kể cả kết quả "không tìm thấy") giới hạn 10 lượt/10 phút mỗi IP và 60 lượt/10 phút toàn site; tra lại địa điểm đã cache không trừ lượt |
 | `POST /thoi-tiet/dia-diem/them`, `/xoa` (cần đăng nhập) | Thêm/xoá địa điểm hay xem |
 | `/xo-so?dai=mn\|mt\|mb\|<khoá đài>&ngay=YYYY-MM-DD&ve=` | Kết quả xổ số theo miền/đài (ô chọn đánh dấu ★ đài quay hôm nay), bảng giải, dò vé bằng code; tối đa 3 lượt tải nguồn song song, không cần đăng nhập |
 | `/gia-vang` | Giá vàng mua/bán (triệu đồng/lượng) kèm ▲▼ so với hôm trước: SJC miếng, nhẫn SJC, DOJI Hà Nội/TP.HCM/nữ trang, PNJ, Bảo Tín, Viettin, VN Gold; vàng thế giới XAU/USD + quy đổi tham khảo theo giá bán USD Vietcombank (chưa gồm thuế phí) và chênh lệch với SJC miếng; mục tỷ giá Vietcombank các ngoại tệ chính; giờ cập nhật + nguồn (vang.today, vang.today lỗi thì bảng SJC). Dùng cache sẵn có của `services/vn_market_data.py` (10 phút) qua `services/price_lookup.py` |
@@ -1767,8 +1772,9 @@ Render Free tier tự **sleep sau ~15 phút không có request nào tới** — 
 request tiếp theo (vd Telegram gửi webhook) phải đợi service "cold start"
 lại, có thể mất vài chục giây tới hơn 1 phút, dẫn tới bot phản hồi trễ hoặc
 Telegram coi webhook timeout. Endpoint `/` (health check, không cần auth,
-xem `web.py::health`) luôn trả `{"status": "ok"}` với `200`, dùng để ping giữ
-service thức:
+xem `web.py::health`) luôn trả `200` (UptimeRobot nhận `{"status": "ok"}`, trình duyệt
+nhận trang chủ), dùng để ping giữ service thức. Khách vào web phải chờ 30-60 giây
+nghĩa là monitor này chưa chạy hoặc đã bị tạm dừng - kiểm tra lại trên UptimeRobot:
 
 1. Tạo tài khoản miễn phí tại [UptimeRobot](https://dashboard.uptimerobot.com/login?rt=true).
 2. Vào **Add New Monitor**:

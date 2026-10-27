@@ -5,6 +5,11 @@ Chuyển từ gói vn-info (MIT License, Copyright (c) 2026), sửa cho hợp re
 - Cache toạ độ và cache dự báo đều có trần số mục (RAM 512 MB trên Render).
 - Timeout ngắn, không retry dài: đây là grounding cho 1 lượt chat còn chịu hạn
   chót CHAT_TURN_TIMEOUT_SEC.
+- Open-Meteo lỗi mà wttr.in trả được: dữ liệu có ``fallback=True`` (chỉ 3 ngày dự
+  báo) và chủ bot nhận 1 cảnh báo nhẹ (core.alerts, tối đa 1 lần mỗi 6 giờ). Mô tả
+  của wttr.in lấy theo mã thời tiết sang tiếng Việt, không để lọt chữ tiếng Anh.
+- Tên địa điểm từ geocoding được sửa chữ: "Ð" (chữ Iceland) -> "Đ", tên tỉnh không
+  dấu ("Lam Dong") -> có dấu.
 
 Không nói địa điểm (hoặc nói Sài Gòn/HCM...) -> mặc định TP. Hồ Chí Minh
 (người dùng tự đặt thành phố mặc định riêng qua services/weather_home.py).
@@ -30,6 +35,7 @@ from typing import NamedTuple
 
 import httpx
 
+from core import alerts
 from core.text_normalize import fold
 from services import http_client
 
@@ -55,6 +61,47 @@ _DEFAULT_ALIASES = {
     "sg",
 }
 _PREFIX_RE = re.compile(r"^\s*(?:thành phố|thanh pho|tp\.?|tỉnh|tinh)\s+", re.IGNORECASE)
+# Tỉnh/thành có dấu (weather_chat dùng lại làm địa danh quen). Open-Meteo hay trả tên
+# tỉnh (admin1) không dấu như "Lam Dong": đổi về tên có dấu theo bảng này.
+VN_PROVINCES = (
+    "Hà Nội", "Hải Phòng", "Đà Nẵng", "Huế", "Cần Thơ", "Hồ Chí Minh",
+    "An Giang", "Bà Rịa", "Vũng Tàu", "Bạc Liêu", "Bắc Giang", "Bắc Kạn", "Bắc Ninh",
+    "Bến Tre", "Bình Định", "Bình Dương", "Bình Phước", "Bình Thuận", "Cà Mau", "Cao Bằng",
+    "Đắk Lắk", "Đắk Nông", "Điện Biên", "Đồng Nai", "Đồng Tháp", "Gia Lai", "Hà Giang",
+    "Hà Nam", "Hà Tĩnh", "Hải Dương", "Hậu Giang", "Hòa Bình", "Hưng Yên", "Khánh Hòa",
+    "Kiên Giang", "Kon Tum", "Lai Châu", "Lâm Đồng", "Lạng Sơn", "Lào Cai", "Long An",
+    "Nam Định", "Nghệ An", "Ninh Bình", "Ninh Thuận", "Phú Thọ", "Phú Yên", "Quảng Bình",
+    "Quảng Nam", "Quảng Ngãi", "Quảng Ninh", "Quảng Trị", "Sóc Trăng", "Sơn La", "Tây Ninh",
+    "Thái Bình", "Thái Nguyên", "Thanh Hóa", "Tiền Giang", "Trà Vinh", "Tuyên Quang",
+    "Vĩnh Long", "Vĩnh Phúc", "Yên Bái",
+)  # fmt: skip
+_PROVINCE_NAMES = {
+    re.sub(r"[^a-z0-9]", "", fold(name)): name
+    for name in (*VN_PROVINCES, "Thừa Thiên Huế", "Bà Rịa - Vũng Tàu")
+}
+# Mã thời tiết của wttr.in (WorldWeatherOnline) -> tiếng Việt cùng giọng với bảng WMO.
+# Không dùng weatherDesc: luôn là tiếng Anh ("Patchy rain nearby").
+_WWO = {
+    113: "trời quang", 116: "ít mây", 119: "có mây", 122: "nhiều mây, u ám",
+    143: "sương mờ", 176: "có mưa rải rác", 179: "có tuyết rải rác",
+    182: "có mưa tuyết rải rác", 185: "có mưa phùn lạnh rải rác", 200: "có thể có dông",
+    227: "tuyết thổi", 230: "bão tuyết", 248: "sương mù", 260: "sương mù đóng băng",
+    263: "mưa phùn nhẹ rải rác", 266: "mưa phùn nhẹ", 281: "mưa phùn lạnh",
+    284: "mưa phùn lạnh dày", 293: "mưa nhỏ rải rác", 296: "mưa nhỏ",
+    299: "lúc có mưa vừa", 302: "mưa vừa", 305: "lúc có mưa to", 308: "mưa to",
+    311: "mưa lạnh nhỏ", 314: "mưa lạnh vừa đến to", 317: "mưa tuyết nhỏ",
+    320: "mưa tuyết vừa đến to", 323: "tuyết nhẹ rải rác", 326: "tuyết nhẹ",
+    329: "tuyết vừa rải rác", 332: "tuyết vừa", 335: "tuyết dày rải rác", 338: "tuyết dày",
+    350: "mưa đá nhỏ", 353: "mưa rào nhẹ", 356: "mưa rào vừa đến to",
+    359: "mưa rào rất to", 362: "mưa tuyết rào nhẹ", 365: "mưa tuyết rào vừa đến to",
+    368: "tuyết rào nhẹ", 371: "tuyết rào vừa đến to", 374: "mưa đá rào nhẹ",
+    377: "mưa đá rào vừa đến to", 386: "mưa nhỏ kèm dông", 389: "mưa vừa đến to kèm dông",
+    392: "tuyết nhẹ kèm dông", 395: "tuyết vừa đến to kèm dông",
+}  # fmt: skip
+WTTR_MAX_DAYS = 3
+# Báo chủ bot khi Open-Meteo lỗi và web/chat đang chạy wttr.in (cảnh báo nhẹ, gom).
+_FALLBACK_ALERT_KEY = "weather:open-meteo-fallback"
+_FALLBACK_ALERT_COOLDOWN_SEC = 6 * 3600
 
 _GEO_CACHE_MAX = 128
 _FORECAST_CACHE_MAX = 32
@@ -155,6 +202,27 @@ def _clean_location(location: str) -> str:
     return _PREFIX_RE.sub("", (location or "").strip(" .,?!")).strip()
 
 
+def _vi_place(part: str, typed: str = "") -> str:
+    """Sửa tên địa điểm Open-Meteo trả về: "Ð" (U+00D0, chữ Iceland) -> "Đ"; tên tỉnh
+    không dấu -> có dấu; tên không dấu mà người dùng gõ có dấu thì lấy chữ người gõ."""
+    part = part.replace("\u00d0", "Đ").replace("\u00f0", "đ")
+    key = re.sub(r"[^a-z0-9]", "", fold(part))
+    if key in _PROVINCE_NAMES:
+        return _PROVINCE_NAMES[key]
+    # fold() hạ chữ thường: so với bản chữ thường để biết tên có dấu hay không.
+    if typed and fold(part) == part.lower() and fold(typed) != typed.lower():
+        if re.sub(r"[^a-z0-9]", "", fold(typed)) == key:
+            return typed.strip().title()
+    return part
+
+
+def location_cached(location: str) -> bool:
+    """Tra địa điểm này có cần gọi geocoding không: TP.HCM (toạ độ sẵn) hoặc đã có
+    trong cache toạ độ - kể cả kết quả "không tìm thấy" - thì không."""
+    name = _clean_location(location)
+    return is_default_location(name) or fold(name) in _geo_cache
+
+
 def is_default_location(location: str) -> bool:
     key = re.sub(r"[^a-z0-9]", "", fold(location))
     return not key or key in _DEFAULT_ALIASES
@@ -194,6 +262,7 @@ async def _geocode(name: str) -> tuple[str, float, float] | None:
             g = found[0]
             parts: list[str] = []
             for part in (g.get("name"), g.get("admin1"), g.get("country")):
+                part = _vi_place(part, name) if part else part
                 if part and fold(part).replace(" ", "") not in {
                     fold(p).replace(" ", "") for p in parts
                 }:
@@ -254,6 +323,12 @@ async def get_weather_at(lat: float, lon: float, label: str, days: int = 1) -> d
             data = await _wttr(label, lat, lon, days)
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc2:
             raise WeatherError(f"Open-Meteo và wttr.in đều lỗi: {exc2!r}") from exc2
+        alerts.send(
+            f"⚠️ Thời tiết: Open-Meteo lỗi ({type(exc).__name__}), đang dùng nguồn dự phòng "
+            f"wttr.in - dự báo chỉ còn {WTTR_MAX_DAYS} ngày. Trang /thoi-tiet đã ghi rõ.",
+            key=_FALLBACK_ALERT_KEY,
+            cooldown=_FALLBACK_ALERT_COOLDOWN_SEC,
+        )
     _cache_put(_forecast_cache, cache_key, (time.monotonic(), data), _FORECAST_CACHE_MAX)
     return data
 
@@ -429,12 +504,12 @@ async def _wttr(label: str, lat: float, lon: float, days: int) -> dict:
     resp = await _get(f"https://wttr.in/{lat:.3f},{lon:.3f}", {"format": "j1", "lang": "vi"})
     d = resp.json()
     c = d["current_condition"][0]
-    desc = (c.get("lang_vi") or c.get("weatherDesc") or [{"value": ""}])[0]["value"]
     out = {
         "location": label,
-        "source": "wttr.in (dự phòng, tối đa 3 ngày)",
+        "source": f"wttr.in (dự phòng, tối đa {WTTR_MAX_DAYS} ngày)",
+        "fallback": True,
         "now": {
-            "description": desc,
+            "description": _wttr_text(c),
             "temperature_c": float(c["temp_C"]),
             "feels_like_c": float(c["FeelsLikeC"]),
             "humidity_percent": int(c["humidity"]),
@@ -449,7 +524,7 @@ async def _wttr(label: str, lat: float, lon: float, days: int) -> dict:
             {
                 "date": w["date"],
                 "weekday": WEEKDAYS[dt.date.fromisoformat(w["date"]).weekday()],
-                "description": (noon.get("lang_vi") or noon["weatherDesc"])[0]["value"],
+                "description": _wttr_text(noon),
                 "min_c": float(w["mintempC"]),
                 "max_c": float(w["maxtempC"]),
                 "rain_chance_percent": max(int(h.get("chanceofrain", 0)) for h in w["hourly"]),
@@ -457,6 +532,19 @@ async def _wttr(label: str, lat: float, lon: float, days: int) -> dict:
             }
         )
     return out
+
+
+def _wttr_text(entry: dict) -> str:
+    """Mô tả tiếng Việt của 1 mục wttr.in: theo mã thời tiết, rồi lang_vi; không bao giờ
+    lấy weatherDesc (tiếng Anh)."""
+    try:
+        text = _WWO.get(int(entry.get("weatherCode")))
+    except (TypeError, ValueError):
+        text = None
+    if text:
+        return text
+    vi = (entry.get("lang_vi") or [{}])[0].get("value", "").strip()
+    return vi or "không rõ"
 
 
 def _n(x) -> str:

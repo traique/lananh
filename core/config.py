@@ -614,6 +614,9 @@ DIAGNOSE_PATH = "/diagnose"
 WEBHOOK_BASE_URL = (
     os.getenv("WEBHOOK_BASE_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()
 )
+# Địa chỉ công khai của web LCTA cho link canonical, og:url, sitemap.xml (vd khi trỏ
+# tên miền riêng). Trống = WEBHOOK_BASE_URL.
+SITE_BASE_URL = (os.getenv("SITE_BASE_URL", "").strip() or WEBHOOK_BASE_URL).rstrip("/")
 
 # Khoá mã hoá đối xứng (Fernet) dùng để mã hoá các giá trị nhạy cảm (vd
 # __Secure-1PSIDTS đã rotate) trước khi lưu vào bảng settings trong DB. Tạo

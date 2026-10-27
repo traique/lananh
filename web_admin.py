@@ -229,6 +229,11 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def client_ip(request: Request) -> str:
+    """IP client thật sau proxy Render - dùng chung cho hạn mức của trang web công khai."""
+    return _client_ip(request)
+
+
 def _hours_param(request: Request, default: int = 168) -> int:
     try:
         hours = int(request.query_params.get("hours", str(default)))
@@ -317,8 +322,13 @@ def _with_logo_version(page: str) -> str:
 
 
 def _login_page(error: str, status_code: int, next_path: str = "/admin") -> HTMLResponse:
-    login_html = _with_logo_version(_ADMIN_LOGIN_PATH.read_text(encoding="utf-8")).replace(
-        "<!--NEXT-->", html.escape(safe_next(next_path), quote=True)
+    next_path = safe_next(next_path)
+    # Khách lỡ bấm vào: link quay lại trang web đang xem (trang admin thì về trang chủ).
+    back = "/" if next_path.startswith("/admin") else next_path
+    login_html = (
+        _with_logo_version(_ADMIN_LOGIN_PATH.read_text(encoding="utf-8"))
+        .replace("<!--NEXT-->", html.escape(next_path, quote=True))
+        .replace("<!--BACK-->", html.escape(back, quote=True))
     )
     if error:
         login_html = login_html.replace("<!--ERROR-->", f'<div class="err">{error}</div>')

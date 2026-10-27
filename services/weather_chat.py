@@ -86,16 +86,7 @@ _EXPLICIT_PLACE_RE = re.compile(r"\b(?:o|tai)\s+(?=\S)")
 # Địa danh hay hỏi: khớp trước tiên, tránh việc bỏ từ thừa cắt mất chữ của tên
 # ("nha" trong Nha Trang, "mai" trong Mai Châu). Tên khác vẫn tra geocoding.
 KNOWN_PLACES = [
-    "Hà Nội", "Hải Phòng", "Đà Nẵng", "Huế", "Cần Thơ", "Hồ Chí Minh",
-    "An Giang", "Bà Rịa", "Vũng Tàu", "Bạc Liêu", "Bắc Giang", "Bắc Kạn", "Bắc Ninh",
-    "Bến Tre", "Bình Định", "Bình Dương", "Bình Phước", "Bình Thuận", "Cà Mau", "Cao Bằng",
-    "Đắk Lắk", "Đắk Nông", "Điện Biên", "Đồng Nai", "Đồng Tháp", "Gia Lai", "Hà Giang",
-    "Hà Nam", "Hà Tĩnh", "Hải Dương", "Hậu Giang", "Hòa Bình", "Hưng Yên", "Khánh Hòa",
-    "Kiên Giang", "Kon Tum", "Lai Châu", "Lâm Đồng", "Lạng Sơn", "Lào Cai", "Long An",
-    "Nam Định", "Nghệ An", "Ninh Bình", "Ninh Thuận", "Phú Thọ", "Phú Yên", "Quảng Bình",
-    "Quảng Nam", "Quảng Ngãi", "Quảng Ninh", "Quảng Trị", "Sóc Trăng", "Sơn La", "Tây Ninh",
-    "Thái Bình", "Thái Nguyên", "Thanh Hóa", "Tiền Giang", "Trà Vinh", "Tuyên Quang",
-    "Vĩnh Long", "Vĩnh Phúc", "Yên Bái",
+    *weather.VN_PROVINCES,
     "Đà Lạt", "Sa Pa", "Sapa", "Hạ Long", "Phú Quốc", "Nha Trang", "Mũi Né", "Phan Thiết",
     "Hội An", "Mai Châu", "Mộc Châu", "Tam Đảo", "Côn Đảo", "Quy Nhơn", "Buôn Ma Thuột",
     "Pleiku", "Biên Hòa", "Thủ Dầu Một", "Long Xuyên", "Rạch Giá", "Bảo Lộc", "Tuy Hòa",

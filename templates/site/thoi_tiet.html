@@ -3,7 +3,7 @@
 <div class="title-row">
   <div>
     <h1>{{ "Thời tiết " ~ data.location if data else "Thời tiết" }}</h1>
-    <p class="sub">Hiện tại và dự báo 7 ngày. Không nhập địa điểm thì xem TP. Hồ Chí Minh.</p>
+    <p class="sub">Hiện tại và dự báo {{ days }} ngày. Không nhập địa điểm thì xem TP. Hồ Chí Minh.</p>
   </div>
   <form class="search" action="/thoi-tiet" method="get" role="search">
     <label class="sr-only" for="noi">Địa điểm</label>
@@ -38,6 +38,9 @@
 {% endif %}
 
 {% if data %}
+{% if data.fallback %}
+<div class="ok-box notice price-note" role="status">Nguồn chính Open-Meteo đang lỗi, tạm dùng nguồn dự phòng wttr.in nên chỉ có dự báo {{ days }} ngày.</div>
+{% endif %}
 <section class="panel weather-now" aria-labelledby="now-title">
   <header><h2 id="now-title">Bây giờ</h2><span class="meta">{{ data.location }}</span></header>
   <div class="strip">
@@ -53,7 +56,7 @@
 </section>
 <section class="panel" aria-labelledby="fc-title">
   <header><h2 id="fc-title">Dự báo {{ data.daily | length }} ngày</h2><span class="meta">Nguồn: {{ data.source }}, cập nhật khoảng 10 phút một lần</span></header>
-  <div class="table-wrap">
+  <div class="table-wrap" tabindex="0" role="region" aria-labelledby="fc-title">
     <table class="forecast">
       <thead><tr><th scope="col">Ngày</th><th scope="col">Trời</th><th scope="col" class="n">Thấp</th><th scope="col" class="range-col"><span class="sr-only">Biên độ</span></th><th scope="col" class="n">Cao</th><th scope="col" class="n">Mưa</th><th scope="col" class="n">UV</th></tr></thead>
       <tbody>

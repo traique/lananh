@@ -210,7 +210,12 @@ api.add_middleware(SecurityHeadersMiddleware)
 @api.exception_handler(StarletteHTTPException)
 async def _http_error(request: Request, exc: StarletteHTTPException) -> Response:
     """Dưới /api/v1 mọi lỗi HTTP (404, 405...) cùng dạng {"error": {code, message}}
-    như lỗi nhập liệu 422; các đường dẫn khác giữ dạng mặc định của FastAPI."""
+    như lỗi nhập liệu 422; trình duyệt (Accept: text/html) gặp 404 ngoài /api thì
+    nhận trang HTML; các trường hợp khác giữ dạng mặc định của FastAPI."""
+    is_api = request.url.path.startswith("/api/")
+    if exc.status_code == 404 and not is_api and web_site.is_browser(request):
+        # Trình duyệt gõ sai đường dẫn: trang 404 cùng giao diện thay vì JSON thô.
+        return await web_site.not_found(request)
     if request.url.path.startswith("/api/v1/"):
         codes = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
         return JSONResponse(
@@ -240,8 +245,9 @@ api.include_router(web_site.api_router)
 
 @api.api_route("/", methods=["GET", "HEAD"])
 async def health(request: Request) -> Response:
-    """Trình duyệt (Accept: text/html) nhận trang chủ; Render health check,
-    UptimeRobot và mọi client khác vẫn nhận JSON {"status": "ok"} như cũ."""
+    """Trình duyệt và trình đọc link (Facebook, Zalo gửi Accept: */*) nhận trang chủ
+    HTML; health check Render/UptimeRobot và client xin JSON vẫn nhận {"status": "ok"}
+    (xem web_site.wants_html)."""
     if request.method == "GET" and web_site.wants_html(request):
         return await web_site.home(request)
     return JSONResponse({"status": "ok"})

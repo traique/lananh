@@ -14,10 +14,9 @@
       <div class="lp-num" aria-hidden="true">{{ reading.lifePath.value }}</div>
       <p><span class="sr-only">Số {{ reading.lifePath.value }}. </span>{{ reading.lifePath.meaning }}</p>
     </div>
-    <h3>Các con số khác</h3>
-    <div class="table-wrap">
+    <h3 id="numbers-title">Các con số khác</h3>
+    <div class="table-wrap" tabindex="0" role="region" aria-labelledby="numbers-title">
       <table class="numbers">
-        <caption class="sr-only">Các con số khác</caption>
         <tbody>
           {% for label, item in rows %}{% if item %}
           <tr><th scope="row">{{ label }}</th><td class="n">{{ item.value }}</td><td>{{ item.meaning }}</td></tr>

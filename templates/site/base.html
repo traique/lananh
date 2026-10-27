@@ -6,6 +6,25 @@
   <title>{% block title %}{{ title }} · LCTA{% endblock %}</title>
   <meta name="description" content="{{ description }}">
   <meta name="color-scheme" content="light dark">
+  {% if noindex %}<meta name="robots" content="noindex">{% endif %}
+  {% if page_url and not noindex %}<link rel="canonical" href="{{ page_url }}">{% endif %}
+  {# Xem trước khi chia sẻ link (Facebook, Zalo, X...): tiêu đề, mô tả, ảnh 1200x630. #}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="LCTA">
+  <meta property="og:locale" content="vi_VN">
+  <meta property="og:title" content="{{ title }}">
+  <meta property="og:description" content="{{ description }}">
+  {% if page_url %}<meta property="og:url" content="{{ page_url }}">{% endif %}
+  {% if site_url %}
+  <meta property="og:image" content="{{ site_url }}/static/og-image.png?v={{ v }}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="LCTA - lịch âm, thời tiết, xổ số, giá vàng, tử vi">
+  <meta name="twitter:image" content="{{ site_url }}/static/og-image.png?v={{ v }}">
+  {% endif %}
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ title }}">
+  <meta name="twitter:description" content="{{ description }}">
   <link rel="icon" href="/static/favicon.png?v={{ v }}" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,7 +39,7 @@
       } catch (e) {}
     })();
   </script>
-  <style>{{ inline_css }}</style>
+  <link rel="stylesheet" href="/static/site.css?v={{ css_v }}">
 </head>
 <body>
   <a class="skip-link" href="#main">Bỏ qua đến nội dung chính</a>
@@ -56,13 +75,13 @@
           <span>Giao diện tối</span>
           <span class="switch" aria-hidden="true"></span>
         </button>
+        {# Khách không cần tài khoản: mọi trang xem tự do. Đăng nhập chỉ dành cho chủ
+           trang (AI luận giải, sửa địa điểm) nên chỉ là link nhỏ ở chân trang. #}
         {% if logged_in %}
         <a class="side-action i-admin" href="/admin">Quản trị</a>
         <form method="post" action="/admin/logout">
           <button class="side-action i-logout" type="submit">Đăng xuất</button>
         </form>
-        {% else %}
-        <a class="side-action i-login" href="{{ login_url }}">Đăng nhập</a>
         {% endif %}
       </div>
     </aside>
@@ -74,6 +93,7 @@
         <span>© LCTA · tính bằng thuật toán, AI chỉ chạy khi bạn bấm luận giải</span>
         <a href="/privacy">Quyền riêng tư</a>
         <a href="/terms">Điều khoản</a>
+        {% if not logged_in %}<a href="{{ login_url }}" rel="nofollow">Chủ trang đăng nhập</a>{% endif %}
       </footer>
     </div>
   </div>

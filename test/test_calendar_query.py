@@ -84,3 +84,89 @@ def test_relative_day_cong_khai_va_ban_bo_dau_cho_nhac_viec_cung_ton_tai():
     assert folded is not None and folded[0] == dt.date(2026, 10, 27)
     assert calendar_query.solar_dates_folded("15/11", today) == [dt.date(2026, 11, 15)]
     assert proactive_service.resolve_when("mai", today) == dt.date(2026, 10, 27)
+
+
+# ─── Sửa sau nhận xét dùng thử 27/10 ─────────────────────────────────────────
+
+REVIEW_TODAY = dt.date(2026, 10, 27)  # thứ Ba
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        ("tết 2028", "Thứ Tư 26/01/2028"),  # năm gõ kèm tên lễ không bị bỏ qua
+        ("còn mấy ngày tới tết 2028", "Còn 456 ngày nữa là tới Tết Nguyên đán"),
+        ("trung thu 2027", "Thứ Tư 15/09/2027"),
+        ("tết 2025", "đã qua 636 ngày"),
+        ("29/2/2027", "Năm 2027 không có ngày 29/2"),
+        ("32/12", "Tháng 12 chỉ có 31 ngày, không có ngày 32/12"),
+        ("5/13/2026", "Không có tháng 13"),
+        ("25/12/9999", "Lịch chỉ tra được năm 1900-2100"),
+    ],
+)
+def test_nam_cua_le_va_ngay_khong_co_that(query, expected):
+    assert expected in calendar_query.understand(query, REVIEW_TODAY)
+
+
+def test_ngay_khong_co_that_khong_bat_nham_ngay_am_va_khung_gio():
+    assert "Đinh Mùi âm lịch rơi vào" in calendar_query.understand("âm 30/2", REVIEW_TODAY)
+    assert "Đinh Mùi âm lịch rơi vào" in calendar_query.understand("ngày âm 30/2", REVIEW_TODAY)
+    assert "29/02/2028" in calendar_query.understand("29/2/2028", REVIEW_TODAY)
+    reply = calendar_query.understand("giờ hoàng đạo 13-15h", REVIEW_TODAY) or ""
+    assert "Không có tháng" not in reply
+
+
+def test_ngay_tot_thang_nay_bo_ngay_da_qua_va_nhac_loc_theo_viec():
+    reply = calendar_query.understand("ngày tốt tháng này", REVIEW_TODAY)
+    assert "từ hôm nay (27/10)" in reply and "05/10" not in reply and "26/10" not in reply
+    assert "28/10" in reply and "chưa lọc theo việc" in reply
+    # Tháng đã qua vẫn tra được, có ghi rõ.
+    assert "tháng 9/2026 (đã qua)" in calendar_query.understand(
+        "ngày tốt tháng trước", REVIEW_TODAY
+    )
+
+
+def test_xem_ngay_theo_viec_loc_theo_truc():
+    from services import can_chi
+
+    wedding = calendar_query.understand("ngày tốt để cưới tháng 12", REVIEW_TODAY)
+    opening = calendar_query.understand("xem ngày khai trương tháng 12", REVIEW_TODAY)
+    assert wedding.startswith("📅 Ngày tốt cho cưới hỏi, tháng 12/2026")
+    assert opening.startswith("📅 Ngày tốt cho khai trương")
+    assert wedding != opening  # cưới và khai trương không còn ra cùng một danh sách
+    for line in wedding.splitlines()[1:-1]:
+        day = dt.date(2026, 12, int(line.split()[3].split("/")[0]))
+        assert can_chi.day_truc(day) in ("Định", "Thành", "Khai") and can_chi.day_god(day)[1]
+    ground = calendar_query.understand("xem ngày động thổ", REVIEW_TODAY)
+    assert "động thổ" in ground and "30 ngày tới" in ground and "trực" in ground
+    # Tháng này hết ngày hợp -> gợi ý tháng sau, không trả danh sách rỗng.
+    assert "Sang tháng 11/2026" in calendar_query.understand("ngày cưới tháng này", REVIEW_TODAY)
+    one = calendar_query.understand("20/12 cưới được không", REVIEW_TODAY)
+    assert "chưa hợp cưới hỏi" in one and "Ngày hợp gần nhất" in one
+    # Đếm ngày tới đám cưới vẫn là câu đếm ngày.
+    assert calendar_query.understand("còn mấy ngày tới đám cưới 20/12", REVIEW_TODAY).startswith(
+        "Còn 54 ngày"
+    )
+
+
+def test_truc_ngay_va_ngay_giao_tiet_lap_truc():
+    from services import can_chi
+
+    assert can_chi.day_truc(dt.date(2024, 2, 10)) == "Mãn"  # Mùng 1 Tết Giáp Thìn
+    # Lập đông 7/11/2026: ngày giao tiết lặp lại trực của hôm trước.
+    assert can_chi.day_truc(dt.date(2026, 11, 6)) == can_chi.day_truc(dt.date(2026, 11, 7))
+
+
+def test_cuoi_tuan_du_thu_bay_chu_nhat():
+    good = calendar_query.understand("ngày tốt cuối tuần này", REVIEW_TODAY)
+    assert "Thứ Bảy 31/10/2026" in good and "Chủ Nhật 01/11/2026" in good
+    both = calendar_query.understand("thứ 7 chủ nhật này", REVIEW_TODAY)
+    assert "Thứ Bảy 31/10/2026" in both and "Chủ Nhật 01/11/2026" in both
+    # Chủ Nhật hỏi "cuối tuần này": còn mỗi hôm nay.
+    sunday = calendar_query.understand("cuối tuần này", dt.date(2026, 11, 1))
+    assert "Chủ Nhật 01/11/2026" in sunday and "31/10/2026" not in sunday
+
+
+def test_khong_hieu_tra_none_lenh_chat_van_goi_y_cu_phap():
+    assert calendar_query.understand("abc", REVIEW_TODAY) is None
+    assert calendar_query.answer("abc", REVIEW_TODAY).startswith("Em chưa hiểu")

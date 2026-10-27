@@ -10,7 +10,7 @@
     <div class="form-actions"><button class="btn" type="submit">{{ ai_label }}</button></div>
   </form>
   {% else %}
-  <p class="muted">Phần luận giải bằng AI chỉ dành cho tài khoản đã đăng nhập.</p>
-  <div class="form-actions"><a class="btn" href="{{ login_url }}">Đăng nhập để dùng AI</a></div>
+  <p class="muted">Kết quả ở trên tính bằng thuật toán, xem miễn phí, không cần tài khoản. Phần diễn giải thêm bằng AI tốn lượt AI có hạn nên chỉ chủ trang dùng được.</p>
+  <p class="hint spaced"><a href="{{ login_url }}" rel="nofollow">Chủ trang đăng nhập</a></p>
   {% endif %}
 </section>

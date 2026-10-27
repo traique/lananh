@@ -8,10 +8,11 @@
 </div>
 <div class="grid top">
   <form class="panel form s5 lottery-form" action="/xo-so" method="get" novalidate>
-    {% include "_errors.html" %}
+    {# Ngày/vé sai: lỗi nằm ngay dưới ô đó; đài sai hoặc nguồn lỗi: khung lỗi đầu form. #}
+    {% if error_field not in ("ve", "ngay") %}{% include "_errors.html" %}{% endif %}
     <div class="field">
       <label for="dai">Miền hoặc đài</label>
-      <select class="input" id="dai" name="dai"{% if error %} aria-describedby="form-error"{% endif %}>
+      <select class="input" id="dai" name="dai"{% if error_field == "dai" %} aria-invalid="true" aria-describedby="form-error"{% endif %}>
         {% for group in groups %}
         <optgroup label="{{ group.label }}">
           {% for value, label, today in group.options %}
@@ -25,12 +26,14 @@
     <div class="form-row">
       <div class="field">
         <label for="ngay">Ngày quay</label>
-        <input class="input" type="date" id="ngay" name="ngay" value="{{ form.ngay }}" max="{{ today_iso }}">
+        <input class="input" type="date" id="ngay" name="ngay" value="{{ form.ngay }}" max="{{ today_iso }}"{% if error_field == "ngay" %} aria-invalid="true" aria-describedby="form-error"{% endif %}>
+        {% if error_field == "ngay" %}<span class="field-error" id="form-error" role="alert">{{ error }}</span>{% endif %}
         <span class="hint">Bỏ trống: kỳ mới nhất.</span>
       </div>
       <div class="field">
         <label for="ve">Số vé (dò vé)</label>
-        <input class="input" type="text" id="ve" name="ve" value="{{ form.ve }}" inputmode="numeric" pattern="[0-9]{5,6}" maxlength="6" autocomplete="off" placeholder="6 số, miền Bắc 5 số">
+        <input class="input" type="text" id="ve" name="ve" value="{{ form.ve }}" inputmode="numeric" pattern="[0-9]{5,6}" maxlength="6" autocomplete="off" placeholder="6 số, miền Bắc 5 số"{% if error_field == "ve" %} aria-invalid="true" aria-describedby="form-error"{% endif %}>
+        {% if error_field == "ve" %}<span class="field-error" id="form-error" role="alert">{{ error }} Kết quả dưới đây chưa dò vé.</span>{% endif %}
       </div>
     </div>
     <div class="form-actions"><button class="btn primary" type="submit">Xem kết quả</button></div>

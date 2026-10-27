@@ -150,7 +150,6 @@ a { color: inherit; text-underline-offset: 3px; }
 .i-fuel { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 20.5V5a1.5 1.5 0 0 1 1.5-1.5h6A1.5 1.5 0 0 1 13.5 5v15.5M3 20.5h12M4.5 10h9M13.5 9h2a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 0 3 0V8l-2.5-2.5'/%3E%3C/svg%3E"); }
 .i-admin { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10M18 7h2M4 17h4M12 17h8'/%3E%3Ccircle cx='16' cy='7' r='2'/%3E%3Ccircle cx='10' cy='17' r='2'/%3E%3C/svg%3E"); }
 .i-logout { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 20.5H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h3.5M15.5 16.5 20 12l-4.5-4.5M20 12H9.5'/%3E%3C/svg%3E"); }
-.i-login { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.5 3.5H18a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2h-3.5M10 16.5 14.5 12 10 7.5M14.5 12H4'/%3E%3C/svg%3E"); }
 @media (hover: hover) and (pointer: fine) { .nav-item:hover { background: var(--raised); color: var(--text); } }
 .nav-item[aria-current="page"] { background: var(--active); color: var(--text); font-weight: 500; }
 .sidebar-foot { margin-top: auto; padding-top: 20px; display: grid; gap: 4px; }
@@ -230,6 +229,8 @@ h1.date {
 
 /* bảng: vạch hàng, tiêu đề cột nhỏ xám, số căn phải */
 .table-wrap { overflow-x: auto; }
+/* bảng cuộn ngang được: nhận focus (tabindex="0") để cuộn bằng phím mũi tên */
+.table-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-inner); }
 table { width: 100%; border-collapse: collapse; }
 th {
   height: 36px; padding: 0 12px; text-align: left; font-weight: 400; font-size: var(--fs-small);
@@ -361,6 +362,9 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
   background: var(--pill-neg-bg); color: var(--pill-neg-ink);
 }
 .ok-box { background: var(--pill-pos-bg); color: var(--pill-pos-ink); }
+/* ô nhập sai: viền đỏ + câu lỗi ngay dưới ô (ngoài khung báo lỗi đầu form) */
+.input[aria-invalid="true"] { border-color: var(--negative); box-shadow: inset 0 0 0 1px var(--negative); }
+.field-error { color: var(--negative); font-size: var(--fs-small); font-weight: 500; }
 
 /* ---------- trang chủ ---------- */
 .home-head { margin: 32px 0 50px; }
@@ -383,7 +387,9 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
 .hour.focus { background: var(--accent); color: var(--accent-ink); }
 .hour.focus span { color: var(--accent-ink); }
 .hour.past { color: var(--muted); }
-.hour.past.good { background: transparent; outline-color: var(--pill-pos-bg); color: var(--pill-pos-ink); }
+/* giờ hoàng đạo đã qua: bỏ nền nhưng giữ viền nét đứt xanh đậm (≥ 3:1) để vẫn tách được
+   với giờ thường đã qua (viền mảnh xám) */
+.hour.past.good { background: transparent; outline: 1px dashed var(--pill-pos-ink); outline-offset: -1px; color: var(--pill-pos-ink); }
 .hour.now { outline: 2px solid var(--text); outline-offset: 2px; }
 @container (max-width: 760px) {
   .hours { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -398,6 +404,7 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
 .key.good::before { background: var(--pill-pos-bg); outline-color: var(--pill-pos-ink); }
 .key.focus::before { background: var(--accent); outline: 0; }
 .key.now::before { outline: 2px solid var(--text); outline-offset: -2px; }
+.key.past-good::before { outline: 1px dashed var(--pill-pos-ink); outline-offset: -1px; }
 
 /* ---------- lịch tháng ---------- */
 .month-nav { display: flex; gap: 8px; }
@@ -480,8 +487,18 @@ table.month td:last-child { padding-right: 2px; }
   border-radius: var(--radius-inner); background: var(--sheet); text-decoration: none;
   font-size: var(--fs-small);
 }
-.chart-map a b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chart-map a span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Ô hẹp (~75px trên điện thoại 360px): tên cung xuống dòng thay vì bị cắt "Điền Tr…",
+   sao chính tối đa 2 dòng. */
+.chart-map a b { font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+.chart-map a span {
+  color: var(--muted); font-size: 12px; line-height: 1.3; overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
+}
+.chart-map > .c {
+  grid-area: c; display: grid; align-content: center; justify-items: center; gap: 2px; padding: 8px;
+  text-align: center; font-size: var(--fs-small); color: var(--muted);
+}
+.chart-map > .c b { color: var(--text); font-weight: 600; }
 .chart-map a.is-menh { outline: 2px solid var(--accent); outline-offset: -2px; }
 .chart-map a.is-menh b { color: var(--accent); }
 .chart-map > .b0 { grid-area: tys; } .chart-map > .b1 { grid-area: suu; } .chart-map > .b2 { grid-area: dan; }
@@ -625,22 +642,32 @@ table.forecast td:nth-child(2) { white-space: normal; }
 .gold-table .delta { display: block; }
 .strip.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .strip .lead-figure + .small { margin-top: 4px; }
-/* Khối hẹp (điện thoại 360px, cạnh thanh bên): bảng gập thành từng thẻ - tên mặt hàng một
-   dòng, các ô số xếp 2 cột kèm nhãn cột lấy từ data-label. Không cuộn ngang. */
+/* Khối hẹp (điện thoại 360px, cạnh thanh bên). Vàng và tỷ giá giữ dạng bảng gọn (dễ so
+   giá các hiệu theo cột, trang ngắn); bảng xăng nhiều cột hơn gập thành từng thẻ - tên
+   mặt hàng một dòng, các ô số xếp 2 cột kèm nhãn cột lấy từ data-label. Không cuộn ngang. */
 @container (max-width: 560px) {
-  .price-table thead {
+  .gold-table th, .gold-table td, .fx-table th, .fx-table td { padding: 8px 6px; font-size: var(--fs-small); }
+  .gold-table th:first-child, .gold-table td:first-child, .fx-table th:first-child { padding-left: 0; }
+  .gold-table th:last-child, .gold-table td:last-child, .fx-table th:last-child, .fx-table td:last-child { padding-right: 0; }
+  .gold-table thead th, .fx-table thead th { white-space: normal; line-height: 1.3; height: auto; }
+  .gold-table tbody th, .fx-table tbody th { font-size: var(--fs-small); overflow-wrap: anywhere; }
+  .gold-table .price { font-size: var(--fs-body); }
+  .gold-table .delta.flat { display: none; }
+}
+@container (max-width: 560px) {
+  .fuel-table thead {
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
   }
-  .price-table, .price-table tbody { display: block; }
-  .price-table tr {
+  .fuel-table, .fuel-table tbody { display: block; }
+  .fuel-table tr {
     display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px;
     padding: 12px 0; border-bottom: 1px solid var(--rule);
   }
-  .price-table tbody tr:first-child { padding-top: 0; }
-  .price-table tbody tr:last-child { padding-bottom: 0; border-bottom: 0; }
-  .price-table tbody th[scope="row"] { grid-column: 1 / -1; padding: 0; border: 0; }
-  .price-table td, .price-table td.n { min-width: 0; padding: 0; border: 0; text-align: left; white-space: normal; }
-  .price-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--fs-small); }
+  .fuel-table tbody tr:first-child { padding-top: 0; }
+  .fuel-table tbody tr:last-child { padding-bottom: 0; border-bottom: 0; }
+  .fuel-table tbody th[scope="row"] { grid-column: 1 / -1; padding: 0; border: 0; }
+  .fuel-table td, .fuel-table td.n { min-width: 0; padding: 0; border: 0; text-align: left; white-space: normal; }
+  .fuel-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--fs-small); }
 }
 @media (max-width: 860px) {
   .strip.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
