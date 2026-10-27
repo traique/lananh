@@ -52,6 +52,12 @@ Node adapter dùng `zca-js` cho tài khoản B, chạy cùng container với Fas
 - Câu trả lời gửi kèm `styles` zca-js từ Python (đậm, nghiêng, màu % tăng/giảm);
   Zalo từ chối định dạng (lỗi có `error_code`) thì gửi lại đúng 1 lần chữ thuần,
   lỗi mạng giữ cách thử lại cũ (không gửi trùng bản khác).
+- Python trả thêm `voice: {path, url, duration_ms, mime}` khi người gửi bật `/noi`
+  (`src/voice.ts`): sau các tin chữ, gateway tải clip M4A qua loopback
+  `${ZALO_BRIDGE_BASE_URL}/tts/<tên>`, tải lên CDN Zalo (`uploadAttachment`) rồi
+  `sendVoice` link CDN; lỗi thì `sendVoice` link công khai ký HMAC `url` (sống 10
+  phút). Mỗi bước timeout 20 giây, lỗi chỉ log (đếm `voice_replies` /
+  `voice_reply_failures`).
 - Gửi trả lời lỗi thì thử lại 3 lần (1s/3s/8s); lưu tin nhóm lỗi thử lại 2 lần.
 - Nghỉ ngẫu nhiên `ZALO_SEND_GAP_MIN_MS`..`MAX_MS` giữa các đoạn và giữa các tin
   outbox; outbox có ngân sách `ZALO_OUTBOX_MAX_PER_HOUR` tin/giờ - vượt thì hoãn

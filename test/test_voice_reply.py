@@ -472,6 +472,16 @@ async def test_semaphore_khong_cho_lau(settings, tts, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bi_mat_trong_cau_tra_loi_duoc_che_truoc_khi_gui_tts(settings, tts, monkeypatch):
+    _no_ffmpeg(monkeypatch)
+    settings["voice_reply:42"] = "on"
+    await voice_reply.make_clip(
+        42, "Dạ em ghi rồi: mật khẩu wifi là Abc@12345xyz nha anh.", channel="telegram"
+    )
+    assert "Abc@12345xyz" not in tts[0]["text"] and "đã ẩn" in tts[0]["text"]
+
+
+@pytest.mark.asyncio
 async def test_tin_thoai_zalo_tra_voice_qua_hop_capture(monkeypatch):
     """Lượt tin thoại Zalo chạy trong task con huỷ được: clip đi ra qua hộp capture()."""
     from services import voice_service

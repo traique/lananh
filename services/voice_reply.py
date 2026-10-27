@@ -64,7 +64,7 @@ from core.envutil import env_int, env_on
 from core.text_normalize import fold
 from core.text_utils import parse_on_off
 from core.urls import URL_RE
-from services import personal_settings, reply_audience, usage_quota
+from services import personal_settings, prompt_redaction, reply_audience, usage_quota
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +431,10 @@ async def make_clip(
         if not channel_supported(channel):
             return None
         you, _ = reply_audience.forms()
-        speech, truncated = fit(speakable_text(text), max_chars(), you)
+        # Câu trả lời có thể chép lại bí mật code đã khôi phục (vd ghi chú mật khẩu
+        # wifi): che như mọi prompt gửi provider (services/prompt_redaction.py).
+        hidden = prompt_redaction.Redactor().text(text)
+        speech, truncated = fit(speakable_text(hidden), max_chars(), you)
         if len(speech) < MIN_SPEAK_CHARS:
             return None
         remaining = remaining_turn_seconds()
