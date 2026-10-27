@@ -1,5 +1,8 @@
 """Test web công khai (web_site.py): trang HTML, JSON API, health check giữ nguyên."""
 
+import datetime as dt
+import json
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -391,6 +394,7 @@ async def test_trang_thoi_tiet(client, monkeypatch):
     assert 'href="/thoi-tiet" aria-current="page"' in html  # tab Thời tiết trên menu
     assert "18°C" in html and "Mưa nhẹ" in html and "Hôm nay" in html and "Ngày mai" in html
     assert html.count('class="when"') == 7
+    assert "<dd>0,3 mm</dd>" in html  # dấu phẩy thập phân kiểu Việt, không "0.3"
 
     html = (await client.get("/thoi-tiet", params={"noi": "Xyzabc"})).text
     assert 'role="alert"' in html and "Không tìm thấy địa điểm" in html and "°C" not in html
@@ -840,17 +844,24 @@ async def test_trang_gia_vang(client, price_sources):
     for name in ("SJC miếng 9999", "Nhẫn SJC 9999", "DOJI Hà Nội", "DOJI TP.HCM", "PNJ 24K"):
         assert name in html
     assert "Bảo Tín 9999" in html and "Viettin SJC" in html and "VN Gold SJC" in html
-    assert "141,7" in html and "Cập nhật 07:30 27/10/2026" in html
+    # Bảng giá: mọi ô 2 số lẻ (135,00 thẳng cột với 138,70), đơn vị ghi ngay trên bảng.
+    assert (
+        ">141,70</span>" in html
+        and ">135,00</span>" in html
+        and "Cập nhật 07:30 27/10/2026" in html
+    )
+    assert "Triệu đồng/lượng" in html and "1 lượng = 10 chỉ = 37,5 g" in html
     # ▲▼ kèm chữ cho trình đọc màn hình, màu theo lớp up/down; 0 không ghi "đứng giá".
     up = (
         '<span class="delta up"><span aria-hidden="true">▲</span><span class="sr-only">tăng </span>'
     )
     down = '<span class="delta down"><span aria-hidden="true">▼</span><span class="sr-only">giảm '
-    assert up + "0,5</span>" in html and down + "</span>0,3</span>" in html
+    assert up + "0,50</span>" in html and down + "</span>0,30</span>" in html
     assert "đứng giá" not in html
     # Vàng thế giới + quy đổi theo giá bán USD Vietcombank, chênh với SJC miếng.
-    assert "4.015,1" in html and "≈ 126,01 triệu/lượng" in html and "26.030" in html
-    assert "Cao hơn ≈ 15,69 triệu" in html and "chưa gồm thuế" in html
+    assert "4.015,1" in html and "USD/ounce" in html and "26.030" in html
+    assert "≈ 126,01 triệu đồng/lượng" in html and "Cao hơn ≈ 15,69 triệu đồng/lượng" in html
+    assert "chưa gồm thuế" in html
     # Mục tỷ giá các ngoại tệ chính, số kiểu Việt Nam.
     assert 'id="fx-title"' in html and "25.650" in html and "173,65" in html
     assert "Đô la Mỹ" in html and "Yên Nhật" in html
@@ -863,7 +874,7 @@ async def test_trang_gia_vang_du_phong_sjc_va_nguon_loi(client, price_sources):
     html = (await client.get("/gia-vang")).text
     assert "tạm hiện bảng giá SJC" in html and "Vàng SJC 1L, 10L, 1KG" in html
     assert "Hồ Chí Minh" in html and "Hà Nội" not in html  # giữ chi nhánh đầu
-    assert ">150</span>" in html and 'id="world-title"' not in html and "sjc.com.vn" in html
+    assert ">150,00</span>" in html and 'id="world-title"' not in html and "sjc.com.vn" in html
     price_sources["sjc"] = True
     r = await client.get("/gia-vang")
     assert r.status_code == 200 and 'role="alert"' in r.text and "không tự đoán giá" in r.text
@@ -873,7 +884,7 @@ async def test_trang_gia_vang_du_phong_sjc_va_nguon_loi(client, price_sources):
 async def test_trang_gia_vang_thieu_ty_gia_van_hien_bang(client, price_sources):
     price_sources["fx"] = True
     html = (await client.get("/gia-vang")).text
-    assert "141,7" in html and "4.015,1" in html and "tạm chưa quy đổi" in html
+    assert "141,70" in html and "4.015,1" in html and "tạm chưa quy đổi" in html
     assert 'id="fx-title"' not in html and 'role="alert"' not in html
 
 
@@ -1010,7 +1021,8 @@ async def test_404_html_cho_trinh_duyet_json_cho_api(monkeypatch):
         page = await c.get("/khong-co-trang-nay", headers={"Accept": "text/html"})
         assert page.status_code == 404 and page.headers["content-type"].startswith("text/html")
         assert (
-            "Không tìm thấy trang" in page.text and 'name="robots" content="noindex"' in page.text
+            "Không tìm thấy trang" in page.text
+            and 'name="robots" content="noindex, follow"' in page.text
         )
         assert 'href="/lich"' in page.text  # có đường đi tiếp
         assert (await c.get("/khong-co-trang-nay")).json() == {"detail": "Not Found"}
@@ -1032,8 +1044,70 @@ async def test_robots_sitemap_va_the_seo(client, monkeypatch):
     ).text
     assert '<link rel="canonical" href="https://lcta.vn/lich?thang=2026-10">' in html
     assert '<meta property="og:url" content="https://lcta.vn/lich?thang=2026-10">' in html
-    assert '<meta property="og:title" content="Lịch tháng">' in html
+    assert (
+        '<meta property="og:title" content="Lịch âm tháng 10/2026: ngày hoàng đạo, ngày lễ">'
+        in html
+    )
+    assert "<title>Lịch âm tháng 10/2026: ngày hoàng đạo, ngày lễ | LCTA</title>" in html
     assert '<meta name="twitter:card" content="summary_large_image">' in html
+
+
+def _json_ld(html: str) -> list[dict]:
+    raw = html.split('<script type="application/ld+json">', 1)[1].split("</script>", 1)[0]
+    return json.loads(raw)["@graph"]
+
+
+async def test_seo_tieu_de_co_ngay_json_ld_va_noindex(client, price_sources, monkeypatch):
+    monkeypatch.setattr(web_site.config, "SITE_BASE_URL", "https://lcta.vn")
+    monkeypatch.setattr(web_site.site_data, "today", lambda: dt.date(2026, 10, 27))
+    html = (await client.get("/gia-vang")).text
+    # Trang giá: tiêu đề có ngày, mô tả có giá dòng đầu, JSON-LD có giờ cập nhật số liệu.
+    assert "<title>Giá vàng hôm nay 27/10/2026: SJC, nhẫn 9999, DOJI, PNJ | LCTA</title>" in html
+    assert "hôm nay 27/10/2026: mua 138,70, bán 141,70 triệu đồng/lượng" in html
+    page, crumbs = _json_ld(html)
+    assert page["@type"] == "WebPage" and page["url"] == "https://lcta.vn/gia-vang"
+    assert page["dateModified"] == "2026-10-27T07:30:00+07:00"
+    assert [c["name"] for c in crumbs["itemListElement"]] == ["Hôm nay", "Giá vàng"]
+    assert '<link rel="apple-touch-icon" href="/static/icon.png?v=' in html
+    assert '<meta name="theme-color" content="#ffffff"' in html
+    # Trang chủ: WebSite + tổ chức có logo vuông (ảnh tĩnh phục vụ được).
+    token = web_site._viewer.set((False, "/", "https://lcta.vn"))
+    try:
+        home = bytes(web_site.home_page().body).decode()
+    finally:
+        web_site._viewer.reset(token)
+    site, org = _json_ld(home)
+    assert site["@type"] == "WebSite" and org["logo"] == "https://lcta.vn/static/icon.png"
+    day = web_site.site_data.now().date()
+    assert f"<title>Lịch âm hôm nay {day:%d/%m/%Y}: giờ hoàng đạo, ngày tốt xấu | LCTA" in home
+    assert (await client.get("/static/icon.png")).headers["content-type"] == "image/png"
+    # Đổi ngày có kết quả: tiêu đề trả lời luôn câu hỏi.
+    html = (await client.get("/lich/doi-ngay", params={"am": "15/8/2027"})).text
+    assert "<title>15/8/2027 âm lịch là ngày 15/09/2027 dương lịch | LCTA</title>" in html
+    # Trang kết quả riêng: không vào chỉ mục, không canonical/JSON-LD; trang gốc thì có.
+    noindex = '<meta name="robots" content="noindex, follow">'
+    for path, params in (("/lich/hoi", {"q": "rằm tháng 8"}), ("/ky-mon", {"gio": "08:30"})):
+        html = (await client.get(path, params=params)).text
+        assert noindex in html and 'rel="canonical"' not in html and "ld+json" not in html
+    for path in ("/lich/hoi", "/ky-mon", "/tu-vi"):
+        html = (await client.get(path)).text
+        assert noindex not in html and 'rel="canonical"' in html, path
+    html = (await client.post("/than-so-hoc", data={"ngay": "1990-03-15"})).text
+    assert noindex in html
+
+
+async def test_sitemap_co_lastmod_va_trang_tra_cuu(client, monkeypatch):
+    monkeypatch.setattr(web_site.site_data, "today", lambda: dt.date(2026, 10, 27))  # thứ Ba
+    text = (await client.get("/sitemap.xml")).text
+    assert "<loc>https://testserver/gia-vang</loc><lastmod>2026-10-27</lastmod>" in text
+    assert "<loc>https://testserver/tu-vi</loc></url>" in text  # trang tĩnh: không đoán lastmod
+    # Đài TP.HCM quay thứ Hai, thứ Bảy: lastmod là ngày quay gần nhất.
+    assert (
+        "<loc>https://testserver/xo-so?dai=ho-chi-minh</loc><lastmod>2026-10-26</lastmod>" in text
+    )
+    assert "/thoi-tiet?noi=H%C3%A0%20N%E1%BB%99i" in text and "noi=TP.HCM" not in text
+    assert "/lich?thang=2026-11<" in text and "/lich?thang=2027-09<" in text
+    assert "/lich?thang=2027-10<" not in text
 
 
 async def test_trang_dang_nhap_noi_ro_chi_cho_chu_trang_va_co_duong_ve(monkeypatch):

@@ -1,5 +1,7 @@
 """Tạo ảnh xem trước khi chia sẻ link (static/og-image.png, 1200x630 - cỡ Facebook,
-Zalo, X khuyên dùng) từ logo nền tối static/logo-dark.webp và một dòng giới thiệu.
+Zalo, X khuyên dùng) từ logo nền tối static/logo-dark.webp và một dòng giới thiệu, cùng
+biểu tượng vuông static/icon.png (512x512: apple-touch-icon, logo trong JSON-LD - favicon
+64px quá nhỏ cho hai chỗ này).
 
 Chạy tay một lần khi đổi logo hoặc đổi câu giới thiệu (cần Pillow + phông có dấu
 tiếng Việt, mặc định DejaVu Sans):
@@ -33,3 +35,10 @@ for text, size, color in lines:
     y += size + 22
 img.save(f"{out}/og-image.png", "PNG", optimize=True)
 print("og-image.png", img.size)
+
+# Biểu tượng vuông: nền xanh đêm kín (iOS tự bo góc), logo giữa, chừa lề an toàn.
+icon = Image.new("RGB", (512, 512), (10, 61, 42))
+mark = logo.resize((400, round(logo.height * 400 / logo.width)), Image.LANCZOS)
+icon.paste(mark, ((512 - mark.width) // 2, (512 - mark.height) // 2), mark)
+icon.save(f"{out}/icon.png", "PNG", optimize=True)
+print("icon.png", icon.size)

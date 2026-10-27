@@ -294,6 +294,9 @@ def test_parse_vang_today_loi():
 def test_dinh_dang_trieu_va_quy_doi_the_gioi():
     assert market.trieu(138_700_000) == "138,7" and market.trieu(135_000_000) == "135"
     assert market.trieu(141_750_000) == "141,75"
+    # bảng giá web: luôn 2 số lẻ để các ô thẳng cột
+    assert market.trieu(135_000_000, fixed=True) == "135,00"
+    assert market.trieu(138_700_000, fixed=True) == "138,70"
     assert round(market.world_gold_vnd(4015.1, 26030) / 1e6, 2) == 126.01
     table = market.parse_vang_today_json(VANG_TODAY_JSON)
     head = market.gold_live_headline(table)

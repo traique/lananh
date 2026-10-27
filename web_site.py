@@ -57,6 +57,7 @@ import re
 import time
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, unquote, urlencode
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request
 from fastapi.routing import APIRoute
@@ -93,12 +94,14 @@ from services.site_data import InputError
 
 _ROOT = Path(__file__).resolve().parent
 _STATIC = _ROOT / "static"
+_VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _STATIC_FILES = {
     "site.css": "text/css; charset=utf-8",
     "logo-light.webp": "image/webp",
     "logo-dark.webp": "image/webp",
     "favicon.png": "image/png",
     "og-image.png": "image/png",
+    "icon.png": "image/png",
 }
 # Trang công khai cho robots.txt / sitemap.xml (trang có form POST vẫn có bản GET).
 _SITEMAP_PATHS = (
@@ -117,6 +120,9 @@ _SITEMAP_PATHS = (
 )
 # Tham số làm nên nội dung trang - link canonical/og:url chỉ giữ các tham số này (bỏ
 # fbclid/utm_* do Facebook/Zalo gắn, mã thông báo tạm ?tb=, số vé dò).
+_LOTTERY_SHORT = {"mn": "XSMN", "mt": "XSMT", "mb": "XSMB"}
+# Trang đổi số liệu mỗi ngày (lastmod hôm nay trong sitemap).
+_DAILY_PATHS = frozenset({"/", "/lich", "/thoi-tiet", "/xo-so", "/gia-vang", "/gia-xang"})
 _CANONICAL_PARAMS = frozenset({"thang", "ngay", "q", "am", "nhuan", "noi", "dai", "gio"})
 # Health check (Render, UptimeRobot...) chỉ cần mã 200: GET / trả JSON nhẹ cho các client
 # này; mọi client khác (trình duyệt, trình đọc link Facebook/Zalo gửi Accept: */*)
@@ -253,7 +259,8 @@ def _canonical_path(path: str) -> str:
     """Đường dẫn đang xem chỉ giữ tham số nội dung (_CANONICAL_PARAMS) - cho canonical/og:url."""
     base, _, query = path.partition("?")
     pairs = [(k, v) for k, v in parse_qsl(query) if k in _CANONICAL_PARAMS]
-    return base + (f"?{urlencode(pairs)}" if pairs else "")
+    # %20 cho dấu cách (không "+"): trùng link nội bộ (bộ lọc urlencode) và sitemap
+    return base + (f"?{urlencode(pairs, quote_via=quote)}" if pairs else "")
 
 
 class _ViewerRoute(APIRoute):
@@ -343,9 +350,71 @@ def _assets() -> tuple[str, str]:
     return digest(["site.css"]), digest(sorted(n for n in _STATIC_FILES if n != "site.css"))
 
 
-def _render(name: str, *, title: str, description: str, active: str, **ctx) -> HTMLResponse:
+_NAV_LABELS = {href: label for _, items in _NAV for href, label, _ in items}
+
+
+def _structured_data(
+    title: str, description: str, active: str, url: str, base: str, modified: str
+) -> Markup:
+    """JSON-LD cho máy tìm kiếm: trang chủ khai WebSite + tổ chức kèm logo; trang khác
+    khai WebPage (kèm dateModified nếu biết giờ cập nhật số liệu) + đường dẫn mục."""
+    website = {"@type": "WebSite", "@id": f"{base}/#website", "url": f"{base}/", "name": "LCTA"}
+    if active == "/":
+        org = {
+            "@type": "Organization",
+            "name": "LCTA",
+            "url": f"{base}/",
+            "logo": f"{base}/static/icon.png",
+        }
+        graph = [{**website, "inLanguage": "vi", "description": description}, org]
+    else:
+        page = {
+            "@type": "WebPage",
+            "url": url,
+            "name": title,
+            "description": description,
+            "inLanguage": "vi",
+            "isPartOf": website,
+        }
+        if modified:
+            page["dateModified"] = modified
+        graph = [page]
+        if active in _NAV_LABELS:
+            crumbs = [("Hôm nay", "/"), (_NAV_LABELS[active], active)]
+            graph.append(
+                {
+                    "@type": "BreadcrumbList",
+                    "itemListElement": [
+                        {"@type": "ListItem", "position": i, "name": n, "item": f"{base}{href}"}
+                        for i, (n, href) in enumerate(crumbs, 1)
+                    ],
+                }
+            )
+    text = json.dumps({"@context": "https://schema.org", "@graph": graph}, ensure_ascii=False)
+    return Markup(text.replace("<", "\\u003c"))  # chữ từ nguồn ngoài không đóng được <script>
+
+
+def _vn_stamp(text: str | None) -> str:
+    """Giờ cập nhật dạng 07:30 27/10/2026 (giờ VN của nguồn giá) -> ISO 8601 cho
+    dateModified; sai dạng thì chuỗi rỗng."""
+    try:
+        stamp = dt.datetime.strptime(str(text or "").strip(), "%H:%M %d/%m/%Y")
+    except ValueError:
+        return ""
+    return stamp.replace(tzinfo=_VN_TZ).isoformat()
+
+
+def _render(
+    name: str, *, title: str, description: str, active: str, modified: str = "", **ctx
+) -> HTMLResponse:
     css_version, version = _assets()
     logged_in, path, base = _viewer.get()
+    page_url = f"{base}{_canonical_path(path)}" if base else ""
+    ld_json = (
+        _structured_data(title, description, active, page_url, base, modified)
+        if base and not ctx.get("noindex")
+        else ""
+    )
     html = (
         _env()
         .get_template(name)
@@ -358,8 +427,9 @@ def _render(name: str, *, title: str, description: str, active: str, **ctx) -> H
             v=version,
             logged_in=logged_in,
             # Link tuyệt đối cho canonical/og: (chưa biết gốc URL thì bỏ các thẻ này).
-            page_url=f"{base}{_canonical_path(path)}" if base else "",
+            page_url=page_url,
             site_url=base,
+            ld_json=ld_json,
             **ctx,
         )
     )
@@ -443,10 +513,13 @@ def home_page() -> HTMLResponse:
         info["luckyHours"] if hours_day == today else site_data.day_info(hours_day)["luckyHours"]
     )
     hours = _hour_strip(lucky, now.hour)
+    ld = info["lunar"]
     page = _render(
         "home.html",
-        title="Lịch âm, tử vi, thần số học",
-        description="Tra lịch âm dương, ngày tốt xấu, lá số tử vi và thần số học, tính bằng thuật toán.",
+        title=f"Lịch âm hôm nay {today:%d/%m/%Y}: giờ hoàng đạo, ngày tốt xấu",
+        description=f"Hôm nay {today:%d/%m/%Y} dương lịch, tức ngày {ld['day']}/{ld['month']} âm lịch, "
+        f"ngày {'hoàng đạo' if info['isHoangDao'] else 'hắc đạo'}. Giờ hoàng đạo, ngày lễ sắp tới, "
+        "tra lịch âm, tử vi, thần số học, giá vàng, thời tiết.",
         active="/",
         today=info,
         today_date=today,
@@ -511,8 +584,9 @@ async def lich_page(request: Request) -> Response:
     return _render_lich(
         "lich.html",
         tab="/lich",
-        title="Lịch tháng",
-        description="Lịch tháng dương lịch kèm âm lịch, ngày hoàng đạo, ngày lễ.",
+        title=f"Lịch âm tháng {grid['month']}/{grid['year']}: ngày hoàng đạo, ngày lễ",
+        description=f"Lịch âm dương tháng {grid['month']}/{grid['year']}: ngày âm từng ngày, ngày "
+        "hoàng đạo, mùng 1, rằm, ngày lễ. Bấm một ngày để xem can chi, giờ tốt.",
         month=grid,
         weeks=_weeks(grid),
         selected=site_data.day_info(selected_date),
@@ -528,8 +602,10 @@ async def lich_ask_page(request: Request) -> HTMLResponse:
     return _render_lich(
         "lich_hoi.html",
         tab="/lich/hoi",
-        title="Hỏi lịch",
-        description="Hỏi tự do về lịch âm, ngày tốt, tuổi, sao hạn; trả lời bằng thuật toán.",
+        title=f"{q[:60]}: hỏi lịch" if q else "Hỏi lịch âm: ngày tốt, tuổi, sao hạn",
+        description="Hỏi tự do về lịch âm: ngày tốt cưới hỏi, khai trương, động thổ, rằm, Tết, "
+        "tuổi, sao hạn, đổi ngày; trả lời bằng thuật toán, không dùng AI.",
+        noindex=bool(q),
         q=q,
         answer=site_data.calendar_answer(q) if q else "",
         examples=_ASK_EXAMPLES,
@@ -560,11 +636,23 @@ async def lich_convert_page(request: Request) -> HTMLResponse:
                 error = msg
             else:
                 result = site_data.day_info(day)
+    title, description = (
+        "Đổi ngày âm sang dương lịch",
+        "Đổi ngày âm lịch sang dương lịch, có tháng nhuận: nhập 15/8 để biết Trung thu năm nay "
+        "là ngày nào, kèm can chi, giờ tốt.",
+    )
+    if result:
+        solar = dt.date.fromisoformat(result["date"])
+        title = f"{am} âm lịch là ngày {solar:%d/%m/%Y} dương lịch"
+        description = (
+            f"Ngày {am} âm lịch ({result['lunar']['text']}) là {result['weekday']}, "
+            f"{solar:%d/%m/%Y} dương lịch; kèm can chi, ngày hoàng đạo, giờ tốt."
+        )
     return _render_lich(
         "lich_doi.html",
         tab="/lich/doi-ngay",
-        title="Đổi ngày âm sang dương",
-        description="Đổi ngày âm lịch sang dương lịch, có tháng nhuận.",
+        title=title,
+        description=description,
         am=am,
         nhuan=nhuan,
         result=result,
@@ -577,8 +665,9 @@ async def lich_holidays_page() -> HTMLResponse:
     return _render_lich(
         "lich_le.html",
         tab="/lich/ngay-le",
-        title="Ngày lễ sắp tới",
-        description="Các ngày lễ âm lịch và dương lịch sắp tới.",
+        title="Ngày lễ sắp tới trong năm: âm lịch và dương lịch",
+        description="Các ngày lễ, Tết âm lịch và dương lịch trong 12 tháng tới, kèm thứ, ngày "
+        "dương lịch và số ngày còn lại.",
         holidays=_upcoming_holidays(site_data.today(), len(calendar_query.HOLIDAYS)),
     )
 
@@ -700,8 +789,9 @@ async def weather_page(request: Request) -> HTMLResponse:
         heading = f"Thời tiết {data['location']}"
     page = _render(
         "thoi_tiet.html",
-        title=heading,
-        description=f"Thời tiết hiện tại và dự báo {days} ngày cho các tỉnh thành Việt Nam.",
+        title=f"{heading} hôm nay và {days} ngày tới",
+        description=f"{heading}: nhiệt độ, cảm giác, độ ẩm, gió, lượng mưa hiện tại và dự báo "
+        f"{days} ngày, cập nhật khoảng 10 phút một lần.",
         active="/thoi-tiet",
         heading=heading,
         place=place,
@@ -714,6 +804,8 @@ async def weather_page(request: Request) -> HTMLResponse:
         showing_mine=coords is not None,
         notice=_PLACE_NOTICES.get(request.query_params.get("tb", "")),
         fmt=lambda x: "?" if x is None else round(float(x)),
+        # lượng mưa có số lẻ: dấu phẩy thập phân kiểu Việt (0,2 mm), số chẵn bỏ ",0"
+        mm=lambda x: "?" if x is None else vn_market_data.vnd(float(x), 1).removesuffix(",0"),
     )
     if mine:
         # Trang theo cookie riêng của người xem: không cho bộ đệm dùng chung giữ lại.
@@ -760,13 +852,20 @@ async def lottery_page(request: Request) -> HTMLResponse:
         )
     current = data["target"]["key"] if data else (selector or "mn")
     today_names = [(p.key, p.name) for p in lottery_provinces.drawing_on(today) if p.region != "mb"]
-    title = "Xổ số"
-    if data:
-        title = f"Xổ số {data['target']['name']}"
+    title = "Kết quả xổ số 3 miền và từng tỉnh"
+    description = "Kết quả xổ số 3 miền và từng tỉnh, dò vé bằng code. Nguồn xskt.com.vn."
+    if data and data.get("draw"):
+        name, day = data["target"]["name"], dt.date.fromisoformat(data["draw"]["date"])
+        short = _LOTTERY_SHORT.get(data["target"]["key"])
+        title = f"Kết quả xổ số {name} {day:%d/%m/%Y}" + (f" ({short})" if short else "")
+        description = (
+            f"Kết quả xổ số {name} kỳ {data['draw']['weekday']} {day:%d/%m/%Y}: giải đặc biệt "
+            "đến giải tám, dò vé bằng code. Nguồn xskt.com.vn."
+        )
     page = _render(
         "xo_so.html",
         title=title,
-        description="Kết quả xổ số 3 miền và từng tỉnh, dò vé bằng code. Nguồn xskt.com.vn.",
+        description=description,
         active="/xo-so",
         data=data,
         error=error,
@@ -803,11 +902,23 @@ async def gold_page() -> HTMLResponse:
         data = await _limited_prices(price_lookup.gold)
     except vn_market_data.MarketDataError:
         error = "Nguồn giá vàng đang lỗi hoặc chậm, thử lại sau ít phút. Trang không tự đoán giá."
+    today = f"{site_data.today():%d/%m/%Y}"
+    description = (
+        "Giá vàng SJC, nhẫn, DOJI, PNJ, Bảo Tín, vàng thế giới quy đổi và tỷ giá "
+        "Vietcombank. Nguồn vang.today, SJC dự phòng."
+    )
+    if data and data.get("domestic"):
+        r = data["domestic"][0]
+        trieu = functools.partial(vn_market_data.trieu, fixed=True)
+        description = (
+            f"Giá vàng {r['name']} hôm nay {today}: mua {trieu(r['buy'])}, bán {trieu(r['sell'])} "
+            "triệu đồng/lượng. Bảng giá nhẫn SJC, DOJI, PNJ, Bảo Tín, vàng thế giới, tỷ giá."
+        )
     page = _render(
         "gia_vang.html",
-        title="Giá vàng hôm nay",
-        description="Giá vàng SJC, nhẫn, DOJI, PNJ, Bảo Tín, vàng thế giới quy đổi và tỷ giá "
-        "Vietcombank. Nguồn vang.today, SJC dự phòng.",
+        title=f"Giá vàng hôm nay {today}: SJC, nhẫn 9999, DOJI, PNJ",
+        description=description,
+        modified=_vn_stamp(data and data.get("updated")),
         active="/gia-vang",
         data=data,
         error=error,
@@ -825,11 +936,22 @@ async def fuel_page() -> HTMLResponse:
         error = (
             "Nguồn giá xăng dầu đang lỗi hoặc chậm, thử lại sau ít phút. Trang không tự đoán giá."
         )
+    today = f"{site_data.today():%d/%m/%Y}"
+    description = (
+        "Giá xăng dầu Petrolimex (vùng 1, vùng 2) và PVOIL theo kỳ điều hành. "
+        "Nguồn giaxanghomnay.com."
+    )
+    if data and data.get("petrolimex"):
+        r, vnd = data["petrolimex"][0], vn_market_data.vnd
+        description = (
+            f"Giá {r['name']} hôm nay {today}: {vnd(r['zone1'])} đồng/lít vùng 1, "
+            f"{vnd(r['zone2'])} đồng/lít vùng 2. Bảng giá xăng dầu Petrolimex, PVOIL theo kỳ điều hành."
+        )
     page = _render(
         "gia_xang.html",
-        title="Giá xăng dầu hôm nay",
-        description="Giá xăng dầu Petrolimex (vùng 1, vùng 2) và PVOIL theo kỳ điều hành. "
-        "nguồn giaxanghomnay.com.",
+        title=f"Giá xăng dầu hôm nay {today}: Petrolimex, PVOIL",
+        description=description,
+        modified=_vn_stamp(data and data.get("updated")),
         active="/gia-xang",
         data=data,
         error=error,
@@ -913,8 +1035,9 @@ async def _form(request: Request) -> dict[str, str]:
 def _tuvi_form(form: dict, error: str = "") -> HTMLResponse:
     return _render(
         "tuvi.html",
-        title="Lá số tử vi",
-        description="An lá số Tử Vi Đẩu Số: 12 cung, chính tinh, phụ tinh, đại hạn.",
+        title="Lá số tử vi: an sao 12 cung theo ngày giờ sinh",
+        description="Lập lá số Tử Vi Đẩu Số theo ngày, giờ sinh dương lịch hoặc âm lịch: 12 cung, "
+        "chính tinh kèm độ sáng, phụ tinh, Tứ hóa, Tuần Triệt, đại hạn.",
         active="/tu-vi",
         # Theo giờ đồng hồ từ 23h: Tý đầu (23h-24h) đứng trước Tý (0h-1h).
         hours=[site_data.HOUR_OPTIONS[site_data.EARLY_TY], *site_data.HOUR_OPTIONS[:12]],
@@ -982,6 +1105,7 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
         "tuvi_result.html",
         title="Lá số tử vi",
         description="Lá số Tử Vi Đẩu Số.",
+        noindex=True,  # kết quả theo ngày sinh của từng người
         active="/tu-vi",
         chart=tuvi.chart_data(c),
         ai_text=ai_text,
@@ -994,8 +1118,9 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
 def _tsh_form(form: dict, error: str = "") -> HTMLResponse:
     return _render(
         "tsh.html",
-        title="Thần số học",
-        description="Con số chủ đạo, biểu đồ ngày sinh, năm cá nhân theo thần số học Pythagoras.",
+        title="Thần số học: tính con số chủ đạo theo ngày sinh",
+        description="Tính thần số học Pythagoras theo ngày sinh và họ tên: con số chủ đạo, biểu "
+        "đồ ngày sinh, mũi tên, 4 đỉnh cao, năm và tháng cá nhân.",
         active="/than-so-hoc",
         form=form,
         error=error,
@@ -1031,6 +1156,7 @@ async def tsh_submit(request: Request) -> HTMLResponse:
         "tsh_result.html",
         title="Thần số học",
         description="Kết quả thần số học.",
+        noindex=True,
         active="/than-so-hoc",
         reading=reading,
         rows=rows,
@@ -1054,7 +1180,8 @@ def _kymon_page(form: dict, *, ai_text: str = "", error: str = "") -> HTMLRespon
     data = kymon.chart_data(chart)
     page = _render(
         "kymon.html",
-        title="Kỳ Môn Độn Giáp",
+        title="Kỳ Môn Độn Giáp: lập bàn 9 cung theo giờ",
+        noindex=not is_now,  # bàn của một giờ tự chọn: vô số URL, chỉ trang gốc vào chỉ mục
         description="Lập bàn Kỳ Môn Độn Giáp theo giờ (chuyển bàn, chiết bổ): cửu tinh, bát môn, "
         "bát thần, cách cục - tính bằng thuật toán.",
         active="/ky-mon",
@@ -1137,8 +1264,34 @@ async def robots(request: Request) -> Response:
 
 @static_router.get("/sitemap.xml", include_in_schema=False)
 async def sitemap(request: Request) -> Response:
-    base = _base_url(request)
-    urls = "".join(f"<url><loc>{base}{path}</loc></url>" for path in _SITEMAP_PATHS)
+    """Trang công khai + trang tra cứu hay tìm (từng đài xổ số, thời tiết các nơi có sẵn,
+    lịch 12 tháng tới). lastmod chỉ ghi khi biết chắc: trang đổi số liệu mỗi ngày ghi hôm
+    nay, đài xổ số ghi ngày quay gần nhất; trang công cụ tĩnh bỏ trống."""
+    base, today = _base_url(request), site_data.today()
+    entries: list[tuple[str, dt.date | None]] = [
+        (path, today if path in _DAILY_PATHS else None) for path in _SITEMAP_PATHS
+    ]
+    entries += [(f"/xo-so?dai={key}", today) for key in _LOTTERY_SHORT if key != "mb"]
+    entries += [
+        (f"/xo-so?dai={p.key}", lottery_provinces.last_draw_day(p, today))
+        for p in lottery_provinces.PROVINCES
+    ]
+    entries += [
+        (f"/thoi-tiet?{urlencode({'noi': place}, quote_via=quote)}", today)
+        for place in weather_places.DEFAULT_PLACES[1:]  # chỗ đầu (TP.HCM) chính là /thoi-tiet
+    ]
+    first = today.replace(day=1)
+    for i in range(1, 12):
+        month = (first.month - 1 + i) % 12 + 1
+        entries.append(
+            (f"/lich?thang={first.year + (first.month - 1 + i) // 12}-{month:02d}", None)
+        )
+    urls = "".join(
+        f"<url><loc>{escape(base + path)}</loc>"
+        + (f"<lastmod>{day.isoformat()}</lastmod>" if day else "")
+        + "</url>"
+        for path, day in entries
+    )
     body = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>'
@@ -1146,7 +1299,8 @@ async def sitemap(request: Request) -> Response:
     return Response(
         body,
         media_type="application/xml",
-        headers={"Cache-Control": "public, max-age=86400"},
+        # lastmod theo ngày: bộ đệm 1 giờ để sang ngày mới không giữ bản cũ quá lâu
+        headers={"Cache-Control": "public, max-age=3600"},
     )
 
 

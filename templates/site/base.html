@@ -3,10 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{{ title }} · LCTA{% endblock %}</title>
+  <title>{% block title %}{{ title }} | LCTA{% endblock %}</title>
   <meta name="description" content="{{ description }}">
   <meta name="color-scheme" content="light dark">
-  {% if noindex %}<meta name="robots" content="noindex">{% endif %}
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e100f" media="(prefers-color-scheme: dark)">
+  {# Trang kết quả riêng (câu hỏi tự do, lá số, bàn theo giờ, 404): không đưa vào chỉ mục
+     nhưng vẫn cho máy tìm kiếm đi theo link sang trang khác. #}
+  {% if noindex %}<meta name="robots" content="noindex, follow">{% endif %}
   {% if page_url and not noindex %}<link rel="canonical" href="{{ page_url }}">{% endif %}
   {# Xem trước khi chia sẻ link (Facebook, Zalo, X...): tiêu đề, mô tả, ảnh 1200x630. #}
   <meta property="og:type" content="website">
@@ -26,6 +30,8 @@
   <meta name="twitter:title" content="{{ title }}">
   <meta name="twitter:description" content="{{ description }}">
   <link rel="icon" href="/static/favicon.png?v={{ v }}" type="image/png">
+  <link rel="apple-touch-icon" href="/static/icon.png?v={{ v }}">
+  {% if ld_json %}<script type="application/ld+json">{{ ld_json }}</script>{% endif %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&amp;family=Newsreader:opsz,wght@6..72,500&amp;display=swap">

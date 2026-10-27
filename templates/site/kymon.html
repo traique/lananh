@@ -7,20 +7,45 @@
     <p class="sub">Bàn thời gia theo giờ đồng hồ Việt Nam: chuyển bàn, định cục chiết bổ. Tính bằng thuật toán, không lưu lại.</p>
   </div>
 </div>
-<div class="grid">
-  <form class="panel form s5" action="/ky-mon" method="get" novalidate>
-    {% include "_errors.html" %}
-    <div class="form-row">
-      <div class="field"><label for="ngay">Ngày</label><input class="input" type="date" id="ngay" name="ngay" value="{{ form.ngay }}" min="1900-01-01" max="2100-12-31"{% if error %} aria-describedby="form-error"{% endif %}></div>
-      <div class="field"><label for="gio">Giờ</label><input class="input" type="time" id="gio" name="gio" value="{{ form.gio }}" aria-describedby="gio-hint{% if error %} form-error{% endif %}"></div>
-    </div>
-    <span class="hint" id="gio-hint">Mở trang là bàn của lúc này. Từ 23h tính là giờ Tý của ngày hôm sau.</span>
-    <div class="form-actions">
+<form class="toolbar" action="/ky-mon" method="get" novalidate>
+  {% include "_errors.html" %}
+  <div class="toolbar-row">
+    <div class="field"><label for="ngay">Ngày</label><input class="input" type="date" id="ngay" name="ngay" value="{{ form.ngay }}" min="1900-01-01" max="2100-12-31"{% if error %} aria-describedby="form-error"{% endif %}></div>
+    <div class="field"><label for="gio">Giờ</label><input class="input" type="time" id="gio" name="gio" value="{{ form.gio }}" aria-describedby="gio-hint{% if error %} form-error{% endif %}"></div>
+    <div class="toolbar-actions">
       <button class="btn primary" type="submit">Lập bàn</button>
       {% if not is_now %}<a class="btn ghost" href="/ky-mon">Về lúc này</a>{% endif %}
     </div>
-  </form>
-  <section class="panel s7" aria-labelledby="qm-facts">
+  </div>
+  <span class="hint" id="gio-hint">Mở trang là bàn của lúc này. Từ 23h tính là giờ Tý của ngày hôm sau.</span>
+</form>
+<div class="grid top">
+  <section class="panel qm-panel s7" aria-labelledby="qm-board">
+    <header><h2 id="qm-board">Bàn 9 cung</h2><span class="meta">Nam ở trên, Bắc ở dưới; mỗi ô: thần, sao, cửa, can thiên/địa</span></header>
+    <ol class="qm-board">
+      {% for row in rows %}{% for p in row %}
+      {% if p.number == 5 %}
+      <li class="qm-cell qm-center" aria-label="Cung 5 trung cung">
+        <header><span>5 Trung cung</span></header>
+        <p class="qm-big">{{ chart.dunText }}<br>{{ chart.ju }} cục</p>
+        <p class="qm-stems"><span><span class="muted">Địa</span> {{ p.earthStems | join("/") }}</span><span class="muted">ký Khôn 2</span></p>
+      </li>
+      {% else %}
+      <li class="qm-cell{% if p.isZhiFu %} is-zhifu{% endif %}" aria-label="Cung {{ p.number }} {{ p.name }}, hướng {{ p.direction }}{% if p.isZhiFu %}, Trực phù{% endif %}{% if p.isZhiShi %}, Trực sử{% endif %}{% if p.isVoid %}, không vong{% endif %}{% if p.isHorse %}, mã tinh{% endif %}">
+        <header><span>{{ p.number }} {{ p.name }}</span><span class="dir">{{ p.direction }}</span></header>
+        <p class="qm-god">{{ p.god }}</p>
+        <p class="qm-star">{{ p.star }}{% if p.lodgedStar %} <span class="muted">+ {{ p.lodgedStar | replace("Thiên ", "") }}</span>{% endif %}</p>
+        <p class="qm-door"><span class="pill sm{% if p.door in good_doors %} pos{% endif %}">{{ p.door }}</span></p>
+        <p class="qm-stems"><span><span class="muted">Thiên</span> {{ p.heavenStems | join("/") }}</span><span><span class="muted">Địa</span> {{ p.earthStems | join("/") }}</span></p>
+        {% if p.isZhiFu or p.isZhiShi or p.isVoid or p.isHorse %}
+        <p class="qm-flags">{% if p.isZhiFu %}<span class="pill sm pos">Trực phù</span>{% endif %}{% if p.isZhiShi %}<span class="pill sm">Trực sử</span>{% endif %}{% if p.isVoid %}<span class="pill sm warn">Không</span>{% endif %}{% if p.isHorse %}<span class="pill sm">Mã</span>{% endif %}</p>
+        {% endif %}
+      </li>
+      {% endif %}
+      {% endfor %}{% endfor %}
+    </ol>
+  </section>
+  <section class="sect s5" aria-labelledby="qm-facts">
     <header><h2 id="qm-facts">{{ chart.dunText }} {{ chart.ju }} cục, {{ chart.yuanText }}</h2><span class="meta">{{ form.gio }} {{ form.ngay | vn_date }}{% if is_now %} (lúc này){% endif %}</span></header>
     <dl class="facts">
       <dt>Tứ trụ</dt><dd>Giờ {{ chart.pillars.hour.text }}, ngày {{ chart.pillars.day.text }}, tháng {{ chart.pillars.month.text }}, năm {{ chart.pillars.year.text }}</dd>
@@ -33,33 +58,8 @@
     </dl>
   </section>
 </div>
-<section class="panel qm-panel" aria-labelledby="qm-board">
-  <header><h2 id="qm-board">Bàn 9 cung</h2><span class="meta">Nam ở trên, Bắc ở dưới; mỗi ô: thần, sao, cửa, can thiên/địa</span></header>
-  <ol class="qm-board">
-    {% for row in rows %}{% for p in row %}
-    {% if p.number == 5 %}
-    <li class="qm-cell qm-center" aria-label="Cung 5 trung cung">
-      <header><span>5 Trung cung</span></header>
-      <p class="qm-big">{{ chart.dunText }}<br>{{ chart.ju }} cục</p>
-      <p class="qm-stems"><span><span class="muted">Địa</span> {{ p.earthStems | join("/") }}</span><span class="muted">ký Khôn 2</span></p>
-    </li>
-    {% else %}
-    <li class="qm-cell{% if p.isZhiFu %} is-zhifu{% endif %}" aria-label="Cung {{ p.number }} {{ p.name }}, hướng {{ p.direction }}{% if p.isZhiFu %}, Trực phù{% endif %}{% if p.isZhiShi %}, Trực sử{% endif %}{% if p.isVoid %}, không vong{% endif %}{% if p.isHorse %}, mã tinh{% endif %}">
-      <header><span>{{ p.number }} {{ p.name }}</span><span class="dir">{{ p.direction }}</span></header>
-      <p class="qm-god">{{ p.god }}</p>
-      <p class="qm-star">{{ p.star }}{% if p.lodgedStar %} <span class="muted">+ {{ p.lodgedStar | replace("Thiên ", "") }}</span>{% endif %}</p>
-      <p class="qm-door"><span class="pill sm{% if p.door in good_doors %} pos{% endif %}">{{ p.door }}</span></p>
-      <p class="qm-stems"><span><span class="muted">Thiên</span> {{ p.heavenStems | join("/") }}</span><span><span class="muted">Địa</span> {{ p.earthStems | join("/") }}</span></p>
-      {% if p.isZhiFu or p.isZhiShi or p.isVoid or p.isHorse %}
-      <p class="qm-flags">{% if p.isZhiFu %}<span class="pill sm pos">Trực phù</span>{% endif %}{% if p.isZhiShi %}<span class="pill sm">Trực sử</span>{% endif %}{% if p.isVoid %}<span class="pill sm warn">Không</span>{% endif %}{% if p.isHorse %}<span class="pill sm">Mã</span>{% endif %}</p>
-      {% endif %}
-    </li>
-    {% endif %}
-    {% endfor %}{% endfor %}
-  </ol>
-</section>
 <div class="grid top">
-  <section class="panel s7" aria-labelledby="qm-points">
+  <section class="sect s7" aria-labelledby="qm-points">
     <header><h2 id="qm-points">Cách cục và điểm chính</h2></header>
     <ul class="rows">
       {% if chart.starFuYin or chart.doorFuYin %}
@@ -75,7 +75,7 @@
       {% endfor %}
     </ul>
   </section>
-  <section class="panel s5" aria-labelledby="qm-meanings">
+  <section class="sect s5" aria-labelledby="qm-meanings">
     <header><h2 id="qm-meanings">Ý nghĩa từng cung</h2></header>
     <div class="qm-details">
       {% for row in rows %}{% for p in row %}{% if p.number != 5 %}
@@ -92,7 +92,7 @@
   </section>
 </div>
 {% if ai_text or logged_in %}
-<section class="panel ai-box" aria-labelledby="ai-title">
+<section class="sect ai-box" aria-labelledby="ai-title">
   <header><h2 id="ai-title">Luận giải bằng AI</h2></header>
   {% if ai_text %}
   {% if question %}<p class="muted">Việc cần xem: {{ question }}</p>{% endif %}

@@ -6,11 +6,11 @@
     <p class="sub">Kết quả xổ số 3 miền và từng tỉnh, dò vé bằng code. Nguồn xskt.com.vn, đối chiếu lại với vé gốc trước khi lĩnh thưởng.</p>
   </div>
 </div>
-<div class="grid top">
-  <form class="panel form s5 lottery-form" action="/xo-so" method="get" novalidate>
-    {# Ngày/vé sai: lỗi nằm ngay dưới ô đó; đài sai hoặc nguồn lỗi: khung lỗi đầu form. #}
-    {% if error_field not in ("ve", "ngay") %}{% include "_errors.html" %}{% endif %}
-    <div class="field">
+<form class="toolbar wide lottery-form" action="/xo-so" method="get" novalidate>
+  {# Ngày/vé sai: lỗi nằm ngay dưới ô đó; đài sai hoặc nguồn lỗi: khung lỗi đầu form. #}
+  {% if error_field not in ("ve", "ngay") %}{% include "_errors.html" %}{% endif %}
+  <div class="toolbar-row">
+    <div class="field f-wide">
       <label for="dai">Miền hoặc đài</label>
       <select class="input" id="dai" name="dai"{% if error_field == "dai" %} aria-invalid="true" aria-describedby="form-error"{% endif %}>
         {% for group in groups %}
@@ -23,43 +23,41 @@
       </select>
       <span class="hint">★ = đài quay hôm nay theo lịch cố định (miền Nam 16h15, miền Trung 17h15, miền Bắc 18h15).</span>
     </div>
-    <div class="form-row">
-      <div class="field">
-        <label for="ngay">Ngày quay</label>
-        <input class="input" type="date" id="ngay" name="ngay" value="{{ form.ngay }}" max="{{ today_iso }}"{% if error_field == "ngay" %} aria-invalid="true" aria-describedby="form-error"{% endif %}>
-        {% if error_field == "ngay" %}<span class="field-error" id="form-error" role="alert">{{ error }}</span>{% endif %}
-        <span class="hint">Bỏ trống: kỳ mới nhất.</span>
-      </div>
-      <div class="field">
-        <label for="ve">Số vé (dò vé)</label>
-        <input class="input" type="text" id="ve" name="ve" value="{{ form.ve }}" inputmode="numeric" pattern="[0-9]{5,6}" maxlength="6" autocomplete="off" placeholder="6 số, miền Bắc 5 số"{% if error_field == "ve" %} aria-invalid="true" aria-describedby="form-error"{% endif %}>
-        {% if error_field == "ve" %}<span class="field-error" id="form-error" role="alert">{{ error }} Kết quả dưới đây chưa dò vé.</span>{% endif %}
-      </div>
+    <div class="field">
+      <label for="ngay">Ngày quay</label>
+      <input class="input" type="date" id="ngay" name="ngay" value="{{ form.ngay }}" max="{{ today_iso }}"{% if error_field == "ngay" %} aria-invalid="true" aria-describedby="form-error"{% endif %}>
+      {% if error_field == "ngay" %}<span class="field-error" id="form-error" role="alert">{{ error }}</span>{% endif %}
+      <span class="hint">Bỏ trống: kỳ mới nhất.</span>
     </div>
-    <div class="form-actions"><button class="btn primary" type="submit">Xem kết quả</button></div>
-  </form>
-  <section class="panel s7" aria-labelledby="today-title">
-    <header><h2 id="today-title">Hôm nay quay</h2></header>
-    <ul class="links" role="list">
-      {% for key, name in today_names %}
-      <li><a href="/xo-so?dai={{ key | urlencode }}"{% if key == form.dai %} aria-current="page"{% endif %}>{{ name }}</a></li>
-      {% endfor %}
-      <li><a href="/xo-so?dai=mn"{% if form.dai == 'mn' %} aria-current="page"{% endif %}>Cả miền Nam</a></li>
-      <li><a href="/xo-so?dai=mt"{% if form.dai == 'mt' %} aria-current="page"{% endif %}>Cả miền Trung</a></li>
-      <li><a href="/xo-so?dai=mb"{% if form.dai == 'mb' %} aria-current="page"{% endif %}>Miền Bắc</a></li>
-    </ul>
-    {% if data and data.target.drawDays %}
-    <p class="muted small">Đài {{ data.target.name }} quay {{ data.target.drawDays | join(", ") }} lúc {{ data.target.drawTime }}.</p>
-    {% endif %}
-  </section>
-</div>
+    <div class="field">
+      <label for="ve">Số vé (dò vé)</label>
+      <input class="input" type="text" id="ve" name="ve" value="{{ form.ve }}" inputmode="numeric" pattern="[0-9]{5,6}" maxlength="6" autocomplete="off" placeholder="6 số, miền Bắc 5 số"{% if error_field == "ve" %} aria-invalid="true" aria-describedby="form-error"{% endif %}>
+      {% if error_field == "ve" %}<span class="field-error" id="form-error" role="alert">{{ error }} Kết quả dưới đây chưa dò vé.</span>{% endif %}
+    </div>
+    <div class="toolbar-actions"><button class="btn primary" type="submit">Xem kết quả</button></div>
+  </div>
+</form>
+<section class="sect inline-sect" aria-labelledby="today-title">
+  <h2 id="today-title">Hôm nay quay</h2>
+  <ul class="links" role="list">
+    {% for key, name in today_names %}
+    <li><a href="/xo-so?dai={{ key | urlencode }}"{% if key == form.dai %} aria-current="page"{% endif %}>{{ name }}</a></li>
+    {% endfor %}
+    <li><a href="/xo-so?dai=mn"{% if form.dai == 'mn' %} aria-current="page"{% endif %}>Cả miền Nam</a></li>
+    <li><a href="/xo-so?dai=mt"{% if form.dai == 'mt' %} aria-current="page"{% endif %}>Cả miền Trung</a></li>
+    <li><a href="/xo-so?dai=mb"{% if form.dai == 'mb' %} aria-current="page"{% endif %}>Miền Bắc</a></li>
+  </ul>
+  {% if data and data.target.drawDays %}
+  <p class="muted small">Đài {{ data.target.name }} quay {{ data.target.drawDays | join(", ") }} lúc {{ data.target.drawTime }}.</p>
+  {% endif %}
+</section>
 
 {% if data %}
 {% if data.message %}
 <div class="ok-box notice lottery-note" role="status">{{ data.message }}</div>
 {% endif %}
 {% if data.ticket %}
-<section class="panel" aria-labelledby="ticket-title">
+<section class="sect" aria-labelledby="ticket-title">
   <header><h2 id="ticket-title">Dò vé {{ data.ticket.number }}</h2><span class="meta">Kỳ {{ data.draw.date | vn_date }}</span></header>
   <ul class="rows" role="list">
     {% for r in data.ticket.results %}
@@ -77,35 +75,36 @@
 </section>
 {% endif %}
 {% if data.draw %}
-<section class="panel" aria-labelledby="draw-title">
+{% set provs = data.draw.provinces %}
+<section class="panel draw-panel" aria-labelledby="draw-title">
   <header>
     <h2 id="draw-title">{{ data.draw.weekday }} {{ data.draw.date | vn_date }}</h2>
     <span class="meta">{{ data.target.regionName }}, nguồn {{ data.source }}</span>
   </header>
-  <div class="lottery-grid">
-    {% for p in data.draw.provinces %}
-    <div class="sheet lottery-card">
-      <h3>{{ p.name }}</h3>
-      <table class="compact lottery-table">
-        <tbody>
-          {% for key in prize_order %}
-          {% if p.prizes.get(key) %}
-          <tr{% if key == "ĐB" %} class="special"{% endif %}>
-            <th scope="row">{{ prize_labels[key] }}</th>
-            <td class="num"><span class="nums">{% for n in p.prizes[key] %}<span>{{ n }}</span>{% endfor %}</span></td>
-          </tr>
-          {% endif %}
+  <div class="table-wrap" tabindex="0" role="region" aria-labelledby="draw-title">
+    <table class="lottery-table cols-{{ provs | length }}">
+      <caption class="sr-only">Bảng kết quả: mỗi hàng một giải, mỗi cột một đài</caption>
+      <thead><tr><th scope="col">Giải</th>{% for p in provs %}<th scope="col">{{ p.name }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for key in prize_order %}
+        {% set row = namespace(any=false) %}{% for p in provs %}{% if p.prizes.get(key) %}{% set row.any = true %}{% endif %}{% endfor %}
+        {% if row.any %}
+        <tr{% if key == "ĐB" %} class="special"{% endif %}>
+          <th scope="row">{{ prize_labels[key] }}</th>
+          {% for p in provs %}
+          <td class="num"><span class="nums">{% for n in p.prizes.get(key, ()) %}<span>{{ n }}</span>{% endfor %}</span></td>
           {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% endfor %}
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </section>
 {% endif %}
 {% if data.availableDates %}
-<section class="panel" aria-labelledby="dates-title">
-  <header><h2 id="dates-title">Kỳ quay gần đây</h2></header>
+<section class="sect inline-sect" aria-labelledby="dates-title">
+  <h2 id="dates-title">Kỳ quay gần đây</h2>
   <ul class="links" role="list">
     {% for d in data.availableDates %}
     <li><a href="/xo-so?dai={{ data.target.key | urlencode }}&amp;ngay={{ d }}"{% if data.draw and d == data.draw.date %} aria-current="page"{% endif %}>{{ d | vn_date }}</a></li>

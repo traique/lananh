@@ -1,5 +1,6 @@
 {# Tăng giảm: ▲ xanh / ▼ đỏ (quy ước bảng giá Việt Nam), kèm chữ ẩn cho trình đọc màn
-   hình. ``unit``: "trieu" (đồng -> triệu), "usd" (1 số lẻ khi cần), còn lại số nguyên.
+   hình. ``unit``: "trieu" (đồng -> triệu, luôn 2 số lẻ như ô giá), "usd" (1 số lẻ khi cần),
+   còn lại số nguyên.
    ``zero``: chữ khi bằng 0; trống (vàng) thì coi như không có số, vì nguồn trả 0 cả khi
    thiếu số; xăng ghi "Giữ nguyên". Không có số: ô để trống, chỉ trình đọc màn hình đọc thành lời. #}
 {% macro delta(value, unit="vnd", zero="") -%}
@@ -9,7 +10,7 @@
 <span class="delta flat">{{ zero }}</span>
 {%- else -%}
 {%- set size = value | abs -%}
-{%- set text = (size | trieu) if unit == "trieu" else ((size | usd) if unit == "usd" else (size | vnd)) -%}
+{%- set text = (size | trieu(fixed=true)) if unit == "trieu" else ((size | usd) if unit == "usd" else (size | vnd)) -%}
 <span class="delta {{ 'up' if value > 0 else 'down' }}"><span aria-hidden="true">{{ "▲" if value > 0 else "▼" }}</span><span class="sr-only">{{ "tăng " if value > 0 else "giảm " }}</span>{{ text }}</span>
 {%- endif -%}
 {%- endmacro %}

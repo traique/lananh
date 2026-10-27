@@ -1,6 +1,6 @@
 {# Khách không thấy khối này: luận giải AI chỉ cho chủ trang (đăng nhập ở /admin). #}
 {% if ai_text or logged_in %}
-<section class="panel ai-box" aria-labelledby="ai-title">
+<section class="sect ai-box" aria-labelledby="ai-title">
   <header><h2 id="ai-title">Luận giải bằng AI</h2></header>
   {% if ai_text %}
   <div class="answer" role="status">{{ ai_text }}</div>

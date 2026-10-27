@@ -12,8 +12,8 @@
   </nav>
 </div>
 {% include "_errors.html" %}
-<div class="grid">
-  <section class="panel s8" aria-label="Lưới tháng {{ month.month }}/{{ month.year }}">
+<div class="grid top">
+  <section class="panel month-panel s8" aria-label="Lưới tháng {{ month.month }}/{{ month.year }}">
     <table class="month">
       <caption class="sr-only">Lịch tháng {{ month.month }}/{{ month.year }}, mỗi ô ghi ngày dương và ngày âm</caption>
       <thead><tr>{% for wd in ["T2","T3","T4","T5","T6","T7","CN"] %}<th scope="col">{{ wd }}</th>{% endfor %}</tr></thead>
@@ -37,10 +37,10 @@
       {% endfor %}
       </tbody>
     </table>
-    <p class="month-key"><span class="dot">Hoàng đạo</span><span>Chữ đậm: mùng 1, rằm</span><span>Viền xanh: hôm nay</span><span>Nền đậm: ngày đang xem</span></p>
+    <p class="month-key"><span class="dot">Hoàng đạo</span><span>Chữ đậm: mùng 1, rằm</span><span>Viền xanh: hôm nay</span><span>Ô tô đặc: ngày đang xem</span></p>
   </section>
 
-  <section class="panel s4" aria-labelledby="day-title">
+  <section class="sect day-aside s4" aria-labelledby="day-title">
     <header><h2 id="day-title">{{ selected.weekday }}, {{ selected_date.strftime('%d/%m/%Y') }}</h2></header>
     <p class="lunar-line">{{ selected.lunar.text }} âm lịch</p>
     {% with day = selected %}{% include "_day_facts.html" %}{% endwith %}

@@ -58,40 +58,40 @@
 {% if data.fallback %}
 <div class="ok-box notice price-note" role="status">Nguồn chính Open-Meteo đang lỗi, tạm dùng nguồn dự phòng wttr.in nên chỉ có dự báo {{ days }} ngày.</div>
 {% endif %}
-<section class="panel weather-now" aria-labelledby="now-title">
-  <header><h2 id="now-title">Bây giờ</h2><span class="meta">{{ data.location }}</span></header>
-  <div class="strip">
-    <div>
-      <p class="lead-figure">{{ fmt(data.now.temperature_c) }}°C</p>
-      <p class="muted">{{ data.now.description | capitalize }}</p>
+<div class="grid top">
+  <section class="panel weather-now s5" aria-labelledby="now-title">
+    <header><h2 id="now-title">Bây giờ</h2><span class="meta">{{ data.location }}</span></header>
+    <p class="now-temp">{{ fmt(data.now.temperature_c) }}°C</p>
+    <p class="now-sky">{{ data.now.description | capitalize }}</p>
+    <dl class="now-stats">
+      <div><dt>Cảm giác</dt><dd>{{ fmt(data.now.feels_like_c) }}°C</dd></div>
+      <div><dt>Độ ẩm</dt><dd>{{ fmt(data.now.humidity_percent) }}%</dd></div>
+      <div><dt>Gió</dt><dd>{{ fmt(data.now.wind_kmh) }} km/h</dd></div>
+      <div><dt>Mưa</dt><dd>{{ mm(data.now.precipitation_mm) }} mm</dd></div>
+    </dl>
+  </section>
+  <section class="sect s7" aria-labelledby="fc-title">
+    <header><h2 id="fc-title">Dự báo {{ data.daily | length }} ngày</h2><span class="meta">Nguồn: {{ data.source }}, cập nhật khoảng 10 phút một lần</span></header>
+    <div class="table-wrap" tabindex="0" role="region" aria-labelledby="fc-title">
+      <table class="forecast">
+        <thead><tr><th scope="col">Ngày</th><th scope="col">Trời</th><th scope="col" class="n">Thấp</th><th scope="col" class="range-col"><span class="sr-only">Biên độ</span></th><th scope="col" class="n">Cao</th><th scope="col" class="n">Mưa</th><th scope="col" class="n">UV</th></tr></thead>
+        <tbody>
+          {% for d in data.daily %}
+          <tr>
+            <td class="when">{{ d.label }}<span class="sub">{{ d.short }}</span></td>
+            <td>{{ d.description | capitalize }}</td>
+            <td class="n muted">{{ fmt(d.min_c) }}°</td>
+            <td class="range-col">{% if d.bar %}<div class="range" aria-hidden="true"><i style="left: {{ d.bar[0] }}%; width: {{ d.bar[1] }}%"></i></div>{% endif %}</td>
+            <td class="n">{{ fmt(d.max_c) }}°</td>
+            <td class="n">{{ fmt(d.rain_chance_percent) }}%</td>
+            <td class="n">{{ fmt(d.uv_max) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
-    <div><span class="meta">Cảm giác</span><p class="v">{{ fmt(data.now.feels_like_c) }}°C</p></div>
-    <div><span class="meta">Độ ẩm</span><p class="v">{{ fmt(data.now.humidity_percent) }}%</p></div>
-    <div><span class="meta">Gió</span><p class="v">{{ fmt(data.now.wind_kmh) }} km/h</p></div>
-    <div><span class="meta">Mưa</span><p class="v">{{ data.now.precipitation_mm if data.now.precipitation_mm is not none else "?" }} mm</p></div>
-  </div>
-</section>
-<section class="panel" aria-labelledby="fc-title">
-  <header><h2 id="fc-title">Dự báo {{ data.daily | length }} ngày</h2><span class="meta">Nguồn: {{ data.source }}, cập nhật khoảng 10 phút một lần</span></header>
-  <div class="table-wrap" tabindex="0" role="region" aria-labelledby="fc-title">
-    <table class="forecast">
-      <thead><tr><th scope="col">Ngày</th><th scope="col">Trời</th><th scope="col" class="n">Thấp</th><th scope="col" class="range-col"><span class="sr-only">Biên độ</span></th><th scope="col" class="n">Cao</th><th scope="col" class="n">Mưa</th><th scope="col" class="n">UV</th></tr></thead>
-      <tbody>
-        {% for d in data.daily %}
-        <tr>
-          <td class="when">{{ d.label }}<span class="sub">{{ d.short }}</span></td>
-          <td>{{ d.description | capitalize }}</td>
-          <td class="n muted">{{ fmt(d.min_c) }}°</td>
-          <td class="range-col">{% if d.bar %}<div class="range" aria-hidden="true"><i style="left: {{ d.bar[0] }}%; width: {{ d.bar[1] }}%"></i></div>{% endif %}</td>
-          <td class="n">{{ fmt(d.max_c) }}°</td>
-          <td class="n">{{ fmt(d.rain_chance_percent) }}%</td>
-          <td class="n">{{ fmt(d.uv_max) }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
+  </section>
+</div>
 {% endif %}
 <script>
   // Nút "Lấy vị trí hiện tại": hỏi quyền định vị, làm tròn 2 số lẻ (~1 km) rồi gửi form
