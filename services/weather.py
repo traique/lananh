@@ -10,6 +10,10 @@ Chuyển từ gói vn-info (MIT License, Copyright (c) 2026), sửa cho hợp re
   của wttr.in lấy theo mã thời tiết sang tiếng Việt, không để lọt chữ tiếng Anh.
 - Tên địa điểm từ geocoding được sửa chữ: "Ð" (chữ Iceland) -> "Đ", tên tỉnh không
   dấu ("Lam Dong") -> có dấu.
+- ``reverse_geocode``: tên nơi của 1 toạ độ (vị trí hiện tại trên web) qua Nominatim của
+  OpenStreetMap, theo chính sách dùng của OSMF: tối đa 1 lượt/giây cho cả tiến trình,
+  User-Agent riêng của app, cache có trần, lỗi/bị chặn thì nghỉ 10 phút; trang hiển thị
+  tên phải ghi "© OpenStreetMap" (dữ liệu ODbL).
 
 Không nói địa điểm (hoặc nói Sài Gòn/HCM...) -> mặc định TP. Hồ Chí Minh
 (người dùng tự đặt thành phố mặc định riêng qua services/weather_home.py).
@@ -26,6 +30,7 @@ Thêm (gọi riêng, chỉ khi cần):
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import logging
 import re
@@ -35,7 +40,7 @@ from typing import NamedTuple
 
 import httpx
 
-from core import alerts
+from core import alerts, config
 from core.text_normalize import fold
 from services import http_client
 
@@ -104,6 +109,19 @@ _FALLBACK_ALERT_KEY = "weather:open-meteo-fallback"
 _FALLBACK_ALERT_COOLDOWN_SEC = 6 * 3600
 
 _GEO_CACHE_MAX = 128
+# Nominatim (tra ngược toạ độ -> tên): https://operations.osmfoundation.org/policies/nominatim/
+_NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
+_NOMINATIM_INTERVAL_SEC = 1.0
+_NOMINATIM_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
+_NOMINATIM_COOLDOWN_SEC = 600
+_REVERSE_CACHE_MAX = 256
+# (lat, lon) làm tròn 2 số lẻ -> tên, hoặc None (biển, nơi không có tên: khỏi tra lại)
+_reverse_cache: OrderedDict[tuple[float, float], str | None] = OrderedDict()
+_reverse_lock = asyncio.Lock()
+_reverse_state = {"last": 0.0, "down_until": 0.0}
+# Tiền tố hành chính bỏ đi ở cấp tỉnh/thành ("Thành phố Đà Lạt" -> "Đà Lạt"); cấp phường
+# xã giữ nguyên ("Phường 1" mà bỏ tiền tố thì chỉ còn "1").
+_ADMIN_PREFIX_RE = re.compile(r"^(?:Thành phố|Tỉnh|Thị xã)\s+", re.IGNORECASE)
 _FORECAST_CACHE_MAX = 32
 _FORECAST_TTL_SEC = 600
 _HOURLY_CACHE_MAX = 16
@@ -290,6 +308,76 @@ async def resolve_location(location: str) -> tuple[str, float, float] | None:
         return await _geocode(name)
     except (httpx.HTTPError, ValueError) as exc:
         raise WeatherError(f"tra toạ độ '{name}' lỗi: {exc!r}") from exc
+
+
+def reverse_cached(lat: float, lon: float) -> bool:
+    """Toạ độ này đã tra tên rồi (kể cả không có tên) - tra lại không gọi Nominatim."""
+    return (round(lat, 2), round(lon, 2)) in _reverse_cache
+
+
+def _place_label(address: dict) -> str | None:
+    """ "Phường 1, Đà Lạt" từ ``address`` của Nominatim: nơi nhỏ (phường/xã/thị trấn) +
+    thành phố hoặc tỉnh, bỏ tiền tố hành chính ở cấp lớn, không lặp tên."""
+
+    def first(*keys: str) -> tuple[str, str]:
+        return next(((k, str(address[k]).strip()) for k in keys if address.get(k)), ("", ""))
+
+    small_key, small = first("suburb", "quarter", "village", "town", "city_district", "county")
+    # Cấp lớn không lấy lại trường đã dùng cho cấp nhỏ ("town" có thể là cả hai).
+    big_keys = [k for k in ("city", "town", "state", "province") if k != small_key]
+    big = _ADMIN_PREFIX_RE.sub("", first(*big_keys)[1])
+    parts: list[str] = []
+    for part in (small, big):
+        part = _vi_place(part) if part else part
+        if part and fold(part) not in {fold(x) for x in parts}:
+            parts.append(part)
+    return ", ".join(parts)[:80] or None
+
+
+async def reverse_geocode(lat: float, lon: float) -> str | None:
+    """Tên nơi của toạ độ (làm tròn 2 số lẻ ~1 km) qua Nominatim; None = không có tên,
+    đã tắt (NOMINATIM_ENABLED=0), đang nghỉ sau lỗi, hoặc nguồn lỗi. Không bao giờ raise
+    lỗi mạng - tên chỉ là phần phụ, nơi gọi tự đặt hạn chót (lượt chờ xếp hàng 1 giây)."""
+    key = (round(lat, 2), round(lon, 2))
+    if key in _reverse_cache:
+        _reverse_cache.move_to_end(key)
+        return _reverse_cache[key]
+    if not config.NOMINATIM_ENABLED or time.monotonic() < _reverse_state["down_until"]:
+        return None
+    async with _reverse_lock:
+        if key in _reverse_cache:  # lượt khác vừa tra xong trong lúc chờ khoá
+            return _reverse_cache[key]
+        wait = _reverse_state["last"] + _NOMINATIM_INTERVAL_SEC - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        site = config.SITE_BASE_URL or "https://github.com/traique/lananh"
+        try:
+            resp = await http_client.get_client().get(
+                _NOMINATIM_URL,
+                params={
+                    "format": "jsonv2",
+                    "lat": f"{key[0]:.2f}",
+                    "lon": f"{key[1]:.2f}",
+                    "zoom": 14,
+                    "addressdetails": 1,
+                    "accept-language": "vi",
+                },
+                headers={"User-Agent": f"LCTA-thoi-tiet/1.0 (+{site})", "Referer": site},
+                timeout=_NOMINATIM_TIMEOUT,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            # 429/403 (bị chặn) hay mạng lỗi: nghỉ hẳn một lúc, không dồn thêm lượt.
+            _reverse_state["down_until"] = time.monotonic() + _NOMINATIM_COOLDOWN_SEC
+            logger.info("Nominatim lỗi (%r), nghỉ %ds", exc, _NOMINATIM_COOLDOWN_SEC)
+            return None
+        finally:
+            _reverse_state["last"] = time.monotonic()
+    address = data.get("address") if isinstance(data, dict) else None
+    name = _place_label(address) if isinstance(address, dict) else None
+    _cache_put(_reverse_cache, key, name, _REVERSE_CACHE_MAX)
+    return name
 
 
 def _not_found(location: str) -> dict:

@@ -1097,8 +1097,12 @@ async def test_luu_vi_tri_hien_tai_trong_cookie_trinh_duyet(client, monkeypatch)
         calls.append(location)
         return _FAKE_WEATHER
 
+    async def no_name(lat, lon):
+        return None  # Nominatim lỗi/tắt: vẫn lưu toạ độ, trang ghi toạ độ thay tên
+
     monkeypatch.setattr(web_site.weather, "get_weather_at", fake_at)
     monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    monkeypatch.setattr(web_site.weather, "reverse_geocode", no_name)
     html = (await client.get("/thoi-tiet")).text
     assert 'id="geo-btn" hidden' in html and "Lấy vị trí hiện tại" in html
     assert "Vị trí của tôi</a>" not in html and "Xoá vị trí đã lưu" not in html
@@ -1154,3 +1158,56 @@ async def test_vi_tri_trong_cookie_sai_bo_qua_va_tinh_vao_han_muc(client, monkey
         await client.get("/thoi-tiet", headers={**ip, "Cookie": "lcta_vitri=11.00_107.00"})
     ).text
     assert calls == ["", (10.0, 106.0)] and "Bạn vừa tra nhiều địa điểm mới" in html
+
+
+async def test_luu_vi_tri_kem_ten_noi_tu_openstreetmap(client, monkeypatch):
+    """Tên nơi tra 1 lần lúc lưu rồi cất trong cookie: xem lại không gọi Nominatim."""
+    labels, reverse_calls = [], []
+
+    async def fake_at(lat, lon, label, days=1):
+        labels.append(label)
+        return {**_FAKE_WEATHER, "location": label}
+
+    async def fake_reverse(lat, lon):
+        reverse_calls.append((lat, lon))
+        return "Phường 1, Đà Lạt"
+
+    monkeypatch.setattr(web_site.weather, "get_weather_at", fake_at)
+    monkeypatch.setattr(web_site.weather, "reverse_geocode", fake_reverse)
+    monkeypatch.setattr(web_site.weather, "reverse_cached", lambda lat, lon: False)
+    monkeypatch.setattr(web_site, "_new_place_times", web_site.collections.deque())
+    monkeypatch.setattr(web_site, "_new_place_by_ip", web_site.collections.OrderedDict())
+    r = await client.post("/thoi-tiet/vi-tri", data={"lat": "11.94", "lon": "108.46"})
+    cookie = r.headers["set-cookie"]
+    assert cookie.startswith(
+        "lcta_vitri=11.94_108.46_Ph%C6%B0%E1%BB%9Dng%201%2C%20%C4%90%C3%A0%20L%E1%BA%A1t;"
+    )
+    html = (await client.get("/thoi-tiet")).text
+    html = (await client.get("/thoi-tiet")).text
+    assert reverse_calls == [(11.94, 108.46)]  # chỉ lúc lưu
+    assert labels[-1] == "Phường 1, Đà Lạt" and "<h1>Thời tiết Phường 1, Đà Lạt</h1>" in html
+    assert 'href="https://www.openstreetmap.org/copyright"' in html  # ghi công ODbL
+
+    # Hết lượt tra địa điểm mới của IP: vẫn lưu toạ độ, không gọi Nominatim.
+    monkeypatch.setattr(web_site, "_NEW_PLACE_PER_IP", 0)
+    r = await client.post("/thoi-tiet/vi-tri", data={"lat": "21.03", "lon": "105.85"})
+    assert r.headers["set-cookie"].startswith("lcta_vitri=21.03_105.85;")
+    assert len(reverse_calls) == 1
+
+
+async def test_ten_noi_trong_cookie_sua_tay_van_an_toan(client, monkeypatch):
+    async def fake_at(lat, lon, label, days=1):
+        return {**_FAKE_WEATHER, "location": label}
+
+    monkeypatch.setattr(web_site.weather, "get_weather_at", fake_at)
+    monkeypatch.setattr(web_site.weather, "forecast_cached", lambda *a: True)
+    raw = "10.78_106.70_%3Cscript%3Ex%3C%2Fscript%3E%0A" + "a" * 200
+    html = (await client.get("/thoi-tiet", headers={"Cookie": f"lcta_vitri={raw}"})).text
+    assert "<script>x" not in html and "&lt;script&gt;x&lt;/script&gt;" in html
+    assert web_site._parse_my_place(raw)[2] == ("<script>x</script>" + "a" * 200)[:80]
+    # Tên dài nhất (80 ký tự tiếng Việt, percent-encode ~720 ký tự) vẫn đọc lại được.
+    longest = "Đường Ngọc Hồi Phường Hoàng Liệt Quận Hoàng Mai Thành phố Hà Nội Việt Nam ỡỡỡỡỡỡỡ"[
+        :80
+    ]
+    value = "21.03_105.85_" + web_site.quote(longest, safe="")
+    assert web_site._parse_my_place(value) == (21.03, 105.85, longest)

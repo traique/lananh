@@ -349,3 +349,84 @@ async def test_forecast_cached_theo_toa_do(mock_http):
     assert weather.forecast_cached(11.94, 108.46, 7) and not weather.forecast_cached(
         11.94, 108.46, 2
     )
+
+
+# ─── Tên nơi của toạ độ (Nominatim) ─────────────────────────────────────────
+
+
+@pytest.fixture
+def nominatim(mock_http, monkeypatch):
+    weather._reverse_cache.clear()
+    monkeypatch.setitem(weather._reverse_state, "last", 0.0)
+    monkeypatch.setitem(weather._reverse_state, "down_until", 0.0)
+    monkeypatch.setattr(weather.config, "NOMINATIM_ENABLED", True)
+    monkeypatch.setattr(weather.config, "SITE_BASE_URL", "https://lcta.example")
+    sent, routes = mock_http
+    address = {
+        "suburb": "Phường 1",
+        "city": "Thành phố Đà Lạt",
+        "state": "Tỉnh Lâm Đồng",
+        "country": "Việt Nam",
+    }
+    routes["nominatim.openstreetmap.org"] = lambda r: httpx.Response(
+        200, json={"display_name": "...", "address": address}
+    )
+    yield sent, routes
+    weather._reverse_cache.clear()
+
+
+async def test_reverse_geocode_ten_noi_va_cache(nominatim):
+    sent, _routes = nominatim
+    assert await weather.reverse_geocode(11.940419, 108.458313) == "Phường 1, Đà Lạt"
+    req = sent[-1]
+    assert req.url.params["lat"] == "11.94" and req.url.params["lon"] == "108.46"
+    assert req.url.params["accept-language"] == "vi" and req.url.params["format"] == "jsonv2"
+    # Chính sách OSMF: User-Agent riêng của app, không phải mặc định của thư viện.
+    assert req.headers["user-agent"] == "LCTA-thoi-tiet/1.0 (+https://lcta.example)"
+    assert weather.reverse_cached(11.94, 108.46)
+    assert await weather.reverse_geocode(11.9401, 108.4599) == "Phường 1, Đà Lạt"
+    assert len(sent) == 1  # cùng ô ~1 km: dùng cache, không gọi lại
+
+
+async def test_reverse_geocode_toi_da_1_luot_moi_giay(nominatim, monkeypatch):
+    waits = []
+    real_sleep = weather.asyncio.sleep
+
+    async def fake_sleep(delay):
+        waits.append(delay)
+        await real_sleep(0)
+
+    monkeypatch.setattr(weather.asyncio, "sleep", fake_sleep)
+    await weather.reverse_geocode(10.0, 106.0)
+    await weather.reverse_geocode(21.0, 105.8)
+    assert len(waits) == 1 and 0.9 < waits[0] <= 1.0
+
+
+async def test_reverse_geocode_loi_thi_nghi_va_tat_duoc(nominatim, monkeypatch):
+    sent, routes = nominatim
+    routes["nominatim.openstreetmap.org"] = lambda r: httpx.Response(429)
+    assert await weather.reverse_geocode(10.0, 106.0) is None
+    calls = len(sent)
+    assert await weather.reverse_geocode(16.05, 108.2) is None and len(sent) == calls  # đang nghỉ
+    assert not weather.reverse_cached(10.0, 106.0)  # lỗi không cache: lần sau thử lại
+    monkeypatch.setitem(weather._reverse_state, "down_until", 0.0)
+    monkeypatch.setattr(weather.config, "NOMINATIM_ENABLED", False)
+    assert await weather.reverse_geocode(16.05, 108.2) is None and len(sent) == calls
+
+
+@pytest.mark.parametrize(
+    "address, expected",
+    [
+        (
+            {"suburb": "Phường Bến Nghé", "city": "Thành phố Hồ Chí Minh"},
+            "Phường Bến Nghé, Hồ Chí Minh",
+        ),
+        ({"village": "Xã Tả Van", "state": "Tỉnh Lào Cai"}, "Xã Tả Van, Lào Cai"),
+        ({"town": "Thị xã Sa Pa", "state": "Lao Cai"}, "Thị xã Sa Pa, Lào Cai"),
+        ({"city": "Hà Nội"}, "Hà Nội"),
+        ({"city": "Thành phố Huế", "state": "Huế"}, "Huế"),
+        ({"country": "Việt Nam"}, None),
+    ],
+)
+def test_ten_noi_tu_dia_chi_nominatim(address, expected):
+    assert weather._place_label(address) == expected

@@ -56,7 +56,7 @@ import json
 import re
 import time
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import parse_qsl, quote, unquote, urlencode
 
 from fastapi import APIRouter, Request
 from fastapi.routing import APIRoute
@@ -188,11 +188,19 @@ _PLACE_NOTICES = {
 # Vị trí hiện tại của khách (nút "Lấy vị trí hiện tại", navigator.geolocation): lưu TRONG
 # TRÌNH DUYỆT bằng cookie chỉ gửi kèm trang /thoi-tiet, toạ độ làm tròn 2 số lẻ (~1 km).
 # Máy chủ không lưu (không DB, không RAM ngoài cache dự báo có trần), không cần đăng nhập.
+# Tên nơi tra 1 lần lúc lưu (Nominatim, weather.reverse_geocode) rồi cất luôn trong cookie
+# - xem lại không gọi Nominatim nữa.
 _MY_PLACE_COOKIE = "lcta_vitri"
 _MY_PLACE_PATH = "/thoi-tiet"
 _MY_PLACE_MAX_AGE = 365 * 86400
-# "vĩ độ_kinh độ" trong cookie ("_" không phải bọc ngoặc kép như ","); form gửi ",".
+_MY_PLACE_NAME_MAX = 80
+# Tên nơi là phần phụ: quá hạn chót (kể cả chờ lượt 1 giây của Nominatim) thì lưu toạ độ.
+_REVERSE_TIMEOUT_SEC = 6
+# "vĩ độ_kinh độ" ("_" không phải bọc ngoặc kép như ","); form gửi ",".
 _COORDS_RE = re.compile(r"\s*(-?\d{1,3}(?:\.\d{1,8})?)\s*[,_]\s*(-?\d{1,3}(?:\.\d{1,8})?)\s*")
+# Cookie: "vĩ_kinh" hoặc "vĩ_kinh_<tên nơi đã percent-encode>" (80 ký tự tiếng Việt, mỗi
+# ký tự tối đa 3 byte UTF-8 = 9 ký tự "%XX" -> tên dài nhất 720 ký tự).
+_MY_PLACE_RE = re.compile(r"([^_]{1,20}_[^_]{1,20})(?:_(.{1,900}))?")
 _WEATHER_DAYS = 7
 _WEATHER_TIMEOUT_SEC = 15
 # Trang công khai: chặn số lượt gọi Open-Meteo song song để người lạ spam
@@ -542,12 +550,27 @@ async def lich_holidays_page() -> HTMLResponse:
     )
 
 
-async def _limited_weather(place: str, coords: tuple[float, float] | None = None) -> dict:
+async def _limited_weather(
+    place: str, coords: tuple[float, float] | None = None, name: str = ""
+) -> dict:
     async with _weather_slots:
         if coords:
-            label = f"Vị trí của tôi ({coords[0]:.2f}; {coords[1]:.2f})".replace(".", ",")
+            label = name or f"Vị trí của tôi ({coords[0]:.2f}; {coords[1]:.2f})".replace(".", ",")
             return await weather.get_weather_at(*coords, label, days=_WEATHER_DAYS)
         return await weather.get_weather(place, days=_WEATHER_DAYS)
+
+
+def _parse_my_place(raw: str) -> tuple[float, float, str] | None:
+    """Cookie vị trí đã lưu -> (lat, lon, tên nơi hoặc ""); hỏng -> None. Cookie sửa tay
+    được nên tên chỉ hiện lại cho chính người đó (vẫn escape), cắt độ dài, bỏ ký tự điều
+    khiển."""
+    m = _MY_PLACE_RE.fullmatch(raw or "")
+    coords = _parse_coords(m.group(1)) if m else None
+    if coords is None:
+        return None
+    name = unquote(m.group(2) or "")
+    name = "".join(ch for ch in name if ch.isprintable()).strip()[:_MY_PLACE_NAME_MAX]
+    return coords[0], coords[1], name
 
 
 def _parse_coords(raw: str) -> tuple[float, float] | None:
@@ -594,9 +617,10 @@ async def weather_page(request: Request) -> HTMLResponse:
     place = request.query_params.get("noi", "").strip()[:60]
     places = await weather_places.get()
     error, data = "", None
-    mine = _parse_coords(request.cookies.get(_MY_PLACE_COOKIE, "")[:40])
+    mine = _parse_my_place(request.cookies.get(_MY_PLACE_COOKIE, "")[:1000])
     # Không nhập địa điểm mà đã lưu vị trí hiện tại: xem ở đó thay cho TP.HCM.
-    coords = mine if not place else None
+    coords = mine[:2] if mine and not place else None
+    mine_name = mine[2] if mine else ""
     known = {weather_places.fold(p) for p in places}
     limited = ""
     if coords:
@@ -616,7 +640,9 @@ async def weather_page(request: Request) -> HTMLResponse:
     else:
         try:
             # Hạn chót tính cả lúc xếp hàng chờ slot, không chỉ lúc tra.
-            data = await asyncio.wait_for(_limited_weather(place, coords), _WEATHER_TIMEOUT_SEC)
+            data = await asyncio.wait_for(
+                _limited_weather(place, coords, mine_name), _WEATHER_TIMEOUT_SEC
+            )
         except (weather.WeatherError, asyncio.TimeoutError):
             error = "Nguồn thời tiết đang chậm hoặc lỗi, thử lại sau ít phút."
     if data and data.get("error"):
@@ -636,7 +662,7 @@ async def weather_page(request: Request) -> HTMLResponse:
     days = len(data["daily"]) if data and data.get("daily") else _WEATHER_DAYS
     heading = "Thời tiết"
     if coords:
-        heading = "Thời tiết ở vị trí của bạn"
+        heading = f"Thời tiết {mine_name}" if mine_name else "Thời tiết ở vị trí của bạn"
     elif data:
         heading = f"Thời tiết {data['location']}"
     page = _render(
@@ -651,6 +677,7 @@ async def weather_page(request: Request) -> HTMLResponse:
         error=error,
         places=places,
         mine=mine,
+        mine_name=mine_name,
         showing_mine=coords is not None,
         notice=_PLACE_NOTICES.get(request.query_params.get("tb", "")),
         fmt=lambda x: "?" if x is None else round(float(x)),
@@ -797,15 +824,27 @@ async def _change_place(request: Request, action) -> Response:
 
 @router.post("/thoi-tiet/vi-tri")
 async def weather_my_place_save(request: Request) -> Response:
-    """Lưu vị trí hiện tại (JS gửi lat/lon đã làm tròn) vào cookie của trình duyệt."""
+    """Lưu vị trí hiện tại (JS gửi lat/lon đã làm tròn) vào cookie của trình duyệt, kèm
+    tên nơi tra qua Nominatim. Toạ độ chưa tra tên lần nào tính vào hạn mức tra địa điểm
+    mới theo IP; hết lượt, lỗi hay chậm thì vẫn lưu, chỉ thiếu tên."""
     form = await _form(request)
     coords = _parse_coords(f"{form.get('lat', '')},{form.get('lon', '')}")
     if coords is None:
         return RedirectResponse("/thoi-tiet?tb=vi-tri-loi", status_code=303)
+    name = None
+    ip = web_admin.client_ip(request)
+    if weather.reverse_cached(*coords) or _new_place_allowed(ip) == "":
+        try:
+            name = await asyncio.wait_for(weather.reverse_geocode(*coords), _REVERSE_TIMEOUT_SEC)
+        except asyncio.TimeoutError:
+            name = None
+    value = f"{coords[0]:.2f}_{coords[1]:.2f}"
+    if name:
+        value += "_" + quote(name[:_MY_PLACE_NAME_MAX], safe="")
     response = RedirectResponse("/thoi-tiet?tb=da-luu-vi-tri", status_code=303)
     response.set_cookie(
         _MY_PLACE_COOKIE,
-        f"{coords[0]:.2f}_{coords[1]:.2f}",
+        value,
         max_age=_MY_PLACE_MAX_AGE,
         path=_MY_PLACE_PATH,
         httponly=True,

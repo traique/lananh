@@ -1580,6 +1580,15 @@ lưu (chip "Vị trí của tôi"), gõ địa điểm khác vẫn xem bình th�
 (`POST /thoi-tiet/vi-tri/xoa`) về lại mặc định TP.HCM. Toạ độ chưa có trong cache dự báo
 tính vào cùng hạn mức tra địa điểm mới theo IP (cookie sửa tay được).
 
+Tên nơi ("Phường 1, Đà Lạt") tra MỘT lần lúc lưu, qua Nominatim của OpenStreetMap
+(`weather.reverse_geocode`), rồi cất luôn trong cookie (percent-encode) nên xem lại không
+gọi Nominatim. Theo chính sách dùng của OSMF: tối đa 1 lượt/giây cho cả tiến trình (khoá
++ giãn cách), User-Agent riêng `LCTA-thoi-tiet/1.0 (+SITE_BASE_URL)`, cache có trần 256 ô
+~1 km, lỗi/429/bị chặn thì nghỉ 10 phút; trang có tên ghi "Tên địa điểm © OpenStreetMap"
+(dữ liệu ODbL). Tên là phần phụ: hạn chót 6 giây, hết lượt tra địa điểm mới của IP, lỗi
+hay `NOMINATIM_ENABLED=0` thì vẫn lưu, trang ghi toạ độ thay tên. Toạ độ đã làm tròn
+(~1 km) là thứ duy nhất gửi tới OpenStreetMap; dòng chú thích cạnh nút có nói điều này.
+
 Khách xem mọi trang không cần tài khoản nên thanh bên KHÔNG mời "Đăng nhập" (trang đó
 là trang admin, khách vào sẽ cụt đường). Chủ trang có link nhỏ "Chủ trang đăng nhập" ở
 chân trang và trong khối AI luận giải (về lại đúng trang sau khi đăng nhập); trang đăng
