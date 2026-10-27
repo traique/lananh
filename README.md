@@ -370,11 +370,24 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
 
 #### Dữ liệu đời sống VN (không tốn AI)
 
-- Hỏi "giá vàng hôm nay", "tỷ giá đô", "100 đô bằng bao nhiêu tiền Việt", "1 triệu
-  đổi được bao nhiêu đô", "xổ số miền Nam hôm qua", "dò vé 123456" → trả lời thẳng
-  bằng số liệu thật, không gọi AI (`services/vn_daily_chat.py`). Nguồn: SJC
-  (sjc.com.vn), Vietcombank (feed XML, cache 10 phút), xskt.com.vn (RSS 3 miền,
-  cache 5 phút); nguồn lỗi được nhớ 60 giây để không gọi dồn.
+- Hỏi "giá vàng hôm nay", "giá vàng doji", "vàng thế giới", "tỷ giá đô", "100 đô
+  bằng bao nhiêu tiền Việt", "1 triệu đổi được bao nhiêu đô", "giá xăng hôm nay",
+  "dầu diesel bao nhiêu", "xổ số miền Nam hôm qua", "xổ số tây ninh hôm nay", "kết quả
+  đà lạt chủ nhật", "dò vé 123456 đồng nai" → trả lời thẳng bằng số liệu thật, không
+  gọi AI (`services/vn_daily_chat.py`). Nguồn: vàng vang.today `/api/prices` (SJC
+  miếng, nhẫn SJC, DOJI, PNJ, Bảo Tín, Viettin, VN Gold, XAU/USD kèm tăng giảm so với
+  hôm trước; sjc.com.vn làm dự phòng), Vietcombank (feed XML, cache 10 phút), xăng dầu
+  giaxanghomnay.com (bảng Petrolimex vùng 1/vùng 2 + PVOIL, `services/fuel_prices.py`,
+  cache 1 giờ), xskt.com.vn (RSS 3 miền + RSS riêng 35 đài, cache 5 phút); nguồn lỗi
+  được nhớ 60 giây để không gọi dồn. Cache giữ 1 bản/nguồn, trần 64 khoá.
+- Xổ số theo tỉnh (`services/lottery_provinces.py`): danh mục 36 đài (tên khác: Đà Lạt
+  = Lâm Đồng, Sài Gòn/TP.HCM, Huế, Vũng Tàu, mã xstn...), miền, lịch quay cố định trong
+  tuần (nguồn: lịch mở thưởng xskt.com.vn, ghi trong docstring) và feed riêng
+  `https://xskt.com.vn/rss-feed/<slug>.rss` (~9 kỳ gần nhất). Câu nhắc 1 đài luôn đi
+  feed của đúng đài đó (feed lỗi thì lọc từ feed miền); ngày đó đài không quay thì nói
+  rõ lịch quay và đưa kỳ gần nhất; dò vé chỉ đối chiếu kỳ của đài đó (không bao giờ
+  kết luận "chưa trúng" từ đài khác). Vàng thế giới quy đổi ra triệu đồng/lượng theo
+  giá bán USD Vietcombank, ghi rõ chưa gồm thuế phí.
 - Câu rộng hơn ("vàng tăng vậy có nên mua không") → số liệu thật vào ngữ cảnh cho
   AI, lượt đó không tra Tavily và không ép tra web bắt buộc. Nguồn lỗi → quay về
   đường tra web, câu trả lời phải ghi rõ "tham khảo".
@@ -382,9 +395,13 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   báo lỗi), hỏi kết quả mà nguồn lỗi thì bắt tra web thật. Số tiền giải là cơ cấu
   vé 10.000đ miền Nam/Trung để tham khảo; miền Bắc trùng giải ĐB còn phải khớp ký
   hiệu vé. Có nhắc tên đài thì dò đúng kỳ của đài đó.
-- Lệnh: `/vang`, `/tygia [mã|100 usd]`, `/xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé]`
-  (`/xoso help`). Giá xăng chưa có nguồn riêng (Petrolimex không có API), vẫn đi
-  tra web; BTMC không dùng vì cần API key.
+- Lệnh: `/vang [sjc|nhẫn|doji|pnj|bảo tín|thế giới]`, `/tygia [mã|100 usd]`,
+  `/xang [xăng|diesel|dầu hỏa]`, `/xoso [mb|mn|mt|tỉnh] [hôm nay|hôm qua|dd/mm|chủ
+  nhật] [số vé]` (`/xoso help`), `/xoso tinh` (đài theo miền, ⭐ = quay hôm nay).
+  `/xoso` không tham số: kỳ mới nhất miền Nam, Telegram kèm nút chọn đài quay hôm nay
+  (callback `xs:<số>`), Zalo/Zoom kèm dòng gợi ý `/xoso <tên tỉnh>`. Tên mặt hàng xăng
+  đọc nguyên văn từ bảng nguồn (không hard-code); câu "đổ xăng 100k", "giá dầu thế
+  giới", "dầu ăn" không bị bắt. Web công khai `/xo-so` (+ `GET /api/v1/lottery`).
 - Thời tiết theo giờ: "chiều nay có mưa không", "tối mai", "đêm nay", "mấy giờ
   mưa" → khung giờ dễ mưa, giờ mưa cao nhất, từng giờ. "Chất lượng không khí",
   "bụi mịn", "AQI" → US AQI + PM2.5 từ air-quality-api.open-meteo.com (dữ liệu
@@ -400,7 +417,8 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   `/bantin 6` (giờ 4-12), `/bantin tin on|off`, `/bantin xem` (xem thử ngay).
 - Nội dung tính bằng code: thời tiết thành phố riêng + khung giờ dễ mưa + cảnh báo
   AQI > 100, âm lịch + ngày lễ hôm nay + rằm/mùng 1/lễ sắp tới, việc hôm nay (nhắc
-  việc còn lại, hỏi thăm), ngày nhớ 7 ngày tới, vàng SJC + USD Vietcombank, tổng chi
+  việc còn lại, hỏi thăm), ngày nhớ 7 ngày tới, vàng (SJC miếng, nhẫn, thế giới) + USD
+  Vietcombank, giá xăng dầu Petrolimex (TẮT mặc định, bật `/bantin xang on`), tổng chi
   tháng, danh mục (chỉ ngày giao dịch, bản digest), tin.
 - Telegram chủ bot: bật thì THAY digest danh mục 8h. Tin RSS trên Telegram tắt mặc
   định, bật bằng `/bantin tin on`.
@@ -1301,10 +1319,11 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/tsh_chitiet` (hoặc `/ths_chitiet`), `/tuvi_chitiet` | Như trên + AI diễn giải (1 lượt AI; AI chỉ diễn giải số/lá số đã tính, không tính lại). Ngày sinh, họ tên không lưu DB |
 | `/kymon [dd/mm[/yyyy]] [HH:MM\|8h\|9h sáng mai]` | Lập bàn Kỳ Môn Độn Giáp 9 cung bằng code, mặc định lúc này, không tốn AI |
 | `/kymon_chitiet [thời điểm] <việc cần xem>` | Bàn Kỳ Môn + 1 lượt AI luận giải việc đó |
-| `/vang`, `/tygia [mã\|100 usd]` | Giá vàng SJC; tỷ giá Vietcombank, đổi tiền (không tốn AI) |
-| `/xoso [mb\|mn\|mt\|tỉnh] [hôm qua\|dd/mm] [số vé]` | Kết quả xổ số, dò vé bằng code (`/xoso help`) |
+| `/vang [sjc\|nhẫn\|doji\|pnj\|bảo tín\|thế giới]`, `/tygia [mã\|100 usd]` | Giá vàng SJC/DOJI/PNJ/Bảo Tín + thế giới (vang.today, SJC dự phòng); tỷ giá Vietcombank, đổi tiền (không tốn AI) |
+| `/xang [xăng\|diesel\|dầu hỏa]` | Giá xăng dầu Petrolimex vùng 1/vùng 2, tăng giảm kỳ trước, PVOIL, giờ cập nhật (không tốn AI) |
+| `/xoso [mb\|mn\|mt\|tỉnh] [hôm nay\|hôm qua\|dd/mm\|thứ] [số vé]`, `/xoso tinh` | Kết quả xổ số theo miền hoặc từng đài, dò vé bằng code; danh sách đài + lịch quay (`/xoso help`) |
 | `/thoitiet [địa điểm]`, `/thoitiet nha <tỉnh>\|nha\|nha xoa` | Thời tiết; đặt/xem/xoá thành phố riêng của mình |
-| `/bantin [on\|off\|<giờ 4-12>\|tin on\|tin off\|xem]` | Bản tin sáng cá nhân trên kênh đang dùng |
+| `/bantin [on\|off\|<giờ 4-12>\|tin on\|tin off\|xang on\|xang off\|xem]` | Bản tin sáng cá nhân trên kênh đang dùng (`xang on`: thêm giá xăng) |
 | `/nhac`, `/nhac <thời gian> <nội dung>`, `/nhac huy <số\|từ khoá>`, `/nhac hoan <số> <30p\|1 tiếng\|sáng mai>` | Xem, đặt (cả nhắc lặp, âm lịch), huỷ, dời nhắc việc |
 | `/ngaynho`, `/ngaynho <tên> <ngày> [âm] [trước N ngày] [lúc 7h] [theo tháng nhuận]`, `/ngaynho xoa <số\|tên>` | Ngày nhớ: giỗ, sinh nhật, kỷ niệm |
 | `/chitieu [kỳ]`, `/chitieu <mô tả> <số tiền>`, `/chitieu ds`, `/chitieu xoa <số>`, `/chitieu_xoa <số>` | Tổng chi theo danh mục (hôm nay, tuần này, tháng trước, tháng M[/YYYY], năm nay...), ghi, xem, xoá khoản chi |
@@ -1337,7 +1356,7 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/rag <câu hỏi>` | Tra cứu kiến thức trong các file `.md` của thư mục `rag/` (tìm theo từ khóa, AI diễn giải kèm nguồn; chỉ admin trên Zalo/Zoom) |
 | `/ragxuly <file>` | Dọn file md OCR trong `rag/` (gộp dòng ngắt, bỏ số trang, AI thêm heading; backup bản gốc vào `rag/_goc/`; chỉ admin trên Zalo/Zoom) |
 | `/bangtinsang` (hoặc `/bantinsang`) | Gửi ngay bản tin RSS buổi sáng tới Zalo + Zoom (chỉ admin; bình thường tự gửi 8h) |
-| `/userouter9` | Thử lại 9Router provider |
+| `/userouter9` | Thử lại 9Router provider (không nằm trong menu Telegram - menu tối đa 100 lệnh - nhưng vẫn gõ được) |
 | `/zoompair <jid> [tên]` | Cấp quyền 1 jid Zoom nói chuyện với bot |
 | `/zoomxoa` | Gỡ pairing Zoom hiện tại |
 | `/zoomstatus` | Xem jid Zoom đang được pair |
@@ -1490,10 +1509,12 @@ LCTA có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo n
 | `/lich/ngay-le` | Ngày lễ âm/dương trong 12 tháng tới |
 | `/thoi-tiet?noi=Đà Lạt` | Thời tiết hiện tại + dự báo 7 ngày (Open-Meteo, mặc định TP.HCM; tối đa 3 lượt tra song song, cache có trần trong `services/weather.py`) |
 | `POST /thoi-tiet/dia-diem/them`, `/xoa` (cần đăng nhập) | Thêm/xoá địa điểm hay xem |
+| `/xo-so?dai=mn\|mt\|mb\|<khoá đài>&ngay=YYYY-MM-DD&ve=` | Kết quả xổ số theo miền/đài (ô chọn đánh dấu ★ đài quay hôm nay), bảng giải, dò vé bằng code; tối đa 3 lượt tải nguồn song song, không cần đăng nhập |
 | `/tu-vi` (form, POST ra trang kết quả) | Lá số Tử Vi Đẩu Số dạng lưới 4x4, sao kèm độ sáng (M/V/Đ/B/H) và Tứ hóa |
 | `/than-so-hoc` (form, POST ra trang kết quả) | Thần số học: số chủ đạo, biểu đồ ngày sinh / tổng hợp, 4 đỉnh cao, 4 thử thách |
 | `/ky-mon?ngay=YYYY-MM-DD&gio=HH:MM` (mặc định lúc này; `POST /ky-mon` = AI luận giải, cần đăng nhập) | Bàn Kỳ Môn 9 cung dạng lưới 3x3 (giữ 3x3 ở mọi bề rộng), bảng thông số, cách cục theo nhóm, ý nghĩa từng cung; có link từ thanh bên, trang chủ và menu "Công cụ web" của `/admin` |
 | `GET /api/v1/calendar/days/{YYYY-MM-DD}`, `/months/{YYYY-MM}`, `/conversions?lunarDay=&lunarMonth=&lunarYear=&isLeapMonth=`, `/answers?q=` | JSON lịch |
+| `GET /api/v1/lottery?province=&date=&ticket=` | JSON xổ số: `province` = `mn`/`mt`/`mb` hoặc khoá/tên đài (`tay-ninh`, `Đà Lạt`; trống = miền Nam), `date` YYYY-MM-DD (trống = kỳ mới nhất), `ticket` tuỳ chọn; trả `target` (lịch quay `drawDays`, `drawsToday`), `status` (`latest`/`exact`/`not_drawn`/`pending`/`missing`/`empty`), `message`, `draw.provinces[].prizes`, `ticket.results[].wins`, `availableDates`; 422 `INVALID_PROVINCE`/`INVALID_DATE`/`INVALID_TICKET`, nguồn lỗi 503 `SOURCE_UNAVAILABLE` |
 | `POST /api/v1/numerology/readings`, `POST /api/v1/tuvi/charts` | JSON thần số học/lá số (ngày sinh trong body, không nằm trong URL/log; `birthDate` nhận `YYYY-MM-DD` hoặc `DD/MM/YYYY`). Lá số: `isLeapMonth`/`isEarlyTy` là bool (sinh 23h-24h: `isEarlyTy: true`, an theo ngày hôm sau); mỗi cung có `mainStars`/`minorStars` (tên) như cũ và thêm `stars[]` {name, isMain, hoa, brightness M/V/Đ/B/H}, `daiHan.fromAge/toAge`; thần số học thêm `asOf`, `age`, `lifePath.single`, `maturity`, `pinnacles[]`, `challenges[]`, `personalMonthDetail`, `nameChart`, `combinedChart` |
 | `POST /api/v1/qimen/charts` | JSON bàn Kỳ Môn: body `{"dateTime"?: "YYYY-MM-DDTHH:MM[+07:00]"}` (không múi giờ = giờ VN, bỏ trống = lúc này); trả `pillars`, `solarTerm`, `dun`, `ju`, `yuan`, `xunShou`, `zhiFu`, `zhiShi`, `void`, `horse`, cờ phục/phản ngâm, `grid`, `palaces`, `patterns`, `patternGroups`; GET trả 405 chuẩn |
 

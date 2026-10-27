@@ -486,3 +486,101 @@ một lần sau khi deploy.
 - Link công khai `/media/tts/` không cần đăng nhập (ai có link trong 10 phút nghe
   được câu trả lời đó) - link chỉ nằm trong tin gửi người nhận.
 - Bảng kcal là ước lượng thô (±20-40%); câu tự nhiên dựa trên mẫu cố định.
+
+## Dữ liệu đời sống: xổ số theo tỉnh, vàng, xăng
+
+Số liệu luôn do code đọc từ nguồn công khai, AI không được tự đưa con số (không lượt
+AI nào cho câu hỏi gọn). Không migration, không env mới.
+
+### 1. Xổ số theo tỉnh
+
+- `services/lottery_provinces.py`: danh mục 36 đài (21 miền Nam, 14 miền Trung, 1 kỳ
+  chung miền Bắc) gồm tên, tên khác (Đà Lạt = Lâm Đồng, Sài Gòn/TP.HCM, Huế = Thừa
+  Thiên Huế, Vũng Tàu = Bà Rịa - Vũng Tàu, Nha Trang = Khánh Hòa, mã kiểu `xstn`), miền,
+  các thứ quay trong tuần và feed riêng `https://xskt.com.vn/rss-feed/<slug>.rss`. Lịch
+  quay lấy từ trang "Lịch mở thưởng xổ số 3 miền" của xskt.com.vn, đối chiếu với tiêu đề
+  các kỳ trong feed (Huế quay thứ Hai và Chủ Nhật; TP.HCM thứ Hai và thứ Bảy; Đà Nẵng
+  thứ Tư và thứ Bảy; Khánh Hòa thứ Tư và Chủ Nhật). Lịch chỉ dùng để gợi ý; kết quả
+  luôn lấy từ feed.
+- Feed tỉnh đã kiểm tra (Tây Ninh, Lâm Đồng, Thừa Thiên Huế, 27/10/2026): cùng định dạng
+  feed miền Bắc (mô tả plain text "ĐB: ...", không có "[Tên tỉnh]", giải 7/8 dính dòng
+  "7: 1338: 59"), khoảng 9 kỳ gần nhất; feed có lúc lẫn 1 kỳ ngày lạ (link `26-1-2007`)
+  nên kỳ quá 366 ngày hoặc ở tương lai bị bỏ. Mẫu ghi lại ở `test/_vn_data_samples.py`
+  (`XSTN_RSS`).
+- Lệnh: `/xoso <tỉnh> [hôm nay|hôm qua|dd/mm|chủ nhật|thứ 5] [số vé]`, `/xoso tinh`
+  (đài theo miền, ⭐ = quay hôm nay). `/xoso` không tham số giữ như cũ (kỳ mới nhất miền
+  Nam); Telegram kèm nút chọn đài quay hôm nay (verb mới `xs:<chỉ số đài>` trong
+  whitelist `services/action_buttons.py`, chạy ngoài khoá lượt vì không gọi AI), Zalo/Zoom
+  kèm dòng gợi ý `/xoso <tên tỉnh>`.
+- Câu tự nhiên: "xổ số tây ninh hôm nay", "kết quả đà lạt chủ nhật" (không có chữ "xổ
+  số" vẫn nhận nếu câu chỉ gồm tên đài + ngày - "kết quả bóng đá Đà Nẵng" không nhận),
+  "dò vé 123456 đồng nai", "xổ số tây ninh quay thứ mấy". Tên đài thắng tên miền
+  ("/xoso mn đà nẵng" là đài Đà Nẵng miền Trung).
+- Ngày đó đài không quay: nói rõ lịch quay và đưa kỳ gần nhất trước đó (dò vé thì ghi
+  "dò theo kỳ gần nhất dd/mm"). Hôm nay có quay mà nguồn chưa có: báo giờ quay, KHÔNG dò.
+- Sửa lỗi cũ: câu dò vé nhắc 1 đài không có trong kỳ đang xét từng bị dò sang các đài
+  khác của kỳ đó rồi phán "chưa trúng" (vd `/xoso mn 123456 đà nẵng`). Nay đài được nhắc
+  luôn đi feed riêng; `format_ticket` cũng từ chối kết luận khi đài được nhắc vắng mặt.
+- Cache: mỗi đài 1 bản 5 phút (khoá `xst:<đài>`), trần chung 64 khoá; feed tỉnh lỗi thì
+  lọc từ feed miền (ít kỳ hơn); cả hai lỗi: dò vé báo lỗi thật, hỏi kết quả đi tra web
+  có nhãn "tham khảo" và cấm nêu số từ trí nhớ.
+- Web công khai `/xo-so` (link "Xổ số" ở thanh bên, nhóm Tra cứu): ô chọn miền/đài + ngày
+  + số vé, bảng giải từng đài, dò vé, các kỳ nguồn còn giữ; render ở server, chạy cả khi
+  tắt JS, giao diện tối theo site.css. API `GET /api/v1/lottery?province=&date=&ticket=`
+  (`services/lottery_lookup.py`), lỗi theo quy ước `{"error": {...}}` (422/503). Tối đa 3
+  lượt tải nguồn song song, hạn chót 12 giây.
+
+### 2. Giá vàng (vang.today)
+
+- Nguồn chính `https://www.vang.today/api/prices` (như route gold-live của repo tham khảo
+  traique/stock-portfolio). Thực tế ngày 27/10/2026 `prices` là OBJECT `{mã: {...}}`
+  chứ không phải danh sách `type_code` như mô tả; parser nhận cả hai dạng.
+- `/vang` hiện SJC miếng, nhẫn SJC, DOJI, PNJ (Hà Nội, 24K), Bảo Tín (SJC, 9999) - mua/bán
+  triệu đồng/lượng kèm ▲▼ so với hôm trước - và XAU/USD kèm quy đổi tham khảo ra triệu
+  đồng/lượng theo giá bán USD Vietcombank (ghi rõ chưa gồm thuế phí) + chênh lệch với SJC
+  miếng; giờ cập nhật theo nguồn. `/vang pnj`, "giá vàng doji", "vàng thế giới", "vàng
+  nhẫn" lọc theo thương hiệu. "nến doji", "PNJ có nên mua không" (cổ phiếu) không bị
+  nhận là giá vàng.
+- vang.today lỗi: rơi về bảng SJC cũ; hỏi DOJI/PNJ/thế giới mà chỉ còn SJC thì đi tra web
+  có nhãn "tham khảo". Bản tin sáng dùng dòng vang.today (SJC dự phòng).
+
+### 3. Giá xăng dầu (mới)
+
+- `services/fuel_prices.py`: đọc https://giaxanghomnay.com/ bằng BeautifulSoup (đã cài),
+  như route oil-live của repo tham khảo. Không hard-code tên mặt hàng: mọi bảng được đọc,
+  cột nhận theo tiêu đề bỏ dấu ("vùng 1/vùng 2" = Petrolimex, "kỳ trước" + "Giá" =
+  PVOIL; bảng lịch sử "giá cũ/giá mới" và bảng thế giới bị loại), giá ngoài khoảng
+  5.000-100.000 đ/lít bị bỏ. Dòng "Giá của Petrolimex cập nhật YYYY-MM-DD HH:MM:SS" thành
+  giờ cập nhật. Body tối đa 1 MB, cache 1 giờ, lỗi nhớ 60 giây.
+- Fixture `FUEL_HTML` dựng theo cấu trúc trang thật 27/10/2026 (số liệu đúng bảng đã
+  công bố) vì công cụ đọc web chỉ trả văn bản đã render, không trả HTML gốc - xem rủi ro.
+- `/xang [xăng|diesel|dầu hỏa]`; câu "giá xăng hôm nay", "dầu diesel bao nhiêu", "xăng
+  e5 bao nhiêu 1 lít" trả thẳng. Chỉ nhận khi rõ ràng: cần cụm xăng/diesel/dầu DO/dầu hỏa
+  + ngữ cảnh hỏi giá; "đổ xăng 100k" (chi tiêu, đã bắt trước), "hết xăng rồi", "giá dầu
+  hôm nay" (mơ hồ), "dầu ăn", "giá xăng thế giới" không trả thẳng (câu thế giới đi AI kèm
+  số liệu trong nước + tra web).
+- Bản tin sáng: mục `fuel` (order 45) TẮT mặc định, bật `/bantin xang on` (lưu trong JSON
+  cài đặt bản tin, khoá `fuel`).
+
+### Menu Telegram
+
+Menu có 99/100 lệnh. Thêm `/xang` thì bỏ `/userouter9` khỏi MENU (lệnh vẫn chạy, vẫn có
+trong /help): bot đã tự thử lại 9Router định kỳ và cảnh báo provider tự gợi ý lệnh này
+nên ít khi phải gõ. Test kiểm menu ≤ 100 lệnh, không trùng.
+
+### Việc chủ bot cần làm
+
+- Không cần migration hay env mới. Sau deploy thử `/xoso tinh`, `/xoso tây ninh`,
+  `/vang`, `/xang`, trang `/xo-so` trên điện thoại.
+- Nếu Telegram vẫn hiện menu cũ, gửi lại menu bằng cách khởi động lại bot (`set_my_commands`
+  chạy lúc khởi động).
+
+### Rủi ro
+
+- Lịch quay có thể đổi (sáp nhập tỉnh, nghỉ Tết): chỉ ảnh hưởng câu gợi ý "đài không
+  quay"; kết quả vẫn theo feed. Nếu một đài đổi ngày, sửa `weekdays` trong danh mục.
+- giaxanghomnay.com đổi cấu trúc HTML (chưa kiểm được HTML gốc, chỉ thấy bản render): nếu
+  tiêu đề cột không còn "vùng 1"/"kỳ trước" thì `/xang` báo lỗi thật và câu chat đi tra
+  web "tham khảo" - không bao giờ đoán số.
+- vang.today là nguồn tổng hợp không chính thức; số liệu ghi rõ nguồn và giờ cập nhật,
+  SJC chính hãng vẫn làm dự phòng.
