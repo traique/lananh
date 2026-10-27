@@ -417,7 +417,9 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   `/xoso` không tham số: kỳ mới nhất miền Nam, Telegram kèm nút chọn đài quay hôm nay
   (callback `xs:<số>`), Zalo/Zoom kèm dòng gợi ý `/xoso <tên tỉnh>`. Tên mặt hàng xăng
   đọc nguyên văn từ bảng nguồn (không hard-code); câu "đổ xăng 100k", "giá dầu thế
-  giới", "dầu ăn" không bị bắt. Web công khai `/xo-so` (+ `GET /api/v1/lottery`).
+  giới", "dầu ăn" không bị bắt. Web công khai `/xo-so` (+ `GET /api/v1/lottery`),
+  `/gia-vang` (kèm tỷ giá Vietcombank) và `/gia-xang` (+ `GET /api/v1/gold`, `/fuel`,
+  `/fx`) - dùng chung cache của chat, không tải nguồn lần nữa.
 - Thời tiết theo giờ: "chiều nay có mưa không", "tối mai", "đêm nay", "mấy giờ
   mưa" → khung giờ dễ mưa, giờ mưa cao nhất, từng giờ. "Chất lượng không khí",
   "bụi mịn", "AQI" → US AQI + PM2.5 từ air-quality-api.open-meteo.com (dữ liệu
@@ -1542,10 +1544,11 @@ dùng đúng 2 kênh bạn yêu cầu; trên Telegram dùng `/tintuc` hoặc `/b
   sáng hôm sau.
 - Tắt hẳn tính năng: set `MORNING_NEWS_ENABLED=false`.
 
-## Web LCTA (lịch, thời tiết, tử vi, thần số học, Kỳ Môn)
+## Web LCTA (lịch, thời tiết, tử vi, thần số học, Kỳ Môn, xổ số, giá vàng, giá xăng)
 
 `web_site.py` - trang render sẵn ở server (chạy được khi tắt JavaScript). Xem
-lịch, thời tiết, tử vi, thần số học, Kỳ Môn KHÔNG cần đăng nhập và không tốn AI.
+lịch, thời tiết, tử vi, thần số học, Kỳ Môn, xổ số, giá vàng, giá xăng KHÔNG cần đăng
+nhập và không tốn AI.
 Cần đăng nhập bằng tài khoản admin (`ADMIN_USER`/`ADMIN_PASS`, chung phiên với
 `/admin`) cho việc tốn quota hoặc đổi dữ liệu chung:
 - nút "AI luận giải" ở trang kết quả tử vi/thần số học và ô câu hỏi ở `/ky-mon`
@@ -1593,11 +1596,16 @@ LCTA có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo n
 | `/thoi-tiet?noi=Đà Lạt` | Thời tiết hiện tại + dự báo 7 ngày (Open-Meteo, mặc định TP.HCM; tối đa 3 lượt tra song song, cache có trần trong `services/weather.py`) |
 | `POST /thoi-tiet/dia-diem/them`, `/xoa` (cần đăng nhập) | Thêm/xoá địa điểm hay xem |
 | `/xo-so?dai=mn\|mt\|mb\|<khoá đài>&ngay=YYYY-MM-DD&ve=` | Kết quả xổ số theo miền/đài (ô chọn đánh dấu ★ đài quay hôm nay), bảng giải, dò vé bằng code; tối đa 3 lượt tải nguồn song song, không cần đăng nhập |
+| `/gia-vang` | Giá vàng mua/bán (triệu đồng/lượng) kèm ▲▼ so với hôm trước: SJC miếng, nhẫn SJC, DOJI Hà Nội/TP.HCM/nữ trang, PNJ, Bảo Tín, Viettin, VN Gold; vàng thế giới XAU/USD + quy đổi tham khảo theo giá bán USD Vietcombank (chưa gồm thuế phí) và chênh lệch với SJC miếng; mục tỷ giá Vietcombank các ngoại tệ chính; giờ cập nhật + nguồn (vang.today, vang.today lỗi thì bảng SJC). Dùng cache sẵn có của `services/vn_market_data.py` (10 phút) qua `services/price_lookup.py` |
+| `/gia-xang` | Giá xăng dầu Petrolimex (vùng 1, vùng 2, tăng giảm kỳ này/kỳ trước) và PVOIL, giờ cập nhật, nguồn giaxanghomnay.com (`services/fuel_prices.py`, cache 1 giờ). Hai trang giá: tối đa 3 lượt tải nguồn song song, hạn chót 15 giây, nguồn lỗi thì hiện thông báo thay vì trang lỗi; bảng gập thành thẻ khi khối hẹp (điện thoại 360px không cuộn ngang) |
 | `/tu-vi` (form, POST ra trang kết quả) | Lá số Tử Vi Đẩu Số dạng lưới 4x4, sao kèm độ sáng (M/V/Đ/B/H) và Tứ hóa |
 | `/than-so-hoc` (form, POST ra trang kết quả) | Thần số học: số chủ đạo, biểu đồ ngày sinh / tổng hợp, 4 đỉnh cao, 4 thử thách |
 | `/ky-mon?ngay=YYYY-MM-DD&gio=HH:MM` (mặc định lúc này; `POST /ky-mon` = AI luận giải, cần đăng nhập) | Bàn Kỳ Môn 9 cung dạng lưới 3x3 (giữ 3x3 ở mọi bề rộng), bảng thông số, cách cục theo nhóm, ý nghĩa từng cung; có link từ thanh bên, trang chủ và menu "Công cụ web" của `/admin` |
 | `GET /api/v1/calendar/days/{YYYY-MM-DD}`, `/months/{YYYY-MM}`, `/conversions?lunarDay=&lunarMonth=&lunarYear=&isLeapMonth=`, `/answers?q=` | JSON lịch |
 | `GET /api/v1/lottery?province=&date=&ticket=` | JSON xổ số: `province` = `mn`/`mt`/`mb` hoặc khoá/tên đài (`tay-ninh`, `Đà Lạt`; trống = miền Nam), `date` YYYY-MM-DD (trống = kỳ mới nhất), `ticket` tuỳ chọn; trả `target` (lịch quay `drawDays`, `drawsToday`), `status` (`latest`/`exact`/`not_drawn`/`pending`/`missing`/`empty`), `message`, `draw.provinces[].prizes`, `ticket.results[].wins`, `availableDates`; 422 `INVALID_PROVINCE`/`INVALID_DATE`/`INVALID_TICKET`, nguồn lỗi 503 `SOURCE_UNAVAILABLE` |
+| `GET /api/v1/gold` | JSON giá vàng: `source` (`vang.today` hoặc `sjc.com.vn`), `fallback` (true = vang.today lỗi, đang dùng bảng SJC, không có tăng giảm/thế giới), `updated`, `unit` (`VND/lượng`), `domestic[]` {code, name, brand, branch, buy, sell, changeBuy, changeSell} (đồng/lượng, tăng giảm so với hôm trước, `null` khi không có), `world` {priceUsdPerOunce, change, unit, `conversion` {vndPerTael, usdVnd, rateSource, rateUpdated, sjcSellGap, note} hoặc null khi thiếu tỷ giá} hoặc null, `fx` (như `/fx`, null khi tỷ giá lỗi); cả vang.today lẫn SJC lỗi → 503 `SOURCE_UNAVAILABLE` |
+| `GET /api/v1/fuel` | JSON giá xăng dầu: `source`, `updated`, `unit` (`VND/lít`), `petrolimex[]` {name, kind (`xang`/`diesel`/`dau_hoa`/`khac`), zone1, zone2, change, prevChange}, `pvoil[]` {name, kind, price, change, prevChange}; nguồn lỗi 503 `SOURCE_UNAVAILABLE` |
+| `GET /api/v1/fx` | JSON tỷ giá Vietcombank: `source`, `updated`, `unit` (`VND`), `rates[]` {code, name, nameVi, cashBuy, transferBuy, sell} cho USD, EUR, JPY, CNY, KRW, GBP, AUD, SGD, THB (mã nào nguồn thiếu thì bỏ); nguồn lỗi 503 `SOURCE_UNAVAILABLE` |
 | `POST /api/v1/numerology/readings`, `POST /api/v1/tuvi/charts` | JSON thần số học/lá số (ngày sinh trong body, không nằm trong URL/log; `birthDate` nhận `YYYY-MM-DD` hoặc `DD/MM/YYYY`). Lá số: `isLeapMonth`/`isEarlyTy` là bool (sinh 23h-24h: `isEarlyTy: true`, an theo ngày hôm sau); mỗi cung có `mainStars`/`minorStars` (tên) như cũ và thêm `stars[]` {name, isMain, hoa, brightness M/V/Đ/B/H}, `daiHan.fromAge/toAge`; thần số học thêm `asOf`, `age`, `lifePath.single`, `maturity`, `pinnacles[]`, `challenges[]`, `personalMonthDetail`, `nameChart`, `combinedChart` |
 | `POST /api/v1/qimen/charts` | JSON bàn Kỳ Môn: body `{"dateTime"?: "YYYY-MM-DDTHH:MM[+07:00]"}` (không múi giờ = giờ VN, bỏ trống = lúc này); trả `pillars`, `solarTerm`, `dun`, `ju`, `yuan`, `xunShou`, `zhiFu`, `zhiShi`, `void`, `horse`, cờ phục/phản ngâm, `grid`, `palaces`, `patterns`, `patternGroups`; GET trả 405 chuẩn |
 
