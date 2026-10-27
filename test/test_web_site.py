@@ -1183,7 +1183,17 @@ async def test_thoi_tiet_nguon_du_phong_ghi_dung_so_ngay(client, monkeypatch):
     monkeypatch.setattr(web_site.weather, "get_weather", fallback)
     html = (await client.get("/thoi-tiet")).text
     assert "Hiện tại và dự báo 3 ngày" in html and "dự báo 7 ngày" not in html
-    assert "Open-Meteo đang lỗi" in html
+    # dòng nguồn của bảng dự báo đã ghi là dự phòng; không thêm băng báo riêng
+    assert "Nguồn: wttr.in (dự phòng, tối đa 3 ngày)" in html and "Open-Meteo đang lỗi" not in html
+
+
+async def test_tu_vi_va_ky_mon_co_dien_giai_cho_khach(client):
+    html = (await client.post("/tu-vi", data=_TUVI_FORM)).text
+    assert 'id="read-title">Diễn giải lá số</h2>' in html and 'href="#read-title"' in html
+    assert html.count('<p class="rl-head">') == 12 and "Bản mệnh" in html
+    html = (await client.get("/ky-mon", params={"ngay": "2026-10-27", "gio": "09:30"})).text
+    assert 'id="qm-read">Diễn giải bàn</h2>' in html and "Việc gì xem hướng nào" in html
+    assert "Hướng nên dùng" in html and "Cách đọc bàn" in html
 
 
 async def test_luoi_tu_vi_dien_thoai_co_o_giua(client):

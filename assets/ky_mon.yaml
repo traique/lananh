@@ -189,3 +189,47 @@ dung_than:
   Tìm đồ mất, kẻ gian: Huyền Vũ, Đỗ môn
   Gặp quý nhân, cầu xin: Hưu môn, Trực phù
   Nhà đất: Sinh môn, Thiên Nhậm, Cửu Địa
+
+# ─── Diễn giải trên web (services/kymon.reading) ────────────────────────────
+# viec_xem: việc cần làm -> yếu tố (dụng thần, theo dung_than ở trên) cần tìm trên bàn:
+#   cua (bát môn), sao (cửu tinh), than (bát thần) hoặc ma: true (cung Mã tinh). Hướng
+#   của việc được chấm theo các yếu tố còn lại trong cùng cung (cửa, sao, thần), không
+#   vong và cách cục ở cung đó.
+viec_xem:
+  - viec: Công việc, sự nghiệp, xin việc
+    cua: Khai
+  - viec: Tiền bạc, kinh doanh, đầu tư
+    cua: Sinh
+  - viec: Thi cử, giấy tờ, văn bản
+    cua: Cảnh
+  - viec: Gặp quý nhân, cầu xin, nhờ vả
+    cua: Hưu
+  - viec: Tình cảm, hôn nhân, hợp tác
+    than: Lục Hợp
+  - viec: Sức khỏe, tìm thầy thuốc
+    sao: Thiên Tâm
+  - viec: Nhà đất
+    sao: Thiên Nhậm
+  - viec: Đi xa, xuất hành
+    ma: true
+  - viec: Kiện tụng, tranh chấp
+    cua: Kinh
+  - viec: Tìm đồ mất, đề phòng kẻ gian
+    than: Huyền Vũ
+
+dun:
+  Dương độn: nửa năm từ Đông chí đến trước Hạ chí, khí dương tăng dần; tam kỳ lục nghi an thuận theo số cung.
+  Âm độn: nửa năm từ Hạ chí đến trước Đông chí, khí âm tăng dần; tam kỳ lục nghi an nghịch theo số cung.
+truc_phu: sao đứng đầu của giờ, cho biết khí chung của cả giờ
+truc_su: cửa chủ việc của giờ, cho biết việc người ta làm trong giờ này
+khong_vong: việc làm theo hướng này dễ hụt, khó thành; cát giảm cát, hung giảm hung
+ma_tinh: thuận cho di chuyển, đi xa, việc cần nhanh
+
+# Cách đọc bàn trên trang web (mỗi dòng một ý).
+cach_doc:
+  - Bàn có 9 ô ứng 9 hướng, phía Nam ở trên, Bắc ở dưới như la bàn phong thủy; ô giữa là trung cung.
+  - Trong mỗi ô, dòng đầu là số cung, tên quẻ và hướng; dòng thứ hai là thần (ảnh hưởng ngầm: được che chở hay bị quấy rầy).
+  - Chữ đậm là sao (thiên thời, khí của việc). Nhãn tròn là cửa (việc mình làm, nhân sự); nhãn xanh là cửa tốt Khai, Hưu, Sinh.
+  - Dòng cuối là can thiên bàn và địa bàn, dùng để xét cách cục.
+  - Ô viền xanh là cung Trực phù; nhãn "Không" là không vong, "Mã" là Mã tinh.
+  - Muốn làm việc gì thì tìm yếu tố của việc đó (mục "Việc gì xem hướng nào") rồi xem hướng của nó tốt hay xấu.

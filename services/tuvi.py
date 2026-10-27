@@ -374,6 +374,109 @@ def brightness(star: str, pos: int) -> str | None:
     return level if level in BRIGHTNESS_NAMES else None
 
 
+# Đọc nhanh một cung: chính tinh sáng cộng, hãm trừ; Tứ hóa; cát/sát tinh (mỗi phía tối
+# đa 2 điểm); Tuần, Triệt kéo điểm về 0. Từ 2 trở lên là thuận, -2 trở xuống là nhiều trắc trở.
+_BRIGHT_SCORE = {"M": 2, "V": 2, "Đ": 1, "B": 0, "H": -2}
+_HOA_SCORE = {"Hóa Lộc": 1, "Hóa Quyền": 1, "Hóa Khoa": 1, "Hóa Kỵ": -2}
+_CUC_MENH = {
+    "same": "binh_hoa",
+    "sinh": "cuc_sinh_menh",
+    "duoc_sinh": "menh_sinh_cuc",
+    "khac": "cuc_khac_menh",
+    "bi_khac": "menh_khac_cuc",
+}
+
+
+def _verdict(score: int) -> tuple[str, str]:
+    if score >= 2:
+        return "Thuận", "pos"
+    if score <= -2:
+        return "Nhiều trắc trở", "warn"
+    return "Trung bình", ""
+
+
+def reading(c: Chart, today: dt.date) -> dict:
+    """Diễn giải lá số bằng lời thường cho trang web: mỗi cung lo việc gì, chính tinh sáng
+    hay hãm, Tứ hóa, cát/sát tinh, Tuần Triệt, quan hệ cục - mệnh và đại hạn đang đi qua.
+    Đọc nhanh theo quy tắc phổ biến (assets/tu_vi.yaml), chưa xét các cách cục."""
+    t = _texts()
+    domains, natures = t.get("cung_y_nghia", {}), t.get("chinh_tinh_tinh_chat", {})
+    hoa_text = t.get("tu_hoa_y_nghia", {})
+    good, bad = set(t.get("cat_tinh", [])), set(t.get("sat_tinh", []))
+    age = can_chi.lunar_year_of(today) - c.lunar_year + 1
+    current = next((pos for pos, (a, b) in c.dai_han.items() if a <= age <= b), None)
+    palaces = []
+    for i in range(12):
+        pos = (c.menh + i) % 12
+        stars = c.star_list(pos)
+        mains = [s for s in stars if s.is_main]
+        lines, score = [], 0
+        if mains:
+            parts = []
+            for s in mains:
+                score += _BRIGHT_SCORE.get(s.brightness or "", 0)
+                level = BRIGHTNESS_NAMES.get(s.brightness or "")
+                parts.append(f"{s.name}{' ' + level if level else ''} ({natures.get(s.name, '')})")
+            lines.append("Chính tinh " + "; ".join(parts) + ".")
+        else:
+            score -= 1
+            opposite = (pos + 6) % 12
+            borrowed = ", ".join(s.name for s in c.star_list(opposite) if s.is_main)
+            lines.append(
+                f"Vô chính diệu: không có chính tinh, mượn sao cung {c.palace_at(opposite)} "
+                f"đối diện ({borrowed or 'cũng trống'}) để luận, sức cung yếu hơn."
+            )
+        for s in stars:
+            if s.hoa and s.hoa in hoa_text:
+                score += _HOA_SCORE[s.hoa]
+                lines.append(f"{s.hoa} ({s.name}): {hoa_text[s.hoa]}.")
+        helpers = [s.name for s in stars if s.name in good]
+        harms = [s.name for s in stars if s.name in bad]
+        if helpers:
+            score += min(len(helpers), 2)
+            lines.append(f"Cát tinh {', '.join(helpers)}: {t.get('cat_tinh_y_nghia', '')}.")
+        if harms:
+            score -= min(len(harms), 2)
+            lines.append(f"Sát tinh {', '.join(harms)}: {t.get('sat_tinh_y_nghia', '')}.")
+        cut = [name for name, on in (("Tuần", pos in c.tuan), ("Triệt", pos in c.triet)) if on]
+        if cut:
+            score = int(score / 2)
+            lines.append(f"{' và '.join(cut)} {t.get('tuan_triet', '')}")
+        verdict, tone = _verdict(score)
+        palaces.append(
+            {
+                "name": PALACES[i],
+                "branchIndex": pos,
+                "domain": domains.get(PALACES[i], ""),
+                "verdict": verdict,
+                "tone": tone,
+                "lines": lines,
+                "isMenh": i == 0,
+                "isThan": pos == c.than,
+                "isCurrent": pos == current,
+            }
+        )
+    born = can_chi.year_profile(c.lunar_year)
+    relation = _CUC_MENH[can_chi.ngu_hanh_kind(c.element, born["menh"])]
+    than = palaces[(c.than - c.menh) % 12]
+    overview = [
+        f"Bản mệnh {born['nap_am']} ({born['menh']}), {_CUC_NAME[c.cuc]}: "
+        f"{t.get('cuc_menh', {}).get(relation, '')}",
+        f"Thân cư {than['name']}: {t.get('than_cu', '')} ({than['domain']}).",
+    ]
+    if current is not None:
+        start, end = c.dai_han[current]
+        now = palaces[(current - c.menh) % 12]
+        overview.append(
+            f"Năm nay {age} tuổi âm, đang đi đại hạn cung {now['name']} ({start}-{end} tuổi): "
+            f"mười năm này nổi bật chuyện {now['domain']}; cung này đọc nhanh là "
+            f"{now['verdict'].lower()}."
+        )
+    elif 0 < age < c.cuc:
+        overview.append(f"Năm nay {age} tuổi âm, chưa vào đại hạn đầu (từ {c.cuc} tuổi).")
+    return {"age": age, "overview": overview, "palaces": palaces, "howTo": t.get("cach_doc", [])}
+
+
 def format_chart(c: Chart) -> str:
     born = can_chi.year_profile(c.lunar_year)
     gender = ("Dương" if c.can_y % 2 == 0 else "Âm") + (" Nam" if c.male else " Nữ")

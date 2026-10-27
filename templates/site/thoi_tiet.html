@@ -44,8 +44,8 @@
   {% if mine %}
   <form method="post" action="/thoi-tiet/vi-tri/xoa"><button class="btn ghost" type="submit">Xoá vị trí đã lưu</button></form>
   {% endif %}
-  <p class="hint" id="geo-msg" role="status"{% if not mine %} hidden{% endif %}>Vị trí làm tròn khoảng 1 km, chỉ lưu trong trình duyệt này. Tên nơi tra qua OpenStreetMap.</p>
-  {% if showing_mine and mine_name %}<p class="hint">Tên địa điểm © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap</a></p>{% endif %}
+  {# chỉ hiện khi lấy vị trí lỗi (script cuối trang ghi câu báo vào đây) #}
+  <p class="hint" id="geo-msg" role="status" hidden></p>
 </div>
 <form id="geo-form" method="post" action="/thoi-tiet/vi-tri" hidden>
   <input type="hidden" name="lat"><input type="hidden" name="lon">
@@ -55,9 +55,6 @@
 {% endif %}
 
 {% if data %}
-{% if data.fallback %}
-<div class="ok-box notice price-note" role="status">Nguồn chính Open-Meteo đang lỗi, tạm dùng nguồn dự phòng wttr.in nên chỉ có dự báo {{ days }} ngày.</div>
-{% endif %}
 <div class="grid top">
   <section class="panel weather-now s5" aria-labelledby="now-title">
     <header><h2 id="now-title">Bây giờ</h2><span class="meta">{{ data.location }}</span></header>
@@ -71,7 +68,7 @@
     </dl>
   </section>
   <section class="sect s7" aria-labelledby="fc-title">
-    <header><h2 id="fc-title">Dự báo {{ data.daily | length }} ngày</h2><span class="meta">Nguồn: {{ data.source }}, cập nhật khoảng 10 phút một lần</span></header>
+    <header><h2 id="fc-title">Dự báo {{ data.daily | length }} ngày</h2><span class="meta">Nguồn: {{ data.source }}, cập nhật khoảng 10 phút một lần{% if showing_mine and mine_name %}; tên địa điểm © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap</a>{% endif %}</span></header>
     <div class="table-wrap" tabindex="0" role="region" aria-labelledby="fc-title">
       <table class="forecast">
         <thead><tr><th scope="col">Ngày</th><th scope="col">Trời</th><th scope="col" class="n">Thấp</th><th scope="col" class="range-col"><span class="sr-only">Biên độ</span></th><th scope="col" class="n">Cao</th><th scope="col" class="n">Mưa</th><th scope="col" class="n">UV</th></tr></thead>
@@ -103,7 +100,6 @@
     if (!btn || !form || !navigator.geolocation || !window.isSecureContext) return;
     var label = btn.lastChild.textContent;
     btn.hidden = false;
-    msg.hidden = false;
     btn.addEventListener('click', function () {
       btn.disabled = true;
       btn.lastChild.textContent = 'Đang lấy vị trí…';
@@ -114,6 +110,7 @@
       }, function (err) {
         btn.disabled = false;
         btn.lastChild.textContent = label;
+        msg.hidden = false;
         msg.textContent = err.code === 1
           ? 'Trình duyệt chưa cho trang này lấy vị trí. Bật quyền vị trí trong cài đặt trình duyệt rồi thử lại, hoặc gõ tên địa điểm.'
           : 'Chưa lấy được vị trí lúc này. Thử lại ở nơi thoáng hơn hoặc gõ tên địa điểm.';

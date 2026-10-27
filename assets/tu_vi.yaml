@@ -66,3 +66,70 @@ do_sang:
   Thiên Mã:    "--V--V--Đ--H"
   Đại Hao:     "--ĐĐ----ĐĐ--"
   Tiểu Hao:    "--ĐĐ----ĐĐ--"
+
+# ─── Diễn giải trên web (services/tuvi.reading) ─────────────────────────────
+# Đọc nhanh theo quy tắc phổ biến: chính tinh sáng (miếu, vượng, đắc) thì cung tốt,
+# hãm thì kém; Hóa Lộc/Quyền/Khoa thêm tốt, Hóa Kỵ thêm trắc trở; cát tinh trợ lực,
+# sát tinh gây va vấp; Tuần, Triệt làm giảm lực. Chưa xét các cách cục.
+cung_y_nghia:
+  Mệnh: bản thân, tính cách, năng lực và vận chung cả đời
+  Phụ Mẫu: cha mẹ, người trên, sự che chở và giấy tờ
+  Phúc Đức: phúc phần dòng họ, đời sống tinh thần, sự an vui
+  Điền Trạch: nhà cửa, đất đai, tài sản cố định
+  Quan Lộc: công việc, sự nghiệp, chức vụ
+  Nô Bộc: bạn bè, đồng nghiệp, cấp dưới
+  Thiên Di: ra ngoài, đi xa, quan hệ xã hội
+  Tật Ách: sức khoẻ, bệnh tật, tai nạn
+  Tài Bạch: tiền bạc, thu nhập, cách kiếm và giữ tiền
+  Tử Tức: con cái, đời sau
+  Phu Thê: vợ chồng, người yêu, hôn nhân
+  Huynh Đệ: anh chị em, người thân ngang hàng
+
+# Tính chất ngắn của chính tinh, đúng ở mọi cung (chinh_tinh ở trên là khi thủ Mệnh).
+chinh_tinh_tinh_chat:
+  Tử Vi: đế tinh, chủ quyền uy, che chở
+  Thiên Cơ: thiện tinh, chủ mưu trí, hay thay đổi
+  Thái Dương: quý tinh, chủ danh tiếng, sự rộng rãi
+  Vũ Khúc: tài tinh, chủ tiền bạc, quyết đoán
+  Thiên Đồng: phúc tinh, chủ an nhàn, hưởng thụ
+  Liêm Trinh: tù tinh, chủ nguyên tắc, cá tính mạnh
+  Thiên Phủ: tài khố, chủ giữ của, ổn định
+  Thái Âm: phú tinh, chủ tích luỹ, nhà cửa
+  Tham Lang: đào hoa tinh, chủ giao thiệp, ham muốn
+  Cự Môn: ám tinh, chủ ăn nói, dễ thị phi
+  Thiên Tướng: ấn tinh, chủ giúp đỡ, chức vụ
+  Thiên Lương: ấm tinh, chủ che chở, phúc thọ
+  Thất Sát: tướng tinh, chủ quyết liệt, biến động
+  Phá Quân: hao tinh, chủ phá cũ đổi mới
+
+tu_hoa_y_nghia:
+  Hóa Lộc: thêm tài lộc, may mắn
+  Hóa Quyền: thêm quyền hành, chủ động, có tiếng nói
+  Hóa Khoa: thêm danh tiếng, học hành, được quý nhân giúp
+  Hóa Kỵ: trắc trở, lo nghĩ, dễ vướng thị phi
+
+cat_tinh: [Tả Phù, Hữu Bật, Văn Xương, Văn Khúc, Thiên Khôi, Thiên Việt, Lộc Tồn]
+cat_tinh_y_nghia: thêm người giúp, việc thuận hơn
+sat_tinh: [Kình Dương, Đà La, Hỏa Tinh, Linh Tinh, Địa Không, Địa Kiếp]
+sat_tinh_y_nghia: dễ va vấp, hao tổn, cần cẩn trọng
+
+tuan_triet: làm giảm lực các sao trong cung (tốt bớt tốt, xấu bớt xấu); Triệt nặng hơn lúc trẻ, Tuần nặng hơn về sau.
+
+# Quan hệ ngũ hành giữa Cục và Bản mệnh.
+cuc_menh:
+  binh_hoa: cục và mệnh cùng hành, bình hoà; đời ổn định, ít bị hoàn cảnh cản trở.
+  cuc_sinh_menh: cục sinh mệnh, tốt; dễ được hoàn cảnh và người khác nâng đỡ.
+  menh_sinh_cuc: mệnh sinh cục; phải bỏ nhiều công sức, thành quả chủ yếu do tự thân.
+  cuc_khac_menh: cục khắc mệnh; hay gặp trở ngại từ hoàn cảnh, cần kiên nhẫn và thận trọng.
+  menh_khac_cuc: mệnh khắc cục; làm chủ được hoàn cảnh nhưng vất vả, phải tự lực vượt khó.
+
+than_cu: từ khoảng 30 tuổi trở đi, đây là mặt bạn dồn nhiều tâm sức nhất
+
+# Cách đọc lá số trên trang web (mỗi dòng một ý).
+cach_doc:
+  - Mỗi ô là một cung, lo một mặt của đời sống (danh sách 12 cung bên dưới ghi rõ). Ô viền xanh là cung Mệnh, nói về chính bạn.
+  - Chữ đậm là chính tinh, quyết định tính chất của cung; chữ nhỏ bên dưới là phụ tinh, thêm bớt cho cung.
+  - Chữ nhỏ cạnh tên sao là độ sáng. M miếu, V vượng là rất tốt; Đ đắc là khá; B bình là trung bình; H hãm là kém. Sao càng sáng càng phát huy mặt tốt.
+  - Nhãn Hóa Lộc, Hóa Quyền, Hóa Khoa là điểm cộng; Hóa Kỵ là điểm trừ, báo trắc trở ở mặt đó.
+  - Nhãn Tuần, Triệt làm giảm lực các sao trong cung, sao tốt bớt tốt, sao xấu bớt xấu.
+  - Dòng "ĐH 15-24" là đại hạn, mười năm (tính theo tuổi âm) cung đó chi phối nhiều nhất. Nhãn "Thân" đánh dấu cung chi phối nửa đời sau.

@@ -529,6 +529,115 @@ def _meaning(section: str, key: str) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+# Chấm nhanh một cung: cửa Khai/Hưu/Sinh +2, Cảnh/Đỗ 0, Tử/Kinh/Thương -2; sao, thần cát
+# +1 hung -1 (theo ky_mon.yaml); không vong -2; cách cục cát +2, hung -2.
+_DOOR_SCORE = {**{d: 2 for d in CAT_DOORS}, "Cảnh": 0, "Đỗ": 0}
+
+
+def _palace_parts(c: Chart, p: int) -> list[tuple[str, str, int]]:
+    """(loại, lời đọc, điểm) các yếu tố của cung p: cửa, sao, thần, không vong, cách cục."""
+    palace, parts = c.palaces[p], []
+    if palace.door:
+        score = _DOOR_SCORE.get(palace.door, -2)
+        kind = "cát môn" if score > 0 else "hung môn" if score < 0 else "cửa trung bình"
+        parts.append(("cua", f"{door_text(palace.door)} ({kind})", score))
+    for section, kind, name in (("cuu_tinh", "sao", palace.star), ("bat_than", "than", palace.god)):
+        if name:
+            good = bool(_meaning(section, name).get("cat"))
+            label = ("cát" if good else "hung") + (" tinh" if kind == "sao" else " thần")
+            parts.append((kind, f"{name} ({label})", 1 if good else -1))
+    if p in c.void_palaces:
+        parts.append(("khong", "đang không vong", -2))
+    for x in c.patterns:
+        if x.palace == p:
+            parts.append(
+                ("cach", f"{x.name} ({'cát' if x.good else 'hung'} cách)", 2 if x.good else -2)
+            )
+    return parts
+
+
+def _grade(score: int, good: str, bad: str) -> tuple[str, str]:
+    if score >= 2:
+        return good, "pos"
+    if score <= -2:
+        return bad, "warn"
+    return "Trung bình", ""
+
+
+def reading(c: Chart) -> dict:
+    """Diễn giải bàn bằng lời thường cho trang web: Trực phù, Trực sử, không vong, Mã
+    tinh, hướng nên dùng / nên tránh và "việc gì xem hướng nào" (viec_xem trong
+    ky_mon.yaml). Chấm nhanh theo cát hung của cửa, sao, thần - tham khảo."""
+    t = texts()
+    outer = [p for p in range(1, 10) if p != 5]
+    scored = {p: _palace_parts(c, p) for p in outer}
+
+    def place(p: int) -> dict:
+        return {"palace": p, "name": PALACE_NAMES[p], "direction": DIRECTIONS[p]}
+
+    directions = []
+    for p in outer:
+        total = sum(score for _, _, score in scored[p])
+        verdict, tone = _grade(total, "Tốt", "Nên tránh")
+        why = ", ".join(text for _, text, _ in scored[p])
+        directions.append(
+            {**place(p), "score": total, "verdict": verdict, "tone": tone, "why": why}
+        )
+    directions.sort(key=lambda d: -d["score"])
+
+    tasks = []
+    for item in t.get("viec_xem", []):
+        if item.get("ma"):
+            p, label, skip = c.horse_palace, "Mã tinh", None
+        else:
+            kind = next((k for k in ("cua", "sao", "than") if item.get(k)), None)
+            if kind is None:
+                continue
+            target = item[kind]
+            field_name = {"cua": "door", "sao": "star", "than": "god"}[kind]
+            p = next((q for q in outer if getattr(c.palaces[q], field_name) == target), None)
+            label = door_text(target) if kind == "cua" else target
+            skip = kind
+        if p is None or p == 5:
+            continue
+        rest = [(text, score) for kind_, text, score in _palace_parts(c, p) if kind_ != skip]
+        verdict, tone = _grade(sum(score for _, score in rest), "Thuận", "Khó")
+        tasks.append(
+            {
+                "task": item.get("viec", ""),
+                "indicator": label,
+                **place(p),
+                "verdict": verdict,
+                "tone": tone,
+                "with": ", ".join(text for text, _ in rest),
+            }
+        )
+
+    star, door = c.zhi_fu_star, c.zhi_shi_door
+    overview = [
+        f"{c.dun_text} {c.ju} cục, {YUAN_NAMES[c.yuan].lower()}: {t.get('dun', {}).get(c.dun_text, '')}",
+        f"Trực phù là {star}, ở hướng {DIRECTIONS[c.zhi_fu_palace]} ({t.get('truc_phu', '')}). "
+        f"{_meaning('cuu_tinh', star).get('y_nghia', '')}",
+        f"Trực sử là {door_text(door)}, ở hướng {DIRECTIONS[c.zhi_shi_palace]} "
+        f"({t.get('truc_su', '')}). {_meaning('bat_mon', door).get('y_nghia', '')}",
+    ]
+    void = [DIRECTIONS[p] for p in c.void_palaces]
+    if void:
+        overview.append(f"Hướng {', '.join(void)} đang không vong: {t.get('khong_vong', '')}.")
+    overview.append(f"Mã tinh ở hướng {DIRECTIONS[c.horse_palace]}: {t.get('ma_tinh', '')}.")
+    meanings = t.get("cach_cuc", {})
+    for x in c.patterns:
+        if x.palace is None:
+            overview.append(f"Giờ này phạm {x.name}: {meanings.get(x.key, {}).get('y_nghia', '')}")
+    return {
+        "overview": overview,
+        "best": [d for d in directions if d["tone"] == "pos"],
+        "avoid": [d for d in directions if d["tone"] == "warn"],
+        "tasks": tasks,
+        "howTo": t.get("cach_doc", []),
+    }
+
+
 def chart_data(c: Chart) -> dict:
     """Bàn dạng dict khoá camelCase cho trang web và JSON API (hợp đồng công
     khai: chỉ THÊM trường, không đổi/bỏ trường cũ)."""

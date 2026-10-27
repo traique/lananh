@@ -11,6 +11,7 @@
       <input type="hidden" name="sua" value="1">
       <button class="btn" type="submit">Sửa thông tin</button>
     </form>
+    <a class="btn ghost" href="#read-title">Đọc diễn giải</a>
     <a class="btn ghost" href="/tu-vi">Lập lá số khác</a>
   </div>
 </div>
@@ -54,6 +55,24 @@
     </article>
     {% endfor %}
   </div>
+</section>
+<section class="sect reading" aria-labelledby="read-title">
+  <header><h2 id="read-title">Diễn giải lá số</h2><span class="meta">Đọc nhanh theo quy tắc phổ biến, chưa xét các cách cục</span></header>
+  <ul class="read-overview" role="list">{% for line in reading.overview %}<li>{{ line }}</li>{% endfor %}</ul>
+  <details class="howto">
+    <summary>Cách đọc lá số</summary>
+    <ul role="list">{% for line in reading.howTo %}<li>{{ line }}</li>{% endfor %}</ul>
+  </details>
+  <h3>Từng cung</h3>
+  <ol class="read-list" role="list">
+    {% for p in reading.palaces %}
+    <li>
+      <p class="rl-head"><a href="#cung-{{ p.branchIndex }}">{{ p.name }}</a><span class="pill sm {{ p.tone }}">{{ p.verdict }}</span>{% if p.isCurrent %}<span class="pill sm">Đại hạn hiện tại</span>{% endif %}{% if p.isThan %}<span class="pill sm">Thân</span>{% endif %}</p>
+      <p class="rl-domain">{{ p.domain[:1] | upper }}{{ p.domain[1:] }}.</p>
+      <ul role="list">{% for line in p.lines %}<li>{{ line }}</li>{% endfor %}</ul>
+    </li>
+    {% endfor %}
+  </ol>
 </section>
 {% include "_ai_box.html" %}
 <p class="note-line">{{ chart.disclaimer | replace("ℹ️ ", "") }} {{ chart.note | replace("...", "…") }}</p>
