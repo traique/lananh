@@ -58,7 +58,22 @@ Repository được thiết kế cho **một chủ sở hữu**:
 
 - Provider chain theo `PROVIDER_ORDER` (mặc định `router9,groq,openrouter,api1,api2`):
   9Router (gateway OpenAI-compatible) → Groq (miễn phí, chat mặc định
-  `openai/gpt-oss-20b`) → OpenRouter (model `:free`) → AI Studio key 1 → key 2.
+  `openai/gpt-oss-20b`) → OpenRouter (model `:free`) → AI Studio key 1 → key 2 →
+  Gemini Live (`live`, tự thêm vào cuối khi `LIVE_CHAT_FALLBACK=1`).
+- Gemini Live (`ai/live_client.py`, model `LIVE_MODEL` = `gemini-3.8-live`, WebSocket
+  qua `client.aio.live.connect` của google-genai): provider chat dự phòng CUỐI, chỉ
+  chạy khi mọi provider trước lỗi hoặc đang cooldown. Model âm thanh gốc chỉ trả
+  AUDIO, nên câu chữ là bản chép lời (`output_audio_transcription`) và persona được
+  dặn thêm "trả lời ngắn, văn nói, không markdown". Chỉ dùng cho chat thường: không
+  tự tra web, không dùng cho `ask()`/JSON/utility/phân tích cổ phiếu, không dùng ở
+  lượt có số liệu cổ phiếu chuẩn. Dùng chung key api1 → api2 nhưng cooldown quota
+  RIÊNG (`live_api1/2`), ghi `provider_calls` tên `live_api1/2`; tối đa
+  `LIVE_MAX_SESSIONS` phiên cùng lúc, trần `LIVE_CALL_TIMEOUT_SEC` giây (trong hạn
+  chót lượt) và `LIVE_MAX_AUDIO_MB`; socket luôn đóng kể cả khi bị huỷ. Bật/tắt và
+  đổi model ở `/admin` → Provider (thẻ `live`). **Hạn mức free tier của Live chưa
+  được Google công bố** (vài trang bên thứ ba ghi "Unlimited" - chưa kiểm chứng):
+  `/status` hiện số lượt Live trong ngày quota, xem số thật tại
+  aistudio.google.com/rate-limit.
 - 9Router chỉ bị coi là chết khi timeout (mặc định 120s), khi key bị từ chối
   (401/403), hoặc khi lỗi 5xx/mất kết nối 2 lần trong 5 phút; lúc đó chuyển hẳn
   provider kế, probe lại nền (`ROUTER9_PROBE_INTERVAL_SEC`), `/userouter9` để thử
@@ -160,7 +175,8 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
 - `/status` hiện lý do cooldown và số phút còn lại từng provider; `/admin` reset
   được cooldown (kể cả 9Router).
 - Groq tra web (`groq_search`) và Groq chép lời (`groq_stt`) có cooldown riêng,
-  không khoá Groq chat hay lượt phụ JSON.
+  không khoá Groq chat hay lượt phụ JSON. Gemini Live (`live_api1/2`) và Gemini TTS
+  (`tts_api1/2`) cũng cooldown riêng, không khoá chat api1/api2.
 - Webhook không thử lại lỗi chắc chắn lặp (`TurnTimeoutError`, Telegram
   BadRequest/Forbidden, `TypeError`/`KeyError`/`AttributeError`): sự kiện kết thúc
   ngay ở lần đầu và chủ bot nhận 1 cảnh báo. Lỗi khác vẫn thử lại tối đa
@@ -494,9 +510,14 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
 - Trả lời kèm giọng nói (`/noi on|off|auto`, `services/voice_reply.py`): mỗi người tự
   bật (mặc định tắt; `auto` = chỉ đọc khi vừa gửi tin thoại), cổng toàn bot
   `VOICE_REPLY_ENABLED`. Bản chữ vẫn gửi như cũ, tin thoại đi kèm sau; lệnh "/" và
-  báo cáo cổ phiếu không đọc. Gemini TTS (`VOICE_TTS_MODEL`, giọng `VOICE_TTS_VOICE`)
-  bằng key AI Studio sẵn có, qua `bounded()` trong hạn chót lượt, cooldown quota TTS
-  riêng (`tts_api1/2`). Chỉ đọc chữ đã lọc (bỏ bảng, link, markdown, emoji), tối đa
+  báo cáo cổ phiếu không đọc. Bộ đọc chọn bằng `VOICE_ENGINE`: `auto` (mặc định) =
+  Gemini Live trước - dặn chặt "đọc NGUYÊN VĂN", rồi so bản chép lời với văn bản
+  (theo từ, bỏ dấu, ngưỡng `LIVE_VOICE_MIN_MATCH`=80%); lệch, lỗi hay hết quota Live
+  thì bỏ âm thanh Live và dùng Gemini TTS, để tin thoại không nói khác bản chữ;
+  `live` = chỉ Live (lỗi thì chỉ gửi chữ); `tts` = chỉ Gemini TTS
+  (`VOICE_TTS_MODEL`). Cùng giọng `VOICE_TTS_VOICE`, bằng key AI Studio sẵn có, qua
+  `bounded()` trong hạn chót lượt, cooldown quota riêng (`live_api1/2`,
+  `tts_api1/2`). Chỉ đọc chữ đã lọc (bỏ bảng, link, markdown, emoji), tối đa
   `VOICE_REPLY_MAX_CHARS` ký tự - dài hơn thì đọc đoạn đầu và nhắc xem tin chữ.
   Telegram: có `ffmpeg` trên PATH thì gửi tin thoại OGG/Opus, không có thì file WAV
   (sendDocument - Bot API chỉ nhận OGG/MP3/M4A cho voice). Zalo: CHỈ khi có ffmpeg
@@ -811,6 +832,11 @@ Provider, tra web, quota:
 | `GEMINI_KEYS_SAME_PROJECT` | 0 | 1 = API 1 và API 2 cùng project Google Cloud (cộng chung quota) |
 | `FREE_TIER_RPD_GEMINI` / `FREE_TIER_RPD_GROQ` | 0 / 0 | Hạn mức lượt/ngày (0 = chưa đặt, chỉ hiển thị); Groq ưu tiên số từ header response |
 | `FREE_TIER_RPD_OPENROUTER` / `FREE_TIER_TAVILY_MONTHLY` | 50 / 1000 | OpenRouter `:free` 50 lượt/ngày (1000 khi đã nạp từ 10 USD); Tavily credit/tháng (tìm advanced = 2) |
+| `LIVE_CHAT_FALLBACK` | 1 | Gemini Live làm provider chat dự phòng cuối (tự thêm `live` vào cuối `PROVIDER_ORDER`); 0 = bỏ `live` khỏi chuỗi |
+| `LIVE_MODEL` | `gemini-3.8-live` | Model Gemini Live (đổi được ở `/admin` → Provider → `live`) |
+| `LIVE_MAX_SESSIONS` / `LIVE_CALL_TIMEOUT_SEC` / `LIVE_MAX_AUDIO_MB` | 1 / 60 / 8 | Số phiên Live cùng lúc (1-4), trần giây 1 lượt (10-180, không vượt hạn chót lượt), trần MB âm thanh 1 lượt (1-32) |
+| `LIVE_HISTORY_MESSAGES` | 6 | Số tin lịch sử gần nhất gửi kèm lượt chat qua Live (0-20) |
+| `FREE_TIER_RPD_GEMINI_LIVE` | 0 | Hạn mức lượt/ngày của Live (live_api1 + live_api2); Google chưa công bố - để 0 (chỉ đếm) tới khi thấy số thật ở aistudio.google.com/rate-limit |
 
 DB, bảo mật, lượt song song:
 
@@ -883,7 +909,9 @@ Thoại, ảnh, tài liệu:
 | `VOICE_MAX_BYTES` / `VOICE_MAX_SECONDS` | 5242880 / 180 | Trần tin thoại (64 KB-8 MB; 10-600 giây), gateway dùng chung trần byte |
 | `VOICE_REPLY_ENABLED` | 1 | Cho phép `/noi` (mỗi người vẫn phải tự bật); 0 = tắt cả bot |
 | `VOICE_REPLY_MAX_CHARS` | 600 | Số ký tự tối đa được đọc (100-2000) |
-| `VOICE_TTS_MODEL` / `VOICE_TTS_VOICE` | `gemini-3.8-flash-tts` / `Kore` | Model Gemini TTS và giọng dựng sẵn |
+| `VOICE_TTS_MODEL` / `VOICE_TTS_VOICE` | `gemini-3.8-flash-tts` / `Kore` | Model Gemini TTS và giọng dựng sẵn (Live dùng chung giọng) |
+| `VOICE_ENGINE` | `auto` | Bộ đọc `/noi`: `auto` = Gemini Live rồi Gemini TTS khi Live lỗi/hết quota/đọc lệch; `live` = chỉ Live; `tts` = chỉ TTS |
+| `LIVE_VOICE_MIN_MATCH` | 80 | % giống tối thiểu giữa bản chép lời của Live và văn bản cần đọc (50-100); thấp hơn thì bỏ âm thanh Live |
 | `VOICE_REPLY_URL_TTL_MIN` / `VOICE_REPLY_STORE_MB` | 10 / 8 | Zalo: link tin thoại ký HMAC sống N phút; kho RAM tối đa N MB (và 20 file) |
 | `NUTRITION_NL` / `NUTRITION_AI_ESTIMATE` | 0 / 0 | `/an`: 1 = ghi bữa ăn từ câu tự nhiên rất rõ; 1 = món lạ ước lượng kcal bằng 1 lượt AI |
 | `VISION_QA_ENABLED` / `PHOTO_NO_CAPTION_MODE` | 1 / `prompt` | Ảnh kèm câu hỏi được trả lời về ảnh; ảnh không caption: `prompt` hoặc `describe` |
@@ -1617,7 +1645,9 @@ khoảng chọn. Không script/CDN ngoài; mọi giá trị server vẫn escape.
   nền có trần, giữ 14 ngày (`RETENTION_TURN_METRICS_DAYS`), bản sao lưu không chép
   dữ liệu bảng này. Gateway Zalo chưa ghi cùng mã lượt và chưa đo thời gian gửi.
 - `/status` (Telegram, Zalo/Zoom) có khối "📈 24 giờ qua": số lượt, p50/p95 độ trễ,
-  tỉ lệ lỗi theo từng provider.
+  tỉ lệ lỗi theo từng provider, và dòng "🎙️ Gemini Live": bật/tắt, cooldown riêng,
+  số lượt Live trong ngày quota (từ 0h giờ Thái Bình Dương, đọc `provider_calls`;
+  không ping Live để khỏi tốn lượt). `/admin` → Quota miễn phí có dòng "Gemini Live".
 - Quota miễn phí (`services/quota_burn.py`), mỗi provider đếm theo đúng cửa sổ của
   nó: Gemini theo project Google Cloud, reset 0h giờ Thái Bình Dương (khoảng 14-15h
   giờ VN; 2 key cùng project thì `GEMINI_KEYS_SAME_PROJECT=1`); OpenRouter theo ngày
@@ -1625,7 +1655,9 @@ khoảng chọn. Không script/CDN ngoài; mọi giá trị server vẫn escape.
   theo tháng (1000 credit, tìm "advanced" tính 2); Groq lấy số còn lại từ header
   response. Hạn mức để 0 thì chỉ hiển thị. Chạm `QUOTA_BURN_ALERT_PCT` (80%) thì bot
   nhắn chủ bot 1 lần cho mỗi cửa sổ. Nên đặt `FREE_TIER_RPD_GEMINI` theo hạn mức
-  của model đang dùng (xem trên AI Studio).
+  của model đang dùng (xem trên AI Studio). Hạn mức free tier của Gemini Live chưa
+  được Google công bố: quan sát số lượt trên `/status` và aistudio.google.com/rate-limit
+  rồi mới đặt `FREE_TIER_RPD_GEMINI_LIVE`.
 - Nếu Groq từ chối tham số xin token thì đặt `GROQ_STREAM_USAGE=0`.
 
 ## Giữ Render Free không bị ngủ (UptimeRobot)
@@ -1870,7 +1902,7 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
 
 ## Tài liệu bổ sung
 
-- `docs/nang-cap-jarvis.md` — các tính năng lấy ý từ các dự án Jarvis: `/chuy`, gom thông báo + giờ yên lặng (migration 026), việc nền `/viec` + tác vụ định kỳ `/lichtacvu` (migration 027), che bí mật trước khi gửi provider, duyệt cách trả lời, mô tả tool gọn, trả lời bằng giọng nói `/noi`, trang Nhật ký trong `/admin`, ghi ăn uống `/an` (migration 028)
+- `docs/nang-cap-jarvis.md` — các tính năng lấy ý từ các dự án Jarvis: `/chuy`, gom thông báo + giờ yên lặng (migration 026), việc nền `/viec` + tác vụ định kỳ `/lichtacvu` (migration 027), che bí mật trước khi gửi provider, duyệt cách trả lời, mô tả tool gọn, trả lời bằng giọng nói `/noi`, trang Nhật ký trong `/admin`, ghi ăn uống `/an` (migration 028), Gemini Live (chat dự phòng cuối + bộ đọc `/noi`)
 - `docs/nang-cap-2026-10-26.md` — đợt nâng cấp 26/10/2026: thay đổi theo nhóm, danh sách việc khi deploy (migration 017-025, biến Render, GitHub secrets), việc chủ bot còn phải quyết, phần cố ý chưa làm, rủi ro
 - `docs/backup-restore.md` — sao lưu/khôi phục DB, role chỉ-đọc, diễn tập, xoay khoá
 - `docs/upgrade-2026-10.md` — đợt nâng cấp toàn diện 10/2026 (lỗi đã sửa, migration 015, biến mới, kết quả backtest offline, việc cần làm khi deploy)
