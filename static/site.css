@@ -3,6 +3,8 @@
  * nav: kept (thanh bên, 12 mục) · signature: kept, dải 12 giờ hoàng đạo · states: không vùng nào tải dữ liệu (tính ở server)
  * axes: light/roman-serif/chromatic-green · posture: restrained · contrast: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, lượt đầu trên hệ thương hiệu giữ nguyên; đổi nhịp bề mặt (nền trắng, khối sage, vạch mảnh) thay cho bảy thẻ sage giống hệt */
+/* Hallmark · finish-review: subagent · 7 findings · 7 resolved (bước 861-1100px, ngắt tiêu đề ngày, cỡ h2 Tra cứu, link ngày lễ, chú giải dải giờ, vạch kép, cột nút) · gap: partial, câu giờ hoàng đạo lên 24px, số liệu ngày xuống 24px
+ * dismissed 26a, 34, 56, 62 · tầng tĩnh đọc template riêng lẻ nên không thấy site.css; đo trên trình duyệt: overflow-x clip ở html và body, vòng focus 2px màu nhấn, một phần tử sticky mỗi bề rộng, menu điện thoại mở bằng #menu khi tắt JavaScript */
 /* LCTA - giao diện web công khai (lịch, thời tiết, tử vi, thần số học).
 
    Thiết kế theo skill ui-craft (Taste, app screens), style "editorial greeting":
@@ -190,7 +192,7 @@ h1.date {
   font-family: var(--font-date); font-size: var(--fs-date); line-height: 1.05; font-weight: 500;
   letter-spacing: -0.02em;
 }
-.date + .sub { margin-top: 12px; font-size: var(--fs-section); color: var(--text); }
+.date + .sub { margin-top: 12px; font-size: var(--fs-section); color: var(--text); text-wrap: pretty; }
 .date + .sub .muted { color: var(--muted); }
 
 /* ---------- lưới 12 cột ---------- */
@@ -392,41 +394,44 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
 .today-facts > div:last-child { padding-right: 0; }
 .today-facts dt { color: var(--muted); font-size: var(--fs-small); }
 .today-facts .fig {
-  margin-top: 4px; font-size: var(--fs-lead); line-height: 1.15; letter-spacing: -0.01em;
+  margin-top: 4px; font-size: var(--fs-title); line-height: 1.2; letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
 }
 .today-facts .note { margin-top: 8px; color: var(--muted); font-size: var(--fs-small); }
 .holiday-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.holiday-strip > li { display: grid; gap: 4px; min-width: 0; padding: 0 20px; border-left: 1px solid var(--rule); }
+.holiday-strip > li {
+  position: relative; display: grid; gap: 4px; min-width: 0; padding: 0 20px;
+  border-left: 1px solid var(--rule);
+}
 .holiday-strip > li:first-child { padding-left: 0; border-left: 0; }
 .holiday-strip > li:last-child { padding-right: 0; }
-.holiday-strip a { font-weight: 500; text-decoration: none; }
-.holiday-strip a:hover { text-decoration: underline; }
+/* Tên lễ là link: gạch chân sẵn (màn cảm ứng không có hover), vùng bấm phủ cả ô. */
+.holiday-strip a { font-weight: 500; text-decoration-color: var(--control); }
+.holiday-strip a::after { content: ""; position: absolute; inset: 0; }
+.holiday-strip a:hover { text-decoration-color: currentColor; }
 .holiday-strip .when { color: var(--muted); font-size: var(--fs-small); }
 .holiday-strip .left { font-size: var(--fs-section); font-variant-numeric: tabular-nums; }
 .tools { margin-top: 40px; }
-.tools > h2 { font-size: var(--fs-body); font-weight: 600; line-height: 1.4; margin-bottom: 8px; }
+.tools > h2 { font-size: var(--fs-section); font-weight: 600; line-height: 1.4; margin-bottom: 8px; }
 /* Mỗi hàng: tên + mô tả bên trái, nút (hoặc ô ngày sinh) bên phải; khối bọc tên và mô tả
    dùng display: contents để trên điện thoại nút lên ngang tên, mô tả trải bên dưới. */
 .tool-list > li {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 40px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 26rem; gap: 4px 40px;
   align-items: center; padding: 20px 0; border-top: 1px solid var(--rule);
 }
-.tool-list > li:last-child { border-bottom: 1px solid var(--rule); }
 .tool-list > li > div { display: contents; }
 .tool-list h3 { grid-column: 1; font-size: var(--fs-body); font-weight: 600; line-height: 1.4; }
 .tool-list p { grid-column: 1; color: var(--muted); max-width: 65ch; }
-.tool-list > li > .btn, .tool-form { grid-column: 2; grid-row: 1 / span 2; justify-self: end; }
-.tool-form {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; width: 26rem;
-}
+/* Cột thao tác cố định: mọi nút bắt đầu cùng một mép với ô ngày sinh của Thần số học. */
+.tool-list > li > .btn, .tool-form { grid-column: 2; grid-row: 1 / span 2; justify-self: start; }
+.tool-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; width: 100%; }
 .tool-form label { grid-column: 1 / -1; font-size: var(--fs-small); color: var(--muted); }
 /* dải 12 giờ địa chi: phần tử riêng của LCTA. Giờ thường là ô viền mảnh, giờ hoàng
    đạo nền xanh nhạt; chỉ một ô tô đặc màu nhấn (giờ hiện tại nếu tốt, không thì giờ tốt
    kế tiếp). Giờ đã qua lùi xuống, giờ hiện tại có vòng ngoài. Gập theo bề rộng của chính
    khối (container query): đủ chỗ thì 12 cột, hẹp thì 4 cột x 3 hàng, mỗi hàng 8 tiếng. */
 .hours-panel { container-type: inline-size; }
-.next-hour { margin: -4px 0 16px; font-size: var(--fs-section); }
+.next-hour { margin: -4px 0 16px; font-size: var(--fs-title); line-height: 1.3; }
 .next-hour b { font-weight: 600; }
 .hours { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 6px; }
 .hour {
@@ -435,9 +440,10 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
 }
 .hour b { font-weight: 500; }
 .hour span { font-size: 12px; color: var(--muted); white-space: nowrap; }
-.hour.good { background: var(--pill-pos-bg); color: var(--pill-pos-ink); outline-color: transparent; }
+/* viền liền = giờ hoàng đạo sắp tới, viền nét đứt = đã qua (khớp chú giải bên dưới) */
+.hour.good { background: var(--pill-pos-bg); color: var(--pill-pos-ink); outline-color: var(--pill-pos-ink); }
 .hour.good span { color: var(--pill-pos-ink); }
-.hour.focus { background: var(--accent); color: var(--accent-ink); }
+.hour.focus { background: var(--accent); color: var(--accent-ink); outline-color: transparent; }
 .hour.focus span { color: var(--accent-ink); }
 .hour.past { color: var(--muted); }
 /* giờ hoàng đạo đã qua: bỏ nền nhưng giữ viền nét đứt xanh đậm (≥ 3:1) để vẫn tách được
@@ -742,6 +748,15 @@ main.column { padding-bottom: 48px; }
 /* ---------- máy tính bảng ---------- */
 @media (max-width: 1100px) {
   .s3 { grid-column: span 6; } .s9, .s8, .s7, .s5, .s4 { grid-column: 1 / -1; }
+  .today-head { grid-template-columns: minmax(0, 1fr); }
+  .today-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
+  .today-facts > div:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .today-facts > div:nth-child(even) { padding-right: 0; }
+  .today-facts > div:nth-child(n + 3) { padding-top: 16px; border-top: 1px solid var(--rule); }
+  .tool-list > li { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .tool-list p { grid-column: 1 / -1; }
+  .tool-list > li > .btn { grid-row: 1; justify-self: end; }
+  .tool-form { grid-column: 1 / -1; grid-row: auto; width: min(100%, 26rem); }
 }
 /* ---------- điện thoại: thanh bên gập thành thanh trên 52px + bảng trượt ---------- */
 @media (max-width: 860px) {
@@ -771,12 +786,9 @@ main.column { padding-bottom: 48px; }
   .title-row { margin-bottom: 20px; }
   h1.date { font-size: 32px; }
   .date + .sub { font-size: var(--fs-body); }
-  .today-head { grid-template-columns: minmax(0, 1fr); margin: 8px 0 28px; }
-  .today-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 28px 0; row-gap: 16px; }
-  .today-facts > div:nth-child(odd) { padding-left: 0; border-left: 0; }
-  .today-facts > div:nth-child(even) { padding-right: 0; }
-  .today-facts > div:nth-child(n + 3) { padding-top: 16px; border-top: 1px solid var(--rule); }
-  .today-facts .fig { font-size: 24px; }
+  .today-head { margin: 8px 0 28px; }
+  .today-facts { margin: 28px 0; }
+  .next-hour { font-size: var(--fs-section); }
   .holiday-strip { grid-template-columns: minmax(0, 1fr); }
   .holiday-strip > li {
     grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px;
@@ -786,10 +798,7 @@ main.column { padding-bottom: 48px; }
   .holiday-strip > li:first-child { padding-top: 0; border-top: 0; }
   .holiday-strip > li:last-child { padding-bottom: 0; }
   .tools { margin-top: 28px; }
-  .tool-list > li { gap: 8px 12px; padding: 16px 0; }
-  .tool-list p { grid-column: 1 / -1; }
-  .tool-list > li > .btn { grid-row: 1; }
-  .tool-form { grid-column: 1 / -1; grid-row: auto; justify-self: start; width: min(100%, 26rem); }
+  .tool-list > li { padding: 16px 0; }
   .grid > * { grid-column: 1 / -1; }
   .panel { padding: 16px; }
   .form-row { grid-template-columns: minmax(0, 1fr); }
