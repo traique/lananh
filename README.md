@@ -442,6 +442,35 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   ghi số tin bị lược). `NOTIFY_HUB_ENABLED=0` = hành vi cũ. Chi tiết từng nguồn:
   [docs/nang-cap-jarvis.md](docs/nang-cap-jarvis.md).
 
+#### Việc nền (`/viec`) và tác vụ định kỳ (`/lichtacvu`)
+
+- `/viec <yêu cầu>`: em trả lời ngay "em làm rồi báo anh", chạy yêu cầu ở NỀN rồi gửi
+  kết quả (`services/background_jobs.py`, bảng `bg_jobs` migration 027). Việc chạy
+  ngoài khoá lượt (người dùng vẫn chat bình thường) nhưng vẫn chiếm 1 chỗ
+  `MAX_CONCURRENT_TURNS` (việc của thành viên Zalo dùng chỗ thành viên, không đụng
+  chỗ dành riêng cho chủ bot); hạn chót riêng `BACKGROUND_JOB_TIMEOUT_SEC` (600 giây);
+  tối đa `BACKGROUND_JOBS_CONCURRENCY` (1) việc chạy cùng lúc toàn bot, mỗi người
+  `BACKGROUND_JOBS_MAX_PER_USER` (3) việc chờ/chạy. Lượt AI giống chat thường của đúng
+  người đó (persona, trí nhớ, tra web, số liệu vàng/tỷ giá, đọc danh mục/chi tiêu, giá
+  cổ phiếu nhắc tới) nhưng KHÔNG ghi dữ liệu. `/viec` xem danh sách, `/viec xem <số>`
+  xem lại kết quả, `/viec huy <số>` huỷ. Kết quả gửi mức URGENT qua hub (trong giờ
+  yên lặng thì giữ tới sáng). Bot khởi động lại giữa chừng: việc tự chạy lại 1 lần,
+  gián đoạn lần 2 thì báo lỗi. Thành viên Zalo dùng được, mỗi việc tính 1 lượt nặng
+  (`BACKGROUND_JOBS_MEMBERS=0` để tắt).
+- Tác vụ định kỳ (`services/routines.py`): "mỗi sáng thứ 2 8h tóm tắt tin về VNM cho
+  anh", "mỗi tối thứ 6 9h tổng kết chi tiêu tuần cho anh" (nhắn thẳng hoặc
+  `/lichtacvu <câu đó>`). Khác nhắc việc: nhắc việc gửi câu cố định, tác vụ chạy 1
+  lượt AI qua bộ chạy nền ở trên rồi gửi kết quả mức NORMAL (tin tổng hợp hẹn giờ,
+  tôn trọng giờ yên lặng); không có gì đáng báo thì model trả `NO_REPLY` và em im.
+  Câu tự nhiên chỉ được nhận khi có "tóm tắt / tổng kết / báo cáo / kiểm tra / tra …
+  cho anh" + "mỗi/hằng …" và KHÔNG có chữ "nhắc"; thiếu "mỗi" ("tối thứ 6 9h tổng kết
+  chi tiêu tuần cho anh") thì em hỏi lại, nhắn "ok" mới đặt. Tối đa 10 tác vụ/người,
+  `ROUTINE_MAX_RUNS_PER_DAY` (20) lần chạy/ngày toàn bot, lỡ giờ thì chạy bù 1 lần
+  (trễ quá 12 giờ thì bỏ lần đó). `/lichtacvu` xem, `huy|tam dung|tiep <số>`. Thành
+  viên Zalo mặc định tắt (`ROUTINES_MEMBERS=1` để mở).
+- `/chuy` có thêm mục "việc nền đang chạy" và "tác vụ định kỳ hôm nay"; `/admin` →
+  Hệ thống có bảng việc nền + tác vụ định kỳ (`/admin/api/jobs`).
+
 #### Tin thoại, ảnh, tài liệu, vị trí
 
 - Tin thoại (Telegram voice/audio, Zalo `chat.voice`): chép lời bằng Groq Whisper
@@ -812,6 +841,13 @@ Nhắc việc, chi tiêu, bản tin sáng, danh mục:
 | `NOTIFY_BATCH_MINUTES` | 60 | Tin nhẹ chờ tối đa chừng này phút rồi gộp gửi (5-1440) |
 | `NOTIFY_QUIET_HOURS` | `22:30-06:30` | Giờ yên lặng mặc định (giờ VN; `off` = không có), từng người đổi bằng `/yenlang` |
 | `NOTIFY_QUEUE_MAX_PER_USER` / `RETENTION_NOTIFY_QUEUE_DAYS` | 30 / 7 | Trần tin chờ mỗi người nhận; số ngày giữ dòng đã gửi (chống xếp trùng) |
+| `BACKGROUND_JOBS_ENABLED` | 1 | Việc nền `/viec` + bộ chạy tác vụ định kỳ; 0 = tắt cả hai |
+| `BACKGROUND_JOB_TIMEOUT_SEC` | 600 | Hạn chót mỗi việc nền/lần chạy tác vụ (60-1800 giây) |
+| `BACKGROUND_JOBS_CONCURRENCY` / `BACKGROUND_JOBS_MAX_PER_USER` | 1 / 3 | Việc chạy cùng lúc toàn bot (không vượt `MAX_CONCURRENT_TURNS`); việc chờ/chạy tối đa mỗi người |
+| `BACKGROUND_JOBS_MEMBERS` | 1 | Thành viên Zalo được giao `/viec` (tính lượt nặng); 0 = chỉ chủ bot, admin |
+| `ROUTINES_ENABLED` / `ROUTINES_MEMBERS` | 1 / 0 | Tác vụ định kỳ `/lichtacvu`; thành viên Zalo mặc định không dùng |
+| `ROUTINE_MAX_RUNS_PER_DAY` | 20 | Trần số lần chạy tác vụ định kỳ mỗi ngày toàn bot |
+| `RETENTION_BG_JOBS_DAYS` | 30 | Số ngày giữ việc nền đã xong (yêu cầu + kết quả) |
 
 Thoại, ảnh, tài liệu:
 
@@ -1003,8 +1039,8 @@ không (xem trên), không liên quan tới việc cách ly bộ nhớ này.
 - Mỗi ngày tối đa `ZALO_MEMBER_DAILY_TURNS` lượt (mặc định 40) và
   `ZALO_MEMBER_DAILY_HEAVY` lượt nặng (mặc định 5), mở lại lúc 0h giờ VN. Sửa trên
   `/admin` → Người dùng & Zalo (kèm số lượt đã dùng hôm nay của từng người).
-- Lượt nặng: `/anh`, `/tuvi_chitiet`, `/kymon_chitiet`, `/tsh_chitiet` và lượt chat
-  có tra web. Hết lượt nặng thì vẫn trò chuyện được nhưng không tra web. Cổ phiếu
+- Lượt nặng: `/anh`, `/tuvi_chitiet`, `/kymon_chitiet`, `/tsh_chitiet`, lượt chat
+  có tra web, việc nền `/viec` và mỗi lần chạy tác vụ định kỳ. Hết lượt nặng thì vẫn trò chuyện được nhưng không tra web. Cổ phiếu
   tính như lượt thường.
 - Hết lượt thì Lan Anh báo 1 câu theo cách gọi riêng kèm giờ mở lại, tối đa 1 lần
   mỗi giờ; các tin sau trong giờ đó im lặng. DB lỗi thì không chặn ai.
@@ -1256,6 +1292,8 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/hoithan [on\|off]` | Bật/tắt hỏi thăm chủ động |
 | `/chuy` | Có gì cần chú ý: nhắc việc, ngày nhớ, danh mục, hỏi thăm, tin chờ gom; admin thêm bài FB chờ duyệt; chủ bot thêm lỗi, provider, giám sát (không tốn AI) |
 | `/yenlang [on\|off\|22-7]` | Giờ yên lặng của chính mình: ban đêm chỉ nhắn ngay nhắc việc (và cảnh báo 🚨 cho chủ bot), tin khác gom lại |
+| `/viec <yêu cầu>`, `/viec [xem\|huy <số>]` | Giao việc chạy nền (vẫn chat bình thường), xong em gửi kết quả; xem/huỷ việc |
+| `/lichtacvu <mỗi ... cho anh>`, `/lichtacvu [huy\|tam dung\|tiep <số>]` | Tác vụ định kỳ: đến giờ em chạy 1 yêu cầu AI rồi gửi kết quả (khác `/nhac`); thành viên Zalo mặc định tắt |
 | `/hoc [ok\|bo]` | Duyệt cách trả lời em tự rút ra (Telegram còn có nút [Ghi nhớ] [Bỏ]) |
 | `/model` | Xem hoặc đổi model 9Router |
 | `/status` | Provider chain, chế độ tra web, cooldown (lý do, phút còn lại), khối "📈 24 giờ qua" (số lượt, p50/p95, tỉ lệ lỗi theo provider) |
@@ -1464,6 +1502,9 @@ hiển thị trên trang đều được escape HTML. Trang cho phép:
 - Người dùng & Zalo: xem, ghim, quên từng mục trí nhớ của từng người
   (`/admin/api/memory/items`, `/admin/api/memory/item`); sửa trần lượt/lượt nặng mỗi
   ngày của thành viên Zalo kèm số đã dùng hôm nay (`/admin/api/quota`, áp dụng ngay).
+- Hệ thống → "Việc nền & tác vụ định kỳ" (`/admin/api/jobs`): 30 việc gần nhất (đang
+  chạy/chờ trước, thời gian chạy, token, lỗi) và danh sách tác vụ định kỳ, số lần
+  chạy hôm nay so với trần.
 - Hệ thống → "Giám sát, sao lưu & lỗi" (`/admin/api/watchdog`): lỗi hôm nay theo
   loại, số lần khởi động lại trong 7 ngày, nhịp tim, lần sao lưu và diễn tập gần
   nhất, trạng thái xoay khoá (nút "Xoay khoá ngay" = `POST /admin/api/key-rotation/run`),
@@ -1674,7 +1715,8 @@ services/           Logic dùng chung cho mọi kênh: channel_chat_service.run_
                     (pipeline chat), channel_dispatch (Zalo/Zoom), memory_service,
                     tools + tool_registry, reminder_service, expense_service,
                     morning_brief, attention (/chuy), notify_hub (gom thông báo,
-                    giờ yên lặng), vn_daily_chat, kymon, voice/vision/document_service,
+                    giờ yên lặng), background_jobs (/viec), routines (/lichtacvu),
+                    vn_daily_chat, kymon, voice/vision/document_service,
                     portfolio_* / price_alerts, usage_quota, watchdog, error_digest,
                     quota_burn, price_search (/gia), usage_stats (/thongke)...
 stock/              Market data, validation, policy, lịch giao dịch, danh mục và backtest
@@ -1792,7 +1834,7 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
 
 ## Tài liệu bổ sung
 
-- `docs/nang-cap-jarvis.md` — các tính năng lấy ý từ các dự án Jarvis: `/chuy`, gom thông báo + giờ yên lặng (migration 026), che bí mật trước khi gửi provider, duyệt cách trả lời, mô tả tool gọn
+- `docs/nang-cap-jarvis.md` — các tính năng lấy ý từ các dự án Jarvis: `/chuy`, gom thông báo + giờ yên lặng (migration 026), việc nền `/viec` + tác vụ định kỳ `/lichtacvu` (migration 027), che bí mật trước khi gửi provider, duyệt cách trả lời, mô tả tool gọn
 - `docs/nang-cap-2026-10-26.md` — đợt nâng cấp 26/10/2026: thay đổi theo nhóm, danh sách việc khi deploy (migration 017-025, biến Render, GitHub secrets), việc chủ bot còn phải quyết, phần cố ý chưa làm, rủi ro
 - `docs/backup-restore.md` — sao lưu/khôi phục DB, role chỉ-đọc, diễn tập, xoay khoá
 - `docs/upgrade-2026-10.md` — đợt nâng cấp toàn diện 10/2026 (lỗi đã sửa, migration 015, biến mới, kết quả backtest offline, việc cần làm khi deploy)
