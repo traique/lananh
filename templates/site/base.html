@@ -75,8 +75,8 @@
           <span>Giao diện tối</span>
           <span class="switch" aria-hidden="true"></span>
         </button>
-        {# Khách không cần tài khoản: mọi trang xem tự do. Đăng nhập chỉ dành cho chủ
-           trang (AI luận giải, sửa địa điểm) nên chỉ là link nhỏ ở chân trang. #}
+        {# Trang công khai không có nút đăng nhập: chủ trang đăng nhập ở /admin (chung
+           phiên), quay lại đây mới thấy Quản trị/Đăng xuất và phần AI luận giải. #}
         {% if logged_in %}
         <a class="side-action i-admin" href="/admin">Quản trị</a>
         <form method="post" action="/admin/logout">
@@ -90,10 +90,9 @@
         {% block content %}{% endblock %}
       </main>
       <footer class="foot column">
-        <span>© LCTA · tính bằng thuật toán, AI chỉ chạy khi bạn bấm luận giải</span>
+        <span>© LCTA, tính bằng thuật toán</span>
         <a href="/privacy">Quyền riêng tư</a>
         <a href="/terms">Điều khoản</a>
-        {% if not logged_in %}<a href="{{ login_url }}" rel="nofollow">Chủ trang đăng nhập</a>{% endif %}
       </footer>
     </div>
   </div>

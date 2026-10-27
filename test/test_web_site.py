@@ -71,14 +71,15 @@ async def test_root_tra_html_cho_trinh_duyet_json_cho_health_check(monkeypatch):
             )
 
 
-async def test_chua_dang_nhap_van_xem_duoc_chi_co_link_nho_cho_chu_trang(client):
+async def test_trang_cong_khai_khong_co_dang_nhap(client):
+    """Khách xem tự do; chỉ /admin có ô đăng nhập. Trang công khai không có nút hay câu
+    nào nhắc đăng nhập/tài khoản/AI cho khách."""
     r = await client.get("/lich/hoi", params={"q": "rằm tháng 8"})
     assert r.status_code == 200 and "rằm" in r.text
-    # Khách không bị mời "Đăng nhập" ở thanh bên (dẫn vào trang admin, cụt đường); chủ
-    # trang có link nhỏ ở chân trang, quay lại đúng trang sau khi đăng nhập.
-    assert 'class="side-action i-login"' not in r.text and ">Đăng nhập</a>" not in r.text
-    assert 'href="/admin?next=%2Flich%2Fhoi%3Fq%3D' in r.text
-    assert 'rel="nofollow">Chủ trang đăng nhập</a>' in r.text
+    for path in ("/", "/lich/hoi", "/thoi-tiet", "/tu-vi", "/than-so-hoc", "/ky-mon"):
+        html = (await client.get(path)).text.lower()
+        assert "đăng nhập" not in html and "/admin?next" not in html, path
+        assert "tài khoản" not in html and "luận giải bằng ai" not in html, path
     assert ">Quản trị</a>" not in r.text and "/admin/logout" not in r.text
     for path in ("/lich", "/tu-vi", "/than-so-hoc", "/lich/ngay-le", "/lich/doi-ngay"):
         assert (await client.get(path)).status_code == 200, path
@@ -102,7 +103,7 @@ async def test_root_html_cong_khai_health_check_van_json(monkeypatch):
         assert (await c.get("/", headers={"Accept": "application/json"})).json() == {"status": "ok"}
         page = await c.get("/", headers={"Accept": "text/html"})
         assert page.status_code == 200 and "Hôm nay" in page.text
-        assert 'href="/admin?next=%2F"' in page.text
+        assert "đăng nhập" not in page.text.lower()
 
 
 _TUVI_FORM = {
@@ -123,12 +124,11 @@ async def test_ai_luan_giai_chi_khi_dang_nhap(client, monkeypatch):
         return "## Tổng quan\n**Mệnh** vững vàng."
 
     monkeypatch.setattr(web_site.divination_commands, "ai_text", fake_ai_text)
-    # Chưa đăng nhập: bấm AI (ai=1) cũng không gọi AI; nói rõ phần AI chỉ chủ trang dùng.
+    # Chưa đăng nhập: bấm AI (ai=1) cũng không gọi AI, và không thấy khối AI.
     html = (await client.post("/tu-vi", data={**_TUVI_FORM, "ai": "1"})).text
-    assert calls == [] and "chỉ chủ trang dùng được" in html
-    assert 'href="/admin?next=%2Ftu-vi" rel="nofollow">Chủ trang đăng nhập' in html
+    assert calls == [] and "Luận giải bằng AI" not in html
     html = (await client.post("/than-so-hoc", data={"ngay": "1990-03-15", "ai": "1"})).text
-    assert calls == [] and "chỉ chủ trang dùng được" in html
+    assert calls == [] and "Luận giải bằng AI" not in html
 
     monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_in)
     html = (await client.post("/tu-vi", data=_TUVI_FORM)).text
@@ -163,7 +163,7 @@ async def test_them_xoa_dia_diem_thoi_tiet(client, monkeypatch):
     html = (await client.get("/thoi-tiet")).text
     assert ">Nha Trang</a>" in html and 'class="chip-x"' not in html and "dia-diem/them" not in html
     r = await client.post("/thoi-tiet/dia-diem/them", data={"ten": "Vũng Tàu"})
-    assert r.status_code == 303 and "tb=dang-nhap" in r.headers["location"] and store == {}
+    assert r.status_code == 303 and r.headers["location"] == "/thoi-tiet" and store == {}
 
     monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_in)
     html = (await client.get("/thoi-tiet", params={"noi": "Vũng Tàu"})).text

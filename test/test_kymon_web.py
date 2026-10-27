@@ -58,7 +58,7 @@ async def test_trang_ky_mon_mac_dinh_luc_nay(client):
     # 9 ô theo thứ tự Tốn Ly Khôn / Chấn Trung Đoài / Cấn Khảm Càn, mỗi ô có nhãn.
     labels = re.findall(r'aria-label="Cung (\d)', html)
     assert labels == ["4", "9", "2", "3", "5", "7", "8", "1", "6"]
-    assert "Đăng nhập để dùng AI" in html and "<textarea" not in html
+    assert "Luận giải bằng AI" not in html and "<textarea" not in html  # khách không thấy AI
     assert "Về lúc này" not in html
 
 
@@ -100,7 +100,7 @@ async def test_ai_luan_giai_chi_khi_dang_nhap_va_co_cau_hoi(client, monkeypatch)
     monkeypatch.setattr(web_site.divination_commands, "ai_text", fake_ai_text)
     form = {"ngay": "2026-01-11", "gio": "08:30", "ai": "1", "cau_hoi": "ký hợp đồng"}
     html = (await client.post("/ky-mon", data=form)).text
-    assert calls == [] and "Đăng nhập để dùng AI" in html  # chưa đăng nhập: không tốn AI
+    assert calls == [] and "Luận giải bằng AI" not in html  # chưa đăng nhập: không tốn AI
 
     monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_in)
     html = (await client.get("/ky-mon", params={"ngay": "2026-01-11", "gio": "08:30"})).text

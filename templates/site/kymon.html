@@ -91,6 +91,7 @@
     </div>
   </section>
 </div>
+{% if ai_text or logged_in %}
 <section class="panel ai-box" aria-labelledby="ai-title">
   <header><h2 id="ai-title">Luận giải bằng AI</h2></header>
   {% if ai_text %}
@@ -108,10 +109,8 @@
     </div>
     <div class="form-actions"><button class="btn" type="submit">AI luận giải bàn</button></div>
   </form>
-  {% else %}
-  <p class="muted">Phần luận giải bằng AI chỉ dành cho tài khoản đã đăng nhập.</p>
-  <div class="form-actions"><a class="btn" href="{{ login_url }}">Đăng nhập để dùng AI</a></div>
   {% endif %}
 </section>
+{% endif %}
 <p class="note-line">{{ chart.disclaimer | replace("ℹ️ ", "") }} {{ chart.note }}</p>
 {% endblock %}

@@ -44,7 +44,7 @@
   {% if mine %}
   <form method="post" action="/thoi-tiet/vi-tri/xoa"><button class="btn ghost" type="submit">Xoá vị trí đã lưu</button></form>
   {% endif %}
-  <p class="hint" id="geo-msg" role="status"{% if not mine %} hidden{% endif %}>Vị trí làm tròn khoảng 1 km, chỉ lưu trong trình duyệt này, không cần tài khoản. Tên nơi tra qua OpenStreetMap.</p>
+  <p class="hint" id="geo-msg" role="status"{% if not mine %} hidden{% endif %}>Vị trí làm tròn khoảng 1 km, chỉ lưu trong trình duyệt này. Tên nơi tra qua OpenStreetMap.</p>
   {% if showing_mine and mine_name %}<p class="hint">Tên địa điểm © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap</a></p>{% endif %}
 </div>
 <form id="geo-form" method="post" action="/thoi-tiet/vi-tri" hidden>

@@ -1589,12 +1589,12 @@ gọi Nominatim. Theo chính sách dùng của OSMF: tối đa 1 lượt/giây c
 hay `NOMINATIM_ENABLED=0` thì vẫn lưu, trang ghi toạ độ thay tên. Toạ độ đã làm tròn
 (~1 km) là thứ duy nhất gửi tới OpenStreetMap; dòng chú thích cạnh nút có nói điều này.
 
-Khách xem mọi trang không cần tài khoản nên thanh bên KHÔNG mời "Đăng nhập" (trang đó
-là trang admin, khách vào sẽ cụt đường). Chủ trang có link nhỏ "Chủ trang đăng nhập" ở
-chân trang và trong khối AI luận giải (về lại đúng trang sau khi đăng nhập); trang đăng
-nhập ghi rõ chỉ dành cho chủ trang và có link "← Quay lại trang đang xem". Đăng nhập rồi
-mới hiện "Quản trị" và "Đăng xuất" ở thanh bên. Menu admin có nhóm "Công cụ web" sang
-các trang này.
+Trang công khai KHÔNG có nút hay câu nào về đăng nhập: khách chỉ thấy phần tính bằng
+thuật toán, khối "Luận giải bằng AI" (tử vi, thần số học, Kỳ Môn) và ô thêm/xoá địa điểm
+thời tiết ẩn hẳn. Chủ trang đăng nhập ở `/admin` (trang đăng nhập ghi rõ chỉ dành cho chủ
+trang, có link "← Quay lại trang đang xem"); cùng phiên đó quay lại web mới thấy phần AI,
+nút sửa địa điểm và "Quản trị"/"Đăng xuất" ở thanh bên. Menu admin có nhóm "Công cụ web"
+sang các trang này.
 
 Giao diện dạng ứng dụng (thanh bên trái nhóm Lịch / Tra cứu, cột nội dung 1100px
 lưới 12 cột), dựng theo skill ui-craft: khối nội dung tông xanh lá xám (sage) trên

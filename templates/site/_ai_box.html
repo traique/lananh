@@ -1,3 +1,5 @@
+{# Khách không thấy khối này: luận giải AI chỉ cho chủ trang (đăng nhập ở /admin). #}
+{% if ai_text or logged_in %}
 <section class="panel ai-box" aria-labelledby="ai-title">
   <header><h2 id="ai-title">Luận giải bằng AI</h2></header>
   {% if ai_text %}
@@ -9,8 +11,6 @@
     <p class="muted">Gửi kết quả đã tính cho AI diễn giải thêm. Tốn 1 lượt AI, có thể mất vài chục giây.</p>
     <div class="form-actions"><button class="btn" type="submit">{{ ai_label }}</button></div>
   </form>
-  {% else %}
-  <p class="muted">Kết quả ở trên tính bằng thuật toán, xem miễn phí, không cần tài khoản. Phần diễn giải thêm bằng AI tốn lượt AI có hạn nên chỉ chủ trang dùng được.</p>
-  <p class="hint spaced"><a href="{{ login_url }}" rel="nofollow">Chủ trang đăng nhập</a></p>
   {% endif %}
 </section>
+{% endif %}

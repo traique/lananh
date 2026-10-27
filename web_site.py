@@ -180,7 +180,6 @@ _PLACE_NOTICES = {
     ),
     "day": ("error", f"Tối đa {weather_places.MAX_PLACES} địa điểm, xoá bớt trước khi thêm."),
     "luu": ("error", "Không lưu được, thử lại sau."),
-    "dang-nhap": ("error", "Cần đăng nhập để thêm/xoá địa điểm."),
     "da-luu-vi-tri": ("ok", "Đã lưu vị trí hiện tại. Lần sau mở trang Thời tiết sẽ xem ở đây."),
     "da-xoa-vi-tri": ("ok", "Đã xoá vị trí đã lưu."),
     "vi-tri-loi": ("error", "Không đọc được vị trí, thử lại."),
@@ -235,10 +234,6 @@ _viewer: contextvars.ContextVar[tuple[bool, str, str]] = contextvars.ContextVar(
 
 def _current_path(request: Request) -> str:
     return request.url.path + (f"?{request.url.query}" if request.url.query else "")
-
-
-def _login_url(path: str) -> str:
-    return "/admin?" + urlencode({"next": web_admin.safe_next(path)})
 
 
 def _base_url(request: Request) -> str:
@@ -323,7 +318,6 @@ def _render(name: str, *, title: str, description: str, active: str, **ctx) -> H
             css_v=css_version,
             v=version,
             logged_in=logged_in,
-            login_url=_login_url(path),
             # Link tuyệt đối cho canonical/og: (chưa biết gốc URL thì bỏ các thẻ này).
             page_url=f"{base}{_canonical_path(path)}" if base else "",
             site_url=base,
@@ -806,16 +800,15 @@ async def fuel_page() -> HTMLResponse:
 
 
 async def _change_place(request: Request, action) -> Response:
-    form: dict[str, str] = {}
     if not _viewer.get()[0]:
-        code = "dang-nhap"  # chưa đăng nhập: không đọc form
-    else:
-        form = await _form(request)
-        try:
-            await action(form.get("ten", ""))
-            code = "da-them" if action is weather_places.add else "da-xoa"
-        except weather_places.PlacesError as exc:
-            code = exc.code
+        # Chưa đăng nhập (trang không có nút này, chỉ ai tự gửi form): bỏ qua, không đọc form.
+        return RedirectResponse("/thoi-tiet", status_code=303)
+    form = await _form(request)
+    try:
+        await action(form.get("ten", ""))
+        code = "da-them" if action is weather_places.add else "da-xoa"
+    except weather_places.PlacesError as exc:
+        code = exc.code
     query = {"tb": code}
     if form.get("noi"):
         query["noi"] = form["noi"]
