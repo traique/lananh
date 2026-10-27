@@ -18,15 +18,24 @@
   chỉ gửi chữ); ``tts`` = chỉ Gemini TTS (api1 -> api2, cooldown quota TTS riêng
   "tts_api1/2"). Mỗi lượt qua ``ai.timeouts.bounded()`` trong hạn chót của lượt.
   Model TTS VOICE_TTS_MODEL (mặc định gemini-3.8-flash-tts), giọng dựng sẵn
-  VOICE_TTS_VOICE (mặc định Kore - Live dùng cùng bộ giọng, đều đọc được tiếng
-  Việt). Đầu ra PCM 16-bit mono 24 kHz (thô, hoặc WAV có header với model TTS 3.8)
-  - ``to_pcm`` nhận cả hai.
+  VOICE_TTS_VOICE (mặc định Sulafat "ấm" - Live dùng cùng bộ giọng, đều đọc được
+  tiếng Việt); mỗi người đổi giọng riêng bằng ``/noi giong <tên>``. Chỉ dẫn phong
+  cách đọc VOICE_STYLE_PROMPT (giọng nữ trẻ miền Nam, thân mật, có ngắt nghỉ): TTS
+  3.8 nhận qua annotation speech_metadata (ai/official_client.py), Live qua chỉ dẫn
+  hệ thống. Đầu ra PCM 16-bit mono 24 kHz (thô, hoặc WAV có header với model TTS
+  3.8) - ``to_pcm`` nhận cả hai.
+- Trước khi đọc, chữ được chuẩn hoá (services/tts_normalize.py + từ điển
+  assets/tts_viet_tat.yaml): số tiền, %, ngày giờ, đơn vị, viết tắt, mã cổ phiếu
+  đọc từng chữ cái. Live so bản chép lời với bản ĐÃ chuẩn hoá.
 - Định dạng (không thêm package/apt): có ffmpeg trên PATH thì Telegram nhận
   OGG/Opus qua sendVoice; không có thì đóng gói WAV bằng module ``wave`` và gửi
   sendDocument (Bot API: sendVoice chỉ nhận OGG/Opus, MP3, M4A; sendAudio chỉ MP3,
   M4A). Zalo (zca-js sendVoice gửi link m4a cho app Zalo tự phát) CHỈ bật khi có
   ffmpeg (đổi sang M4A/AAC) - WAV không chắc phát được trên app Zalo.
-- Zalo: clip M4A nằm trong kho RAM có trần (``ClipStore``: tối đa 20 file và
+- Zoom: chatbot Team Chat không gửi được file/âm thanh -> kèm 1 dòng
+  "🔊 Nghe giọng Lan Anh: <link>" tới ``/media/tts/<tên>`` (M4A, cùng kho RAM, cần
+  URL công khai WEBHOOK_BASE_URL/RENDER_EXTERNAL_URL).
+- Zalo: clip M4A nằm trong kho RAM có trần (``ClipStore``: tối đa 12 file và
   VOICE_REPLY_STORE_MB, hết hạn sau VOICE_REPLY_URL_TTL_MIN phút), tên file ký HMAC
   có hạn (khoá ngẫu nhiên theo process - restart là link cũ hết hiệu lực, đúng như
   kho RAM). Gateway tải qua loopback ``/internal/zalo/tts/<tên>``, tải lên CDN Zalo
@@ -43,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import dataclasses
 import hashlib
 import hmac
 import io
@@ -62,13 +72,19 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 
 from ai.timeouts import TurnTimeoutError, remaining_turn_seconds
-from core import config
+from core import config, memtrim
 from core import database as db
 from core.envutil import env_int, env_on
 from core.text_normalize import fold
 from core.text_utils import parse_on_off
 from core.urls import URL_RE
-from services import personal_settings, prompt_redaction, reply_audience, usage_quota
+from services import (
+    personal_settings,
+    prompt_redaction,
+    reply_audience,
+    tts_normalize,
+    usage_quota,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +93,52 @@ MODE_ON = "on"
 MODE_AUTO = "auto"
 MODES = (MODE_OFF, MODE_ON, MODE_AUTO)
 DEFAULT_MODEL = "gemini-3.8-flash-tts"
-DEFAULT_VOICE = "Kore"
+# Sulafat ("Warm") thay Kore ("Firm" - nghe cứng, "rất AI" theo phản hồi 27/10).
+DEFAULT_VOICE = "Sulafat"
+# Chỉ dẫn phong cách bằng lời (Gemini TTS: annotation speech_metadata.style; Live:
+# chỉ dẫn hệ thống). VOICE_STYLE_PROMPT đổi được; "off" = không gửi phong cách.
+DEFAULT_STYLE = (
+    "Giọng nữ trẻ miền Nam, ấm áp, thân mật như đang nhắn tin thoại cho người nhà; "
+    "nói chuyện tự nhiên, nhịp vừa phải, có ngắt nghỉ ở dấu phẩy và cuối câu, lên "
+    "xuống giọng nhẹ nhàng theo ý câu, mỉm cười khi chào hỏi; không đọc đều đều như "
+    "máy, không nhấn nhá kiểu phát thanh viên."
+)
+# 30 giọng dựng sẵn của Gemini TTS (ai.google.dev/gemini-api/docs/speech-generation,
+# 10/2026) - Live dùng cùng bộ giọng. Mô tả theo tài liệu, dịch ngắn.
+VOICES = {
+    "Zephyr": "sáng",
+    "Puck": "vui tươi",
+    "Charon": "rõ ràng, kiểu thông tin",
+    "Kore": "chắc, dứt khoát",
+    "Fenrir": "hào hứng",
+    "Leda": "trẻ trung",
+    "Orus": "chắc",
+    "Aoede": "nhẹ nhàng, thoáng",
+    "Callirrhoe": "thoải mái",
+    "Autonoe": "sáng",
+    "Enceladus": "hơi thở nhẹ",
+    "Iapetus": "rõ",
+    "Umbriel": "thoải mái",
+    "Algieba": "mượt",
+    "Despina": "mượt",
+    "Erinome": "rõ",
+    "Algenib": "khàn",
+    "Rasalgethi": "kiểu thông tin",
+    "Laomedeia": "vui tươi",
+    "Achernar": "mềm",
+    "Alnilam": "chắc",
+    "Schedar": "đều",
+    "Gacrux": "chín chắn",
+    "Pulcherrima": "thẳng thắn",
+    "Achird": "thân thiện",
+    "Zubenelgenubi": "bình dân",
+    "Vindemiatrix": "dịu dàng",
+    "Sadachbia": "sôi nổi",
+    "Sadaltager": "hiểu biết",
+    "Sulafat": "ấm",
+}
+# Gợi ý khi gõ /noi giong (giọng nữ hợp persona Lan Anh).
+SUGGESTED_VOICES = ("Sulafat", "Leda", "Aoede", "Vindemiatrix", "Achernar", "Despina", "Kore")
 _MB = 1024 * 1024
 # Một lượt TTS ~600 ký tự mất 5-20 giây; trần riêng để provider treo không ăn hết lượt.
 TTS_TIMEOUT_SEC = 45.0
@@ -87,7 +148,9 @@ FFMPEG_TIMEOUT_SEC = 20.0
 GATE_WAIT_SEC = 10.0
 # 600 ký tự đọc ~45-60 giây = ~2,9 MB PCM 24 kHz; trần dư cho câu đọc chậm.
 MAX_PCM_BYTES = 8 * _MB
-STORE_MAX_FILES = 20
+# Kho clip Zalo/Zoom: tin thoại M4A 48 kbps ~0,35 MB/phút -> 12 file / 4 MB đủ cho
+# vài người trong 10 phút hiệu lực link (trước 27/10: 20 file / 8 MB).
+STORE_MAX_FILES = 12
 MIN_SPEAK_CHARS = 2
 TELEGRAM_WAV_NAME = "lan-anh-tra-loi.wav"
 
@@ -108,7 +171,30 @@ def tts_model() -> str:
 
 
 def tts_voice() -> str:
-    return os.getenv("VOICE_TTS_VOICE", DEFAULT_VOICE).strip() or DEFAULT_VOICE
+    return canonical_voice(os.getenv("VOICE_TTS_VOICE", DEFAULT_VOICE)) or DEFAULT_VOICE
+
+
+def canonical_voice(name: str) -> str | None:
+    """Tên giọng đúng chữ hoa theo VOICES (không phân biệt hoa/thường); None nếu lạ."""
+    wanted = (name or "").strip().lower()
+    return next((voice for voice in VOICES if voice.lower() == wanted), None)
+
+
+def style_prompt() -> str:
+    """VOICE_STYLE_PROMPT (trống = mặc định; "off"/"0"/"-" = không gửi phong cách)."""
+    raw = " ".join(os.getenv("VOICE_STYLE_PROMPT", "").split())
+    if raw.lower() in ("off", "0", "-", "none", "tat", "tắt"):
+        return ""
+    return (raw or DEFAULT_STYLE)[:500]
+
+
+async def get_voice(user_id: int) -> str:
+    """Giọng riêng của người này (/noi giong), không có thì VOICE_TTS_VOICE."""
+    try:
+        raw = await db.get_setting(personal_settings.voice_name_key(user_id))
+    except Exception:
+        raw = None
+    return canonical_voice(raw or "") or tts_voice()
 
 
 def voice_engine() -> str:
@@ -122,18 +208,27 @@ def url_ttl_sec() -> int:
 
 
 def store_max_bytes() -> int:
-    return env_int("VOICE_REPLY_STORE_MB", 8, 1, 64) * _MB
+    return env_int("VOICE_REPLY_STORE_MB", 4, 1, 64) * _MB
 
 
 def ffmpeg_path() -> str | None:
     return shutil.which("ffmpeg")
 
 
+def public_base() -> str | None:
+    base = (config.WEBHOOK_BASE_URL or "").rstrip("/")
+    return base if base.startswith("https://") else None
+
+
 def channel_supported(channel: str) -> bool:
     """Kênh gửi được tin thoại trả lời: Telegram luôn (OGG hoặc file WAV), Zalo chỉ
-    khi có ffmpeg (M4A), Zoom chưa."""
+    khi có ffmpeg (M4A). Zoom: chatbot Team Chat KHÔNG gửi được file/âm thanh (chỉ
+    tin chữ/thẻ có link - developers.zoom.us, 10/2026) nên gửi 1 dòng link nghe
+    ``/media/tts/<tên>`` - cần URL công khai (WEBHOOK_BASE_URL/RENDER_EXTERNAL_URL)."""
     if channel == "telegram":
         return True
+    if channel == "zoom":
+        return public_base() is not None
     return channel == "zalo" and ffmpeg_path() is not None
 
 
@@ -158,6 +253,36 @@ async def wants_voice(user_id: int, *, voice_in: bool = False) -> bool:
     return enabled() and _wants(await get_mode(user_id), voice_in)
 
 
+_VOICE_ARG_RE = re.compile(r"^(?:giong|voice)(?:\s|$)")
+_RESET_WORDS = {"mac dinh", "macdinh", "default", "reset", "xoa", "bo"}
+
+
+async def _voice_command(user_id: int, name: str, me: str, you: str) -> str:
+    """/noi giong [tên|mặc định]: xem gợi ý / đổi giọng đọc của CHÍNH người gõ."""
+    key = personal_settings.voice_name_key(user_id)
+    if name and fold(name) in _RESET_WORDS:
+        await db.set_setting(key, "")
+        return f"🔊 Đã về giọng mặc định {tts_voice()} ({VOICES.get(tts_voice(), '')})."
+    if name:
+        voice = canonical_voice(name)
+        if voice is None:
+            return (
+                f"{me.capitalize()} chưa có giọng “{name}”. Gợi ý: "
+                + ", ".join(SUGGESTED_VOICES)
+                + ". Gõ /noi giong để xem mô tả nha."
+            )
+        await db.set_setting(key, voice)
+        return f"🔊 Từ giờ {me} đọc bằng giọng {voice} ({VOICES[voice]}) cho {you} nha."
+    current = await get_voice(user_id)
+    lines = [f"🎙️ Giọng đang dùng: {current} ({VOICES.get(current, '')}). Gợi ý giọng nữ:"]
+    lines += [f"• {voice} - {VOICES[voice]}" for voice in SUGGESTED_VOICES]
+    lines.append(
+        "Đổi: /noi giong <tên> (vd /noi giong Leda) · về mặc định: /noi giong mac dinh. "
+        f"Dùng được cả {len(VOICES)} giọng Gemini dựng sẵn."
+    )
+    return "\n".join(lines)
+
+
 def _parse_mode(argument: str) -> str | None:
     arg = fold(argument or "")
     if arg in {"auto", "tu dong", "tudong"}:
@@ -174,6 +299,11 @@ async def noi_command(user_id: int, argument: str, *, channel: str, is_admin: bo
     if not enabled():
         return "🔇 Trả lời bằng giọng nói đang tắt trên bot (VOICE_REPLY_ENABLED=0)."
     arg = " ".join((argument or "").split())
+    if _VOICE_ARG_RE.match(fold(arg)):
+        words = arg.split()[1:]
+        if words and fold(words[0]) == "doc":  # "/noi giọng đọc Leda"
+            words = words[1:]
+        return await _voice_command(user_id, " ".join(words), me, you)
     key = personal_settings.voice_reply_key(user_id)
     if arg:
         mode = _parse_mode(arg)
@@ -206,11 +336,18 @@ async def noi_command(user_id: int, argument: str, *, channel: str, is_admin: bo
             )
         if usage_quota.applies(channel, is_admin):
             lines.append("Mỗi tin thoại tính 1 lượt nặng trong ngày.")
+    elif public_base() is None:
+        lines.append(
+            f"Zoom không gửi được tin thoại và máy chủ chưa có link công khai nên {me} chỉ "
+            f"gửi chữ - cài đặt này dùng chung với Telegram của {you}."
+        )
     else:
         lines.append(
-            f"Zoom chưa gửi được tin thoại - cài đặt này dùng chung với Telegram của {you}."
+            f"Zoom không nhận tin thoại từ bot nên {me} gửi kèm 1 link nghe (hết hạn sau "
+            f"{url_ttl_sec() // 60} phút) - cài đặt này dùng chung với Telegram của {you}."
         )
-    lines.append("Đổi: /noi on · /noi auto · /noi off")
+    lines.append(f"Giọng đang dùng: {await get_voice(user_id)} (xem/đổi: /noi giong).")
+    lines.append("Đổi: /noi on · /noi auto · /noi off · /noi giong")
     return "\n".join(lines)
 
 
@@ -225,13 +362,30 @@ _EMPHASIS_RE = re.compile(r"(\*\*|__|\*|_|~~)(?=\S)(.+?)(?<=\S)\1")
 _INLINE_CODE_RE = re.compile(r"`([^`\n]*)`")
 _HTML_TAG_RE = re.compile(r"</?[a-zA-Z][^>\n]*>")
 _LEFTOVER_RE = re.compile(r"[*#`|~^<>\[\]{}\\]")
-_ARROWS = {"→": ", ", "⇒": ", ", "←": ", ", "↑": " tăng ", "↓": " giảm ", "≈": " khoảng "}
+_ARROWS = {
+    "→": ", ",
+    "⇒": ", ",
+    "←": ", ",
+    "↑": " tăng ",
+    "↓": " giảm ",
+    "≈": " khoảng ",
+    "▲": " tăng ",
+    "▼": " giảm ",
+    "🔺": " tăng ",
+    "🔻": " giảm ",
+    "±": " cộng trừ ",
+    "~": " khoảng ",
+    "≥": " lớn hơn hoặc bằng ",
+    "≤": " nhỏ hơn hoặc bằng ",
+}
 _SENTENCE_END = ".!?…:;,"
 
 
 def _is_symbol(ch: str) -> bool:
     if ch in "‍️︎⃣":
         return True
+    if ch in "°$€":  # đơn vị đọc được (30°C, $5) - services/tts_normalize.py đọc thành chữ
+        return False
     category = unicodedata.category(ch)
     return category in ("So", "Sk", "Cs", "Co", "Cn") or (category == "Sm" and ch not in "+=%<>")
 
@@ -415,10 +569,17 @@ async def ffmpeg_encode(pcm: bytes, rate: int, channels: int, fmt: str) -> bytes
 
 
 async def _encode(pcm: bytes, rate: int, channels: int, channel: str) -> tuple[bytes, str] | None:
-    """(dữ liệu, đuôi) theo kênh: Telegram OGG (ffmpeg) hoặc WAV; Zalo M4A (ffmpeg)."""
+    """(dữ liệu, đuôi) theo kênh: Telegram OGG (ffmpeg) hoặc WAV; Zalo M4A (ffmpeg);
+    Zoom (link nghe trên trình duyệt) M4A - trình duyệt nào cũng phát được, không có
+    ffmpeg thì WAV."""
     if channel == "zalo":
         data = await ffmpeg_encode(pcm, rate, channels, "m4a")
         return (data, "m4a") if data else None
+    if channel == "zoom":
+        data = await ffmpeg_encode(pcm, rate, channels, "m4a")
+        if data:
+            return data, "m4a"
+        return await asyncio.to_thread(wav_bytes, pcm, rate, channels), "wav"
     data = await ffmpeg_encode(pcm, rate, channels, "ogg")
     if data:
         return data, "ogg"
@@ -445,6 +606,9 @@ async def make_clip(
         # wifi): che như mọi prompt gửi provider (services/prompt_redaction.py).
         hidden = prompt_redaction.Redactor().text(text)
         speech, truncated = fit(speakable_text(hidden), max_chars(), you)
+        # Viết tắt, số tiền, ngày giờ, mã cổ phiếu -> chữ đọc được (tin chữ không đổi).
+        # Live so bản chép lời với CHÍNH bản đã chuẩn hoá này.
+        speech = tts_normalize.normalize(speech)
         if len(speech) < MIN_SPEAK_CHARS:
             return None
         remaining = remaining_turn_seconds()
@@ -453,7 +617,7 @@ async def make_clip(
             return None
         if not await usage_quota.heavy_available(user_id, channel=channel, is_admin=is_admin):
             return None
-        clip = await _synthesize(speech, channel, truncated)
+        clip = await _synthesize(speech, channel, truncated, voice=await get_voice(user_id))
         if clip is not None:
             await usage_quota.record_heavy(
                 user_id, usage_quota.KIND_TTS, channel=channel, is_admin=is_admin
@@ -467,7 +631,9 @@ async def make_clip(
         return None
 
 
-async def _synthesize(speech: str, channel: str, truncated: bool) -> Clip | None:
+async def _synthesize(
+    speech: str, channel: str, truncated: bool, *, voice: str | None = None
+) -> Clip | None:
     from ai import orchestrator
 
     remaining = remaining_turn_seconds()
@@ -481,9 +647,10 @@ async def _synthesize(speech: str, channel: str, truncated: bool) -> Clip | None
         result = await orchestrator.synthesize_speech(
             speech,
             model=tts_model(),
-            voice=tts_voice(),
+            voice=voice or tts_voice(),
             timeout_sec=TTS_TIMEOUT_SEC,
             engine=voice_engine(),
+            style=style_prompt(),
         )
         pcm, rate, channels = to_pcm(result.audio, result.mime)
         if not pcm or len(pcm) > MAX_PCM_BYTES:
@@ -496,6 +663,8 @@ async def _synthesize(speech: str, channel: str, truncated: bool) -> Clip | None
         return Clip(data, MIMES[ext], ext, duration_ms(pcm, rate, channels), truncated)
     finally:
         _gate.release()
+        # PCM vài MB + tiến trình ffmpeg: trả heap rảnh về hệ điều hành (core/memtrim.py).
+        memtrim.request("tin thoại")
 
 
 # ─── Kho RAM cho Zalo (link ký HMAC có hạn) ──────────────────────────────────
@@ -574,8 +743,40 @@ store = ClipStore()
 
 
 def public_url(name: str) -> str | None:
-    base = (config.WEBHOOK_BASE_URL or "").rstrip("/")
-    return f"{base}/media/tts/{name}" if base.startswith("https://") else None
+    base = public_base()
+    return f"{base}/media/tts/{name}" if base else None
+
+
+ZOOM_LINK_PREFIX = "🔊 Nghe giọng Lan Anh:"
+
+
+async def with_zoom_voice(user_id: int, text: str, result):
+    """ChannelResult của lượt Zoom + dòng link nghe (nếu /noi bật) - không đọc lệnh
+    "/", tin cổ phiếu, ảnh (cùng điều kiện tin thoại Zalo). Lỗi -> chỉ chữ."""
+    if (
+        not result.messages
+        or (text or "").lstrip().startswith("/")
+        or result.market
+        or result.image_b64
+        or result.image_url
+    ):
+        return result
+    line = await zoom_voice_line(user_id, speakable_reply(list(result.messages)))
+    if not line:
+        return result
+    return dataclasses.replace(result, messages=[*result.messages, line])
+
+
+async def zoom_voice_line(user_id: int, text: str, *, voice_in: bool = False) -> str | None:
+    """Dòng "🔊 Nghe giọng Lan Anh: <link>" cho Zoom (chatbot không gửi được âm thanh):
+    clip vào kho RAM có trần, link công khai ký HMAC hết hạn sau
+    VOICE_REPLY_URL_TTL_MIN phút (channels/tts_media.py). None nếu không cần/không làm được."""
+    clip = await make_clip(user_id, text, channel="zoom", voice_in=voice_in)
+    if clip is None:
+        return None
+    name = store.put(clip)
+    url = public_url(name) if name else None
+    return f"{ZOOM_LINK_PREFIX} {url}" if url else None
 
 
 async def zalo_voice(

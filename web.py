@@ -30,10 +30,11 @@ from channels import (
 from channels.router import router as zalo_router
 from channels.zalo_media import router as zalo_media_router
 from channels import tts_media
+from ai.timeouts import turn_deadline
 from core import config, database as db, idempotency, trace, webhook_inbox
 from diagnose_router9 import main as diagnose_main
 from services import db_maintenance, market_page, morning_news, notify_hub
-from services import action_buttons, channel_dispatch, turn_control
+from services import action_buttons, channel_dispatch, turn_control, voice_reply
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.concurrency import OWNER_TURN_KEY, assistant_turn, cancel_turn, is_busy
 from services.reminder_delivery import NotificationTarget, notification_target
@@ -331,6 +332,14 @@ def _zoom_chunks(outputs: list[str]) -> list[str]:
     return [chunk for message in outputs for chunk in split_for_zalo(message)]
 
 
+async def _zoom_chat(user_id: int, text: str):
+    """Lượt chat Zoom + dòng link nghe /noi (chatbot Zoom không gửi được âm thanh -
+    services/voice_reply.zoom_voice_line) trong CÙNG 1 hạn chót lượt."""
+    with turn_deadline():
+        result = await handle_channel_text(user_id, text, channel="zoom")
+        return await voice_reply.with_zoom_voice(user_id, text, result)
+
+
 async def _process_zoom_event(event: "zoom.ZoomEvent") -> None:
     with notification_target(
         NotificationTarget(
@@ -374,9 +383,7 @@ async def _deliver_zoom_event(event: "zoom.ZoomEvent") -> None:
                 command_account_id=zalo_account_id or None,
             ),
             channel_dispatch.DispatchHandlers(
-                chat=lambda user_id, text, is_admin: handle_channel_text(
-                    user_id, text, channel="zoom"
-                ),
+                chat=lambda user_id, text, is_admin: _zoom_chat(user_id, text),
                 get_cached=idempotency.get_zalo_response,
                 save_cached=idempotency.save_zalo_response,
                 facebook=facebook_commands.maybe_handle_facebook_command,

@@ -5,6 +5,7 @@ import json
 import logging
 import mimetypes
 import re
+import time
 from datetime import datetime
 from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
@@ -313,12 +314,128 @@ async def transcribe_audio(
     return await generate_from_bytes(idx, instruction, audio, mime_type, label="audio")
 
 
-async def synthesize_speech(idx: int, text: str, *, model: str, voice: str) -> tuple[bytes, str]:
+INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+_INTERACTIONS_TIMEOUT_SEC = 60.0
+# Lỗi KHÔNG phải quota của đường interactions (model cũ không hỗ trợ, schema đổi):
+# chỉ cảnh báo 1 lần mỗi process rồi dùng generate_content (không phong cách).
+# Lỗi 4xx (yêu cầu bị từ chối hẳn) thì thôi thử interactions 6 giờ để mỗi tin
+# thoại không tốn thêm 1 request hỏng.
+_interactions_warned = False
+_INTERACTIONS_BACKOFF_SEC = 6 * 3600
+_interactions_off_until = 0.0
+
+
+class InteractionsHTTPError(RuntimeError):
+    """Interactions API trả HTTP lỗi; ``status_code`` để is_quota_exhausted_error nhận 429."""
+
+    def __init__(self, status_code: int, message: str):
+        super().__init__(f"{status_code} {message}")
+        self.status_code = status_code
+
+
+def _find_audio(payload) -> tuple[str, str] | None:
+    """(base64, mime) của khối âm thanh CUỐI trong JSON interactions (steps[].content[]
+    theo REST, hoặc outputs/output_audio) - dò đệ quy để chịu được đổi vỏ JSON."""
+    found: list[tuple[str, str]] = []
+
+    def walk(node, depth: int = 0) -> None:
+        if depth > 8:
+            return
+        if isinstance(node, dict):
+            data = node.get("data")
+            if node.get("type") == "audio" and isinstance(data, str) and data:
+                found.append((data, str(node.get("mime_type") or node.get("mimeType") or "")))
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    walk(value, depth + 1)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, depth + 1)
+
+    walk(payload)
+    return found[-1] if found else None
+
+
+async def _synthesize_interactions(
+    idx: int, text: str, *, model: str, voice: str, style: str
+) -> tuple[bytes, str]:
+    """Gemini TTS 3.8 qua Interactions API (REST, theo ai.google.dev/gemini-api/docs/
+    speech-generation 10/2026): ``text`` là bản chép nguyên văn, phong cách đọc đi
+    trong annotation ``speech_metadata.style`` - model 3.8 KHÔNG làm theo chỉ dẫn
+    viết lẫn trong chữ (sẽ đọc to cả chỉ dẫn). Gọi REST bằng httpx thay vì
+    client.interactions của SDK: SDK chưa có kiểu annotation speech_metadata."""
+    import base64
+
+    import httpx
+
+    from services import http_client
+
+    key = await api_key_for(idx)
+    if not key:
+        raise RuntimeError(f"Chưa cấu hình GOOGLE_AI_STUDIO_API_KEY_{idx}")
+    body = {
+        "model": model,
+        "input": [
+            {
+                "type": "user_input",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": text,
+                        "annotations": [{"type": "speech_metadata", "style": style}],
+                    }
+                ],
+            }
+        ],
+        "response_format": {"type": "audio"},
+        "generation_config": {"speech_config": [{"voice": voice}]},
+    }
+    try:
+        response = await http_client.get_client().post(
+            INTERACTIONS_URL,
+            json=body,
+            headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+            timeout=_INTERACTIONS_TIMEOUT_SEC,
+        )
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"api{idx} TTS interactions lỗi mạng: {type(exc).__name__}") from exc
+    if response.status_code != 200:
+        raise InteractionsHTTPError(response.status_code, response.text[:300])
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"api{idx} TTS interactions trả JSON hỏng") from exc
+    audio = _find_audio(payload)
+    if audio is None:
+        raise RuntimeError(f"api{idx} TTS interactions không trả âm thanh")
+    data, mime = audio
+    return base64.b64decode(data), mime or "audio/wav"
+
+
+async def synthesize_speech(
+    idx: int, text: str, *, model: str, voice: str, style: str = ""
+) -> tuple[bytes, str]:
     """Gemini TTS (model *-tts) đọc ``text`` bằng 1 giọng dựng sẵn -> (âm thanh,
     mime). Model đời 2.5/3.1 trả PCM thô ("audio/L16;codec=pcm;rate=24000"), đời
     3.8 trả WAV có header RIFF - services/voice_reply.py nhận cả hai. Text là bản
-    chép nguyên văn (model TTS không làm theo chỉ dẫn trong text). Caller bọc
-    bounded() (hạn chót lượt)."""
+    chép nguyên văn (model TTS không làm theo chỉ dẫn trong text).
+
+    ``style`` (VOICE_STYLE_PROMPT) khác rỗng: thử Interactions API có annotation
+    phong cách trước; lỗi quota (429) thì raise như thường (cooldown TTS), lỗi khác
+    thì rơi về generate_content không phong cách. Caller bọc bounded() (hạn chót lượt)."""
+    global _interactions_warned, _interactions_off_until
+    if style and time.monotonic() >= _interactions_off_until:
+        try:
+            return await _synthesize_interactions(idx, text, model=model, voice=voice, style=style)
+        except Exception as exc:
+            if is_quota_exhausted_error(exc):
+                raise
+            status = getattr(exc, "status_code", None)
+            if isinstance(status, int) and 400 <= status < 500:
+                _interactions_off_until = time.monotonic() + _INTERACTIONS_BACKOFF_SEC
+            log = logger.info if _interactions_warned else logger.warning
+            _interactions_warned = True
+            log("api%s TTS có phong cách lỗi (%s) - đọc không phong cách.", idx, exc)
     from google.genai import types
 
     client = await _get_official_client(idx)

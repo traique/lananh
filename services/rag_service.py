@@ -226,8 +226,12 @@ BM25_B = 0.75
 # Ngưỡng cho /rag: điểm chuẩn hoá tối thiểu + số token nội dung trùng.
 MIN_NORMALIZED_SCORE = 0.2
 MIN_MATCHED_TERMS = 2
-# Trần chỉ mục trong RAM (kho hiện ~110 KB -> ~100 chunk, < 2 MB).
-MAX_INDEX_CHUNKS = 2000
+# Trần chỉ mục trong RAM. Đo 27/10 (kho thật 100 chunk / 82 nghìn ký tự): chunk +
+# Counter BM25 tốn ~44 KB/chunk, ~55 byte/ký tự -> trần cũ 2000 chunk có thể lên
+# 90-200 MB (tài liệu /doc lưu vào rag/ tới 20 MB). Trần mới: 600 chunk VÀ 400
+# nghìn ký tự nội dung (~22 MB tệ nhất); phần vượt không được tra, có log cảnh báo.
+MAX_INDEX_CHUNKS = 600
+MAX_INDEX_CHARS = 400_000
 
 
 def _syllables(text: str) -> list[tuple[str, str]]:
@@ -300,8 +304,26 @@ def _files_signature() -> tuple:
     return tuple(sig)
 
 
+def _cap_chunks(chunks: list[Chunk]) -> list[Chunk]:
+    kept: list[Chunk] = []
+    chars = 0
+    for chunk in chunks:
+        chars += len(chunk.content) + len(chunk.heading)
+        if len(kept) >= MAX_INDEX_CHUNKS or chars > MAX_INDEX_CHARS:
+            logger.warning(
+                "Kho rag/ vượt trần chỉ mục (%d chunk / %d ký tự): chỉ tra %d/%d chunk đầu.",
+                MAX_INDEX_CHUNKS,
+                MAX_INDEX_CHARS,
+                len(kept),
+                len(chunks),
+            )
+            break
+        kept.append(chunk)
+    return kept
+
+
 def _build_index(chunks: list[Chunk]) -> _Index:
-    chunks = chunks[:MAX_INDEX_CHUNKS]
+    chunks = _cap_chunks(chunks)
     doc_terms: list[Counter] = []
     df: Counter = Counter()
     for chunk in chunks:

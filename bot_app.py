@@ -108,7 +108,7 @@ ALL_COMMANDS = [
     BotCommand("chitieu", "Chi tiêu: tổng theo danh mục, ghi khoản"),
     BotCommand("chitieu_xoa", "Xoá 1 khoản chi theo số #"),
     BotCommand("an", "Ghi bữa ăn, xem kcal ước lượng hôm nay/tuần"),
-    BotCommand("noi", "Trả lời kèm giọng nói (on|off|auto)"),
+    BotCommand("noi", "Trả lời kèm giọng nói (on|off|auto · giong <tên>)"),
     BotCommand("prompt", "Viết prompt tạo ảnh"),
     BotCommand("gia", "Tìm giá sản phẩm"),
     BotCommand("dich", "Dịch chat Nhật-Việt"),

@@ -53,6 +53,7 @@ Không gọi khi không có mạng: mọi exception được để nảy lên - 
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -341,3 +342,61 @@ def fetch_upcoming_events(symbol: str, days_ahead: int = 45) -> list[UpcomingEve
             _events_cache.pop(min(_events_cache, key=lambda k: _events_cache[k][0]), None)
         _events_cache[key] = (now, events)
     return list(events)
+
+
+# ─── Lịch sự kiện quyền ĐÃ QUA (điều chỉnh chuỗi giá - stock/corporate_actions.py) ──
+# Thay Company(symbol).events() của vnstock (cùng endpoint /v1/events, mặc định 10
+# năm tới hôm nay, trang đầu 50 dòng, mọi loại sự kiện) để việc nền nhẹ (cảnh báo
+# giá/danh mục, bản tin sáng) không nạp vnstock + pandas (~50 MB RSS). Chỉ lấy
+# DIV (cổ tức tiền) + ISS (phát hành cổ phiếu) - đúng 2 loại corporate_actions dùng,
+# nên 100 dòng chứa nhiều sự kiện liên quan hơn trang 50 dòng lẫn mọi loại trước đây.
+_HISTORY_EVENT_CODES = "DIV,ISS"
+_HISTORY_YEARS = 10
+_HISTORY_PAGE_SIZE = 100
+_DATE_KEYS = ("public_date", "issue_date", "record_date", "exright_date", "display_date")
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def snake_key(name: str) -> str:
+    """exrightDate -> exright_date (cùng cách vnstock đặt tên cột events())."""
+    return _CAMEL_RE.sub("_", re.sub(r"[\s.\-]+", "_", str(name))).lower()
+
+
+def normalize_event_rows(rows: list) -> list[dict]:
+    """Dòng JSON /v1/events -> dict khoá snake_case, ngày epoch ms -> YYYY-MM-DD
+    (giờ VN), như DataFrame events() của vnstock mà corporate_actions từng đọc."""
+    out: list[dict] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        item = {snake_key(k): v for k, v in row.items()}
+        for key in _DATE_KEYS:
+            if key in item and item[key] not in (None, ""):
+                item[key] = _event_date(item[key])
+        out.append(item)
+    return out
+
+
+def fetch_event_history(symbol: str) -> list[dict]:
+    """Sự kiện DIV/ISS trong 10 năm tới hôm nay (đã chuẩn hoá khoá/ngày). Có thể
+    raise (mạng/HTTP/JSON) - corporate_actions tự bắt và coi như không có sự kiện."""
+    key = symbol.strip().upper()
+    today = datetime.now(_VN_TZ).date()
+    response = requests.get(
+        _EVENTS_URL,
+        params={
+            "ticker": key,
+            "fromDate": (today - timedelta(days=365 * _HISTORY_YEARS)).strftime("%Y%m%d"),
+            "toDate": today.strftime("%Y%m%d"),
+            "eventCode": _HISTORY_EVENT_CODES,
+            "page": 0,
+            "size": _HISTORY_PAGE_SIZE,
+        },
+        headers=_HEADERS,
+        timeout=_REQUEST_TIMEOUT_SEC,
+    )
+    response.raise_for_status()
+    data = response.json()
+    payload = data.get("data") if isinstance(data, dict) else None
+    rows = payload.get("content") if isinstance(payload, dict) else payload
+    return normalize_event_rows(rows if isinstance(rows, list) else [])

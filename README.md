@@ -533,15 +533,26 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   (theo từ, bỏ dấu, ngưỡng `LIVE_VOICE_MIN_MATCH`=80%); lệch, lỗi hay hết quota Live
   thì bỏ âm thanh Live và dùng Gemini TTS, để tin thoại không nói khác bản chữ;
   `live` = chỉ Live (lỗi thì chỉ gửi chữ); `tts` = chỉ Gemini TTS
-  (`VOICE_TTS_MODEL`). Cùng giọng `VOICE_TTS_VOICE`, bằng key AI Studio sẵn có, qua
+  (`VOICE_TTS_MODEL`). Cùng giọng `VOICE_TTS_VOICE` (mặc định Sulafat "ấm"; mỗi người
+  đổi riêng bằng `/noi giong <tên>`, `/noi giong` xem gợi ý) và chỉ dẫn phong cách
+  `VOICE_STYLE_PROMPT` (giọng nữ trẻ miền Nam, thân mật, có ngắt nghỉ - TTS 3.8 nhận
+  qua annotation `speech_metadata` của Interactions API, Live qua chỉ dẫn hệ thống),
+  bằng key AI Studio sẵn có, qua
   `bounded()` trong hạn chót lượt, cooldown quota riêng (`live_api1/2`,
   `tts_api1/2`). Chỉ đọc chữ đã lọc (bỏ bảng, link, markdown, emoji), tối đa
-  `VOICE_REPLY_MAX_CHARS` ký tự - dài hơn thì đọc đoạn đầu và nhắc xem tin chữ.
+  `VOICE_REPLY_MAX_CHARS` ký tự - dài hơn thì đọc đoạn đầu và nhắc xem tin chữ. Trước
+  khi đọc, chữ được chuẩn hoá (`services/tts_normalize.py`, từ điển sửa được
+  `assets/tts_viet_tat.yaml`): 150k, 1tr2, 1.299.000đ, %, 26/10, 8h30, km, m², °C,
+  TP.HCM, LNST, P/E, ko/k, dc... thành chữ; mã cổ phiếu đọc từng chữ cái (FPT → "ép
+  pê tê"); Live so bản chép lời với bản ĐÃ chuẩn hoá.
   Telegram: có `ffmpeg` trên PATH thì gửi tin thoại OGG/Opus, không có thì file WAV
   (sendDocument - Bot API chỉ nhận OGG/MP3/M4A cho voice). Zalo: CHỈ khi có ffmpeg
-  (M4A); clip nằm trong kho RAM có trần (20 file, `VOICE_REPLY_STORE_MB`), tên file
+  (M4A); clip nằm trong kho RAM có trần (12 file, `VOICE_REPLY_STORE_MB`), tên file
   ký HMAC hết hạn sau `VOICE_REPLY_URL_TTL_MIN` phút; gateway tải qua loopback,
   đưa lên CDN Zalo rồi `sendVoice`, lỗi thì gửi link công khai `/media/tts/<tên>`.
+  Zoom: chatbot Team Chat không gửi được file/âm thanh (chỉ chữ và thẻ link) nên câu
+  trả lời kèm 1 dòng "🔊 Nghe giọng Lan Anh: <link>" tới `/media/tts/<tên>` (M4A,
+  cùng kho và hạn link; cần `WEBHOOK_BASE_URL`/`RENDER_EXTERNAL_URL` https).
   Thành viên Zalo: mỗi tin thoại tính 1 lượt nặng. Image Docker đã cài ffmpeg (CI
   kiểm có encoder libopus và aac); chạy nơi khác thiếu ffmpeg thì tự rơi về WAV.
 - Hỏi đáp về ảnh: ảnh kèm câu hỏi ("ảnh này là gì?", "dịch giúp anh chữ trong
@@ -724,7 +735,8 @@ VCI ───┘                         │
 
 Năng lực hiện tại:
 
-- DNSE OHLCV với failover tự động sang `vnstock`/VCI (đăng ký `VNSTOCK_API_KEY` free tại vnstocks.com/login để tăng rate limit 20→60 req/phút và số kỳ BCTC 4→8, không bắt buộc).
+- DNSE OHLCV với failover tự động sang VCI gap-chart gọi THẲNG bằng httpx (`stock/providers.py`); lịch sự kiện quyền lấy thẳng REST `/v1/events` của VCI (`stock/vci_direct.py`). Việc nền về giá (cảnh báo giá trong phiên, cảnh báo/sự kiện danh mục, bản tin sáng, trang thị trường, watchlist) KHÔNG nạp `vnstock`/pandas (~50 MB RSS); `vnstock` chỉ còn cho dữ liệu cơ bản/danh sách sàn khi phân tích đầy đủ và backtest (đăng ký `VNSTOCK_API_KEY` free tại vnstocks.com/login để tăng rate limit 20→60 req/phút và số kỳ BCTC 4→8, không bắt buộc).
+- Hỏi giá mà không ra mã: chỉ báo "chưa tra ra mã cổ phiếu" khi câu RÕ RÀNG hỏi cổ phiếu (có "cổ phiếu/mã/CK", hoặc chỉ gồm token dạng mã như "giá xyz bao nhiêu"); hỏi giá sản phẩm/hàng hoá ("giá samsung s24 plus cũ", "giá iphone 15 pro max") đi xuống chat và BẮT tra web thật (`stock.analysis.wants_product_price`).
 - Strict contract cho độ dài mảng, số hữu hạn, quan hệ OHLC và ngày giao dịch.
 - RSI, MACD, MA/EMA, Bollinger, ADX, ATR, Donchian, thanh khoản, distribution days và key levels.
 - Chuỗi giá 260 phiên: SMA200 + trend 1 năm vào bối cảnh dài hạn.
@@ -929,10 +941,11 @@ Thoại, ảnh, tài liệu:
 | `VOICE_MAX_BYTES` / `VOICE_MAX_SECONDS` | 5242880 / 180 | Trần tin thoại (64 KB-8 MB; 10-600 giây), gateway dùng chung trần byte |
 | `VOICE_REPLY_ENABLED` | 1 | Cho phép `/noi` (mỗi người vẫn phải tự bật); 0 = tắt cả bot |
 | `VOICE_REPLY_MAX_CHARS` | 600 | Số ký tự tối đa được đọc (100-2000) |
-| `VOICE_TTS_MODEL` / `VOICE_TTS_VOICE` | `gemini-3.8-flash-tts` / `Kore` | Model Gemini TTS và giọng dựng sẵn (Live dùng chung giọng) |
+| `VOICE_TTS_MODEL` / `VOICE_TTS_VOICE` | `gemini-3.8-flash-tts` / `Sulafat` | Model Gemini TTS và giọng dựng sẵn mặc định (Live dùng chung giọng; mỗi người đổi bằng `/noi giong <tên>`) |
+| `VOICE_STYLE_PROMPT` | (trống = mặc định) | Chỉ dẫn phong cách đọc bằng lời cho TTS/Live; `off` = không gửi |
 | `VOICE_ENGINE` | `auto` | Bộ đọc `/noi`: `auto` = Gemini Live rồi Gemini TTS khi Live lỗi/hết quota/đọc lệch; `live` = chỉ Live; `tts` = chỉ TTS |
 | `LIVE_VOICE_MIN_MATCH` | 80 | % giống tối thiểu giữa bản chép lời của Live và văn bản cần đọc (50-100); thấp hơn thì bỏ âm thanh Live |
-| `VOICE_REPLY_URL_TTL_MIN` / `VOICE_REPLY_STORE_MB` | 10 / 8 | Zalo: link tin thoại ký HMAC sống N phút; kho RAM tối đa N MB (và 20 file) |
+| `VOICE_REPLY_URL_TTL_MIN` / `VOICE_REPLY_STORE_MB` | 10 / 4 | Zalo/Zoom: link tin thoại ký HMAC sống N phút; kho RAM tối đa N MB (và 12 file) |
 | `NL_COMMANDS_ENABLED` / `NL_COMMANDS_LLM` | 1 / 1 | Hỏi tự nhiên thay cho lệnh: 0 = tắt hẳn / 0 = chỉ mẫu câu bằng code, không thêm lệnh vào router tool |
 | `NUTRITION_NL` / `NUTRITION_AI_ESTIMATE` | 0 / 0 | `/an`: 1 = ghi bữa ăn từ câu tự nhiên rất rõ; 1 = món lạ ước lượng kcal bằng 1 lượt AI |
 | `VISION_QA_ENABLED` / `PHOTO_NO_CAPTION_MODE` | 1 / `prompt` | Ảnh kèm câu hỏi được trả lời về ảnh; ảnh không caption: `prompt` hoặc `describe` |
@@ -957,7 +970,9 @@ Giám sát, gom lỗi, sao lưu, dọn dữ liệu:
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
 | `ALERT_ZOOM_MIRROR` | `critical` | Zoom làm kênh phụ cho cảnh báo: `critical` (Telegram lỗi + luôn nhận 🚨), `fallback`, `all`, `off` |
-| `WATCHDOG_ENABLED` / `WATCHDOG_MEMORY_PCT` | 1 / 85 | Watchdog luật cố định; ngưỡng % RAM working set, 2 lần đo liên tiếp |
+| `WATCHDOG_ENABLED` / `WATCHDOG_MEMORY_PCT` | 1 / 85 | Watchdog luật cố định; ngưỡng % RAM working set (không tính page cache), 2 lần đo liên tiếp |
+| `MEMORY_TRIM_INTERVAL_SEC` / `MEMORY_TRIM_AFTER_WORK` / `MEMORY_TRIM_MIN_GAP_SEC` | 600 / 1 / 30 | Trả heap rảnh của Python về hệ điều hành (gc + `malloc_trim`, `core/memtrim.py`) mỗi N giây và sau lượt trả lời/việc nặng (tối đa 1 lần mỗi MIN_GAP giây); 0 = tắt |
+| `ZALO_NODE_HEAP_MB` / `ZALO_NODE_OPTIMIZE_SIZE` / `ZALO_NODE_EXTRA_FLAGS` | 96 / 1 / (trống) | Heap V8 của gateway Zalo, `--optimize-for-size` (0 = tắt), cờ node thêm |
 | `WATCHDOG_INBOX_STALE_MIN` | 10 | Tin Telegram/Zoom kẹt trong inbox quá N phút thì báo |
 | `WATCHDOG_RESTART_GAP_MIN` / `WATCHDOG_RESTART_BURST` | 20 / 3 | Báo khi khởi động lại sau gián đoạn > N phút; khi restart bất thường từ N lần/24 giờ |
 | `ERROR_DIGEST_ENABLED` / `ERROR_ALERT_IMMEDIATE` | 1 / 1 | Gom lỗi theo loại + vị trí code (`/loi`); báo ngay loại lỗi mới trong ngày |
@@ -1411,7 +1426,7 @@ Telegram chỉ còn 18 lệnh hay dùng; mọi lệnh khác vẫn gõ được.
 | `/ngaynho`, `/ngaynho <tên> <ngày> [âm] [trước N ngày] [lúc 7h] [theo tháng nhuận]`, `/ngaynho xoa <số\|tên>` | Ngày nhớ: giỗ, sinh nhật, kỷ niệm |
 | `/chitieu [kỳ]`, `/chitieu <mô tả> <số tiền>`, `/chitieu ds`, `/chitieu xoa <số>`, `/chitieu_xoa <số>` | Tổng chi theo danh mục (hôm nay, tuần này, tháng trước, tháng M[/YYYY], năm nay...), ghi, xem, xoá khoản chi |
 | `/an <món> [bữa]`, `/an`, `/an tuan`, `/an xoa <số>` | Ghi bữa ăn (kcal ước lượng theo bảng món Việt), xem hôm nay theo bữa, 7 ngày, xoá 1 món |
-| `/noi [on\|off\|auto]` | Trả lời kèm tin thoại (auto: chỉ khi vừa gửi tin thoại); Telegram và Zalo (image đã có ffmpeg) |
+| `/noi [on\|off\|auto]`, `/noi giong [tên]` | Trả lời kèm tin thoại (auto: chỉ khi vừa gửi tin thoại); Telegram và Zalo (image đã có ffmpeg), Zoom kèm link nghe; đổi/xem giọng đọc |
 | `/router9 on\|off`, `/tavily on\|off` | Bật/tắt 9Router thủ công; bật/tắt Tavily (trả lời kèm chế độ tra web hiện tại; tắt thì dùng web search của provider) |
 | `/prompt` | Tạo prompt hình ảnh |
 | `/gia` | Tìm giá sản phẩm |
@@ -1648,7 +1663,9 @@ hiển thị trên trang đều được escape HTML. Trang cho phép:
 - Hệ thống → "Giám sát, sao lưu & lỗi" (`/admin/api/watchdog`): lỗi hôm nay theo
   loại, số lần khởi động lại trong 7 ngày, nhịp tim, lần sao lưu và diễn tập gần
   nhất, trạng thái xoay khoá (nút "Xoay khoá ngay" = `POST /admin/api/key-rotation/run`),
-  dòng "Gateway Zalo"; thẻ RAM có thêm working set và `memory.events`.
+  dòng "Gateway Zalo"; thẻ RAM có thêm working set và `memory.events`. KPI RAM hiện
+  working set (cùng số watchdog dùng, không tính page cache), số cgroup gồm cả cache
+  ở dòng phụ; có dòng "Dọn heap (malloc_trim)" (số lần, RSS trước/sau lần gần nhất).
 
 Giao diện: dashboard responsive (sidebar/topbar, 360px không cuộn ngang), sáng/tối
 tự động + nút đổi, KPI tile (provider, lượt gọi, RAM, DB, Zalo), biểu đồ SVG
@@ -1864,10 +1881,11 @@ services/           Logic dùng chung cho mọi kênh: channel_chat_service.run_
                     portfolio_* / price_alerts, usage_quota, watchdog, error_digest,
                     quota_burn, price_search (/gia), usage_stats (/thongke)...
 stock/              Market data, validation, policy, lịch giao dịch, danh mục và backtest
-assets/             Ý nghĩa soạn sẵn: tu_vi.yaml, than_so_hoc.yaml, ky_mon.yaml
+assets/             Ý nghĩa soạn sẵn: tu_vi.yaml, than_so_hoc.yaml, ky_mon.yaml; tts_viet_tat.yaml (đọc giọng /noi)
 rag/                Kho kiến thức .md cho lệnh /rag (mỗi heading 1 mẩu kiến thức)
 migrations/         NNN_*.sql (001-026), checksum ghim trong migrations.lock
-scripts/            backup_drill.py, run_evals.py, train_trend_model.py, run-zalo-gateway.sh
+scripts/            backup_drill.py, run_evals.py, train_trend_model.py, run-zalo-gateway.sh,
+                    benchmark_memory.py (đo RSS theo kịch bản tải, offline)
 test/evals/         Golden set đánh giá (YAML + harness.py)
 zalo-gateway/        Node.js Zalo listener
 web.py               FastAPI webhook entrypoint (Telegram + Zoom), /healthz
@@ -1978,7 +1996,7 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
 
 ## Tài liệu bổ sung
 
-- `docs/nang-cap-jarvis.md` — các tính năng lấy ý từ các dự án Jarvis: `/chuy`, gom thông báo + giờ yên lặng (migration 026), việc nền `/viec` + tác vụ định kỳ `/lichtacvu` (migration 027), che bí mật trước khi gửi provider, duyệt cách trả lời, mô tả tool gọn, trả lời bằng giọng nói `/noi`, trang Nhật ký trong `/admin`, ghi ăn uống `/an` (migration 028), Gemini Live (chat dự phòng cuối + bộ đọc `/noi`)
+- `docs/nang-cap-jarvis.md` — các tính năng lấy ý từ các dự án Jarvis: `/chuy`, gom thông báo + giờ yên lặng (migration 026), việc nền `/viec` + tác vụ định kỳ `/lichtacvu` (migration 027), che bí mật trước khi gửi provider, duyệt cách trả lời, mô tả tool gọn, trả lời bằng giọng nói `/noi`, trang Nhật ký trong `/admin`, ghi ăn uống `/an` (migration 028), Gemini Live (chat dự phòng cuối + bộ đọc `/noi`), sửa sau chạy thật 27/10 (RAM: đường giá không nạp pandas/vnstock, `malloc_trim`, trần chỉ mục rag; Zoom link nghe; chuẩn hoá chữ + phong cách giọng `/noi`; hỏi giá sản phẩm không bị chặn)
 - `docs/nang-cap-2026-10-26.md` — đợt nâng cấp 26/10/2026: thay đổi theo nhóm, danh sách việc khi deploy (migration 017-025, biến Render, GitHub secrets), việc chủ bot còn phải quyết, phần cố ý chưa làm, rủi ro
 - `docs/backup-restore.md` — sao lưu/khôi phục DB, role chỉ-đọc, diễn tập, xoay khoá
 - `docs/upgrade-2026-10.md` — đợt nâng cấp toàn diện 10/2026 (lỗi đã sửa, migration 015, biến mới, kết quả backtest offline, việc cần làm khi deploy)

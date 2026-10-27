@@ -53,7 +53,7 @@ HELP_TEXT = (
     'ảnh kèm câu hỏi ("ảnh này là gì?", "dịch giúp anh chữ trong ảnh") thì em trả lời về ảnh.\n\n'
     "🎙️ *Tin thoại*: em nghe rồi trả lời như tin chữ (tin thoại không tự ghi danh mục, chi tiêu, "
     "nhắc việc - muốn ghi thì gõ chữ). /noi on|off|auto — em trả lời kèm tin thoại (auto: chỉ "
-    "khi anh vừa gửi tin thoại).\n\n"
+    "khi anh vừa gửi tin thoại); /noi giong <tên> — đổi giọng em đọc (/noi giong: xem gợi ý).\n\n"
     "📄 *File PDF, TXT/MD, Word (.docx)*: em tóm tắt hoặc trả lời câu hỏi ở chú thích; chú thích "
     '"lưu vào kho" (cả chú thích, hoặc "lưu vào kho rồi <câu hỏi>") để em lưu tài liệu vào '
     "kho kiến thức rag/.\n\n"

@@ -35,7 +35,13 @@ def settings(monkeypatch):
 
     monkeypatch.setattr(db, "get_setting", get_setting)
     monkeypatch.setattr(db, "set_setting", set_setting)
-    for name in ("VOICE_REPLY_ENABLED", "VOICE_REPLY_MAX_CHARS", "VOICE_REPLY_STORE_MB"):
+    for name in (
+        "VOICE_REPLY_ENABLED",
+        "VOICE_REPLY_MAX_CHARS",
+        "VOICE_REPLY_STORE_MB",
+        "VOICE_TTS_VOICE",
+        "VOICE_STYLE_PROMPT",
+    ):
         monkeypatch.delenv(name, raising=False)
     voice_reply.store.clear()
     return data
@@ -46,8 +52,10 @@ def tts(monkeypatch):
     """TTS giả: trả PCM thô như model 2.5 ("audio/L16;...;rate=24000")."""
     calls = []
 
-    async def synthesize(text, *, model, voice, timeout_sec, engine="tts"):
-        calls.append({"text": text, "model": model, "voice": voice, "engine": engine})
+    async def synthesize(text, *, model, voice, timeout_sec, engine="tts", style=""):
+        calls.append(
+            {"text": text, "model": model, "voice": voice, "engine": engine, "style": style}
+        )
         return orchestrator.Speech(PCM, "audio/L16;codec=pcm;rate=24000", "api1")
 
     monkeypatch.setattr(orchestrator, "synthesize_speech", synthesize)
@@ -194,7 +202,13 @@ async def test_noi_dat_che_do_theo_tung_nguoi(settings, monkeypatch):
         zalo = await voice_reply.noi_command(-5, "", channel="zalo", is_admin=False)
     assert "cần máy chủ có ffmpeg" in zalo and "1 lượt nặng" in zalo and "chị vừa gửi" in zalo
     assert "chưa hiểu" in await voice_reply.noi_command(42, "to lên", channel="telegram")
-    assert "Zoom chưa gửi được" in await voice_reply.noi_command(42, "tắt", channel="zoom")
+    from core import config
+
+    monkeypatch.setattr(config, "WEBHOOK_BASE_URL", "")
+    zoom = await voice_reply.noi_command(42, "tắt", channel="zoom")
+    assert "chưa có link công khai" in zoom and "/noi giong" in zoom
+    monkeypatch.setattr(config, "WEBHOOK_BASE_URL", "https://bot.onrender.com")
+    assert "1 link nghe" in await voice_reply.noi_command(42, "", channel="zoom")
     assert settings["voice_reply:42"] == "off"
     monkeypatch.setenv("VOICE_REPLY_ENABLED", "0")
     assert "tắt trên bot" in await voice_reply.noi_command(42, "on", channel="telegram")
@@ -221,7 +235,13 @@ async def test_clip_chi_khi_nguoi_dung_bat(settings, tts, monkeypatch):
     clip = await voice_reply.make_clip(42, "Dạ chào anh.", channel="telegram", voice_in=True)
     assert clip.ext == "wav" and clip.data[:4] == b"RIFF" and clip.duration_ms == 1000
     assert tts == [
-        {"text": "Dạ chào anh.", "model": "gemini-3.8-flash-tts", "voice": "Kore", "engine": "auto"}
+        {
+            "text": "Dạ chào anh.",
+            "model": "gemini-3.8-flash-tts",
+            "voice": "Sulafat",
+            "engine": "auto",
+            "style": voice_reply.DEFAULT_STYLE,
+        }
     ]
     monkeypatch.setenv("VOICE_REPLY_ENABLED", "0")
     assert await voice_reply.make_clip(42, "Dạ.", channel="telegram", voice_in=True) is None
@@ -229,6 +249,9 @@ async def test_clip_chi_khi_nguoi_dung_bat(settings, tts, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_telegram_ogg_khi_co_ffmpeg_zalo_chi_khi_co_ffmpeg(settings, tts, monkeypatch):
+    from core import config
+
+    monkeypatch.setattr(config, "WEBHOOK_BASE_URL", "")
     settings["voice_reply:42"] = settings["voice_reply:-5"] = "on"
     _no_ffmpeg(monkeypatch)
     assert await voice_reply.make_clip(-5, "Dạ chào chị.", channel="zalo") is None
@@ -512,3 +535,157 @@ async def test_tin_thoai_zalo_tra_voice_qua_hop_capture(monkeypatch):
     assert replies[-1] == "Dạ trời nắng ạ."
     assert seen == [(-5, "Dạ trời nắng ạ.", True, False)] and box[0]["path"] == "tts/v.m4a"
     voice_reply.offer({"path": "tts/x.m4a"})  # ngoài capture(): bỏ qua, không lỗi
+
+
+# ─── Sửa sau chạy thật 27/10 ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_clip_doc_ban_da_chuan_hoa_giong_rieng_va_phong_cach(settings, tts, monkeypatch):
+    _no_ffmpeg(monkeypatch)
+    settings["voice_reply:42"] = "on"
+    clip = await voice_reply.make_clip(42, "**FPT** ▲ 1,5%, giá 150k ko đổi 🚀", channel="telegram")
+    assert clip is not None
+    assert tts[-1]["text"] == (
+        "ép pê tê tăng một phẩy năm phần trăm, giá một trăm năm mươi nghìn không đổi."
+    )
+    assert tts[-1]["voice"] == "Sulafat" and tts[-1]["style"] == voice_reply.DEFAULT_STYLE
+    settings["voice_name:42"] = "Leda"
+    monkeypatch.setenv("VOICE_STYLE_PROMPT", "off")
+    await voice_reply.make_clip(42, "Dạ.", channel="telegram")
+    assert tts[-1]["voice"] == "Leda" and tts[-1]["style"] == ""
+    monkeypatch.setenv("VOICE_STYLE_PROMPT", "giọng vui")
+    settings["voice_name:42"] = "TênLạ"  # giá trị hỏng -> về mặc định
+    await voice_reply.make_clip(42, "Dạ.", channel="telegram")
+    assert tts[-1]["voice"] == "Sulafat" and tts[-1]["style"] == "giọng vui"
+
+
+@pytest.mark.asyncio
+async def test_noi_giong_liet_ke_doi_va_ve_mac_dinh(settings):
+    listing = await voice_reply.noi_command(42, "giong", channel="telegram")
+    assert "Giọng đang dùng: Sulafat" in listing
+    assert all(name in listing for name in voice_reply.SUGGESTED_VOICES)
+    reply = await voice_reply.noi_command(42, "giọng leda", channel="telegram")
+    assert "Leda" in reply and settings["voice_name:42"] == "Leda"
+    assert await voice_reply.get_voice(42) == "Leda"
+    assert "chưa có giọng" in await voice_reply.noi_command(42, "giong Robot", channel="zalo")
+    assert settings["voice_name:42"] == "Leda"
+    assert "mặc định" in await voice_reply.noi_command(42, "giong mặc định", channel="telegram")
+    assert settings["voice_name:42"] == "" and await voice_reply.get_voice(42) == "Sulafat"
+    assert "Leda" in await voice_reply.noi_command(-5, "giọng đọc Leda", channel="zalo")
+    from services import personal_settings
+
+    assert "voice_name:-5" in personal_settings.zalo_user_keys(-5)
+
+
+@pytest.mark.asyncio
+async def test_zoom_kem_link_nghe_cong_khai(settings, tts, monkeypatch):
+    from core import config
+    from services.channel_result import ChannelResult
+
+    _fake_ffmpeg(monkeypatch)
+    settings["voice_reply:42"] = "on"
+    monkeypatch.setattr(config, "WEBHOOK_BASE_URL", "https://bot.onrender.com")
+    result = await voice_reply.with_zoom_voice(42, "chào em", ChannelResult(["Dạ chào anh."]))
+    assert result.messages[0] == "Dạ chào anh."
+    line = result.messages[1]
+    match = re.fullmatch(
+        r"🔊 Nghe giọng Lan Anh: https://bot\.onrender\.com/media/tts/([A-Za-z0-9_.-]+\.m4a)",
+        line,
+    )
+    assert match and voice_reply.store.get(match.group(1)).data == b"ENCODED"
+    # Link công khai phục vụ được qua /media/tts (channels/tts_media.py).
+    from channels import tts_media
+
+    app = FastAPI()
+    app.include_router(tts_media.public_router)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        res = await client.get(f"/media/tts/{match.group(1)}")
+    assert res.status_code == 200 and res.headers["content-type"] == "audio/mp4"
+    # Lệnh "/", tin cổ phiếu: không đọc; không có URL công khai: chỉ chữ.
+    same = ChannelResult(["x"])
+    assert await voice_reply.with_zoom_voice(42, "/help", same) is same
+    stock = ChannelResult(["FPT"], market=True)
+    assert await voice_reply.with_zoom_voice(42, "giá FPT", stock) is stock
+    monkeypatch.setattr(config, "WEBHOOK_BASE_URL", "")
+    plain = ChannelResult(["Dạ."])
+    assert await voice_reply.with_zoom_voice(42, "chào", plain) is plain
+
+
+@pytest.mark.asyncio
+async def test_tts_phong_cach_qua_interactions_va_roi_ve_generate_content(monkeypatch):
+    import base64
+    import json
+
+    from ai import official_client
+    from services import http_client
+
+    bodies = []
+    state = {"status": 200}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        assert request.headers["x-goog-api-key"] == "k1"
+        if state["status"] != 200:
+            return httpx.Response(state["status"], text="bad request")
+        audio = base64.b64encode(b"RIFFxxxxWAVE").decode()
+        return httpx.Response(
+            200,
+            json={
+                "steps": [{"content": [{"type": "audio", "data": audio, "mime_type": "audio/wav"}]}]
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(http_client, "get_client", lambda: client)
+
+    async def key(idx):
+        return "k1"
+
+    generated = []
+
+    class FakeModels:
+        async def generate_content(self, *, model, contents, config):
+            generated.append(contents)
+            part = type(
+                "P",
+                (),
+                {"inline_data": type("D", (), {"data": b"PCM", "mime_type": "audio/L16"})()},
+            )
+            content = type("C", (), {"parts": [part]})()
+            return type("R", (), {"candidates": [type("Ca", (), {"content": content})()]})()
+
+    class FakeClient:
+        aio = type("A", (), {"models": FakeModels()})()
+
+    async def official(idx):
+        return FakeClient()
+
+    monkeypatch.setattr(official_client, "api_key_for", key)
+    monkeypatch.setattr(official_client, "_get_official_client", official)
+    monkeypatch.setattr(official_client, "_interactions_off_until", 0.0)
+
+    audio, mime = await official_client.synthesize_speech(
+        1, "Dạ chào anh.", model="gemini-3.8-flash-tts", voice="Sulafat", style="ấm áp"
+    )
+    assert (audio, mime) == (b"RIFFxxxxWAVE", "audio/wav") and generated == []
+    content = bodies[0]["input"][0]["content"][0]
+    assert content["text"] == "Dạ chào anh."  # chữ cần đọc không lẫn chỉ dẫn
+    assert content["annotations"] == [{"type": "speech_metadata", "style": "ấm áp"}]
+    assert bodies[0]["generation_config"] == {"speech_config": [{"voice": "Sulafat"}]}
+    # 400: rơi về generate_content (không phong cách) và thôi thử interactions một thời gian.
+    state["status"] = 400
+    audio, _ = await official_client.synthesize_speech(
+        1, "Dạ.", model="m", voice="Kore", style="ấm"
+    )
+    assert audio == b"PCM" and generated == ["Dạ."]
+    await official_client.synthesize_speech(1, "Dạ.", model="m", voice="Kore", style="ấm")
+    assert len(bodies) == 2  # lần 3 không gọi interactions nữa
+    # 429: lỗi quota nảy lên để orchestrator đặt cooldown TTS.
+    monkeypatch.setattr(official_client, "_interactions_off_until", 0.0)
+    state["status"] = 429
+    with pytest.raises(official_client.InteractionsHTTPError) as info:
+        await official_client.synthesize_speech(1, "Dạ.", model="m", voice="Kore", style="ấm")
+    assert official_client.is_quota_exhausted_error(info.value)
+    await client.aclose()

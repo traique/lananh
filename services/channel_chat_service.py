@@ -352,6 +352,9 @@ async def run_chat_turn(
             forced = not quota_no_search and (
                 daily.force_real_search
                 or (not skip_search and stock_analysis.wants_external_market_data(text))
+                # Hỏi giá sản phẩm/hàng hoá ("giá samsung s24 plus cũ") mà nhánh cổ
+                # phiếu không nhận ra mã: bắt tra web thật, không để LLM tự nghĩ giá.
+                or (not skip_search and not grounding and stock_analysis.wants_product_price(text))
             )
             mode = _search_mode(
                 plan,

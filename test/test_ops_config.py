@@ -129,3 +129,39 @@ def test_workflow_khong_xin_quyen_ghi():
     for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
         data = yaml.safe_load(path.read_text("utf-8"))
         assert data.get("permissions") == {"contents": "read"}, path.name
+
+
+def _gateway_args(tmp_path, **env):
+    import os
+    import subprocess
+
+    fake = tmp_path / "node"
+    fake.write_text('#!/bin/sh\necho "$@"\n')
+    fake.chmod(0o755)
+    run_env = {"PATH": f"{tmp_path}:{os.environ.get('PATH', '')}", "ZALO_ENABLED": "true", **env}
+    proc = subprocess.run(
+        ["sh", str(ROOT / "scripts" / "run-zalo-gateway.sh")],
+        capture_output=True,
+        text=True,
+        env=run_env,
+        check=True,
+        timeout=10,
+    )
+    return proc.stdout.split()
+
+
+def test_gateway_node_co_tran_heap_va_optimize_for_size(tmp_path):
+    """Sửa 27/10: gateway Zalo chạy với --optimize-for-size (RSS nạp zca-js 86 -> 75 MB),
+    tắt được bằng ZALO_NODE_OPTIMIZE_SIZE=0; cờ thêm qua ZALO_NODE_EXTRA_FLAGS."""
+    args = _gateway_args(tmp_path)
+    assert args[:3] == ["--max-old-space-size=96", "--max-semi-space-size=8", "--optimize-for-size"]
+    assert args[-1] == "/app/zalo-gateway/dist/index.js"
+    args = _gateway_args(
+        tmp_path,
+        ZALO_NODE_OPTIMIZE_SIZE="0",
+        ZALO_NODE_HEAP_MB="128",
+        ZALO_NODE_EXTRA_FLAGS="--max-semi-space-size=4",
+    )
+    assert "--optimize-for-size" not in args and args[0] == "--max-old-space-size=128"
+    assert "--max-semi-space-size=4" in args
+    assert _gateway_args(tmp_path, ZALO_NODE_HEAP_MB="9999")[0] == "--max-old-space-size=96"

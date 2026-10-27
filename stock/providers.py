@@ -3,7 +3,12 @@
 Nguồn dùng ở đây đều CÔNG KHAI, KHÔNG CẦN API KEY:
 - DNSE chart-api: OHLCV theo ngày, dùng cho phân tích kỹ thuật.
 - DNSE price-api (GraphQL): giá khớp lệnh gần nhất, realtime, chỉ áp dụng cho cổ phiếu.
+- VCI gap-chart (REST, httpx): OHLCV dự phòng khi DNSE lỗi.
 - Google News RSS: tin tức theo mã.
+
+RAM: đường giá/OHLCV (cảnh báo giá, danh mục, trang thị trường, bản tin sáng) chỉ
+dùng httpx - KHÔNG nạp vnstock/pandas. vnstock chỉ còn cho danh sách mã/sàn
+(phân tích, backtest) và stock/fundamentals.py (phân tích đầy đủ).
 """
 
 import asyncio
@@ -158,17 +163,15 @@ async def fetch_ohlcv(symbol: str, days: int = 90) -> OhlcvSeries:
         series = primary
     else:
         _provider_failures["dnse"] += 1
-        logger.warning(
-            "DNSE unusable for %s (%s); trying vnstock/VCI", sym, primary_errors or "empty"
-        )
-        fallback = await _fetch_ohlcv_vnstock(sym, days)
+        logger.warning("DNSE unusable for %s (%s); trying VCI", sym, primary_errors or "empty")
+        fallback = await _fetch_ohlcv_vci(sym, days)
         fallback_errors = ohlcv_contract_errors(
             fallback.closes, fallback.highs, fallback.lows, fallback.volumes, fallback.dates
         )
         if fallback.closes and not fallback_errors:
             series = fallback
         else:
-            _provider_failures["vnstock"] += 1
+            _provider_failures["vci"] += 1
             series = OhlcvSeries(symbol=sym, source="unavailable")
     # Chỉ cache khi có dữ liệu THẬT - cache cả series rỗng "unavailable" sẽ
     # khiến mọi lượt phân tích trong 90s kế tiếp nhận ngay kết quả fail của
@@ -280,74 +283,92 @@ async def _fetch_ohlcv_dnse(symbol: str, days: int = 90) -> OhlcvSeries:
     )
 
 
-_provider_failures = {"dnse": 0, "vnstock": 0}
+_provider_failures = {"dnse": 0, "vci": 0}
 
 
 def provider_health_snapshot():
     return dict(_provider_failures)
 
 
-def _fetch_ohlcv_vnstock_sync(symbol, days):
-    try:
-        ensure_vnstock_api_key()
-        from vnstock.explorer.vci import Quote
-
-        end = datetime.now(_VN_TZ).date()
-        start = end - timedelta(days=int(days * 1.7) + 30)
-        df = Quote(symbol=dnse_symbol(symbol), show_log=False).history(
-            start=start.isoformat(), end=end.isoformat(), interval="1D"
-        )
-        if df is None or df.empty:
-            return OhlcvSeries(symbol=symbol, source="vnstock-vci")
-        cols = {str(c).strip().lower(): c for c in df.columns}
-
-        def pick(*names):
-            return next((cols[n] for n in names if n in cols), None)
-
-        dc, cc, hc, lc, vc = (
-            pick("time", "date", "trading_date"),
-            pick("close"),
-            pick("high"),
-            pick("low"),
-            pick("volume", "match_volume"),
-        )
-        if any(x is None for x in (dc, cc, hc, lc, vc)):
-            return OhlcvSeries(symbol=symbol, source="vnstock-vci")
-        rows = []
-        for _, r in df.iterrows():
-            try:
-                rows.append(
-                    (str(r[dc])[:10], float(r[hc]), float(r[lc]), float(r[cc]), float(r[vc]))
-                )
-            except (TypeError, ValueError, KeyError):
-                pass
-        rows = sorted(rows)[-days:]
-        if not rows:
-            return OhlcvSeries(symbol=symbol, source="vnstock-vci")
-        median = sorted(r[3] for r in rows)[len(rows) // 2]
-        scale = 1 if is_index_symbol(symbol) or median >= 1000 else PRICE_SCALE
-        return OhlcvSeries(
-            symbol,
-            [round(r[3] * scale) for r in rows],
-            [round(r[1] * scale) for r in rows],
-            [round(r[2] * scale) for r in rows],
-            [r[4] for r in rows],
-            [r[0] for r in rows],
-            "vnstock-vci",
-        )
-    except Exception:
-        logger.warning("vnstock fallback failed for %s", symbol, exc_info=True)
-        return OhlcvSeries(symbol=symbol, source="vnstock-vci")
+# Nguồn dự phòng OHLCV: gọi THẲNG REST gap-chart của VCI (đúng endpoint mà
+# vnstock.explorer.vci.Quote.history dùng) bằng httpx. Trước đây dự phòng đi qua
+# vnstock -> nạp pandas + vnstock (~50 MB RSS) ngay khi DNSE trục trặc 1 lần, kể cả
+# trong việc nền nhẹ (cảnh báo giá, cảnh báo danh mục) - và không bao giờ nhả ra.
+# Giá cổ phiếu VCI trả theo VND (vnstock chia 1000 rồi phần dưới nhân lại), chỉ số
+# trả theo điểm; mốc thời gian là epoch giây.
+VCI_CHART_URL = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
+_VCI_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/json, text/plain, */*",
+    "Content-Type": "application/json",
+    "Referer": "https://trading.vietcap.com.vn/",
+    "Origin": "https://trading.vietcap.com.vn/",
+}
+_VCI_TIMEOUT_SEC = 20.0
 
 
-async def _fetch_ohlcv_vnstock(symbol, days):
+def parse_vci_chart(symbol: str, payload, days: int) -> OhlcvSeries:
+    """Hàm thuần: JSON gap-chart của VCI -> OhlcvSeries (rỗng nếu sai schema)."""
+    rows = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        return OhlcvSeries(symbol=symbol, source="vci")
+    item = rows[0]
+    t, h, l, c, v = (item.get(k) or [] for k in ("t", "h", "l", "c", "v"))
+    if not isinstance(t, list) or not isinstance(c, list):
+        return OhlcvSeries(symbol=symbol, source="vci")
+    bars = []
+    for i in range(min(len(t), len(c))):
+        try:
+            close = float(c[i])
+            high = float(h[i]) if i < len(h) and h[i] else close
+            low = float(l[i]) if i < len(l) and l[i] else close
+            vol = float(v[i]) if i < len(v) and v[i] else 0.0
+            ts = int(float(t[i]))
+        except (IndexError, TypeError, ValueError):
+            continue
+        if close > 0:
+            bars.append((ts, high, low, close, vol))
+    bars.sort(key=lambda b: b[0])
+    bars = _merge_same_day_bars(bars)[-days:]
+    if not bars:
+        return OhlcvSeries(symbol=symbol, source="vci")
+    # An toàn với cả 2 quy ước: giá cổ phiếu dạng nghìn đồng (25.5) thì nhân 1000.
+    median = sorted(b[3] for b in bars)[len(bars) // 2]
+    scale = 1 if is_index_symbol(symbol) or median >= 1000 else PRICE_SCALE
+    return OhlcvSeries(
+        symbol=symbol,
+        closes=[round(b[3] * scale) for b in bars],
+        highs=[round(b[1] * scale) for b in bars],
+        lows=[round(b[2] * scale) for b in bars],
+        volumes=[b[4] for b in bars],
+        dates=[datetime.fromtimestamp(b[0], tz=_VN_TZ).strftime("%Y-%m-%d") for b in bars],
+        source="vci",
+    )
+
+
+async def _fetch_ohlcv_vci(symbol: str, days: int) -> OhlcvSeries:
+    """OHLCV ngày từ VCI qua httpx (không nạp vnstock/pandas). Không raise."""
+    sym = symbol.strip().upper()
+    end = datetime.now(timezone.utc) + timedelta(days=1)
+    payload = {
+        "timeFrame": "ONE_DAY",
+        "symbols": [dnse_symbol(sym)],
+        "to": int(end.timestamp()),
+        # Số phiên cần + dư cho ngày lễ (vnstock đếm ngày làm việc trong khoảng).
+        "countBack": int(days * 1.2) + 10,
+    }
     try:
         async with get_vnstock_semaphore():
-            return await asyncio.wait_for(
-                asyncio.to_thread(_fetch_ohlcv_vnstock_sync, symbol, days), timeout=20
+            res = await get_http_client().post(
+                VCI_CHART_URL, json=payload, headers=_VCI_HEADERS, timeout=_VCI_TIMEOUT_SEC
             )
-    except (TimeoutError, asyncio.TimeoutError):
-        return OhlcvSeries(symbol=symbol, source="vnstock-vci")
+        if res.status_code != 200:
+            logger.warning("VCI gap-chart(%s) HTTP %s", sym, res.status_code)
+            return OhlcvSeries(symbol=sym, source="vci")
+        return parse_vci_chart(sym, res.json(), days)
+    except (httpx.HTTPError, ValueError) as e:
+        logger.warning("VCI gap-chart(%s) lỗi: %s", sym, e)
+        return OhlcvSeries(symbol=sym, source="vci")
 
 
 def _fetch_symbol_universe_sync():

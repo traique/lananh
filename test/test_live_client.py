@@ -578,3 +578,45 @@ async def test_status_hien_so_luot_live_trong_ngay_quota(live, monkeypatch):
     )
     assert (requests, limited) == (10, 1)
     assert seen["since"].astimezone(timezone.utc) == datetime(2026, 10, 26, 7, tzinfo=timezone.utc)
+
+
+# ─── Sửa sau chạy thật 27/10: phong cách đọc + so với bản đã chuẩn hoá ───────
+
+
+@pytest.mark.asyncio
+async def test_live_doc_voi_chi_dan_phong_cach_va_so_voi_ban_chuan_hoa(live):
+    from services import tts_normalize
+
+    original = "FPT tăng 1,5%, giá 150k ko đổi."
+    spoken = tts_normalize.normalize(original)
+    assert spoken == "ép pê tê tăng một phẩy năm phần trăm, giá một trăm năm mươi nghìn không đổi."
+    # Live đọc đúng bản chuẩn hoá -> khớp (so với bản gốc thì lệch vì "FPT"/"150k").
+    live.factory = lambda idx: FakeSession(_reply(spoken))
+    turn = await live_client.speak(spoken, voice="Sulafat", timeout_sec=5, style="ấm, thân mật")
+    assert turn.similarity is not None and turn.similarity >= 0.99
+    assert live_client.similarity(original, spoken) < live_client.min_match()
+    _model, cfg = live.clients[1].configs[0]
+    assert cfg.system_instruction.startswith(live_client.SPEAK_INSTRUCTION)
+    assert "ấm, thân mật" in cfg.system_instruction
+    turns, _ = live.clients[1].sessions[0].sent[0]
+    assert turns[-1].parts[0].text == spoken  # phong cách không lẫn vào chữ cần đọc
+    assert live_client.speak_instruction("") == live_client.SPEAK_INSTRUCTION
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_chuyen_phong_cach_cho_tts(live, monkeypatch):
+    calls = []
+
+    async def speech(idx, text, *, model, voice, style=""):
+        calls.append((idx, text, voice, style))
+        return b"\x02\x00" * 100, "audio/L16;codec=pcm;rate=24000"
+
+    async def nothing(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(official_client, "synthesize_speech", speech)
+    monkeypatch.setattr(orchestrator.call_log, "record", nothing)
+    await orchestrator.synthesize_speech(
+        "Dạ.", model="m", voice="Leda", timeout_sec=5, engine="tts", style="ấm"
+    )
+    assert calls == [(1, "Dạ.", "Leda", "ấm")]

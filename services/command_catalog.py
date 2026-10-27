@@ -380,7 +380,7 @@ ENTRIES: tuple[Entry, ...] = (
     _e("anh", LOOKUP, A, B, "tien_ich", "/anh <mô tả> · /anh on|off (admin)",
        "Tạo ảnh thật (Agnes AI)", "tạo ảnh con mèo đội nón lá", "cmd:cmd_anh + suggest",
        ("tao anh", "ve anh", "ve hinh")),
-    _e("noi", WRITE, A, B, "cai_dat", "/noi on|off|auto", "Trả lời kèm giọng nói",
+    _e("noi", WRITE, A, B, "cai_dat", "/noi on|off|auto · /noi giong <tên>", "Trả lời kèm giọng nói",
        "bật trả lời bằng giọng nói", "set:set_noi", ("giong noi", "tin thoai", "doc cho nghe")),
     # ── Quản trị bot ──
     _e("status", LOOKUP, S, B, "admin", "/status", "Trạng thái provider",

@@ -17,6 +17,8 @@ import sys
 import time
 from pathlib import Path
 
+from core import memtrim
+
 MIB = 1024 * 1024
 # Thư viện nặng chỉ nạp khi cần; biết cái nào đã nạp giúp giải thích RAM tăng.
 _HEAVY_MODULES = {
@@ -176,4 +178,6 @@ def snapshot() -> dict:
         "heavy_modules_loaded": {
             name: purpose for name, purpose in _HEAVY_MODULES.items() if name in sys.modules
         },
+        # Lần trả heap rảnh về hệ điều hành gần nhất (core/memtrim.py).
+        "trim": memtrim.snapshot(),
     }
