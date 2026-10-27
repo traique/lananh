@@ -492,7 +492,7 @@
 
       <!-- ========== PROVIDER ========== -->
       <section id="providers" data-title="Provider">
-        <div class="section-head"><h2>Provider</h2><p>Chuỗi provider: 9Router → Groq → OpenRouter → Google AI Studio (api1/api2).</p></div>
+        <div class="section-head"><h2>Provider</h2><p>Chuỗi provider: 9Router → Groq → OpenRouter → Google AI Studio (api1/api2) → Gemini Live (dự phòng cuối).</p></div>
         <div class="grid cols-2">
           <div class="card">
             <div class="card-head"><h3>9Router</h3></div>
@@ -612,7 +612,7 @@
 
 <script>
 'use strict';
-const COOLDOWN_PROVIDERS = ['groq', 'openrouter', 'api1', 'api2'];
+const COOLDOWN_PROVIDERS = ['groq', 'openrouter', 'api1', 'api2', 'live_api1', 'live_api2'];
 const RANGE_LABEL = { 24: '24 giờ qua', 168: '7 ngày qua', 720: '30 ngày qua' };
 const MARKET_JOB_LABEL = { stock: 'Báo cáo chứng khoán', news: 'Tin CafeF' };
 const $ = id => document.getElementById(id);
@@ -862,13 +862,17 @@ function providerCard(p) {
         </div>
         <div class="field-label">Model hiện dùng: <span class="mono">${esc(p.model)}</span>${p.model_overridden ? ' (đã override)' : ' (mặc định env)'}</div>
       </div>
+      ${p.api_key_shared ? `
+      <div class="field">
+        <div class="field-label">Dùng chung key api1/api2 (cooldown quota riêng). Hạn mức free tier chưa được Google công bố - xem aistudio.google.com/rate-limit.</div>
+      </div>` : `
       <div class="field">
         <div class="field-row">
           <input class="input mono key-input" type="password" autocomplete="off" placeholder="${esc(p.api_key_masked || 'API key (để trống = giữ nguyên)')}" data-provider="${esc(p.provider)}">
           <button class="btn sm save-key" type="button" data-provider="${esc(p.provider)}">Lưu key</button>
         </div>
         <div class="field-label">${p.api_key_overridden ? 'Đang dùng key override từ trang admin.' : 'Đang dùng key từ biến môi trường.'}</div>
-      </div>
+      </div>`}
       ${baseUrlControl}
     </div>`;
 }

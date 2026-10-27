@@ -173,7 +173,8 @@ _status_cache: tuple[float, str] | None = None
 
 
 async def _build_status_text() -> str:
-    """Ping thật cả 5 provider rồi dựng text trạng thái (HTML parse_mode)."""
+    """Ping thật cả 5 provider rồi dựng text trạng thái (HTML parse_mode). Gemini
+    Live không ping (tốn quota chưa rõ hạn mức) - chỉ hiện cấu hình + số lượt."""
     (
         (router9_ok, router9_detail),
         groq_status,
@@ -201,6 +202,7 @@ async def _build_status_text() -> str:
         "openrouter": "OpenRouter",
         "api1": "API 1",
         "api2": "API 2",
+        "live": "Gemini Live",
     }
     active_line = f"🔀 Provider đang dùng: <b>{html.escape(active_map.get(state['active_provider'], state['active_provider']))}</b>"
 
@@ -287,6 +289,7 @@ async def _build_status_text() -> str:
         openrouter_line,
         api1_line,
         api2_line,
+        *await provider_health.live_lines(use_html=True),
         "",
         model_line,
     ]

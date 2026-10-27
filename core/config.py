@@ -285,10 +285,14 @@ MONITOR_INTERVAL_SEC = _env_int("MONITOR_INTERVAL_SEC", 300)  # 5 phút
 # api2. Chi phí phụ thuộc provider/model/tool thực tế; Gemini official đứng cuối
 # làm lưới an toàn.
 _PROVIDER_ORDER_RAW = os.getenv("PROVIDER_ORDER", "router9,groq,openrouter,api1,api2").strip()
+# Gemini Live (ai/live_client.py) làm provider chat dự phòng CUỐI: "live" chưa có
+# trong PROVIDER_ORDER thì được thêm vào cuối chuỗi; 0 = bỏ "live" khỏi chuỗi kể cả
+# khi PROVIDER_ORDER có ghi. Chỉ dùng cho chat thường (không tra web/JSON/cổ phiếu).
+LIVE_CHAT_FALLBACK = _env_bool("LIVE_CHAT_FALLBACK", True)
 
 
-def _parse_provider_order(raw: str) -> list[str]:
-    valid = {"router9", "groq", "openrouter", "api1", "api2"}
+def _parse_provider_order(raw: str, *, live: bool = True) -> list[str]:
+    valid = {"router9", "groq", "openrouter", "api1", "api2", "live"}
     order = [p.strip().lower() for p in raw.split(",") if p.strip()]
     # Tương thích ngược: cấu hình cũ còn ghi "cookie" (Render env đã lưu từ
     # trước khi đổi sang 9Router) -> coi như "router9".
@@ -305,10 +309,14 @@ def _parse_provider_order(raw: str) -> list[str]:
     for p in ("router9", "groq", "openrouter", "api1", "api2"):
         if p not in deduped:
             deduped.append(p)
+    if not live:
+        return [p for p in deduped if p != "live"]
+    if "live" not in deduped:
+        deduped.append("live")
     return deduped
 
 
-PROVIDER_ORDER = _parse_provider_order(_PROVIDER_ORDER_RAW)
+PROVIDER_ORDER = _parse_provider_order(_PROVIDER_ORDER_RAW, live=LIVE_CHAT_FALLBACK)
 
 # ─── Scheduler: reminder + daily digest danh mục (Bước 6) ──────────────────
 REMINDER_CHECK_INTERVAL_SEC = _env_int("REMINDER_CHECK_INTERVAL_SEC", 30)

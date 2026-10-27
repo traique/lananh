@@ -1,16 +1,20 @@
-"""Override model/api_key/enabled theo provider (groq|openrouter|api1|api2;
+"""Override model/api_key/enabled theo provider (groq|openrouter|api1|api2|live;
 router9 model đã có sẵn cơ chế riêng - xem router9_client.get_preferred_model_name),
 lưu bảng settings qua core.database, cache RAM lười (nạp 1 lần/khoá, cập nhật
 lại ngay khi ghi). api_key mã hoá bằng core.crypto trước khi lưu, cùng cơ chế
 với channels/zalo_session.py. Dùng bởi ai/*_client.py và trang admin (web.py).
 """
+
 from typing import Optional
 
 from core import crypto
 from core import database as db
 
-PROVIDERS = ("router9", "groq", "openrouter", "api1", "api2")
-ENABLE_OVERRIDABLE = ("groq", "openrouter", "api1", "api2")  # router9: ai/provider_state.py
+# "live": Gemini Live (ai/live_client.py) - dùng chung key api1/api2, chỉ có
+# override model + bật/tắt (không có key riêng).
+PROVIDERS = ("router9", "groq", "openrouter", "api1", "api2", "live")
+ENABLE_OVERRIDABLE = ("groq", "openrouter", "api1", "api2", "live")  # router9: ai/provider_state.py
+SHARED_KEY_PROVIDERS = ("live",)
 
 _model_cache: dict[str, Optional[str]] = {}
 _api_key_cache: dict[str, Optional[str]] = {}

@@ -39,6 +39,9 @@ _COOLDOWN_PROVIDERS = (
     "router9",
     "groq_search",
     "router9_search",
+    # Gemini Live (ai/live_client.py): quota tách hẳn chat api1/api2.
+    "live_api1",
+    "live_api2",
 )
 # router9 lỗi 5xx/mất kết nối: chỉ khai tử khi đủ ROUTER9_HEALTH_STRIKES lỗi
 # trong ROUTER9_HEALTH_WINDOW_SEC (timeout và 401/403 vẫn khai tử ngay).
@@ -57,6 +60,8 @@ class ProviderStateSnapshot(TypedDict):
     router9_exhausted_until: float
     groq_search_exhausted_until: float
     router9_search_exhausted_until: float
+    live_api1_exhausted_until: float
+    live_api2_exhausted_until: float
     cooldown_reasons: dict[str, str]
 
 
@@ -240,6 +245,8 @@ class ProviderChainState:
             router9_exhausted_until=self.api_exhausted_until.get("router9", 0.0),
             groq_search_exhausted_until=self.api_exhausted_until.get("groq_search", 0.0),
             router9_search_exhausted_until=self.api_exhausted_until.get("router9_search", 0.0),
+            live_api1_exhausted_until=self.api_exhausted_until.get("live_api1", 0.0),
+            live_api2_exhausted_until=self.api_exhausted_until.get("live_api2", 0.0),
             cooldown_reasons=dict(self.cooldown_reasons),
         )
 

@@ -43,6 +43,21 @@ services:
         sync: false
       - key: GOOGLE_AI_STUDIO_MODEL
         value: gemini-3.5-flash-lite
+      # Gemini Live (key api1/api2, cooldown riêng): provider chat dự phòng cuối chuỗi
+      # + bộ đọc /noi (VOICE_ENGINE). Hạn mức free tier chưa được Google công bố -
+      # xem aistudio.google.com/rate-limit; /status đếm số lượt Live trong ngày.
+      - key: LIVE_CHAT_FALLBACK
+        value: "1"
+      - key: LIVE_MODEL
+        value: "gemini-3.8-live"
+      - key: LIVE_MAX_SESSIONS
+        value: "1"
+      - key: LIVE_CALL_TIMEOUT_SEC
+        value: "60"
+      - key: LIVE_MAX_AUDIO_MB
+        value: "8"
+      - key: LIVE_HISTORY_MESSAGES
+        value: "6"
       - key: MAX_CONCURRENT_TURNS
         value: "2"
       # 1 chỗ trong MAX_CONCURRENT_TURNS dành riêng cho chủ bot (Telegram/Zoom/web);
@@ -240,6 +255,11 @@ services:
         value: "gemini-3.8-flash-tts"
       - key: VOICE_TTS_VOICE
         value: "Kore"
+      # auto = Gemini Live trước, lỗi/quota/đọc lệch chữ thì Gemini TTS; live | tts.
+      - key: VOICE_ENGINE
+        value: "auto"
+      - key: LIVE_VOICE_MIN_MATCH
+        value: "80"
       - key: VOICE_REPLY_URL_TTL_MIN
         value: "10"
       - key: VOICE_REPLY_STORE_MB
@@ -461,6 +481,8 @@ services:
       - key: GEMINI_KEYS_SAME_PROJECT
         value: "0"
       - key: FREE_TIER_RPD_GEMINI
+        value: "0"
+      - key: FREE_TIER_RPD_GEMINI_LIVE
         value: "0"
       - key: FREE_TIER_RPD_GROQ
         value: "0"
