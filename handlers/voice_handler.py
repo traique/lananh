@@ -95,4 +95,7 @@ async def voice_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             await message.reply_text(reply)
             return
-        await chat_router.route_text(update, context, transcript, allow_side_effects=False)
+        # voice_in=True: /noi auto đọc kèm câu trả lời của tin thoại này.
+        await chat_router.route_text(
+            update, context, transcript, allow_side_effects=False, voice_in=True
+        )

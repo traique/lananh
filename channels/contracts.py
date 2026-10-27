@@ -54,6 +54,18 @@ class ZaloTextStyle(BaseModel):
     st: ZaloTextStyleName
 
 
+class ZaloVoice(BaseModel):
+    """Tin thoại trả lời /noi (services/voice_reply.py): gateway tải ``path`` (tương
+    đối với ZALO_BRIDGE_BASE_URL, loopback) lên CDN Zalo rồi sendVoice; tải lên lỗi
+    thì sendVoice thẳng ``url`` công khai (None = không có WEBHOOK_BASE_URL). Link
+    hết hạn sau VOICE_REPLY_URL_TTL_MIN phút - gửi lại muộn thì gateway bỏ qua."""
+
+    path: str = Field(pattern=r"^tts/[A-Za-z0-9_.-]{1,200}$")
+    url: str | None = None
+    duration_ms: int = Field(default=0, ge=0)
+    mime: str = "audio/mp4"
+
+
 class ZaloMessageResponse(BaseModel):
     messages: list[str]
     provider: str | None = None
@@ -68,6 +80,8 @@ class ZaloMessageResponse(BaseModel):
     # hoặc vừa bị /zaloxoa) -> gateway quên; True = đã pair; None = không nói
     # (bản cache idempotency cũ) -> gateway giữ cách cũ.
     paired: bool | None = None
+    # Tuỳ chọn: tin thoại gửi SAU các tin chữ (None = không có). Gateway cũ bỏ qua.
+    voice: ZaloVoice | None = None
 
 
 # Câu báo gateway xin dựng sẵn (POST /internal/zalo/notice, channels/zalo_media.py)

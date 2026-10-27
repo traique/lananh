@@ -83,6 +83,8 @@ _USER_DATA_TABLES = (
     "stock_price_alerts",
     # migrations/020: chi tiêu cá nhân.
     "expenses",
+    # migrations/028: nhật ký ăn uống (/an).
+    "meals",
     # migrations/021: đánh giá câu trả lời (có bản chụp câu hỏi/câu trả lời).
     "answer_feedback",
     "stock_alert_log",

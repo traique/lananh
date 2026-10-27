@@ -1307,6 +1307,66 @@ async def _gemini_transcript(idx: int, audio: bytes, mime_type: str, instruction
     return (getattr(response, "text", None) or "").strip()
 
 
+# ─── Đọc chữ thành giọng (TTS, services/voice_reply.py) ──────────────────────
+# Quota TTS của AI Studio tách hẳn quota chat: cooldown riêng "tts_api1/2" - hết
+# lượt đọc không làm chat api1/api2 bị coi là hết quota.
+TTS_COOLDOWN_PREFIX = "tts_"
+
+
+class Speech(NamedTuple):
+    audio: bytes
+    mime: str
+    provider: str
+
+
+async def synthesize_speech(text: str, *, model: str, voice: str, timeout_sec: float) -> Speech:
+    """Gemini TTS api1 -> api2, mỗi lượt qua bounded() (trong hạn chót lượt của caller).
+    Raise TurnTimeoutError (hết hạn lượt) hoặc lỗi cuối cùng."""
+    await provider_state.ensure_loaded()
+    last_exc: Optional[BaseException] = None
+    for idx in (1, 2):
+        name = f"api{idx}"
+        cooldown_key = f"{TTS_COOLDOWN_PREFIX}{name}"
+        if not await official_client.api_key_for(idx):
+            continue
+        if not await provider_overrides.is_enabled(name):
+            continue
+        if provider_state.api_in_cooldown(cooldown_key):
+            continue
+        started = time.monotonic()
+        try:
+            audio, mime = await bounded(
+                lambda idx=idx: official_client.synthesize_speech(
+                    idx, text, model=model, voice=voice
+                ),
+                timeout_sec,
+            )
+        except TurnTimeoutError:
+            await call_log.record(
+                name, model, outcome="turn_timeout", latency_ms=_elapsed_ms(started), stage="tts"
+            )
+            raise
+        except Exception as exc:
+            await call_log.record(
+                name,
+                model,
+                outcome=_classify_outcome(exc),
+                latency_ms=_elapsed_ms(started),
+                stage="tts",
+            )
+            if official_client.is_quota_exhausted_error(exc):
+                seconds, reason = cooldown.cooldown_for(name, exc)
+                await provider_state.mark_api_exhausted(cooldown_key, seconds, reason)
+            logger.warning("%s đọc giọng (TTS) lỗi: %s", name, _short_error(exc))
+            last_exc = exc
+            continue
+        await call_log.record(name, model, latency_ms=_elapsed_ms(started), stage="tts")
+        return Speech(audio, mime, name)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Chưa có key Google AI Studio dùng được cho đọc giọng (TTS).")
+
+
 async def check_router9_status() -> tuple[bool, str]:
     try:
         return await _run_with_call_timeout(router9_client.check_status)

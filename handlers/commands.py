@@ -51,7 +51,8 @@ HELP_TEXT = (
     "🖼️ *Gửi 1 ảnh chân dung* để em viết prompt (dán sang app Gemini) giữ nguyên khuôn mặt; "
     'ảnh kèm câu hỏi ("ảnh này là gì?", "dịch giúp anh chữ trong ảnh") thì em trả lời về ảnh.\n\n'
     "🎙️ *Tin thoại*: em nghe rồi trả lời như tin chữ (tin thoại không tự ghi danh mục, chi tiêu, "
-    "nhắc việc - muốn ghi thì gõ chữ).\n\n"
+    "nhắc việc - muốn ghi thì gõ chữ). /noi on|off|auto — em trả lời kèm tin thoại (auto: chỉ "
+    "khi anh vừa gửi tin thoại).\n\n"
     "📄 *File PDF, TXT/MD, Word (.docx)*: em tóm tắt hoặc trả lời câu hỏi ở chú thích; chú thích "
     '"lưu vào kho" (cả chú thích, hoặc "lưu vào kho rồi <câu hỏi>") để em lưu tài liệu vào '
     "kho kiến thức rag/.\n\n"
@@ -88,6 +89,9 @@ HELP_TEXT = (
     'nếu nhầm); gửi ảnh kèm chữ "hoá đơn" để em đọc hoá đơn (lưu nháp)\n'
     "/chitieu [hôm nay|tuần này|tháng trước|tháng 10] — tổng theo danh mục; /chitieu ds — khoản "
     "gần nhất; /chitieu cafe 45k — ghi 1 khoản; /chitieu\\_xoa <số> — xoá\n\n"
+    "*Ăn uống (kcal ước lượng theo bảng món Việt)*\n"
+    "/an phở bò sáng, /an 2 bát cơm, cá kho tối — ghi bữa ăn; /an — xem hôm nay; "
+    "/an tuan — 7 ngày; /an xoa <số> — xoá 1 món\n\n"
     "*Chat và tiện ích*\n"
     "/prompt <mô tả> — viết prompt tạo ảnh từ mô tả cơ bản\n"
     "/anh <mô tả> — tạo ảnh thật (Agnes AI); /anh on|off — bật/tắt\n"

@@ -34,6 +34,9 @@ export const STAT_KEYS = [
   "outbox_failed",
   /** Lần outbox hết ngân sách gửi theo giờ và hoãn tin sang lượt sau. */
   "outbox_deferred",
+  /** Tin thoại trả lời /noi đã gửi (voice.ts) / gửi không được. */
+  "voice_replies",
+  "voice_reply_failures",
 ] as const;
 
 export type StatKey = (typeof STAT_KEYS)[number];

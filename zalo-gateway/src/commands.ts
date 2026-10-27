@@ -21,8 +21,8 @@ export const READONLY_ANY_COMMANDS = [
   "/danhgia",
   "/chuy",
 ];
-/** Chỉ đọc khi KHÔNG có tham số (/memory on|off, /nhac 8h mai... là lệnh ghi). */
-export const READONLY_BARE_COMMANDS = ["/memory", "/nhac", "/yenlang"];
+/** Chỉ đọc khi KHÔNG có tham số (/memory on|off, /nhac 8h mai..., /an phở là lệnh ghi). */
+export const READONLY_BARE_COMMANDS = ["/memory", "/nhac", "/yenlang", "/an", "/noi"];
 
 /**
  * ["/lenh" viết thường, bỏ @tên_bot; phần tham số] - ["", ""] nếu không phải lệnh.

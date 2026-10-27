@@ -7,7 +7,7 @@ dùng chung pipeline với Zalo/Zoom: services/channel_chat_service.run_chat_tur
 
 import logging
 
-from telegram import Update
+from telegram import InputFile, Update
 from telegram.ext import ContextTypes
 
 import messages
@@ -26,11 +26,13 @@ from services import (
     conversation_log,
     expense_service,
     lunar_chat,
+    nutrition_service,
     portfolio_service,
     reminder_service,
     style_approval,
     turn_control,
     turn_progress,
+    voice_reply,
     weather_chat,
 )
 from services import attention, vn_daily_chat
@@ -67,22 +69,72 @@ async def route_text(
     text: str,
     *,
     allow_side_effects: bool = True,
+    voice_in: bool = False,
 ) -> None:
     """Định tuyến 1 câu chữ như tin nhắn thường. allow_side_effects=False (chữ
     chép từ tin nhắn thoại - handlers/voice_handler.py): bỏ lối tắt nhắc việc,
-    ghi danh mục/chi tiêu bằng lời và tool ghi dữ liệu - chỉ trả lời."""
+    ghi danh mục/chi tiêu bằng lời và tool ghi dữ liệu - chỉ trả lời.
+    voice_in: người dùng vừa gửi tin thoại (/noi auto đọc kèm câu trả lời).
+
+    MỘT hạn chót CHAT_TURN_TIMEOUT_SEC cho cả lượt: trả lời chữ + tin thoại /noi
+    (lồng trong hạn của tin thoại thì giữ hạn sớm hơn)."""
     user_id = update.effective_user.id
     # "Đang nhập..." suốt lượt (1 lần send_chat_action chỉ sống ~5 giây).
-    async with common.typing_keepalive(context.bot, update.effective_chat.id):
-        if await _quick_reply(update, user_id, text, allow_side_effects=allow_side_effects):
-            return
-        await _ai_reply(update, context, user_id, text, allow_side_effects=allow_side_effects)
+    with turn_deadline():
+        async with common.typing_keepalive(context.bot, update.effective_chat.id):
+            reply = await _quick_reply(update, user_id, text, allow_side_effects=allow_side_effects)
+            if reply is None:
+                # Lượt AI tự đọc kèm ngay sau câu trả lời (trước câu hỏi duyệt cách trả lời).
+                await _ai_reply(
+                    update,
+                    context,
+                    user_id,
+                    text,
+                    allow_side_effects=allow_side_effects,
+                    voice_in=voice_in,
+                )
+                return
+        if reply:
+            await _speak(update, context, user_id, reply, voice_in=voice_in)
+
+
+async def _speak(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, text: str, *, voice_in: bool
+) -> None:
+    """Tin thoại /noi đọc câu trả lời đã gửi (services/voice_reply.py): OGG/Opus qua
+    sendVoice khi máy có ffmpeg, không thì file WAV qua sendDocument (Bot API: voice
+    chỉ nhận OGG/Opus, MP3, M4A). Lỗi chỉ log - bản chữ đã gửi rồi."""
+    if not await voice_reply.wants_voice(user_id, voice_in=voice_in):
+        return
+    chat_id = update.effective_chat.id
+    try:
+        await context.bot.send_chat_action(chat_id=chat_id, action="record_voice")
+    except Exception:
+        logger.debug("Không gửi được trạng thái đang ghi âm.", exc_info=True)
+    clip = await voice_reply.make_clip(user_id, text, channel="telegram", voice_in=voice_in)
+    if clip is None:
+        return
+    try:
+        with trace.stage("send"):
+            if clip.ext == "ogg":
+                await update.message.reply_voice(
+                    voice=InputFile(clip.data, filename="lan-anh.ogg"),
+                    duration=clip.duration_sec,
+                )
+            else:
+                await update.message.reply_document(
+                    document=InputFile(clip.data, filename=voice_reply.TELEGRAM_WAV_NAME),
+                    caption="🔊 Bản đọc câu trả lời",
+                )
+    except Exception:
+        logger.warning("Không gửi được tin thoại trả lời về Telegram.", exc_info=True)
 
 
 async def _quick_reply(
     update: Update, user_id: int, text: str, *, allow_side_effects: bool = True
-) -> bool:
-    """Các nhánh trả lời bằng code (không tốn lượt AI). True nếu đã trả lời."""
+) -> str | None:
+    """Các nhánh trả lời bằng code (không tốn lượt AI). Đã trả lời thì trả câu vừa
+    gửi (để /noi đọc kèm), không thì None."""
     # Câu trả lời nhanh cũng vào lịch sử để câu hỏi nối tiếp có ngữ cảnh.
     record = conversation_log.record_exchange
 
@@ -92,7 +144,7 @@ async def _quick_reply(
     )
     if approval is not None:
         await common.reply_long_text(update.message, approval)
-        return True
+        return approval
 
     # "hoãn 10p" / "xong" ngay sau tin nhắc việc: code xử lý, không tốn lượt AI.
     shortcut = (
@@ -101,7 +153,7 @@ async def _quick_reply(
     if shortcut is not None:
         await record(user_id, text, shortcut, conversation_log.KIND_REMINDER)
         await common.reply_long_text(update.message, shortcut)
-        return True
+        return shortcut
 
     portfolio_result = (
         await portfolio_service.maybe_handle_natural_language(user_id, text)
@@ -111,7 +163,7 @@ async def _quick_reply(
     if portfolio_result is not None:
         await record(user_id, text, portfolio_result, conversation_log.KIND_PORTFOLIO)
         await common.reply_long_text(update.message, portfolio_result)
-        return True
+        return portfolio_result
 
     expense_reply = (
         await expense_service.maybe_handle_chat(user_id, text) if allow_side_effects else None
@@ -119,21 +171,30 @@ async def _quick_reply(
     if expense_reply is not None:
         await record(user_id, text, expense_reply, conversation_log.KIND_EXPENSE)
         await common.reply_long_text(update.message, expense_reply)
-        return True
+        return expense_reply
+
+    # "trưa nay anh ăn bún chả" (chỉ khi NUTRITION_NL=1): ghi bữa ăn bằng code.
+    meal_reply = (
+        await nutrition_service.maybe_handle_chat(user_id, text) if allow_side_effects else None
+    )
+    if meal_reply is not None:
+        await record(user_id, text, meal_reply, conversation_log.KIND_MEAL)
+        await common.reply_long_text(update.message, meal_reply)
+        return meal_reply
 
     article = await article_reader.maybe_handle(text)
     if article is not None:
         await record(user_id, text, article, conversation_log.KIND_ARTICLE)
         chat_context.remember_article(user_id, text, article)
         await common.reply_long_text(update.message, article)
-        return True
+        return article
 
     # "Có gì cần anh chú ý?": tin /chuy tính bằng code (services/attention.py).
     if attention.is_attention_question(text):
         reply = await attention.build(user_id, "telegram")
         await record(user_id, text, reply, conversation_log.KIND_DAILY)
         await common.reply_long_text(update.message, reply)
-        return True
+        return reply
 
     # Giá vàng/tỷ giá/xổ số, thời tiết và âm lịch: trả lời thẳng bằng code,
     # không tốn lượt AI nào.
@@ -142,20 +203,20 @@ async def _quick_reply(
     if daily_reply is not None:
         await record(user_id, text, daily_reply, conversation_log.KIND_DAILY)
         await common.reply_long_text(update.message, daily_reply)
-        return True
+        return daily_reply
 
     weather_reply = await weather_chat.maybe_handle(text, user_id=user_id)
     if weather_reply is not None:
         await record(user_id, text, weather_reply, conversation_log.KIND_WEATHER)
         await common.reply_long_text(update.message, weather_reply)
-        return True
+        return weather_reply
 
     lunar_reply = await lunar_chat.maybe_handle(text)
     if lunar_reply is not None:
         await record(user_id, text, lunar_reply, conversation_log.KIND_LUNAR)
         await common.reply_long_text(update.message, lunar_reply)
-        return True
-    return False
+        return lunar_reply
+    return None
 
 
 async def _reply_or_edit(message, status_message, text: str) -> None:
@@ -176,6 +237,7 @@ async def _ai_reply(
     text: str,
     *,
     allow_side_effects: bool = True,
+    voice_in: bool = False,
 ) -> None:
     record = conversation_log.record_exchange
     tracker = turn_progress.Tracker()
@@ -300,6 +362,8 @@ async def _ai_reply(
             )
         )
     if turn.text:
+        # /noi: tin thoại đọc câu trả lời, ngay sau bản chữ (services/voice_reply.py).
+        await _speak(update, context, user_id, turn.text, voice_in=voice_in)
         await _ask_style_approval(update.message, user_id)
 
 

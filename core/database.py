@@ -1454,6 +1454,60 @@ async def expense_recent(telegram_user_id: int, limit: int = 10) -> list[dict]:
     return await expenses.recent(await get_pool(), telegram_user_id, limit)
 
 
+# ─── Nhật ký ăn uống (services/nutrition_service.py) ────────────────────────
+# SQL ở core/repositories/meals.py; ngày truyền dạng text YYYY-MM-DD. Món không có
+# event_key (lệnh ngoài webhook) INSERT không idempotent -> không retry.
+
+
+@_with_reconnect(idempotent=False)
+async def meal_add(telegram_user_id: int, **kw) -> tuple[int, bool]:
+    from core.repositories import meals
+
+    return await meals.insert(await get_pool(), telegram_user_id, **kw)
+
+
+@_with_reconnect
+async def meal_count_since(telegram_user_id: int, within) -> int:
+    from core.repositories import meals
+
+    return await meals.count_since(await get_pool(), telegram_user_id, within)
+
+
+@_with_reconnect
+async def meal_day(telegram_user_id: int, day: str, limit: int = 40) -> list[dict]:
+    from core.repositories import meals
+
+    return await meals.day_rows(await get_pool(), telegram_user_id, day, limit)
+
+
+@_with_reconnect
+async def meal_day_totals(telegram_user_id: int, start: str, end: str) -> list[dict]:
+    from core.repositories import meals
+
+    return await meals.day_totals(await get_pool(), telegram_user_id, start, end)
+
+
+@_with_reconnect
+async def meal_delete(telegram_user_id: int, meal_id: int) -> dict | None:
+    from core.repositories import meals
+
+    return await meals.delete(await get_pool(), telegram_user_id, meal_id)
+
+
+@_with_reconnect
+async def meal_recent(telegram_user_id: int, limit: int = 200) -> list[dict]:
+    from core.repositories import meals
+
+    return await meals.recent(await get_pool(), telegram_user_id, limit)
+
+
+@_with_reconnect
+async def meal_clear(telegram_user_id: int) -> int:
+    from core.repositories import meals
+
+    return await meals.clear(await get_pool(), telegram_user_id)
+
+
 @_with_reconnect
 async def list_reminders_between(
     telegram_user_id: int, start: datetime, end: datetime, limit: int = 10

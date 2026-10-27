@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import binascii
+import dataclasses
 import functools
 import hmac
 import ipaddress
@@ -27,9 +28,10 @@ from channels.contracts import (
 from channels.facebook_commands import maybe_handle_facebook_command, prepare_post
 from channels.group_commands import maybe_handle_group_command
 from channels.zalo_text import to_plain_text, zalo_rich_chunks
+from ai.timeouts import turn_deadline
 from core import alerts, idempotency, trace
 from core.envutil import env_on
-from services import channel_dispatch, reply_audience, turn_control, usage_quota
+from services import channel_dispatch, reply_audience, turn_control, usage_quota, voice_reply
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.channel_image_service import MAX_ZALO_IMAGE_BYTES, handle_channel_image
 from services import facebook_dedup, facebook_intake_stats
@@ -365,12 +367,31 @@ def _chat_for(zalo_user: zalo_users.ZaloUser, sender_id: str):
     hiệu lực."""
 
     async def chat(user_id: int, text: str, is_admin: bool = True, quote_text: str | None = None):
-        with reply_audience.use(_audience(zalo_user, sender_id)):
+        with reply_audience.use(_audience(zalo_user, sender_id)), turn_deadline():
             if quote_text:
-                return await handle_channel_text(user_id, text, is_admin, quote_text=quote_text)
-            return await handle_channel_text(user_id, text, is_admin)
+                result = await handle_channel_text(user_id, text, is_admin, quote_text=quote_text)
+            else:
+                result = await handle_channel_text(user_id, text, is_admin)
+            return await _with_voice(user_id, text, result, is_admin)
 
     return chat
+
+
+async def _with_voice(user_id: int, text: str, result, is_admin: bool):
+    """Kèm tin thoại /noi (services/voice_reply.py) cho câu trả lời trò chuyện - không
+    đọc lệnh "/", tin cổ phiếu, ảnh. Trong CÙNG hạn chót của lượt; lỗi -> chỉ chữ."""
+    if (
+        not result.messages
+        or text.lstrip().startswith("/")
+        or result.market
+        or result.image_b64
+        or result.image_url
+    ):
+        return result
+    voice = await voice_reply.zalo_voice(
+        user_id, voice_reply.speakable_reply(list(result.messages)), is_admin=is_admin
+    )
+    return dataclasses.replace(result, voice=voice) if voice else result
 
 
 async def _receive_text(payload: ZaloMessageRequest) -> ZaloMessageResponse:

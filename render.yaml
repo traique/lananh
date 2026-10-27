@@ -194,6 +194,11 @@ services:
       # Chi tiêu: "cafe 45k" ghi bằng code (false = chỉ khi nói rõ hoặc /chitieu).
       - key: EXPENSE_CHAT_CAPTURE
         value: "true"
+      # Ăn uống /an: câu tự nhiên tắt, không ước lượng kcal bằng AI (bảng soạn sẵn).
+      - key: NUTRITION_NL
+        value: "0"
+      - key: NUTRITION_AI_ESTIMATE
+        value: "0"
       # Lịch sử chat mỗi người (tool search_history "hôm trước em nói gì...").
       - key: CHAT_MESSAGES_RETENTION_LIMIT
         value: "1000"
@@ -209,6 +214,19 @@ services:
         value: "5242880"
       - key: VOICE_MAX_SECONDS
         value: "180"
+      # Trả lời kèm giọng nói /noi (mỗi người tự bật); Zalo cần ffmpeg trong image.
+      - key: VOICE_REPLY_ENABLED
+        value: "1"
+      - key: VOICE_REPLY_MAX_CHARS
+        value: "600"
+      - key: VOICE_TTS_MODEL
+        value: "gemini-3.8-flash-tts"
+      - key: VOICE_TTS_VOICE
+        value: "Kore"
+      - key: VOICE_REPLY_URL_TTL_MIN
+        value: "10"
+      - key: VOICE_REPLY_STORE_MB
+        value: "8"
       - key: VISION_QA_ENABLED
         value: "1"
       - key: PHOTO_NO_CAPTION_MODE

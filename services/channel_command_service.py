@@ -23,7 +23,7 @@ from services import (
     usage_stats,
 )
 from services import answer_feedback, daily_commands, expense_service, reminder_commands
-from services import attention, notify_hub
+from services import attention, notify_hub, nutrition_service, voice_reply
 from services import turn_control
 from services.telemetry import telemetry
 
@@ -68,6 +68,10 @@ Nhắn "cafe 45k", "đổ xăng 1tr2", "2 củ tiền điện" là Lan Anh ghi l
 /chitieu [hôm nay|tuần này|tháng trước|tháng 10] — tổng theo danh mục; /chitieu ds — khoản gần nhất
 /chitieu cafe 45k — ghi 1 khoản; /chitieu xoa <số> — xoá
 
+Ăn uống (kcal ước lượng theo bảng món Việt, riêng từng người)
+/an phở bò sáng, /an 2 bát cơm, cá kho tối — ghi bữa ăn; /an — xem hôm nay; /an tuan — 7 ngày;
+  /an xoa <số> — xoá 1 món
+
 Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
 /anh <mô tả> — tạo ảnh thật (Agnes AI)
@@ -75,6 +79,7 @@ Chat và tiện ích
   "dịch giúp chữ trong ảnh") thì Lan Anh trả lời về ảnh
 🎙️ Gửi tin thoại — Lan Anh nghe rồi trả lời như tin chữ (tin thoại không tự ghi danh mục, chi tiêu,
   nhắc việc - muốn ghi thì gõ chữ)
+/noi on|off|auto — trả lời kèm tin thoại (auto: chỉ khi mình vừa gửi tin thoại)
 📄 Gửi file PDF, TXT, Word (.docx) — tóm tắt hoặc trả lời câu hỏi kèm theo
 /gia <sản phẩm> — tìm và so sánh giá
 /dich [ja>vi|vi>ja] <nội dung> — dịch chat công việc Nhật-Việt
@@ -502,6 +507,13 @@ async def maybe_handle_command(
     expense = await expense_service.handle_command(command, argument, user_id)
     if expense is not None:
         return expense, None
+    # /an: nhật ký ăn uống (kcal ước lượng tra bảng soạn sẵn, không AI mặc định).
+    meals = await nutrition_service.handle_command(command, argument, user_id)
+    if meals is not None:
+        return meals, None
+    # /noi on|off|auto: trả lời kèm tin thoại của CHÍNH người gõ.
+    if command == "/noi":
+        return [await voice_reply.noi_command(user_id, argument, channel=channel)], None
     if command == "/prompt":
         return await _prompt(user_id, argument, channel)
     if command == "/gia":

@@ -21,6 +21,7 @@ class FakeMemoryDB:
         self.chat: list[dict] = []
         self.summary: dict[int, str] = {}
         self.events: list[dict] = []
+        self.meals: list[dict] = []
         self._ids = itertools.count(1)
         self.now = datetime.now(timezone.utc)
 
@@ -93,6 +94,8 @@ class FakeMemoryDB:
             "finish_user_event_ids",
             "clear_user_events",
             "notify_clear_user",
+            "meal_recent",
+            "meal_clear",
         ):
             monkeypatch.setattr(db_module, name, getattr(self, name))
 
@@ -254,6 +257,15 @@ class FakeMemoryDB:
 
     async def clear_highlights(self, uid):
         self.highlights = [h for h in self.highlights if h["uid"] != uid]
+
+    # ─── nhật ký ăn uống (/an) ───
+    async def meal_recent(self, uid, limit=200):
+        return [dict(m) for m in self.meals if m["uid"] == uid][:limit]
+
+    async def meal_clear(self, uid):
+        before = len(self.meals)
+        self.meals = [m for m in self.meals if m["uid"] != uid]
+        return before - len(self.meals)
 
     # ─── session notes ───
     async def upsert_session_note(

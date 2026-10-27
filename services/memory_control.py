@@ -550,6 +550,10 @@ async def build_export(user_id: int) -> dict:
         "su_kien_hoi_tham": _clean_rows(
             await db.list_user_events(user_id, 50), ("title", "when_text", "event_date", "status")
         ),
+        "an_uong": _clean_rows(
+            await db.meal_recent(user_id, 200),
+            ("eaten_on", "meal", "food", "portion", "kcal", "kcal_source"),
+        ),
         "lich_su_chat": _clean_rows(
             list(reversed(await db.get_recent_chat_rows(user_id, 200, 2000))),
             ("role", "kind", "content", "created_at"),
@@ -595,6 +599,8 @@ async def export_text(user_id: int) -> str:
     if data["nhac_viec_sap_toi"]:
         lines.append("\nNhắc việc sắp tới:")
         lines.extend(f"• {r['luc'][:16]} {r['noi_dung']}" for r in data["nhac_viec_sap_toi"])
+    if data["an_uong"]:
+        lines.append(f"\nNhật ký ăn uống: {len(data['an_uong'])} món gần nhất (xem bằng /an).")
     lines.append(f"\nLịch sử chat: {len(data['lich_su_chat'])} tin gần nhất (không in ra ở đây).")
     text = "\n".join(lines)
     if len(text) > EXPORT_TEXT_MAX_CHARS:
@@ -610,10 +616,10 @@ async def delete_own_data(user_id: int, argument: str = "") -> str:
     if "xacnhan" not in (argument or "").lower():
         scope = (
             "toàn bộ dữ liệu cá nhân (trí nhớ, ghi chú, lịch sử chat, nhắc việc, danh mục, "
-            "cài đặt riêng)"
+            "chi tiêu, ăn uống, cài đặt riêng)"
             if user_id < 0
-            else "trí nhớ, ghi chú, lịch sử chat và sự kiện hỏi thăm (danh mục cổ phiếu, "
-            "nhắc việc giữ nguyên)"
+            else "trí nhớ, ghi chú, lịch sử chat, sự kiện hỏi thăm và nhật ký ăn uống (danh "
+            "mục cổ phiếu, nhắc việc giữ nguyên)"
         )
         return (
             f"⚠️ Lệnh này xoá {scope} và KHÔNG khôi phục được. Chắc chắn thì gõ: /xoadulieu xacnhan"
@@ -638,6 +644,8 @@ async def delete_own_data(user_id: int, argument: str = "") -> str:
             await db.notify_clear_user(user_id)
             # Đánh giá 👍/👎 có bản chụp câu hỏi/câu trả lời (migrations/021).
             await db.answer_feedback_clear(user_id)
+            # Nhật ký ăn uống /an (migrations/028).
+            await db.meal_clear(user_id)
             for key in personal_settings.memory_user_keys(user_id):
                 await db.set_setting(key, "")
     from services import chat_context
