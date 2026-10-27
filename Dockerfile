@@ -21,8 +21,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     OPENBLAS_NUM_THREADS=1 \
     OMP_NUM_THREADS=1
 
+# ffmpeg: đổi giọng TTS sang OGG/Opus (tin thoại Telegram) và M4A/AAC (Zalo) cho
+# /noi - services/voice_reply.py; chỉ chạy 1 tiến trình ngắn mỗi tin thoại.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends supervisor ca-certificates \
+    && apt-get install -y --no-install-recommends supervisor ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=gateway /usr/local/bin/node /usr/local/bin/node

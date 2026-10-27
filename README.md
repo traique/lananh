@@ -542,8 +542,8 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   (M4A); clip nằm trong kho RAM có trần (20 file, `VOICE_REPLY_STORE_MB`), tên file
   ký HMAC hết hạn sau `VOICE_REPLY_URL_TTL_MIN` phút; gateway tải qua loopback,
   đưa lên CDN Zalo rồi `sendVoice`, lỗi thì gửi link công khai `/media/tts/<tên>`.
-  Thành viên Zalo: mỗi tin thoại tính 1 lượt nặng. Image hiện chưa có ffmpeg - thêm
-  vào Dockerfile là quyết định của chủ repo (xem docs/nang-cap-jarvis.md).
+  Thành viên Zalo: mỗi tin thoại tính 1 lượt nặng. Image Docker đã cài ffmpeg (CI
+  kiểm có encoder libopus và aac); chạy nơi khác thiếu ffmpeg thì tự rơi về WAV.
 - Hỏi đáp về ảnh: ảnh kèm câu hỏi ("ảnh này là gì?", "dịch giúp anh chữ trong
   ảnh", "đọc giúp tờ giấy này") thì trả lời về ảnh, đọc/dịch được cả chữ Nhật,
   Trung, Hàn, số liệu chép đúng như trong ảnh. Ảnh không caption, hoặc caption
@@ -1411,7 +1411,7 @@ Telegram chỉ còn 18 lệnh hay dùng; mọi lệnh khác vẫn gõ được.
 | `/ngaynho`, `/ngaynho <tên> <ngày> [âm] [trước N ngày] [lúc 7h] [theo tháng nhuận]`, `/ngaynho xoa <số\|tên>` | Ngày nhớ: giỗ, sinh nhật, kỷ niệm |
 | `/chitieu [kỳ]`, `/chitieu <mô tả> <số tiền>`, `/chitieu ds`, `/chitieu xoa <số>`, `/chitieu_xoa <số>` | Tổng chi theo danh mục (hôm nay, tuần này, tháng trước, tháng M[/YYYY], năm nay...), ghi, xem, xoá khoản chi |
 | `/an <món> [bữa]`, `/an`, `/an tuan`, `/an xoa <số>` | Ghi bữa ăn (kcal ước lượng theo bảng món Việt), xem hôm nay theo bữa, 7 ngày, xoá 1 món |
-| `/noi [on\|off\|auto]` | Trả lời kèm tin thoại (auto: chỉ khi vừa gửi tin thoại); Zalo cần máy chủ có ffmpeg |
+| `/noi [on\|off\|auto]` | Trả lời kèm tin thoại (auto: chỉ khi vừa gửi tin thoại); Telegram và Zalo (image đã có ffmpeg) |
 | `/router9 on\|off`, `/tavily on\|off` | Bật/tắt 9Router thủ công; bật/tắt Tavily (trả lời kèm chế độ tra web hiện tại; tắt thì dùng web search của provider) |
 | `/prompt` | Tạo prompt hình ảnh |
 | `/gia` | Tìm giá sản phẩm |
