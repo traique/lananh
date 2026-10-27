@@ -50,6 +50,11 @@ export type BridgeResponse = {
    * (bản cache idempotency cũ).
    */
   paired?: boolean | null;
+  /**
+   * Tin thoại trả lời /noi (channels/contracts.ZaloVoice): gửi SAU các tin chữ
+   * (voice.ts). Thiếu/null = không có.
+   */
+  voice?: unknown;
 };
 /**
  * Thời gian chờ Python trả lời 1 tin. Phải LỚN HƠN hạn chót mỗi lượt bên Python

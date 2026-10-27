@@ -287,6 +287,18 @@
     background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);
     padding:12px;margin:12px 0 0;max-height:420px;overflow:auto;
   }
+  /* ---------- Nhật ký (ghi chú phiên) ---------- */
+  .journal-controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .journal-controls .select{flex:none;max-width:100%}
+  .journal-controls .field-row{flex:1;min-width:220px}
+  .journal-day{margin-top:18px}
+  .journal-day h4{margin:0 0 8px;font-size:13px;color:var(--text-2)}
+  .journal-note{border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-top:8px;background:var(--field)}
+  .journal-note .head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+  .journal-note .title{font-weight:600;font-size:14px}
+  .journal-note .body{white-space:pre-wrap;word-break:break-word;font-size:13px;margin-top:6px;color:var(--text-2)}
+  .journal-note textarea.input{height:auto;min-height:72px;padding:8px 12px;line-height:1.5;resize:vertical;font-family:inherit;margin-top:6px}
+  .journal-pager{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:16px;flex-wrap:wrap}
   .chips{display:flex;flex-wrap:wrap;gap:6px}
   .chip{display:inline-block;padding:3px 9px;border-radius:999px;background:var(--surface-2);font-size:12px;color:var(--text-2)}
   .chip b{color:var(--text);font-family:var(--mono);font-weight:600} /* taste-skill-ignore: mono chỉ cho mã (model, key, pid) */
@@ -378,6 +390,7 @@
       <a href="#ai"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 4 3 5-7"/></svg>Thống kê AI</a>
       <a href="#providers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg>Provider</a>
       <a href="#users"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4a3.5 3.5 0 0 1 0 7M18 13.5a6.5 6.5 0 0 1 3.5 6.5"/></svg>Người dùng &amp; Zalo</a>
+      <a href="#journal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19v-3"/><path d="M9 7.5h6M9 11h4"/></svg>Nhật ký</a>
       <a href="#market"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"/><path d="M4 15l5-6 4 3 7-8"/></svg>Page chứng khoán</a>
       <a href="#system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="8" ry="2.5"/><path d="M4 5.5v13c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-13"/><path d="M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></svg>Hệ thống</a>
       <span class="nav-label">Công cụ web</span>
@@ -532,6 +545,24 @@
           <div class="card-head"><h3>Giới hạn lượt của thành viên Zalo</h3><span class="hint">mỗi ngày, mở lại lúc 0h giờ VN · 0 = không giới hạn</span></div>
           <p class="note">Chỉ áp cho thành viên (không áp cho chủ bot, admin Zalo). Lượt nặng = tạo ảnh /anh, luận giải chi tiết (/tuvi_chitiet, /kymon_chitiet, /tsh_chitiet), lượt chat có tra web, việc nền /viec và lần chạy tác vụ định kỳ; hết lượt nặng thì vẫn trò chuyện được nhưng không tra web. Cổ phiếu tính như lượt thường.</p>
           <div id="quota-box"><div class="skeleton"><i></i><i></i></div></div>
+        </div>
+      </section>
+
+      <!-- ========== NHẬT KÝ ========== -->
+      <section id="journal" data-title="Nhật ký">
+        <div class="section-head"><h2>Nhật ký</h2><p>Ghi chú từng phiên trò chuyện theo ngày và tóm tắt dài hạn em đang nhớ về từng người; tìm, sửa hoặc xoá từng ghi chú.</p></div>
+        <div class="card">
+          <div class="journal-controls">
+            <label class="sr-only" for="journal-user">Người dùng</label>
+            <select class="select" id="journal-user"><option value="">Đang tải…</option></select>
+            <form class="field-row" id="journal-search" role="search">
+              <label class="sr-only" for="journal-q">Từ khoá</label>
+              <input class="input" id="journal-q" type="search" maxlength="100" placeholder="Tìm trong tiêu đề, ý chính, tóm tắt">
+              <button class="btn sm" type="submit">Tìm</button>
+            </form>
+          </div>
+          <p class="field-label">Ghi chú phiên được đưa vào đầu phiên chat sau để em nhớ mạch chuyện; sửa ở đây có hiệu lực từ lượt chat kế tiếp. Mỗi người giữ tối đa 100 phiên gần nhất.</p>
+          <div id="journal-box"><div class="empty">Chọn người dùng để xem nhật ký.</div></div>
         </div>
       </section>
 
@@ -1132,6 +1163,107 @@ async function loadMemoryItems(userId, label) {
   });
 }
 
+/* ---------- Nhật ký: ghi chú phiên + tóm tắt (services/journal_admin.py) ---------- */
+// Mọi chữ (tiêu đề, ý chính, tóm tắt, tên người dùng) do người/AI viết: luôn qua esc().
+const journal = { userId: null, label: '', q: '', page: 1, loaded: false };
+function fmtDay(iso) {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+async function initJournal() {
+  journal.loaded = true;
+  const users = cache.memory || await api('/admin/api/memory');
+  const sel = $('journal-user');
+  sel.innerHTML = users.map(u => `<option value="${esc(u.user_id)}">${esc(u.label)}</option>`).join('');
+  if (!users.length) { setState($('journal-box'), 'empty', 'Chưa có người dùng nào.'); return; }
+  const remembered = loadPref('admin.journalUser', '');
+  if (users.some(u => String(u.user_id) === remembered)) sel.value = remembered;
+  sel.addEventListener('change', () => { journal.page = 1; savePref('admin.journalUser', sel.value); loadJournal(); });
+  $('journal-search').addEventListener('submit', ev => {
+    ev.preventDefault();
+    journal.q = $('journal-q').value.trim();
+    journal.page = 1;
+    loadJournal();
+  });
+  loadJournal();
+}
+function journalNoteHtml(n) {
+  const when = n.started_at ? new Date(n.started_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
+  return `<div class="journal-note" data-key="${esc(n.session_key)}">
+    <div class="head"><div><div class="title">${esc(n.title || '(chưa có tiêu đề)')}</div><div class="muted small">bắt đầu ${esc(when)} · cập nhật ${fmtRel(n.updated_at)}</div></div>
+      <div class="actions" style="margin-top:0"><button class="btn sm journal-edit" type="button">Sửa</button><button class="btn sm journal-del" type="button">Xoá</button></div></div>
+    ${n.bullets ? `<div class="body">${esc(n.bullets)}</div>` : ''}
+    ${n.summary ? `<div class="body muted">${esc(n.summary)}</div>` : ''}
+  </div>`;
+}
+function journalEditForm(card, n, userId) {
+  const k = esc(n.session_key);
+  card.innerHTML = `<label class="field-label" for="je-title-${k}">Tiêu đề</label>
+    <input class="input" id="je-title-${k}" maxlength="200" value="${esc(n.title)}">
+    <label class="field-label" for="je-bullets-${k}">Ý chính (mỗi dòng 1 ý)</label>
+    <textarea class="input" id="je-bullets-${k}" maxlength="1500" rows="4">${esc(n.bullets)}</textarea>
+    <label class="field-label" for="je-summary-${k}">Tóm tắt phiên</label>
+    <textarea class="input" id="je-summary-${k}" maxlength="1200" rows="3">${esc(n.summary)}</textarea>
+    <div class="actions"><button class="btn sm journal-save" type="button">Lưu</button><button class="btn sm journal-cancel" type="button">Huỷ</button><span class="muted small">Để trống cả 3 ô = xoá ghi chú.</span></div>`;
+  card.querySelector('.journal-cancel').addEventListener('click', () => loadJournal());
+  card.querySelector('.journal-save').addEventListener('click', async ev => {
+    const btn = ev.currentTarget;
+    busy(btn);
+    try {
+      await post('/admin/api/journal/note', {
+        user_id: userId, session_key: n.session_key, action: 'edit',
+        title: $(`je-title-${n.session_key}`).value,
+        bullets: $(`je-bullets-${n.session_key}`).value,
+        summary: $(`je-summary-${n.session_key}`).value,
+      });
+      msg('Đã lưu ghi chú.');
+      loadJournal();
+    } catch (e) { msg('Lưu thất bại: ' + e.message, true); idle(btn); }
+  });
+}
+async function loadJournal() {
+  const userId = parseInt($('journal-user').value, 10);
+  if (Number.isNaN(userId)) return;
+  journal.userId = userId;
+  const box = $('journal-box');
+  box.innerHTML = '';
+  skeleton(box);
+  let d;
+  try {
+    d = await api(`/admin/api/journal?user_id=${encodeURIComponent(userId)}&page=${encodeURIComponent(journal.page)}&q=${encodeURIComponent(journal.q)}`);
+  } catch (e) { setState(box, 'error', 'Không tải được nhật ký: ' + e.message); return; }
+  journal.label = d.label;
+  journal.page = d.page;
+  const notesByKey = {};
+  d.days.forEach(day => day.notes.forEach(n => { notesByKey[n.session_key] = n; }));
+  const summary = d.summary
+    ? `<div class="journal-day"><h4>Tóm tắt dài hạn <span class="muted small">· cập nhật ${fmtRel(d.summary.updated_at)}</span></h4><pre class="output" style="margin-top:0">${esc(d.summary.text)}</pre></div>`
+    : '';
+  const days = d.days.map(day => `<div class="journal-day"><h4>${esc(fmtDay(day.day))} · ${esc(day.notes.length)} phiên</h4>${day.notes.map(journalNoteHtml).join('')}</div>`).join('');
+  const head = `<div class="muted small" style="margin-top:12px">${esc(d.label)} · ${esc(fmtNum(d.total))} ghi chú${d.query ? ` khớp “${esc(d.query)}”` : ''}</div>`;
+  const pager = d.pages > 1
+    ? `<div class="journal-pager"><button class="btn sm" type="button" id="journal-prev"${d.page <= 1 ? ' disabled' : ''}>← Mới hơn</button><span class="muted small">Trang ${esc(d.page)}/${esc(d.pages)}</span><button class="btn sm" type="button" id="journal-next"${d.page >= d.pages ? ' disabled' : ''}>Cũ hơn →</button></div>`
+    : '';
+  box.innerHTML = head + summary + (days || `<div class="empty">${d.query ? 'Không có ghi chú nào khớp.' : 'Chưa có ghi chú phiên nào.'}</div>`) + pager;
+  if ($('journal-prev')) $('journal-prev').addEventListener('click', () => { journal.page -= 1; loadJournal(); });
+  if ($('journal-next')) $('journal-next').addEventListener('click', () => { journal.page += 1; loadJournal(); });
+  box.querySelectorAll('.journal-del').forEach(btn => btn.addEventListener('click', async () => {
+    const key = parseInt(btn.closest('.journal-note').dataset.key, 10);
+    if (!window.confirm('Xoá hẳn ghi chú phiên này? Lịch sử chat không bị xoá.')) return;
+    busy(btn);
+    try {
+      await post('/admin/api/journal/note', { user_id: userId, session_key: key, action: 'delete' });
+      msg('Đã xoá ghi chú.');
+      loadJournal();
+    } catch (e) { msg('Xoá thất bại: ' + e.message, true); idle(btn); }
+  }));
+  box.querySelectorAll('.journal-edit').forEach(btn => btn.addEventListener('click', () => {
+    const card = btn.closest('.journal-note');
+    journalEditForm(card, notesByKey[card.dataset.key], userId);
+  }));
+}
+
 // Zalo: user_id âm = tài khoản Zalo đã ghép (xem channels/zalo_users.py);
 // ghép danh sách /memory với lượt gọi kênh zalo trong /usage.
 function renderZalo() {
@@ -1477,7 +1609,7 @@ async function loadWatchdog() {
       : !z.reachable
         ? '<span class="pill bad">không trả lời</span>'
         : `${pill(Boolean(z.connected), 'đã kết nối', z.state || 'mất kết nối')} <span class="muted small">đếm từ ${esc(zs.since ? fmtAbs(new Date(zs.since)) : '—')}</span>
-          <div class="small">${esc(fmtNum(zs.direct_messages))} tin riêng · ${esc(fmtNum(zs.merged_messages))} tin được gộp · ${esc(fmtNum(zs.fast_lane))} lệnh làn nhanh · ${esc(fmtNum(zs.voice_turns))} tin thoại · ${esc(fmtNum(zs.file_turns))} file · ${esc(fmtNum(zs.chunks_sent))} tin đã gửi${zs.plain_fallbacks ? ` · ${esc(fmtNum(zs.plain_fallbacks))} lần rơi về chữ thuần` : ''}${zs.send_failures ? ` <span class="pill bad">${esc(fmtNum(zs.send_failures))} lần gửi lỗi</span>` : ''}</div>
+          <div class="small">${esc(fmtNum(zs.direct_messages))} tin riêng · ${esc(fmtNum(zs.merged_messages))} tin được gộp · ${esc(fmtNum(zs.fast_lane))} lệnh làn nhanh · ${esc(fmtNum(zs.voice_turns))} tin thoại · ${esc(fmtNum(zs.file_turns))} file · ${esc(fmtNum(zs.chunks_sent))} tin đã gửi${zs.voice_replies ? ` · ${esc(fmtNum(zs.voice_replies))} tin thoại trả lời` : ''}${zs.plain_fallbacks ? ` · ${esc(fmtNum(zs.plain_fallbacks))} lần rơi về chữ thuần` : ''}${zs.send_failures ? ` <span class="pill bad">${esc(fmtNum(zs.send_failures))} lần gửi lỗi</span>` : ''}</div>
           <div class="muted small">outbox ${esc(fmtNum(zs.outbox_sent))} gửi · ${esc(fmtNum(zs.outbox_failed))} lỗi · ${esc(fmtNum(zs.outbox_deferred))} lần hoãn (hết ngân sách giờ) · hàng đợi ${esc(fmtNum(zq.pending))} chờ, ${esc(fmtNum(zq.running))} đang chạy</div>`;
   const drillCell = b.last_drill_at
     ? `${pill(!b.drill_stale, 'đạt', 'quá hạn')} ${esc(fmtAbs(new Date(b.last_drill_at)))}`
@@ -1632,6 +1764,8 @@ function showTab(id) {
   }
   // Biểu đồ vẽ theo bề rộng thật; lúc tab ẩn bề rộng = 0 nên vẽ lại khi hiện.
   if (id === 'overview' && chartData) renderChart(chartData);
+  // Nhật ký tải khi mở tab (không nằm trong vòng tự làm mới: đang sửa không bị đè).
+  if (id === 'journal' && !journal.loaded) initJournal().catch(e => setState($('journal-box'), 'error', 'Không tải được: ' + e.message));
 }
 // Điện thoại: thanh bên là bảng danh mục toàn màn, mở bằng nút "Danh mục".
 const sheet = $('side-sheet');

@@ -43,7 +43,8 @@ from ai import (
 from ai.provider_state import provider_state
 from channels import zalo_gateway_status, zalo_users
 from core import config, database as db
-from services import db_maintenance, market_page, memory_control, memory_service, memory_stats
+from services import db_maintenance, journal_admin, market_page, memory_control, memory_service
+from services import memory_stats
 from services import backup_status, error_digest, key_rotation, quota_burn, usage_quota
 from services import watchdog
 
@@ -681,6 +682,72 @@ async def admin_memory_item(request: Request) -> Response:
     ):
         return Response(status_code=400)
     changed = await memory_control.admin_edit(user_id, action, kind, item_id)
+    return JSONResponse({"changed": changed}, status_code=200 if changed else 404)
+
+
+# ─── Nhật ký: ghi chú phiên + tóm tắt (services/journal_admin.py) ────────────
+
+
+async def _journal_user(raw) -> dict | None:
+    """Người dùng hợp lệ của trang Nhật ký (chủ bot hoặc Zalo đã ghép), None nếu không."""
+    user_id = raw if isinstance(raw, int) and not isinstance(raw, bool) else _int_param(raw)
+    if user_id is None:
+        return None
+    return next((e for e in await _memory_user_entries() if e["user_id"] == user_id), None)
+
+
+def _json_body_required(request: Request) -> bool:
+    """POST sửa dữ liệu chỉ nhận JSON: form chéo trang (text/plain, form-urlencoded)
+    không đặt được Content-Type này nếu không qua CORS preflight - thêm 1 lớp chống
+    CSRF ngoài cookie SameSite=Lax."""
+    return "application/json" in (request.headers.get("content-type") or "").lower()
+
+
+@api_router.get("/journal")
+async def admin_journal(request: Request) -> Response:
+    """?user_id=&q=&page= - 1 trang ghi chú phiên gom theo ngày + tóm tắt dài hạn."""
+    entry = await _journal_user(request.query_params.get("user_id"))
+    if entry is None:
+        return Response(status_code=400)
+    page_no = _int_param(request.query_params.get("page")) or 1
+    data = await journal_admin.page(entry["user_id"], request.query_params.get("q", ""), page_no)
+    return JSONResponse({**data, "label": entry["label"]})
+
+
+@api_router.post("/journal/note")
+async def admin_journal_note(request: Request) -> Response:
+    """Body: {"user_id": int, "session_key": int, "action": "edit"|"delete",
+    "title"?, "bullets"?, "summary"?}. 404 nếu ghi chú không còn, 409 nếu đang bận."""
+    if not _json_body_required(request):
+        return Response(status_code=415)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return Response(status_code=400)
+    entry = await _journal_user(body.get("user_id"))
+    session_key, action = body.get("session_key"), body.get("action")
+    if (
+        entry is None
+        or not isinstance(session_key, int)
+        or isinstance(session_key, bool)
+        or action not in ("edit", "delete")
+    ):
+        return Response(status_code=400)
+    try:
+        if action == "delete":
+            changed = await journal_admin.delete_note(entry["user_id"], session_key)
+        else:
+            changed = await journal_admin.edit_note(
+                entry["user_id"],
+                session_key,
+                title=body.get("title"),
+                bullets=body.get("bullets"),
+                summary=body.get("summary"),
+            )
+    except journal_admin.JournalBusy:
+        return JSONResponse(
+            {"error": "Bot đang ghi trí nhớ của người này, thử lại sau vài giây."},
+            status_code=409,
+        )
     return JSONResponse({"changed": changed}, status_code=200 if changed else 404)
 
 

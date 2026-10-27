@@ -533,7 +533,8 @@ def telegram_voice(monkeypatch, tmp_path):
         state["downloads"] += 1
         path.write_bytes(OGG)
 
-    async def route(update, context, text, *, allow_side_effects=True):
+    async def route(update, context, text, *, allow_side_effects=True, voice_in=False):
+        assert voice_in is True  # /noi auto đọc kèm câu trả lời của tin thoại
         state["routed"].append((text, allow_side_effects, remaining_turn_seconds() is not None))
 
     monkeypatch.setattr(voice_handler.common, "download_telegram_photo_with_retry", download)

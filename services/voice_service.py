@@ -35,6 +35,7 @@ from core import database as db
 from core.envutil import env_int, env_on
 from core.text_normalize import fold
 from services import channel_chat_service, conversation_log, media_text, reply_audience
+from services import voice_reply
 from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -318,14 +319,15 @@ _WRITE_KINDS = {
     "portfolio": "danh mục cổ phiếu",
     "expense": "chi tiêu",
     "weather_home": "thành phố thời tiết mặc định",
+    "meal": "bữa ăn",
 }
 
 
 def write_statement_kind(text: str) -> str | None:
-    """ "portfolio" | "expense" | "weather_home" | None: chữ chép từ tin thoại là câu
+    """ "portfolio" | "expense" | "weather_home" | "meal" | None: chữ chép từ tin thoại là câu
     mà nhánh nhanh SẼ ghi dữ liệu (lượt chỉ đọc bỏ qua nhánh đó - phải nói rõ là
     chưa ghi, không để chat AI tự "xác nhận" bừa)."""
-    from services import expense_service, portfolio_service, weather_home
+    from services import expense_service, nutrition_service, portfolio_service, weather_home
 
     if portfolio_service.looks_like_write_statement(text):
         return "portfolio"
@@ -333,6 +335,8 @@ def write_statement_kind(text: str) -> str | None:
         return "expense"
     if weather_home.parse_statement(text) is not None:
         return "weather_home"
+    if nutrition_service.looks_like_meal_statement(text):
+        return "meal"
     return None
 
 
@@ -350,6 +354,7 @@ def write_record_kind(kind: str) -> str:
     return {
         "portfolio": conversation_log.KIND_PORTFOLIO,
         "weather_home": conversation_log.KIND_DAILY,
+        "meal": conversation_log.KIND_MEAL,
     }.get(kind, conversation_log.KIND_EXPENSE)
 
 
@@ -386,4 +391,15 @@ async def handle_channel_voice(
         result = await channel_chat_service.handle_channel_text(
             user_id, transcript, is_admin, channel="zalo", allow_side_effects=False
         )
+        # /noi on|auto: kèm tin thoại đọc câu trả lời (cùng hạn chót của lượt); đi ra
+        # qua voice_reply.capture() của channels/zalo_media.py. Lỗi -> chỉ chữ.
+        if result.messages and not result.market:
+            voice_reply.offer(
+                await voice_reply.zalo_voice(
+                    user_id,
+                    voice_reply.speakable_reply(list(result.messages)),
+                    voice_in=True,
+                    is_admin=is_admin,
+                )
+            )
     return [echo, *result.messages], result.provider

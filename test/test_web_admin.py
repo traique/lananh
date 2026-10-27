@@ -326,7 +326,7 @@ def test_templates_have_theme_tokens_and_no_inline_handlers():
 
 def test_admin_template_sections_and_controls():
     html = (ROOT / "templates" / "admin.html").read_text(encoding="utf-8")
-    for section in ("overview", "ai", "providers", "users", "market", "system"):
+    for section in ("overview", "ai", "providers", "users", "journal", "market", "system"):
         assert f'<section id="{section}"' in html
     for control in ("refresh-btn", "auto-refresh", "range", "chart", "chart-table"):
         assert f'id="{control}"' in html

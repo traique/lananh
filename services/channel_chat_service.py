@@ -34,7 +34,7 @@ from services import (
     usage_quota,
     web_search,
 )
-from services import channel_command_service, reply_audience, style_approval
+from services import channel_command_service, nutrition_service, reply_audience, style_approval
 from services import attention, routines, vn_daily_chat
 from services.channel_result import ChannelResult
 from services.telemetry import telemetry
@@ -628,6 +628,11 @@ async def _side_effect_paths(
     if expense_reply is not None:
         await record(user_id, text, expense_reply, conversation_log.KIND_EXPENSE)
         return ChannelResult([expense_reply])
+    # "trưa nay anh ăn bún chả" (chỉ khi NUTRITION_NL=1): ghi bữa ăn bằng code.
+    meal_reply = await nutrition_service.maybe_handle_chat(user_id, text)
+    if meal_reply is not None:
+        await record(user_id, text, meal_reply, conversation_log.KIND_MEAL)
+        return ChannelResult([meal_reply])
     return None
 
 

@@ -81,6 +81,8 @@ def payload_from_result(result: ChannelResult, chunk, rich_chunk=None) -> dict[s
         "image_b64": result.image_b64,
         "image_url": result.image_url,
     }
+    if result.voice:
+        payload["voice"] = result.voice
     if rich_chunk is None:
         return {"messages": chunk(list(result.messages)), **payload}
     messages, styles = rich_chunk(list(result.messages), colorize=result.market)

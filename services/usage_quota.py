@@ -10,8 +10,9 @@
   trần riêng.
 - Trần lượt "nặng"/ngày (ZALO_MEMBER_DAILY_HEAVY, mặc định 5): /anh tạo ảnh,
   /tuvi_chitiet, /kymon_chitiet, /tsh_chitiet, lượt chat có tra web (user_calls
-  kind "chat_search"), việc nền /viec (kind "viec", ghi lúc việc chạy) và 1 lần
-  chạy tác vụ định kỳ (kind "routine"). Hết lượt nặng: lệnh nặng bị chặn, chat vẫn trả lời nhưng
+  kind "chat_search"), việc nền /viec (kind "viec", ghi lúc việc chạy), 1 lần
+  chạy tác vụ định kỳ (kind "routine") và tin thoại trả lời /noi (kind "tts",
+  ``heavy_available``/``record_heavy``). Hết lượt nặng: lệnh nặng bị chặn, chat vẫn trả lời nhưng
   không tra web (kèm ghi chú để model không bịa tin mới).
 - 0 = không giới hạn. Chủ bot sửa 2 trần trên /admin (bảng settings, cache ghi-xuyên
   core.settings_cache - sửa xong áp dụng ngay).
@@ -61,6 +62,8 @@ KIND_STOCK = "stock"
 # Lượt AI nền (services/background_jobs.py): /viec và 1 lần chạy tác vụ định kỳ.
 KIND_JOB = "viec"
 KIND_ROUTINE = "routine"
+# Tin thoại trả lời (services/voice_reply.py, /noi): đọc chữ thành giọng tốn quota TTS.
+KIND_TTS = "tts"
 # Loại lượt tính vào trần "nặng" (user_calls.kind).
 HEAVY_KINDS = (
     "image",
@@ -70,6 +73,7 @@ HEAVY_KINDS = (
     KIND_CHAT_SEARCH,
     KIND_JOB,
     KIND_ROUTINE,
+    KIND_TTS,
 )
 # Lệnh huyền học gọi AI, gồm alias (/ths_chitiet): cùng bảng định tuyến của
 # divination_commands.handle nên không alias nào lọt trần nặng.
@@ -291,6 +295,35 @@ async def heavy_exhausted(user_id: int, *, channel: str, is_admin: bool) -> bool
     return bool(limits.heavy and usage.heavy >= limits.heavy) or bool(
         limits.turns and usage.turns >= limits.turns
     )
+
+
+async def heavy_available(user_id: int, *, channel: str, is_admin: bool) -> bool:
+    """Chỉ XEM: còn lượt nặng hôm nay cho việc phụ trong lượt đã được cho qua (vd tin
+    thoại trả lời /noi) không. Ngoài phạm vi quota (chủ bot, admin) hoặc không đặt
+    trần nặng -> True. DB lỗi -> True (fail-open như check())."""
+    if not applies(channel, is_admin):
+        return True
+    try:
+        limits = await caps()
+        if not limits.heavy:
+            return True
+        usage = await _usage(user_id)
+    except Exception:
+        logger.warning("Quota thành viên: DB lỗi khi xem lượt nặng, cho qua.", exc_info=True)
+        return True
+    return usage.heavy < limits.heavy
+
+
+async def record_heavy(user_id: int, kind: str, *, channel: str, is_admin: bool) -> None:
+    """Tính 1 lượt nặng ``kind`` (đã làm xong việc phụ, vd tin thoại trả lời): cộng
+    dồn cache ngay và ghi user_calls. Ngoài phạm vi quota thì bỏ qua. Không raise."""
+    if not applies(channel, is_admin):
+        return
+    cached = _cache.get(user_id)
+    if cached is not None:
+        cached.heavy += 1
+        cached.turns += 1
+    await record(user_id, channel, kind)
 
 
 @contextmanager

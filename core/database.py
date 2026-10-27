@@ -1099,6 +1099,28 @@ async def rewrite_session_note(
 
 
 @_with_reconnect
+async def search_session_notes(
+    telegram_user_id: int, query: str = "", *, limit: int = 20, offset: int = 0
+) -> tuple[int, list[dict]]:
+    """Trang /admin "Nhật ký": (tổng số khớp, 1 trang ghi chú phiên)."""
+    from core.repositories import memory
+
+    total, rows = await memory.search_session_notes(
+        await get_pool(), telegram_user_id, query, limit, offset
+    )
+    return total, [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def get_summary_row(telegram_user_id: int) -> dict | None:
+    """Tóm tắt dài hạn kèm thời điểm cập nhật (trang /admin "Nhật ký")."""
+    from core.repositories import memory
+
+    row = await memory.summary_row(await get_pool(), telegram_user_id)
+    return dict(row) if row else None
+
+
+@_with_reconnect
 async def clear_session_notes(telegram_user_id: int) -> None:
     from core.repositories import memory
 
@@ -1452,6 +1474,60 @@ async def expense_recent(telegram_user_id: int, limit: int = 10) -> list[dict]:
     from core.repositories import expenses
 
     return await expenses.recent(await get_pool(), telegram_user_id, limit)
+
+
+# ─── Nhật ký ăn uống (services/nutrition_service.py) ────────────────────────
+# SQL ở core/repositories/meals.py; ngày truyền dạng text YYYY-MM-DD. Món không có
+# event_key (lệnh ngoài webhook) INSERT không idempotent -> không retry.
+
+
+@_with_reconnect(idempotent=False)
+async def meal_add(telegram_user_id: int, **kw) -> tuple[int, bool]:
+    from core.repositories import meals
+
+    return await meals.insert(await get_pool(), telegram_user_id, **kw)
+
+
+@_with_reconnect
+async def meal_count_since(telegram_user_id: int, within) -> int:
+    from core.repositories import meals
+
+    return await meals.count_since(await get_pool(), telegram_user_id, within)
+
+
+@_with_reconnect
+async def meal_day(telegram_user_id: int, day: str, limit: int = 40) -> list[dict]:
+    from core.repositories import meals
+
+    return await meals.day_rows(await get_pool(), telegram_user_id, day, limit)
+
+
+@_with_reconnect
+async def meal_day_totals(telegram_user_id: int, start: str, end: str) -> list[dict]:
+    from core.repositories import meals
+
+    return await meals.day_totals(await get_pool(), telegram_user_id, start, end)
+
+
+@_with_reconnect
+async def meal_delete(telegram_user_id: int, meal_id: int) -> dict | None:
+    from core.repositories import meals
+
+    return await meals.delete(await get_pool(), telegram_user_id, meal_id)
+
+
+@_with_reconnect
+async def meal_recent(telegram_user_id: int, limit: int = 200) -> list[dict]:
+    from core.repositories import meals
+
+    return await meals.recent(await get_pool(), telegram_user_id, limit)
+
+
+@_with_reconnect
+async def meal_clear(telegram_user_id: int) -> int:
+    from core.repositories import meals
+
+    return await meals.clear(await get_pool(), telegram_user_id)
 
 
 @_with_reconnect

@@ -70,6 +70,8 @@ KIND_DOCUMENT = "document"
 # ("cafe 45k"): vào lịch sử cho câu hỏi nối tiếp, không trích trí nhớ.
 KIND_REMINDER = "reminder"
 KIND_EXPENSE = "expense"
+# Ghi bữa ăn bằng câu tự nhiên ("trưa nay anh ăn bún chả", services/nutrition_service.py).
+KIND_MEAL = "meal"
 # Tin hỏi thăm chủ động (services/proactive_service.py) - dòng "user" là nhãn
 # hệ thống, không phải lời người dùng.
 KIND_FOLLOWUP = "followup"

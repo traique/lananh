@@ -330,3 +330,159 @@ một lần sau khi deploy.
   không thấy giá trị - trả lời chung chung.
 - Trả lời "ghi nhớ"/"bỏ" bằng chữ dựa vào trạng thái trong RAM: restart giữa chừng
   thì dùng `/hoc ok|bo`.
+
+## P4 — Trả lời bằng giọng nói, Nhật ký trên web, ghi ăn uống
+
+### 1. `/noi`: trả lời kèm tin thoại (ý từ ethanplusai/jarvis, isair/jarvis)
+
+- `/noi on|off|auto` theo TỪNG người (settings `voice_reply:<user_id>`, mặc định
+  off; `auto` = chỉ đọc khi người dùng vừa gửi tin thoại). Cổng toàn bot
+  `VOICE_REPLY_ENABLED=1` (người dùng vẫn phải tự bật). Chủ bot Telegram/Zoom dùng
+  chung 1 cài đặt; mỗi Zalo (kể cả Zalo của chủ bot) riêng, xoá cùng `/zaloxoa`.
+- Bản chữ luôn gửi như cũ; tin thoại đi SAU bản chữ (Telegram: trước câu hỏi duyệt
+  cách trả lời). Đọc câu trả lời trò chuyện và câu trả lời nhanh (thời tiết, giá
+  vàng...); KHÔNG đọc lệnh "/", báo cáo cổ phiếu, ảnh. Lỗi TTS/ffmpeg/hết quota/hết
+  hạn chót chỉ log - câu chữ không bị ảnh hưởng.
+- Lọc chữ trước khi đọc (`speakable_text`): bỏ khối code, dòng bảng, link (giữ chữ
+  của link markdown), markdown, emoji, dòng "⚙️ API"; bí mật code đã khôi phục trong
+  câu trả lời (vd ghi chú mật khẩu wifi) được che như prompt (`prompt_redaction`)
+  trước khi gửi TTS. Trần `VOICE_REPLY_MAX_CHARS`
+  (600): dài hơn thì đọc đoạn đầu (cắt ở cuối câu) và nói "Phần còn lại anh xem trong
+  tin nhắn chữ nha".
+- Tổng hợp giọng: Gemini TTS chính thức qua `google-genai` đã cài (2.11, API
+  `generate_content` với `response_modalities=["AUDIO"]` + `SpeechConfig` giọng dựng
+  sẵn - tài liệu ai.google.dev ghi `generateContent` vẫn được hỗ trợ đầy đủ). Model
+  mặc định `gemini-3.8-flash-tts` (bản ổn định hiện hành, có tiếng Việt), giọng
+  `Kore`; đổi bằng `VOICE_TTS_MODEL`/`VOICE_TTS_VOICE` (vd `gemini-3.8-flash-lite-tts`,
+  giọng `Aoede`, `Leda`...). Đầu ra PCM 16-bit mono 24 kHz: model 3.8 trả WAV có
+  header, model cũ trả PCM thô - code nhận cả hai. Đi `orchestrator.synthesize_speech`:
+  api1 → api2, mỗi lượt qua `ai.timeouts.bounded()` (trần 45 giây, trong hạn chót
+  CHAT_TURN_TIMEOUT_SEC của lượt; còn < 8 giây thì thôi đọc), ghi `provider_calls`
+  stage `tts`, hết quota thì cooldown riêng `tts_api1/2` (không làm chat api1/api2 bị
+  coi là hết quota). Tối đa 1 lượt đọc cùng lúc (semaphore, chờ tối đa 10 giây).
+- Định dạng, không thêm package/apt:
+  - Telegram: có `ffmpeg` trên PATH (`shutil.which`) thì đổi sang OGG/Opus 32 kbps và
+    gửi `sendVoice`; không có thì đóng gói WAV bằng module `wave` và gửi
+    `sendDocument` (Bot API: `sendVoice` chỉ nhận OGG/Opus, MP3, M4A; `sendAudio` chỉ
+    MP3, M4A - WAV chỉ gửi được dạng file).
+  - Zalo: zca-js `sendVoice({voiceUrl})` gửi link `voiceUrl`/`m4aUrl` cho app Zalo tự
+    tải (gửi HEAD trước để lấy Content-Length). App Zalo phát m4a; WAV không chắc phát
+    được nên Zalo CHỈ bật khi có ffmpeg (M4A/AAC 48 kbps). Không có ffmpeg thì `/noi`
+    trên Zalo nói rõ "vẫn chỉ gửi chữ".
+- Đường Zalo: clip M4A vào kho RAM (`voice_reply.ClipStore`: tối đa 20 file và
+  `VOICE_REPLY_STORE_MB` = 8 MB, bỏ file cũ nhất khi đầy), tên file
+  `<id>.<hết hạn>.<HMAC-SHA256>.m4a` (khoá ngẫu nhiên theo process; sai chữ ký/hết
+  hạn `VOICE_REPLY_URL_TTL_MIN` = 10 phút/bị đẩy khỏi kho → 404). Bridge trả thêm
+  trường `voice: {path, url, duration_ms, mime}` (`channels/contracts.ZaloVoice`;
+  gateway cũ bỏ qua). Gateway (`zalo-gateway/src/voice.ts`) gửi sau các tin chữ:
+  tải clip qua loopback `GET /internal/zalo/tts/<tên>` (bridge secret), tải lên CDN
+  Zalo (`uploadAttachment` file .m4a), rồi `sendVoice` link CDN - link bền, người nhận
+  mở muộn vẫn nghe. Tải lên lỗi thì `sendVoice` thẳng link công khai
+  `GET|HEAD /media/tts/<tên>` (`channels/tts_media.py`, cần `WEBHOOK_BASE_URL` hoặc
+  `RENDER_EXTERNAL_URL` https). Mỗi bước timeout 20 giây; lỗi chỉ log + đếm
+  `voice_reply_failures` (bảng gateway trên `/admin` hiện số tin thoại đã gửi).
+- Thành viên Zalo (role user): mỗi tin thoại tính 1 lượt nặng (user_calls kind `tts`,
+  `usage_quota.heavy_available`/`record_heavy`); hết lượt nặng thì chỉ gửi chữ.
+  Tin thoại Zalo đi kèm lượt chữ (`/internal/zalo/message`) và lượt tin thoại
+  (`/internal/zalo/voice`, cho `auto`).
+
+### 2. Nhật ký trên web (ý từ Memory Viewer của isair/jarvis)
+
+- `/admin` → mục mới "Nhật ký": chọn chủ bot hoặc 1 người Zalo đã ghép, xem ghi chú
+  phiên (`user_session_notes`: tiêu đề, ý chính, tóm tắt phiên) gom theo ngày giờ VN
+  và tóm tắt dài hạn (`user_memory_summary`), tìm theo từ khoá (ILIKE trong tiêu đề,
+  ý chính, tóm tắt; `%`/`_` được escape), sửa/xoá từng ghi chú.
+- API: `GET /admin/api/journal?user_id=&q=&page=` (20 ghi chú/trang, tối đa 50 trang,
+  từ khoá tối đa 100 ký tự), `POST /admin/api/journal/note` `{user_id, session_key,
+  action: edit|delete, title, bullets, summary}`. Cùng đăng nhập/phiên như mọi
+  endpoint admin; POST chỉ nhận `Content-Type: application/json` (thêm 1 lớp chống
+  CSRF ngoài cookie SameSite=Lax); chỉ nhận `user_id` có trong danh sách người dùng
+  của trang. Sửa/xoá chạy trong `memory_service.user_lock` của người đó (bộ trích nhớ
+  đang ghi thì trả 409 "thử lại sau"); để trống cả 3 ô = xoá. Xoá ghi chú phiên không
+  đụng lịch sử chat.
+- Giao diện cùng phong cách các mục khác (thẻ, nút viên thuốc, bảng gập trên điện
+  thoại); mọi chữ qua `esc()`; tab tải khi mở và không nằm trong vòng tự làm mới
+  (đang sửa không bị đè).
+
+### 3. `/an`: ghi ăn uống (ý từ isair/jarvis nutrition)
+
+- `services/nutrition_service.py`, migration 028 (bảng `meals`: ngày ăn, bữa
+  sang/trua/phu/toi/khac, món, số phần, kcal, nguồn kcal table/ai/none, event_key
+  chống ghi 2 lần khi tin gửi lại).
+- `/an phở bò sáng`, `/an 2 bát cơm, cá kho tối`, `/an hôm qua bún chả trưa`,
+  `/an nửa tô phở`, `/an trà sữa x2`: tối đa 6 món/lần (tách bằng `,` `+` "và"
+  "với"), số phần bằng số hoặc "nửa/một/hai + đơn vị" ("hải sản", "nấm" không bị đọc
+  thành số). Bữa không nói thì đoán theo giờ VN.
+- kcal: tra `assets/thuc_pham.yaml` (124 món/cách gọi phổ biến, khẩu phần thường gặp,
+  ghi rõ là ước lượng; sửa file không cần đổi code), khớp tên dài nhất, câu có dấu so
+  bản còn dấu trước. Món không có trong bảng: ghi tên, không có kcal - KHÔNG gọi AI.
+  `NUTRITION_AI_ESTIMATE=1`: món lạ được ước lượng bằng 1 lượt `utility_json` qua
+  `bounded()` (20 giây), số ngoài 1-3000 kcal bị bỏ, đánh dấu "AI ước lượng".
+- `/an`: hôm nay theo bữa + tổng kcal (ghi rõ số món chưa có kcal); `/an tuan`: 7 ngày
+  (tổng/ngày, trung bình ngày có số); `/an xoa <số>`; `/an` và `/noi` không tham số là
+  lệnh chỉ đọc (chạy ngoài khoá lượt, gateway đưa làn nhanh). Trần 40 món/24 giờ.
+- Câu tự nhiên chỉ khi `NUTRITION_NL=1` (mặc định 0), 2 mẫu rất rõ: "ghi ăn …"/"ghi
+  bữa trưa: …" và "<sáng|trưa|chiều|tối> nay|qua [anh/em] ăn …". Tránh lặp lỗi exp-1
+  (câu nhắc việc có kèm số tiền bị nuốt thành khoản chi): câu nhờ nhắc/ghi chú/nhớ
+  (`write_intent.asks_remind_or_remember`) và câu có số tiền (để chi tiêu ghi) không
+  bao giờ là bữa ăn; câu hỏi, kế hoạch ("định", "muốn", "sẽ"), đánh giá ("ngon không")
+  đi chat AI; "tối nay ăn lẩu" lúc chưa tới giờ tối là kế hoạch; mẫu "<bữa> nay ăn …"
+  đòi MỌI món có trong bảng ("trưa nay anh ăn với khách" vẫn là chat); câu gõ không
+  dấu "ghi an …" cũng đòi món có trong bảng ("ghi ân thầy cô"). Chạy sau ghi chi tiêu
+  trong chuỗi trả lời nhanh. Tin thoại: câu ghi bữa ăn được báo "chưa ghi, gõ chữ".
+- Dữ liệu riêng từng người (Zalo tách Telegram); xoá cùng `/xoadulieu` (cả chủ bot) và
+  `/zaloxoa`; `/xuatdulieu` có mục `an_uong` (200 món gần nhất).
+
+### Việc chủ bot cần làm
+
+1. Migration 028 tự áp lúc khởi động; `migrations.lock` đã có dòng 028 (gói P2 dùng
+   027 - gộp nhánh thì chạy lại `python -m core.migrations --write-lock`).
+2. Biến mới (đã có trong `.env.example`, `render.yaml`, mặc định an toàn):
+   `VOICE_REPLY_ENABLED=1`, `VOICE_REPLY_MAX_CHARS=600`,
+   `VOICE_TTS_MODEL=gemini-3.8-flash-tts`, `VOICE_TTS_VOICE=Kore`,
+   `VOICE_REPLY_URL_TTL_MIN=10`, `VOICE_REPLY_STORE_MB=8`, `NUTRITION_NL=0`,
+   `NUTRITION_AI_ESTIMATE=0`.
+3. **ffmpeg - quyết định của chủ repo.** Image hiện KHÔNG có ffmpeg: Telegram nhận
+   file WAV (bấm mở để nghe), Zalo không có tin thoại. Muốn tin thoại thật trên cả
+   2 kênh thì thêm `ffmpeg` vào dòng `apt-get install` của `Dockerfile` (~+80 MB
+   image, RAM chỉ khi đổi định dạng, mỗi lần vài chục MB trong <1 giây). Chưa làm vì
+   AGENTS.md cấm tự thêm apt.
+4. Menu Telegram có thêm `/an`, `/noi` (tự cập nhật lúc khởi động; menu đang 99/100
+   lệnh nếu gộp cả P2 - Telegram tối đa 100). Gateway Zalo cần build lại (đã nằm
+   trong image).
+5. Thử: `/noi on` trên Telegram, nhắn "chào em" → có bản chữ rồi file/tin thoại;
+   gửi tin thoại khi `/noi auto`. `/an phở bò sáng`, `/an`, `/an tuan`. Mở `/admin`
+   → Nhật ký, sửa 1 ghi chú. Kiểm model TTS dùng được với key AI Studio (lỗi thì log
+   "đọc giọng (TTS) lỗi" và `/admin` → lượt gọi stage `tts`).
+
+### Quyết định đã chọn (chủ bot có thể đổi)
+
+- Zalo gửi qua CDN Zalo trước (link bền) thay vì chỉ link công khai 10 phút; link
+  công khai là dự phòng.
+- Tin thoại không đọc báo cáo cổ phiếu (dài, nhiều số) và lệnh "/". Câu báo lỗi của
+  lượt chat Zalo vẫn có thể được đọc (không phân biệt được với câu trả lời).
+- Tin thoại thất bại không báo người dùng (chỉ log), để không thêm tin lỗi sau câu
+  trả lời đúng. Thành viên Zalo chỉ bị trừ lượt nặng khi tin thoại tạo được.
+- Kcal chỉ từ bảng soạn sẵn; không có mục tiêu kcal/ngày, không gợi ý ăn kiêng.
+
+### Cố ý chưa làm
+
+- Zoom: chưa gửi tin thoại (Chatbot API Zoom cần URL công khai cho file, khác luồng
+  ảnh hiện có) - `/noi` trên Zoom đổi cài đặt dùng chung với Telegram.
+- Chọn giọng riêng từng người, đọc tin chủ động (nhắc việc, bản tin sáng).
+- Nhật ký web chưa sửa tóm tắt dài hạn (chỉ xem); muốn quên 1 điều vẫn dùng `/quen`.
+- Bữa ăn chưa vào bản tin sáng/`/chuy`.
+
+### Rủi ro
+
+- Model/giọng TTS: tài liệu Gemini hướng dẫn chủ yếu bằng Interactions API (SDK ≥
+  2.25), repo dùng `generate_content` của SDK 2.11 đã cài; nếu model 3.8 không nhận
+  `generateContent` ở tài khoản này thì đổi `VOICE_TTS_MODEL` sang
+  `gemini-3.1-flash-tts-preview`/`gemini-2.5-flash-preview-tts`, hoặc nâng SDK (cần
+  chủ repo duyệt). Quota TTS miễn phí thấp: hết quota thì chỉ còn chữ.
+- zca-js `uploadAttachment` file "others" chờ sự kiện websocket không có timeout bên
+  trong - gateway bọc timeout 20 giây (lời hứa treo vẫn chạy nền tới khi socket trả).
+  Chưa thử với Zalo thật trong đợt này (không có mạng/tài khoản).
+- Link công khai `/media/tts/` không cần đăng nhập (ai có link trong 10 phút nghe
+  được câu trả lời đó) - link chỉ nằm trong tin gửi người nhận.
+- Bảng kcal là ước lượng thô (±20-40%); câu tự nhiên dựa trên mẫu cố định.

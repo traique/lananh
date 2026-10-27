@@ -355,6 +355,17 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   SQL), `/chitieu ds` xem 10 khoản gần nhất. `EXPENSE_CHAT_CAPTURE=false` tắt ghi
   tự động; bản tin sáng có dòng tổng chi tháng (`MORNING_BRIEF_EXPENSES`). Webhook
   ngân hàng SePay chưa làm (chờ chủ bot duyệt).
+- Ăn uống (`/an`, migration 028, `services/nutrition_service.py`): `/an phở bò
+  sáng`, `/an 2 bát cơm, cá kho tối`, `/an hôm qua bún chả trưa` ghi 1 bữa (tối đa 6
+  món, số phần "2 bát", "nửa tô", "x2"; bữa không nói thì đoán theo giờ VN). kcal là
+  ƯỚC LƯỢNG tra bảng ~120 món Việt soạn sẵn (`assets/thuc_pham.yaml`, sửa không cần
+  đổi code) nhân số phần; món lạ chỉ ghi tên, không có kcal (không gọi AI;
+  `NUTRITION_AI_ESTIMATE=1` thì ước lượng bằng 1 lượt AI JSON có hạn chót). `/an` xem
+  hôm nay theo bữa, `/an tuan` 7 ngày, `/an xoa <số>`. Câu tự nhiên ("ghi ăn phở
+  bò", "trưa nay anh ăn bún chả") chỉ khi `NUTRITION_NL=1` và đúng mẫu rất rõ: không
+  bắt câu hỏi, câu có số tiền (chi tiêu ghi), câu nhờ nhắc/nhớ, kế hoạch ("tối nay
+  định ăn lẩu"); mẫu "<bữa> nay ăn ..." đòi mọi món có trong bảng. Dữ liệu riêng từng
+  người, xoá cùng `/xoadulieu` và `/zaloxoa`, có trong `/xuatdulieu`; 40 món/24 giờ.
 - `/agent` (chỉ chủ bot/admin) - xem mục "AI Agent" bên dưới.
 
 #### Dữ liệu đời sống VN (không tốn AI)
@@ -480,6 +491,20 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   nhắc việc hay ghi chú theo chữ nghe được (câu kiểu "đã mua FPT 1000 giá 120"
   được nhắc gõ lại bằng chữ). Trần 5 MB và 180 giây (`VOICE_MAX_BYTES`,
   `VOICE_MAX_SECONDS`); tắt bằng `VOICE_STT_ENABLED=0`.
+- Trả lời kèm giọng nói (`/noi on|off|auto`, `services/voice_reply.py`): mỗi người tự
+  bật (mặc định tắt; `auto` = chỉ đọc khi vừa gửi tin thoại), cổng toàn bot
+  `VOICE_REPLY_ENABLED`. Bản chữ vẫn gửi như cũ, tin thoại đi kèm sau; lệnh "/" và
+  báo cáo cổ phiếu không đọc. Gemini TTS (`VOICE_TTS_MODEL`, giọng `VOICE_TTS_VOICE`)
+  bằng key AI Studio sẵn có, qua `bounded()` trong hạn chót lượt, cooldown quota TTS
+  riêng (`tts_api1/2`). Chỉ đọc chữ đã lọc (bỏ bảng, link, markdown, emoji), tối đa
+  `VOICE_REPLY_MAX_CHARS` ký tự - dài hơn thì đọc đoạn đầu và nhắc xem tin chữ.
+  Telegram: có `ffmpeg` trên PATH thì gửi tin thoại OGG/Opus, không có thì file WAV
+  (sendDocument - Bot API chỉ nhận OGG/MP3/M4A cho voice). Zalo: CHỈ khi có ffmpeg
+  (M4A); clip nằm trong kho RAM có trần (20 file, `VOICE_REPLY_STORE_MB`), tên file
+  ký HMAC hết hạn sau `VOICE_REPLY_URL_TTL_MIN` phút; gateway tải qua loopback,
+  đưa lên CDN Zalo rồi `sendVoice`, lỗi thì gửi link công khai `/media/tts/<tên>`.
+  Thành viên Zalo: mỗi tin thoại tính 1 lượt nặng. Image hiện chưa có ffmpeg - thêm
+  vào Dockerfile là quyết định của chủ repo (xem docs/nang-cap-jarvis.md).
 - Hỏi đáp về ảnh: ảnh kèm câu hỏi ("ảnh này là gì?", "dịch giúp anh chữ trong
   ảnh", "đọc giúp tờ giấy này") thì trả lời về ảnh, đọc/dịch được cả chữ Nhật,
   Trung, Hàn, số liệu chép đúng như trong ảnh. Ảnh không caption, hoặc caption
@@ -856,6 +881,11 @@ Thoại, ảnh, tài liệu:
 | `VOICE_STT_ENABLED` | 1 | Chép lời tin thoại Telegram/Zalo; 0 = trả lời "chưa bật" |
 | `GROQ_STT_MODEL` / `VOICE_STT_LANGUAGE` | `whisper-large-v3-turbo` / `vi` | Model Whisper của Groq (cooldown riêng `groq_stt`); ngôn ngữ gửi Whisper (trống hoặc `auto` = tự nhận) |
 | `VOICE_MAX_BYTES` / `VOICE_MAX_SECONDS` | 5242880 / 180 | Trần tin thoại (64 KB-8 MB; 10-600 giây), gateway dùng chung trần byte |
+| `VOICE_REPLY_ENABLED` | 1 | Cho phép `/noi` (mỗi người vẫn phải tự bật); 0 = tắt cả bot |
+| `VOICE_REPLY_MAX_CHARS` | 600 | Số ký tự tối đa được đọc (100-2000) |
+| `VOICE_TTS_MODEL` / `VOICE_TTS_VOICE` | `gemini-3.8-flash-tts` / `Kore` | Model Gemini TTS và giọng dựng sẵn |
+| `VOICE_REPLY_URL_TTL_MIN` / `VOICE_REPLY_STORE_MB` | 10 / 8 | Zalo: link tin thoại ký HMAC sống N phút; kho RAM tối đa N MB (và 20 file) |
+| `NUTRITION_NL` / `NUTRITION_AI_ESTIMATE` | 0 / 0 | `/an`: 1 = ghi bữa ăn từ câu tự nhiên rất rõ; 1 = món lạ ước lượng kcal bằng 1 lượt AI |
 | `VISION_QA_ENABLED` / `PHOTO_NO_CAPTION_MODE` | 1 / `prompt` | Ảnh kèm câu hỏi được trả lời về ảnh; ảnh không caption: `prompt` hoặc `describe` |
 | `DOCUMENT_QA_ENABLED` / `DOCUMENT_MAX_BYTES` | 1 / 5242880 | Đọc PDF/TXT/MD/DOCX; trần file (64 KB-8 MB) |
 | `DOCUMENT_MAX_CHARS` | 40000 | Trần ký tự chữ tách từ TXT/DOCX mỗi lượt hỏi (2000-200000) |
@@ -1278,6 +1308,8 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/nhac`, `/nhac <thời gian> <nội dung>`, `/nhac huy <số\|từ khoá>`, `/nhac hoan <số> <30p\|1 tiếng\|sáng mai>` | Xem, đặt (cả nhắc lặp, âm lịch), huỷ, dời nhắc việc |
 | `/ngaynho`, `/ngaynho <tên> <ngày> [âm] [trước N ngày] [lúc 7h] [theo tháng nhuận]`, `/ngaynho xoa <số\|tên>` | Ngày nhớ: giỗ, sinh nhật, kỷ niệm |
 | `/chitieu [kỳ]`, `/chitieu <mô tả> <số tiền>`, `/chitieu ds`, `/chitieu xoa <số>`, `/chitieu_xoa <số>` | Tổng chi theo danh mục (hôm nay, tuần này, tháng trước, tháng M[/YYYY], năm nay...), ghi, xem, xoá khoản chi |
+| `/an <món> [bữa]`, `/an`, `/an tuan`, `/an xoa <số>` | Ghi bữa ăn (kcal ước lượng theo bảng món Việt), xem hôm nay theo bữa, 7 ngày, xoá 1 món |
+| `/noi [on\|off\|auto]` | Trả lời kèm tin thoại (auto: chỉ khi vừa gửi tin thoại); Zalo cần máy chủ có ffmpeg |
 | `/router9 on\|off`, `/tavily on\|off` | Bật/tắt 9Router thủ công; bật/tắt Tavily (trả lời kèm chế độ tra web hiện tại; tắt thì dùng web search của provider) |
 | `/prompt` | Tạo prompt hình ảnh |
 | `/gia` | Tìm giá sản phẩm |
@@ -1505,6 +1537,10 @@ hiển thị trên trang đều được escape HTML. Trang cho phép:
 - Hệ thống → "Việc nền & tác vụ định kỳ" (`/admin/api/jobs`): 30 việc gần nhất (đang
   chạy/chờ trước, thời gian chạy, token, lỗi) và danh sách tác vụ định kỳ, số lần
   chạy hôm nay so với trần.
+- Nhật ký (`/admin/api/journal?user_id=&q=&page=`, `POST /admin/api/journal/note`):
+  ghi chú phiên chat của chủ bot hoặc 1 người Zalo gom theo ngày (giờ VN) kèm tóm tắt
+  dài hạn, tìm theo từ khoá, sửa/xoá từng ghi chú (trong khoá trí nhớ của người đó;
+  POST chỉ nhận JSON), 20 ghi chú/trang, tối đa 50 trang.
 - Hệ thống → "Giám sát, sao lưu & lỗi" (`/admin/api/watchdog`): lỗi hôm nay theo
   loại, số lần khởi động lại trong 7 ngày, nhịp tim, lần sao lưu và diễn tập gần
   nhất, trạng thái xoay khoá (nút "Xoay khoá ngay" = `POST /admin/api/key-rotation/run`),
@@ -1834,7 +1870,7 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
 
 ## Tài liệu bổ sung
 
-- `docs/nang-cap-jarvis.md` — các tính năng lấy ý từ các dự án Jarvis: `/chuy`, gom thông báo + giờ yên lặng (migration 026), việc nền `/viec` + tác vụ định kỳ `/lichtacvu` (migration 027), che bí mật trước khi gửi provider, duyệt cách trả lời, mô tả tool gọn
+- `docs/nang-cap-jarvis.md` — các tính năng lấy ý từ các dự án Jarvis: `/chuy`, gom thông báo + giờ yên lặng (migration 026), việc nền `/viec` + tác vụ định kỳ `/lichtacvu` (migration 027), che bí mật trước khi gửi provider, duyệt cách trả lời, mô tả tool gọn, trả lời bằng giọng nói `/noi`, trang Nhật ký trong `/admin`, ghi ăn uống `/an` (migration 028)
 - `docs/nang-cap-2026-10-26.md` — đợt nâng cấp 26/10/2026: thay đổi theo nhóm, danh sách việc khi deploy (migration 017-025, biến Render, GitHub secrets), việc chủ bot còn phải quyết, phần cố ý chưa làm, rủi ro
 - `docs/backup-restore.md` — sao lưu/khôi phục DB, role chỉ-đọc, diễn tập, xoay khoá
 - `docs/upgrade-2026-10.md` — đợt nâng cấp toàn diện 10/2026 (lỗi đã sửa, migration 015, biến mới, kết quả backtest offline, việc cần làm khi deploy)

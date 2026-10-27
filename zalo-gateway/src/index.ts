@@ -54,6 +54,7 @@ import { ReconnectScheduler } from "./reconnect.js";
 import { STORE_RETRY_DELAYS_MS, retry } from "./retry.js";
 import { jitterMs, sendChunks, type SendChunksOptions } from "./sender.js";
 import { GatewayStats } from "./stats.js";
+import { parseVoice, sendVoiceReply, type VoiceClient } from "./voice.js";
 import {
   KnownSenders,
   SeenIds,
@@ -222,6 +223,7 @@ function send(
   chunks: string[],
   imageB64?: string | null,
   styles?: unknown,
+  voice?: unknown,
 ): Promise<void> {
   return sendLock.run(target, async () => {
     const client = api;
@@ -231,6 +233,18 @@ function send(
       const gap = sent > 0 ? sendGap() : 0;
       if (gap > 0) await sleep(gap);
       await sendImage(client, target, imageB64);
+    }
+    // Tin thoại /noi đi SAU tin chữ; lỗi chỉ log (voice.ts không ném).
+    const clip = parseVoice(voice);
+    if (clip) {
+      const gap = sent > 0 ? sendGap() : 0;
+      if (gap > 0) await sleep(gap);
+      const how = await sendVoiceReply(client as VoiceClient, target, clip, {
+        bridgeBaseUrl: config.bridgeBaseUrl,
+        bridgeSecret: config.bridgeSecret,
+        threadType: ThreadType.User,
+      });
+      stats.inc(how ? "voice_replies" : "voice_reply_failures");
     }
   });
 }
@@ -267,9 +281,10 @@ async function sendReply(
   chunks: string[],
   imageB64?: string | null,
   styles?: unknown,
+  voice?: unknown,
 ): Promise<void> {
   try {
-    await send(msg.threadId, chunks, imageB64, styles);
+    await send(msg.threadId, chunks, imageB64, styles, voice);
   } catch (error) {
     stats.inc("send_failures");
     const reason = errorMessage(error, String(error));
@@ -569,7 +584,7 @@ async function handleTextTurn(items: ParsedMessage[]): Promise<void> {
   }
   feedback.stop();
   notePaired(last.sender, reply);
-  await sendReply(last, reply.messages, reply.image_b64, reply.styles);
+  await sendReply(last, reply.messages, reply.image_b64, reply.styles, reply.voice);
   if (GROUP_ADMIN_COMMAND.test(text)) await refreshGroups();
 }
 
@@ -647,7 +662,7 @@ async function handleVoice(msg: ParsedMessage): Promise<void> {
   }
   feedback.stop();
   notePaired(msg.sender, reply);
-  await sendReply(msg, reply.messages, reply.image_b64, reply.styles);
+  await sendReply(msg, reply.messages, reply.image_b64, reply.styles, reply.voice);
 }
 
 /**

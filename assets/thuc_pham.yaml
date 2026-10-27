@@ -1,0 +1,142 @@
+# Bảng món Việt phổ biến cho lệnh /an (services/nutrition_service.py).
+#
+# kcal là ƯỚC LƯỢNG cho 1 khẩu phần thường gặp ngoài hàng/ở nhà (cột phan), tổng
+# hợp từ các bảng thành phần dinh dưỡng phổ thông - cùng một món có thể chênh
+# 20-40% tuỳ công thức, lượng dầu mỡ, đường, nước dùng. Chỉ để tham khảo, không
+# phải tư vấn dinh dưỡng. Sửa thoải mái, không cần đổi code.
+#
+# ten: tên hiển thị; goi: các cách gọi khác (viết có dấu - người dùng gõ không dấu
+# vẫn khớp); món khớp tên dài nhất thắng ("bún bò huế" thắng "bún").
+
+mon:
+  # ── Món nước ──────────────────────────────────────────────
+  - {ten: Phở bò, kcal: 450, phan: 1 tô, goi: [phở, phở tái, phở chín, phở tái chín, phở bò tái]}
+  - {ten: Phở gà, kcal: 400, phan: 1 tô}
+  - {ten: Phở cuốn, kcal: 300, phan: 1 đĩa (5 cuốn)}
+  - {ten: Bún bò Huế, kcal: 480, phan: 1 tô, goi: [bún bò]}
+  - {ten: Bún chả, kcal: 550, phan: 1 suất}
+  - {ten: Bún riêu, kcal: 400, phan: 1 tô, goi: [bún riêu cua]}
+  - {ten: Bún thịt nướng, kcal: 500, phan: 1 tô}
+  - {ten: Bún mọc, kcal: 400, phan: 1 tô}
+  - {ten: Bún cá, kcal: 400, phan: 1 tô}
+  - {ten: Bún đậu mắm tôm, kcal: 650, phan: 1 mẹt, goi: [bún đậu]}
+  - {ten: Bún mắm, kcal: 500, phan: 1 tô}
+  - {ten: Bún ốc, kcal: 380, phan: 1 tô}
+  - {ten: Bún bò Nam Bộ, kcal: 550, phan: 1 tô, goi: [bún bò nam bộ, bún trộn]}
+  - {ten: Hủ tiếu, kcal: 420, phan: 1 tô, goi: [hủ tíu]}
+  - {ten: Hủ tiếu Nam Vang, kcal: 450, phan: 1 tô, goi: [hủ tíu nam vang]}
+  - {ten: Mì Quảng, kcal: 500, phan: 1 tô}
+  - {ten: Cao lầu, kcal: 480, phan: 1 tô}
+  - {ten: Bánh canh, kcal: 400, phan: 1 tô}
+  - {ten: Bánh canh cua, kcal: 450, phan: 1 tô}
+  - {ten: Bánh đa cua, kcal: 450, phan: 1 tô}
+  - {ten: Miến gà, kcal: 350, phan: 1 tô}
+  - {ten: Miến lươn, kcal: 400, phan: 1 tô}
+  - {ten: Mì vằn thắn, kcal: 400, phan: 1 tô, goi: [mì hoành thánh, vằn thắn, hoành thánh]}
+  - {ten: Mì tôm, kcal: 350, phan: 1 gói, goi: [mì gói, mì ăn liền, mì tôm trứng]}
+  - {ten: Mì cay, kcal: 600, phan: 1 tô}
+  - {ten: Cháo trắng, kcal: 150, phan: 1 bát}
+  - {ten: Cháo gà, kcal: 300, phan: 1 bát}
+  - {ten: Cháo lòng, kcal: 400, phan: 1 bát}
+  - {ten: Cháo sườn, kcal: 300, phan: 1 bát}
+  - {ten: Cháo yến mạch, kcal: 200, phan: 1 bát, goi: [yến mạch, cháo yến]}
+  - {ten: Súp cua, kcal: 200, phan: 1 chén}
+  - {ten: Lẩu, kcal: 600, phan: 1 người ăn, goi: [lẩu thái, lẩu bò, lẩu gà, lẩu hải sản]}
+  # ── Cơm, xôi ───────────────────────────────────────────────
+  - {ten: Cơm trắng, kcal: 200, phan: 1 bát, goi: [cơm, bát cơm, chén cơm]}
+  - {ten: Cơm tấm sườn, kcal: 650, phan: 1 đĩa, goi: [cơm tấm, cơm sườn]}
+  - {ten: Cơm gà, kcal: 600, phan: 1 đĩa, goi: [cơm gà xối mỡ]}
+  - {ten: Cơm rang, kcal: 600, phan: 1 đĩa, goi: [cơm chiên, cơm rang dưa bò, cơm chiên dương châu]}
+  - {ten: Cơm văn phòng, kcal: 650, phan: 1 suất, goi: [cơm bụi, cơm hộp, cơm suất, cơm bình dân]}
+  - {ten: Cơm bò lúc lắc, kcal: 700, phan: 1 đĩa, goi: [bò lúc lắc]}
+  - {ten: Cơm chay, kcal: 450, phan: 1 suất}
+  - {ten: Cơm cuộn, kcal: 350, phan: 1 cuộn, goi: [kimbap, gimbap]}
+  - {ten: Xôi xéo, kcal: 500, phan: 1 gói}
+  - {ten: Xôi gà, kcal: 550, phan: 1 gói}
+  - {ten: Xôi mặn, kcal: 600, phan: 1 gói, goi: [xôi thập cẩm, xôi pate]}
+  - {ten: Xôi đậu xanh, kcal: 400, phan: 1 gói, goi: [xôi, xôi lạc, xôi đỗ]}
+  # ── Bánh ───────────────────────────────────────────────────
+  - {ten: Bánh mì thịt, kcal: 450, phan: 1 ổ, goi: [bánh mì, bánh mỳ, bánh mì thập cẩm, bánh mì chả]}
+  - {ten: Bánh mì trứng, kcal: 380, phan: 1 ổ, goi: [bánh mì ốp la]}
+  - {ten: Bánh mì pate, kcal: 400, phan: 1 ổ}
+  - {ten: Bánh mì không, kcal: 250, phan: 1 ổ, goi: [bánh mì trắng]}
+  - {ten: Bánh bao, kcal: 300, phan: 1 cái}
+  - {ten: Bánh cuốn, kcal: 350, phan: 1 đĩa}
+  - {ten: Bánh xèo, kcal: 500, phan: 1 cái lớn}
+  - {ten: Bánh khọt, kcal: 400, phan: 1 đĩa}
+  - {ten: Bánh bèo, kcal: 250, phan: 1 đĩa}
+  - {ten: Bánh ướt, kcal: 300, phan: 1 đĩa}
+  - {ten: Bánh giò, kcal: 350, phan: 1 cái}
+  - {ten: Bánh chưng, kcal: 400, phan: 1/4 cái, goi: [bánh tét]}
+  - {ten: Bánh căn, kcal: 350, phan: 1 đĩa}
+  - {ten: Bánh tráng trộn, kcal: 350, phan: 1 bịch}
+  - {ten: Bánh tráng nướng, kcal: 300, phan: 1 cái}
+  - {ten: Bánh flan, kcal: 150, phan: 1 hũ, goi: [caramen, kem flan]}
+  - {ten: Bánh bông lan, kcal: 200, phan: 1 miếng, goi: [bánh ngọt, bánh kem]}
+  - {ten: Bánh quy, kcal: 200, phan: 5 cái, goi: [bánh quy bơ, cookie]}
+  - {ten: Bánh pía, kcal: 400, phan: 1 cái}
+  - {ten: Bánh trung thu, kcal: 600, phan: 1 cái, goi: [bánh nướng, bánh dẻo]}
+  - {ten: Bánh gạo, kcal: 120, phan: 4 cái}
+  # ── Món mặn ăn kèm cơm ────────────────────────────────────
+  - {ten: Thịt kho trứng, kcal: 450, phan: 1 phần, goi: [thịt kho, thịt kho tàu]}
+  - {ten: Cá kho, kcal: 250, phan: 1 khúc, goi: [cá kho tộ]}
+  - {ten: Cá rán, kcal: 250, phan: 1 khúc, goi: [cá chiên]}
+  - {ten: Gà luộc, kcal: 300, phan: 1 phần (1/4 con nhỏ)}
+  - {ten: Gà rán, kcal: 300, phan: 1 miếng, goi: [gà chiên, gà kfc, cánh gà chiên]}
+  - {ten: Sườn xào chua ngọt, kcal: 400, phan: 1 phần, goi: [sườn chua ngọt, sườn rim]}
+  - {ten: Thịt luộc, kcal: 300, phan: 1 đĩa nhỏ}
+  - {ten: Thịt bò xào, kcal: 300, phan: 1 phần, goi: [bò xào]}
+  - {ten: Đậu phụ sốt cà chua, kcal: 200, phan: 1 phần, goi: [đậu phụ, đậu hũ, đậu sốt cà]}
+  - {ten: Trứng chiên, kcal: 200, phan: 2 quả, goi: [trứng rán, trứng ốp la, ốp la]}
+  - {ten: Trứng luộc, kcal: 75, phan: 1 quả, goi: [trứng gà luộc]}
+  - {ten: Nem rán, kcal: 300, phan: 3 cái, goi: [chả giò, nem]}
+  - {ten: Gỏi cuốn, kcal: 200, phan: 2 cuốn, goi: [nem cuốn]}
+  - {ten: Bò bít tết, kcal: 600, phan: 1 phần, goi: [bít tết, beefsteak]}
+  - {ten: Rau muống xào, kcal: 120, phan: 1 đĩa, goi: [rau xào]}
+  - {ten: Rau luộc, kcal: 50, phan: 1 đĩa}
+  - {ten: Canh chua, kcal: 120, phan: 1 bát}
+  - {ten: Canh rau, kcal: 60, phan: 1 bát, goi: [canh]}
+  - {ten: Salad, kcal: 150, phan: 1 đĩa, goi: [sa lát, salat]}
+  # ── Đồ ăn nhanh, ăn vặt ───────────────────────────────────
+  - {ten: Pizza, kcal: 280, phan: 1 miếng}
+  - {ten: Hamburger, kcal: 500, phan: 1 cái, goi: [burger]}
+  - {ten: Khoai tây chiên, kcal: 350, phan: 1 phần vừa}
+  - {ten: Xúc xích, kcal: 150, phan: 1 cây}
+  - {ten: Sushi, kcal: 300, phan: 6 miếng}
+  - {ten: Tokbokki, kcal: 450, phan: 1 phần, goi: [tteokbokki, bánh gạo cay]}
+  - {ten: Hột vịt lộn, kcal: 180, phan: 1 quả, goi: [trứng vịt lộn]}
+  - {ten: Ốc, kcal: 250, phan: 1 đĩa, goi: [ốc xào, ốc luộc]}
+  - {ten: Bắp luộc, kcal: 150, phan: 1 bắp, goi: [ngô luộc, bắp nướng, ngô nướng]}
+  - {ten: Khoai lang, kcal: 130, phan: 1 củ vừa, goi: [khoai lang luộc, khoai lang nướng]}
+  - {ten: Snack, kcal: 250, phan: 1 gói, goi: [bim bim, snack khoai tây]}
+  - {ten: Chè, kcal: 300, phan: 1 cốc, goi: [chè đậu, chè thập cẩm, chè bưởi]}
+  - {ten: Kem, kcal: 200, phan: 1 cây/1 ly, goi: [kem que, kem ốc quế]}
+  - {ten: Sữa chua, kcal: 100, phan: 1 hộp, goi: [yaourt, yogurt]}
+  - {ten: Hạt điều, kcal: 160, phan: 1 nắm (30 g), goi: [hạt, các loại hạt, hạnh nhân, óc chó]}
+  # ── Đồ uống ────────────────────────────────────────────────
+  - {ten: Cà phê đen, kcal: 30, phan: 1 ly (có đường ít), goi: [cafe đen, cà phê, cafe, cf đen]}
+  - {ten: Cà phê sữa, kcal: 150, phan: 1 ly, goi: [cafe sữa, cà phê sữa đá, nâu đá, cf sữa]}
+  - {ten: Bạc xỉu, kcal: 180, phan: 1 ly}
+  - {ten: Trà sữa trân châu, kcal: 450, phan: 1 ly (size M), goi: [trà sữa]}
+  - {ten: Trà đá, kcal: 0, phan: 1 cốc, goi: [trà, nước chè, trà xanh không đường]}
+  - {ten: Trà chanh, kcal: 120, phan: 1 cốc}
+  - {ten: Matcha latte, kcal: 250, phan: 1 ly, goi: [matcha]}
+  - {ten: Nước mía, kcal: 180, phan: 1 ly}
+  - {ten: Nước cam, kcal: 120, phan: 1 ly, goi: [cam vắt]}
+  - {ten: Nước dừa, kcal: 60, phan: 1 quả}
+  - {ten: Sinh tố bơ, kcal: 350, phan: 1 ly, goi: [sinh tố]}
+  - {ten: Sữa tươi, kcal: 120, phan: 1 hộp 180 ml, goi: [sữa, hộp sữa]}
+  - {ten: Bia, kcal: 150, phan: 1 lon, goi: [lon bia, chai bia]}
+  - {ten: Nước ngọt có ga, kcal: 140, phan: 1 lon, goi: [coca, pepsi, nước ngọt, coca cola]}
+  - {ten: Rượu vang, kcal: 120, phan: 1 ly, goi: [vang]}
+  # ── Trái cây ───────────────────────────────────────────────
+  - {ten: Chuối, kcal: 100, phan: 1 quả}
+  - {ten: Táo, kcal: 80, phan: 1 quả}
+  - {ten: Cam, kcal: 60, phan: 1 quả}
+  - {ten: Xoài, kcal: 150, phan: 1 quả}
+  - {ten: Dưa hấu, kcal: 50, phan: 1 miếng}
+  - {ten: Đu đủ, kcal: 60, phan: 1 đĩa nhỏ}
+  - {ten: Ổi, kcal: 70, phan: 1 quả}
+  - {ten: Nho, kcal: 70, phan: 1 chùm nhỏ (100 g)}
+  - {ten: Thanh long, kcal: 60, phan: 1/2 quả}
+  - {ten: Sầu riêng, kcal: 300, phan: 2 múi}
