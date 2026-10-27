@@ -3,7 +3,7 @@
 <div class="title-row">
   <div>
     <h1>{{ "Xổ số " ~ data.target.name if data else "Xổ số" }}</h1>
-    <p class="sub">Kết quả xổ số 3 miền và từng tỉnh, dò vé bằng code. Nguồn xskt.com.vn - đối chiếu lại với vé gốc trước khi lĩnh thưởng.</p>
+    <p class="sub">Kết quả xổ số 3 miền và từng tỉnh, dò vé bằng code. Nguồn xskt.com.vn, đối chiếu lại với vé gốc trước khi lĩnh thưởng.</p>
   </div>
 </div>
 <div class="grid top">
@@ -80,7 +80,7 @@
 <section class="panel" aria-labelledby="draw-title">
   <header>
     <h2 id="draw-title">{{ data.draw.weekday }} {{ data.draw.date | vn_date }}</h2>
-    <span class="meta">{{ data.target.regionName }} · nguồn {{ data.source }}</span>
+    <span class="meta">{{ data.target.regionName }}, nguồn {{ data.source }}</span>
   </header>
   <div class="lottery-grid">
     {% for p in data.draw.provinces %}
@@ -92,7 +92,7 @@
           {% if p.prizes.get(key) %}
           <tr{% if key == "ĐB" %} class="special"{% endif %}>
             <th scope="row">{{ prize_labels[key] }}</th>
-            <td class="num">{{ p.prizes[key] | join(" · ") }}</td>
+            <td class="num"><span class="nums">{% for n in p.prizes[key] %}<span>{{ n }}</span>{% endfor %}</span></td>
           </tr>
           {% endif %}
           {% endfor %}

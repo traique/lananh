@@ -15,7 +15,7 @@
 <section class="panel price-panel" aria-labelledby="gold-title">
   <header>
     <h2 id="gold-title">Vàng trong nước</h2>
-    <span class="meta">{% if data.updated %}Cập nhật {{ data.updated }} · {% endif %}triệu đồng/lượng</span>
+    <span class="meta">{% if data.updated %}Cập nhật {{ data.updated }}, đơn vị{% else %}Đơn vị{% endif %} triệu đồng/lượng</span>
   </header>
   <table class="price-table gold-table">
     <thead><tr><th scope="col">Loại vàng</th><th scope="col" class="n">Mua vào</th><th scope="col" class="n">Bán ra</th></tr></thead>
@@ -66,7 +66,7 @@
 <section class="panel price-panel" aria-labelledby="fx-title">
   <header>
     <h2 id="fx-title">Tỷ giá Vietcombank</h2>
-    <span class="meta">{% if data.fx.updated %}Cập nhật {{ data.fx.updated }} · {% endif %}đồng</span>
+    <span class="meta">{% if data.fx.updated %}Cập nhật {{ data.fx.updated }}, đơn vị{% else %}Đơn vị{% endif %} đồng</span>
   </header>
   <table class="price-table fx-table">
     <thead><tr><th scope="col">Ngoại tệ</th><th scope="col" class="n">Mua tiền mặt</th><th scope="col" class="n">Mua chuyển khoản</th><th scope="col" class="n">Bán ra</th></tr></thead>

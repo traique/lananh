@@ -16,7 +16,7 @@
     {% if answer %}
     <section class="panel" role="status" aria-labelledby="answer-title">
       <header><h2 id="answer-title">Trả lời</h2><span class="meta">{{ q }}</span></header>
-      <p class="answer">{{ answer }}</p>
+      <p class="answer">{{ answer | clause(", ") }}</p>
     </section>
     {% endif %}
   </div>

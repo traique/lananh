@@ -287,6 +287,9 @@ def _env() -> Environment:
     env.filters["trieu"] = vn_market_data.trieu
     env.filters["fx_rate"] = lambda v: vn_market_data.vnd(v, 0 if v is None or v >= 1000 else 2)
     env.filters["usd"] = lambda v: vn_market_data.vnd(v, 1 if v is not None and v % 1 else 0)
+    # Ý nghĩa trong assets/*.yaml (dùng chung với chat) viết "nhãn - giải thích"; trên web
+    # gạch nối có cách thành dấu hai chấm (hoặc phẩy), không để gạch làm dấu câu.
+    env.filters["clause"] = lambda text, sep=": ": str(text).replace(" - ", sep)
     return env
 
 
@@ -407,7 +410,7 @@ def home_page() -> HTMLResponse:
     page = _render(
         "home.html",
         title="Lịch âm, tử vi, thần số học",
-        description="Tra lịch âm dương, ngày tốt xấu, lá số tử vi và thần số học - tính bằng thuật toán.",
+        description="Tra lịch âm dương, ngày tốt xấu, lá số tử vi và thần số học, tính bằng thuật toán.",
         active="/",
         today=info,
         today_date=today,
@@ -473,7 +476,7 @@ async def lich_page(request: Request) -> Response:
         "lich.html",
         tab="/lich",
         title="Lịch tháng",
-        description="Lịch tháng dương - âm, ngày hoàng đạo, ngày lễ.",
+        description="Lịch tháng dương lịch kèm âm lịch, ngày hoàng đạo, ngày lễ.",
         month=grid,
         weeks=_weeks(grid),
         selected=site_data.day_info(selected_date),
@@ -490,7 +493,7 @@ async def lich_ask_page(request: Request) -> HTMLResponse:
         "lich_hoi.html",
         tab="/lich/hoi",
         title="Hỏi lịch",
-        description="Hỏi tự do về lịch âm, ngày tốt, tuổi, sao hạn - trả lời bằng thuật toán.",
+        description="Hỏi tự do về lịch âm, ngày tốt, tuổi, sao hạn; trả lời bằng thuật toán.",
         q=q,
         answer=site_data.calendar_answer(q) if q else "",
         examples=_ASK_EXAMPLES,
@@ -727,7 +730,7 @@ async def lottery_page(request: Request) -> HTMLResponse:
     page = _render(
         "xo_so.html",
         title=title,
-        description="Kết quả xổ số 3 miền và từng tỉnh, dò vé bằng code - nguồn xskt.com.vn.",
+        description="Kết quả xổ số 3 miền và từng tỉnh, dò vé bằng code. Nguồn xskt.com.vn.",
         active="/xo-so",
         data=data,
         error=error,
@@ -768,7 +771,7 @@ async def gold_page() -> HTMLResponse:
         "gia_vang.html",
         title="Giá vàng hôm nay",
         description="Giá vàng SJC, nhẫn, DOJI, PNJ, Bảo Tín, vàng thế giới quy đổi và tỷ giá "
-        "Vietcombank - nguồn vang.today, SJC dự phòng.",
+        "Vietcombank. Nguồn vang.today, SJC dự phòng.",
         active="/gia-vang",
         data=data,
         error=error,
@@ -789,7 +792,7 @@ async def fuel_page() -> HTMLResponse:
     page = _render(
         "gia_xang.html",
         title="Giá xăng dầu hôm nay",
-        description="Giá xăng dầu Petrolimex (vùng 1, vùng 2) và PVOIL theo kỳ điều hành - "
+        description="Giá xăng dầu Petrolimex (vùng 1, vùng 2) và PVOIL theo kỳ điều hành. "
         "nguồn giaxanghomnay.com.",
         active="/gia-xang",
         data=data,

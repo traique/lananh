@@ -12,7 +12,7 @@
 <section class="panel price-panel" aria-labelledby="plx-title">
   <header>
     <h2 id="plx-title">Petrolimex</h2>
-    <span class="meta">{% if data.updated %}Cập nhật {{ data.updated }} · {% endif %}đồng/lít</span>
+    <span class="meta">{% if data.updated %}Cập nhật {{ data.updated }}, đơn vị{% else %}Đơn vị{% endif %} đồng/lít</span>
   </header>
   <table class="price-table fuel-table">
     <thead><tr><th scope="col">Mặt hàng</th><th scope="col" class="n">Vùng 1</th><th scope="col" class="n">Vùng 2</th><th scope="col" class="n">Kỳ này</th><th scope="col" class="n">Kỳ trước</th></tr></thead>

@@ -5,6 +5,9 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, lượt đầu trên hệ thương hiệu giữ nguyên; đổi nhịp bề mặt (nền trắng, khối sage, vạch mảnh) thay cho bảy thẻ sage giống hệt */
 /* Hallmark · finish-review: subagent · 7 findings · 7 resolved (bước 861-1100px, ngắt tiêu đề ngày, cỡ h2 Tra cứu, link ngày lễ, chú giải dải giờ, vạch kép, cột nút) · gap: partial, câu giờ hoàng đạo lên 24px, số liệu ngày xuống 24px
  * dismissed 26a, 34, 56, 62 · tầng tĩnh đọc template riêng lẻ nên không thấy site.css; đo trên trình duyệt: overflow-x clip ở html và body, vòng focus 2px màu nhấn, một phần tử sticky mỗi bề rộng, menu điện thoại mở bằng #menu khi tắt JavaScript */
+/* Hallmark · checked: 2026-10-27 · genre: modern-minimal (inferred) · redesign: polish (các màn ngoài trang chủ)
+ * fixed: 63 (dấu · nối chuỗi, mũi tên ‹ › dính chữ), 19 (gạch ngang làm dấu câu trên web qua bộ lọc clause, ô "–" giá vàng), 27 (.palace:target khi giảm chuyển động), 41 (màu chữ trên khối)
+ * structural: printed (nút form dính đáy khối ở /ky-mon, /lich, /xo-so; khoảng cách lẻ 24b của hệ cũ) · built: the project · redesign: polish · v2.0.0 */
 /* LCTA - giao diện web công khai (lịch, thời tiết, tử vi, thần số học).
 
    Thiết kế theo skill ui-craft (Taste, app screens), style "editorial greeting":
@@ -205,7 +208,7 @@ h1.date {
 .s9 { grid-column: span 9; } .s12 { grid-column: 1 / -1; }
 
 /* ---------- khối ---------- */
-.panel { background: var(--panel); border-radius: var(--radius); padding: var(--pad); min-width: 0; }
+.panel { background: var(--panel); color: var(--text); border-radius: var(--radius); padding: var(--pad); min-width: 0; }
 .panel > header {
   display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
   gap: 4px 12px; margin-bottom: 14px;
@@ -620,7 +623,8 @@ table.month td:last-child { padding-right: 2px; }
 .qm-cell header .dir { color: var(--muted); font-weight: 400; font-size: var(--fs-small); text-align: right; }
 .qm-god { color: var(--muted); }
 .qm-star { font-weight: 600; }
-.qm-stems { font-size: var(--fs-small); }
+/* can Thiên và Địa là hai mục, tách bằng khoảng trống thay cho dấu chấm giữa */
+.qm-stems { display: flex; flex-wrap: wrap; gap: 0 12px; font-size: var(--fs-small); }
 .qm-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: auto; padding-top: 4px; }
 .qm-cell.is-zhifu { outline: 2px solid var(--accent); outline-offset: -2px; }
 .qm-cell.is-zhifu .qm-star { color: var(--accent); }
@@ -670,7 +674,7 @@ tbody tr:last-child th { border-bottom: 0; }
 .notice { margin: 0 0 16px; }
 .title-row .search { flex: 1 1 320px; max-width: 440px; }
 .panel.search { padding: 12px; }
-.panel.search .input { background: var(--sheet); }
+.panel.search .input { background: var(--sheet); color: var(--text); }
 .range-col { width: 26%; }
 table.compact td { padding-top: 7px; padding-bottom: 7px; }
 table.forecast td { white-space: nowrap; }
@@ -683,6 +687,8 @@ table.forecast td:nth-child(2) { white-space: normal; }
 .lottery-card h3 { margin: 0 0 6px; font-size: var(--fs-body); font-weight: 600; color: var(--text); }
 .lottery-table th { width: 7.5em; padding-right: 10px; font-size: var(--fs-small); font-weight: 400; color: var(--muted); }
 .lottery-table td { overflow-wrap: anywhere; letter-spacing: 0.02em; }
+/* các số cùng giải: mỗi số một mục, xuống dòng nguyên số, tách bằng khoảng trống */
+.nums { display: flex; flex-wrap: wrap; gap: 0 16px; }
 .lottery-table tr.special td { font-size: 22px; font-weight: 600; color: var(--accent); }
 .lottery-form .form-row { align-items: start; }
 
@@ -711,7 +717,6 @@ table.forecast td:nth-child(2) { white-space: normal; }
   .gold-table thead th, .fx-table thead th { white-space: normal; line-height: 1.3; height: auto; }
   .gold-table tbody th, .fx-table tbody th { font-size: var(--fs-small); overflow-wrap: anywhere; }
   .gold-table .price { font-size: var(--fs-body); }
-  .gold-table .delta.flat { display: none; }
 }
 @container (max-width: 560px) {
   .fuel-table thead {
@@ -821,6 +826,7 @@ main.column { padding-bottom: 48px; }
   .btn:active { transform: none; }
   .switch::after { transition: none; }
   .sidebar, .sidebar:target, .sidebar.open { transition: none; }
+  .palace:target { animation: none; }
 }
 /* Màn cảm ứng: mọi điều khiển và liên kết lẻ cao tối thiểu 44px. */
 @media (pointer: coarse) {

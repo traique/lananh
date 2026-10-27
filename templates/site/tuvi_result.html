@@ -26,7 +26,7 @@
     <div class="chart-center">
       <dl class="facts">
         <dt>Bản mệnh</dt><dd>{{ chart.napAm }} ({{ chart.element }})</dd>
-        <dt>Cục</dt><dd>{{ chart.cuc }} · {{ chart.cucRelation }}</dd>
+        <dt>Cục</dt><dd>{{ chart.cuc }}, {{ chart.cucRelation }}</dd>
         <dt>Mệnh chủ</dt><dd>{{ chart.menhChu }}</dd>
         <dt>Thân chủ</dt><dd>{{ chart.thanChu }}</dd>
         <dt>Thân cư</dt><dd>{{ chart.thanPalace }}</dd>
@@ -37,7 +37,7 @@
       {% if chart.isMenhEmpty %}
       <p class="small"><strong>Vô chính diệu:</strong> {{ chart.menhEmptyNote }}</p>
       {% else %}
-      <div class="prose small">{% for n in chart.menhNotes %}<p><strong>{{ n.star }}{% if n.brightnessName %} ({{ n.brightnessName }}){% endif %}:</strong> {{ n.meaning }}</p>{% endfor %}</div>
+      <div class="prose small">{% for n in chart.menhNotes %}<p><strong>{{ n.star }}{% if n.brightnessName %} ({{ n.brightnessName }}){% endif %}:</strong> {{ n.meaning | clause(", ") }}</p>{% endfor %}</div>
       {% endif %}
       <p class="star-legend"><span class="sr-only">Chú giải độ sáng: </span>{% for k, v in chart.brightnessLegend.items() %}<span><span class="lvl {{ k | lower }}">{{ k }}</span> {{ v }}</span>{% endfor %}</p>
     </div>
@@ -56,5 +56,5 @@
   </div>
 </section>
 {% include "_ai_box.html" %}
-<p class="note-line">{{ chart.disclaimer | replace("ℹ️ ", "") }} {{ chart.note }}</p>
+<p class="note-line">{{ chart.disclaimer | replace("ℹ️ ", "") }} {{ chart.note | replace("...", "…") }}</p>
 {% endblock %}

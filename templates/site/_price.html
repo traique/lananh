@@ -1,10 +1,10 @@
 {# Tăng giảm: ▲ xanh / ▼ đỏ (quy ước bảng giá Việt Nam), kèm chữ ẩn cho trình đọc màn
    hình. ``unit``: "trieu" (đồng -> triệu), "usd" (1 số lẻ khi cần), còn lại số nguyên.
-   ``zero``: chữ khi bằng 0 - vàng để "–" (không ghi "đứng giá" vì nguồn trả 0 cả khi
-   thiếu số), xăng ghi "0" (giữ nguyên). Không có số: "–". #}
-{% macro delta(value, unit="vnd", zero="–") -%}
-{%- if value is none -%}
-<span class="delta flat">–</span>
+   ``zero``: chữ khi bằng 0; trống (vàng) thì coi như không có số, vì nguồn trả 0 cả khi
+   thiếu số; xăng ghi "0". Không có số: ô để trống, chỉ trình đọc màn hình đọc thành lời. #}
+{% macro delta(value, unit="vnd", zero="") -%}
+{%- if value is none or (value == 0 and not zero) -%}
+<span class="delta flat"><span class="sr-only">chưa có số tăng giảm</span></span>
 {%- elif value == 0 -%}
 <span class="delta flat">{{ zero }}</span>
 {%- else -%}
