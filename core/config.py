@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from pathlib import Path
 
 import jinja2
@@ -621,6 +622,22 @@ SITE_BASE_URL = (os.getenv("SITE_BASE_URL", "").strip() or WEBHOOK_BASE_URL).rst
 # OpenStreetMap (tối đa 1 lượt/giây, có cache). Tắt (=0) nếu bị chặn hoặc không muốn gửi
 # toạ độ ra ngoài - trang khi đó ghi toạ độ thay cho tên.
 NOMINATIM_ENABLED = _env_bool("NOMINATIM_ENABLED", True)
+
+
+def _site_verification(raw: str) -> str:
+    """Mã xác minh Google Search Console. Nhận phần content hoặc cả thẻ
+    <meta name="google-site-verification" content="..."> dán nguyên từ Search Console."""
+    found = re.search(r"""content\s*=\s*["']([^"']+)""", raw)
+    token = (found.group(1) if found else raw).strip()
+    if token and not re.fullmatch(r"[A-Za-z0-9_-]{10,100}", token):
+        logger.warning("GOOGLE_SITE_VERIFICATION không đúng dạng mã của Google, bỏ qua")
+        return ""
+    return token
+
+
+# Xác minh quyền sở hữu site trong Google Search Console bằng cách "Thẻ HTML": mọi trang
+# công khai in thẻ meta này (trống = không in).
+GOOGLE_SITE_VERIFICATION = _site_verification(os.getenv("GOOGLE_SITE_VERIFICATION", ""))
 
 # Khoá mã hoá đối xứng (Fernet) dùng để mã hoá các giá trị nhạy cảm (vd
 # __Secure-1PSIDTS đã rotate) trước khi lưu vào bảng settings trong DB. Tạo
