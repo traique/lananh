@@ -562,6 +562,35 @@ AI nào cho câu hỏi gọn). Không migration, không env mới.
 - Bản tin sáng: mục `fuel` (order 45) TẮT mặc định, bật `/bantin xang on` (lưu trong JSON
   cài đặt bản tin, khoá `fuel`).
 
+### 4. Giá vàng, giá xăng trên web công khai
+
+- Trang `/gia-vang` và `/gia-xang` (link "Giá vàng", "Giá xăng" ở thanh bên nhóm Tra cứu,
+  ngay sau Xổ số - cùng danh mục cho menu điện thoại; thêm 2 thẻ trên trang chủ, thẻ chỉ là
+  link nên trang chủ không gọi nguồn giá).
+- `/gia-vang`: bảng mua/bán triệu đồng/lượng kèm ▲▼ so với hôm trước (▲ xanh = màu nhấn,
+  ▼ đỏ = màu lỗi của site, ≥ 5.5:1 ở cả sáng/tối, có chữ ẩn "tăng/giảm" cho trình đọc màn
+  hình; tăng giảm 0 ghi "–" chứ không ghi "đứng giá" như chat) cho SJC miếng, nhẫn SJC,
+  DOJI Hà Nội/TP.HCM/nữ trang, PNJ Hà Nội/24K, Bảo Tín SJC/9999, Viettin, VN Gold; mục vàng
+  thế giới XAU/USD + quy đổi tham khảo theo giá bán USD Vietcombank (ghi rõ chưa gồm thuế,
+  phí gia công, vận chuyển) + chênh lệch với giá bán SJC miếng; mục nhỏ tỷ giá Vietcombank
+  9 ngoại tệ chính (tên tiếng Việt). Không làm trang `/ty-gia` riêng: tỷ giá đã tải để quy
+  đổi vàng nên hiện luôn ở đây, API có `/api/v1/fx`.
+- `/gia-xang`: bảng Petrolimex (vùng 1, vùng 2, tăng giảm kỳ này, kỳ trước) và PVOIL.
+- API `GET /api/v1/gold`, `/api/v1/fuel`, `/api/v1/fx` (khoá camelCase, số thô kèm `unit`,
+  nguồn lỗi 503 `SOURCE_UNAVAILABLE` dạng `{"error": {...}}`). Dữ liệu dựng ở
+  `services/price_lookup.py`, gọi đúng `vn_market_data.get_gold_live/get_gold/get_fx` và
+  `fuel_prices.get_fuel` - chung cache 1 bản/nguồn với chat và bản tin sáng, không parser
+  mới, không gọi AI/DB. vang.today lỗi thì rơi về bảng SJC (`fallback: true`, chỉ chi nhánh
+  đầu, tối đa 12 dòng); tỷ giá lỗi thì chỉ bỏ phần quy đổi.
+- Tài nguyên: tối đa 3 lượt tải nguồn giá song song (semaphore riêng như `/xo-so`), hạn
+  chót 15 giây tính cả lúc chờ slot (vàng có thể phải thử vang.today rồi mới tới SJC); quá
+  hạn hoặc nguồn lỗi thì trang hiện thông báo lịch sự (HTTP 200, `role="alert"`), không
+  đoán số. Render ở server, không cần JS; mọi chữ từ nguồn được Jinja escape.
+- Điện thoại: bảng gập thành thẻ theo bề rộng khối (container query ≤ 560px): tên mặt
+  hàng một dòng, các ô số xếp 2 cột kèm nhãn lấy từ `data-label` - 360px không cuộn ngang.
+- Test: `test/test_web_site.py` (dữ liệu giả từ `_vn_data_samples.py`: trang 200, dự phòng
+  SJC, nguồn lỗi/quá hạn, escape, schema 3 API, link thanh bên + thẻ trang chủ).
+
 ### Menu Telegram
 
 Menu có 99/100 lệnh. Thêm `/xang` thì bỏ `/userouter9` khỏi MENU (lệnh vẫn chạy, vẫn có
@@ -571,7 +600,7 @@ nên ít khi phải gõ. Test kiểm menu ≤ 100 lệnh, không trùng.
 ### Việc chủ bot cần làm
 
 - Không cần migration hay env mới. Sau deploy thử `/xoso tinh`, `/xoso tây ninh`,
-  `/vang`, `/xang`, trang `/xo-so` trên điện thoại.
+  `/vang`, `/xang`, trang `/xo-so`, `/gia-vang`, `/gia-xang` trên điện thoại.
 - Nếu Telegram vẫn hiện menu cũ, gửi lại menu bằng cách khởi động lại bot (`set_my_commands`
   chạy lúc khởi động).
 

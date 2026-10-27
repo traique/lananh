@@ -146,6 +146,8 @@ a { color: inherit; text-underline-offset: 3px; }
 .i-number { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 4 7 20M17 4l-2 16M4.5 9h15M3.5 15h15'/%3E%3C/svg%3E"); }
 .i-compass { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='m15.5 8.5-2.2 4.8-4.8 2.2 2.2-4.8z'/%3E%3C/svg%3E"); }
 .i-ticket { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 7.5a2 2 0 0 0 2-2h13a2 2 0 0 0 2 2v2a2.5 2.5 0 0 0 0 5v2a2 2 0 0 0-2 2h-13a2 2 0 0 0-2-2v-2a2.5 2.5 0 0 0 0-5z'/%3E%3Cpath d='M14.5 5.5v13' stroke-dasharray='2 2.2'/%3E%3C/svg%3E"); }
+.i-gold { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7.5 10.5 9.5 5h5l2 5.5zM2.5 19.5l2-6h5l2 6zM12.5 19.5l2-6h5l2 6z'/%3E%3C/svg%3E"); }
+.i-fuel { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 20.5V5a1.5 1.5 0 0 1 1.5-1.5h6A1.5 1.5 0 0 1 13.5 5v15.5M3 20.5h12M4.5 10h9M13.5 9h2a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 0 3 0V8l-2.5-2.5'/%3E%3C/svg%3E"); }
 .i-admin { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10M18 7h2M4 17h4M12 17h8'/%3E%3Ccircle cx='16' cy='7' r='2'/%3E%3Ccircle cx='10' cy='17' r='2'/%3E%3C/svg%3E"); }
 .i-logout { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 20.5H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h3.5M15.5 16.5 20 12l-4.5-4.5M20 12H9.5'/%3E%3C/svg%3E"); }
 .i-login { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.5 3.5H18a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2h-3.5M10 16.5 14.5 12 10 7.5M14.5 12H4'/%3E%3C/svg%3E"); }
@@ -607,6 +609,42 @@ table.forecast td:nth-child(2) { white-space: normal; }
 .lottery-table td { overflow-wrap: anywhere; letter-spacing: 0.02em; }
 .lottery-table tr.special td { font-size: 22px; font-weight: 600; color: var(--accent); }
 .lottery-form .form-row { align-items: start; }
+
+/* ---------- giá vàng, giá xăng, tỷ giá ---------- */
+/* ▲ tăng xanh, ▼ giảm đỏ theo quy ước bảng giá Việt Nam; dùng đúng màu nhấn / màu lỗi của
+   site (≥ 5.5:1 trên nền khối ở cả sáng lẫn tối), mũi tên đi kèm nên không chỉ dựa vào màu. */
+.price-note { background: var(--pill-warn-bg); color: var(--pill-warn-ink); }
+.price-panel { container-type: inline-size; }
+.price-table td.n { white-space: nowrap; }
+.price-table .price { font-weight: 500; }
+.price-table th .sub { display: block; color: var(--muted); font-size: var(--fs-small); font-weight: 400; }
+.delta { font-size: var(--fs-small); font-weight: 500; white-space: nowrap; }
+.delta.up { color: var(--accent); }
+.delta.down { color: var(--negative); }
+.delta.flat { color: var(--muted); font-weight: 400; }
+.gold-table .delta { display: block; }
+.strip.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.strip .lead-figure + .small { margin-top: 4px; }
+/* Khối hẹp (điện thoại 360px, cạnh thanh bên): bảng gập thành từng thẻ - tên mặt hàng một
+   dòng, các ô số xếp 2 cột kèm nhãn cột lấy từ data-label. Không cuộn ngang. */
+@container (max-width: 560px) {
+  .price-table thead {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
+  }
+  .price-table, .price-table tbody { display: block; }
+  .price-table tr {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px;
+    padding: 12px 0; border-bottom: 1px solid var(--rule);
+  }
+  .price-table tbody tr:first-child { padding-top: 0; }
+  .price-table tbody tr:last-child { padding-bottom: 0; border-bottom: 0; }
+  .price-table tbody th[scope="row"] { grid-column: 1 / -1; padding: 0; border: 0; }
+  .price-table td, .price-table td.n { min-width: 0; padding: 0; border: 0; text-align: left; white-space: normal; }
+  .price-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--fs-small); }
+}
+@media (max-width: 860px) {
+  .strip.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 /* ---------- chân trang ---------- */
 .foot {

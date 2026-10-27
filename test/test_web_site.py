@@ -721,3 +721,205 @@ async def test_api_lottery_nguon_loi(client, lottery_sources):
     lottery_sources["down"] = True
     r = await client.get("/api/v1/lottery", params={"province": "mn"})
     assert r.status_code == 503 and r.json()["error"]["code"] == "SOURCE_UNAVAILABLE"
+
+
+# ─── Giá vàng /gia-vang, giá xăng /gia-xang + /api/v1/gold, /fuel, /fx ───────
+
+
+@pytest.fixture
+def price_sources(monkeypatch):
+    """Nguồn giá dựng từ mẫu thật (không mạng); state[<nguồn>] = True để làm nguồn lỗi.
+    Ghi lại lượt gọi để kiểm tra trang đi đúng hàm có cache sẵn, không gọi thừa."""
+    from _vn_data_samples import FUEL_HTML, FX_XML, SJC_JSON, VANG_TODAY_JSON
+
+    from services import fuel_prices
+    from services import vn_market_data as market
+
+    state = {"live": False, "sjc": False, "fx": False, "fuel": False, "calls": []}
+    tables = {
+        "live": market.parse_vang_today_json(VANG_TODAY_JSON),
+        "sjc": market.parse_sjc_json(SJC_JSON),
+        "fx": market.parse_fx_xml(FX_XML),
+        "fuel": fuel_prices.parse_fuel_html(FUEL_HTML),
+    }
+
+    def source(name):
+        async def get():
+            state["calls"].append(name)
+            if state[name]:
+                raise market.MarketDataError("down")
+            return tables[name]
+
+        return get
+
+    monkeypatch.setattr(market, "get_gold_live", source("live"))
+    monkeypatch.setattr(market, "get_gold", source("sjc"))
+    monkeypatch.setattr(market, "get_fx", source("fx"))
+    monkeypatch.setattr(fuel_prices, "get_fuel", source("fuel"))
+    return state
+
+
+async def test_trang_gia_vang(client, price_sources):
+    r = await client.get("/gia-vang")
+    html = r.text
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+    assert 'href="/gia-vang" aria-current="page"' in html  # mục Giá vàng trên thanh bên
+    for name in ("SJC miếng 9999", "Nhẫn SJC 9999", "DOJI Hà Nội", "DOJI TP.HCM", "PNJ 24K"):
+        assert name in html
+    assert "Bảo Tín 9999" in html and "Viettin SJC" in html and "VN Gold SJC" in html
+    assert "141,7" in html and "Cập nhật 07:30 27/10/2026" in html
+    # ▲▼ kèm chữ cho trình đọc màn hình, màu theo lớp up/down; 0 không ghi "đứng giá".
+    up = (
+        '<span class="delta up"><span aria-hidden="true">▲</span><span class="sr-only">tăng </span>'
+    )
+    down = '<span class="delta down"><span aria-hidden="true">▼</span><span class="sr-only">giảm '
+    assert up + "0,5</span>" in html and down + "</span>0,3</span>" in html
+    assert "đứng giá" not in html
+    # Vàng thế giới + quy đổi theo giá bán USD Vietcombank, chênh với SJC miếng.
+    assert "4.015,1" in html and "≈ 126,01 triệu/lượng" in html and "26.030" in html
+    assert "Cao hơn ≈ 15,69 triệu" in html and "chưa gồm thuế" in html
+    # Mục tỷ giá các ngoại tệ chính, số kiểu Việt Nam.
+    assert 'id="fx-title"' in html and "25.650" in html and "173,65" in html
+    assert "Đô la Mỹ" in html and "Yên Nhật" in html
+    assert "vang.today, SJC dự phòng" in html
+    assert sorted(price_sources["calls"]) == ["fx", "live"]  # vang.today chạy: không gọi SJC
+
+
+async def test_trang_gia_vang_du_phong_sjc_va_nguon_loi(client, price_sources):
+    price_sources["live"] = True
+    html = (await client.get("/gia-vang")).text
+    assert "tạm hiện bảng giá SJC" in html and "Vàng SJC 1L, 10L, 1KG" in html
+    assert "Hồ Chí Minh" in html and "Hà Nội" not in html  # giữ chi nhánh đầu
+    assert ">150</span>" in html and 'id="world-title"' not in html and "sjc.com.vn" in html
+    price_sources["sjc"] = True
+    r = await client.get("/gia-vang")
+    assert r.status_code == 200 and 'role="alert"' in r.text and "không tự đoán giá" in r.text
+    assert 'id="gold-title"' not in r.text
+
+
+async def test_trang_gia_vang_thieu_ty_gia_van_hien_bang(client, price_sources):
+    price_sources["fx"] = True
+    html = (await client.get("/gia-vang")).text
+    assert "141,7" in html and "4.015,1" in html and "tạm chưa quy đổi" in html
+    assert 'id="fx-title"' not in html and 'role="alert"' not in html
+
+
+async def test_trang_gia_vang_escape_chu_tu_nguon(client, price_sources, monkeypatch):
+    from services import vn_market_data as market
+
+    evil = market.GoldTable(
+        updated="<img src=x onerror=alert(1)>",
+        rows=(market.GoldRow("<script>alert(1)</script>", "<b>HCM</b>", 1.5e8, 1.52e8),),
+    )
+    price_sources["live"] = True
+
+    async def get_gold():
+        return evil
+
+    monkeypatch.setattr(market, "get_gold", get_gold)
+    html = (await client.get("/gia-vang")).text
+    assert "<script>alert(1)" not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "<img src=x" not in html and "<b>HCM</b>" not in html
+
+
+async def test_trang_gia_xang(client, price_sources):
+    r = await client.get("/gia-xang")
+    html = r.text
+    assert r.status_code == 200 and 'href="/gia-xang" aria-current="page"' in html
+    assert "Xăng E5 RON 92" in html and "25.060" in html and "25.560" in html
+    assert "DO 0,05S Mức 2" in html and 'id="pvoil-title"' in html
+    assert "Dầu DO 0,001S Mức 5" in html
+    assert "Cập nhật 00:00 27/10/2026" in html and "giaxanghomnay.com" in html
+    assert '<span class="sr-only">giảm </span>1.610' in html
+    assert '<span class="sr-only">tăng </span>450' in html
+    assert 'data-label="Vùng 2"' in html  # nhãn cột cho bảng gập trên điện thoại
+    price_sources["fuel"] = True
+    r = await client.get("/gia-xang")
+    assert r.status_code == 200 and 'role="alert"' in r.text and "giá xăng dầu đang lỗi" in r.text
+
+
+async def test_api_gold_fuel_fx(client, price_sources):
+    gold = (await client.get("/api/v1/gold")).json()
+    assert gold["source"] == "vang.today" and gold["fallback"] is False
+    assert gold["updated"] == "07:30 27/10/2026" and gold["unit"] == "VND/lượng"
+    assert gold["domestic"][0] == {
+        "code": "SJL1L10",
+        "name": "SJC miếng 9999",
+        "brand": "sjc",
+        "branch": "",
+        "buy": 138700000,
+        "sell": 141700000,
+        "changeBuy": 500000,
+        "changeSell": 500000,
+    }
+    assert all(r["code"] != "XAUUSD" for r in gold["domestic"])
+    world = gold["world"]
+    assert world["priceUsdPerOunce"] == 4015.1 and world["change"] == 9
+    conv = world["conversion"]
+    assert conv["usdVnd"] == 26030 and conv["vndPerTael"] == 126006476
+    assert conv["sjcSellGap"] == 141700000 - 126006476 and "chưa gồm thuế" in conv["note"]
+    assert [r["code"] for r in gold["fx"]["rates"]] == ["USD", "EUR", "JPY", "AUD"]
+
+    fuel = (await client.get("/api/v1/fuel")).json()
+    assert fuel["source"] == "giaxanghomnay.com" and fuel["unit"] == "VND/lít"
+    assert fuel["petrolimex"][0] == {
+        "name": "Xăng E5 RON 92",
+        "kind": "xang",
+        "change": 0,
+        "prevChange": -1610,
+        "zone1": 25060,
+        "zone2": 25560,
+    }
+    assert fuel["pvoil"][1]["price"] == 29250 and fuel["pvoil"][1]["kind"] == "diesel"
+
+    fx = (await client.get("/api/v1/fx")).json()
+    assert fx["source"] == "Vietcombank" and fx["updated"] == "08:03 26/10/2026"
+    assert fx["rates"][0] == {
+        "code": "USD",
+        "name": "US DOLLAR",
+        "nameVi": "Đô la Mỹ",
+        "cashBuy": 25620.0,
+        "transferBuy": 25650.0,
+        "sell": 26030.0,
+    }
+
+
+async def test_api_gold_du_phong_va_nguon_loi_503(client, price_sources):
+    price_sources["live"] = True
+    gold = (await client.get("/api/v1/gold")).json()
+    assert gold["source"] == "sjc.com.vn" and gold["fallback"] is True and gold["world"] is None
+    assert gold["domestic"][0]["changeSell"] is None and gold["domestic"][0]["sell"] == 150000000
+    for key, url in (("sjc", "/api/v1/gold"), ("fuel", "/api/v1/fuel"), ("fx", "/api/v1/fx")):
+        price_sources[key] = True
+        r = await client.get(url)
+        assert r.status_code == 503 and r.json()["error"]["code"] == "SOURCE_UNAVAILABLE"
+
+
+async def test_gia_vang_het_han_chot_bao_loi_lich_su(client, price_sources, monkeypatch):
+    import asyncio
+
+    from services import vn_market_data as market
+
+    async def slow():
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(market, "get_gold_live", slow)
+    monkeypatch.setattr(web_site, "_PRICE_TIMEOUT_SEC", 0.05)
+    r = await client.get("/gia-vang")
+    assert r.status_code == 200 and "đang lỗi hoặc chậm" in r.text
+    r = await client.get("/api/v1/gold")
+    assert r.status_code == 503 and r.json()["error"]["code"] == "SOURCE_UNAVAILABLE"
+
+
+def test_thanh_ben_va_trang_chu_co_gia_vang_gia_xang():
+    html = bytes(web_site.home_page().body).decode()
+    nav = html[html.index('aria-label="Điều hướng chính"') :]
+    assert (
+        nav.index('href="/xo-so"') < nav.index('href="/gia-vang"') < nav.index('href="/gia-xang"')
+    )
+    assert 'class="nav-item i-gold"' in nav and 'class="nav-item i-fuel"' in nav
+    # Thẻ trên trang chủ chỉ là link: trang chủ không gọi nguồn giá, không phụ thuộc mạng.
+    assert 'id="gold-title"' in html and 'id="fuel-title"' in html
+    assert 'class="btn" href="/gia-vang"' in html and 'class="btn" href="/gia-xang"' in html
+    css = (web_site._STATIC / "site.css").read_text("utf-8")
+    assert ".i-gold" in css and ".i-fuel" in css and ".delta.up" in css
