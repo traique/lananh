@@ -25,6 +25,7 @@ from services import (
     memory_commands,
     memory_control,
     memory_service,
+    nl_commands,
     price_search,
     prompt_templates,
     rag_clean_service,
@@ -51,7 +52,8 @@ HELP_TEXT = (
     "🖼️ *Gửi 1 ảnh chân dung* để em viết prompt (dán sang app Gemini) giữ nguyên khuôn mặt; "
     'ảnh kèm câu hỏi ("ảnh này là gì?", "dịch giúp anh chữ trong ảnh") thì em trả lời về ảnh.\n\n'
     "🎙️ *Tin thoại*: em nghe rồi trả lời như tin chữ (tin thoại không tự ghi danh mục, chi tiêu, "
-    "nhắc việc - muốn ghi thì gõ chữ).\n\n"
+    "nhắc việc - muốn ghi thì gõ chữ). /noi on|off|auto — em trả lời kèm tin thoại (auto: chỉ "
+    "khi anh vừa gửi tin thoại).\n\n"
     "📄 *File PDF, TXT/MD, Word (.docx)*: em tóm tắt hoặc trả lời câu hỏi ở chú thích; chú thích "
     '"lưu vào kho" (cả chú thích, hoặc "lưu vào kho rồi <câu hỏi>") để em lưu tài liệu vào '
     "kho kiến thức rag/.\n\n"
@@ -67,11 +69,24 @@ HELP_TEXT = (
     "/kymon [ngày] [giờ] — lập bàn Kỳ Môn Độn Giáp (không tốn AI), mặc định lúc này\n"
     "/kymon\\_chitiet [thời điểm] <việc cần xem> — AI luận giải bàn Kỳ Môn cho việc đó\n\n"
     "*Đời sống (số liệu thật, không tốn AI)*\n"
-    "/vang — giá vàng SJC; /tygia [mã|100 usd] — tỷ giá Vietcombank, đổi tiền\n"
-    "/xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé] — kết quả xổ số, dò vé\n"
+    "/vang [sjc|nhẫn|doji|pnj|bảo tín|thế giới] — giá vàng SJC, DOJI, PNJ, Bảo Tín, thế giới "
+    "(kèm quy đổi); /tygia [mã|100 usd] — tỷ giá Vietcombank, đổi tiền\n"
+    "/xang [xăng|diesel|dầu hỏa] — giá xăng dầu Petrolimex vùng 1/vùng 2, PVOIL\n"
+    "/xoso [mb|mn|mt|tỉnh] [hôm nay|hôm qua|dd/mm|chủ nhật] [số vé] — kết quả xổ số, dò vé "
+    "(vd /xoso tây ninh, /xoso đà lạt 123456); /xoso tinh — lịch các đài\n"
     "/thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của anh\n"
     "/bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, "
-    "danh mục; bật thì thay digest danh mục 8h)\n\n"
+    "danh mục; bật thì thay digest danh mục 8h); /bantin xang on — thêm giá xăng\n"
+    "/chuy — có gì cần anh chú ý (nhắc việc, ngày nhớ, danh mục, hỏi thăm, bài FB chờ, lỗi, "
+    'provider, giám sát; hoặc hỏi "hôm nay có gì cần lo")\n'
+    "/yenlang on|off|22-7 — giờ yên lặng: ban đêm chỉ nhắn ngay nhắc việc và cảnh báo nghiêm "
+    "trọng, tin khác em gom lại gửi 1 tin\n\n"
+    "*Việc nền và tác vụ định kỳ*\n"
+    "/viec <yêu cầu> — giao việc cho em làm ở nền (anh vẫn chat bình thường), xong em báo; "
+    "/viec — xem việc; /viec xem <số> — xem kết quả; /viec huy <số> — huỷ\n"
+    "/lichtacvu mỗi sáng thứ 2 8h tóm tắt tin về VNM cho anh — đến giờ em tự chạy yêu cầu rồi "
+    'gửi kết quả (khác /nhac chỉ nhắc 1 câu cố định; nhắn thẳng câu có "mỗi ..." và "... cho anh" '
+    "cũng được); /lichtacvu — xem; /lichtacvu huy|tam dung|tiep <số>\n\n"
     "*Nhắc việc và ngày nhớ (giờ tính bằng code)*\n"
     "/nhac — xem nhắc việc đang chờ; /nhac 8h tối mai gọi mẹ — đặt nhắc; "
     "/nhac 7h sáng mỗi ngày uống thuốc, /nhac mùng 1 và rằm 6h thắp hương — nhắc lặp\n"
@@ -84,6 +99,9 @@ HELP_TEXT = (
     'nếu nhầm); gửi ảnh kèm chữ "hoá đơn" để em đọc hoá đơn (lưu nháp)\n'
     "/chitieu [hôm nay|tuần này|tháng trước|tháng 10] — tổng theo danh mục; /chitieu ds — khoản "
     "gần nhất; /chitieu cafe 45k — ghi 1 khoản; /chitieu\\_xoa <số> — xoá\n\n"
+    "*Ăn uống (kcal ước lượng theo bảng món Việt)*\n"
+    "/an phở bò sáng, /an 2 bát cơm, cá kho tối — ghi bữa ăn; /an — xem hôm nay; "
+    "/an tuan — 7 ngày; /an xoa <số> — xoá 1 món\n\n"
     "*Chat và tiện ích*\n"
     "/prompt <mô tả> — viết prompt tạo ảnh từ mô tả cơ bản\n"
     "/anh <mô tả> — tạo ảnh thật (Agnes AI); /anh on|off — bật/tắt\n"
@@ -99,6 +117,7 @@ HELP_TEXT = (
     "/notes [từ khoá] — xem/tìm ghi chú; /xoaghichu <số> — xoá 1 ghi chú\n"
     "/xuatdulieu — tải file dữ liệu em đang lưu; /xoadulieu — xoá trí nhớ, ghi chú, lịch sử chat\n"
     "/hoithan on|off — em chủ động hỏi thăm việc anh kể sắp làm (phỏng vấn, đi khám...)\n"
+    "/hoc [ok|bo] — duyệt cách trả lời em tự rút ra từ hội thoại (em hỏi trước khi áp)\n"
     "/agent <câu hỏi> — agent tự tra cứu nhiều bước để trả lời (thử nghiệm)\n"
     "/rag <câu hỏi> — tra cứu kiến thức trong thư mục rag/\n"
     "/ragxuly <file> — dọn file md OCR trong rag/ ở nền (AI thêm heading, backup bản gốc)\n\n"
@@ -161,7 +180,8 @@ HELP_TEXT = (
     "Facebook chờ duyệt, người Zalo lạ và tin nhắc việc cũng có nút bấm.\n"
     "/huy — dừng câu trả lời đang chạy dở; trong lúc chờ vẫn dùng được /help, /notes, /lich, "
     "/tsh, /tuvi, /kymon, /history, /memory (tin phải chờ lượt trước được thả 👀)\n"
-    "/start — lời chào; /help — hiển thị hướng dẫn này\n"
+    "/start — lời chào; /help — hướng dẫn ngắn; /help <chủ đề> (vd /help vàng); "
+    "/help all — bản đầy đủ này\n"
     "Trang quản trị: /admin trên URL dịch vụ (thống kê, provider, RAM, DB)."
 )
 
@@ -175,8 +195,9 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• nhắc anh 8h tối gọi mẹ\n"
         "• giá vàng hôm nay\n"
         "• phân tích FPT\n"
+        "• em làm được gì?\n"
         "Gửi 1 ảnh là em viết prompt tạo ảnh từ ảnh đó. "
-        "Gõ /help xem đầy đủ lệnh nha anh."
+        "Gõ /help xem gợi ý theo chủ đề, /help all xem đầy đủ lệnh nha anh."
     )
 
 
@@ -195,6 +216,12 @@ def help_chunks(text: str = HELP_TEXT, limit: int = 3500) -> list[str]:
 
 @common.restricted
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/help: bản ngắn (cứ nhắn tự nhiên + danh sách chủ đề); /help <chủ đề>: lệnh của
+    chủ đề đó; /help all: HELP_TEXT đầy đủ (services/nl_commands.help_reply)."""
+    text = nl_commands.help_reply(common.extract_arg(context), "owner", "telegram")
+    if text is not None:
+        await common.reply_long_text(update.message, text)
+        return
     for chunk in help_chunks():
         await update.message.reply_text(chunk, parse_mode="Markdown")
 
@@ -372,7 +399,7 @@ async def reset_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 @common.restricted
 async def memory_family_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/memory, /forget, /quen, /nho, /ghim, /boghim, /notes, /xoaghichu,
-    /xuatdulieu, /xoadulieu, /hoithan - logic ở services/memory_commands.py."""
+    /xuatdulieu, /xoadulieu, /hoithan, /hoc - logic ở services/memory_commands.py."""
     text = (update.message.text or "").strip()
     command = text.split(maxsplit=1)[0].lower().split("@", 1)[0] if text else ""
     reply = await memory_commands.handle(

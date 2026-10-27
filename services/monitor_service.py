@@ -49,6 +49,12 @@ def _is_provider_down(name: str, now: float) -> bool:
             or (provider_state.router9_dead_since is not None)
             or provider_state.api_exhausted_until.get("router9", 0.0) > now
         )
+    if name == "live":
+        # Gemini Live: cooldown riêng theo từng key (live_api1/live_api2).
+        return all(
+            provider_state.api_exhausted_until.get(key, 0.0) > now
+            for key in ("live_api1", "live_api2")
+        )
     return provider_state.api_exhausted_until.get(name, 0.0) > now
 
 
@@ -75,7 +81,8 @@ async def _check_all_providers_down() -> None:
         downtime_min = (now - _all_down_since) / 60
         logger.info("Provider-chain hồi phục sau %.1f phút down toàn bộ.", downtime_min)
         _all_down_since = None
-        send_alert(messages.ALL_PROVIDERS_RECOVERED_ALERT)
+        # Gửi ngay (không gom) để chủ bot biết bot đã trả lời lại được.
+        send_alert(messages.ALL_PROVIDERS_RECOVERED_ALERT, urgent=True)
 
 
 async def _run_step(label: str, step) -> None:

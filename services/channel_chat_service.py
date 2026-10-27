@@ -34,8 +34,8 @@ from services import (
     usage_quota,
     web_search,
 )
-from services import channel_command_service, reply_audience
-from services import vn_daily_chat
+from services import channel_command_service, nutrition_service, reply_audience, style_approval
+from services import attention, nl_commands, routines, vn_daily_chat
 from services.channel_result import ChannelResult
 from services.telemetry import telemetry
 from stock import analysis as stock_analysis
@@ -71,6 +71,12 @@ class ChatTurn:
     # id 2 dòng chat_messages của lượt (rỗng = chưa lưu lịch sử) - 🔄/✂️ xoá
     # đúng cặp này sau khi làm lại xong (services/answer_feedback.py).
     history_ids: tuple[int, ...] = ()
+    # Lệnh chạy từ câu tự nhiên (services/nl_commands.py): ``messages`` là các tin gửi
+    # NGUYÊN VĂN (không qua AI viết lại, không nút 👍/👎/🔄), kèm ảnh /anh nếu có.
+    verbatim: bool = False
+    messages: tuple[str, ...] = ()
+    image_b64: str | None = None
+    image_url: str | None = None
 
 
 def failure_message(turn: ChatTurn, *, owner: bool, address_form: str | None = None) -> str:
@@ -168,6 +174,39 @@ def _saved_note(outcome: tool_registry.ToolOutcome) -> str:
     return outcome.confirmation if outcome.saved else ""
 
 
+async def _given(value):
+    return value
+
+
+async def _command_turn(
+    user_id: int,
+    text: str,
+    outcome: tool_registry.ToolOutcome,
+    outputs: list[str],
+    *,
+    prompt_id: int | None,
+    telemetry_kind: str,
+    record_history: bool,
+) -> ChatTurn:
+    """Lượt chat mà router đã chọn 1 lệnh (services/nl_commands.py): gửi nguyên văn
+    kết quả lệnh, không gọi AI viết lại. Vào lịch sử (bản đã làm sạch) cho câu hỏi
+    nối tiếp ("thế còn ngày mai?", người dùng trả lời câu em hỏi lại)."""
+    reply = "\n\n".join(outputs)
+    nl_commands.note_turn(user_id, outcome)
+    await telemetry.success(prompt_id, telemetry_kind, reply or "(không có nội dung)")
+    line = str(outcome.extra.get("command") or "")
+    if record_history and reply and not nl_commands.records_itself(line):
+        await conversation_log.record_exchange(user_id, text, reply, conversation_log.KIND_COMMAND)
+    return ChatTurn(
+        reply,
+        prompt_id=prompt_id,
+        verbatim=True,
+        messages=tuple(outputs),
+        image_b64=outcome.extra.get("image_b64"),
+        image_url=outcome.extra.get("image_url"),
+    )
+
+
 async def run_chat_turn(
     user_id: int,
     text: str,
@@ -179,6 +218,9 @@ async def run_chat_turn(
     quote_text: str | None = None,
     allow_side_effects: bool = True,
     style_hint: str = "",
+    deadline_sec: float | None = None,
+    record_history: bool = True,
+    telemetry_kind: str = "chat",
 ) -> ChatTurn:
     """Pipeline chat chung: gom ngữ cảnh -> orchestrator.chat -> lưu lịch sử.
 
@@ -191,9 +233,12 @@ async def run_chat_turn(
     (nhắc việc, ghi chú, chi tiêu, danh mục, điều cần nhớ) không chạy và câu trả
     lời nói rõ chưa lưu. style_hint: yêu cầu trình bày riêng của lượt này (nút
     ✂️ Ngắn hơn/🔄 Thử lại - services/answer_feedback.py), nối sau "cách trả lời"
-    người dùng đã dặn. Không raise: lỗi trả ChatTurn(failed=True) sau khi đã
-    log và ghi telemetry."""
-    prompt_id = await telemetry.start(user_id, "chat", text, channel=channel)
+    người dùng đã dặn. Lượt AI nền (services/background_jobs.py): deadline_sec thay
+    CHAT_TURN_TIMEOUT_SEC (BACKGROUND_JOB_TIMEOUT_SEC), record_history=False (bộ
+    chạy nền tự lưu lịch sử sau khi lọc NO_REPLY), telemetry_kind là loại lượt
+    trong prompts/user_calls ("viec", "routine" - quota thành viên tính lượt nặng).
+    Không raise: lỗi trả ChatTurn(failed=True) sau khi đã log và ghi telemetry."""
+    prompt_id = await telemetry.start(user_id, telemetry_kind, text, channel=channel)
     outcome = tool_registry.ToolOutcome()
     # Chỉ truyền tham số khác mặc định: chỗ giả lập maybe_run_tool(user_id, text) cũ vẫn
     # chạy; vai trò admin Zalo đi qua tools.admin_scope().
@@ -203,7 +248,41 @@ async def run_chat_turn(
         # AI 2-3 lần + orchestrator.chat), không phải từng lượt gọi AI riêng lẻ -
         # nếu không, tổng thời gian vượt mức gateway Zalo chờ (240s). Task con của
         # asyncio.gather thừa hưởng cùng hạn chót qua ContextVar.
-        with turn_deadline():
+        with turn_deadline(deadline_sec):
+            links_ok = chat_context.links_allowed(user_id, is_admin)
+            page_turn = links_ok and chat_context.first_url(text) is not None
+            # Đọc link đã do chat_context.read_link lo (theo quyền links_allowed của
+            # chủ bot/admin/thành viên): router không được chọn tool read_link đọc
+            # lại lần 2, hay đọc giúp người không được phép đọc link.
+            excluded = ("read_link",) if (page_turn or not links_ok) else ()
+            # Câu có thể là yêu cầu chạy lệnh ("xem tử vi...", "provider đang chạy cái
+            # nào"): router chạy TRƯỚC - chọn lệnh thì gửi nguyên văn kết quả, khỏi tra
+            # web/trí nhớ và khỏi lượt chat AI (services/nl_commands.py).
+            pre_tool = None
+            if telemetry_kind == "chat" and tools.wants_command_router(user_id, text, is_admin):
+                with (
+                    tools.admin_scope(is_admin),
+                    tools.exclude_scope(excluded),
+                    nl_commands.turn_scope(channel, is_admin),
+                    trace.stage("context"),
+                ):
+                    pre_tool = await tools.maybe_run_tool(user_id, text, **tool_kwargs)
+                pre_outcome, _ = _tool_outcome(pre_tool)
+                outputs = nl_commands.outcome_messages(pre_outcome)
+                if (
+                    outputs
+                    or pre_outcome.extra.get("image_b64")
+                    or pre_outcome.extra.get("image_url")
+                ):
+                    return await _command_turn(
+                        user_id,
+                        text,
+                        pre_outcome,
+                        outputs,
+                        prompt_id=prompt_id,
+                        telemetry_kind=telemetry_kind,
+                        record_history=record_history,
+                    )
             # Giá vàng/tỷ giá/xổ số: số liệu tra bằng code (thường đã nằm sẵn
             # cache từ nhánh trả lời nhanh). Có đủ số liệu thì bỏ tra web và
             # forced search của lượt này - khỏi trả 2 lần và khỏi chỉ thị mâu
@@ -211,8 +290,6 @@ async def run_chat_turn(
             daily = await vn_daily_chat.grounding_for(text)
             # Tin có link (article_reader không xử lý): đọc trang thay vì tra web
             # theo chữ trong tin - trừ khi người dùng muốn so với nguồn khác.
-            links_ok = chat_context.links_allowed(user_id, is_admin)
-            page_turn = links_ok and chat_context.first_url(text) is not None
             compare = page_turn and chat_context.wants_outside_sources(text)
             skip_search = daily.skip_search or (page_turn and not compare)
             # Thành viên Zalo đã hết lượt "nặng" hôm nay (services/usage_quota.py):
@@ -231,17 +308,16 @@ async def run_chat_turn(
             # Các nguồn ngữ cảnh độc lập nhau - chạy song song thay vì tuần tự
             # (trước đây Tavily + memory nối tiếp, thêm vài trăm ms - vài giây
             # độ trễ cho mọi tin nhắn).
-            # Đọc link đã do chat_context.read_link lo (theo quyền links_allowed của
-            # chủ bot/admin/thành viên): router không được chọn tool read_link đọc
-            # lại lần 2, hay đọc giúp người không được phép đọc link.
-            excluded = ("read_link",) if (page_turn or not links_ok) else ()
             with (
                 tools.admin_scope(is_admin),
                 tools.exclude_scope(excluded),
+                nl_commands.turn_scope(channel, is_admin),
                 trace.stage("context"),  # turn_metrics.context_ms
             ):
                 tool_result, plan, memory, last_row, page, kb = await asyncio.gather(
-                    tools.maybe_run_tool(user_id, text, **tool_kwargs),
+                    _given(pre_tool)
+                    if pre_tool is not None
+                    else tools.maybe_run_tool(user_id, text, **tool_kwargs),
                     search,
                     memory_service.build_turn_memory(user_id, text),
                     # Câu trả lời ngay trước (báo cáo cổ phiếu?) - chặn câu chat nói
@@ -251,6 +327,7 @@ async def run_chat_turn(
                     chat_context.kb_grounding(text) if use_kb else _empty_text(),
                 )
             outcome, tool_text = _tool_outcome(tool_result)
+            nl_commands.note_turn(user_id, outcome)
             if outcome.name == "rag_search" and outcome.status == tool_registry.STATUS_OK:
                 # Router đã tra kho rag/ theo yêu cầu rõ: không chèn đoạn tự tra trùng.
                 kb = ""
@@ -306,6 +383,9 @@ async def run_chat_turn(
                     is_admin=is_admin,
                     address_form=address_form,
                     style_rules="\n\n".join(p for p in (memory.style_rules, style_hint) if p),
+                    # Gemini Live (dự phòng cuối, trả lời bằng văn nói) không dùng cho
+                    # lượt có số liệu cổ phiếu chuẩn hay ngay sau báo cáo cổ phiếu.
+                    allow_live=not (grounding or stock_followup),
                 )
         form = address_form or reply_audience.current().address_form
         reply = conversation_log.guard_stock_reply(
@@ -331,7 +411,7 @@ async def run_chat_turn(
     except TurnTimeoutError as exc:
         logger.warning("Lượt chat hết hạn chót (kênh %s): %s", channel, exc)
         trace.set_outcome("timeout")
-        await telemetry.failure(prompt_id, "chat", exc)
+        await telemetry.failure(prompt_id, telemetry_kind, exc)
         return ChatTurn(
             failed=True,
             prompt_id=prompt_id,
@@ -342,7 +422,7 @@ async def run_chat_turn(
     except Exception as exc:
         logger.exception("Lỗi lượt chat (kênh %s)", channel)
         trace.set_outcome("error")
-        await telemetry.failure(prompt_id, "chat", exc)
+        await telemetry.failure(prompt_id, telemetry_kind, exc)
         return ChatTurn(
             failed=True,
             prompt_id=prompt_id,
@@ -357,11 +437,15 @@ async def run_chat_turn(
     model = str(getattr(response, "model", "") or "")
     if provider:
         await telemetry.success(
-            prompt_id, "chat", reply or "(không có nội dung)", provider=provider, model=model
+            prompt_id,
+            telemetry_kind,
+            reply or "(không có nội dung)",
+            provider=provider,
+            model=model,
         )
     else:
-        await telemetry.success(prompt_id, "chat", reply or "(không có nội dung)")
-    if reply:
+        await telemetry.success(prompt_id, telemetry_kind, reply or "(không có nội dung)")
+    if reply and record_history:
         # Lượt trả lời dựa trên dữ liệu ngoài (Tavily, provider tự tra web, trang
         # người dùng gửi...): câu trả lời có thể mang nội dung bị prompt injection
         # -> kind chat_ext, trích nhớ chỉ đọc lời người dùng. Lưu lịch sử (1
@@ -578,6 +662,10 @@ async def _side_effect_paths(
     tắt "hoãn 10p"/"xong" của nhắc việc, ghi chi tiêu "cafe 45k". Câu trả lời nhanh
     cũng vào lịch sử (services/conversation_log) cho câu hỏi nối tiếp."""
     record = conversation_log.record_exchange
+    # "ghi nhớ"/"bỏ" ngay sau câu em hỏi duyệt cách trả lời (services/style_approval).
+    approval = await style_approval.maybe_handle_reply(user_id, text)
+    if approval is not None:
+        return ChannelResult([approval])
     portfolio_command = await portfolio_service.handle_command(user_id, text)
     if portfolio_command is not None:
         return ChannelResult([portfolio_command], market=True)
@@ -599,6 +687,12 @@ async def _side_effect_paths(
     if shortcut is not None:
         await record(user_id, text, shortcut, conversation_log.KIND_REMINDER)
         return ChannelResult([shortcut])
+    # "mỗi sáng thứ 2 8h tóm tắt tin VNM cho anh": tác vụ định kỳ (services/routines) -
+    # TRƯỚC router AI để không thành nhắc việc gửi câu cố định.
+    routine_reply = await routines.maybe_handle_chat(user_id, text, channel, is_admin=is_admin)
+    if routine_reply is not None:
+        await record(user_id, text, routine_reply, conversation_log.KIND_REMINDER)
+        return ChannelResult([routine_reply])
     portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
     if portfolio_result is not None:
         await record(user_id, text, portfolio_result, conversation_log.KIND_PORTFOLIO)
@@ -608,6 +702,11 @@ async def _side_effect_paths(
     if expense_reply is not None:
         await record(user_id, text, expense_reply, conversation_log.KIND_EXPENSE)
         return ChannelResult([expense_reply])
+    # "trưa nay anh ăn bún chả" (chỉ khi NUTRITION_NL=1): ghi bữa ăn bằng code.
+    meal_reply = await nutrition_service.maybe_handle_chat(user_id, text)
+    if meal_reply is not None:
+        await record(user_id, text, meal_reply, conversation_log.KIND_MEAL)
+        return ChannelResult([meal_reply])
     return None
 
 
@@ -639,6 +738,24 @@ async def handle_channel_text(
         # Giữ bài vừa đọc (đã rào) cho câu hỏi nối tiếp "bài này nói gì về...".
         chat_context.remember_article(user_id, text, article)
         return ChannelResult([article])
+    # "Có gì cần anh chú ý?" / "hôm nay có gì cần lo": tin /chuy tính bằng code.
+    if attention.is_attention_question(text):
+        reply = await channel_command_service.attention_text(user_id, channel, is_admin)
+        await record(user_id, text, reply, conversation_log.KIND_DAILY)
+        return ChannelResult([reply])
+    # "em làm được gì", "xem tử vi 15/3/1990 9h30 nam", "bật giọng nói"...: lệnh chạy
+    # từ câu tự nhiên bằng code (services/nl_commands.py), không tốn lượt AI router.
+    command_reply = await nl_commands.maybe_handle(
+        user_id, text, channel=channel, is_admin=is_admin, allow_side_effects=allow_side_effects
+    )
+    if command_reply is not None:
+        await record(user_id, text, command_reply.text, conversation_log.KIND_COMMAND)
+        return ChannelResult(
+            list(command_reply.messages),
+            None,
+            command_reply.image_b64,
+            command_reply.image_url,
+        )
     # Giá vàng/tỷ giá/xổ số, thời tiết (Open-Meteo) và âm lịch (offline): trả
     # lời thẳng, không tốn lượt AI nào; câu không chắc trả None và đi tiếp
     # xuống chat AI như cũ.
@@ -694,6 +811,8 @@ async def handle_channel_text(
         )
     if turn.failed:
         return ChannelResult([await failure_text(turn, user_id)])
+    if turn.verbatim:
+        return ChannelResult(list(turn.messages), None, turn.image_b64, turn.image_url)
     if not turn.text:
         return ChannelResult([await reply_audience.error_text("empty", user_id)])
     # Nhãn câu trả lời dự phòng là chẩn đoán cho chủ bot (Zoom, Zalo controller);
@@ -703,4 +822,10 @@ async def handle_channel_text(
         if turn.used_fallback and await reply_audience.is_owner(user_id)
         else ""
     )
-    return ChannelResult([turn.text + footnote], "api" if turn.used_fallback else None)
+    outputs = [turn.text + footnote]
+    # Đề xuất cách trả lời chờ duyệt: hỏi bằng tin riêng SAU câu trả lời, tối đa
+    # 1 lần/ngày (services/style_approval) - người dùng nhắn "ghi nhớ"/"bỏ".
+    question = await style_approval.take_question(user_id)
+    if question is not None:
+        outputs.append(question.text)
+    return ChannelResult(outputs, "api" if turn.used_fallback else None)

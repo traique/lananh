@@ -46,7 +46,7 @@ import json
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable, Iterator, Optional
 
 from ai import call_log, official_client, prompt_budget
@@ -60,6 +60,7 @@ from ai.timeouts import (
 )
 from core import address, config, untrusted, urls
 from core.text_utils import strip_json_fence
+from services import prompt_redaction
 from services import tool_registry as reg
 
 logger = logging.getLogger(__name__)
@@ -200,6 +201,8 @@ class _Turn:
     history: tuple[tuple[str, str], ...] = ()
     seen: dict = field(default_factory=dict)
     budget: _CallBudget = field(default_factory=_CallBudget)
+    # Che bí mật trong câu hỏi/lịch sử/trí nhớ/kết quả tool trước khi gửi provider.
+    redactor: prompt_redaction.Redactor = field(default_factory=prompt_redaction.Redactor)
 
 
 _turn: ContextVar[_Turn | None] = ContextVar("agent_turn", default=None)
@@ -304,59 +307,50 @@ def _agent_spec(name, description, parameters, fn, *, untrusted_output=False, st
     )
 
 
+# Mô tả/schema NGẮN (kiểu EasyTool) - 4 bước /agent gửi lại toàn bộ danh sách tool
+# mỗi bước, Groq free chỉ 8K token/phút (test_tool_catalog_budget đặt trần).
 _AGENT_ONLY = (
     _agent_spec(
         "tim_web",
-        "Tìm kiếm web theo từ khóa/câu hỏi, ưu tiên nguồn Việt Nam và trả kèm URL nguồn thật.",
-        reg.object_schema(
-            {"query": reg.string("Từ khóa hoặc câu hỏi cần tìm trên web")}, required=["query"]
-        ),
+        "Tìm web (ưu tiên nguồn VN), trả kèm URL nguồn.",
+        reg.object_schema({"query": reg.string("từ khoá/câu hỏi")}, required=["query"]),
         _tool_tim_web,
         untrusted_output=True,
     ),
     _agent_spec(
         "tim_gia",
-        "Tìm giá bán thực tế của 1 sản phẩm tại Việt Nam (tìm web thật, không bịa).",
+        "Tìm giá bán thực tế 1 sản phẩm ở VN.",
         reg.object_schema(
-            {"ten_san_pham": reg.string("Tên sản phẩm cần tìm giá, vd 'iPhone 15 128GB'")},
-            required=["ten_san_pham"],
+            {"ten_san_pham": reg.string("vd 'iPhone 15 128GB'")}, required=["ten_san_pham"]
         ),
         _tool_tim_gia,
         untrusted_output=True,
     ),
     _agent_spec(
         "xem_thong_ke",
-        "Xem thống kê lượt gọi AI của bot (theo user/kênh và theo model) trong N giờ gần nhất.",
-        reg.object_schema(
-            {"so_gio": reg.integer("Số giờ gần nhất muốn xem, mặc định 168 (7 ngày)")}
-        ),
+        "Thống kê lượt gọi AI của bot (theo user/kênh, model) trong N giờ.",
+        reg.object_schema({"so_gio": reg.integer("mặc định 168")}),
         _tool_xem_thong_ke,
         staff=True,
     ),
     _agent_spec(
         "xem_gia_co_phieu",
-        "Xem giá cổ phiếu Việt Nam hiện tại theo mã (vd 'FPT', 'VNM'), lấy trực tiếp từ DNSE.",
-        reg.object_schema({"ma_co_phieu": reg.string("Mã cổ phiếu, vd 'FPT'")}, ["ma_co_phieu"]),
+        "Giá cổ phiếu VN hiện tại theo mã (DNSE).",
+        reg.object_schema({"ma_co_phieu": reg.string("vd 'FPT'")}, ["ma_co_phieu"]),
         _tool_xem_gia_co_phieu,
     ),
     _agent_spec(
         "doc_link",
-        "Đọc nội dung 1 trang web/bài báo cụ thể theo URL người dùng đưa, trả về text sạch để tóm tắt/trả lời.",
-        reg.object_schema(
-            {"url": reg.string("URL đầy đủ (bắt đầu bằng http:// hoặc https://) cần đọc")},
-            required=["url"],
-        ),
+        "Đọc 1 trang web theo URL có trong câu hỏi/kết quả tim_web.",
+        reg.object_schema({"url": reg.string("URL http(s) đầy đủ")}, required=["url"]),
         _tool_doc_link,
         untrusted_output=True,
     ),
     _agent_spec(
         "xem_rss",
-        "Đọc các mục mới nhất từ 1 feed RSS/Atom theo URL người dùng đưa.",
+        "Đọc các mục mới nhất của 1 feed RSS/Atom người dùng đưa.",
         reg.object_schema(
-            {
-                "url": reg.string("URL feed RSS/Atom"),
-                "so_muc": reg.integer("Số mục mới nhất muốn xem, mặc định 8"),
-            },
+            {"url": reg.string("URL feed"), "so_muc": reg.integer("mặc định 8")},
             required=["url"],
         ),
         _tool_xem_rss,
@@ -415,23 +409,16 @@ def _build_openai_tools() -> list[dict]:
     return reg.openai_tools(_specs())
 
 
-_JSON_ROUTER_INSTRUCTION_TEMPLATE = """Bạn là bộ định tuyến tool (function router) nội bộ cho agent của lananh.
-Đọc câu hỏi của người dùng và quyết định có cần gọi 1 trong các tool sau
-không. Trả về DUY NHẤT 1 object JSON (không markdown, không code fence,
-không thêm chữ nào khác) đúng định dạng:
-
+_JSON_ROUTER_INSTRUCTION_TEMPLATE = """Bạn là bộ định tuyến tool nội bộ của agent. Đọc câu hỏi, chọn
+tối đa 1 tool. Trả DUY NHẤT 1 object JSON (không markdown/code fence):
 {{"tool": "ten_tool_hoac_none", "args": {{...}}}}
 
-Danh sách tool khả dụng:
+Tool:
 {tool_list}
-- "none": câu hỏi KHÔNG cần tool nào (chuyện phiếm, hỏi đáp không cần tra
-  cứu dữ liệu thật). args: {{}}.
+- "none": không cần tra dữ liệu thật (chuyện phiếm, hỏi đáp thường). args {{}}.
 
-Quy tắc: CHỈ chọn 1 tool khi câu hỏi có ý định RÕ RÀNG khớp mô tả trên. Nếu
-câu hỏi cần NHIỀU tool hoặc nhiều bước (vd so sánh 2 sản phẩm), vẫn chỉ được
-chọn ĐÚNG 1 tool phù hợp nhất cho bước đầu tiên (nhánh này không hỗ trợ đa
-bước) - hoặc chọn "none" nếu không có tool nào giải quyết được 1 phần rõ
-ràng của câu hỏi.
+Chỉ chọn tool khi ý định RÕ RÀNG khớp mô tả. Câu cần nhiều tool/nhiều bước (vd so
+sánh 2 sản phẩm): chọn ĐÚNG 1 tool cho bước đầu (nhánh này 1 bước), không có thì "none".
 
 Câu hỏi của người dùng: {question}"""
 
@@ -485,7 +472,8 @@ async def _call_tool(name: str, args: dict) -> str:
             result = _cap(result)
         if len(seen) < _MAX_SEEN_CALLS:
             seen[key] = True
-        return result
+        # Ghi chú/chi tiêu... có thể chứa mật khẩu, STK: provider chỉ thấy nhãn đã ẩn.
+        return _current().redactor.text(result)
     except TurnTimeoutError:
         raise
     except Exception as exc:
@@ -799,8 +787,9 @@ async def _build_turn(user_id: int | None, question: str, address_form: str | No
     nhất của ĐÚNG user_id người hỏi (Zalo, kể cả Zalo của chủ bot, tách hẳn
     Telegram). Lỗi DB -> lượt chạy không có ngữ cảnh, không chặn /agent."""
     system = _persona(address_form)
+    redactor = prompt_redaction.Redactor()
     if not user_id:
-        return _Turn(system=system)
+        return _Turn(system=system, redactor=redactor)
     role = reg.ROLE_OWNER if config.is_owner_user_id(user_id) else reg.ROLE_ADMIN
     history: tuple[tuple[str, str], ...] = ()
     try:
@@ -811,7 +800,8 @@ async def _build_turn(user_id: int | None, question: str, address_form: str | No
             user_id, _HISTORY_ROWS, config.CHAT_SESSION_TIMEOUT_SEC
         )
         history = tuple(
-            (role_, content[:_HISTORY_ROW_MAX_CHARS]) for role_, content in rows[-_HISTORY_ROWS:]
+            (role_, redactor.text(content[:_HISTORY_ROW_MAX_CHARS]))
+            for role_, content in rows[-_HISTORY_ROWS:]
         )
     except Exception:
         logger.warning("Agent: không đọc được lịch sử hội thoại.", exc_info=True)
@@ -819,7 +809,7 @@ async def _build_turn(user_id: int | None, question: str, address_form: str | No
         from services import memory_service
 
         turn_memory = await memory_service.build_turn_memory(user_id, question)
-        memory = (turn_memory.context or "").strip()
+        memory = redactor.text((turn_memory.context or "").strip())
         if memory:
             system += (
                 "\n\nĐiều đã biết về người dùng (trí nhớ dài hạn):\n" + memory[:_MEMORY_MAX_CHARS]
@@ -831,7 +821,7 @@ async def _build_turn(user_id: int | None, question: str, address_form: str | No
             system += "\n\n" + style[:_STYLE_MAX_CHARS]
     except Exception:
         logger.warning("Agent: không đọc được trí nhớ dài hạn.", exc_info=True)
-    return _Turn(user_id=user_id, role=role, system=system, history=history)
+    return _Turn(user_id=user_id, role=role, system=system, history=history, redactor=redactor)
 
 
 async def _save_turn(user_id: int | None, question: str, answer: str) -> None:
@@ -869,9 +859,14 @@ async def ask_agent(
     tool ghi dữ liệu không bao giờ chạy trong /agent."""
     with turn_deadline(), agent_url_scope(question) as allowed_urls, reg.taint_scope():
         turn = await _build_turn(user_id, question, address_form)
+        # Model chỉ thấy bản đã che; link được phép đọc, lưu lịch sử vẫn theo câu gốc.
+        masked = turn.redactor.text(question)
+        if turn.redactor.redacted:
+            turn = replace(turn, system=f"{turn.system}\n\n{turn.redactor.note()}")
+            turn.redactor.log("agent")
         token = _turn.set(turn)
         try:
-            text, provider = await _ask_agent(question)
+            text, provider = await _ask_agent(masked)
         finally:
             _turn.reset(token)
     text = _filter_answer_links(text, question, allowed_urls)

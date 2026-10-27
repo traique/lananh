@@ -21,6 +21,7 @@ class FakeMemoryDB:
         self.chat: list[dict] = []
         self.summary: dict[int, str] = {}
         self.events: list[dict] = []
+        self.meals: list[dict] = []
         self._ids = itertools.count(1)
         self.now = datetime.now(timezone.utc)
 
@@ -92,6 +93,10 @@ class FakeMemoryDB:
             "list_user_events",
             "finish_user_event_ids",
             "clear_user_events",
+            "notify_clear_user",
+            "bg_job_clear_user",
+            "meal_recent",
+            "meal_clear",
         ):
             monkeypatch.setattr(db_module, name, getattr(self, name))
 
@@ -254,6 +259,15 @@ class FakeMemoryDB:
     async def clear_highlights(self, uid):
         self.highlights = [h for h in self.highlights if h["uid"] != uid]
 
+    # ─── nhật ký ăn uống (/an) ───
+    async def meal_recent(self, uid, limit=200):
+        return [dict(m) for m in self.meals if m["uid"] == uid][:limit]
+
+    async def meal_clear(self, uid):
+        before = len(self.meals)
+        self.meals = [m for m in self.meals if m["uid"] != uid]
+        return before - len(self.meals)
+
     # ─── session notes ───
     async def upsert_session_note(
         self, uid, session_key, *, title="", bullets="", summary="", started_at
@@ -314,6 +328,13 @@ class FakeMemoryDB:
 
     async def clear_user_events(self, uid):
         self.events = [e for e in self.events if e["uid"] != uid]
+
+    async def notify_clear_user(self, uid):
+        self.notify_cleared = [*getattr(self, "notify_cleared", []), uid]
+
+    async def bg_job_clear_user(self, uid):
+        # Việc nền đã xong (migrations/027) - fake chỉ ghi nhận đã xoá.
+        self.jobs_cleared = [*getattr(self, "jobs_cleared", []), uid]
 
     # ─── notes ───
     async def add_note(self, uid, content, *, event_key=None):

@@ -123,7 +123,7 @@ def test_help_va_menu_co_kymon():
     import bot_app
     from handlers import commands
 
-    names = {c.command for c in bot_app.COMMANDS}
+    names = {c.command for c in bot_app.ALL_COMMANDS}
     assert {"kymon", "kymon_chitiet"} <= names
     assert "/kymon " in commands.HELP_TEXT and "/kymon\\_chitiet" in commands.HELP_TEXT
     assert "/kymon " in ccs.HELP and "/kymon_chitiet" in ccs.HELP

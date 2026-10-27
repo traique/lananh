@@ -11,7 +11,10 @@ quyền) tới đúng người sở hữu dữ liệu.
 Mỗi lượt gửi thành công được ghi stock_alert_log (kind, ref_key, ngày VN) - vừa
 chống gửi trùng qua restart/redeploy, vừa là bộ đếm trần mỗi ngày cho Zalo. Mục
 phụ trong 1 tin gộp (mark_sent) ghi loại riêng "event_grouped", không tính trần.
-Không có lời gọi AI nào ở đây (không cần khoá lượt/hạn chót).
+Đi qua services/notify_hub: chạm giá/stop/target (URGENT) gửi ngay; quy đổi quyền,
+lịch quyền báo trước (NORMAL) vào hàng đợi gom - nhật ký vẫn ghi lúc xếp hàng (hàng
+đợi bền, dedup theo kind/ref/ngày). Không có lời gọi AI nào ở đây (không cần khoá
+lượt/hạn chót).
 """
 
 from __future__ import annotations
@@ -67,7 +70,34 @@ async def _zalo_recipient(user_id: int) -> str | None:
     return None
 
 
-async def _send_zalo(user_id: int, text: str, today: str) -> bool:
+# Mức thông báo theo loại (services/notify_hub.py): chạm giá/stop/target là URGENT
+# (gửi ngay), quy đổi quyền và lịch quyền báo trước là NORMAL (gom lại).
+_HUB_SOURCE = {
+    "price": "price_alert",
+    "stop": "holding_alert",
+    "target": "holding_alert",
+    "corp": "portfolio_corp",
+    "event": "portfolio_event",
+}
+
+
+async def _offer(
+    channel: str, user_id: int, text: str, kind: str, ref_key: str, today: str
+) -> bool:
+    from services import notify_hub
+
+    return await notify_hub.offer(
+        channel,
+        user_id,
+        text,
+        source=_HUB_SOURCE.get(kind, "portfolio_event"),
+        dedup=f"{kind}:{ref_key[:200]}:{today}",
+    )
+
+
+async def _send_zalo(
+    user_id: int, text: str, today: str, kind: str = "", ref_key: str = ""
+) -> bool:
     cap = zalo_daily_cap()
     if cap <= 0:
         return False
@@ -77,6 +107,8 @@ async def _send_zalo(user_id: int, text: str, today: str) -> bool:
     recipient = await _zalo_recipient(user_id)
     if not recipient:
         return False
+    if await _offer("zalo", user_id, text, kind, ref_key, today):
+        return True
     from channels import zalo_repository
 
     account_id = await zalo_repository.resolve_active_account_id()
@@ -88,11 +120,14 @@ async def deliver(user_id: int, text: str, *, kind: str, ref_key: str, today: st
     """Gửi 1 thông báo; True nếu đã gửi (Telegram) hoặc đã xếp hàng (Zalo)."""
     try:
         if user_id > 0:
-            if user_id != config.ALLOWED_USER_ID or _notify is None:
+            if user_id != config.ALLOWED_USER_ID:
                 return False
-            await _notify(user_id, text)
+            if not await _offer("telegram", user_id, text, kind, ref_key, today):
+                if _notify is None:
+                    return False
+                await _notify(user_id, text)
         elif user_id < 0:
-            if not await _send_zalo(user_id, text, today):
+            if not await _send_zalo(user_id, text, today, kind, ref_key):
                 return False
         else:
             return False

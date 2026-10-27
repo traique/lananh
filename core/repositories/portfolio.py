@@ -718,6 +718,19 @@ async def log_alert(pool: Any, user_id: int, kind: str, ref_key: str, sent_on: s
     )
 
 
+async def alert_log_since(pool: Any, user_id: int, since: str) -> list[tuple[str, str, str]]:
+    """(kind, ref_key, ngày ISO) đã ghi nhật ký từ ngày ``since`` (lệnh /chuy), tối
+    đa 100 dòng mới nhất."""
+    rows = await pool.fetch(
+        "SELECT kind, ref_key, sent_on::text AS sent_on FROM stock_alert_log "
+        "WHERE telegram_user_id = $1 AND sent_on >= ($2::text)::date "
+        "ORDER BY created_at DESC LIMIT 100",
+        user_id,
+        since,
+    )
+    return [(r["kind"], r["ref_key"], r["sent_on"]) for r in rows]
+
+
 # Mục nằm trong 1 tin gộp đã gửi (dòng nhật ký thêm, không phải tin riêng).
 GROUPED_EVENT_KIND = "event_grouped"
 

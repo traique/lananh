@@ -444,6 +444,22 @@ async def _save_state(user_id: int, state: dict) -> None:
     )
 
 
+async def _offer(user_id: int, text: str, today: date) -> bool:
+    """Qua services/notify_hub: có dòng stop/target (🚨/🎯) là URGENT - gửi ngay qua
+    đường cũ; chỉ breakout/lỗ sâu là NORMAL - vào hàng đợi gom (bền, dedup theo ngày)."""
+    from services import notify_hub
+
+    level = notify_hub.URGENT if ("🚨" in text or "🎯" in text) else notify_hub.NORMAL
+    return await notify_hub.offer(
+        "telegram",
+        user_id,
+        text,
+        source="portfolio_close",
+        level=level,
+        dedup=f"close:{today.isoformat()}",
+    )
+
+
 async def run_once(user_id: int, *, force: bool = False) -> bool:
     """Trả True nếu đã gửi cảnh báo. Đánh dấu ngày khi đã gửi, khi có dữ liệu mới
     mà không có gì để báo, hoặc ở vòng cuối khung (xem docstring module)."""
@@ -482,6 +498,10 @@ async def run_once(user_id: int, *, force: bool = False) -> bool:
         await _save_state(user_id, new_state)
         await db.set_setting(_LAST_RUN_KEY, today.isoformat())
         return False
+    if not force and await _offer(user_id, text, today):
+        await _save_state(user_id, new_state)
+        await db.set_setting(_LAST_RUN_KEY, today.isoformat())
+        return True
     if _notify is None:
         logger.warning("portfolio_alerts: chưa đăng ký notify, chưa gửi được cảnh báo.")
         return False

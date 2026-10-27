@@ -20,6 +20,12 @@ MEMORY_CONSOLIDATED_PREFIX = "memory_consolidated:"
 # Hỏi thăm chủ động (services/proactive_service.py): bật/tắt, số tin đã gửi trong ngày.
 FOLLOWUP_PREFIX = "followup:"
 FOLLOWUP_SENT_PREFIX = "followup_sent:"
+# Giờ yên lặng riêng (services/notify_hub.py, lệnh /yenlang): "on" | "off" | "HH:MM-HH:MM".
+QUIET_PREFIX = "quiet:"
+# "Cách trả lời" bộ trích nhớ đề xuất, chờ người dùng duyệt (services/style_approval.py).
+STYLE_PENDING_PREFIX = "style_pending:"
+# Trả lời kèm giọng nói (services/voice_reply.py, lệnh /noi): "on" | "off" | "auto".
+VOICE_REPLY_PREFIX = "voice_reply:"
 
 
 def weather_home_key(user_id: int) -> str:
@@ -56,6 +62,18 @@ def followup_sent_key(user_id: int) -> str:
     return f"{FOLLOWUP_SENT_PREFIX}{user_id}"
 
 
+def quiet_key(user_id: int) -> str:
+    return f"{QUIET_PREFIX}{user_id}"
+
+
+def style_pending_key(user_id: int) -> str:
+    return f"{STYLE_PENDING_PREFIX}{user_id}"
+
+
+def voice_reply_key(user_id: int) -> str:
+    return f"{VOICE_REPLY_PREFIX}{user_id}"
+
+
 def memory_user_keys(user_id: int) -> list[str]:
     """Khoá trí nhớ/hỏi thăm của 1 người (dùng chung cho /zaloxoa và /xoadulieu)."""
     return [
@@ -64,6 +82,7 @@ def memory_user_keys(user_id: int) -> list[str]:
         memory_consolidated_key(user_id),
         followup_key(user_id),
         followup_sent_key(user_id),
+        style_pending_key(user_id),
     ]
 
 
@@ -74,4 +93,6 @@ def zalo_user_keys(user_id: int) -> list[str]:
         brief_key("zalo", user_id),
         brief_sent_key("zalo", user_id),
         *memory_user_keys(user_id),
+        quiet_key(user_id),
+        voice_reply_key(user_id),
     ]

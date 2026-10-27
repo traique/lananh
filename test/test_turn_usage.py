@@ -258,8 +258,9 @@ async def test_burn_dung_cua_so_cua_tung_provider(burn_db, monkeypatch):
     now = datetime(2026, 10, 26, 10, 0, tzinfo=timezone.utc)  # 17h VN, 3h sáng Pacific
     burns = {b.name: b for b in await quota_burn.snapshot(now)}
     starts = {providers: since for providers, since in burn_db}
-    # Gemini reset 0h giờ Thái Bình Dương (26/10 03:00 PDT -> mốc 26/10 07:00 UTC).
-    gemini_start = starts[("api1", "api2")]
+    # Gemini reset 0h giờ Thái Bình Dương (26/10 03:00 PDT -> mốc 26/10 07:00 UTC);
+    # Gemini Live cùng cửa sổ nên chung 1 câu SQL.
+    gemini_start = starts[("api1", "api2", "live_api1", "live_api2")]
     assert gemini_start.astimezone(timezone.utc) == datetime(2026, 10, 26, 7, tzinfo=timezone.utc)
     assert burns["api1"].pct == 80.0 and burns["api2"].pct == 20.0
     assert burns["openrouter"].limit == 50 and burns["openrouter"].pct == 90.0
@@ -268,6 +269,8 @@ async def test_burn_dung_cua_so_cua_tung_provider(burn_db, monkeypatch):
     assert burns["tavily"].window_start.startswith("2026-10-01")
     assert burns["groq"].limit == 0 and burns["groq"].pct is None
     assert burns["agnes"].used == 0
+    # Live: hạn mức chưa được Google công bố -> chỉ đếm, không %.
+    assert burns["live"].limit == 0 and burns["live"].pct is None
 
 
 async def test_burn_gemini_cung_project_cong_chung(burn_db, monkeypatch):

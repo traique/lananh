@@ -458,6 +458,11 @@ def _recurrence_words(scan: _Scan) -> tuple[str | None, str | None]:
     return unit, period
 
 
+def _unit_from_period_only(scan: _Scan) -> bool:
+    """Đơn vị "ngày" chỉ đến từ "mỗi <buổi>" (không có "mỗi ngày"/"hằng ngày")."""
+    return not re.search(r"\b(?:moi|hang) ngay\b|\bngay nao cung\b", scan.f)
+
+
 def _unread_date(scan: _Scan) -> bool:
     """Còn chữ ngày chưa đọc được ("tuần sau", "ngày 15 tháng sau", "30 tết")."""
     for m in _UNREAD_DATE_RE.finditer(scan.work):
@@ -522,10 +527,14 @@ def parse(text: str, now: dt.datetime | None = None) -> When:
     # ── Lặp lại ───────────────────────────────────────────────────────────
     rule: dict | None = None
     many_lunar_days = len(lunar_dates) >= 2 and all(m is None for _, m, _, _ in lunar_dates)
+    # "mỗi sáng thứ 2 8h", "mỗi tối thứ 6": "mỗi <buổi>" kèm thứ là lặp HẰNG TUẦN vào
+    # thứ đó, không phải hằng ngày.
+    weekly_by_period = unit == "ngay" and every_period is not None and bool(weekdays)
+    weekly_by_period = weekly_by_period and _unit_from_period_only(scan)
     if unit or weekday_every or many_lunar_days:
-        if unit == "ngay" or (unit is None and every_period):
+        if (unit == "ngay" and not weekly_by_period) or (unit is None and every_period):
             rule = {"type": "daily"}
-        elif unit == "tuan" or weekday_every:
+        elif unit == "tuan" or weekday_every or weekly_by_period:
             base_day = weekday_date or relative or today
             rule = {"type": "weekly", "days": weekdays or [base_day.weekday()]}
         elif unit == "thang" or many_lunar_days:

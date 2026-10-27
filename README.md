@@ -58,7 +58,22 @@ Repository được thiết kế cho **một chủ sở hữu**:
 
 - Provider chain theo `PROVIDER_ORDER` (mặc định `router9,groq,openrouter,api1,api2`):
   9Router (gateway OpenAI-compatible) → Groq (miễn phí, chat mặc định
-  `openai/gpt-oss-20b`) → OpenRouter (model `:free`) → AI Studio key 1 → key 2.
+  `openai/gpt-oss-20b`) → OpenRouter (model `:free`) → AI Studio key 1 → key 2 →
+  Gemini Live (`live`, tự thêm vào cuối khi `LIVE_CHAT_FALLBACK=1`).
+- Gemini Live (`ai/live_client.py`, model `LIVE_MODEL` = `gemini-3.8-live`, WebSocket
+  qua `client.aio.live.connect` của google-genai): provider chat dự phòng CUỐI, chỉ
+  chạy khi mọi provider trước lỗi hoặc đang cooldown. Model âm thanh gốc chỉ trả
+  AUDIO, nên câu chữ là bản chép lời (`output_audio_transcription`) và persona được
+  dặn thêm "trả lời ngắn, văn nói, không markdown". Chỉ dùng cho chat thường: không
+  tự tra web, không dùng cho `ask()`/JSON/utility/phân tích cổ phiếu, không dùng ở
+  lượt có số liệu cổ phiếu chuẩn. Dùng chung key api1 → api2 nhưng cooldown quota
+  RIÊNG (`live_api1/2`), ghi `provider_calls` tên `live_api1/2`; tối đa
+  `LIVE_MAX_SESSIONS` phiên cùng lúc, trần `LIVE_CALL_TIMEOUT_SEC` giây (trong hạn
+  chót lượt) và `LIVE_MAX_AUDIO_MB`; socket luôn đóng kể cả khi bị huỷ. Bật/tắt và
+  đổi model ở `/admin` → Provider (thẻ `live`). **Hạn mức free tier của Live chưa
+  được Google công bố** (vài trang bên thứ ba ghi "Unlimited" - chưa kiểm chứng):
+  `/status` hiện số lượt Live trong ngày quota, xem số thật tại
+  aistudio.google.com/rate-limit.
 - 9Router chỉ bị coi là chết khi timeout (mặc định 120s), khi key bị từ chối
   (401/403), hoặc khi lỗi 5xx/mất kết nối 2 lần trong 5 phút; lúc đó chuyển hẳn
   provider kế, probe lại nền (`ROUTER9_PROBE_INTERVAL_SEC`), `/userouter9` để thử
@@ -160,7 +175,8 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
 - `/status` hiện lý do cooldown và số phút còn lại từng provider; `/admin` reset
   được cooldown (kể cả 9Router).
 - Groq tra web (`groq_search`) và Groq chép lời (`groq_stt`) có cooldown riêng,
-  không khoá Groq chat hay lượt phụ JSON.
+  không khoá Groq chat hay lượt phụ JSON. Gemini Live (`live_api1/2`) và Gemini TTS
+  (`tts_api1/2`) cũng cooldown riêng, không khoá chat api1/api2.
 - Webhook không thử lại lỗi chắc chắn lặp (`TurnTimeoutError`, Telegram
   BadRequest/Forbidden, `TypeError`/`KeyError`/`AttributeError`): sự kiện kết thúc
   ngay ở lần đầu và chủ bot nhận 1 cảnh báo. Lỗi khác vẫn thử lại tối đa
@@ -204,6 +220,15 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   lượt có dữ liệu web ngoài trong prompt; lượt provider tự tra web thì lọc lỏng:
   giữ link không mang dữ liệu và nguồn được trích dẫn), `all` (mọi lượt), `off`.
 - Lượt trả lời dựa trên web chỉ trích nhớ từ lời người dùng.
+- Che bí mật trước khi gửi provider (`services/prompt_redaction.py`,
+  `PROMPT_REDACTION`, mặc định bật): câu hỏi, lịch sử chat, trí nhớ, grounding, lời
+  dặn kèm ảnh/tài liệu, chữ chép từ tin thoại và kết quả tool `/agent` được thay
+  phần giá trị OTP, mật khẩu/mk/pass, mã PIN, STK, CCCD/CMND/hộ chiếu, số thẻ (kiểm
+  Luhn), khoá bí mật, API key bằng nhãn `[đã ẩn: mã OTP]`... (bỏ cả ký tự vô hình).
+  Mẫu neo theo từ khoá như `memory_guard`, không bắt giá/khối lượng cổ phiếu, số
+  điện thoại, số tiền. Có ẩn thì model nhận thêm 1 dòng hệ thống (không đoán,
+  không hỏi lại). DB vẫn lưu nguyên văn; router tool đổi nhãn về giá trị gốc nên
+  "ghi chú giúp anh: mật khẩu wifi là ..." vẫn lưu đúng ghi chú.
 - Web và `/admin` có header bảo mật (nosniff, Referrer-Policy, X-Frame-Options
   DENY, CSP frame-ancestors, HSTS không preload - tắt HSTS bằng `SECURITY_HSTS=0`).
 
@@ -268,6 +293,13 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   - Không lưu mật khẩu, OTP, số thẻ, số tài khoản, CCCD/CMND/hộ chiếu, API key
     (`services/memory_guard.py`).
   - Nhớ "cách anh muốn em trả lời" (ngắn gọn, không emoji...) và áp dụng mọi lượt.
+    Quy tắc bộ trích nhớ TỰ rút ra phải được duyệt (`services/style_approval.py`,
+    `STYLE_RULES_NEED_APPROVAL`, mặc định bật): lưu thành đề xuất chờ (gộp nhiều
+    đề xuất, hết hạn sau 3 ngày), Lan Anh hỏi 1 lần bằng tin riêng sau câu trả lời
+    chat, tối đa 1 lần/ngày - Telegram có nút [✅ Ghi nhớ] [🗑 Bỏ], Zalo/Zoom nhắn
+    "ghi nhớ"/"bỏ" ngay sau câu hỏi, hoặc `/hoc ok|bo` lúc nào cũng được. Dòng đã
+    bỏ không đề xuất lại. Lời tự dặn rõ ("từ giờ trả lời ngắn thôi", "đừng chèn
+    emoji nữa", `/nho cách trả lời: ...`) vẫn áp ngay.
   - Mỗi phiên có ghi chú + tóm tắt ("lúc nãy mình bàn gì?", bảng
     `user_session_notes`); gộp fact trùng tối đa 1 lần/ngày khi gần đầy
     (`MEMORY_CONSOLIDATION`).
@@ -283,6 +315,7 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   | `/xuatdulieu` | Telegram gửi file .json (tối đa 1 MB), Zalo/Zoom gửi bản chữ rút gọn |
   | `/xoadulieu xacnhan` | Thành viên Zalo xoá mọi dữ liệu cá nhân (vẫn giữ pairing); chủ bot xoá trí nhớ, ghi chú, lịch sử chat, sự kiện hỏi thăm |
   | `/forget` | Xoá hết trí nhớ dài hạn |
+  | `/hoc [ok\|bo]` | Xem / ghi nhớ / bỏ đề xuất cách trả lời em tự rút ra đang chờ duyệt |
 
   Trang `/admin` xem, ghim, quên từng mục trí nhớ của từng người.
 - `/rag` chấm điểm BM25 trên âm tiết và cặp âm tiết (có dấu và bỏ dấu), stopword
@@ -338,15 +371,39 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   SQL), `/chitieu ds` xem 10 khoản gần nhất. `EXPENSE_CHAT_CAPTURE=false` tắt ghi
   tự động; bản tin sáng có dòng tổng chi tháng (`MORNING_BRIEF_EXPENSES`). Webhook
   ngân hàng SePay chưa làm (chờ chủ bot duyệt).
+- Ăn uống (`/an`, migration 028, `services/nutrition_service.py`): `/an phở bò
+  sáng`, `/an 2 bát cơm, cá kho tối`, `/an hôm qua bún chả trưa` ghi 1 bữa (tối đa 6
+  món, số phần "2 bát", "nửa tô", "x2"; bữa không nói thì đoán theo giờ VN). kcal là
+  ƯỚC LƯỢNG tra bảng ~120 món Việt soạn sẵn (`assets/thuc_pham.yaml`, sửa không cần
+  đổi code) nhân số phần; món lạ chỉ ghi tên, không có kcal (không gọi AI;
+  `NUTRITION_AI_ESTIMATE=1` thì ước lượng bằng 1 lượt AI JSON có hạn chót). `/an` xem
+  hôm nay theo bữa, `/an tuan` 7 ngày, `/an xoa <số>`. Câu tự nhiên ("ghi ăn phở
+  bò", "trưa nay anh ăn bún chả") chỉ khi `NUTRITION_NL=1` và đúng mẫu rất rõ: không
+  bắt câu hỏi, câu có số tiền (chi tiêu ghi), câu nhờ nhắc/nhớ, kế hoạch ("tối nay
+  định ăn lẩu"); mẫu "<bữa> nay ăn ..." đòi mọi món có trong bảng. Dữ liệu riêng từng
+  người, xoá cùng `/xoadulieu` và `/zaloxoa`, có trong `/xuatdulieu`; 40 món/24 giờ.
 - `/agent` (chỉ chủ bot/admin) - xem mục "AI Agent" bên dưới.
 
 #### Dữ liệu đời sống VN (không tốn AI)
 
-- Hỏi "giá vàng hôm nay", "tỷ giá đô", "100 đô bằng bao nhiêu tiền Việt", "1 triệu
-  đổi được bao nhiêu đô", "xổ số miền Nam hôm qua", "dò vé 123456" → trả lời thẳng
-  bằng số liệu thật, không gọi AI (`services/vn_daily_chat.py`). Nguồn: SJC
-  (sjc.com.vn), Vietcombank (feed XML, cache 10 phút), xskt.com.vn (RSS 3 miền,
-  cache 5 phút); nguồn lỗi được nhớ 60 giây để không gọi dồn.
+- Hỏi "giá vàng hôm nay", "giá vàng doji", "vàng thế giới", "tỷ giá đô", "100 đô
+  bằng bao nhiêu tiền Việt", "1 triệu đổi được bao nhiêu đô", "giá xăng hôm nay",
+  "dầu diesel bao nhiêu", "xổ số miền Nam hôm qua", "xổ số tây ninh hôm nay", "kết quả
+  đà lạt chủ nhật", "dò vé 123456 đồng nai" → trả lời thẳng bằng số liệu thật, không
+  gọi AI (`services/vn_daily_chat.py`). Nguồn: vàng vang.today `/api/prices` (SJC
+  miếng, nhẫn SJC, DOJI, PNJ, Bảo Tín, Viettin, VN Gold, XAU/USD kèm tăng giảm so với
+  hôm trước; sjc.com.vn làm dự phòng), Vietcombank (feed XML, cache 10 phút), xăng dầu
+  giaxanghomnay.com (bảng Petrolimex vùng 1/vùng 2 + PVOIL, `services/fuel_prices.py`,
+  cache 1 giờ), xskt.com.vn (RSS 3 miền + RSS riêng 35 đài, cache 5 phút); nguồn lỗi
+  được nhớ 60 giây để không gọi dồn. Cache giữ 1 bản/nguồn, trần 64 khoá.
+- Xổ số theo tỉnh (`services/lottery_provinces.py`): danh mục 36 đài (tên khác: Đà Lạt
+  = Lâm Đồng, Sài Gòn/TP.HCM, Huế, Vũng Tàu, mã xstn...), miền, lịch quay cố định trong
+  tuần (nguồn: lịch mở thưởng xskt.com.vn, ghi trong docstring) và feed riêng
+  `https://xskt.com.vn/rss-feed/<slug>.rss` (~9 kỳ gần nhất). Câu nhắc 1 đài luôn đi
+  feed của đúng đài đó (feed lỗi thì lọc từ feed miền); ngày đó đài không quay thì nói
+  rõ lịch quay và đưa kỳ gần nhất; dò vé chỉ đối chiếu kỳ của đài đó (không bao giờ
+  kết luận "chưa trúng" từ đài khác). Vàng thế giới quy đổi ra triệu đồng/lượng theo
+  giá bán USD Vietcombank, ghi rõ chưa gồm thuế phí.
 - Câu rộng hơn ("vàng tăng vậy có nên mua không") → số liệu thật vào ngữ cảnh cho
   AI, lượt đó không tra Tavily và không ép tra web bắt buộc. Nguồn lỗi → quay về
   đường tra web, câu trả lời phải ghi rõ "tham khảo".
@@ -354,9 +411,13 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   báo lỗi), hỏi kết quả mà nguồn lỗi thì bắt tra web thật. Số tiền giải là cơ cấu
   vé 10.000đ miền Nam/Trung để tham khảo; miền Bắc trùng giải ĐB còn phải khớp ký
   hiệu vé. Có nhắc tên đài thì dò đúng kỳ của đài đó.
-- Lệnh: `/vang`, `/tygia [mã|100 usd]`, `/xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé]`
-  (`/xoso help`). Giá xăng chưa có nguồn riêng (Petrolimex không có API), vẫn đi
-  tra web; BTMC không dùng vì cần API key.
+- Lệnh: `/vang [sjc|nhẫn|doji|pnj|bảo tín|thế giới]`, `/tygia [mã|100 usd]`,
+  `/xang [xăng|diesel|dầu hỏa]`, `/xoso [mb|mn|mt|tỉnh] [hôm nay|hôm qua|dd/mm|chủ
+  nhật] [số vé]` (`/xoso help`), `/xoso tinh` (đài theo miền, ⭐ = quay hôm nay).
+  `/xoso` không tham số: kỳ mới nhất miền Nam, Telegram kèm nút chọn đài quay hôm nay
+  (callback `xs:<số>`), Zalo/Zoom kèm dòng gợi ý `/xoso <tên tỉnh>`. Tên mặt hàng xăng
+  đọc nguyên văn từ bảng nguồn (không hard-code); câu "đổ xăng 100k", "giá dầu thế
+  giới", "dầu ăn" không bị bắt. Web công khai `/xo-so` (+ `GET /api/v1/lottery`).
 - Thời tiết theo giờ: "chiều nay có mưa không", "tối mai", "đêm nay", "mấy giờ
   mưa" → khung giờ dễ mưa, giờ mưa cao nhất, từng giờ. "Chất lượng không khí",
   "bụi mịn", "AQI" → US AQI + PM2.5 từ air-quality-api.open-meteo.com (dữ liệu
@@ -372,7 +433,8 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   `/bantin 6` (giờ 4-12), `/bantin tin on|off`, `/bantin xem` (xem thử ngay).
 - Nội dung tính bằng code: thời tiết thành phố riêng + khung giờ dễ mưa + cảnh báo
   AQI > 100, âm lịch + ngày lễ hôm nay + rằm/mùng 1/lễ sắp tới, việc hôm nay (nhắc
-  việc còn lại, hỏi thăm), ngày nhớ 7 ngày tới, vàng SJC + USD Vietcombank, tổng chi
+  việc còn lại, hỏi thăm), ngày nhớ 7 ngày tới, vàng (SJC miếng, nhẫn, thế giới) + USD
+  Vietcombank, giá xăng dầu Petrolimex (TẮT mặc định, bật `/bantin xang on`), tổng chi
   tháng, danh mục (chỉ ngày giao dịch, bản digest), tin.
 - Telegram chủ bot: bật thì THAY digest danh mục 8h. Tin RSS trên Telegram tắt mặc
   định, bật bằng `/bantin tin on`.
@@ -386,6 +448,73 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   người 1 tin/ngày; Zalo đánh dấu trước khi vào outbox nên không bao giờ gửi đôi.
   `MORNING_BRIEF_AI_INTRO=true` thêm 1 câu chào do AI viết cho chủ bot (mặc định tắt).
 - Module khác thêm mục bằng `morning_brief.register_section("ten", order=35)`.
+- Bật gom thông báo (mặc định) thì bản tin đi qua hàng đợi gom: ngoài giờ yên lặng
+  gửi ngay kèm các tin nhẹ đang chờ, trong giờ yên lặng (vd `/bantin 5`) chờ hết giờ.
+
+#### "Có gì cần anh chú ý?" (`/chuy`)
+
+- `/chuy` hoặc câu rõ ràng "có gì cần anh chú ý", "hôm nay có gì cần lo" (phải có
+  người được nhắc hoặc mốc "hôm nay/bây giờ"; "có gì cần lưu ý khi mua nhà" vẫn đi
+  chat AI) trả MỘT tin tính bằng code, không gọi AI (`services/attention.py`).
+- Mục: nhắc việc còn lại hôm nay + ngày nhớ 3 ngày tới; danh mục (stop/target, giá
+  chạm ngưỡng đã báo hôm nay, đang dưới stop nhiều phiên, sự kiện quyền rơi vào hôm
+  nay); hỏi thăm đang chờ; số tin đang chờ gom (gửi luôn sau đó); bài Facebook chờ
+  duyệt (chủ bot, admin Zalo); lỗi mới hôm nay, provider đang cooldown hoặc quota
+  miễn phí ≥ 80%, watchdog đang báo (chỉ chủ bot: Telegram, Zoom, Zalo controller).
+- Thành viên Zalo chỉ thấy dữ liệu của chính mình. Mỗi mục có timeout riêng; mục
+  lỗi bị bỏ và ghi 1 dòng "chưa đọc được". Không có gì thì 1 câu ngắn.
+- Lệnh chỉ đọc: chạy ngay cả khi lượt dài đang chạy. Module khác thêm mục bằng
+  `attention.register_section("ten", order=80, audience="owner")`.
+
+#### Gom thông báo và giờ yên lặng (`/yenlang`)
+
+- Tin bot tự nhắn đi qua `services/notify_hub.py`. Việc cần người quyết gửi ngay
+  (URGENT): nhắc việc tự đặt, chạm stop/target, giá chạm ngưỡng đã đặt, bài Facebook
+  chờ duyệt, cảnh báo hệ thống 🚨 và cảnh báo cần kiểm tra tay. Việc đã xong/thông
+  tin (NORMAL: hỏi thăm, quy đổi và lịch sự kiện quyền, cảnh báo cuối phiên không có
+  stop/target, cảnh báo nhẹ ⚠️/🐞/⛽, tổng hợp lỗi, bản tin sáng, digest 8h) vào bảng
+  `notify_queue` (migration 026, bền qua restart) và được gộp thành 1 tin khi: tin cũ
+  nhất đã chờ `NOTIFY_BATCH_MINUTES` (60) phút, người dùng vừa nhắn bot (kể cả ban
+  đêm), hết giờ yên lặng, hoặc có tin tổng hợp hẹn giờ (bản tin, digest).
+- Giờ yên lặng mặc định 22:30-06:30 giờ VN (`NOTIFY_QUIET_HOURS`), mỗi người đổi
+  bằng `/yenlang on|off|22-7` (chủ bot Telegram/Zoom dùng chung, mỗi Zalo riêng).
+  Trong giờ này chỉ nhắc việc tự đặt và cảnh báo 🚨 gửi ngay; URGENT khác bị giữ và
+  đứng đầu tin gom lúc hết giờ (bài Facebook giữ lại không kèm nút, vẫn có dòng
+  `/fb_ok`, `/fb_boqua`; bản Zoom không được giữ).
+- Không gửi trùng: mỗi nguồn giữ guard cũ và chỉ đánh dấu khi hub đã nhận; `dedup_key`
+  chặn xếp 2 lần; Zalo xả vào `zalo_outbox` trong cùng transaction. Tối đa
+  `NOTIFY_QUEUE_MAX_PER_USER` tin chờ/người (vượt thì bỏ tin nhẹ cũ nhất, tin gom
+  ghi số tin bị lược). `NOTIFY_HUB_ENABLED=0` = hành vi cũ. Chi tiết từng nguồn:
+  [docs/nang-cap-jarvis.md](docs/nang-cap-jarvis.md).
+
+#### Việc nền (`/viec`) và tác vụ định kỳ (`/lichtacvu`)
+
+- `/viec <yêu cầu>`: em trả lời ngay "em làm rồi báo anh", chạy yêu cầu ở NỀN rồi gửi
+  kết quả (`services/background_jobs.py`, bảng `bg_jobs` migration 027). Việc chạy
+  ngoài khoá lượt (người dùng vẫn chat bình thường) nhưng vẫn chiếm 1 chỗ
+  `MAX_CONCURRENT_TURNS` (việc của thành viên Zalo dùng chỗ thành viên, không đụng
+  chỗ dành riêng cho chủ bot); hạn chót riêng `BACKGROUND_JOB_TIMEOUT_SEC` (600 giây);
+  tối đa `BACKGROUND_JOBS_CONCURRENCY` (1) việc chạy cùng lúc toàn bot, mỗi người
+  `BACKGROUND_JOBS_MAX_PER_USER` (3) việc chờ/chạy. Lượt AI giống chat thường của đúng
+  người đó (persona, trí nhớ, tra web, số liệu vàng/tỷ giá, đọc danh mục/chi tiêu, giá
+  cổ phiếu nhắc tới) nhưng KHÔNG ghi dữ liệu. `/viec` xem danh sách, `/viec xem <số>`
+  xem lại kết quả, `/viec huy <số>` huỷ. Kết quả gửi mức URGENT qua hub (trong giờ
+  yên lặng thì giữ tới sáng). Bot khởi động lại giữa chừng: việc tự chạy lại 1 lần,
+  gián đoạn lần 2 thì báo lỗi. Thành viên Zalo dùng được, mỗi việc tính 1 lượt nặng
+  (`BACKGROUND_JOBS_MEMBERS=0` để tắt).
+- Tác vụ định kỳ (`services/routines.py`): "mỗi sáng thứ 2 8h tóm tắt tin về VNM cho
+  anh", "mỗi tối thứ 6 9h tổng kết chi tiêu tuần cho anh" (nhắn thẳng hoặc
+  `/lichtacvu <câu đó>`). Khác nhắc việc: nhắc việc gửi câu cố định, tác vụ chạy 1
+  lượt AI qua bộ chạy nền ở trên rồi gửi kết quả mức NORMAL (tin tổng hợp hẹn giờ,
+  tôn trọng giờ yên lặng); không có gì đáng báo thì model trả `NO_REPLY` và em im.
+  Câu tự nhiên chỉ được nhận khi có "tóm tắt / tổng kết / báo cáo / kiểm tra / tra …
+  cho anh" + "mỗi/hằng …" và KHÔNG có chữ "nhắc"; thiếu "mỗi" ("tối thứ 6 9h tổng kết
+  chi tiêu tuần cho anh") thì em hỏi lại, nhắn "ok" mới đặt. Tối đa 10 tác vụ/người,
+  `ROUTINE_MAX_RUNS_PER_DAY` (20) lần chạy/ngày toàn bot, lỡ giờ thì chạy bù 1 lần
+  (trễ quá 12 giờ thì bỏ lần đó). `/lichtacvu` xem, `huy|tam dung|tiep <số>`. Thành
+  viên Zalo mặc định tắt (`ROUTINES_MEMBERS=1` để mở).
+- `/chuy` có thêm mục "việc nền đang chạy" và "tác vụ định kỳ hôm nay"; `/admin` →
+  Hệ thống có bảng việc nền + tác vụ định kỳ (`/admin/api/jobs`).
 
 #### Tin thoại, ảnh, tài liệu, vị trí
 
@@ -396,6 +525,25 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   nhắc việc hay ghi chú theo chữ nghe được (câu kiểu "đã mua FPT 1000 giá 120"
   được nhắc gõ lại bằng chữ). Trần 5 MB và 180 giây (`VOICE_MAX_BYTES`,
   `VOICE_MAX_SECONDS`); tắt bằng `VOICE_STT_ENABLED=0`.
+- Trả lời kèm giọng nói (`/noi on|off|auto`, `services/voice_reply.py`): mỗi người tự
+  bật (mặc định tắt; `auto` = chỉ đọc khi vừa gửi tin thoại), cổng toàn bot
+  `VOICE_REPLY_ENABLED`. Bản chữ vẫn gửi như cũ, tin thoại đi kèm sau; lệnh "/" và
+  báo cáo cổ phiếu không đọc. Bộ đọc chọn bằng `VOICE_ENGINE`: `auto` (mặc định) =
+  Gemini Live trước - dặn chặt "đọc NGUYÊN VĂN", rồi so bản chép lời với văn bản
+  (theo từ, bỏ dấu, ngưỡng `LIVE_VOICE_MIN_MATCH`=80%); lệch, lỗi hay hết quota Live
+  thì bỏ âm thanh Live và dùng Gemini TTS, để tin thoại không nói khác bản chữ;
+  `live` = chỉ Live (lỗi thì chỉ gửi chữ); `tts` = chỉ Gemini TTS
+  (`VOICE_TTS_MODEL`). Cùng giọng `VOICE_TTS_VOICE`, bằng key AI Studio sẵn có, qua
+  `bounded()` trong hạn chót lượt, cooldown quota riêng (`live_api1/2`,
+  `tts_api1/2`). Chỉ đọc chữ đã lọc (bỏ bảng, link, markdown, emoji), tối đa
+  `VOICE_REPLY_MAX_CHARS` ký tự - dài hơn thì đọc đoạn đầu và nhắc xem tin chữ.
+  Telegram: có `ffmpeg` trên PATH thì gửi tin thoại OGG/Opus, không có thì file WAV
+  (sendDocument - Bot API chỉ nhận OGG/MP3/M4A cho voice). Zalo: CHỈ khi có ffmpeg
+  (M4A); clip nằm trong kho RAM có trần (20 file, `VOICE_REPLY_STORE_MB`), tên file
+  ký HMAC hết hạn sau `VOICE_REPLY_URL_TTL_MIN` phút; gateway tải qua loopback,
+  đưa lên CDN Zalo rồi `sendVoice`, lỗi thì gửi link công khai `/media/tts/<tên>`.
+  Thành viên Zalo: mỗi tin thoại tính 1 lượt nặng. Image hiện chưa có ffmpeg - thêm
+  vào Dockerfile là quyết định của chủ repo (xem docs/nang-cap-jarvis.md).
 - Hỏi đáp về ảnh: ảnh kèm câu hỏi ("ảnh này là gì?", "dịch giúp anh chữ trong
   ảnh", "đọc giúp tờ giấy này") thì trả lời về ảnh, đọc/dịch được cả chữ Nhật,
   Trung, Hàn, số liệu chép đúng như trong ảnh. Ảnh không caption, hoặc caption
@@ -462,7 +610,9 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
 - Khóa truy cập theo một Telegram user ID.
 - Xử lý text dài, ảnh, image document, tin thoại/audio, file PDF/TXT/MD/DOCX, vị
   trí; sticker, video, file lạ nhận 1 câu nói rõ em hiểu được những gì.
-- Lệnh quản lý memory, provider, model và Zalo.
+- Lệnh quản lý memory, provider, model và Zalo. Menu "/" chỉ còn 18 lệnh hay dùng
+  (`bot_app.MENU_COMMANDS`); mọi lệnh vẫn gõ được, hoặc nhắn tự nhiên (mục "Hỏi tự
+  nhiên thay cho lệnh").
 - Phản hồi khi chờ: Telegram luôn hiện "đang nhập…"; lượt quá
   `TELEGRAM_STATUS_DELAY_SEC` giây (mặc định 7, 0 = tắt) thì em gửi 1 dòng trạng
   thái theo việc đang làm ("🔎 Em đang tra web xíu nha anh…", "📖 Em đang đọc trang
@@ -702,6 +852,11 @@ Provider, tra web, quota:
 | `GEMINI_KEYS_SAME_PROJECT` | 0 | 1 = API 1 và API 2 cùng project Google Cloud (cộng chung quota) |
 | `FREE_TIER_RPD_GEMINI` / `FREE_TIER_RPD_GROQ` | 0 / 0 | Hạn mức lượt/ngày (0 = chưa đặt, chỉ hiển thị); Groq ưu tiên số từ header response |
 | `FREE_TIER_RPD_OPENROUTER` / `FREE_TIER_TAVILY_MONTHLY` | 50 / 1000 | OpenRouter `:free` 50 lượt/ngày (1000 khi đã nạp từ 10 USD); Tavily credit/tháng (tìm advanced = 2) |
+| `LIVE_CHAT_FALLBACK` | 1 | Gemini Live làm provider chat dự phòng cuối (tự thêm `live` vào cuối `PROVIDER_ORDER`); 0 = bỏ `live` khỏi chuỗi |
+| `LIVE_MODEL` | `gemini-3.8-live` | Model Gemini Live (đổi được ở `/admin` → Provider → `live`) |
+| `LIVE_MAX_SESSIONS` / `LIVE_CALL_TIMEOUT_SEC` / `LIVE_MAX_AUDIO_MB` | 1 / 60 / 8 | Số phiên Live cùng lúc (1-4), trần giây 1 lượt (10-180, không vượt hạn chót lượt), trần MB âm thanh 1 lượt (1-32) |
+| `LIVE_HISTORY_MESSAGES` | 6 | Số tin lịch sử gần nhất gửi kèm lượt chat qua Live (0-20) |
+| `FREE_TIER_RPD_GEMINI_LIVE` | 0 | Hạn mức lượt/ngày của Live (live_api1 + live_api2); Google chưa công bố - để 0 (chỉ đếm) tới khi thấy số thật ở aistudio.google.com/rate-limit |
 
 DB, bảo mật, lượt song song:
 
@@ -726,6 +881,8 @@ Hội thoại, trí nhớ, hỏi thăm:
 | `MEMORY_FLUSH_EXCHANGES` | 3 | Trích nhớ khi có từng này lượt có nghĩa chưa xử lý |
 | `MEMORY_IDLE_FLUSH_SEC` / `MEMORY_SWEEP_SEC` | 1800 / 600 | Rảnh bao lâu thì trích; chu kỳ vòng quét nền (chạy cả lúc khởi động) |
 | `MEMORY_SWEEP_ENABLED` / `MEMORY_CONSOLIDATION` | 1 / 1 | Bật vòng quét nền; gộp fact trùng tối đa 1 lần/ngày khi gần đầy |
+| `STYLE_RULES_NEED_APPROVAL` | 1 | Cách trả lời bộ trích nhớ tự rút ra chờ người dùng duyệt (`/hoc`, nút [Ghi nhớ] [Bỏ]); 0 = áp ngay như cũ |
+| `PROMPT_REDACTION` | 1 | Che OTP/mật khẩu/STK/CCCD/số thẻ/API key trong prompt trước khi gửi provider; 0 = tắt |
 | `CHAT_READ_LINKS` / `CHAT_READ_LINKS_MEMBERS` | 1 / 0 | Đọc link gửi kèm câu hỏi (chủ bot, admin); 1 = mở cho cả thành viên Zalo |
 | `CHAT_AUTO_RAG` | 1 | Chat thường tự tra kho `rag/` khi khớp rất rõ (chủ bot/admin, không tốn AI) |
 | `PROACTIVE_FOLLOWUPS` | 1 | Công tắc chung hỏi thăm chủ động |
@@ -751,6 +908,17 @@ Nhắc việc, chi tiêu, bản tin sáng, danh mục:
 | `PRICE_ALERTS_ENABLED` / `PRICE_ALERTS_HOLDINGS_INTRADAY` | 1 / 1 | Quét ngưỡng giá trong phiên; báo luôn stop/target danh mục chủ bot trong phiên |
 | `PRICE_ALERT_POLL_SEC` | 300 | Chu kỳ quét trong phiên (120-1800 giây) |
 | `PRICE_ALERT_MAX_SYMBOLS` / `PRICE_ALERT_MAX_PER_USER` / `WATCHLIST_MAX_SYMBOLS` | 40 / 10 / 20 | Mã mỗi vòng quét; ngưỡng mỗi người; mã theo dõi mỗi người |
+| `NOTIFY_HUB_ENABLED` | 1 | Gom thông báo chủ động + giờ yên lặng (`services/notify_hub.py`); 0 = mọi nguồn gửi thẳng như cũ |
+| `NOTIFY_BATCH_MINUTES` | 60 | Tin nhẹ chờ tối đa chừng này phút rồi gộp gửi (5-1440) |
+| `NOTIFY_QUIET_HOURS` | `22:30-06:30` | Giờ yên lặng mặc định (giờ VN; `off` = không có), từng người đổi bằng `/yenlang` |
+| `NOTIFY_QUEUE_MAX_PER_USER` / `RETENTION_NOTIFY_QUEUE_DAYS` | 30 / 7 | Trần tin chờ mỗi người nhận; số ngày giữ dòng đã gửi (chống xếp trùng) |
+| `BACKGROUND_JOBS_ENABLED` | 1 | Việc nền `/viec` + bộ chạy tác vụ định kỳ; 0 = tắt cả hai |
+| `BACKGROUND_JOB_TIMEOUT_SEC` | 600 | Hạn chót mỗi việc nền/lần chạy tác vụ (60-1800 giây) |
+| `BACKGROUND_JOBS_CONCURRENCY` / `BACKGROUND_JOBS_MAX_PER_USER` | 1 / 3 | Việc chạy cùng lúc toàn bot (không vượt `MAX_CONCURRENT_TURNS`); việc chờ/chạy tối đa mỗi người |
+| `BACKGROUND_JOBS_MEMBERS` | 1 | Thành viên Zalo được giao `/viec` (tính lượt nặng); 0 = chỉ chủ bot, admin |
+| `ROUTINES_ENABLED` / `ROUTINES_MEMBERS` | 1 / 0 | Tác vụ định kỳ `/lichtacvu`; thành viên Zalo mặc định không dùng |
+| `ROUTINE_MAX_RUNS_PER_DAY` | 20 | Trần số lần chạy tác vụ định kỳ mỗi ngày toàn bot |
+| `RETENTION_BG_JOBS_DAYS` | 30 | Số ngày giữ việc nền đã xong (yêu cầu + kết quả) |
 
 Thoại, ảnh, tài liệu:
 
@@ -759,6 +927,14 @@ Thoại, ảnh, tài liệu:
 | `VOICE_STT_ENABLED` | 1 | Chép lời tin thoại Telegram/Zalo; 0 = trả lời "chưa bật" |
 | `GROQ_STT_MODEL` / `VOICE_STT_LANGUAGE` | `whisper-large-v3-turbo` / `vi` | Model Whisper của Groq (cooldown riêng `groq_stt`); ngôn ngữ gửi Whisper (trống hoặc `auto` = tự nhận) |
 | `VOICE_MAX_BYTES` / `VOICE_MAX_SECONDS` | 5242880 / 180 | Trần tin thoại (64 KB-8 MB; 10-600 giây), gateway dùng chung trần byte |
+| `VOICE_REPLY_ENABLED` | 1 | Cho phép `/noi` (mỗi người vẫn phải tự bật); 0 = tắt cả bot |
+| `VOICE_REPLY_MAX_CHARS` | 600 | Số ký tự tối đa được đọc (100-2000) |
+| `VOICE_TTS_MODEL` / `VOICE_TTS_VOICE` | `gemini-3.8-flash-tts` / `Kore` | Model Gemini TTS và giọng dựng sẵn (Live dùng chung giọng) |
+| `VOICE_ENGINE` | `auto` | Bộ đọc `/noi`: `auto` = Gemini Live rồi Gemini TTS khi Live lỗi/hết quota/đọc lệch; `live` = chỉ Live; `tts` = chỉ TTS |
+| `LIVE_VOICE_MIN_MATCH` | 80 | % giống tối thiểu giữa bản chép lời của Live và văn bản cần đọc (50-100); thấp hơn thì bỏ âm thanh Live |
+| `VOICE_REPLY_URL_TTL_MIN` / `VOICE_REPLY_STORE_MB` | 10 / 8 | Zalo: link tin thoại ký HMAC sống N phút; kho RAM tối đa N MB (và 20 file) |
+| `NL_COMMANDS_ENABLED` / `NL_COMMANDS_LLM` | 1 / 1 | Hỏi tự nhiên thay cho lệnh: 0 = tắt hẳn / 0 = chỉ mẫu câu bằng code, không thêm lệnh vào router tool |
+| `NUTRITION_NL` / `NUTRITION_AI_ESTIMATE` | 0 / 0 | `/an`: 1 = ghi bữa ăn từ câu tự nhiên rất rõ; 1 = món lạ ước lượng kcal bằng 1 lượt AI |
 | `VISION_QA_ENABLED` / `PHOTO_NO_CAPTION_MODE` | 1 / `prompt` | Ảnh kèm câu hỏi được trả lời về ảnh; ảnh không caption: `prompt` hoặc `describe` |
 | `DOCUMENT_QA_ENABLED` / `DOCUMENT_MAX_BYTES` | 1 / 5242880 | Đọc PDF/TXT/MD/DOCX; trần file (64 KB-8 MB) |
 | `DOCUMENT_MAX_CHARS` | 40000 | Trần ký tự chữ tách từ TXT/DOCX mỗi lượt hỏi (2000-200000) |
@@ -942,8 +1118,8 @@ không (xem trên), không liên quan tới việc cách ly bộ nhớ này.
 - Mỗi ngày tối đa `ZALO_MEMBER_DAILY_TURNS` lượt (mặc định 40) và
   `ZALO_MEMBER_DAILY_HEAVY` lượt nặng (mặc định 5), mở lại lúc 0h giờ VN. Sửa trên
   `/admin` → Người dùng & Zalo (kèm số lượt đã dùng hôm nay của từng người).
-- Lượt nặng: `/anh`, `/tuvi_chitiet`, `/kymon_chitiet`, `/tsh_chitiet` và lượt chat
-  có tra web. Hết lượt nặng thì vẫn trò chuyện được nhưng không tra web. Cổ phiếu
+- Lượt nặng: `/anh`, `/tuvi_chitiet`, `/kymon_chitiet`, `/tsh_chitiet`, lượt chat
+  có tra web, việc nền `/viec` và mỗi lần chạy tác vụ định kỳ. Hết lượt nặng thì vẫn trò chuyện được nhưng không tra web. Cổ phiếu
   tính như lượt thường.
 - Hết lượt thì Lan Anh báo 1 câu theo cách gọi riêng kèm giờ mở lại, tối đa 1 lần
   mỗi giờ; các tin sau trong giờ đó im lặng. DB lỗi thì không chặn ai.
@@ -1146,11 +1322,63 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 `zalo-gateway` thực hiện. `account_id` cho các lệnh `/fb_*` trên Telegram/Zoom
 được lấy từ Zalo session đang đăng nhập, nên không cần có nhóm `/tongket` trước.
 
+## Hỏi tự nhiên thay cho lệnh
+
+Không cần nhớ ~100 lệnh: nhắn tự nhiên (có dấu hay không dấu đều được) là em tự làm
+đúng việc; lệnh / vẫn chạy như cũ cho ai thích gõ. Cơ chế (`services/nl_commands.py`,
+danh bạ lệnh `services/command_catalog.py`, chi tiết ở `docs/nang-cap-jarvis.md` mục
+"Hỏi tự nhiên thay cho lệnh"):
+
+- Mẫu câu rõ ràng nhận bằng code (không tốn AI); câu có dấu hiệu là yêu cầu chức năng
+  thì lệnh của nhóm đó được thêm vào router tool sẵn có (vẫn 1 lượt router, chỉ nhóm
+  khớp vào prompt). Kết quả lệnh gửi NGUYÊN VĂN như khi gõ lệnh, không qua AI viết lại.
+- Thiếu tham số (tử vi thiếu giờ sinh/giới tính...) thì em hỏi lại, không đoán; câu
+  trả lời kế tiếp chạy tiếp lệnh. Router không chắc thì hỏi lại 1 câu ngắn.
+- Bật/tắt cài đặt (`/noi`, `/yenlang`, `/bantin`, `/hoithan`, `/memory on|off`,
+  `/tavily`) chỉ khi câu nói rõ bật/tắt; em nhắc lại lệnh đã chạy. Tin thoại không đổi
+  cài đặt.
+- Lệnh quản trị/nguy hiểm/xoá (`/fb_*`, `/zalo*`, `/forget`, `/xoadulieu`, `/reset`,
+  `/router9`, `/model`, `/themnhom`, `/xoanhom`, `/bangtinsang`...) KHÔNG BAO GIỜ tự
+  chạy: em chỉ ra đúng lệnh cần gõ, tham số điền sẵn.
+- Quyền giữ nguyên: thành viên Zalo không thấy/không gọi được lệnh admin (hỏi thì đi
+  chat thường, không lộ lệnh); dữ liệu luôn của đúng người hỏi; người lạ vẫn im lặng.
+- `NL_COMMANDS_ENABLED=0` tắt hẳn; `NL_COMMANDS_LLM=0` chỉ dùng mẫu câu bằng code.
+
+| Nhắn | Em làm |
+|---|---|
+| "em làm được gì?", "giúp gì được cho anh" | Bản `/help` ngắn theo vai trò |
+| "làm sao để dò vé số", "có lệnh nào xem vàng không" | Chỉ cách hỏi tự nhiên + lệnh tương ứng (`/xoso`, `/vang`) |
+| "xem tử vi 15/3/1990 9h30 nam", "luận giải tử vi chi tiết ..." | `/tuvi`, `/tuvi_chitiet` |
+| "xem tử vi giúp anh" → "15/3/1990 9h30 nam" | Hỏi ngày giờ sinh, giới tính rồi an lá số |
+| "thần số học 15/3/1990 tên Nguyễn Văn An" | `/tsh 15/3/1990 Nguyễn Văn An` |
+| "lập bàn kỳ môn lúc này", "kỳ môn 9h mai ký hợp đồng có thuận không" | `/kymon`, `/kymon_chitiet` |
+| "ngày tốt tháng này", "sao hạn 1990 nam năm 2027", "xem hợp tuổi 1990 và 1992" | `/lich <câu hỏi>` |
+| "tìm giá iPhone 16 Pro", "dịch giúp anh sang tiếng Nhật: cảm ơn" | `/gia`, `/dich vi>ja` |
+| "tạo ảnh con mèo đội nón lá", "viết prompt tạo ảnh ..." | `/anh`, `/prompt` |
+| "em đang nhớ gì về anh", "xem lịch sử chat gần đây" | `/memory`, `/history` |
+| "việc nền của anh tới đâu rồi", "xem các tác vụ định kỳ" | `/viec`, `/lichtacvu` |
+| "hôm nay anh ăn bao nhiêu calo", "các khoản chi gần đây" | `/an`, `/chitieu ds` |
+| "danh sách mã anh đang theo dõi", "sổ giao dịch FPT", "tháng 10 anh chốt lãi bao nhiêu" | `/theodoi`, `/lichsucp FPT`, `/laicp 10` |
+| "xem thử bản tin sáng" | `/bantin xem` |
+| "bật trả lời bằng giọng nói", "bật giờ yên lặng từ 22h đến 7h", "tắt hỏi thăm chủ động" | `/noi on`, `/yenlang 22-7`, `/hoithan off` |
+| "provider đang chạy cái nào", "thống kê lượt gọi 7 ngày", "hôm nay bot có lỗi gì không", "điểm tin sáng nay có gì" (chủ bot/admin) | `/status`, `/thongke 7d`, `/loi` (chủ bot), `/tintuc` |
+| "tóm tắt nhóm Gia đình hôm nay", "nhóm Gia đình đang nói gì" (chủ bot/admin) | `/tongket Gia đình homnay`, `/dangnoi Gia đình` |
+| "xoá hết trí nhớ đi em", "khoá zalo user 12345" | 🔐 Chỉ ra `/forget`, `/zalokhoa 12345` - không tự chạy |
+
+Đã có từ trước và giữ nguyên: giá vàng/tỷ giá/xăng/xổ số, thời tiết, âm lịch, "có gì
+cần anh chú ý", nhắc việc, ngày nhớ, ghi chú, "nhớ giúp anh", chi tiêu, ăn uống
+(`NUTRITION_NL`), danh mục và ngưỡng giá, tác vụ định kỳ, đọc link, tìm lại lịch sử
+chat, kho `rag/`.
+
+Trợ giúp: `/help` ngắn (vài câu mẫu + danh sách chủ đề), `/help <chủ đề>` (vd `/help
+vàng`, `/help nhắc việc`, `/help admin`), `/help all` bản đầy đủ. Menu "/" của
+Telegram chỉ còn 18 lệnh hay dùng; mọi lệnh khác vẫn gõ được.
+
 ## Lệnh chính
 
 | Lệnh | Chức năng |
 |---|---|
-| `/help` | Hướng dẫn đầy đủ (Telegram: `handlers/commands.py`; Zalo/Zoom: `services/channel_command_service.py`, theo vai trò) |
+| `/help [chủ đề\|all]` | Hướng dẫn ngắn "cứ nhắn tự nhiên như …" + chủ đề; `/help vàng`, `/help admin`... chi tiết 1 chủ đề; `/help all` bản đầy đủ (Telegram: `handlers/commands.py`; Zalo/Zoom: `services/channel_command_service.py`, theo vai trò) |
 | `/start` | Lời chào (Telegram có câu ví dụ) |
 | `/huy` | Dừng câu trả lời đang chạy dở (mọi kênh, cả thành viên Zalo) |
 | `/sai [lý do]` | Báo câu trả lời chat vừa rồi chưa ổn (ghi 👎 kèm lý do) |
@@ -1174,13 +1402,16 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/tsh_chitiet` (hoặc `/ths_chitiet`), `/tuvi_chitiet` | Như trên + AI diễn giải (1 lượt AI; AI chỉ diễn giải số/lá số đã tính, không tính lại). Ngày sinh, họ tên không lưu DB |
 | `/kymon [dd/mm[/yyyy]] [HH:MM\|8h\|9h sáng mai]` | Lập bàn Kỳ Môn Độn Giáp 9 cung bằng code, mặc định lúc này, không tốn AI |
 | `/kymon_chitiet [thời điểm] <việc cần xem>` | Bàn Kỳ Môn + 1 lượt AI luận giải việc đó |
-| `/vang`, `/tygia [mã\|100 usd]` | Giá vàng SJC; tỷ giá Vietcombank, đổi tiền (không tốn AI) |
-| `/xoso [mb\|mn\|mt\|tỉnh] [hôm qua\|dd/mm] [số vé]` | Kết quả xổ số, dò vé bằng code (`/xoso help`) |
+| `/vang [sjc\|nhẫn\|doji\|pnj\|bảo tín\|thế giới]`, `/tygia [mã\|100 usd]` | Giá vàng SJC/DOJI/PNJ/Bảo Tín + thế giới (vang.today, SJC dự phòng); tỷ giá Vietcombank, đổi tiền (không tốn AI) |
+| `/xang [xăng\|diesel\|dầu hỏa]` | Giá xăng dầu Petrolimex vùng 1/vùng 2, tăng giảm kỳ trước, PVOIL, giờ cập nhật (không tốn AI) |
+| `/xoso [mb\|mn\|mt\|tỉnh] [hôm nay\|hôm qua\|dd/mm\|thứ] [số vé]`, `/xoso tinh` | Kết quả xổ số theo miền hoặc từng đài, dò vé bằng code; danh sách đài + lịch quay (`/xoso help`) |
 | `/thoitiet [địa điểm]`, `/thoitiet nha <tỉnh>\|nha\|nha xoa` | Thời tiết; đặt/xem/xoá thành phố riêng của mình |
-| `/bantin [on\|off\|<giờ 4-12>\|tin on\|tin off\|xem]` | Bản tin sáng cá nhân trên kênh đang dùng |
+| `/bantin [on\|off\|<giờ 4-12>\|tin on\|tin off\|xang on\|xang off\|xem]` | Bản tin sáng cá nhân trên kênh đang dùng (`xang on`: thêm giá xăng) |
 | `/nhac`, `/nhac <thời gian> <nội dung>`, `/nhac huy <số\|từ khoá>`, `/nhac hoan <số> <30p\|1 tiếng\|sáng mai>` | Xem, đặt (cả nhắc lặp, âm lịch), huỷ, dời nhắc việc |
 | `/ngaynho`, `/ngaynho <tên> <ngày> [âm] [trước N ngày] [lúc 7h] [theo tháng nhuận]`, `/ngaynho xoa <số\|tên>` | Ngày nhớ: giỗ, sinh nhật, kỷ niệm |
 | `/chitieu [kỳ]`, `/chitieu <mô tả> <số tiền>`, `/chitieu ds`, `/chitieu xoa <số>`, `/chitieu_xoa <số>` | Tổng chi theo danh mục (hôm nay, tuần này, tháng trước, tháng M[/YYYY], năm nay...), ghi, xem, xoá khoản chi |
+| `/an <món> [bữa]`, `/an`, `/an tuan`, `/an xoa <số>` | Ghi bữa ăn (kcal ước lượng theo bảng món Việt), xem hôm nay theo bữa, 7 ngày, xoá 1 món |
+| `/noi [on\|off\|auto]` | Trả lời kèm tin thoại (auto: chỉ khi vừa gửi tin thoại); Zalo cần máy chủ có ffmpeg |
 | `/router9 on\|off`, `/tavily on\|off` | Bật/tắt 9Router thủ công; bật/tắt Tavily (trả lời kèm chế độ tra web hiện tại; tắt thì dùng web search của provider) |
 | `/prompt` | Tạo prompt hình ảnh |
 | `/gia` | Tìm giá sản phẩm |
@@ -1193,9 +1424,14 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/notes [từ khoá]`, `/xoaghichu <số\|tatca xacnhan>` | Xem/tìm, xoá ghi chú |
 | `/xuatdulieu`, `/xoadulieu [xacnhan]` | Xuất / xoá dữ liệu cá nhân |
 | `/hoithan [on\|off]` | Bật/tắt hỏi thăm chủ động |
+| `/chuy` | Có gì cần chú ý: nhắc việc, ngày nhớ, danh mục, hỏi thăm, tin chờ gom; admin thêm bài FB chờ duyệt; chủ bot thêm lỗi, provider, giám sát (không tốn AI) |
+| `/yenlang [on\|off\|22-7]` | Giờ yên lặng của chính mình: ban đêm chỉ nhắn ngay nhắc việc (và cảnh báo 🚨 cho chủ bot), tin khác gom lại |
+| `/viec <yêu cầu>`, `/viec [xem\|huy <số>]` | Giao việc chạy nền (vẫn chat bình thường), xong em gửi kết quả; xem/huỷ việc |
+| `/lichtacvu <mỗi ... cho anh>`, `/lichtacvu [huy\|tam dung\|tiep <số>]` | Tác vụ định kỳ: đến giờ em chạy 1 yêu cầu AI rồi gửi kết quả (khác `/nhac`); thành viên Zalo mặc định tắt |
+| `/hoc [ok\|bo]` | Duyệt cách trả lời em tự rút ra (Telegram còn có nút [Ghi nhớ] [Bỏ]) |
 | `/model` | Xem hoặc đổi model 9Router |
 | `/status` | Provider chain, chế độ tra web, cooldown (lý do, phút còn lại), khối "📈 24 giờ qua" (số lượt, p50/p95, tỉ lệ lỗi theo provider) |
-| `/loi` | Lỗi gom theo loại + vị trí code hôm nay/hôm qua, số lần khởi động lại 7 ngày (Telegram, chủ bot) |
+| `/loi` | Lỗi gom theo loại + vị trí code hôm nay/hôm qua, số lần khởi động lại 7 ngày (chủ bot: Telegram, Zoom) |
 | `/thongke [Nd\|Ngiờ]` | Thống kê lượt gọi theo user/kênh và theo model (mặc định 7 ngày, chỉ admin) |
 | `/danhgia [Nd]` | Số 👍/👎 theo provider/model, mặc định 30 ngày (chủ bot: Telegram, Zoom, Zalo controller) |
 | `/xuateval [Nd]` | Xuất các câu chủ bot bấm 👎 trên Telegram thành file YAML case ứng viên cho golden set |
@@ -1203,7 +1439,7 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/rag <câu hỏi>` | Tra cứu kiến thức trong các file `.md` của thư mục `rag/` (tìm theo từ khóa, AI diễn giải kèm nguồn; chỉ admin trên Zalo/Zoom) |
 | `/ragxuly <file>` | Dọn file md OCR trong `rag/` (gộp dòng ngắt, bỏ số trang, AI thêm heading; backup bản gốc vào `rag/_goc/`; chỉ admin trên Zalo/Zoom) |
 | `/bangtinsang` (hoặc `/bantinsang`) | Gửi ngay bản tin RSS buổi sáng tới Zalo + Zoom (chỉ admin; bình thường tự gửi 8h) |
-| `/userouter9` | Thử lại 9Router provider |
+| `/userouter9` | Thử lại 9Router provider (không nằm trong menu Telegram - menu tối đa 100 lệnh - nhưng vẫn gõ được) |
 | `/zoompair <jid> [tên]` | Cấp quyền 1 jid Zoom nói chuyện với bot |
 | `/zoomxoa` | Gỡ pairing Zoom hiện tại |
 | `/zoomstatus` | Xem jid Zoom đang được pair |
@@ -1263,6 +1499,12 @@ hỏi>` (`ai/agent_service.py`) để MODEL tự quyết định:
   `services/web_reader.py`), `xem_rss`, cộng các tool CHỈ ĐỌC của chat: ghi chú,
   nhắc việc, ngày nhớ, chi tiêu, thời tiết, âm lịch, danh mục, kho `rag/` (chủ
   bot/admin). Không có tool GHI dữ liệu trong `/agent`.
+- Mô tả tool/schema viết gọn kiểu EasyTool (1 câu + dạng args + khi nào dùng) để
+  router chat và mỗi bước `/agent` vừa 8K token/phút của Groq gpt-oss-20b:
+  danh sách tool router 4.221 → 2.622 ký tự, JSON tools `/agent` 4.037 → 3.558;
+  `test_tool_catalog_budget` đặt trần, thêm tool thì viết gọn tương tự.
+- Câu hỏi, lịch sử, trí nhớ và kết quả tool được che bí mật trước khi gửi
+  provider (`PROMPT_REDACTION`).
 - Kết quả tool ngoài (web, link, RSS) luôn được làm sạch, rào bằng `core.untrusted`
   và đánh dấu taint; câu trả lời cuối qua bộ lọc link lạ.
 - Bật trên cả Telegram, Zalo và Zoom (`services/channel_command_service.py`),
@@ -1350,10 +1592,12 @@ LCTA có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo n
 | `/lich/ngay-le` | Ngày lễ âm/dương trong 12 tháng tới |
 | `/thoi-tiet?noi=Đà Lạt` | Thời tiết hiện tại + dự báo 7 ngày (Open-Meteo, mặc định TP.HCM; tối đa 3 lượt tra song song, cache có trần trong `services/weather.py`) |
 | `POST /thoi-tiet/dia-diem/them`, `/xoa` (cần đăng nhập) | Thêm/xoá địa điểm hay xem |
+| `/xo-so?dai=mn\|mt\|mb\|<khoá đài>&ngay=YYYY-MM-DD&ve=` | Kết quả xổ số theo miền/đài (ô chọn đánh dấu ★ đài quay hôm nay), bảng giải, dò vé bằng code; tối đa 3 lượt tải nguồn song song, không cần đăng nhập |
 | `/tu-vi` (form, POST ra trang kết quả) | Lá số Tử Vi Đẩu Số dạng lưới 4x4, sao kèm độ sáng (M/V/Đ/B/H) và Tứ hóa |
 | `/than-so-hoc` (form, POST ra trang kết quả) | Thần số học: số chủ đạo, biểu đồ ngày sinh / tổng hợp, 4 đỉnh cao, 4 thử thách |
 | `/ky-mon?ngay=YYYY-MM-DD&gio=HH:MM` (mặc định lúc này; `POST /ky-mon` = AI luận giải, cần đăng nhập) | Bàn Kỳ Môn 9 cung dạng lưới 3x3 (giữ 3x3 ở mọi bề rộng), bảng thông số, cách cục theo nhóm, ý nghĩa từng cung; có link từ thanh bên, trang chủ và menu "Công cụ web" của `/admin` |
 | `GET /api/v1/calendar/days/{YYYY-MM-DD}`, `/months/{YYYY-MM}`, `/conversions?lunarDay=&lunarMonth=&lunarYear=&isLeapMonth=`, `/answers?q=` | JSON lịch |
+| `GET /api/v1/lottery?province=&date=&ticket=` | JSON xổ số: `province` = `mn`/`mt`/`mb` hoặc khoá/tên đài (`tay-ninh`, `Đà Lạt`; trống = miền Nam), `date` YYYY-MM-DD (trống = kỳ mới nhất), `ticket` tuỳ chọn; trả `target` (lịch quay `drawDays`, `drawsToday`), `status` (`latest`/`exact`/`not_drawn`/`pending`/`missing`/`empty`), `message`, `draw.provinces[].prizes`, `ticket.results[].wins`, `availableDates`; 422 `INVALID_PROVINCE`/`INVALID_DATE`/`INVALID_TICKET`, nguồn lỗi 503 `SOURCE_UNAVAILABLE` |
 | `POST /api/v1/numerology/readings`, `POST /api/v1/tuvi/charts` | JSON thần số học/lá số (ngày sinh trong body, không nằm trong URL/log; `birthDate` nhận `YYYY-MM-DD` hoặc `DD/MM/YYYY`). Lá số: `isLeapMonth`/`isEarlyTy` là bool (sinh 23h-24h: `isEarlyTy: true`, an theo ngày hôm sau); mỗi cung có `mainStars`/`minorStars` (tên) như cũ và thêm `stars[]` {name, isMain, hoa, brightness M/V/Đ/B/H}, `daiHan.fromAge/toAge`; thần số học thêm `asOf`, `age`, `lifePath.single`, `maturity`, `pinnacles[]`, `challenges[]`, `personalMonthDetail`, `nameChart`, `combinedChart` |
 | `POST /api/v1/qimen/charts` | JSON bàn Kỳ Môn: body `{"dateTime"?: "YYYY-MM-DDTHH:MM[+07:00]"}` (không múi giờ = giờ VN, bỏ trống = lúc này); trả `pillars`, `solarTerm`, `dun`, `ju`, `yuan`, `xunShou`, `zhiFu`, `zhiShi`, `void`, `horse`, cờ phục/phản ngâm, `grid`, `palaces`, `patterns`, `patternGroups`; GET trả 405 chuẩn |
 
@@ -1394,6 +1638,13 @@ hiển thị trên trang đều được escape HTML. Trang cho phép:
 - Người dùng & Zalo: xem, ghim, quên từng mục trí nhớ của từng người
   (`/admin/api/memory/items`, `/admin/api/memory/item`); sửa trần lượt/lượt nặng mỗi
   ngày của thành viên Zalo kèm số đã dùng hôm nay (`/admin/api/quota`, áp dụng ngay).
+- Hệ thống → "Việc nền & tác vụ định kỳ" (`/admin/api/jobs`): 30 việc gần nhất (đang
+  chạy/chờ trước, thời gian chạy, token, lỗi) và danh sách tác vụ định kỳ, số lần
+  chạy hôm nay so với trần.
+- Nhật ký (`/admin/api/journal?user_id=&q=&page=`, `POST /admin/api/journal/note`):
+  ghi chú phiên chat của chủ bot hoặc 1 người Zalo gom theo ngày (giờ VN) kèm tóm tắt
+  dài hạn, tìm theo từ khoá, sửa/xoá từng ghi chú (trong khoá trí nhớ của người đó;
+  POST chỉ nhận JSON), 20 ghi chú/trang, tối đa 50 trang.
 - Hệ thống → "Giám sát, sao lưu & lỗi" (`/admin/api/watchdog`): lỗi hôm nay theo
   loại, số lần khởi động lại trong 7 ngày, nhịp tim, lần sao lưu và diễn tập gần
   nhất, trạng thái xoay khoá (nút "Xoay khoá ngay" = `POST /admin/api/key-rotation/run`),
@@ -1434,7 +1685,10 @@ khoảng chọn. Không script/CDN ngoài; mọi giá trị server vẫn escape.
   Phần nhịp tim/khởi động lại chỉ chạy khi `RENDER=true`.
 - **Kênh cảnh báo.** Cảnh báo cùng loại có cooldown (`core.alerts`, trần 128 khoá).
   Telegram là kênh chính; Zoom là kênh phụ khi Telegram lỗi và luôn nhận các cảnh
-  báo 🚨 (`ALERT_ZOOM_MIRROR`).
+  báo 🚨 (`ALERT_ZOOM_MIRROR`). Cảnh báo 🚨 và cảnh báo cần xử lý ngay (`urgent=True`:
+  hồi phục provider, gateway Zalo mất/có lại kết nối, tin bị bỏ DEAD, Zoom lạ, lượt đăng
+  Page chưa rõ, kết quả `/ragxuly`) gửi ngay; cảnh báo nhẹ được gom (mục "Gom thông
+  báo" ở trên) - tin gom đi Telegram, không nhân bản sang Zoom.
 - **Gom lỗi** (`services/error_digest.py`): lỗi ERROR (và WARNING có traceback)
   được gom theo logger, loại lỗi và vị trí code trong repo; không lưu nội dung lỗi.
   Có loại lỗi mới thì bot báo ngay (tối đa 4 tin/giờ); 7h sáng gửi tổng hợp lỗi
@@ -1467,7 +1721,9 @@ khoảng chọn. Không script/CDN ngoài; mọi giá trị server vẫn escape.
   nền có trần, giữ 14 ngày (`RETENTION_TURN_METRICS_DAYS`), bản sao lưu không chép
   dữ liệu bảng này. Gateway Zalo chưa ghi cùng mã lượt và chưa đo thời gian gửi.
 - `/status` (Telegram, Zalo/Zoom) có khối "📈 24 giờ qua": số lượt, p50/p95 độ trễ,
-  tỉ lệ lỗi theo từng provider.
+  tỉ lệ lỗi theo từng provider, và dòng "🎙️ Gemini Live": bật/tắt, cooldown riêng,
+  số lượt Live trong ngày quota (từ 0h giờ Thái Bình Dương, đọc `provider_calls`;
+  không ping Live để khỏi tốn lượt). `/admin` → Quota miễn phí có dòng "Gemini Live".
 - Quota miễn phí (`services/quota_burn.py`), mỗi provider đếm theo đúng cửa sổ của
   nó: Gemini theo project Google Cloud, reset 0h giờ Thái Bình Dương (khoảng 14-15h
   giờ VN; 2 key cùng project thì `GEMINI_KEYS_SAME_PROJECT=1`); OpenRouter theo ngày
@@ -1475,7 +1731,9 @@ khoảng chọn. Không script/CDN ngoài; mọi giá trị server vẫn escape.
   theo tháng (1000 credit, tìm "advanced" tính 2); Groq lấy số còn lại từ header
   response. Hạn mức để 0 thì chỉ hiển thị. Chạm `QUOTA_BURN_ALERT_PCT` (80%) thì bot
   nhắn chủ bot 1 lần cho mỗi cửa sổ. Nên đặt `FREE_TIER_RPD_GEMINI` theo hạn mức
-  của model đang dùng (xem trên AI Studio).
+  của model đang dùng (xem trên AI Studio). Hạn mức free tier của Gemini Live chưa
+  được Google công bố: quan sát số lượt trên `/status` và aistudio.google.com/rate-limit
+  rồi mới đặt `FREE_TIER_RPD_GEMINI_LIVE`.
 - Nếu Groq từ chối tham số xin token thì đặt `GROQ_STREAM_USAGE=0`.
 
 ## Giữ Render Free không bị ngủ (UptimeRobot)
@@ -1600,13 +1858,15 @@ handlers/           Telegram handlers mỏng (parse lệnh -> gọi service -> t
 services/           Logic dùng chung cho mọi kênh: channel_chat_service.run_chat_turn
                     (pipeline chat), channel_dispatch (Zalo/Zoom), memory_service,
                     tools + tool_registry, reminder_service, expense_service,
-                    morning_brief, vn_daily_chat, kymon, voice/vision/document_service,
+                    morning_brief, attention (/chuy), notify_hub (gom thông báo,
+                    giờ yên lặng), background_jobs (/viec), routines (/lichtacvu),
+                    vn_daily_chat, kymon, voice/vision/document_service,
                     portfolio_* / price_alerts, usage_quota, watchdog, error_digest,
                     quota_burn, price_search (/gia), usage_stats (/thongke)...
 stock/              Market data, validation, policy, lịch giao dịch, danh mục và backtest
 assets/             Ý nghĩa soạn sẵn: tu_vi.yaml, than_so_hoc.yaml, ky_mon.yaml
 rag/                Kho kiến thức .md cho lệnh /rag (mỗi heading 1 mẩu kiến thức)
-migrations/         NNN_*.sql (001-025), checksum ghim trong migrations.lock
+migrations/         NNN_*.sql (001-026), checksum ghim trong migrations.lock
 scripts/            backup_drill.py, run_evals.py, train_trend_model.py, run-zalo-gateway.sh
 test/evals/         Golden set đánh giá (YAML + harness.py)
 zalo-gateway/        Node.js Zalo listener
@@ -1718,6 +1978,7 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
 
 ## Tài liệu bổ sung
 
+- `docs/nang-cap-jarvis.md` — các tính năng lấy ý từ các dự án Jarvis: `/chuy`, gom thông báo + giờ yên lặng (migration 026), việc nền `/viec` + tác vụ định kỳ `/lichtacvu` (migration 027), che bí mật trước khi gửi provider, duyệt cách trả lời, mô tả tool gọn, trả lời bằng giọng nói `/noi`, trang Nhật ký trong `/admin`, ghi ăn uống `/an` (migration 028), Gemini Live (chat dự phòng cuối + bộ đọc `/noi`)
 - `docs/nang-cap-2026-10-26.md` — đợt nâng cấp 26/10/2026: thay đổi theo nhóm, danh sách việc khi deploy (migration 017-025, biến Render, GitHub secrets), việc chủ bot còn phải quyết, phần cố ý chưa làm, rủi ro
 - `docs/backup-restore.md` — sao lưu/khôi phục DB, role chỉ-đọc, diễn tập, xoay khoá
 - `docs/upgrade-2026-10.md` — đợt nâng cấp toàn diện 10/2026 (lỗi đã sửa, migration 015, biến mới, kết quả backtest offline, việc cần làm khi deploy)

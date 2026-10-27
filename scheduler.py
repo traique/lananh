@@ -1,4 +1,8 @@
-"""Background scheduler for reminders and the daily portfolio digest."""
+"""Background scheduler for reminders and the daily portfolio digest.
+
+Nhắc việc là tin URGENT do người dùng tự đặt giờ: gửi thẳng (kể cả giờ yên lặng),
+không qua services/notify_hub. Digest danh mục 8h là tin tổng hợp: qua hub.
+"""
 
 import asyncio
 import logging
@@ -229,10 +233,27 @@ async def run_daily_digest_once(user_id: int, *, force: bool = False) -> bool:
         # Không có danh mục: vẫn đánh dấu để không thử lại mỗi 15 phút cả buổi sáng.
         await db.set_setting(_DIGEST_LAST_SENT_KEY, now.date().isoformat())
         return False
-    if await _notify(user_id, digest):
+    if await _offer_digest(user_id, digest, now, force=force) or await _notify(user_id, digest):
         await db.set_setting(_DIGEST_LAST_SENT_KEY, now.date().isoformat())
         return True
     return False
+
+
+async def _offer_digest(user_id: int, digest: str, now: datetime, *, force: bool) -> bool:
+    """Digest là tin tổng hợp (NORMAL): qua services/notify_hub - xả ngay kèm tin
+    đang chờ gom, hoặc chờ hết giờ yên lặng. False = gửi thẳng như cũ."""
+    if force:
+        return False
+    from services import notify_hub
+
+    return await notify_hub.offer(
+        "telegram",
+        user_id,
+        digest,
+        source="portfolio_digest",
+        dedup=f"digest:{now.date().isoformat()}",
+        now=now,
+    )
 
 
 async def _daily_digest_loop(user_id: int) -> None:

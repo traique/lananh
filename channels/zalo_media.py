@@ -18,8 +18,10 @@ POST /internal/zalo/voice
     body:    file ghi âm (m4a/aac/ogg/mp3/wav..., nhận theo magic bytes),
              tối đa VOICE_MAX_BYTES (mặc định 5 MB)
     trả:     ZaloMessageResponse {"messages": [...], "provider": null|"api",
-             "image_b64": null}; messages[0] là "🎙️ Em nghe là: «...»" (hoặc câu
-             báo lỗi giọng Lan Anh), các tin sau là câu trả lời. Cache kind "voice".
+             "image_b64": null, "voice": null|{...}}; messages[0] là "🎙️ Em nghe là:
+             «...»" (hoặc câu báo lỗi giọng Lan Anh), các tin sau là câu trả lời;
+             "voice" = tin thoại trả lời khi người gửi bật /noi on|auto
+             (channels/contracts.ZaloVoice). Cache kind "voice".
 
 POST /internal/zalo/file
     headers: x-zalo-bridge-secret, x-zalo-sender-id, x-zalo-message-id,
@@ -76,6 +78,7 @@ from services import (
     reply_audience,
     turn_control,
     usage_quota,
+    voice_reply,
     voice_service,
 )
 from services.concurrency import TurnCancelled, assistant_turn, run_cancellable
@@ -184,7 +187,12 @@ async def _voice_turn(
         cached = await idempotency.get_zalo_response(x_zalo_account_id, x_zalo_message_id, "voice")
         if cached is not None:
             return ZaloMessageResponse.model_validate(cached)
-        with reply_audience.use(_audience(zalo_user, x_zalo_sender_id)):
+        # Tin thoại trả lời /noi (auto: người dùng vừa gửi tin thoại) đi ra qua hộp
+        # voice_reply.capture() - task con huỷ được thừa hưởng cùng hộp.
+        with (
+            reply_audience.use(_audience(zalo_user, x_zalo_sender_id)),
+            voice_reply.capture() as box,
+        ):
             replies, provider = await _cancellable(
                 zalo_user.internal_user_id,
                 functools.partial(
@@ -196,7 +204,11 @@ async def _voice_turn(
                 ),
             )
         del body
-        response = ZaloMessageResponse(messages=_zalo_chunks(replies), provider=provider)
+        response = ZaloMessageResponse(
+            messages=_zalo_chunks(replies),
+            provider=provider,
+            voice=box[0] if box else None,
+        )
         await idempotency.save_zalo_response(
             x_zalo_account_id, x_zalo_message_id, "voice", response.model_dump()
         )

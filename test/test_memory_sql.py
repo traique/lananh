@@ -179,3 +179,30 @@ async def test_ghi_de_ghi_chu_phien_va_xong_su_kien_theo_id(delivery_db):
     statuses = {e["title"]: e["status"] for e in await db.list_user_events(UID)}
     assert statuses == {"tái khám tiểu đường": "done", "phỏng vấn": "pending"}
     assert (await db.list_user_events(-5))[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_nhat_ky_admin_tim_ilike_phan_trang_va_tom_tat(delivery_db):
+    base = dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc)
+    for i in range(5):
+        await db.upsert_session_note(
+            UID,
+            100 + i,
+            title=f"Phiên {i}",
+            bullets="- bàn FPT" if i % 2 else "- đi chợ",
+            summary="giảm 50% phí_x" if i == 4 else "",
+            started_at=base + dt.timedelta(days=i),
+        )
+    await db.upsert_session_note(UID + 1, 1, title="FPT người khác", started_at=base)
+    total, rows = await db.search_session_notes(UID, "", limit=2, offset=0)
+    assert total == 5 and [r["session_key"] for r in rows] == [104, 103]
+    total, rows = await db.search_session_notes(UID, "fpt", limit=10, offset=0)
+    assert total == 2 and {r["session_key"] for r in rows} == {101, 103}
+    # % và _ là chữ thường, không phải ký tự đại diện của LIKE.
+    assert (await db.search_session_notes(UID, "50%", limit=10))[0] == 1
+    assert (await db.search_session_notes(UID, "phí_x", limit=10))[0] == 1
+    assert (await db.search_session_notes(UID, "%", limit=10))[0] == 1
+    assert (await db.search_session_notes(UID, "_", limit=10))[0] == 1
+    assert await db.get_summary_row(UID) is None
+    await db.set_summary(UID, "Anh thích cà phê.")
+    assert (await db.get_summary_row(UID))["summary"] == "Anh thích cà phê."

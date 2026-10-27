@@ -54,6 +54,8 @@ _SKIP_LOGGERS = (
     "core.alerts",
     "services.owner_alerts",
     "services.error_digest",
+    # Hàng đợi gom cũng chở cảnh báo chủ bot: lỗi gửi ở đó không sinh cảnh báo mới.
+    "services.notify_hub",
     "httpx",
     "httpcore",
     "telegram",

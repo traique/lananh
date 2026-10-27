@@ -222,7 +222,8 @@ def _alert_uncertain(job: str, key: str) -> None:
         key,
         extra={"alerted": True},  # cảnh báo riêng ngay dưới; error digest không báo lần 2
     )
-    alerts.send(messages.MARKET_PAGE_UNCERTAIN_ALERT.format(job=job, key=key))
+    # Cần chủ bot kiểm tra tay: gửi ngay, không gom (services/notify_hub.py).
+    alerts.send(messages.MARKET_PAGE_UNCERTAIN_ALERT.format(job=job, key=key), urgent=True)
 
 
 async def _recover_interrupted(job: str) -> None:

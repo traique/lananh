@@ -6,11 +6,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from _vn_data_samples import FX_XML, SJC_JSON
+from _vn_data_samples import FUEL_HTML, FX_XML, SJC_JSON, VANG_TODAY_JSON
 from core import config
 from core import database as db
 from services import morning_brief as mb
-from services import morning_news, weather, weather_home
+from services import fuel_prices, morning_news, weather, weather_home
 from services import vn_market_data as market
 
 VN = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -86,6 +86,14 @@ def world(monkeypatch):
     async def gold():
         return market.parse_sjc_json(SJC_JSON)
 
+    async def gold_live():
+        if state.get("gold_live_down"):
+            raise market.MarketDataError("vang.today lỗi")
+        return market.parse_vang_today_json(VANG_TODAY_JSON)
+
+    async def fuel():
+        return fuel_prices.parse_fuel_html(FUEL_HTML)
+
     async def fx():
         return market.parse_fx_xml(FX_XML)
 
@@ -155,6 +163,8 @@ def world(monkeypatch):
     monkeypatch.setattr(weather, "get_hourly", fake_hourly)
     monkeypatch.setattr(weather, "get_air_quality", fake_air)
     monkeypatch.setattr(market, "get_gold", gold)
+    monkeypatch.setattr(market, "get_gold_live", gold_live)
+    monkeypatch.setattr(fuel_prices, "get_fuel", fuel)
     monkeypatch.setattr(market, "get_fx", fx)
     monkeypatch.setattr(trading_calendar, "is_trading_day", lambda d: d.weekday() < 5)
     monkeypatch.setattr(portfolio, "list_holdings", holdings)
@@ -194,6 +204,9 @@ def test_parse_settings_mac_dinh_va_gia_tri_hong():
     assert mb.parse_settings(mb.dump_settings(mb.BriefSettings(True, 6, True))) == mb.BriefSettings(
         True, 6, True
     )
+    assert s.fuel is False  # giá xăng mặc định tắt
+    assert mb.parse_settings(mb.dump_settings(mb.BriefSettings(True, 6, None, True))).fuel is True
+    assert mb.parse_settings('{"on": true, "fuel": "yes"}').fuel is False
 
 
 async def test_ban_tin_chu_bot_telegram(world):
@@ -208,7 +221,8 @@ async def test_ban_tin_chu_bot_telegram(world):
     assert "📅 Âm lịch: ngày 17 tháng 9 năm Bính Ngọ" in text
     assert "Mùng 1 tháng 10" in text and "Ngày Nhà giáo Việt Nam" in text
     assert "⏰ Nhắc việc hôm nay:\n• 09:05 họp team" in text and "mai mới nhắc" not in text
-    assert "🪙 Vàng SJC mua 148.000" in text and "💱 USD Vietcombank" in text
+    assert "🪙 Vàng SJC miếng 9999 mua 138,7 · bán 141,7 (▲0,5) triệu/lượng" in text
+    assert "💱 USD Vietcombank" in text and "⛽" not in text  # xăng: mặc định tắt
     assert "Digest danh mục* của 42" in text
     assert "TIN ĐÁNG CHÚ Ý" not in text and world["headlines"] == 0  # Telegram: tắt tin
     # Thứ tự mục cố định theo order.
@@ -493,3 +507,12 @@ async def test_ai_intro_rao_noi_dung_ban_tin(world, monkeypatch):
     assert untrusted.contains_untrusted(prompt)
     opened = prompt.index("<<<" + untrusted.OPEN_TAG)
     assert prompt.index("Tin A") > opened and prompt.index("Viết ĐÚNG 1 câu") < opened
+
+
+async def test_muc_gia_xang_bat_rieng_va_vang_du_phong_sjc(world):
+    settings = mb.BriefSettings(on=True, fuel=True)
+    world["gold_live_down"] = True
+    text = await mb.build(OWNER, "telegram", now=MONDAY, settings=settings)
+    assert "⛽ Xăng dầu Petrolimex vùng 1: Xăng E5 RON 92 25.060" in text
+    assert "🪙 Vàng SJC mua 148.000" in text  # vang.today lỗi -> bảng SJC
+    assert text.index("🪙") < text.index("⛽") < text.index("📊")

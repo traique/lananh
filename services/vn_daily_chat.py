@@ -1,14 +1,20 @@
-"""Giá vàng, tỷ giá, xổ số trả lời bằng code (không AI) + grounding cho chat.
+"""Giá vàng, tỷ giá, xăng dầu, xổ số trả lời bằng code (không AI) + grounding cho chat.
 
-- ``maybe_handle(text, user_id)``: câu hỏi gọn ("giá vàng hôm nay", "tỷ giá
-  đô", "100 đô bằng bao nhiêu tiền Việt", "xổ số miền Nam hôm nay", "dò vé
-  123456") -> trả lời thẳng, không tốn lượt AI nào. Câu khai báo nơi ở ("anh ở
-  Hà Nội") -> lưu thành phố thời tiết riêng. Không chắc hoặc nguồn lỗi -> None
+- ``maybe_handle(text, user_id)``: câu hỏi gọn ("giá vàng hôm nay", "vàng thế
+  giới", "giá vàng doji", "tỷ giá đô", "100 đô bằng bao nhiêu tiền Việt", "giá
+  xăng hôm nay", "dầu diesel bao nhiêu", "xổ số miền Nam hôm nay", "xổ số tây
+  ninh hôm nay", "kết quả đà lạt chủ nhật", "dò vé 123456 đồng nai") -> trả lời
+  thẳng, không tốn lượt AI nào. Câu nhắc 1 đài đi feed riêng của đúng đài đó
+  (services/lottery_provinces.py). Câu khai báo nơi ở ("anh ở Hà Nội") -> lưu
+  thành phố thời tiết riêng. Không chắc hoặc nguồn lỗi -> None
   để đi tiếp đường cũ (cổ phiếu, chat AI).
 - ``grounding_for(text)``: câu rộng hơn ("vàng tăng vậy có nên mua không") ->
   số liệu thật làm grounding và BỎ tra web + forced search của lượt đó (khỏi
   trả 2 lần và khỏi mâu thuẫn "hệ thống không có dữ liệu"). Nguồn lỗi -> giữ
   đường tra web cũ nhưng buộc ghi rõ số liệu web là "tham khảo".
+
+Xăng dầu chỉ nhận câu RÕ là hỏi giá bán lẻ trong nước ("giá xăng", "dầu diesel bao
+nhiêu"); "đổ xăng 100k", "hết xăng", "giá dầu thế giới" không bị bắt.
 
 Xổ số KHÔNG BAO GIỜ được trả từ trí nhớ model: kết quả và dò vé luôn tính
 bằng code. Nguồn lỗi thì dò vé báo lỗi thẳng; hỏi kết quả thì đi tra web thật
@@ -24,7 +30,8 @@ from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
 from core.text_normalize import fold
-from services import reply_audience, weather_home
+from services import fuel_prices, reply_audience, weather_home
+from services import lottery_provinces as provinces
 from services import vn_market_data as market
 
 logger = logging.getLogger(__name__)
@@ -49,8 +56,13 @@ def _low(text: str) -> str:
 # Bỏ dấu thì "vâng" (dạ), "vắng", "vang" (rượu vang) đều thành "vang", "nhắn"
 # thành "nhẫn": "vàng + chữ mơ hồ" chỉ so trên chữ CÓ DẤU. Bản bỏ dấu chỉ giữ cụm
 # không thể nhầm; người gõ không dấu cả câu được so riêng (_GOLD_PLAIN_RE).
-_GOLD_RE = re.compile(r"\bgia vang\b|\bvang (?:sjc|mieng|9999|24k)\b|\bsjc\b")
-_GOLD_ACCENTED_RE = re.compile(r"\bvàng (?:sjc|miếng|nhẫn|9999|24k|hôm nay|bây giờ|bao nhiêu)\b")
+_GOLD_RE = re.compile(
+    r"\bgia vang\b|\bvang (?:sjc|mieng|9999|24k|doji|pnj|bao tin|btmc|viettin|xau)\b|"
+    r"\bsjc\b|\bxau ?usd\b"
+)
+_GOLD_ACCENTED_RE = re.compile(
+    r"\bvàng (?:sjc|miếng|nhẫn|9999|24k|hôm nay|bây giờ|bao nhiêu|thế giới|quốc tế)\b"
+)
 _GOLD_PLAIN_RE = re.compile(r"(?<!ruou )\bvang (?:nhan|hom nay|bay gio|bao nhieu)\b")
 _WORLD_GOLD_RE = re.compile(r"\b(?:the gioi|quoc te|ounce|kitco|spot)\b")
 _FX_EXPLICIT_RE = re.compile(r"\bt[yi] gia\b")
@@ -151,28 +163,17 @@ _REGION_RE = (
     ("mt", re.compile(r"\b(?:mien trung|xsmt|mt)\b")),
     ("mn", re.compile(r"\b(?:mien nam|xsmn|mn|xshcm|xstphcm)\b")),
 )
-# Tỉnh mở thưởng (tên bỏ dấu) -> miền; tỉnh khác miền Bắc chỉ còn "miền Bắc".
-_PROVINCE_REGION = {
-    **{p: "mn" for p in (
-        "ho chi minh", "tp hcm", "tphcm", "sai gon", "dong thap", "ca mau", "ben tre",
-        "vung tau", "bac lieu", "dong nai", "can tho", "soc trang", "tay ninh", "an giang",
-        "binh thuan", "vinh long", "binh duong", "tra vinh", "long an", "binh phuoc",
-        "hau giang", "tien giang", "kien giang", "da lat", "lam dong",
-    )},
-    **{p: "mt" for p in (
-        "hue", "thua thien hue", "phu yen", "dak lak", "quang nam", "da nang", "khanh hoa",
-        "binh dinh", "quang tri", "quang binh", "gia lai", "ninh thuan", "quang ngai",
-        "dak nong", "kon tum",
-    )},
-    **{p: "mb" for p in (
-        "ha noi", "quang ninh", "bac ninh", "hai phong", "nam dinh", "thai binh",
-    )},
-}  # fmt: skip
-_PROVINCE_RE = re.compile(
-    r"\b("
-    + "|".join(re.escape(p) for p in sorted(_PROVINCE_REGION, key=len, reverse=True))
-    + r")\b"
+# Tên đài (bỏ dấu) theo danh mục services/lottery_provinces.py.
+_PROVINCE_RE = re.compile(provinces.alias_pattern())
+# "kết quả đà lạt chủ nhật": không có chữ "xổ số" nhưng chỉ gồm tên đài + ngày.
+_RESULT_PROVINCE_RE = re.compile(r"\b(?:ket qua|kq)\b")
+# "xổ số tây ninh quay thứ mấy", "lịch quay đà lạt": nói lịch quay trước kết quả.
+_SCHEDULE_QUESTION_RE = re.compile(
+    r"\b(?:thu may|lich quay|lich mo thuong|quay ngay nao|ngay nao quay)\b"
 )
+_WEEKDAY_RE = re.compile(r"\b(?:thu (2|3|4|5|6|7|hai|ba|tu|nam|sau|bay)|(chu nhat))\b")
+_WEEKDAY_WORDS = {"2": 0, "hai": 0, "3": 1, "ba": 1, "4": 2, "tu": 2, "5": 3, "nam": 3,
+                  "6": 4, "sau": 4, "7": 5, "bay": 5}  # fmt: skip
 _DATE_RE = re.compile(r"(?<![\d.,])(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}))?(?![\d.,])")
 
 # Từ không mang nội dung trong câu hỏi giá vàng/tỷ giá (đã bỏ dấu). Còn lại
@@ -187,6 +188,10 @@ _PRICE_FILLER = [
     r"tien viet", r"tien", r"vnd", r"vnđ", r"dong", r"doi", r"ra", r"bang", r"duoc", r"sang",
     r"do", r"yen", r"te", r"bat", r"won", r"rup", r"k", r"nghin", r"ngan", r"trieu", r"tr",
     r"cu", r"ty", r"d", r"bn", r"nhiu", r"dang", r"co", r"gium", r"may", r"dc", r"nao",
+    r"doji", r"pnj", r"bao tin", r"btmc", r"viettin", r"vn gold", r"vngold", r"the gioi",
+    r"quoc te", r"xau", r"xauusd", r"usd", r"ounce", r"oz", r"ha noi", r"hcm", r"nu trang",
+    r"xang", r"dau", r"diesel", r"hoa", r"e5", r"e10", r"ron", r"a95", r"lit", r"petrolimex",
+    r"pvoil", r"vung", r"ky nay", r"muc", r"bang gia", r"loai",
 ]  # fmt: skip
 _PRICE_FILLER_RE = re.compile(
     r"\b(?:" + "|".join(sorted(_PRICE_FILLER, key=len, reverse=True)) + r")\b"
@@ -201,7 +206,9 @@ _OPINION_FILLER = [
 _LOTTERY_FILLER = [
     r"xo so", r"so xo", r"xs\w*", r"kqxs", r"ket qua", r"mien", r"bac", r"nam", r"trung",
     r"mb", r"mn", r"mt", r"ve", r"do", r"so", r"dai", r"giai", r"hom qua", r"hom kia",
-    r"toi nay", r"chieu nay", r"ngay", r"kiem tra",
+    r"toi nay", r"chieu nay", r"ngay", r"kiem tra", r"kq", r"thu", r"hai", r"ba", r"tu",
+    r"sau", r"bay", r"chu nhat", r"tuan truoc", r"tuan nay", r"moi nhat", r"gan nhat",
+    r"tinh", r"quay", r"lich quay", r"lich mo thuong", r"trung khong", r"may", r"nao",
 ]  # fmt: skip
 _OPINION_FILLER_RE = re.compile(
     r"\b(?:" + "|".join(sorted(_OPINION_FILLER, key=len, reverse=True)) + r")\b"
@@ -225,6 +232,13 @@ class LotteryQuery:
     ticket: str = ""
     narrow: bool = True
     region_explicit: bool = False
+    province: str = ""  # khoá đài (lottery_provinces) khi câu nhắc đúng 1 đài miền Nam/Trung
+
+
+@dataclass(frozen=True)
+class FuelQuery:
+    kind: str | None = None  # "xang" | "diesel" | "dau_hoa" | None = cả bảng
+    narrow: bool = True
 
 
 def _amount(raw: str, scale: str | None) -> float | None:
@@ -292,24 +306,58 @@ def parse_fx(text: str) -> FxQuery | None:
     return FxQuery(tuple(codes)) if codes else None
 
 
+def _province_only_result(folded: str) -> bool:
+    """ "kết quả đà lạt chủ nhật", "xstn hôm nay": không có chữ "xổ số" nhưng câu
+    chỉ gồm tên đài (hoặc mã xs..) + ngày -> vẫn là hỏi kết quả xổ số. Còn chữ khác
+    ("kết quả bóng đá Đà Nẵng") thì không nhận."""
+    m = _PROVINCE_RE.search(folded)
+    if m is None:
+        return False
+    if m.group(1).startswith("xs"):
+        return True
+    if not _RESULT_PROVINCE_RE.search(folded):
+        return False
+    rest = re.sub(r"\d+(?:[./-]\d+)*", " ", _PROVINCE_RE.sub(" ", folded))
+    rest = _PRICE_FILLER_RE.sub(" ", _LOTTERY_FILLER_RE.sub(" ", rest))
+    return not rest.split()
+
+
+def _weekday_day(folded: str, today: dt.date) -> dt.date | None:
+    """ "chủ nhật", "thứ 5", "thứ hai tuần trước" -> ngày đó gần nhất (<= hôm nay)."""
+    m = _WEEKDAY_RE.search(folded)
+    if m is None:
+        return None
+    weekday = 6 if m.group(2) else _WEEKDAY_WORDS[m.group(1)]
+    day = today - dt.timedelta(days=(today.weekday() - weekday) % 7)
+    if re.search(r"\btuan truoc\b", folded):
+        day -= dt.timedelta(days=7)
+    return day
+
+
 def parse_lottery(text: str, today: dt.date | None = None) -> LotteryQuery | None:
     """Câu hỏi xổ số/dò vé, hoặc None."""
     low = _low(text)
     folded = fold(low)
-    if not _LOTTERY_RE.search(folded) and not _LOTTERY_ACCENTED_RE.search(low):
+    if (
+        not _LOTTERY_RE.search(folded)
+        and not _LOTTERY_ACCENTED_RE.search(low)
+        and not _province_only_result(folded)
+    ):
         return None
     today = today or _today()
     ticket_match = _TICKET_RE.search(folded)
     ticket = ticket_match.group(1) if ticket_match else ""
-    region, explicit = "", False
-    for code, regex in _REGION_RE:
-        if regex.search(folded):
-            region, explicit = code, True
-            break
-    if not region:
-        province = _PROVINCE_RE.search(folded)
-        if province:
-            region, explicit = _PROVINCE_REGION[province.group(1)], True
+    region, explicit, province_key = "", False, ""
+    named = provinces.match(folded)
+    if named is not None:
+        # Tên đài thắng tên miền ("/xoso mn đà nẵng" là đài Đà Nẵng miền Trung).
+        region, explicit = named.region, True
+        province_key = "" if named.region == "mb" else named.key
+    else:
+        for code, regex in _REGION_RE:
+            if regex.search(folded):
+                region, explicit = code, True
+                break
     if not region:
         region = "mb" if len(ticket) == 5 else "mn"
     day: dt.date | None = None
@@ -329,15 +377,57 @@ def parse_lottery(text: str, today: dt.date | None = None) -> LotteryQuery | Non
                     day = day.replace(year=today.year - 1)
             except ValueError:
                 day = None
+        else:
+            day = _weekday_day(folded, today)
     narrow = bool(ticket) or not _LOTTERY_BROAD_RE.search(folded)
-    return LotteryQuery(region, day, ticket, narrow, explicit)
+    return LotteryQuery(region, day, ticket, narrow, explicit, province_key)
+
+
+# ─── Xăng dầu ───────────────────────────────────────────────────────────────
+
+# Chỉ nhận khi RÕ là hỏi giá xăng dầu bán lẻ trong nước: "đổ xăng 100k" (chi tiêu,
+# đã bắt trước ở expense), "hết xăng rồi", "giá dầu thế giới", "dầu ăn" đều không.
+_FUEL_TERM_RE = re.compile(
+    r"\bgiá (?:xăng|dầu diesel|dầu do|dầu hỏa|dầu hoả|diesel)\b|"
+    r"\bxăng (?:e5|e10|ron|a95|tăng|giảm|lên|xuống|hôm nay|bây giờ|bao nhiêu|giá|mấy)\b|"
+    r"\bdầu (?:diesel|do|hỏa|hoả)\b|\bdiesel\b|\bxăng dầu\b"
+)
+_FUEL_TERM_FOLDED_RE = re.compile(
+    r"\bgia xang\b|\bgia dau (?:diesel|hoa)\b|\bxang (?:e5|e10|ron|a95)\b|\bdiesel\b"
+)
+_FUEL_CONTEXT_RE = re.compile(
+    r"\b(?:gia|bao nhieu|bao nhiu|bn|hom nay|bay gio|hien tai|tang|giam|len|xuong|may|"
+    r"nhieu|bang gia|ky nay|dieu chinh|lit)\b"
+)
+# Có các chữ này thì cần nguồn khác (giá thế giới, cổ phiếu ngành) - không trả thẳng.
+_FUEL_OUTSIDE_RE = re.compile(
+    r"\b(?:the gioi|quoc te|brent|wti|dau tho|opec|dau an|co phieu|plx|pvs|gas|oil|my|"
+    r"singapore|tai sao|vi sao|du bao|co nen)\b"
+)
+
+
+def parse_fuel(text: str) -> FuelQuery | None:
+    """Câu hỏi giá xăng dầu trong nước, hoặc None."""
+    low = _low(text)
+    folded = fold(low)
+    if not (_FUEL_TERM_RE.search(low) or _FUEL_TERM_FOLDED_RE.search(folded)):
+        return None
+    if not _FUEL_CONTEXT_RE.search(folded):
+        return None
+    # "dau do" bỏ dấu trùng "đầu đó": chỉ nhận khi cả câu gõ không dấu.
+    diesel = bool(re.search(r"\bdiesel\b", folded) or re.search(r"\bdầu do\b", low)) or (
+        low == folded and bool(re.search(r"\bdau do\b", folded))
+    )
+    kerosene = bool(re.search(r"\bdau hoa\b", folded))
+    petrol = bool(re.search(r"\bxang\b", folded)) and not re.search(r"\bxang dau\b", folded)
+    picked = [k for k, on in (("diesel", diesel), ("dau_hoa", kerosene), ("xang", petrol)) if on]
+    kind = picked[0] if len(picked) == 1 else None
+    return FuelQuery(kind, narrow=not _FUEL_OUTSIDE_RE.search(folded))
 
 
 def _is_narrow_price_question(text: str) -> bool:
     """Câu chỉ hỏi số (không kèm ý kiến/phân tích) -> trả thẳng bằng code."""
     folded = fold(_low(text))
-    if _WORLD_GOLD_RE.search(folded):
-        return False
     rest = re.sub(rf"\b(?:{_FOLD_ALIAS})\b|\d+(?:[.,]\d+)*", " ", folded)
     rest = _PRICE_FILLER_RE.sub(" ", rest)
     return not rest.split()
@@ -345,17 +435,57 @@ def _is_narrow_price_question(text: str) -> bool:
 
 # ─── Câu trả lời bằng code ──────────────────────────────────────────────────
 
+_GOLD_BRAND_RES = (
+    ("doji", re.compile(r"\bdoji\b")),
+    ("pnj", re.compile(r"\bpnj\b")),
+    ("baotin", re.compile(r"\bbao tin\b|\bbtmc\b|\bminh chau\b")),
+    ("viettin", re.compile(r"\bviettin\b")),
+    ("vngold", re.compile(r"\bvn ?gold\b")),
+    ("world", _WORLD_GOLD_RE),
+    ("world", re.compile(r"\bxau\b|\bxauusd\b")),
+)
+
+
+def gold_brands(text: str) -> set[str]:
+    """Thương hiệu được hỏi ("giá vàng doji", "vàng thế giới", "nhẫn sjc"); rỗng = bảng chung."""
+    low = _low(text)
+    folded = fold(low)
+    brands = {name for name, regex in _GOLD_BRAND_RES if regex.search(folded)}
+    # "nhắn" bỏ dấu cũng là "nhan": chỉ nhận "nhẫn" có dấu hoặc câu gõ không dấu cả.
+    ring = bool(re.search(r"\bnhẫn\b", low)) or (low == folded and "vang nhan" in folded)
+    if ring:
+        brands.add("nhan")
+    elif re.search(r"\bsjc\b|\bvang mieng\b", folded):
+        brands.add("sjc")
+    return brands
+
 
 async def gold_text(text: str = "") -> str:
-    table = await market.get_gold()
-    out = market.format_gold(table)
-    if re.search(r"\bchỉ\b", (text or "").lower()) and table.rows[0].sell:
-        row = table.rows[0]
-        out += (
-            f"\n1 chỉ = 1/10 lượng: {row.name} bán ≈ "
-            f"{market.vnd((row.sell or 0) / 10_000)} nghìn/chỉ."
-        )
-    return out
+    """Bảng giá vàng: vang.today (nhiều thương hiệu + thế giới); nguồn đó lỗi thì
+    rơi về bảng SJC. Hỏi thương hiệu/thế giới mà chỉ còn SJC -> raise để tra web."""
+    brands = gold_brands(text)
+    per_chi = bool(re.search(r"\bchỉ\b", (text or "").lower()))
+    try:
+        table = await market.get_gold_live()
+    except market.MarketDataError:
+        if brands - {"sjc", "nhan"}:
+            raise
+        sjc = await market.get_gold()
+        out = market.format_gold(sjc)
+        if per_chi and sjc.rows[0].sell:
+            row = sjc.rows[0]
+            out += (
+                f"\n1 chỉ = 1/10 lượng: {row.name} bán ≈ "
+                f"{market.vnd((row.sell or 0) / 10_000)} nghìn/chỉ."
+            )
+        return out
+    fx = None
+    if (not brands or "world" in brands) and table.get("XAUUSD") is not None:
+        try:
+            fx = await market.get_fx()
+        except market.MarketDataError:
+            fx = None  # thiếu tỷ giá: bỏ dòng quy đổi, vẫn có giá USD/oz
+    return market.format_gold_live(table, brands or None, fx=fx, per_chi=per_chi)
 
 
 async def fx_text(query: FxQuery) -> str:
@@ -367,6 +497,11 @@ async def fx_text(query: FxQuery) -> str:
         if converted:
             return converted
     return market.format_fx(table, list(query.codes) or None)
+
+
+async def fuel_text(query: FuelQuery | None = None) -> str:
+    table = await fuel_prices.get_fuel()
+    return fuel_prices.format_fuel(table, query.kind if query else None)
 
 
 def _missing_day_text(query: LotteryQuery, draws: list[market.LotteryDraw]) -> str:
@@ -384,73 +519,115 @@ def _missing_day_text(query: LotteryQuery, draws: list[market.LotteryDraw]) -> s
     )
 
 
-def _named_province(text: str, region: str) -> tuple[str, str] | None:
-    """(tên bỏ dấu, tên hiển thị) của đài miền Nam/Trung được nhắc trong câu.
-    Miền Bắc quay chung 1 kỳ nên không tách theo tỉnh."""
-    if region == "mb":
-        return None
-    low = _low(text)
-    folded = fold(low)
-    m = _PROVINCE_RE.search(folded)
-    if not m or _PROVINCE_REGION[m.group(1)] != region:
-        return None
-    alias = m.group(1)
-    if "hcm" in alias:
-        return alias, "TP.HCM"
-    shown = low[m.start() : m.end()] if len(low) == len(folded) else alias
-    return alias, shown.title()
+def schedule_line(province: provinces.Province) -> str:
+    return (
+        f"Đài {province.name} quay {provinces.schedule_text(province)} lúc "
+        f"{provinces.DRAW_TIMES[province.region]}."
+    )
 
 
-def _province_text(
-    query: LotteryQuery, draws: list[market.LotteryDraw], alias: str, label: str
+async def province_draws(province: provinces.Province) -> list[market.LotteryDraw]:
+    """Các kỳ của 1 đài: feed riêng của tỉnh; feed đó lỗi thì lọc từ feed miền
+    (ít kỳ hơn). Cả hai lỗi -> MarketDataError."""
+    try:
+        return await market.get_province_lottery(province)
+    except market.MarketDataError:
+        if province.region == "mb":
+            raise
+        region_draws = await market.get_lottery(province.region)
+    out = []
+    for draw in region_draws:
+        hit = next((p for p in draw.provinces if provinces.same(p.name, province)), None)
+        if hit is not None:
+            out.append(market.LotteryDraw(draw.region, draw.date, (hit,), draw.link))
+    return out
+
+
+@dataclass(frozen=True)
+class ProvincePick:
+    """Kỳ chọn được cho 1 đài. status: "latest" (không hỏi ngày), "exact" (đúng ngày),
+    "not_drawn" (ngày đó đài không quay - draw = kỳ gần nhất TRƯỚC đó), "pending" (hôm
+    nay có quay nhưng nguồn chưa có - draw = kỳ gần nhất), "missing" (ngày cũ hơn
+    nguồn còn giữ), "empty" (nguồn chưa có kỳ nào)."""
+
+    status: str
+    draw: market.LotteryDraw | None = None
+
+
+def pick_province_draw(
+    province: provinces.Province,
+    draws: list[market.LotteryDraw],
+    day: dt.date | None,
+    today: dt.date | None = None,
+) -> ProvincePick:
+    today = today or _today()
+    if day is None:
+        return ProvincePick("latest", draws[0]) if draws else ProvincePick("empty")
+    draw = market.pick_draw(draws, day)
+    if draw is not None:
+        return ProvincePick("exact", draw)
+    if not province.draws_on(day):
+        return ProvincePick("not_drawn", next((d for d in draws if d.date < day), None))
+    if day >= today:
+        return ProvincePick("pending", draws[0] if draws else None)
+    return ProvincePick("missing")
+
+
+async def province_text(
+    province: provinces.Province, day: dt.date | None = None, ticket: str = ""
 ) -> str:
-    """Kết quả/dò vé của ĐÚNG đài người dùng nhắc. Kỳ được chọn không có đài đó
-    thì nói rõ, không bao giờ dò sang đài khác rồi phán "chưa trúng"."""
-    region = market.REGION_NAMES[query.region]
-    me = reply_audience.forms()[1]
-    if query.day is None:
-        # Mỗi đài quay 1 lần/tuần: lấy kỳ mới nhất CÓ đài đó, không phải kỳ mới nhất.
-        hit = next(
-            ((d, p) for d in draws if (p := market.find_province(d, alias)) is not None), None
+    """Kết quả/dò vé của ĐÚNG 1 đài. Ngày đó đài không quay -> nói lịch quay và đưa
+    kỳ gần nhất trước đó; không bao giờ dò sang đài khác rồi phán "chưa trúng".
+    Raise MarketDataError khi nguồn lỗi."""
+    draws = await province_draws(province)
+    you, me = reply_audience.forms()
+    today = _today()
+    pick = pick_province_draw(province, draws, day, today)
+    not_yet = f" {me.capitalize()} chưa dò vé này được nha." if ticket else ""
+    prefix = ""
+    if pick.status == "empty":
+        return (
+            f"{me.capitalize()} chưa thấy kết quả đài {province.name} trong các kỳ nguồn "
+            f"còn giữ. {schedule_line(province)}{not_yet}"
         )
-        if hit is None:
-            note = (
-                f"{me.capitalize()} chưa thấy kết quả đài {label} trong {len(draws)} kỳ xổ số "
-                f"{region} gần nhất nguồn còn giữ"
-            )
-            return note + (" nên chưa dò vé này được nha." if query.ticket else ".")
-        draw, province = hit
-    else:
-        found = market.pick_draw(draws, query.day)
-        province = market.find_province(found, alias) if found else None
-        if found is None or province is None:
-            day = f"{query.day:%d/%m/%Y}"
-            have = ", ".join(p.name for p in found.provinces) if found else ""
-            if query.day == _today():
-                msg = (
-                    f"⏳ Đài {label} hôm nay chưa có kết quả (quay lúc "
-                    f"{market.DRAW_TIMES[query.region]}, nguồn cập nhật sau đó ít phút) "
-                    "hoặc hôm nay đài này không quay."
-                    + (f" Kỳ hôm nay nguồn mới có: {have}." if have else "")
-                )
-            elif found is None:
-                msg = _missing_day_text(query, draws)
-            else:
-                msg = f"Ngày {day} đài {label} không quay thưởng (kỳ đó có: {have})."
-            return msg + (f" {me.capitalize()} chưa dò vé này được nha." if query.ticket else "")
-        draw = found
-    one = market.LotteryDraw(draw.region, draw.date, (province,), draw.link)
-    if query.ticket:
-        return market.format_ticket(query.ticket, one)
-    return market.format_draw(one)
+    if pick.status == "missing" and day is not None:
+        return (
+            f"{me.capitalize()} chưa có kết quả đài {province.name} ngày {day:%d/%m/%Y} "
+            f"(nguồn chỉ giữ khoảng {len(draws)} kỳ gần nhất).{not_yet}"
+        )
+    if pick.status == "not_drawn" and day is not None:
+        when = "Hôm nay" if day == today else f"{provinces.WEEKDAYS[day.weekday()]} {day:%d/%m}"
+        msg = f"{when} đài {province.name} không quay. {schedule_line(province)}"
+        if pick.draw is None:
+            return msg + f" Nguồn chưa có kỳ nào gần đó.{not_yet}"
+        verb = "dò theo" if ticket else "đây là"
+        prefix = f"{msg} {me.capitalize()} {verb} kỳ gần nhất ({pick.draw.date:%d/%m}):\n\n"
+    if pick.status == "pending":
+        msg = (
+            f"⏳ Đài {province.name} hôm nay quay lúc {provinces.DRAW_TIMES[province.region]}, "
+            "nguồn chưa có kết quả (thường cập nhật sau giờ quay ít phút)."
+        )
+        if ticket:
+            return msg + f" Có kết quả rồi {you} nhắn {me} dò lại nha."
+        if pick.draw is None:
+            return msg
+        prefix = f"{msg} Kỳ gần nhất ngày {pick.draw.date:%d/%m}:\n\n"
+    draw = pick.draw
+    assert draw is not None
+    if ticket:
+        return prefix + market.format_ticket(ticket, draw)
+    return prefix + market.format_draw(draw)
 
 
 async def lottery_text(query: LotteryQuery, text: str = "") -> str:
     """Kết quả/dò vé bằng code. Raise MarketDataError khi nguồn lỗi."""
-    draws = await market.get_lottery(query.region)
-    named = _named_province(text, query.region)
+    named = provinces.BY_KEY.get(query.province) if query.province else None
     if named is not None:
-        return _province_text(query, draws, *named)
+        reply = await province_text(named, query.day, query.ticket)
+        if _SCHEDULE_QUESTION_RE.search(fold(_low(text))) and "không quay" not in reply:
+            reply = f"📅 {schedule_line(named)}\n\n{reply}"
+        return reply
+    draws = await market.get_lottery(query.region)
     draw = market.pick_draw(draws, query.day)
     prefix = ""
     if draw is None:
@@ -501,7 +678,10 @@ async def maybe_handle(text: str, user_id: int | None = None) -> str | None:
             return lottery_down() if lottery.ticket else None
     gold = wants_gold(text)
     fx = parse_fx(text)
-    if not (gold or fx) or not _is_narrow_price_question(text):
+    fuel = parse_fuel(text)
+    if fuel is not None and not fuel.narrow:
+        return None  # giá dầu thế giới, cổ phiếu ngành...: AI + grounding + tra web
+    if not (gold or fx or fuel) or not _is_narrow_price_question(text):
         return None
     parts: list[str] = []
     try:
@@ -509,6 +689,8 @@ async def maybe_handle(text: str, user_id: int | None = None) -> str | None:
             parts.append(await gold_text(text))
         if fx is not None:
             parts.append(await fx_text(fx))
+        if fuel is not None:
+            parts.append(await fuel_text(fuel))
     except market.MarketDataError:
         return None  # nguồn lỗi -> đường tra web cũ ("tham khảo")
     return "\n\n".join(parts)
@@ -544,10 +726,12 @@ _LOTTERY_NO_MEMORY = (
 _GOLD_FX_TERMS_RE = re.compile(
     rf"vàng|vang|sjc|gold|t[ỷỉyi] gi[áa]|\b(?:{_ACC_ALIAS})\b|\b(?:{_FOLD_ALIAS})\b"
 )
+# Bỏ thêm khi câu hỏi giá xăng dầu trong nước ("dầu" làm wants_external_market_data bật).
+_FUEL_TERMS_RE = re.compile(r"xăng|dầu|diesel|xang|dau")
 
 
 async def grounding_for(text: str) -> DailyGrounding:
-    """Grounding giá vàng/tỷ giá/xổ số cho câu hỏi rộng; rỗng nếu không liên quan.
+    """Grounding giá vàng/tỷ giá/xăng dầu/xổ số cho câu hỏi rộng; rỗng nếu không liên quan.
 
     Không bao giờ raise: lỗi bất ngờ chỉ làm mất phần grounding này, lượt chat
     vẫn chạy đường tra web như cũ."""
@@ -562,8 +746,10 @@ async def _build_grounding(text: str) -> DailyGrounding:
     lottery = parse_lottery(text)
     gold = wants_gold(text)
     fx = parse_fx(text)
-    if lottery is None and not gold and fx is None:
+    fuel = parse_fuel(text)
+    if lottery is None and not gold and fx is None and fuel is None:
         return DailyGrounding()
+    world_missing = False
     parts: list[str] = []
     all_ok = True
     force = False
@@ -583,12 +769,14 @@ async def _build_grounding(text: str) -> DailyGrounding:
         try:
             data = await gold_text(text)
             parts.append(
-                "[Giá vàng SJC thật vừa tra bằng code - dùng ĐÚNG các số này, không lấy giá "
-                f"vàng SJC từ trí nhớ hay web]\n{data}"
+                "[Giá vàng thật vừa tra bằng code - dùng ĐÚNG các số này, không lấy giá "
+                f"vàng từ trí nhớ hay web]\n{data}"
             )
+            # Bảng SJC dự phòng không có giá thế giới: phần đó vẫn phải tra web.
+            world_missing = "XAU/USD" not in data and bool(_WORLD_GOLD_RE.search(fold(_low(text))))
         except market.MarketDataError:
             all_ok = False
-            parts.append(_reference_note("SJC"))
+            parts.append(_reference_note("vang.today/SJC"))
     if fx is not None:
         try:
             data = await fx_text(fx)
@@ -598,14 +786,27 @@ async def _build_grounding(text: str) -> DailyGrounding:
         except market.MarketDataError:
             all_ok = False
             parts.append(_reference_note("Vietcombank"))
+    if fuel is not None:
+        try:
+            data = await fuel_text(fuel)
+            parts.append(
+                "[Giá xăng dầu bán lẻ trong nước thật vừa tra bằng code - dùng ĐÚNG các số "
+                f"này, không lấy giá xăng từ trí nhớ]\n{data}"
+            )
+        except market.MarketDataError:
+            all_ok = False
+            parts.append(_reference_note("giaxanghomnay.com - bảng giá Petrolimex"))
     from stock import analysis as stock_analysis
 
-    # Còn hỏi thứ khác ngoài phần code đã có (bitcoin, giá vàng thế giới, lãi
+    # Còn hỏi thứ khác ngoài phần code đã có (bitcoin, giá dầu thế giới, lãi
     # suất, tin bão...) thì vẫn phải tra web cho phần đó.
     rest = _GOLD_FX_TERMS_RE.sub(" ", _low(text))
+    if fuel is not None and fuel.narrow:
+        rest = _FUEL_TERMS_RE.sub(" ", rest)
     partial = (
         stock_analysis.wants_external_market_data(rest)
-        or bool(gold and _WORLD_GOLD_RE.search(fold(_low(text))))
+        or world_missing
+        or bool(fuel is not None and not fuel.narrow)
         or bool(_uncovered_words(text, lottery=lottery is not None))
     )
     skip = all_ok and not partial and (lottery is None or lottery.narrow)

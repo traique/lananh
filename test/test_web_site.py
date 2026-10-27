@@ -618,3 +618,106 @@ def test_trang_chu_va_admin_co_link_ky_mon():
     assert (
         nav.index('href="/tu-vi"') < nav.index('href="/ky-mon"') < nav.index('href="/than-so-hoc"')
     )
+
+
+# ─── Xổ số /xo-so + /api/v1/lottery ─────────────────────────────────────────
+
+
+@pytest.fixture
+def lottery_sources(monkeypatch):
+    import datetime as dt
+
+    from _vn_data_samples import XSMB_RSS, XSMN_RSS, XSTN_RSS
+    from services import site_data, vn_daily_chat
+    from services import vn_market_data as market
+
+    today = dt.date(2026, 10, 26)  # thứ Hai
+    state = {"down": False}
+    region = {
+        "mn": market.parse_lottery_rss(XSMN_RSS, "mn", today),
+        "mb": market.parse_lottery_rss(XSMB_RSS, "mb", today),
+    }
+    tay_ninh = market.parse_lottery_rss(XSTN_RSS, "mn", today, name="Tây Ninh")
+
+    async def get_lottery(code):
+        if state["down"]:
+            raise market.MarketDataError("down")
+        return region[code]
+
+    async def get_province(province):
+        if state["down"] or province.key != "tay-ninh":
+            raise market.MarketDataError("down")
+        return tay_ninh
+
+    monkeypatch.setattr(market, "get_lottery", get_lottery)
+    monkeypatch.setattr(market, "get_province_lottery", get_province)
+    monkeypatch.setattr(vn_daily_chat, "_today", lambda: today)
+    monkeypatch.setattr(site_data, "today", lambda: today)
+    return state
+
+
+async def test_trang_xo_so_mac_dinh_va_theo_tinh(client, lottery_sources):
+    html = (await client.get("/xo-so")).text
+    assert 'href="/xo-so" aria-current="page"' in html  # mục Xổ số trên thanh bên
+    assert "Kiên Giang" in html and "729510" in html and "Chủ Nhật 25/10/2026" in html
+    assert '<option value="ho-chi-minh">★ TP.HCM (T2/T7)</option>' in html
+    html = (await client.get("/xo-so", params={"dai": "tay-ninh"})).text
+    assert "Xổ số Tây Ninh" in html and "058734" in html and "Thứ Năm 22/10/2026" in html
+    assert '<option value="tay-ninh" selected>Tây Ninh (T5)</option>' in html
+    assert "Đài Tây Ninh quay Thứ Năm lúc 16h15." in html
+    html = (await client.get("/xo-so", params={"dai": "tay-ninh", "ngay": "2026-10-26"})).text
+    assert "Hôm nay đài Tây Ninh không quay" in html and "22/10/2026" in html
+
+
+async def test_trang_xo_so_do_ve_va_escape(client, lottery_sources):
+    html = (await client.get("/xo-so", params={"dai": "tay-ninh", "ve": "058734"})).text
+    assert "Dò vé 058734" in html and "Trúng Giải Đặc biệt" in html
+    html = (await client.get("/xo-so", params={"dai": "mn", "ve": "000000"})).text
+    assert "Không trúng" in html
+    html = (await client.get("/xo-so", params={"dai": "<script>alert(1)</script>"})).text
+    assert "<script>alert(1)" not in html and "Không có đài xổ số này" in html
+    html = (await client.get("/xo-so", params={"dai": "mn", "ve": "12ab"})).text
+    assert "có 6 chữ số" in html and "729510" in html  # vé sai: vẫn hiện kỳ mới nhất
+    lottery_sources["down"] = True
+    r = await client.get("/xo-so", params={"dai": "tay-ninh"})
+    assert r.status_code == 200 and "không tự đoán số" in r.text
+
+
+async def test_api_lottery(client, lottery_sources):
+    r = await client.get("/api/v1/lottery", params={"province": "tay-ninh", "ticket": "058734"})
+    data = r.json()
+    assert r.status_code == 200 and data["status"] == "latest"
+    assert data["target"]["drawDays"] == ["Thứ Năm"] and data["target"]["drawsToday"] is False
+    assert data["draw"]["date"] == "2026-10-22"
+    assert data["draw"]["provinces"][0]["prizes"]["ĐB"] == ["058734"]
+    assert data["ticket"]["results"][0]["wins"][0]["code"] == "ĐB"
+    assert data["availableDates"] == ["2026-10-22", "2026-10-15"]
+    r = await client.get("/api/v1/lottery", params={"province": "Tây Ninh", "date": "2026-10-15"})
+    assert r.json()["status"] == "exact" and r.json()["draw"]["date"] == "2026-10-15"
+    r = await client.get("/api/v1/lottery", params={"province": "mb"})
+    assert r.json()["draw"]["provinces"][0]["prizes"]["ĐB"] == ["30328"]
+    mn = (await client.get("/api/v1/lottery")).json()
+    assert mn["target"]["key"] == "mn" and len(mn["draw"]["provinces"]) == 2
+    # Feed riêng lỗi -> lọc từ feed miền.
+    kg = (await client.get("/api/v1/lottery", params={"province": "kien-giang"})).json()
+    assert [p["name"] for p in kg["draw"]["provinces"]] == ["Kiên Giang"]
+
+
+@pytest.mark.parametrize(
+    "params,code",
+    [
+        ({"province": "xyz"}, "INVALID_PROVINCE"),
+        ({"date": "26/13/2026"}, "INVALID_DATE"),
+        ({"date": "2030-01-01"}, "INVALID_DATE"),
+        ({"province": "mb", "ticket": "123456"}, "INVALID_TICKET"),
+    ],
+)
+async def test_api_lottery_loi_nhap(client, lottery_sources, params, code):
+    r = await client.get("/api/v1/lottery", params=params)
+    assert r.status_code == 422 and r.json()["error"]["code"] == code
+
+
+async def test_api_lottery_nguon_loi(client, lottery_sources):
+    lottery_sources["down"] = True
+    r = await client.get("/api/v1/lottery", params={"province": "mn"})
+    assert r.status_code == 503 and r.json()["error"]["code"] == "SOURCE_UNAVAILABLE"

@@ -43,6 +43,21 @@ services:
         sync: false
       - key: GOOGLE_AI_STUDIO_MODEL
         value: gemini-3.5-flash-lite
+      # Gemini Live (key api1/api2, cooldown riêng): provider chat dự phòng cuối chuỗi
+      # + bộ đọc /noi (VOICE_ENGINE). Hạn mức free tier chưa được Google công bố -
+      # xem aistudio.google.com/rate-limit; /status đếm số lượt Live trong ngày.
+      - key: LIVE_CHAT_FALLBACK
+        value: "1"
+      - key: LIVE_MODEL
+        value: "gemini-3.8-live"
+      - key: LIVE_MAX_SESSIONS
+        value: "1"
+      - key: LIVE_CALL_TIMEOUT_SEC
+        value: "60"
+      - key: LIVE_MAX_AUDIO_MB
+        value: "8"
+      - key: LIVE_HISTORY_MESSAGES
+        value: "6"
       - key: MAX_CONCURRENT_TURNS
         value: "2"
       # 1 chỗ trong MAX_CONCURRENT_TURNS dành riêng cho chủ bot (Telegram/Zoom/web);
@@ -136,6 +151,12 @@ services:
         value: "1800"
       - key: MEMORY_CONSOLIDATION
         value: "1"
+      # "Cách trả lời" bộ trích nhớ tự rút ra chờ người dùng duyệt; 0 = áp ngay.
+      - key: STYLE_RULES_NEED_APPROVAL
+        value: "1"
+      # Che OTP/mật khẩu/STK/CCCD/số thẻ/API key trước khi gửi provider AI.
+      - key: PROMPT_REDACTION
+        value: "1"
       # Vòng quét nền trích nhớ khi rảnh (cả lúc khởi động); 0 = tắt vòng quét.
       - key: MEMORY_SWEEP_ENABLED
         value: "1"
@@ -163,6 +184,32 @@ services:
         value: "20"
       - key: PROACTIVE_TICK_SEC
         value: "1800"
+      # Gom thông báo chủ động + giờ yên lặng (services/notify_hub.py, /yenlang); 0 = tắt.
+      - key: NOTIFY_HUB_ENABLED
+        value: "1"
+      - key: NOTIFY_BATCH_MINUTES
+        value: "60"
+      - key: NOTIFY_QUIET_HOURS
+        value: "22:30-06:30"
+      - key: NOTIFY_QUEUE_MAX_PER_USER
+        value: "30"
+      # Việc nền /viec + tác vụ định kỳ /lichtacvu (services/background_jobs.py).
+      - key: BACKGROUND_JOBS_ENABLED
+        value: "1"
+      - key: BACKGROUND_JOB_TIMEOUT_SEC
+        value: "600"
+      - key: BACKGROUND_JOBS_CONCURRENCY
+        value: "1"
+      - key: BACKGROUND_JOBS_MAX_PER_USER
+        value: "3"
+      - key: BACKGROUND_JOBS_MEMBERS
+        value: "1"
+      - key: ROUTINES_ENABLED
+        value: "1"
+      - key: ROUTINES_MEMBERS
+        value: "0"
+      - key: ROUTINE_MAX_RUNS_PER_DAY
+        value: "20"
       # Bản tin sáng cá nhân (/bantin): chỉ gửi cho người tự bật trên kênh của mình.
       - key: MORNING_BRIEF_ENABLED
         value: "true"
@@ -179,6 +226,16 @@ services:
       # Chi tiêu: "cafe 45k" ghi bằng code (false = chỉ khi nói rõ hoặc /chitieu).
       - key: EXPENSE_CHAT_CAPTURE
         value: "true"
+      # Hỏi tự nhiên thay cho lệnh (services/nl_commands.py) + lệnh trong router tool.
+      - key: NL_COMMANDS_ENABLED
+        value: "1"
+      - key: NL_COMMANDS_LLM
+        value: "1"
+      # Ăn uống /an: câu tự nhiên tắt, không ước lượng kcal bằng AI (bảng soạn sẵn).
+      - key: NUTRITION_NL
+        value: "0"
+      - key: NUTRITION_AI_ESTIMATE
+        value: "0"
       # Lịch sử chat mỗi người (tool search_history "hôm trước em nói gì...").
       - key: CHAT_MESSAGES_RETENTION_LIMIT
         value: "1000"
@@ -194,6 +251,24 @@ services:
         value: "5242880"
       - key: VOICE_MAX_SECONDS
         value: "180"
+      # Trả lời kèm giọng nói /noi (mỗi người tự bật); Zalo cần ffmpeg trong image.
+      - key: VOICE_REPLY_ENABLED
+        value: "1"
+      - key: VOICE_REPLY_MAX_CHARS
+        value: "600"
+      - key: VOICE_TTS_MODEL
+        value: "gemini-3.8-flash-tts"
+      - key: VOICE_TTS_VOICE
+        value: "Kore"
+      # auto = Gemini Live trước, lỗi/quota/đọc lệch chữ thì Gemini TTS; live | tts.
+      - key: VOICE_ENGINE
+        value: "auto"
+      - key: LIVE_VOICE_MIN_MATCH
+        value: "80"
+      - key: VOICE_REPLY_URL_TTL_MIN
+        value: "10"
+      - key: VOICE_REPLY_STORE_MB
+        value: "8"
       - key: VISION_QA_ENABLED
         value: "1"
       - key: PHOTO_NO_CAPTION_MODE
@@ -412,6 +487,8 @@ services:
         value: "0"
       - key: FREE_TIER_RPD_GEMINI
         value: "0"
+      - key: FREE_TIER_RPD_GEMINI_LIVE
+        value: "0"
       - key: FREE_TIER_RPD_GROQ
         value: "0"
       - key: FREE_TIER_RPD_OPENROUTER
@@ -431,3 +508,7 @@ services:
         value: "90"
       - key: RETENTION_ANSWER_FEEDBACK_DAYS
         value: "180"
+      - key: RETENTION_NOTIFY_QUEUE_DAYS
+        value: "7"
+      - key: RETENTION_BG_JOBS_DAYS
+        value: "30"

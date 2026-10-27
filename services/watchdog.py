@@ -624,6 +624,49 @@ async def restart_summary(days: int = 7) -> dict:
     }
 
 
+# ─── Đang có gì bất thường (lệnh /chuy) ────────────────────────────────────
+
+
+async def active_issues(now: datetime | None = None) -> list[str]:
+    """Các luật watchdog ĐANG đúng lúc này / đã báo hôm nay (đọc trạng thái có
+    sẵn, không gửi gì, không gọi AI). Mỗi mục lỗi riêng thì bỏ mục đó."""
+    now = now or datetime.now(VN_TZ)
+    today = now.date().isoformat()
+    out: list[str] = []
+    working = memory_stats.working_set()
+    percent = working.get("percent")
+    if percent is not None and percent >= memory_threshold_pct():
+        out.append(
+            f"RAM container {working['working_set_mib']:.0f}/{working['limit_mib']:.0f} MB "
+            f"({percent:.0f}%, ngưỡng {memory_threshold_pct()}%)"
+        )
+    try:
+        day, _, level = (await db.get_setting(_DB_LEVEL_KEY) or "").partition(":")
+        if day == today and level.isdigit():
+            out.append(f"dung lượng DB đã qua mốc {level}% (DB_SIZE_LIMIT_MB)")
+        state = _load_json(await db.get_setting(_MISSED_KEY)) or {}
+        if state.get("date") == today and state.get("jobs"):
+            labels = {check.name: check.label for check in daily_job_checks(now)}
+            names = [labels.get(name, name) for name in state["jobs"]][:5]
+            out.append("job hằng ngày quá hạn: " + "; ".join(names))
+        minutes = env_int("WATCHDOG_INBOX_STALE_MIN", 10, 1, 1440)
+        stale, _ = await db.webhook_backlog(timedelta(minutes=minutes))
+        if stale > 0:
+            out.append(f"{stale} tin Telegram/Zoom ứ trong inbox quá {minutes} phút")
+        last_burst = _load_json(await db.get_setting(_BURST_KEY))
+        if isinstance(last_burst, (int, float)) and time.time() - last_burst < 86400:
+            out.append("bot khởi động lại dồn dập trong 24 giờ qua")
+        log = _restart_log(await db.get_setting(RESTARTS_KEY), time.time())
+        crashes = [
+            i for i in log if i.get("kind") in ("crash", "oom") and time.time() - i["ts"] < 86400
+        ]
+        if crashes:
+            out.append(f"{len(crashes)} lần tiến trình chết/hết RAM trong 24 giờ qua")
+    except Exception:
+        logger.warning("watchdog: không đọc được trạng thái cho /chuy.", exc_info=True)
+    return out
+
+
 # ─── Điều phối ──────────────────────────────────────────────────────────────
 
 

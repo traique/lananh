@@ -313,6 +313,38 @@ async def transcribe_audio(
     return await generate_from_bytes(idx, instruction, audio, mime_type, label="audio")
 
 
+async def synthesize_speech(idx: int, text: str, *, model: str, voice: str) -> tuple[bytes, str]:
+    """Gemini TTS (model *-tts) đọc ``text`` bằng 1 giọng dựng sẵn -> (âm thanh,
+    mime). Model đời 2.5/3.1 trả PCM thô ("audio/L16;codec=pcm;rate=24000"), đời
+    3.8 trả WAV có header RIFF - services/voice_reply.py nhận cả hai. Text là bản
+    chép nguyên văn (model TTS không làm theo chỉ dẫn trong text). Caller bọc
+    bounded() (hạn chót lượt)."""
+    from google.genai import types
+
+    client = await _get_official_client(idx)
+    response = await client.aio.models.generate_content(
+        model=model,
+        contents=text,
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
+                )
+            ),
+        ),
+    )
+    call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
+    for candidate in getattr(response, "candidates", None) or []:
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", None) or []:
+            inline = getattr(part, "inline_data", None)
+            data = getattr(inline, "data", None)
+            if data:
+                return bytes(data), str(getattr(inline, "mime_type", "") or "")
+    raise RuntimeError(f"api{idx} TTS không trả về âm thanh")
+
+
 async def analyze_document(
     idx: int, instruction: str, path: str, mime_type: str = "application/pdf"
 ) -> FallbackResponse:

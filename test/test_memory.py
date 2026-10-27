@@ -276,7 +276,8 @@ async def test_dinh_dang_cu_delete_thanh_invalidate_va_chan_bi_mat(mem):
 
 @pytest.mark.asyncio
 async def test_style_rules_luu_cach_tra_loi_va_chen_moi_luot(mem):
-    mem.add_turn(UID, "trả lời ngắn thôi em, đừng chèn emoji", "dạ")
+    # Người dùng tự dặn rõ ("từ giờ ...") -> áp ngay, không qua duyệt (style_approval).
+    mem.add_turn(UID, "từ giờ trả lời ngắn thôi em, đừng chèn emoji", "dạ")
     mem.responses.append({"style_rules": "- Trả lời ngắn gọn\n- Không dùng emoji"})
     await memory_service.maybe_flush(UID, explicit=True)
     row = next(f for f in mem.current(UID) if f["key"] == memory_service.STYLE_KEY)

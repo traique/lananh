@@ -10,7 +10,7 @@ from services import usage_stats
 
 @pytest.mark.asyncio
 async def test_help_command():
-    messages, provider = await service.maybe_handle_command(1, "/help")
+    messages, provider = await service.maybe_handle_command(1, "/help all")
     assert "/gia" in messages[0]
     assert "/tongket" in messages[0]
     assert "/fb_themnhom" in messages[0]

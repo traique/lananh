@@ -205,6 +205,8 @@ async def test_remove_user(patched_db, monkeypatch):
         "prompts",
         "stock_holdings",
         "settings",
+        "notify_queue",
+        "meals",
     } <= tables
     uid_args = [args for q, args in patched_db.data_deletes if "settings" not in q]
     assert all(args == (user.internal_user_id,) for args in uid_args)
@@ -227,6 +229,11 @@ async def test_remove_user(patched_db, monkeypatch):
                 f"memory_consolidated:{uid}",
                 f"followup:{uid}",
                 f"followup_sent:{uid}",
+                f"style_pending:{uid}",
+                # Giờ yên lặng riêng (/yenlang, services/notify_hub.py).
+                f"quiet:{uid}",
+                # Trả lời kèm giọng nói riêng (/noi, services/voice_reply.py).
+                f"voice_reply:{uid}",
             ],
         ),
     ) in [(q, a) for q, a in patched_db.data_deletes]

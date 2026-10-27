@@ -34,9 +34,11 @@ from handlers import (
     expense_commands,
     document_handler,
     feedback_commands,
+    job_commands,
     media_handler,
     voice_handler,
     pairing_commands,
+    personal_commands,
     portfolio_commands,
     provider_commands,
     reminder_commands,
@@ -51,6 +53,9 @@ from services import ngay_nho  # noqa: F401 - đăng ký mục "ngay_nho" của 
 from services import portfolio_alerts, rag_clean_service
 from services import portfolio_events, portfolio_push, price_alerts
 from services import monitor_service
+from services import notify_hub
+from services import background_jobs
+from services import routines  # noqa: F401 - đăng ký vòng xếp tác vụ định kỳ + mục /chuy
 from services import owner_alerts
 from services import db_maintenance
 from services import http_client
@@ -61,9 +66,13 @@ from stock import providers as stock_providers
 
 logger = logging.getLogger(__name__)
 
-COMMANDS = [
+# Mô tả MỌI lệnh Telegram (tối đa 100 như giới hạn setMyCommands) - tài liệu/test. Menu
+# thật (COMMANDS bên dưới) chỉ còn ~18 lệnh hay dùng: người dùng cứ nhắn tự nhiên
+# (services/nl_commands.py), bỏ khỏi MENU không có nghĩa là bỏ lệnh - handler vẫn
+# đăng ký đủ trong build_application(). /userouter9 không có trong danh sách này.
+ALL_COMMANDS = [
     BotCommand("start", "Bắt đầu"),
-    BotCommand("help", "Xem hướng dẫn"),
+    BotCommand("help", "Hướng dẫn ngắn; /help all xem đủ lệnh"),
     BotCommand("huy", "Dừng câu trả lời đang chạy dở"),
     BotCommand("sai", "Báo câu trả lời vừa rồi chưa ổn (kèm lý do)"),
     BotCommand("danhmuc", "Xem danh mục cổ phiếu"),
@@ -84,15 +93,22 @@ COMMANDS = [
     BotCommand("tuvi_chitiet", "Lá số tử vi + AI luận giải"),
     BotCommand("kymon", "Lập bàn Kỳ Môn Độn Giáp (mặc định lúc này)"),
     BotCommand("kymon_chitiet", "Bàn Kỳ Môn + AI luận giải việc cần xem"),
-    BotCommand("vang", "Giá vàng SJC"),
+    BotCommand("vang", "Giá vàng SJC, DOJI, PNJ, thế giới"),
     BotCommand("tygia", "Tỷ giá Vietcombank, đổi tiền"),
-    BotCommand("xoso", "Kết quả xổ số, dò vé"),
+    BotCommand("xang", "Giá xăng dầu Petrolimex/PVOIL"),
+    BotCommand("xoso", "Kết quả xổ số theo miền/tỉnh, dò vé"),
     BotCommand("thoitiet", "Thời tiết; /thoitiet nha <tỉnh> đặt nơi ở"),
     BotCommand("bantin", "Bản tin sáng cá nhân (on|off|giờ|xem)"),
+    BotCommand("chuy", "Có gì cần anh chú ý hôm nay"),
+    BotCommand("yenlang", "Giờ yên lặng, gom thông báo (on|off|22-7)"),
+    BotCommand("viec", "Giao việc chạy nền; xem, huỷ việc"),
+    BotCommand("lichtacvu", "Tác vụ định kỳ: em tự chạy yêu cầu theo lịch"),
     BotCommand("nhac", "Nhắc việc: xem, đặt, huỷ, hoãn"),
     BotCommand("ngaynho", "Ngày nhớ: giỗ, sinh nhật, kỷ niệm"),
     BotCommand("chitieu", "Chi tiêu: tổng theo danh mục, ghi khoản"),
     BotCommand("chitieu_xoa", "Xoá 1 khoản chi theo số #"),
+    BotCommand("an", "Ghi bữa ăn, xem kcal ước lượng hôm nay/tuần"),
+    BotCommand("noi", "Trả lời kèm giọng nói (on|off|auto)"),
     BotCommand("prompt", "Viết prompt tạo ảnh"),
     BotCommand("gia", "Tìm giá sản phẩm"),
     BotCommand("dich", "Dịch chat Nhật-Việt"),
@@ -109,6 +125,7 @@ COMMANDS = [
     BotCommand("xuatdulieu", "Tải file dữ liệu em đang lưu"),
     BotCommand("xoadulieu", "Xoá trí nhớ, ghi chú, lịch sử chat"),
     BotCommand("hoithan", "Bật/tắt em chủ động hỏi thăm việc anh kể (on|off)"),
+    BotCommand("hoc", "Duyệt cách trả lời em tự rút ra (ok|bo)"),
     BotCommand("model", "Xem/đổi model"),
     BotCommand("status", "Xem provider"),
     BotCommand("loi", "Xem lỗi gom nhóm hôm nay"),
@@ -120,7 +137,6 @@ COMMANDS = [
     BotCommand("ragxuly", "Dọn file md OCR trong rag/ (AI thêm heading)"),
     BotCommand("bangtinsang", "Gửi ngay Bản tin sáng tới Zalo + Zoom"),
     BotCommand("tintuc", "Đọc Điểm tin mới ngay trong Telegram"),
-    BotCommand("userouter9", "Thử lại 9Router"),
     BotCommand("router9", "Bật/tắt 9Router (on|off)"),
     BotCommand("tavily", "Bật/tắt tra web Tavily (on|off)"),
     BotCommand("anh", "Tạo ảnh thật từ mô tả (Agnes AI)"),
@@ -155,6 +171,30 @@ COMMANDS = [
     BotCommand("zaloxoa", "Xoá pairing 1 user Zalo"),
     BotCommand("zalodanhsach", "Xem danh sách user Zalo"),
 ]
+# Menu "/" của Telegram: lệnh hay dùng nhất (bot chỉ phục vụ chủ bot nên 1 menu chung,
+# không cần BotCommandScope). Thứ tự = thứ tự hiện trong menu.
+MENU_COMMANDS = (
+    "help",
+    "huy",
+    "chuy",
+    "nhac",
+    "chitieu",
+    "danhmuc",
+    "theodoi",
+    "vang",
+    "xoso",
+    "thoitiet",
+    "lich",
+    "tuvi",
+    "dich",
+    "notes",
+    "memory",
+    "viec",
+    "sai",
+    "status",
+)
+_DESCRIPTIONS = {c.command: c.description for c in ALL_COMMANDS}
+COMMANDS = [BotCommand(name, _DESCRIPTIONS[name]) for name in MENU_COMMANDS]
 
 
 async def _post_init(app):
@@ -167,6 +207,8 @@ async def _post_init(app):
     await app.bot.set_my_commands(COMMANDS)
     await orchestrator.init_provider_state()
     orchestrator.start_background_tasks()
+    # Cửa gom thông báo chủ động: bật TRƯỚC các vòng nền để tin đầu tiên đã đi qua hub.
+    notify_hub.start()
     monitor_service.start()
     scheduler.start(config.ALLOWED_USER_ID)
     portfolio_alerts.start(config.ALLOWED_USER_ID)
@@ -175,6 +217,8 @@ async def _post_init(app):
     morning_brief.start()
     memory_service.start()
     proactive_service.start()
+    # Việc nền /viec + tác vụ định kỳ (routines đăng ký vòng xếp lịch vào bộ chạy nền).
+    background_jobs.start()
 
 
 async def _post_shutdown(app):
@@ -184,6 +228,8 @@ async def _post_shutdown(app):
         except Exception:
             logger.exception("Shutdown step lỗi: %s", label)
 
+    await run_step("background jobs", background_jobs.stop())
+    await run_step("notify hub", notify_hub.stop())
     await run_step("Telegram scheduler", scheduler.stop())
     await run_step("portfolio alerts", portfolio_alerts.stop())
     await run_step("portfolio events", portfolio_events.stop())
@@ -282,6 +328,7 @@ def build_application():
         ("xuatdulieu", commands.memory_family_cmd),
         ("xoadulieu", commands.memory_family_cmd),
         ("hoithan", commands.memory_family_cmd),
+        ("hoc", commands.memory_family_cmd),
         ("model", provider_commands.model_cmd),
         ("status", provider_commands.status_cmd),
         ("loi", provider_commands.loi_cmd),
@@ -296,13 +343,20 @@ def build_application():
         ("kymon_chitiet", commands.kymon_chitiet_cmd),
         ("vang", daily_data_commands.vang_cmd),
         ("tygia", daily_data_commands.tygia_cmd),
+        ("xang", daily_data_commands.xang_cmd),
         ("xoso", daily_data_commands.xoso_cmd),
         ("thoitiet", daily_data_commands.thoitiet_cmd),
         ("bantin", daily_data_commands.bantin_cmd),
+        ("chuy", daily_data_commands.chuy_cmd),
+        ("yenlang", daily_data_commands.yenlang_cmd),
+        ("viec", job_commands.viec_cmd),
+        ("lichtacvu", job_commands.lichtacvu_cmd),
         ("nhac", reminder_commands.nhac_cmd),
         ("ngaynho", reminder_commands.ngaynho_cmd),
         ("chitieu", expense_commands.chitieu_cmd),
         ("chitieu_xoa", expense_commands.chitieu_xoa_cmd),
+        ("an", personal_commands.an_cmd),
+        ("noi", personal_commands.noi_cmd),
         ("agent", commands.agent_cmd),
         ("rag", commands.rag_cmd),
         ("ragxuly", commands.ragxuly_cmd),
@@ -437,4 +491,5 @@ def build_application():
     portfolio_push.set_notify_callback(notify)
     morning_brief.set_notify_callback(notify)
     proactive_service.set_notify_callback(notify)
+    notify_hub.set_telegram_sender(notify)
     return app

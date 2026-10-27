@@ -41,9 +41,9 @@ from core import database as db
 from core.text_normalize import fold, nfc
 from core.text_utils import strip_json_fence
 from services import history_search  # noqa: F401 - đăng ký tool search_history
-from services import lunar, turn_progress, weather
+from services import lunar, prompt_redaction, turn_progress, weather
 from services import tool_registry as reg
-from services import write_intent
+from services import nl_commands, write_intent
 from services.reminder_delivery import current_target
 from stock import analysis as stock_analysis
 
@@ -61,29 +61,25 @@ _turn_admin: contextvars.ContextVar[bool] = contextvars.ContextVar("tool_turn_ad
 _turn_excluded: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
     "tool_turn_excluded", default=frozenset()
 )
+# Người gọi của lượt (ToolSpec "chạy lệnh" đang chờ bổ sung tham số theo người này).
+_turn_user: contextvars.ContextVar[int] = contextvars.ContextVar("tool_turn_user", default=0)
 _HISTORY_TURNS = 3
 _HISTORY_LINE_MAX = 300
 
-_ROUTER_HEADER = """Bạn là bộ định tuyến tool (function router) nội bộ cho 1 trợ lý cá nhân qua
-Telegram/Zalo. Đọc TIN NHẮN MỚI của người dùng và quyết định có cần gọi 1 trong
-các tool sau không. Trả về DUY NHẤT 1 object JSON (không markdown, không code
-fence, không thêm chữ nào khác) đúng định dạng:
-
+_ROUTER_HEADER = """Bạn là bộ định tuyến tool nội bộ của 1 trợ lý cá nhân. Đọc TIN NHẮN MỚI,
+chọn tối đa 1 tool. Trả DUY NHẤT 1 object JSON (không markdown/code fence):
 {"tool": "ten_tool_hoac_none", "args": {...}}
 
-Danh sách tool khả dụng:"""
+Tool:"""
 
-_ROUTER_RULES = """- "none": tin nhắn KHÔNG cần tool nào (chuyện phiếm, hỏi đáp thông thường, hỏi
-  giá/phân tích cổ phiếu cụ thể - các trường hợp đó đã được xử lý riêng). args: {}.
-
+_ROUTER_RULES = """- "none": không cần tool (chuyện phiếm, hỏi đáp thường, giá/phân tích cổ phiếu
+  - đã xử lý riêng). args {}.
 Quy tắc:
-- CHỈ chọn 1 tool khi TIN NHẮN MỚI có ý định RÕ RÀNG khớp mô tả trên. Không chắc,
-  kể chuyện đã qua ("hôm qua em nhắc anh rồi"), hay nhắc tới mơ hồ -> "none".
-- Lịch sử hội thoại (nếu có) CHỈ để hiểu "việc đó", "cái đó", "như trên"... trong
-  tin nhắn mới - không chọn tool vì 1 yêu cầu cũ trong lịch sử.
-- KHÔNG tự bịa nội dung cho "content"/"message"/"note" - lấy đúng ý người dùng
-  đã nói, có thể viết gọn hơn nhưng không thêm thông tin mới.
-- KHÔNG tự cộng trừ giờ: chép nguyên văn cụm thời gian vào "when"; hệ thống tự tính."""
+- Chỉ chọn tool khi TIN NHẮN MỚI có ý định RÕ RÀNG khớp mô tả; không chắc, kể
+  chuyện đã qua ("hôm qua em nhắc anh rồi"), mơ hồ -> "none".
+- Lịch sử chỉ để hiểu "việc đó", "cái đó"... - không chọn tool vì yêu cầu cũ.
+- Không bịa "content"/"message": lấy đúng ý người dùng, viết gọn được.
+- Không tự cộng trừ giờ: chép nguyên văn cụm thời gian vào "when"."""
 
 # ─── Ý định ghi dữ liệu (regex, độc lập router) ─────────────────────────────
 # services/write_intent.py (dùng chung với bắt khoản chi từ chat). Không dùng
@@ -564,57 +560,54 @@ def _obj(props: dict | None = None, required: tuple[str, ...] = ()) -> dict:
     return reg.object_schema(props or {}, required)
 
 
+# Mô tả tool NGẮN (kiểu EasyTool): 1 câu mô tả + dạng args + khi nào dùng/1 ví dụ.
+# Prompt router và /agent phải vừa trần 8K token/phút của Groq gpt-oss-20b - test
+# test_tool_catalog_budget đặt trần tổng ký tự, thêm tool thì viết gọn tương tự.
 _CHAT_TOOLS = (
     reg.ToolSpec(
         name="save_note",
         description="Lưu 1 ghi chú tự do.",
-        parameters=_obj({"content": reg.string("nội dung cần ghi nhớ")}, ("content",)),
+        parameters=_obj({"content": reg.string("nội dung")}, ("content",)),
         handler=_tool_save_note,
         side_effect=True,
         effect_label="ghi chú",
-        router_hint=(
-            'args: {"content": "nội dung cần ghi nhớ"}. Dùng khi người dùng RÕ RÀNG yêu cầu '
-            'ghi/ghi chú/note lại điều gì đó (vd "ghi chú giúp anh...", "note lại...").'
-        ),
+        router_hint='args {"content": nội dung}. Khi RÕ RÀNG bảo ghi chú/note lại.',
     ),
     reg.ToolSpec(
         name="remember_fact",
         description="Ghim LÂU DÀI 1 điều về người dùng vào trí nhớ.",
-        parameters=_obj(
-            {"content": reg.string("điều cần nhớ, giữ nguyên ý người dùng")}, ("content",)
-        ),
+        parameters=_obj({"content": reg.string("điều cần nhớ, giữ nguyên ý")}, ("content",)),
         handler=_tool_remember_fact,
         side_effect=True,
         effect_label="điều cần nhớ",
         router_hint=(
-            'args: {"content": "điều cần nhớ, giữ nguyên ý người dùng"}. Dùng khi người dùng '
-            'bảo "nhớ giúp anh là...", "em nhớ nhé: ...", "ghi nhớ giúp: ...".'
+            'args {"content": giữ nguyên ý}. Khi bảo "nhớ giúp anh là...", "em nhớ nhé: ...".'
         ),
     ),
     reg.ToolSpec(
         name="list_notes",
-        description="Xem lại các ghi chú gần đây.",
+        description="Xem các ghi chú gần đây.",
         parameters=_obj(),
         handler=_tool_list_notes,
-        router_hint='args: {}. Dùng khi người dùng hỏi "em ghi chú gì rồi", "xem lại note".',
+        router_hint='args {}. Vd "em ghi chú gì rồi".',
     ),
     reg.ToolSpec(
         name="set_reminder",
         description="Đặt nhắc việc (1 lần hoặc lặp lại).",
         parameters=_obj(
             {
-                "message": reg.string("nội dung cần nhắc"),
-                "when": reg.string("cụm thời gian NGUYÊN VĂN người dùng nói"),
+                "message": reg.string("việc cần nhắc"),
+                "when": reg.string("cụm thời gian NGUYÊN VĂN"),
                 "date": reg.string("YYYY-MM-DD hoặc rỗng"),
-                "time": reg.string("HH:MM (24h) hoặc rỗng"),
-                "in_minutes": reg.number("số phút nữa (chỉ khi người dùng nói 'N phút/tiếng nữa')"),
+                "time": reg.string("HH:MM 24h hoặc rỗng"),
+                "in_minutes": reg.number("số phút nữa ('N phút/tiếng nữa')"),
                 "repeat": reg.string("none|daily|weekly|monthly|yearly|lunar_monthly|lunar_yearly"),
                 "weekdays": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "lặp hằng tuần: 0=Thứ Hai, 1=Thứ Ba ... 5=Thứ Bảy, 6=Chủ nhật",
+                    "description": "0=Thứ Hai ... 6=Chủ nhật",
                 },
-                "day": reg.integer("ngày trong tháng (lặp hằng tháng)"),
+                "day": reg.integer("ngày trong tháng"),
                 "lunar_days": {"type": "array", "items": {"type": "integer"}},
                 "items": {"type": "array", "items": {"type": "object"}},
             },
@@ -624,63 +617,54 @@ _CHAT_TOOLS = (
         side_effect=True,
         effect_label="nhắc việc",
         router_hint=(
-            'args: {"message": "nội dung cần nhắc", "when": "cụm thời gian NGUYÊN VĂN người '
-            'dùng nói, vd \\"8h tối mai\\", \\"30 phút nữa\\", \\"7h sáng mỗi ngày\\"", '
-            '"repeat": "none|daily|weekly|monthly|yearly|lunar_monthly|lunar_yearly"}; chép cả '
-            'các thứ/ngày vào "when" (vd \\"6h sáng thứ 2, 4, 6\\"), nếu dùng "weekdays" thì '
-            "0=Thứ Hai ... 6=Chủ nhật. "
-            "Nhiều việc trong 1 tin: "
-            '{"items": [{"message": ..., "when": ...}, ...]} (tối đa 5). Dùng khi người dùng '
-            'RÕ RÀNG yêu cầu nhắc việc (vd "nhắc anh 30 phút nữa uống thuốc", "8 giờ tối nay '
-            'nhắc anh gọi mẹ", "mùng 1 và rằm nhắc anh thắp hương"). "việc đó" thì lấy nội '
-            "dung từ lịch sử hội thoại."
+            'args {"message": việc cần nhắc, "when": cụm thời gian NGUYÊN VĂN kể cả thứ/ngày '
+            '(vd "8h tối mai", "30 phút nữa", "6h sáng thứ 2, 4, 6"), "repeat": '
+            "none|daily|weekly|monthly|yearly|lunar_monthly|lunar_yearly}; weekdays 0=Thứ "
+            'Hai ... 6=Chủ nhật; nhiều việc: {"items": [{"message", "when"}, ...]} (<= 5). '
+            'Khi RÕ RÀNG nhờ nhắc; "việc đó" lấy từ lịch sử.'
         ),
     ),
     reg.ToolSpec(
         name="list_reminders",
-        description="Xem các nhắc việc đang chờ (đánh số).",
+        description="Xem nhắc việc đang chờ.",
         parameters=_obj(),
         handler=_tool_list_reminders,
-        router_hint='args: {}. Vd "em đặt những nhắc gì rồi", "anh có lịch nhắc nào không".',
+        router_hint='args {}. Vd "em đặt những nhắc gì rồi".',
     ),
     reg.ToolSpec(
         name="cancel_reminder",
-        description="Huỷ 1 nhắc việc đang chờ (nhắc lặp: huỷ cả chuỗi).",
-        parameters=_obj({"target": reg.string("số thứ tự trong /nhac hoặc 1 đoạn nội dung")}),
+        description="Huỷ 1 nhắc việc (nhắc lặp: cả chuỗi).",
+        parameters=_obj({"target": reg.string("số trong /nhac hoặc đoạn nội dung")}),
         handler=_tool_cancel_reminder,
         side_effect=True,
         effect_label="huỷ nhắc việc",
-        router_hint=(
-            'args: {"target": "số thứ tự trong danh sách /nhac hoặc 1 đoạn nội dung, vd '
-            '\\"gọi mẹ\\""}. Vd "huỷ nhắc gọi mẹ", "bỏ cái nhắc số 2".'
-        ),
+        router_hint='args {"target": số trong /nhac hoặc đoạn nội dung}. Vd "huỷ nhắc gọi mẹ".',
     ),
     reg.ToolSpec(
         name="save_special_date",
-        description="Lưu 1 ngày nhớ hằng năm (giỗ, sinh nhật, kỷ niệm) kèm báo trước.",
-        parameters=_obj({"text": reg.string("câu mô tả ngày nhớ nguyên văn")}),
+        description="Lưu ngày nhớ hằng năm (giỗ, sinh nhật, kỷ niệm).",
+        parameters=_obj({"text": reg.string("câu mô tả nguyên văn")}),
         handler=_tool_save_special_date,
         side_effect=True,
         effect_label="ngày nhớ",
         router_hint=(
-            'args: {"text": "nguyên văn phần ngày nhớ, vd \\"giỗ ông nội 12/3 âm, nhắc trước 3 '
-            'ngày\\", \\"sinh nhật vợ 20/11\\""}. Dùng khi người dùng muốn bot NHỚ/nhắc 1 ngày '
-            "lặp hằng năm (giỗ, sinh nhật, kỷ niệm ngày cưới)."
+            'args {"text": nguyên văn, vd "giỗ ông nội 12/3 âm, nhắc trước 3 ngày"}. Khi muốn '
+            "nhớ/nhắc 1 ngày lặp hằng năm."
         ),
     ),
     reg.ToolSpec(
         name="list_special_dates",
-        description="Xem các ngày nhớ (giỗ, sinh nhật, kỷ niệm) đã lưu.",
+        description="Xem các ngày nhớ đã lưu.",
         parameters=_obj(),
         handler=_tool_list_special_dates,
-        router_hint='args: {}. Vd "nhà mình sắp có giỗ ai không", "em nhớ những ngày nào".',
+        router_hint='args {}. Vd "sắp có giỗ ai không".',
     ),
     reg.ToolSpec(
         name="add_expense",
-        description="Ghi khoản chi tiêu (số tiền do hệ thống tự đọc từ câu).",
+        description="Ghi khoản chi (hệ thống tự đọc số tiền).",
         parameters=_obj(
             {
-                "text": reg.string("nguyên văn khoản chi, vd 'cafe 45k'"),
+                "text": reg.string("nguyên văn, vd 'cafe 45k'"),
                 "items": {"type": "array", "items": {"type": "string"}},
             }
         ),
@@ -688,88 +672,77 @@ _CHAT_TOOLS = (
         side_effect=True,
         effect_label="khoản chi",
         router_hint=(
-            'args: {"text": "nguyên văn khoản chi, vd \\"đổ xăng 80k\\""} hoặc {"items": '
-            '["cafe 45k", "ăn trưa 60k"]}. Dùng khi người dùng muốn GHI LẠI tiền đã chi '
-            '(vd "ghi chi tiêu: ăn trưa 60k", "hôm qua đổ xăng hết 80k ghi lại giúp anh").'
+            'args {"text": nguyên văn, vd "đổ xăng 80k"} hoặc {"items": ["cafe 45k", ...]}. '
+            "Khi muốn GHI LẠI tiền đã chi."
         ),
     ),
     reg.ToolSpec(
         name="expense_summary",
-        description="Tổng chi tiêu theo danh mục (tính bằng SQL).",
+        description="Tổng chi tiêu theo danh mục.",
         parameters=_obj({"period": reg.string("hôm nay|tuần này|tháng này|tháng trước|tháng M")}),
         handler=_tool_expense_summary,
         router_hint=(
-            'args: {"period": "hôm nay|hôm qua|tuần này|tháng này|tháng trước|tháng 10"}. Vd '
-            '"tháng này anh tiêu bao nhiêu rồi", "chi tiêu tuần này".'
+            'args {"period": hôm nay|hôm qua|tuần này|tháng này|tháng trước|tháng 10}. Vd '
+            '"tháng này anh tiêu bao nhiêu".'
         ),
     ),
     reg.ToolSpec(
         name="get_portfolio",
-        description="Xem lại danh mục đầu tư đã ghi nhận trong trí nhớ dài hạn.",
+        description="Xem danh mục đầu tư đã ghi nhận.",
         parameters=_obj(),
         handler=_tool_get_portfolio,
-        router_hint='args: {}. Vd "danh mục của anh gồm những gì", "em nhớ anh giữ mã nào".',
+        router_hint='args {}. Vd "anh đang giữ mã nào".',
     ),
     reg.ToolSpec(
         name="get_weather",
         description="Tra thời tiết thật (hiện tại + dự báo).",
         parameters=_obj(
             {
-                "location": reg.string("tên địa danh người dùng nói, rỗng nếu không nói"),
-                "days": reg.integer("số ngày dự báo TÍNH CẢ HÔM NAY (1-7)"),
+                "location": reg.string("địa danh người dùng nói, rỗng nếu không nói"),
+                "days": reg.integer("số ngày TÍNH CẢ HÔM NAY (1-7)"),
             }
         ),
         handler=_tool_get_weather,
         router_hint=(
-            'args: {"location": "tên địa danh người dùng nói, để rỗng nếu không nói địa '
-            'điểm", "days": số ngày dự báo TÍNH CẢ HÔM NAY (1 = hôm nay, 2 = tới ngày mai, '
-            "cuối tuần thì tính tới Chủ Nhật; tối đa 7)}. Dùng khi hỏi thời tiết, mưa/nắng, "
-            "nhiệt độ, có nên mang áo mưa... KHÔNG tự điền địa điểm khi người dùng không nói."
+            'args {"location": địa danh người dùng nói (KHÔNG tự điền), "days": số ngày TÍNH '
+            "CẢ HÔM NAY (1-7; mai = 2, cuối tuần tính tới Chủ Nhật)}. Hỏi mưa/nắng/nhiệt độ."
         ),
     ),
     reg.ToolSpec(
         name="lunar_calendar",
-        description="Tra âm lịch.",
+        description="Tra/đổi âm lịch.",
         parameters=_obj(
             {
-                "date": reg.string("YYYY-MM-DD ngày dương ('' = hôm nay)"),
+                "date": reg.string("YYYY-MM-DD dương ('' = hôm nay)"),
                 "lunar_day": reg.integer("ngày âm"),
                 "lunar_month": reg.integer("tháng âm"),
-                "lunar_year": reg.integer("năm âm (bỏ trống nếu không nói)"),
+                "lunar_year": reg.integer("năm âm (tuỳ chọn)"),
                 "leap": reg.boolean("tháng nhuận"),
             }
         ),
         handler=_tool_lunar_calendar,
         router_hint=(
-            'Hai dạng args: (a) {"date": "YYYY-MM-DD"} - ngày DƯƠNG cần xem âm lịch, can chi, '
-            'giờ hoàng đạo, tiết khí, số ngày tới Tết ("" = hôm nay). (b) {"lunar_day": số, '
-            '"lunar_month": số, "lunar_year": số năm âm hoặc bỏ trống, "leap": true nếu nói rõ '
-            'tháng nhuận} - đổi ngày ÂM sang dương. Vd "rằm tháng 8 là ngày nào" -> lunar_day '
-            '15, lunar_month 8; "mùng 1 Tết" -> lunar_day 1, lunar_month 1.'
+            'args (a) {"date": "YYYY-MM-DD" dương, "" = hôm nay} - âm lịch, can chi, giờ hoàng '
+            'đạo, tiết khí, ngày tới Tết; (b) {"lunar_day", "lunar_month", "lunar_year" (tuỳ '
+            'chọn), "leap"} - đổi âm sang dương, vd "rằm tháng 8" -> 15, 8.'
         ),
     ),
     reg.ToolSpec(
         name="rag_search",
-        description="Tra kho kiến thức riêng (thư mục rag/) của chủ bot.",
+        description="Tra kho kiến thức riêng (rag/) của chủ bot.",
         parameters=_obj({"query": reg.string("câu cần tra")}),
         handler=_tool_rag_search,
         roles=reg.STAFF_ROLES,
         surfaces=frozenset({reg.CHAT, reg.AGENT}),
-        router_hint=(
-            'args: {"query": "câu cần tra"}. CHỈ khi người dùng nhắc rõ tài liệu/kho kiến '
-            'thức của mình (vd "trong tài liệu của anh nói gì về DCA").'
-        ),
+        router_hint='args {"query": câu cần tra}. CHỈ khi nhắc rõ tài liệu/kho kiến thức của mình.',
     ),
     reg.ToolSpec(
         name="read_link",
-        description="Đọc nội dung 1 link người dùng gửi trong tin nhắn.",
-        parameters=_obj({"url": reg.string("URL có nguyên văn trong tin nhắn")}),
+        description="Đọc nội dung 1 link người dùng gửi.",
+        parameters=_obj({"url": reg.string("URL có nguyên văn trong tin")}),
         handler=_tool_read_link,
         untrusted_output=True,
-        router_hint=(
-            'args: {"url": "URL có NGUYÊN VĂN trong tin nhắn mới"}. Dùng khi người dùng gửi '
-            'link và hỏi về nội dung trang (vd "link này nói gì", "tóm tắt giúp anh <link>").'
-        ),
+        router_hint='args {"url": URL NGUYÊN VĂN trong tin mới}. Khi gửi link và hỏi nội dung.',
     ),
 )
 for _spec in _CHAT_TOOLS:
@@ -777,6 +750,16 @@ for _spec in _CHAT_TOOLS:
 
 # Tên cũ - giữ cho chỗ khác/test đang tra handler theo tên.
 _HANDLERS = {spec.name: spec.handler for spec in _CHAT_TOOLS}
+
+
+@contextmanager
+def turn_text_scope(text: str) -> Iterator[None]:
+    """Câu người dùng của lượt cho handler đọc lại (đường code của nl_commands)."""
+    token = _turn_text.set(text)
+    try:
+        yield
+    finally:
+        _turn_text.reset(token)
 
 
 @contextmanager
@@ -804,6 +787,14 @@ def _chat_specs(role: str) -> list[reg.ToolSpec]:
     return [spec for spec in reg.specs(reg.CHAT, role) if spec.name not in excluded]
 
 
+def _turn_specs(user_text: str, role: str) -> list[reg.ToolSpec]:
+    """Tool router chat của lượt + ToolSpec "chạy lệnh" của nhóm khớp câu này
+    (services/nl_commands.py - chỉ nhóm khớp mới vào prompt, giữ trần token)."""
+    extra = nl_commands.router_specs(_turn_user.get(), user_text, role)
+    excluded = _turn_excluded.get()
+    return _chat_specs(role) + [spec for spec in extra if spec.name not in excluded]
+
+
 def _role(user_id: int, is_admin: bool) -> str:
     if config.is_owner_user_id(user_id):
         return reg.ROLE_OWNER
@@ -812,7 +803,11 @@ def _role(user_id: int, is_admin: bool) -> str:
 
 def _build_router_prompt(user_text: str, history_text: str = "", role: str | None = None) -> str:
     now = datetime.now(_VN_TZ)
-    tools = reg.router_tool_list(_chat_specs(role or reg.ROLE_OWNER))
+    specs = _turn_specs(user_text, role or reg.ROLE_OWNER)
+    tools = reg.router_tool_list(specs)
+    rules = _ROUTER_RULES
+    if any(spec.verbatim for spec in specs):
+        rules += "\n" + nl_commands.ROUTER_RULE
     history = ""
     if history_text:
         history = (
@@ -820,7 +815,7 @@ def _build_router_prompt(user_text: str, history_text: str = "", role: str | Non
             f"{history_text}\n\n"
         )
     return (
-        f"{_ROUTER_HEADER}\n{tools}\n{_ROUTER_RULES}\n\n"
+        f"{_ROUTER_HEADER}\n{tools}\n{rules}\n\n"
         f"[Thời điểm hiện tại: {now:%H:%M} {lunar.WEEKDAYS[now.weekday()]} ngày "
         f"{now:%d/%m/%Y}, giờ Việt Nam]\n\n"
         f"{history}### Tin nhắn mới của người dùng\n{user_text}\n\n"
@@ -1036,6 +1031,7 @@ async def execute(
         "router_ran": True,
         "effect_label": spec.effect_label,
         "untrusted": spec.untrusted_output,
+        "verbatim": spec.verbatim,
     }
     if spec.side_effect and not allow_side_effects:
         return reg.ToolOutcome(
@@ -1067,6 +1063,7 @@ async def execute(
         text=result.text,
         confirmation=result.confirmation,
         confirmation_key=result.confirmation_key,
+        extra=dict(result.extra),
         **base,
     )
 
@@ -1089,7 +1086,13 @@ async def maybe_run_tool(
     if is_admin is None:
         is_admin = _turn_admin.get()
     intent = side_effect_intent(user_text)
-    if not intent and not _looks_like_tool_intent(user_text):
+    user_token = _turn_user.set(user_id)
+    if (
+        not intent
+        and not _looks_like_tool_intent(user_text)
+        and not nl_commands.router_groups(user_id, user_text, _role(user_id, is_admin))
+    ):
+        _turn_user.reset(user_token)
         return reg.ToolOutcome()
     token = _turn_text.set(user_text)
     try:
@@ -1101,6 +1104,14 @@ async def maybe_run_tool(
         return reg.ToolOutcome(status=reg.STATUS_FAILED, intent=intent, lookup=lookup)
     finally:
         _turn_text.reset(token)
+        _turn_user.reset(user_token)
+
+
+def wants_command_router(user_id: int, user_text: str, is_admin: bool) -> bool:
+    """Câu có thể là yêu cầu chạy lệnh (nhóm lệnh khớp) - run_chat_turn chạy router
+    TRƯỚC (không song song tra web/trí nhớ): router chọn lệnh thì gửi nguyên văn kết
+    quả, khỏi tốn lượt tra web và lượt chat AI."""
+    return bool(nl_commands.router_groups(user_id, user_text, _role(user_id, is_admin)))
 
 
 async def _route_and_run(
@@ -1114,28 +1125,33 @@ async def _route_and_run(
     prompt = _build_router_prompt(user_text, history, role)
     from ai import orchestrator
 
-    try:
-        data = await orchestrator.utility_json(prompt)
-    except Exception:
-        logger.warning("Router tool: utility_json lỗi.", exc_info=True)
-        data = None
-    if not data and intent:
-        if allow_side_effects:
-            handled = await _deterministic(user_id, user_text, intent)
-            if handled is not None:
-                return handled
+    # Provider chỉ thấy nhãn "[đã ẩn: mật khẩu]"; tham số tool (chạy trong bot, ghi DB
+    # của chính người dùng) được đổi lại giá trị gốc - services/prompt_redaction.
+    with prompt_redaction.scope() as redactor:
         try:
-            data = await _route_with_chain(prompt)
+            data = await orchestrator.utility_json(prompt)
         except Exception:
-            logger.warning("Router tool dự phòng qua provider-chain lỗi.", exc_info=True)
+            logger.warning("Router tool: utility_json lỗi.", exc_info=True)
             data = None
+        if not data and intent:
+            if allow_side_effects:
+                handled = await _deterministic(user_id, user_text, intent)
+                if handled is not None:
+                    return handled
+            try:
+                data = await _route_with_chain(prompt)
+            except Exception:
+                logger.warning("Router tool dự phòng qua provider-chain lỗi.", exc_info=True)
+                data = None
+    if isinstance(data, dict):
+        data = redactor.restore_obj(data)
     if not data:
         lookup = "" if intent else own_data_lookup(user_text)
         return reg.ToolOutcome(status=reg.STATUS_UNAVAILABLE, intent=intent, lookup=lookup)
 
     tool_name = str(data.get("tool", "none")).strip()
     spec = reg.get(tool_name)
-    allowed = {s.name for s in _chat_specs(role)}
+    allowed = {s.name for s in _turn_specs(user_text, role)}
     if tool_name == "none" or spec is None or tool_name not in allowed:
         return reg.ToolOutcome(status=reg.STATUS_NONE, intent=intent, router_ran=True)
     args = data.get("args") or {}

@@ -83,9 +83,14 @@ _USER_DATA_TABLES = (
     "stock_price_alerts",
     # migrations/020: chi tiêu cá nhân.
     "expenses",
+    # migrations/028: nhật ký ăn uống (/an).
+    "meals",
     # migrations/021: đánh giá câu trả lời (có bản chụp câu hỏi/câu trả lời).
     "answer_feedback",
     "stock_alert_log",
+    # migrations/027: việc nền /viec (prompt + kết quả) và tác vụ định kỳ.
+    "bg_jobs",
+    "routines",
 )
 
 
@@ -302,6 +307,10 @@ async def _delete_user_data(conn, internal_user_id: int) -> None:
     await conn.execute("DELETE FROM reminder_series WHERE telegram_user_id = $1", internal_user_id)
     for table in _USER_DATA_TABLES:
         await conn.execute(f"DELETE FROM {table} WHERE telegram_user_id = $1", internal_user_id)
+    # Tin chủ động đang chờ gom/đã gửi (migrations/026, services/notify_hub.py).
+    await conn.execute(
+        "DELETE FROM notify_queue WHERE channel = 'zalo' AND user_id = $1", internal_user_id
+    )
     await conn.execute("DELETE FROM settings WHERE key = $1", f"memory_enabled_{internal_user_id}")
     # Thành phố thời tiết + bản tin sáng cá nhân (services/personal_settings.py).
     await conn.execute(

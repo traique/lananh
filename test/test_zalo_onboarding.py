@@ -153,12 +153,16 @@ async def test_zalopair_bao_chu_bot_trang_thai_loi_chao(fake_store, monkeypatch)
 async def test_help_thanh_vien_khong_thay_lenh_admin_va_fb():
     from services import channel_command_service as ccs
 
-    member, _ = await ccs.maybe_handle_command(-5, "/help", is_admin=False)
-    admin, _ = await ccs.maybe_handle_command(-6, "/help", is_admin=True)
+    member, _ = await ccs.maybe_handle_command(-5, "/help all", is_admin=False)
+    admin, _ = await ccs.maybe_handle_command(-6, "/help all", is_admin=True)
     start, _ = await ccs.maybe_handle_command(-5, "/start", is_admin=False)
+    short, _ = await ccs.maybe_handle_command(-5, "/help", is_admin=False)
 
-    assert member == start == [ccs.HELP_MEMBER]
+    assert member == [ccs.HELP_MEMBER]
     assert admin == [ccs.HELP_ADMIN]
+    # /help, /start: bản ngắn "cứ nhắn tự nhiên" - thành viên không thấy chủ đề admin.
+    assert start == short and "nhắn tự nhiên" in short[0] and "/help all" in short[0]
+    assert "admin" not in short[0] and "nhóm" not in short[0]
     for hidden in ("Chỉ admin", "/fb_", "/status", "/rag", "/tavily", "/anh on|off"):
         assert hidden not in member[0], hidden
         assert hidden in admin[0], hidden

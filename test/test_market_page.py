@@ -1274,7 +1274,7 @@ async def test_inflight_marker_is_written_before_publishing(store, monkeypatch):
 async def test_restart_after_interrupted_publish_skips_and_alerts_owner(store, monkeypatch):
     published, alerts_sent = [], []
     _stock_fakes(monkeypatch, published)
-    monkeypatch.setattr(market_page.alerts, "send", lambda text: alerts_sent.append(text))
+    monkeypatch.setattr(market_page.alerts, "send", lambda text, **kw: alerts_sent.append(text))
 
     async def dies_mid_publish(content, media, page_key="default", **_):
         raise asyncio.CancelledError()  # process bị kill/redeploy giữa lúc đăng
@@ -1339,7 +1339,7 @@ async def test_stop_does_not_cancel_a_publish_in_progress(store, monkeypatch):
 async def test_interrupted_news_digest_is_not_reposted(store, monkeypatch):
     calls = _news_fakes(monkeypatch)
     alerts_sent = []
-    monkeypatch.setattr(market_page.alerts, "send", lambda text: alerts_sent.append(text))
+    monkeypatch.setattr(market_page.alerts, "send", lambda text, **kw: alerts_sent.append(text))
     original_publish = market_page.publish_page_post
 
     async def dies(content, media, page_key="default", **_):

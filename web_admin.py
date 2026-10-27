@@ -33,6 +33,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from ai import (
     agnes_client,
     groq_client,
+    live_client,
     official_client,
     openrouter_client,
     orchestrator,
@@ -43,7 +44,8 @@ from ai import (
 from ai.provider_state import provider_state
 from channels import zalo_gateway_status, zalo_users
 from core import config, database as db
-from services import db_maintenance, market_page, memory_control, memory_service, memory_stats
+from services import db_maintenance, journal_admin, market_page, memory_control, memory_service
+from services import memory_stats
 from services import backup_status, error_digest, key_rotation, quota_burn, usage_quota
 from services import watchdog
 
@@ -52,7 +54,15 @@ logger = logging.getLogger(__name__)
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
 _ADMIN_TEMPLATE_PATH = _TEMPLATES / "admin.html"
 _ADMIN_LOGIN_PATH = _TEMPLATES / "admin_login.html"
-_ADMIN_COOLDOWN_PROVIDERS = ("groq", "openrouter", "api1", "api2", "router9")
+_ADMIN_COOLDOWN_PROVIDERS = (
+    "groq",
+    "openrouter",
+    "api1",
+    "api2",
+    "router9",
+    "live_api1",
+    "live_api2",
+)
 _ADMIN_SESSION_COOKIE = "admin_session"
 _CHANNEL_LABELS = {"telegram": "Telegram", "zoom": "Zoom", "zalo": "Zalo"}
 # Key bảng settings giữ epoch phiên admin (xem SessionEpoch).
@@ -442,22 +452,33 @@ async def _provider_info(provider: str) -> dict:
             "openrouter": openrouter_client.model_name,
             "api1": lambda: official_client.model_for(1),
             "api2": lambda: official_client.model_for(2),
+            "live": live_client.model_name,
         }[provider]()
         enabled = await provider_overrides.is_enabled(provider)
+
+    async def _live_key() -> str | None:
+        # Gemini Live dùng chung key api1/api2 (không có key riêng).
+        return await official_client.api_key_for(1) or await official_client.api_key_for(2)
+
     api_key = await {
         "router9": router9_client.api_key,
         "groq": groq_client.api_key,
         "openrouter": openrouter_client.api_key,
         "api1": lambda: official_client.api_key_for(1),
         "api2": lambda: official_client.api_key_for(2),
+        "live": _live_key,
     }[provider]()
+    shared_key = provider in provider_overrides.SHARED_KEY_PROVIDERS
     return {
         "provider": provider,
         "model": effective_model,
         "model_overridden": bool(model_override),
         "api_key_configured": bool(api_key),
         "api_key_masked": _mask_api_key(api_key or ""),
-        "api_key_overridden": bool(await provider_overrides.get_api_key_override(provider)),
+        "api_key_overridden": (
+            False if shared_key else bool(await provider_overrides.get_api_key_override(provider))
+        ),
+        "api_key_shared": shared_key,
         "enabled": enabled,
         "enabled_editable": provider in provider_overrides.ENABLE_OVERRIDABLE,
         **base_url_info,
@@ -488,6 +509,11 @@ async def admin_providers_update(request: Request) -> Response:
         else:
             await provider_overrides.set_model_override(provider, model)
     if "api_key" in body:
+        if provider in provider_overrides.SHARED_KEY_PROVIDERS:
+            return JSONResponse(
+                {"error": "Gemini Live dùng chung key api1/api2 - đổi key ở thẻ api1/api2."},
+                status_code=400,
+            )
         try:
             await provider_overrides.set_api_key_override(provider, body["api_key"])
         except RuntimeError as exc:
@@ -684,6 +710,72 @@ async def admin_memory_item(request: Request) -> Response:
     return JSONResponse({"changed": changed}, status_code=200 if changed else 404)
 
 
+# ─── Nhật ký: ghi chú phiên + tóm tắt (services/journal_admin.py) ────────────
+
+
+async def _journal_user(raw) -> dict | None:
+    """Người dùng hợp lệ của trang Nhật ký (chủ bot hoặc Zalo đã ghép), None nếu không."""
+    user_id = raw if isinstance(raw, int) and not isinstance(raw, bool) else _int_param(raw)
+    if user_id is None:
+        return None
+    return next((e for e in await _memory_user_entries() if e["user_id"] == user_id), None)
+
+
+def _json_body_required(request: Request) -> bool:
+    """POST sửa dữ liệu chỉ nhận JSON: form chéo trang (text/plain, form-urlencoded)
+    không đặt được Content-Type này nếu không qua CORS preflight - thêm 1 lớp chống
+    CSRF ngoài cookie SameSite=Lax."""
+    return "application/json" in (request.headers.get("content-type") or "").lower()
+
+
+@api_router.get("/journal")
+async def admin_journal(request: Request) -> Response:
+    """?user_id=&q=&page= - 1 trang ghi chú phiên gom theo ngày + tóm tắt dài hạn."""
+    entry = await _journal_user(request.query_params.get("user_id"))
+    if entry is None:
+        return Response(status_code=400)
+    page_no = _int_param(request.query_params.get("page")) or 1
+    data = await journal_admin.page(entry["user_id"], request.query_params.get("q", ""), page_no)
+    return JSONResponse({**data, "label": entry["label"]})
+
+
+@api_router.post("/journal/note")
+async def admin_journal_note(request: Request) -> Response:
+    """Body: {"user_id": int, "session_key": int, "action": "edit"|"delete",
+    "title"?, "bullets"?, "summary"?}. 404 nếu ghi chú không còn, 409 nếu đang bận."""
+    if not _json_body_required(request):
+        return Response(status_code=415)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return Response(status_code=400)
+    entry = await _journal_user(body.get("user_id"))
+    session_key, action = body.get("session_key"), body.get("action")
+    if (
+        entry is None
+        or not isinstance(session_key, int)
+        or isinstance(session_key, bool)
+        or action not in ("edit", "delete")
+    ):
+        return Response(status_code=400)
+    try:
+        if action == "delete":
+            changed = await journal_admin.delete_note(entry["user_id"], session_key)
+        else:
+            changed = await journal_admin.edit_note(
+                entry["user_id"],
+                session_key,
+                title=body.get("title"),
+                bullets=body.get("bullets"),
+                summary=body.get("summary"),
+            )
+    except journal_admin.JournalBusy:
+        return JSONResponse(
+            {"error": "Bot đang ghi trí nhớ của người này, thử lại sau vài giây."},
+            status_code=409,
+        )
+    return JSONResponse({"changed": changed}, status_code=200 if changed else 404)
+
+
 @api_router.get("/usage")
 async def admin_usage(request: Request) -> Response:
     since_hours = _hours_param(request)
@@ -818,6 +910,14 @@ async def admin_quota_update(request: Request) -> Response:
         return Response(status_code=400)
     limits = await usage_quota.set_caps(values.get("turns"), values.get("heavy"))
     return JSONResponse({"turns": limits.turns, "heavy": limits.heavy})
+
+
+@api_router.get("/jobs")
+async def admin_jobs() -> Response:
+    """Việc nền /viec + tác vụ định kỳ (services/background_jobs.py, routines.py)."""
+    from services import background_jobs
+
+    return JSONResponse(await background_jobs.admin_overview())
 
 
 @api_router.get("/usage/burn")

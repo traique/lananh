@@ -70,6 +70,8 @@ KIND_DOCUMENT = "document"
 # ("cafe 45k"): vào lịch sử cho câu hỏi nối tiếp, không trích trí nhớ.
 KIND_REMINDER = "reminder"
 KIND_EXPENSE = "expense"
+# Ghi bữa ăn bằng câu tự nhiên ("trưa nay anh ăn bún chả", services/nutrition_service.py).
+KIND_MEAL = "meal"
 # Tin hỏi thăm chủ động (services/proactive_service.py) - dòng "user" là nhãn
 # hệ thống, không phải lời người dùng.
 KIND_FOLLOWUP = "followup"
@@ -77,6 +79,15 @@ KIND_FOLLOWUP = "followup"
 # ghi bị chặn: câu trả lời đã nói "chưa lưu" -> bộ trích nhớ không được tự lưu
 # từ lượt này (chữ chép có thể nghe nhầm).
 KIND_CHAT_READONLY = "chat_readonly"
+# Kết quả việc nền /viec và tác vụ định kỳ (services/background_jobs.py): dòng
+# "user" là nhãn "[Việc nền #12] <yêu cầu>", câu trả lời có thể chép tin web -> lưu
+# bản đã làm sạch cho câu hỏi nối tiếp, KHÔNG trích trí nhớ (yêu cầu lặp lại hằng
+# tuần không được thành "sở thích").
+KIND_BACKGROUND = "background"
+# Kết quả lệnh chạy từ câu tự nhiên (services/nl_commands.py: "xem tử vi 15/3/1990 9h30
+# nam", "em làm được gì"...): vào lịch sử cho câu hỏi nối tiếp, có thể chép nội dung
+# ngoài (điểm tin RSS, tìm giá) -> lưu bản đã làm sạch, KHÔNG trích trí nhớ.
+KIND_COMMAND = "command"
 
 # Lượt được trích trí nhớ (lời người dùng) / được đọc cả câu trả lời của bot.
 MEMORY_KINDS = frozenset({KIND_CHAT, KIND_CHAT_EXT, KIND_RAG, KIND_AGENT})
@@ -184,6 +195,10 @@ def compact_reply(reply: str, kind: str, user_text: str = "") -> str:
         return "[Đã trả lời về ảnh người dùng gửi] " + _clip(untrusted.sanitize(reply), 1200)
     if kind == KIND_DOCUMENT:
         return "[Đã trả lời về tài liệu người dùng gửi] " + _clip(untrusted.sanitize(reply), 1200)
+    if kind == KIND_BACKGROUND:
+        return "[Kết quả việc chạy nền đã gửi người dùng] " + _clip(untrusted.sanitize(reply), 1200)
+    if kind == KIND_COMMAND:
+        return "[Kết quả lệnh đã gửi người dùng] " + _clip(untrusted.sanitize(reply), 1200)
     return _clip(reply, REPLY_MAX_CHARS)
 
 

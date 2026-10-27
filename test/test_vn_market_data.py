@@ -5,9 +5,11 @@ import datetime as dt
 import httpx
 import pytest
 
-from services import http_client
+from services import fuel_prices, http_client
+from services import lottery_provinces as provinces
 from services import vn_market_data as market
 from _vn_data_samples import FX_XML, SJC_JSON, XSMB_RSS, XSMN_RSS  # noqa: E402
+from _vn_data_samples import FUEL_HTML, VANG_TODAY_JSON, XSTN_RSS  # noqa: E402
 
 TODAY = dt.date(2026, 10, 26)
 
@@ -190,3 +192,171 @@ async def test_get_lottery(mock_http):
     assert sent[0].url.path == "/rss-feed/mien-nam-xsmn.rss"
     with pytest.raises(market.MarketDataError):
         await market.get_lottery("xx")
+
+
+async def test_get_province_lottery_dung_feed_rieng(mock_http):
+    sent, routes = mock_http
+    routes["xskt.com.vn"] = lambda r: httpx.Response(200, content=XSTN_RSS)
+    draws = await market.get_province_lottery(provinces.BY_KEY["tay-ninh"])
+    assert sent[0].url.path == "/rss-feed/tay-ninh-xstn.rss"
+    assert [d.date for d in draws] == [dt.date(2026, 10, 22), dt.date(2026, 10, 15)]
+    assert draws[0].provinces[0].name == "Tây Ninh"
+    await market.get_province_lottery(provinces.BY_KEY["tay-ninh"])
+    assert len(sent) == 1  # cache theo đài
+    # Miền Bắc: 1 kỳ chung -> feed miền.
+    routes["xskt.com.vn"] = lambda r: httpx.Response(200, content=XSMB_RSS)
+    await market.get_province_lottery(provinces.BY_KEY["mien-bac"])
+    assert sent[-1].url.path == "/rss-feed/mien-bac-xsmb.rss"
+    fake = provinces.Province("x", "X", "mn", (0,), "evil-xs")
+    with pytest.raises(market.MarketDataError):
+        await market.get_province_lottery(fake)  # chỉ đài trong danh mục
+
+
+async def test_cache_co_tran_so_khoa(mock_http, monkeypatch):
+    _sent, routes = mock_http
+    routes["xskt.com.vn"] = lambda r: httpx.Response(200, content=XSTN_RSS)
+    monkeypatch.setattr(market, "_MAX_CACHE_KEYS", 3)
+    for p in provinces.PROVINCES[:6]:
+        await market.get_province_lottery(p)
+    assert len(market._cache) == 3 and len(market._locks) <= 3
+
+
+def test_feed_tinh_dinh_dang_nhu_mien_bac_va_bo_ky_ngay_la():
+    draws = market.parse_lottery_rss(XSTN_RSS, "mn", dt.date(2026, 10, 27), name="Tây Ninh")
+    assert len(draws) == 2  # kỳ "26-1-2007" lẫn trong feed bị bỏ
+    prizes = draws[0].provinces[0].prizes
+    assert prizes["ĐB"] == ("058734",) and prizes["7"] == ("133",) and prizes["8"] == ("59",)
+    assert market.check_ticket("000059", prizes, "mn") == ["8"]
+    assert market.format_draw(draws[0]).startswith("🎰 Xổ số Tây Ninh (miền Nam) - Thứ Năm")
+
+
+def test_danh_muc_dai_va_lich_quay():
+    assert len(provinces.PROVINCES) == 36 and len(provinces.in_region("mt")) == 14
+    feeds = {p.feed for p in provinces.PROVINCES}
+    assert "tay-ninh-xstn" in feeds and "thua-thien-hue-xstth" in feeds and len(feeds) == 36
+    assert provinces.match("xổ số Đà Lạt").key == "lam-dong"
+    assert (
+        provinces.match("Sài Gòn") is provinces.match("TP. HCM") is provinces.BY_KEY["ho-chi-minh"]
+    )
+    assert provinces.match("vũng tàu").key == "vung-tau" and provinces.match("huế").region == "mt"
+    assert provinces.match("xskt hôm nay") is None  # "xổ số kiến thiết", không phải Kon Tum
+    monday = dt.date(2026, 10, 26)
+    names = {p.name for p in provinces.drawing_on(monday, "mn")}
+    assert names == {"TP.HCM", "Đồng Tháp", "Cà Mau"}
+    assert {p.name for p in provinces.drawing_on(dt.date(2026, 10, 25), "mt")} == {
+        "Thừa Thiên Huế",
+        "Khánh Hòa",
+        "Kon Tum",
+    }
+    assert provinces.schedule_text(provinces.BY_KEY["thua-thien-hue"]) == "thứ hai và Chủ Nhật"
+    assert provinces.same("Lâm Đồng", provinces.BY_KEY["lam-dong"])
+    assert provinces.get("tay-ninh") is provinces.get("Tây Ninh") is provinces.BY_KEY["tay-ninh"]
+    # Mỗi ngày miền Nam 3-4 đài, miền Trung 2-3 đài.
+    for offset in range(7):
+        day = monday + dt.timedelta(days=offset)
+        assert 3 <= len(provinces.drawing_on(day, "mn")) <= 4
+        assert 2 <= len(provinces.drawing_on(day, "mt")) <= 3
+
+
+# ─── Giá vàng vang.today ────────────────────────────────────────────────────
+
+
+def test_parse_vang_today_object_va_danh_sach():
+    table = market.parse_vang_today_json(VANG_TODAY_JSON)
+    assert table.updated == "07:30 27/10/2026"
+    sjc = table.get("SJL1L10")
+    assert (sjc.buy, sjc.sell, sjc.change_sell) == (138_700_000, 141_700_000, 500_000)
+    world = table.get("XAUUSD")
+    assert world.buy == 4015.1 and world.sell is None and world.currency == "USD"
+    # Dạng danh sách prices[] có type_code (như tài liệu API).
+    import json
+
+    raw = json.loads(VANG_TODAY_JSON)
+    listed = {**raw, "prices": [{"type_code": k, **v} for k, v in raw["prices"].items()]}
+    again = market.parse_vang_today_json(json.dumps(listed).encode())
+    assert [r.code for r in again.rows] == [r.code for r in table.rows]
+    assert table.rows[0].code == "SJL1L10"  # theo thứ tự hiển thị, không theo nguồn
+
+
+def test_parse_vang_today_loi():
+    with pytest.raises(market.MarketDataError):
+        market.parse_vang_today_json(b'{"success":false}')
+    with pytest.raises(market.MarketDataError):
+        market.parse_vang_today_json(b'{"success":true,"prices":[]}')
+    with pytest.raises(market.MarketDataError):  # chỉ có thế giới, không có giá trong nước
+        market.parse_vang_today_json(
+            b'{"success":true,"prices":{"XAUUSD":{"buy":4000,"currency":"USD"}}}'
+        )
+    with pytest.raises(ValueError):
+        market.parse_vang_today_json(b"<html>")
+
+
+def test_dinh_dang_trieu_va_quy_doi_the_gioi():
+    assert market.trieu(138_700_000) == "138,7" and market.trieu(135_000_000) == "135"
+    assert market.trieu(141_750_000) == "141,75"
+    assert round(market.world_gold_vnd(4015.1, 26030) / 1e6, 2) == 126.01
+    table = market.parse_vang_today_json(VANG_TODAY_JSON)
+    head = market.gold_live_headline(table)
+    assert head.startswith("Vàng SJC miếng 9999 mua 138,7 · bán 141,7 (▲0,5) triệu/lượng")
+    assert "thế giới 4.015 USD/oz" in head
+
+
+async def test_get_gold_live(mock_http):
+    sent, routes = mock_http
+    routes["www.vang.today"] = lambda r: httpx.Response(200, content=VANG_TODAY_JSON)
+    table = await market.get_gold_live()
+    assert table.get("PQHN24NTT").label == "PNJ 24K"
+    assert str(sent[0].url) == "https://www.vang.today/api/prices"
+
+
+# ─── Xăng dầu giaxanghomnay.com ─────────────────────────────────────────────
+
+
+def test_parse_fuel_html_doc_theo_tieu_de_cot():
+    table = fuel_prices.parse_fuel_html(FUEL_HTML)
+    assert table.updated == "00:00 27/10/2026"
+    names = [r.name for r in table.petrolimex]
+    assert names[0] == "Xăng E5 RON 92" and "DO 0,001S Mức 5" in names and len(names) == 6
+    e5 = table.petrolimex[0]
+    assert (e5.change, e5.prev_change, e5.zone1, e5.zone2) == (0, -1610, 25060, 25560)
+    assert table.petrolimex[4].prev_change == 450
+    assert [r.zone1 for r in table.pvoil] == [24910, 29250, 30650]
+    assert all(r.zone2 is None for r in table.pvoil)
+
+
+def test_parse_fuel_ten_moi_va_cot_doi_cho():
+    html = """<table><tr><th>Mặt hàng</th><th>Giá vùng 2</th><th>Giá vùng 1</th>
+    <th>Tăng giảm kỳ trước</th></tr><tr><td>Xăng RON 100 Mới</td><td>27.500</td>
+    <td>27.000</td><td>+1.200</td></tr><tr><td>Rác</td><td>abc</td><td>-</td><td>0</td></tr>
+    </table><p>Giá cập nhật lúc 15:00 ngày 30/10/2026</p>""".encode()
+    table = fuel_prices.parse_fuel_html(html)
+    row = table.petrolimex[0]
+    assert (row.name, row.zone1, row.zone2, row.prev_change) == (
+        "Xăng RON 100 Mới",
+        27000,
+        27500,
+        1200,
+    )
+    assert len(table.petrolimex) == 1 and table.updated == "15:00 30/10/2026"
+
+
+def test_parse_fuel_loi():
+    with pytest.raises(market.MarketDataError):
+        fuel_prices.parse_fuel_html("<html><body>Bảo trì</body></html>".encode())
+    # Chỉ có bảng thế giới (không có "kỳ trước") -> không nhận.
+    with pytest.raises(market.MarketDataError):
+        fuel_prices.parse_fuel_html(
+            b"<table><tr><th>X\xc4\x83ng/d\xe1\xba\xa7u</th><th>Gi\xc3\xa1</th></tr>"
+            b"<tr><td>WTI</td><td>25,000</td></tr></table>"
+        )
+
+
+async def test_get_fuel_cache_mot_gio(mock_http):
+    sent, routes = mock_http
+    routes["giaxanghomnay.com"] = lambda r: httpx.Response(200, content=FUEL_HTML)
+    first = await fuel_prices.get_fuel()
+    assert first is await fuel_prices.get_fuel() and len(sent) == 1
+    routes["giaxanghomnay.com"] = lambda r: httpx.Response(200, content=b"x" * (1024 * 1024 + 1))
+    market.clear_cache()
+    with pytest.raises(market.MarketDataError):
+        await fuel_prices.get_fuel()

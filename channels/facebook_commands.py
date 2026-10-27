@@ -124,6 +124,36 @@ async def _preview(account_id: str, post_id: int) -> str:
     return "\n".join(lines)
 
 
+async def _held_in_quiet_hours_owner(preview: str) -> bool:
+    """Bài chờ duyệt là tin URGENT (services/notify_hub): ngoài giờ yên lặng gửi ngay
+    (kèm nút); trong giờ yên lặng của chủ bot thì giữ trong hàng đợi, gửi đầu tiên
+    khi hết giờ - bản giữ lại chỉ về Telegram, không kèm nút."""
+    from core import config
+    from services import notify_hub
+
+    owner = config.ALLOWED_USER_ID
+    return bool(owner) and await notify_hub.offer(
+        "telegram", owner, preview, source="facebook_review"
+    )
+
+
+async def _held_in_quiet_hours_zalo(controller: str, preview: str) -> bool:
+    """Như trên cho bản gửi Zalo controller (giờ yên lặng của chính Zalo đó)."""
+    from channels import zalo_users
+    from services import notify_hub
+
+    if not notify_hub.active():
+        return False
+    try:
+        user = await zalo_users.resolve(controller)
+    except Exception:
+        logger.warning("Không đọc được Zalo controller để xét giờ yên lặng.", exc_info=True)
+        return False
+    if user is None or not user.is_active:
+        return False
+    return await notify_hub.offer("zalo", user.internal_user_id, preview, source="facebook_review")
+
+
 async def prepare_post(account_id: str, post_id: int, note: str | None = None) -> None:
     row = await facebook_repository.get_post(account_id, post_id)
     if not row:
@@ -137,8 +167,10 @@ async def prepare_post(account_id: str, post_id: int, note: str | None = None) -
     preview = await _preview(account_id, post_id)
     if note:
         preview = f"{preview}\n\n{note}"
-    if controller:
+    if controller and not await _held_in_quiet_hours_zalo(controller, preview):
         await zalo_repository.enqueue_outbox(account_id, controller, preview)
+    if await _held_in_quiet_hours_owner(preview):
+        return  # giữ tới hết giờ yên lặng (tin vẫn có dòng /fb_ok, /fb_boqua)
     try:
         if _admin_buttons_callback is not None:
             from services import action_buttons

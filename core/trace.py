@@ -67,6 +67,9 @@ class TurnMetrics:
     provider_ms: int = 0
     final_provider: str | None = None
     outcome: str = "ok"
+    # Tổng token provider báo về trong lượt (None = chưa provider nào báo) - việc nền
+    # (services/background_jobs.py) ghi vào bg_jobs.tokens.
+    tokens: int | None = None
     # Đã qua assistant_turn (lượt AI thật) - quyết định có ghi turn_metrics không.
     locked: bool = False
 
@@ -191,6 +194,16 @@ def note_call(provider: str, outcome: str, latency_ms: int | None, stage: str | 
     data = _metrics.get()
     if data is not None:
         data.note_call(provider, outcome, latency_ms, stage)
+
+
+def note_tokens(prompt_tokens: int | None, completion_tokens: int | None) -> None:
+    """ai/call_log.record cộng token của 1 lượt gọi provider vào lượt hiện tại."""
+    data = _metrics.get()
+    if data is None or (prompt_tokens is None and completion_tokens is None):
+        return
+    data.tokens = (
+        (data.tokens or 0) + max(0, int(prompt_tokens or 0)) + max(0, int(completion_tokens or 0))
+    )
 
 
 @contextmanager

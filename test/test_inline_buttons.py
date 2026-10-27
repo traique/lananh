@@ -590,3 +590,33 @@ async def test_telemetry_ghi_provider_vao_ket_qua(monkeypatch):
     assert save.await_args.kwargs == {"content_text": "ok", "provider": "groq", "model": "m"}
     await telemetry.success(7, "chat", "ok")
     assert save.await_args.kwargs == {"content_text": "ok"}
+
+
+async def test_nut_chon_dai_xo_so(monkeypatch):
+    from services import daily_commands
+
+    shown = []
+
+    async def fake_province(index):
+        return f"KQ đài {index}"
+
+    async def fake_reply(message, text, **kwargs):
+        shown.append(text)
+
+    monkeypatch.setattr(daily_commands, "xoso_province", fake_province)
+    monkeypatch.setattr(callbacks.common, "reply_long_text", fake_reply)
+    update, query = _cb_update("xs:9")
+    await callbacks.on_callback(update, SimpleNamespace(bot=_Bot()))
+    assert shown == ["KQ đài 9"] and query.answers[0].startswith("🎰")
+    assert query.markups == []  # giữ nút để bấm đài khác
+    # Người lạ bấm: không tra gì.
+    update, query = _cb_update("xs:9", user_id=999)
+    await callbacks.on_callback(update, SimpleNamespace(bot=_Bot()))
+    assert shown == ["KQ đài 9"]
+    rows = action_buttons.lottery_rows(
+        [("TP.HCM", 0), ("Đồng Tháp", 1), ("Cà Mau", 2), ("Huế", 21)]
+    )
+    assert [len(r) for r in rows] == [3, 1]
+    for row in rows:
+        for _label, data in row:
+            assert len(data.encode()) <= 64 and action_buttons.parse(data) is not None

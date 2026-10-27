@@ -23,6 +23,14 @@ from services import (
     usage_stats,
 )
 from services import answer_feedback, daily_commands, expense_service, reminder_commands
+from services import (
+    attention,
+    background_jobs,
+    notify_hub,
+    nutrition_service,
+    routines,
+    voice_reply,
+)
 from services import turn_control
 from services.telemetry import telemetry
 
@@ -47,10 +55,19 @@ _HELP_COMMON = """Lịch, thần số học, tử vi, kỳ môn
 /kymon_chitiet [thời điểm] <việc cần xem> — AI luận giải bàn Kỳ Môn cho việc đó
 
 Đời sống (số liệu thật, không tốn AI)
-/vang — giá vàng SJC; /tygia [mã|100 usd] — tỷ giá Vietcombank, đổi tiền
-/xoso [mb|mn|mt|tỉnh] [hôm qua|dd/mm] [số vé] — kết quả xổ số, dò vé
+/vang [sjc|nhẫn|doji|pnj|bảo tín|thế giới] — giá vàng SJC, DOJI, PNJ, Bảo Tín, thế giới
+/tygia [mã|100 usd] — tỷ giá Vietcombank, đổi tiền
+/xang [xăng|diesel|dầu hỏa] — giá xăng dầu Petrolimex vùng 1/vùng 2, PVOIL
+/xoso [mb|mn|mt|tỉnh] [hôm nay|hôm qua|dd/mm|chủ nhật] [số vé] — kết quả xổ số, dò vé
+  (vd /xoso tây ninh, /xoso đà lạt 123456); /xoso tinh — lịch các đài, đài quay hôm nay
 /thoitiet [địa điểm] — thời tiết; /thoitiet nha <tỉnh> — đặt thành phố của riêng mình
-/bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, danh mục, tin)
+/bantin on|off|<giờ>|xem — bản tin sáng cá nhân (thời tiết, âm lịch, nhắc việc, vàng, danh mục, tin);
+  /bantin xang on|off — thêm giá xăng dầu
+/chuy — có gì cần mình chú ý: nhắc việc hôm nay, ngày nhớ, cảnh báo danh mục, hỏi thăm đang chờ
+  (hoặc hỏi "hôm nay có gì cần lo")
+/yenlang on|off|22-7 — giờ yên lặng: ban đêm chỉ nhắn ngay nhắc việc đã đặt, tin khác gom lại sáng gửi
+/viec <yêu cầu> — giao việc cho Lan Anh làm ở nền, vẫn nhắn bình thường được, xong em báo;
+  /viec — xem việc; /viec xem <số> — xem kết quả; /viec huy <số> — huỷ
 
 Nhắc việc và ngày nhớ (giờ tính bằng code)
 /nhac — xem nhắc việc đang chờ; /nhac 8h tối mai gọi mẹ — đặt nhắc;
@@ -64,6 +81,10 @@ Nhắn "cafe 45k", "đổ xăng 1tr2", "2 củ tiền điện" là Lan Anh ghi l
 /chitieu [hôm nay|tuần này|tháng trước|tháng 10] — tổng theo danh mục; /chitieu ds — khoản gần nhất
 /chitieu cafe 45k — ghi 1 khoản; /chitieu xoa <số> — xoá
 
+Ăn uống (kcal ước lượng theo bảng món Việt, riêng từng người)
+/an phở bò sáng, /an 2 bát cơm, cá kho tối — ghi bữa ăn; /an — xem hôm nay; /an tuan — 7 ngày;
+  /an xoa <số> — xoá 1 món
+
 Chat và tiện ích
 /prompt <mô tả> — viết prompt tạo ảnh
 /anh <mô tả> — tạo ảnh thật (Agnes AI)
@@ -71,6 +92,7 @@ Chat và tiện ích
   "dịch giúp chữ trong ảnh") thì Lan Anh trả lời về ảnh
 🎙️ Gửi tin thoại — Lan Anh nghe rồi trả lời như tin chữ (tin thoại không tự ghi danh mục, chi tiêu,
   nhắc việc - muốn ghi thì gõ chữ)
+/noi on|off|auto — trả lời kèm tin thoại (auto: chỉ khi mình vừa gửi tin thoại)
 📄 Gửi file PDF, TXT, Word (.docx) — tóm tắt hoặc trả lời câu hỏi kèm theo
 /gia <sản phẩm> — tìm và so sánh giá
 /dich [ja>vi|vi>ja] <nội dung> — dịch chat công việc Nhật-Việt
@@ -82,6 +104,7 @@ Chat và tiện ích
 /notes [từ khoá] — xem/tìm ghi chú; /xoaghichu <số> — xoá 1 ghi chú
 /xuatdulieu — xem dữ liệu em đang lưu; /xoadulieu — xoá dữ liệu cá nhân của mình
 /hoithan on|off — em chủ động nhắn hỏi thăm việc sắp tới đã kể (mặc định tắt trên Zalo)
+/hoc [ok|bo] — duyệt cách trả lời em tự rút ra (hoặc nhắn "ghi nhớ"/"bỏ" ngay sau câu em hỏi)
 
 Danh mục cổ phiếu (riêng từng người)
 /danhmuc — xem danh mục, lãi/lỗ, cảnh báo stop/target
@@ -94,6 +117,9 @@ Danh mục cổ phiếu (riêng từng người)
 /theodoi [MÃ...] — danh sách theo dõi; /botheodoi <MÃ> — bỏ theo dõi
 /canhbaogia <MÃ> [về|lên] <GIÁ> — báo khi giá chạm ngưỡng đã đặt; /xoacanhbao <MÃ> [GIÁ]"""
 _HELP_ADMIN_ONLY = """Chỉ admin
+/chuy — admin thấy thêm bài Facebook chờ duyệt; chủ bot thấy thêm lỗi mới, provider, giám sát
+/lichtacvu mỗi sáng thứ 2 8h tóm tắt tin về VNM cho anh — tác vụ định kỳ: đến giờ em chạy yêu cầu
+  rồi gửi kết quả (khác /nhac chỉ nhắc câu cố định); /lichtacvu — xem; huy|tam dung|tiep <số>
 /model [tên|auto] — xem hoặc đổi model
 /status — xem trạng thái provider
 /thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày
@@ -135,7 +161,7 @@ _HELP_FOOTER = (
     "/huy — dừng câu trả lời đang chạy dở (trong lúc chờ vẫn dùng được /help, /notes, "
     "/lich, /tsh, /tuvi, /kymon, /history)\n"
     "/sai [lý do] — báo câu trả lời vừa rồi chưa ổn để Lan Anh rút kinh nghiệm\n"
-    "/help — hiển thị hướng dẫn này"
+    "/help — hướng dẫn ngắn; /help <chủ đề> (vd /help vàng); /help all — bản đầy đủ này"
 )
 
 HELP_MEMBER = "\n\n".join((_HELP_INTRO_MEMBER, _HELP_COMMON, _HELP_FOOTER))
@@ -176,12 +202,38 @@ def take_pending_image_url() -> str | None:
     return url
 
 
+def help_text(user_id: int, argument: str, is_admin: bool, channel: str) -> str:
+    """/help: bản ngắn "cứ nhắn tự nhiên như..." + danh sách chủ đề; /help <chủ đề>:
+    lệnh của chủ đề đó (services/command_catalog.py); /help all: bản đầy đủ cũ. Thành
+    viên Zalo không thấy lệnh/chủ đề admin."""
+    from services import nl_commands
+
+    role = nl_commands.role_for(user_id, is_admin)
+    you = reply_audience.forms()[0]
+    text = nl_commands.help_reply(argument, role, channel, you)
+    if text is None:
+        return HELP_ADMIN if is_admin else HELP_MEMBER
+    return text
+
+
 def _about(user_id: int) -> str:
     """Cách gọi người gõ lệnh trong câu trả lời: chủ bot "anh", thành viên Zalo
     theo cách xưng hô riêng (core/address.py), chưa đặt thì trung tính."""
     if config.is_owner_user_id(user_id):
         return "anh"
     return reply_audience.current().address_form or ""
+
+
+async def attention_text(user_id: int, channel: str, is_admin: bool) -> str:
+    """Tin /chuy của người gõ: chủ bot (Telegram/Zoom hoặc Zalo controller) thấy cả
+    mục hệ thống; admin Zalo thấy bài Facebook chờ duyệt; thành viên chỉ dữ liệu mình."""
+    return await attention.build(
+        user_id,
+        channel,
+        is_owner=await reply_audience.is_owner(user_id),
+        is_admin=is_admin,
+        address_form=reply_audience.current().address_form,
+    )
 
 
 def _arg(text: str) -> str:
@@ -350,7 +402,8 @@ async def _ragxuly(user_id: int, name: str) -> tuple[list[str], str | None]:
             text = await rag_clean_service.clean_file(name)
         except Exception as exc:
             text = f"❌ /ragxuly {name} lỗi: {exc}"
-        alerts.send(f"/ragxuly {name}:\n{text}")
+        # Kết quả lệnh chủ bot vừa gọi: gửi ngay, không gom (services/notify_hub.py).
+        alerts.send(f"/ragxuly {name}:\n{text}", urgent=True)
 
     if not rag_clean_service.start_background(name, _run()):
         return ["⏳ Đang có một lượt /ragxuly khác chạy. Chờ xong rồi gọi lại nhé."], None
@@ -452,11 +505,28 @@ async def maybe_handle_command(
     argument = _arg(text)
 
     if command in {"/start", "/help"}:
-        return [HELP_ADMIN if is_admin else HELP_MEMBER], None
+        return [help_text(user_id, argument if command == "/help" else "", is_admin, channel)], None
     # /sai [lý do], /danhgia: đánh giá câu trả lời (services/answer_feedback.py).
     feedback = await answer_feedback.handle_command(command, argument, user_id, channel)
     if feedback is not None:
         return feedback, None
+    # /chuy: "có gì cần chú ý" (code, không AI); /yenlang: giờ yên lặng của chính mình.
+    if command == "/chuy":
+        return [await attention_text(user_id, channel, is_admin)], None
+    if command == "/yenlang":
+        you = reply_audience.forms()[0]
+        return [await notify_hub.yenlang(user_id, argument, you=you)], None
+    # /viec: giao việc chạy nền; /lichtacvu: tác vụ định kỳ chạy 1 yêu cầu AI theo lịch.
+    jobs_reply = await background_jobs.handle_command(
+        command, argument, user_id, channel, is_admin=is_admin
+    )
+    if jobs_reply is not None:
+        return jobs_reply, None
+    routine_reply = await routines.handle_command(
+        command, argument, user_id, channel, is_admin=is_admin
+    )
+    if routine_reply is not None:
+        return routine_reply, None
     if command == "/huy":
         # /huy thật được xử lý TRƯỚC khoá lượt (bridge Zalo, webhook Zoom); tới
         # được đây nghĩa là không còn việc gì đang chạy để dừng.
@@ -465,7 +535,7 @@ async def maybe_handle_command(
     divination = await divination_commands.handle(command, argument, user_id, channel)
     if divination is not None:
         return divination, None
-    # /vang, /tygia, /xoso, /thoitiet, /bantin: số liệu thật tính bằng code.
+    # /vang, /tygia, /xang, /xoso, /thoitiet, /bantin: số liệu thật tính bằng code.
     daily = await daily_commands.handle(command, argument, user_id, channel)
     if daily is not None:
         return daily, None
@@ -477,6 +547,13 @@ async def maybe_handle_command(
     expense = await expense_service.handle_command(command, argument, user_id)
     if expense is not None:
         return expense, None
+    # /an: nhật ký ăn uống (kcal ước lượng tra bảng soạn sẵn, không AI mặc định).
+    meals = await nutrition_service.handle_command(command, argument, user_id)
+    if meals is not None:
+        return meals, None
+    # /noi on|off|auto: trả lời kèm tin thoại của CHÍNH người gõ.
+    if command == "/noi":
+        return [await voice_reply.noi_command(user_id, argument, channel=channel)], None
     if command == "/prompt":
         return await _prompt(user_id, argument, channel)
     if command == "/gia":
@@ -550,10 +627,21 @@ async def maybe_handle_command(
     if command == "/status":
         state = orchestrator.get_provider_state_snapshot()
         latency = "\n".join(await provider_health.latency_lines())
+        live = "\n".join(await provider_health.live_lines())
         return [
             f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}\n"
-            f"{await search_status.search_mode_line()}" + (f"\n\n{latency}" if latency else "")
+            f"{await search_status.search_mode_line()}"
+            + (f"\n{live}" if live else "")
+            + (f"\n\n{latency}" if latency else "")
         ], None
+    if command == "/loi":
+        # Lỗi gom theo loại (services/error_digest.py) - chỉ chủ bot (Zoom; Telegram có
+        # handler riêng), admin Zalo không xem log hệ thống.
+        if not await reply_audience.is_owner(user_id):
+            return ["Lệnh này chỉ dành cho chủ bot."], None
+        from services import error_digest
+
+        return [await error_digest.build_report()], None
     if command == "/thongke":
         # Dùng chung logic/format với Telegram - xem services/usage_stats.py.
         hours = usage_stats.parse_thongke_hours(argument)

@@ -29,9 +29,10 @@ from channels import (
 )
 from channels.router import router as zalo_router
 from channels.zalo_media import router as zalo_media_router
+from channels import tts_media
 from core import config, database as db, idempotency, trace, webhook_inbox
 from diagnose_router9 import main as diagnose_main
-from services import db_maintenance, market_page, morning_news
+from services import db_maintenance, market_page, morning_news, notify_hub
 from services import action_buttons, channel_dispatch, turn_control
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.concurrency import OWNER_TURN_KEY, assistant_turn, cancel_turn, is_busy
@@ -118,6 +119,10 @@ async def _process_update(update: Update, *, locked: bool = True) -> None:
         raise
     else:
         turn_feedback.finish_queued(update.update_id, getattr(application, "bot", None), ok=True)
+        # Chủ bot vừa nhắn: xả tin đang chờ gom (services/notify_hub.py) sau câu trả lời.
+        user = getattr(update, "effective_user", None)
+        if getattr(update, "message", None) is not None and user is not None:
+            notify_hub.note_activity(int(user.id))
     finally:
         update_error.reset(token)
 
@@ -222,6 +227,9 @@ async def _http_error(request: Request, exc: StarletteHTTPException) -> Response
 
 api.include_router(zalo_router)
 api.include_router(zalo_media_router)
+# Tin thoại trả lời /noi cho Zalo: link ký HMAC có hạn (services/voice_reply.py).
+api.include_router(tts_media.internal_router)
+api.include_router(tts_media.public_router)
 api.include_router(web_admin.router)
 api.include_router(web_admin.api_router)
 api.include_router(web_site.static_router)

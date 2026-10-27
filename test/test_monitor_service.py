@@ -11,7 +11,7 @@ from services import monitor_service
 @pytest.fixture
 def state(monkeypatch):
     sent = []
-    monkeypatch.setattr(monitor_service, "send_alert", sent.append)
+    monkeypatch.setattr(monitor_service, "send_alert", lambda text, **kw: sent.append(text))
     monkeypatch.setattr(monitor_service, "_all_down_since", None)
     monkeypatch.setattr(monitor_service.config, "PROVIDER_ORDER", ["router9", "groq"])
     ps = monitor_service.provider_state
