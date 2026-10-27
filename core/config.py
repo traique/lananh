@@ -615,9 +615,19 @@ DIAGNOSE_PATH = "/diagnose"
 WEBHOOK_BASE_URL = (
     os.getenv("WEBHOOK_BASE_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()
 )
+
+
+def _site_url(raw: str) -> str:
+    """Gốc URL tuyệt đối cho link canonical/sitemap. Gõ thiếu giao thức
+    ("lananh.onrender.com") thì thêm https:// - không thì mọi link tuyệt đối thành
+    đường dẫn tương đối, Google báo sitemap có URL không hợp lệ."""
+    url = raw.strip().rstrip("/")
+    return f"https://{url}" if url and "://" not in url else url
+
+
 # Địa chỉ công khai của web LCTA cho link canonical, og:url, sitemap.xml (vd khi trỏ
 # tên miền riêng). Trống = WEBHOOK_BASE_URL.
-SITE_BASE_URL = (os.getenv("SITE_BASE_URL", "").strip() or WEBHOOK_BASE_URL).rstrip("/")
+SITE_BASE_URL = _site_url(os.getenv("SITE_BASE_URL", "").strip() or WEBHOOK_BASE_URL)
 # Tên địa điểm cho "vị trí hiện tại" ở /thoi-tiet: tra ngược toạ độ qua Nominatim của
 # OpenStreetMap (tối đa 1 lượt/giây, có cache). Tắt (=0) nếu bị chặn hoặc không muốn gửi
 # toạ độ ra ngoài - trang khi đó ghi toạ độ thay cho tên.

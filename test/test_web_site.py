@@ -1102,6 +1102,14 @@ async def test_seo_tieu_de_co_ngay_json_ld_va_noindex(client, price_sources, mon
     assert noindex in html
 
 
+def test_dia_chi_site_thieu_giao_thuc_tu_them_https():
+    site_url = web_site.config._site_url
+    assert site_url("lananh.onrender.com") == "https://lananh.onrender.com"
+    assert site_url(" https://lcta.vn/ ") == "https://lcta.vn"
+    assert site_url("http://localhost:8000") == "http://localhost:8000"
+    assert site_url("") == ""
+
+
 async def test_ma_xac_minh_google_search_console(client, monkeypatch):
     tag = '<meta name="google-site-verification" content="AbC-123_xyzToken987">'
     # Dán nguyên thẻ từ Search Console hay chỉ phần content đều được; mã lạ thì bỏ qua.
