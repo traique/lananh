@@ -1,3 +1,8 @@
+/* Hallmark · shape: app screen · genre: modern-minimal (inferred) · theme: brand · redesign: full (trang chủ /; các màn khác giữ bố cục)
+ * paper: #ffffff · accent: #1f6b45 · display: Newsreader (chỉ tiêu đề ngày) · body: Be Vietnam Pro
+ * nav: kept (thanh bên, 12 mục) · signature: kept, dải 12 giờ hoàng đạo · states: không vùng nào tải dữ liệu (tính ở server)
+ * axes: light/roman-serif/chromatic-green · posture: restrained · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, lượt đầu trên hệ thương hiệu giữ nguyên; đổi nhịp bề mặt (nền trắng, khối sage, vạch mảnh) thay cho bảy thẻ sage giống hệt */
 /* LCTA - giao diện web công khai (lịch, thời tiết, tử vi, thần số học).
 
    Thiết kế theo skill ui-craft (Taste, app screens), style "editorial greeting":
@@ -86,17 +91,20 @@
 /* ---------- nền ---------- */
 *, *::before, *::after { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html, body { overflow-x: clip; }
 body {
   margin: 0; background: var(--ground); color: var(--text);
   font: 400 var(--fs-body)/1.6 var(--font); -webkit-font-smoothing: antialiased;
 }
 h1, h2, h3, p, figure, dl, dd, ol, ul { margin: 0; }
+h1, h2, h3 { overflow-wrap: break-word; min-width: 0; text-wrap: balance; }
 ul[class], ol[class] { padding: 0; list-style: none; }
 img, svg { display: block; max-width: 100%; }
 button, input, select { font: inherit; color: inherit; }
 a { color: inherit; text-underline-offset: 3px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-.num, table, .lead-figure, .tile-value { font-variant-numeric: tabular-nums; }
+.num, table, .lead-figure, .lp-num { font-variant-numeric: tabular-nums; }
+.nowrap { white-space: nowrap; }
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
@@ -203,19 +211,12 @@ h1.date {
 .panel h2 { font-size: var(--fs-body); font-weight: 600; line-height: 1.4; }
 .panel .meta, .meta { color: var(--muted); font-size: var(--fs-small); }
 .sheet { background: var(--sheet); border-radius: var(--radius-inner); padding: 16px; }
-.card-link { color: var(--text); font-weight: 500; font-size: var(--fs-small); text-decoration: none; white-space: nowrap; }
-.card-link::after { content: " →"; }
-.card-link:hover { text-decoration: underline; }
+.card-link { color: var(--text); font-weight: 500; font-size: var(--fs-small); text-decoration: underline; text-decoration-color: var(--control); white-space: nowrap; }
+.card-link:hover { text-decoration-color: currentColor; }
 .muted { color: var(--muted); }
 .small { font-size: var(--fs-small); }
 .answer { white-space: pre-line; }
 .prose p + p { margin-top: 10px; }
-
-/* ô đếm: nhãn, số ở trọng lượng thường, chú thích */
-.tile { display: flex; flex-direction: column; min-height: 128px; padding: 16px var(--pad); }
-.tile-label { color: var(--muted); font-size: var(--fs-small); }
-.tile-value { margin-top: 6px; font-size: var(--fs-lead); line-height: 1.15; font-weight: 400; letter-spacing: -0.01em; }
-.tile-note { margin-top: auto; padding-top: 10px; color: var(--muted); font-size: var(--fs-small); }
 
 /* hàng trong khối: vạch giữa các hàng */
 .rows > * + * { border-top: 1px solid var(--rule); }
@@ -372,8 +373,54 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
 .input[aria-invalid="true"] { border-color: var(--negative); box-shadow: inset 0 0 0 1px var(--negative); }
 .field-error { color: var(--negative); font-size: var(--fs-small); font-weight: 500; }
 
-/* ---------- trang chủ ---------- */
-.home-head { margin: 32px 0 50px; }
+/* ---------- trang chủ: màn "Hôm nay" ----------
+   Ngày hôm nay mở màn trên nền trang, ô Hỏi lịch (hành động chính) bên phải. Mỗi tầng
+   một bậc bề mặt khác nhau: dải giờ trong khối sage, số liệu ngày trên nền trắng tách
+   bằng vạch mảnh, ngày lễ trong khối sage, danh sách tra cứu là các hàng kẻ vạch. */
+.today-head {
+  display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 24px 40px;
+  align-items: end; margin: 32px 0 40px;
+}
+.today-ask { display: grid; gap: 8px; }
+.today-ask label { font-weight: 600; }
+.today-facts {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 40px 0; padding: 20px 0; border-block: 1px solid var(--rule);
+}
+.today-facts > div { min-width: 0; padding: 0 20px; border-left: 1px solid var(--rule); }
+.today-facts > div:first-child { padding-left: 0; border-left: 0; }
+.today-facts > div:last-child { padding-right: 0; }
+.today-facts dt { color: var(--muted); font-size: var(--fs-small); }
+.today-facts .fig {
+  margin-top: 4px; font-size: var(--fs-lead); line-height: 1.15; letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.today-facts .note { margin-top: 8px; color: var(--muted); font-size: var(--fs-small); }
+.holiday-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.holiday-strip > li { display: grid; gap: 4px; min-width: 0; padding: 0 20px; border-left: 1px solid var(--rule); }
+.holiday-strip > li:first-child { padding-left: 0; border-left: 0; }
+.holiday-strip > li:last-child { padding-right: 0; }
+.holiday-strip a { font-weight: 500; text-decoration: none; }
+.holiday-strip a:hover { text-decoration: underline; }
+.holiday-strip .when { color: var(--muted); font-size: var(--fs-small); }
+.holiday-strip .left { font-size: var(--fs-section); font-variant-numeric: tabular-nums; }
+.tools { margin-top: 40px; }
+.tools > h2 { font-size: var(--fs-body); font-weight: 600; line-height: 1.4; margin-bottom: 8px; }
+/* Mỗi hàng: tên + mô tả bên trái, nút (hoặc ô ngày sinh) bên phải; khối bọc tên và mô tả
+   dùng display: contents để trên điện thoại nút lên ngang tên, mô tả trải bên dưới. */
+.tool-list > li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 40px;
+  align-items: center; padding: 20px 0; border-top: 1px solid var(--rule);
+}
+.tool-list > li:last-child { border-bottom: 1px solid var(--rule); }
+.tool-list > li > div { display: contents; }
+.tool-list h3 { grid-column: 1; font-size: var(--fs-body); font-weight: 600; line-height: 1.4; }
+.tool-list p { grid-column: 1; color: var(--muted); max-width: 65ch; }
+.tool-list > li > .btn, .tool-form { grid-column: 2; grid-row: 1 / span 2; justify-self: end; }
+.tool-form {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; width: 26rem;
+}
+.tool-form label { grid-column: 1 / -1; font-size: var(--fs-small); color: var(--muted); }
 /* dải 12 giờ địa chi: phần tử riêng của LCTA. Giờ thường là ô viền mảnh, giờ hoàng
    đạo nền xanh nhạt; chỉ một ô tô đặc màu nhấn (giờ hiện tại nếu tốt, không thì giờ tốt
    kế tiếp). Giờ đã qua lùi xuống, giờ hiện tại có vòng ngoài. Gập theo bề rộng của chính
@@ -724,11 +771,26 @@ main.column { padding-bottom: 48px; }
   .title-row { margin-bottom: 20px; }
   h1.date { font-size: 32px; }
   .date + .sub { font-size: var(--fs-body); }
-  .home-head { margin: 8px 0 28px; }
+  .today-head { grid-template-columns: minmax(0, 1fr); margin: 8px 0 28px; }
+  .today-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 28px 0; row-gap: 16px; }
+  .today-facts > div:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .today-facts > div:nth-child(even) { padding-right: 0; }
+  .today-facts > div:nth-child(n + 3) { padding-top: 16px; border-top: 1px solid var(--rule); }
+  .today-facts .fig { font-size: 24px; }
+  .holiday-strip { grid-template-columns: minmax(0, 1fr); }
+  .holiday-strip > li {
+    grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px;
+    padding: 12px 0; border-left: 0; border-top: 1px solid var(--rule);
+  }
+  .holiday-strip .left { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: var(--fs-body); }
+  .holiday-strip > li:first-child { padding-top: 0; border-top: 0; }
+  .holiday-strip > li:last-child { padding-bottom: 0; }
+  .tools { margin-top: 28px; }
+  .tool-list > li { gap: 8px 12px; padding: 16px 0; }
+  .tool-list p { grid-column: 1 / -1; }
+  .tool-list > li > .btn { grid-row: 1; }
+  .tool-form { grid-column: 1 / -1; grid-row: auto; justify-self: start; width: min(100%, 26rem); }
   .grid > * { grid-column: 1 / -1; }
-  .grid > .tile.s3 { grid-column: span 6; }
-  .tile { min-height: 112px; padding: 14px 16px; }
-  .tile-value { font-size: 24px; }
   .panel { padding: 16px; }
   .form-row { grid-template-columns: minmax(0, 1fr); }
   .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }

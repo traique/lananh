@@ -1602,8 +1602,12 @@ nền trắng, cách nhau bằng bậc tông - không bóng, không gradient, kh
 nhấn xanh rừng (mệnh Đại Lâm Mộc) chỉ đặt trên dữ liệu: giờ hoàng đạo, hôm nay,
 cung Mệnh, số chủ đạo; nút chính xanh đen; đỏ chỉ cho lỗi, độ sáng hãm. Chữ Be
 Vietnam Pro (Google Fonts, có subset tiếng Việt), tiêu đề ngày ở trang chủ dùng
-Newsreader. Trang chủ lấy ngày hôm nay làm tiêu đề; ngay dưới là câu trả lời "giờ hoàng
-đạo kế tiếp" và dải 12 giờ địa chi: giờ hoàng đạo nền xanh nhạt, chỉ một ô tô đậm (giờ hiện
+Newsreader. Trang chủ (thiết kế lại theo Hallmark, dạng màn ứng dụng, giữ hệ màu/chữ của
+site; dấu Hallmark ở đầu `static/site.css`) lấy ngày hôm nay làm tiêu đề, ô "Hỏi lịch" là
+hành động chính bên phải; dưới là dải giờ hoàng đạo (khối sage), hàng 4 số liệu ngày tách
+bằng vạch mảnh, dải 3 ngày lễ tới, rồi danh sách "Tra cứu" dạng hàng kẻ vạch (thần số học
+có ô ngày sinh ngay trong hàng; tử vi, Kỳ Môn, giá vàng, giá xăng có nút đi tới). Câu trả
+lời "giờ hoàng đạo kế tiếp" nằm trên dải 12 giờ địa chi: giờ hoàng đạo nền xanh nhạt, chỉ một ô tô đậm (giờ hiện
 tại nếu tốt, không thì giờ tốt kế tiếp), giờ đã qua lùi xuống, giờ hiện tại có vòng ngoài;
 từ 23h dải chuyển sang ngày hôm sau (ngày âm đổi ở giờ Tý). Dải tự gập 4 cột x 3 hàng khi
 khối hẹp (container query). Lá số tử vi hiện bàn 4x4 khi khối rộng từ 680px; hẹp hơn thì

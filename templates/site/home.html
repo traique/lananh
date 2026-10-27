@@ -1,122 +1,127 @@
 {% extends "base.html" %}
 {% block content %}
 {% set ld = today.lunar %}
-<div class="home-head">
-  <h1 class="date">{{ today.weekday }}, {{ today_date.day }} tháng {{ today_date.month }} năm {{ today_date.year }}</h1>
-  <p class="sub">
-    {% if ld.day == 15 %}Rằm{% elif ld.day == 1 %}Mùng 1{% else %}Ngày {{ ld.day }}{% endif %} tháng {{ ld.month }}{% if ld.isLeapMonth %} nhuận{% endif %} âm lịch,
-    ngày {{ "hoàng đạo" if today.isHoangDao else "hắc đạo" }} ({{ today.dayGod }}){% if today.isTamNuong %}, phạm Tam nương{% endif %}{% if today.isNguyetKy %}, phạm Nguyệt kỵ{% endif %}.
-    {% if today.holidays %}<span class="muted">Hôm nay: {{ today.holidays | join(", ") }}.</span>{% endif %}
-  </p>
-</div>
-
-<div class="grid">
-  <section class="panel s12 hours-panel" aria-labelledby="hours-title">
-    <header>
-      <h2 id="hours-title">Giờ hoàng đạo {{ "ngày mai" if hours_tomorrow else "hôm nay" }}</h2>
-      {% if hours_tomorrow %}<span class="meta">Từ 23h đã sang giờ Tý của ngày mới</span>{% endif %}
-    </header>
-    <p class="next-hour">
-      {% if next_good and next_good.isNow %}Bây giờ là giờ hoàng đạo <b>{{ next_good.name }}</b>, {{ next_good.span }}.
-      {% elif next_good %}Giờ hoàng đạo kế tiếp: <b>{{ next_good.name }}</b>, {{ next_good.span }}.
-      {% else %}Hôm nay đã hết giờ hoàng đạo; giờ Tý (23h) mở đầu ngày mới.{% endif %}
+<div class="today-head">
+  <div>
+    <h1 class="date">{{ today.weekday }}, {{ today_date.day }} tháng {{ today_date.month }} năm {{ today_date.year }}</h1>
+    <p class="sub">
+      {% if ld.day == 15 %}Rằm{% elif ld.day == 1 %}Mùng 1{% else %}Ngày {{ ld.day }}{% endif %} tháng {{ ld.month }}{% if ld.isLeapMonth %} nhuận{% endif %} âm lịch,
+      ngày {{ "hoàng đạo" if today.isHoangDao else "hắc đạo" }} ({{ today.dayGod }}){% if today.isTamNuong %}, phạm Tam nương{% endif %}{% if today.isNguyetKy %}, phạm Nguyệt kỵ{% endif %}.
+      {% if today.holidays %}<span class="muted">Hôm nay: {{ today.holidays | join(", ") }}.</span>{% endif %}
     </p>
-    <ol class="hours" role="list">
-      {% for h in hours %}
-      <li class="hour{% if h.isGood %} good{% endif %}{% if h.isFocus %} focus{% endif %}{% if h.isPast %} past{% endif %}{% if h.isNow %} now{% endif %}"{% if h.isNow %} aria-current="time"{% endif %}>
-        <b>{{ h.name }}</b>
-        <span>{{ h.span }}</span>
-        <span class="sr-only">{% if h.isGood %}, hoàng đạo{% endif %}{% if h.isNow %}, giờ hiện tại{% elif h.isPast %}, đã qua{% endif %}</span>
-      </li>
-      {% endfor %}
-    </ol>
-    <p class="hours-key" aria-hidden="true"><span class="key good">Hoàng đạo</span><span class="key past-good">Hoàng đạo đã qua</span><span class="key focus">Giờ tốt gần nhất</span><span class="key now">Bây giờ</span></p>
-  </section>
+  </div>
+  <form class="today-ask" action="/lich/hoi" method="get" role="search">
+    <label id="ask-title" for="home-q">Hỏi lịch</label>
+    <div class="search">
+      <input class="input" type="search" id="home-q" name="q" maxlength="200" placeholder="Ví dụ: rằm tháng 8" autocomplete="off" aria-describedby="home-q-hint">
+      <button class="btn primary" type="submit">Tra</button>
+    </div>
+    <span class="hint" id="home-q-hint">Ngày tốt, tuổi, sao hạn, đổi ngày: gõ tự nhiên.</span>
+  </form>
 </div>
 
-<div class="grid">
-  <div class="panel tile s3">
-    <span class="tile-label">Âm lịch</span>
-    <span class="tile-value">{{ ld.day }}/{{ ld.month }}{% if ld.isLeapMonth %} nhuận{% endif %}</span>
-    <span class="tile-note">Năm {{ ld.yearCanChi }}</span>
-  </div>
-  <div class="panel tile s3">
-    <span class="tile-label">Can chi ngày</span>
-    <span class="tile-value">{{ ld.dayCanChi }}</span>
-    <span class="tile-note">Tháng {{ ld.monthCanChi }}</span>
-  </div>
-  <div class="panel tile s3">
-    <span class="tile-label">Tiết khí</span>
-    <span class="tile-value">{{ today.solarTerm }}</span>
-  </div>
-  <div class="panel tile s3">
-    <span class="tile-label">Đến Tết</span>
-    <span class="tile-value">{% if today.daysToTet == 0 %}Hôm nay{% else %}{{ today.daysToTet }} ngày{% endif %}</span>
-    <span class="tile-note">Mùng 1 Tết là {{ today.nextTet | vn_date }}</span>
-  </div>
-</div>
+<section class="panel hours-panel" aria-labelledby="hours-title">
+  <header>
+    <h2 id="hours-title">Giờ hoàng đạo {{ "ngày mai" if hours_tomorrow else "hôm nay" }}</h2>
+    {% if hours_tomorrow %}<span class="meta">Từ 23h đã sang giờ Tý của ngày mới</span>{% endif %}
+  </header>
+  <p class="next-hour">
+    {% if next_good and next_good.isNow %}Bây giờ là giờ hoàng đạo <b>{{ next_good.name }}</b>, <span class="nowrap">{{ next_good.span }}</span>.
+    {% elif next_good %}Giờ hoàng đạo kế tiếp: <b>{{ next_good.name }}</b>, <span class="nowrap">{{ next_good.span }}</span>.
+    {% else %}Hôm nay đã hết giờ hoàng đạo; giờ Tý (23h) mở đầu ngày mới.{% endif %}
+  </p>
+  <ol class="hours" role="list">
+    {% for h in hours %}
+    <li class="hour{% if h.isGood %} good{% endif %}{% if h.isFocus %} focus{% endif %}{% if h.isPast %} past{% endif %}{% if h.isNow %} now{% endif %}"{% if h.isNow %} aria-current="time"{% endif %}>
+      <b>{{ h.name }}</b>
+      <span>{{ h.span }}</span>
+      <span class="sr-only">{% if h.isGood %}, hoàng đạo{% endif %}{% if h.isNow %}, giờ hiện tại{% elif h.isPast %}, đã qua{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="hours-key" aria-hidden="true"><span class="key good">Hoàng đạo</span><span class="key past-good">Hoàng đạo đã qua</span><span class="key focus">Giờ tốt gần nhất</span><span class="key now">Bây giờ</span></p>
+</section>
 
-<div class="grid">
-  <section class="panel s4" aria-labelledby="holiday-title">
-    <header>
-      <h2 id="holiday-title">Ngày lễ tới</h2>
-      <a class="card-link" href="/lich/ngay-le">Tất cả</a>
-    </header>
-    <ul class="rows" role="list">
-      {% for h in holidays %}
-      <li class="row">
-        <span><a href="/lich?ngay={{ h.date.isoformat() }}">{{ h.name }}</a><span class="sub">{{ h.date.strftime('%d/%m') }}{{ " · âm lịch" if h.isLunar }}</span></span>
-        <span class="n muted">{% if h.days == 0 %}hôm nay{% else %}{{ h.days }} ngày{% endif %}</span>
-      </li>
-      {% endfor %}
-    </ul>
-  </section>
+<dl class="today-facts" aria-label="Thông tin ngày hôm nay">
+  <div>
+    <dt>Âm lịch</dt>
+    <dd class="fig">{{ ld.day }}/{{ ld.month }}{% if ld.isLeapMonth %} nhuận{% endif %}</dd>
+    <dd class="note">Năm {{ ld.yearCanChi }}</dd>
+  </div>
+  <div>
+    <dt>Can chi ngày</dt>
+    <dd class="fig">{{ ld.dayCanChi }}</dd>
+    <dd class="note">Tháng {{ ld.monthCanChi }}</dd>
+  </div>
+  <div>
+    <dt>Tiết khí</dt>
+    <dd class="fig">{{ today.solarTerm }}</dd>
+  </div>
+  <div>
+    <dt>Đến Tết</dt>
+    <dd class="fig">{% if today.daysToTet == 0 %}Hôm nay{% else %}{{ today.daysToTet }} ngày{% endif %}</dd>
+    <dd class="note">Mùng 1 Tết là {{ today.nextTet | vn_date }}</dd>
+  </div>
+</dl>
 
-  <section class="panel s4" aria-labelledby="ask-title">
-    <header><h2 id="ask-title">Hỏi lịch</h2></header>
-    <form class="form" action="/lich/hoi" method="get" role="search">
-      <div class="field">
-        <label class="sr-only" for="home-q">Câu hỏi về lịch</label>
-        <input class="input" type="search" id="home-q" name="q" maxlength="200" placeholder="Ví dụ: rằm tháng 8" autocomplete="off">
-        <span class="hint">Ngày tốt, tuổi, sao hạn, đổi ngày - gõ tự nhiên.</span>
+<section class="panel holidays-panel" aria-labelledby="holiday-title">
+  <header>
+    <h2 id="holiday-title">Ngày lễ tới</h2>
+    <a class="card-link" href="/lich/ngay-le">Tất cả ngày lễ</a>
+  </header>
+  <ul class="holiday-strip" role="list">
+    {% for h in holidays %}
+    <li>
+      <a href="/lich?ngay={{ h.date.isoformat() }}">{{ h.name }}</a>
+      <span class="when">{{ h.date.strftime('%d/%m') }}{{ ", âm lịch" if h.isLunar }}</span>
+      <span class="left">{% if h.days == 0 %}hôm nay{% else %}{{ h.days }} ngày{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="tools" aria-labelledby="tools-title">
+  <h2 id="tools-title">Tra cứu</h2>
+  <ul class="tool-list" role="list">
+    <li>
+      <div>
+        <h3 id="tsh-title">Thần số học</h3>
+        <p>Con số chủ đạo, biểu đồ ngày sinh, năm cá nhân theo thần số học Pythagoras.</p>
       </div>
-      <div class="form-actions"><button class="btn primary" type="submit">Tra</button></div>
-    </form>
-  </section>
-
-  <section class="panel s4" aria-labelledby="tsh-title">
-    <header><h2 id="tsh-title">Thần số học</h2></header>
-    <form class="form" action="/than-so-hoc" method="post">
-      <div class="field">
+      <form class="tool-form" action="/than-so-hoc" method="post">
         <label for="home-ngay">Ngày sinh dương lịch</label>
         <input class="input" type="date" id="home-ngay" name="ngay" min="1900-01-01" max="2100-12-31" required>
+        <button class="btn" type="submit">Tính số chủ đạo</button>
+      </form>
+    </li>
+    <li>
+      <div>
+        <h3 id="tuvi-title">Lá số tử vi</h3>
+        <p>12 cung với chính tinh kèm độ sáng, phụ tinh, Tứ hóa, Tuần Triệt và đại hạn. Cần ngày, giờ sinh và giới tính.</p>
       </div>
-      <div class="form-actions"><button class="btn" type="submit">Tính số chủ đạo</button></div>
-    </form>
-  </section>
-
-  <section class="panel s6" aria-labelledby="tuvi-title">
-    <header><h2 id="tuvi-title">Lá số tử vi</h2></header>
-    <p class="muted">12 cung với chính tinh kèm độ sáng, phụ tinh, Tứ hóa, Tuần Triệt và đại hạn. Cần ngày, giờ sinh và giới tính.</p>
-    <div class="form-actions"><a class="btn" href="/tu-vi">Lập lá số</a></div>
-  </section>
-
-  <section class="panel s6" aria-labelledby="kymon-title">
-    <header><h2 id="kymon-title">Kỳ Môn Độn Giáp</h2></header>
-    <p class="muted">Bàn 9 cung theo giờ: tứ trụ, cục, Trực phù, Trực sử, cửa tốt và cách cục. Mặc định lập cho lúc này, đổi được ngày giờ.</p>
-    <div class="form-actions"><a class="btn" href="/ky-mon">Xem bàn lúc này</a></div>
-  </section>
-
-  <section class="panel s6" aria-labelledby="gold-title">
-    <header><h2 id="gold-title">Giá vàng</h2></header>
-    <p class="muted">SJC miếng, nhẫn SJC, DOJI, PNJ, Bảo Tín, Viettin, VN Gold kèm tăng giảm; vàng thế giới quy đổi theo tỷ giá Vietcombank.</p>
-    <div class="form-actions"><a class="btn" href="/gia-vang">Xem giá vàng</a></div>
-  </section>
-
-  <section class="panel s6" aria-labelledby="fuel-title">
-    <header><h2 id="fuel-title">Giá xăng dầu</h2></header>
-    <p class="muted">Giá bán lẻ Petrolimex vùng 1, vùng 2 và PVOIL theo kỳ điều hành, kèm mức tăng giảm kỳ này và kỳ trước.</p>
-    <div class="form-actions"><a class="btn" href="/gia-xang">Xem giá xăng</a></div>
-  </section>
-</div>
+      <a class="btn" href="/tu-vi">Lập lá số</a>
+    </li>
+    <li>
+      <div>
+        <h3 id="kymon-title">Kỳ Môn Độn Giáp</h3>
+        <p>Bàn 9 cung theo giờ: tứ trụ, cục, Trực phù, Trực sử, cửa tốt và cách cục. Mặc định lập cho lúc này, đổi được ngày giờ.</p>
+      </div>
+      <a class="btn" href="/ky-mon">Xem bàn lúc này</a>
+    </li>
+    <li>
+      <div>
+        <h3 id="gold-title">Giá vàng</h3>
+        <p>SJC miếng, nhẫn SJC, DOJI, PNJ, Bảo Tín, Viettin, VN Gold kèm tăng giảm; vàng thế giới quy đổi theo tỷ giá Vietcombank.</p>
+      </div>
+      <a class="btn" href="/gia-vang">Xem giá vàng</a>
+    </li>
+    <li>
+      <div>
+        <h3 id="fuel-title">Giá xăng dầu</h3>
+        <p>Giá bán lẻ Petrolimex vùng 1, vùng 2 và PVOIL theo kỳ điều hành, kèm mức tăng giảm kỳ này và kỳ trước.</p>
+      </div>
+      <a class="btn" href="/gia-xang">Xem giá xăng</a>
+    </li>
+  </ul>
+</section>
 {% endblock %}
