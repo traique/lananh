@@ -74,9 +74,15 @@ async def test_root_tra_html_cho_trinh_duyet_json_cho_health_check(monkeypatch):
             )
 
 
-async def test_trang_cong_khai_khong_co_dang_nhap(client):
+async def test_trang_cong_khai_khong_co_dang_nhap(client, monkeypatch):
     """Khách xem tự do; chỉ /admin có ô đăng nhập. Trang công khai không có nút hay câu
     nào nhắc đăng nhập/tài khoản/AI cho khách."""
+
+    async def fake_get_weather(location="", days=1):
+        return _FAKE_WEATHER
+
+    # /thoi-tiet không được gọi Open-Meteo/wttr.in thật (CI chặn mạng trong test)
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
     r = await client.get("/lich/hoi", params={"q": "rằm tháng 8"})
     assert r.status_code == 200 and "rằm" in r.text
     for path in ("/", "/lich/hoi", "/thoi-tiet", "/tu-vi", "/than-so-hoc", "/ky-mon"):
