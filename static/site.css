@@ -647,6 +647,22 @@ table.month td:last-child { padding-right: 2px; }
   .chart-center { padding: 4px 0 12px; }
 }
 
+/* ---------- diễn giải (tử vi, Kỳ Môn): lời thường dưới bàn ---------- */
+.read-overview { display: grid; gap: 8px; max-width: 80ch; }
+.howto { margin-top: 16px; max-width: 80ch; border-block: 1px solid var(--rule); padding: 12px 0; }
+.howto summary { cursor: pointer; font-weight: 500; min-height: 28px; }
+.howto ul { display: grid; gap: 6px; margin-top: 8px; padding-left: 20px; color: var(--muted); }
+/* 12 cung: hai cột trên màn rộng, mỗi cung một khối chữ tách bằng vạch mảnh */
+.read-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 40px; }
+.read-list > li { min-width: 0; padding: 16px 0; border-top: 1px solid var(--rule); }
+.rl-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.rl-head a { font-weight: 600; text-decoration: underline; text-decoration-color: var(--control); }
+.rl-head a:hover { text-decoration-color: currentColor; }
+.rl-domain { margin-top: 4px; color: var(--muted); font-size: var(--fs-small); }
+.read-list ul { display: grid; gap: 4px; margin-top: 8px; padding-left: 18px; }
+.reading .grid { margin-top: 8px; }
+.reading .grid h3 { margin-top: 24px; }
+
 /* ---------- thần số học ---------- */
 /* số chủ đạo: vật chính của màn, chữ số lớn màu nhấn (không đồng xu nền màu) cạnh ý nghĩa */
 .lp { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 28px; align-items: center; }
@@ -891,6 +907,7 @@ main.column { padding-bottom: 48px; }
   .toolbar-row > .field, .toolbar-row > .field.f-wide { max-width: none; }
   .toolbar, .ask-bar { margin-bottom: 32px; }
   .examples-wide .ex-list { grid-template-columns: minmax(0, 1fr); }
+  .read-list { grid-template-columns: minmax(0, 1fr); }
   .lp { gap: 20px; }
   .lp-num { font-size: 64px; }
   .lp p { font-size: var(--fs-body); }

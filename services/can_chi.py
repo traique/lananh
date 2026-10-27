@@ -110,6 +110,18 @@ def nap_am(can: int, chi: int) -> tuple[str, str]:
     return NAP_AM[jiazi_index(can, chi) // 2]
 
 
+def ngu_hanh_kind(a: str, b: str) -> str:
+    """Quan hệ ngũ hành của a đối với b dạng mã: "same", "sinh" (a sinh b), "duoc_sinh"
+    (b sinh a), "khac" (a khắc b), "bi_khac" (b khắc a)."""
+    if a == b:
+        return "same"
+    if _SINH[a] == b:
+        return "sinh"
+    if _SINH[b] == a:
+        return "duoc_sinh"
+    return "khac" if _KHAC[a] == b else "bi_khac"
+
+
 def ngu_hanh_relation(a: str, b: str) -> str:
     """Quan hệ ngũ hành của a đối với b."""
     if a == b:

@@ -531,3 +531,30 @@ async def test_explain_with_ai_qua_provider_chain_co_han_chot(monkeypatch):
     c = _at("2026-01-11 08:30")
     assert await kymon.explain_with_ai(c, "đi xa") == "Luận giải"
     assert "đi xa" in seen["prompt"] and seen["remaining"] is not None
+
+
+def test_dien_giai_ban_bang_loi_thuong():
+    # 9h30 27/10/2026: Âm độn 2 cục; hướng Đông (Chấn 3) có Hưu môn, Thiên Tâm, Cửu Địa.
+    c = kymon.build_chart(dt.datetime(2026, 10, 27, 9, 30, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh")))
+    r = kymon.reading(c)
+    assert r["overview"][0].startswith("Âm độn 2 cục, hạ nguyên: nửa năm từ Hạ chí")
+    assert r["overview"][1].startswith("Trực phù là Thiên Nhuế, ở hướng Bắc")
+    assert r["overview"][2].startswith("Trực sử là Tử môn, ở hướng Tây Bắc")
+    assert "Hướng Tây Bắc đang không vong" in r["overview"][3] and r["howTo"]
+    best = r["best"][0]
+    assert (best["direction"], best["verdict"], best["tone"]) == ("Đông", "Tốt", "pos")
+    assert best["why"] == "Hưu môn (cát môn), Thiên Tâm (cát tinh), Cửu Địa (cát thần)"
+    assert r["avoid"][-1]["direction"] == "Tây Bắc" and "đang không vong" in r["avoid"][-1]["why"]
+    # Việc gì xem hướng nào: yếu tố của việc không tự chấm mình (Kinh môn cho kiện tụng).
+    tasks = {x["task"]: x for x in r["tasks"]}
+    assert len(tasks) == len(kymon.texts()["viec_xem"])
+    quy_nhan = tasks["Gặp quý nhân, cầu xin, nhờ vả"]
+    assert (quy_nhan["indicator"], quy_nhan["direction"], quy_nhan["verdict"]) == (
+        "Hưu môn",
+        "Đông",
+        "Thuận",
+    )
+    assert quy_nhan["with"] == "Thiên Tâm (cát tinh), Cửu Địa (cát thần)"
+    assert "Kinh môn" not in tasks["Kiện tụng, tranh chấp"]["with"]
+    assert tasks["Đi xa, xuất hành"]["indicator"] == "Mã tinh"
+    assert tasks["Đi xa, xuất hành"]["direction"] == "Tây Bắc"

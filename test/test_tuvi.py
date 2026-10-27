@@ -269,3 +269,29 @@ def test_hoa_khoa_nam_mau_nam_o_huu_bat():
     data = tuvi.chart_data(tuvi.build_chart(1, 1, 1988, 0, True))
     tai = next(p for p in data["palaces"] if p["name"] == "Tài Bạch")
     assert "Hữu Bật (Hóa Khoa)" in tai["minorStars"]
+
+
+def test_dien_giai_la_so_bang_loi_thuong():
+    c = tuvi.parse("15/3/1990 9h30 nam")
+    r = tuvi.reading(c, dt.date(2026, 10, 27))  # Bính Ngọ 2026: 37 tuổi âm
+    assert r["age"] == 37 and len(r["palaces"]) == 12 and r["howTo"]
+    assert r["overview"][0].startswith("Bản mệnh Lộ Bàng Thổ (Thổ), Thổ ngũ cục: cục và mệnh cùng")
+    assert r["overview"][1].startswith("Thân cư Phu Thê:")
+    assert "đang đi đại hạn cung Điền Trạch (35-44 tuổi)" in r["overview"][2]
+    by_name = {p["name"]: p for p in r["palaces"]}
+    menh, dien = by_name["Mệnh"], by_name["Điền Trạch"]
+    assert menh["isMenh"] and menh["domain"].startswith("bản thân")
+    assert menh["lines"][0] == "Chính tinh Phá Quân đắc (hao tinh, chủ phá cũ đổi mới)."
+    assert any(line.startswith("Tuần làm giảm lực") for line in menh["lines"])
+    # Thái Dương, Thái Âm đắc + Hóa Lộc + Hóa Khoa: đọc nhanh là thuận, đánh dấu đại hạn.
+    assert dien["isCurrent"] and dien["verdict"] == "Thuận" and dien["tone"] == "pos"
+    assert "Hóa Lộc (Thái Dương): thêm tài lộc, may mắn." in dien["lines"]
+    # Cung không chính tinh mượn sao cung đối diện.
+    assert by_name["Tử Tức"]["lines"][0].startswith(
+        "Vô chính diệu: không có chính tinh, mượn sao cung Điền Trạch đối diện (Thái Dương"
+    )
+    assert by_name["Phu Thê"]["isThan"]
+    assert {p["verdict"] for p in r["palaces"]} <= {"Thuận", "Trung bình", "Nhiều trắc trở"}
+    young = tuvi.reading(c, dt.date(1992, 6, 1))  # 3 tuổi âm, đại hạn đầu từ 5 tuổi
+    assert "chưa vào đại hạn đầu (từ 5 tuổi)" in young["overview"][-1]
+    assert not any(p["isCurrent"] for p in young["palaces"])

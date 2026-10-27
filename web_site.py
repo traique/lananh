@@ -1109,6 +1109,7 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
         noindex=True,  # kết quả theo ngày sinh của từng người
         active="/tu-vi",
         chart=tuvi.chart_data(c),
+        reading=tuvi.reading(c, site_data.today()),
         ai_text=ai_text,
         ai_action="/tu-vi",
         ai_fields={k: form[k] for k in _TUVI_FIELDS if k in form},
@@ -1187,6 +1188,7 @@ def _kymon_page(form: dict, *, ai_text: str = "", error: str = "") -> HTMLRespon
         "bát thần, cách cục - tính bằng thuật toán.",
         active="/ky-mon",
         chart=data,
+        reading=kymon.reading(chart),
         rows=[[data["palaces"][p - 1] for p in row] for row in kymon.GRID],
         good_doors=[f"{d} môn" for d in kymon.CAT_DOORS],
         texts=kymon.texts(),

@@ -58,6 +58,42 @@
     </dl>
   </section>
 </div>
+<section class="sect reading" aria-labelledby="qm-read">
+  <header><h2 id="qm-read">Diễn giải bàn</h2><span class="meta">Chấm nhanh theo cát hung của cửa, sao, thần</span></header>
+  <ul class="read-overview" role="list">{% for line in reading.overview %}<li>{{ line | clause }}</li>{% endfor %}</ul>
+  <details class="howto">
+    <summary>Cách đọc bàn</summary>
+    <ul role="list">{% for line in reading.howTo %}<li>{{ line }}</li>{% endfor %}</ul>
+  </details>
+  <div class="grid top">
+    <div class="s7">
+      <h3>Việc gì xem hướng nào</h3>
+      <ul class="rows" role="list">
+        {% for x in reading.tasks %}
+        <li class="row"><span><strong>{{ x.task }}</strong><span class="sub">Xem {{ x.indicator }}: hướng {{ x.direction }} (cung {{ x.palace }} {{ x.name }}){% if x.with %}, cùng {{ x.with }}{% endif %}.</span></span><span class="pill sm {{ x.tone }}">{{ x.verdict }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+    <div class="s5">
+      <h3>Hướng nên dùng</h3>
+      <ul class="rows" role="list">
+        {% for d in reading.best %}
+        <li class="row"><span><strong>{{ d.direction }}</strong> (cung {{ d.palace }} {{ d.name }})<span class="sub">{{ d.why }}</span></span><span class="pill sm pos">{{ d.verdict }}</span></li>
+        {% else %}
+        <li class="row"><span class="muted">Giờ này không có hướng nào nổi bật; nếu việc quan trọng, nên chọn giờ khác.</span></li>
+        {% endfor %}
+      </ul>
+      {% if reading.avoid %}
+      <h3>Hướng nên tránh</h3>
+      <ul class="rows" role="list">
+        {% for d in reading.avoid %}
+        <li class="row"><span><strong>{{ d.direction }}</strong> (cung {{ d.palace }} {{ d.name }})<span class="sub">{{ d.why }}</span></span><span class="pill sm warn">{{ d.verdict }}</span></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </div>
+</section>
 <div class="grid top">
   <section class="sect s7" aria-labelledby="qm-points">
     <header><h2 id="qm-points">Cách cục và điểm chính</h2></header>
