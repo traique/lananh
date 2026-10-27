@@ -353,6 +353,45 @@ async def rewrite_session_note(
     )
 
 
+def _like_pattern(query: str) -> str:
+    """Mẫu ILIKE chứa ``query`` nguyên văn (escape \\ % _)."""
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+async def search_session_notes(
+    pool: Any, telegram_user_id: int, query: str, limit: int, offset: int
+) -> tuple[int, list[Any]]:
+    """(tổng số khớp, 1 trang) ghi chú phiên mới bắt đầu trước - trang /admin "Nhật
+    ký". ``query`` rỗng = tất cả; có thì tìm (không phân biệt hoa thường) trong
+    tiêu đề, ý chính và tóm tắt."""
+    pattern = _like_pattern(query) if query else None
+    where = (
+        "telegram_user_id = $1 AND ($2::text IS NULL OR "
+        "(title || ' ' || bullets || ' ' || summary) ILIKE $2 ESCAPE '\\')"
+    )
+    total = await pool.fetchval(
+        f"SELECT count(*) FROM user_session_notes WHERE {where}", telegram_user_id, pattern
+    )
+    rows = await pool.fetch(
+        "SELECT session_key, title, bullets, summary, started_at, updated_at "
+        f"FROM user_session_notes WHERE {where} "
+        "ORDER BY started_at DESC, id DESC LIMIT $3 OFFSET $4",
+        telegram_user_id,
+        pattern,
+        limit,
+        offset,
+    )
+    return int(total or 0), list(rows)
+
+
+async def summary_row(pool: Any, telegram_user_id: int) -> Any:
+    return await pool.fetchrow(
+        "SELECT summary, updated_at FROM user_memory_summary WHERE telegram_user_id = $1",
+        telegram_user_id,
+    )
+
+
 async def clear_session_notes(pool: Any, telegram_user_id: int) -> None:
     await pool.execute(
         "DELETE FROM user_session_notes WHERE telegram_user_id = $1", telegram_user_id

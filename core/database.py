@@ -1099,6 +1099,28 @@ async def rewrite_session_note(
 
 
 @_with_reconnect
+async def search_session_notes(
+    telegram_user_id: int, query: str = "", *, limit: int = 20, offset: int = 0
+) -> tuple[int, list[dict]]:
+    """Trang /admin "Nhật ký": (tổng số khớp, 1 trang ghi chú phiên)."""
+    from core.repositories import memory
+
+    total, rows = await memory.search_session_notes(
+        await get_pool(), telegram_user_id, query, limit, offset
+    )
+    return total, [dict(r) for r in rows]
+
+
+@_with_reconnect
+async def get_summary_row(telegram_user_id: int) -> dict | None:
+    """Tóm tắt dài hạn kèm thời điểm cập nhật (trang /admin "Nhật ký")."""
+    from core.repositories import memory
+
+    row = await memory.summary_row(await get_pool(), telegram_user_id)
+    return dict(row) if row else None
+
+
+@_with_reconnect
 async def clear_session_notes(telegram_user_id: int) -> None:
     from core.repositories import memory
 
