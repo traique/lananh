@@ -181,7 +181,18 @@ _PLACE_NOTICES = {
     "day": ("error", f"Tối đa {weather_places.MAX_PLACES} địa điểm, xoá bớt trước khi thêm."),
     "luu": ("error", "Không lưu được, thử lại sau."),
     "dang-nhap": ("error", "Cần đăng nhập để thêm/xoá địa điểm."),
+    "da-luu-vi-tri": ("ok", "Đã lưu vị trí hiện tại. Lần sau mở trang Thời tiết sẽ xem ở đây."),
+    "da-xoa-vi-tri": ("ok", "Đã xoá vị trí đã lưu."),
+    "vi-tri-loi": ("error", "Không đọc được vị trí, thử lại."),
 }
+# Vị trí hiện tại của khách (nút "Lấy vị trí hiện tại", navigator.geolocation): lưu TRONG
+# TRÌNH DUYỆT bằng cookie chỉ gửi kèm trang /thoi-tiet, toạ độ làm tròn 2 số lẻ (~1 km).
+# Máy chủ không lưu (không DB, không RAM ngoài cache dự báo có trần), không cần đăng nhập.
+_MY_PLACE_COOKIE = "lcta_vitri"
+_MY_PLACE_PATH = "/thoi-tiet"
+_MY_PLACE_MAX_AGE = 365 * 86400
+# "vĩ độ_kinh độ" trong cookie ("_" không phải bọc ngoặc kép như ","); form gửi ",".
+_COORDS_RE = re.compile(r"\s*(-?\d{1,3}(?:\.\d{1,8})?)\s*[,_]\s*(-?\d{1,3}(?:\.\d{1,8})?)\s*")
 _WEATHER_DAYS = 7
 _WEATHER_TIMEOUT_SEC = 15
 # Trang công khai: chặn số lượt gọi Open-Meteo song song để người lạ spam
@@ -531,9 +542,24 @@ async def lich_holidays_page() -> HTMLResponse:
     )
 
 
-async def _limited_weather(place: str) -> dict:
+async def _limited_weather(place: str, coords: tuple[float, float] | None = None) -> dict:
     async with _weather_slots:
+        if coords:
+            label = f"Vị trí của tôi ({coords[0]:.2f}; {coords[1]:.2f})".replace(".", ",")
+            return await weather.get_weather_at(*coords, label, days=_WEATHER_DAYS)
         return await weather.get_weather(place, days=_WEATHER_DAYS)
+
+
+def _parse_coords(raw: str) -> tuple[float, float] | None:
+    """Toạ độ "vĩ,kinh" hoặc "vĩ_kinh" -> (lat, lon) làm tròn 2 số lẻ; sai dạng hoặc
+    ngoài khoảng -> None."""
+    m = _COORDS_RE.fullmatch(raw or "")
+    if not m:
+        return None
+    lat, lon = float(m.group(1)), float(m.group(2))
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None
+    return round(lat, 2), round(lon, 2)
 
 
 def _expire(times: collections.deque[float], now: float) -> None:
@@ -568,9 +594,17 @@ async def weather_page(request: Request) -> HTMLResponse:
     place = request.query_params.get("noi", "").strip()[:60]
     places = await weather_places.get()
     error, data = "", None
+    mine = _parse_coords(request.cookies.get(_MY_PLACE_COOKIE, "")[:40])
+    # Không nhập địa điểm mà đã lưu vị trí hiện tại: xem ở đó thay cho TP.HCM.
+    coords = mine if not place else None
     known = {weather_places.fold(p) for p in places}
     limited = ""
-    if place and weather_places.fold(place) not in known and not weather.location_cached(place):
+    if coords:
+        # Toạ độ trong cookie do trình duyệt gửi (sửa tay được): chưa có trong cache thì
+        # tính vào cùng hạn mức tra địa điểm mới.
+        if not weather.forecast_cached(*coords, _WEATHER_DAYS):
+            limited = _new_place_allowed(web_admin.client_ip(request))
+    elif place and weather_places.fold(place) not in known and not weather.location_cached(place):
         limited = _new_place_allowed(web_admin.client_ip(request))
     if limited:
         error = (
@@ -582,7 +616,7 @@ async def weather_page(request: Request) -> HTMLResponse:
     else:
         try:
             # Hạn chót tính cả lúc xếp hàng chờ slot, không chỉ lúc tra.
-            data = await asyncio.wait_for(_limited_weather(place), _WEATHER_TIMEOUT_SEC)
+            data = await asyncio.wait_for(_limited_weather(place, coords), _WEATHER_TIMEOUT_SEC)
         except (weather.WeatherError, asyncio.TimeoutError):
             error = "Nguồn thời tiết đang chậm hoặc lỗi, thử lại sau ít phút."
     if data and data.get("error"):
@@ -600,19 +634,31 @@ async def weather_page(request: Request) -> HTMLResponse:
                 width = (float(day["max_c"]) - low) / span * 100 - left
                 day["bar"] = (round(left), max(round(width), 4))
     days = len(data["daily"]) if data and data.get("daily") else _WEATHER_DAYS
-    return _render(
+    heading = "Thời tiết"
+    if coords:
+        heading = "Thời tiết ở vị trí của bạn"
+    elif data:
+        heading = f"Thời tiết {data['location']}"
+    page = _render(
         "thoi_tiet.html",
-        title=f"Thời tiết {data['location']}" if data else "Thời tiết",
+        title=heading,
         description=f"Thời tiết hiện tại và dự báo {days} ngày cho các tỉnh thành Việt Nam.",
         active="/thoi-tiet",
+        heading=heading,
         place=place,
         data=data,
         days=days,
         error=error,
         places=places,
+        mine=mine,
+        showing_mine=coords is not None,
         notice=_PLACE_NOTICES.get(request.query_params.get("tb", "")),
         fmt=lambda x: "?" if x is None else round(float(x)),
     )
+    if mine:
+        # Trang theo cookie riêng của người xem: không cho bộ đệm dùng chung giữ lại.
+        page.headers["Cache-Control"] = "private, no-cache"
+    return page
 
 
 async def _lottery_data(selector: str, day: str, ticket: str) -> dict:
@@ -747,6 +793,35 @@ async def _change_place(request: Request, action) -> Response:
     if form.get("noi"):
         query["noi"] = form["noi"]
     return RedirectResponse("/thoi-tiet?" + urlencode(query), status_code=303)
+
+
+@router.post("/thoi-tiet/vi-tri")
+async def weather_my_place_save(request: Request) -> Response:
+    """Lưu vị trí hiện tại (JS gửi lat/lon đã làm tròn) vào cookie của trình duyệt."""
+    form = await _form(request)
+    coords = _parse_coords(f"{form.get('lat', '')},{form.get('lon', '')}")
+    if coords is None:
+        return RedirectResponse("/thoi-tiet?tb=vi-tri-loi", status_code=303)
+    response = RedirectResponse("/thoi-tiet?tb=da-luu-vi-tri", status_code=303)
+    response.set_cookie(
+        _MY_PLACE_COOKIE,
+        f"{coords[0]:.2f}_{coords[1]:.2f}",
+        max_age=_MY_PLACE_MAX_AGE,
+        path=_MY_PLACE_PATH,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+    )
+    return response
+
+
+@router.post("/thoi-tiet/vi-tri/xoa")
+async def weather_my_place_remove() -> Response:
+    response = RedirectResponse("/thoi-tiet?tb=da-xoa-vi-tri", status_code=303)
+    response.delete_cookie(
+        _MY_PLACE_COOKIE, path=_MY_PLACE_PATH, httponly=True, secure=True, samesite="lax"
+    )
+    return response
 
 
 @router.post("/thoi-tiet/dia-diem/them")

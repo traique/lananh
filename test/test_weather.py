@@ -339,3 +339,13 @@ async def test_wttr_mo_ta_tieng_viet_va_bao_chu_bot(mock_http, monkeypatch):
     assert "Patchy" not in weather.describe_weather(data)
     assert sent_alerts and sent_alerts[0][1] == "weather:open-meteo-fallback"
     assert "wttr.in" in sent_alerts[0][0]
+
+
+async def test_forecast_cached_theo_toa_do(mock_http):
+    _sent, routes = mock_http
+    routes["api.open-meteo.com"] = lambda r: httpx.Response(200, json=_FORECAST)
+    assert not weather.forecast_cached(11.94, 108.46, 7)
+    await weather.get_weather_at(11.94, 108.46, "Vị trí của tôi", days=7)
+    assert weather.forecast_cached(11.94, 108.46, 7) and not weather.forecast_cached(
+        11.94, 108.46, 2
+    )

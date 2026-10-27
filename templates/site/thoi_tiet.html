@@ -2,8 +2,8 @@
 {% block content %}
 <div class="title-row">
   <div>
-    <h1>{{ "Thời tiết " ~ data.location if data else "Thời tiết" }}</h1>
-    <p class="sub">Hiện tại và dự báo {{ days }} ngày. Không nhập địa điểm thì xem TP. Hồ Chí Minh.</p>
+    <h1>{{ heading }}</h1>
+    <p class="sub">Hiện tại và dự báo {{ days }} ngày. Không nhập địa điểm thì xem {{ "vị trí bạn đã lưu" if mine else "TP. Hồ Chí Minh" }}.</p>
   </div>
   <form class="search" action="/thoi-tiet" method="get" role="search">
     <label class="sr-only" for="noi">Địa điểm</label>
@@ -12,10 +12,14 @@
   </form>
 </div>
 {% include "_errors.html" %}
+{% set pin %}<svg class="pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>{% endset %}
 <ul class="links" aria-label="Địa điểm hay xem" role="list">
+  {% if mine %}
+  <li><a href="/thoi-tiet"{% if showing_mine %} aria-current="page"{% endif %}>{{ pin }}Vị trí của tôi</a></li>
+  {% endif %}
   {% for p in places %}
   <li class="{% if logged_in %}place-edit{% endif %}">
-    <a href="/thoi-tiet?noi={{ p | urlencode }}"{% if p == place or (not place and loop.first) %} aria-current="page"{% endif %}>{{ p }}</a>
+    <a href="/thoi-tiet?noi={{ p | urlencode }}"{% if p == place or (not place and not showing_mine and loop.first) %} aria-current="page"{% endif %}>{{ p }}</a>
     {% if logged_in %}
     <form method="post" action="/thoi-tiet/dia-diem/xoa">
       <input type="hidden" name="ten" value="{{ p }}"><input type="hidden" name="noi" value="{{ place }}">
@@ -33,6 +37,18 @@
   <button class="btn" type="submit">Thêm</button>
 </form>
 {% endif %}
+{# Vị trí hiện tại: chỉ hiện nút khi trình duyệt có JavaScript + định vị (script cuối trang).
+   Toạ độ làm tròn ở trình duyệt trước khi gửi, lưu bằng cookie của chính trình duyệt. #}
+<div class="geo-row">
+  <button class="btn" type="button" id="geo-btn" hidden>{{ pin }}{{ "Cập nhật vị trí hiện tại" if mine else "Lấy vị trí hiện tại" }}</button>
+  {% if mine %}
+  <form method="post" action="/thoi-tiet/vi-tri/xoa"><button class="btn ghost" type="submit">Xoá vị trí đã lưu</button></form>
+  {% endif %}
+  <p class="hint" id="geo-msg" role="status"{% if not mine %} hidden{% endif %}>Vị trí làm tròn khoảng 1 km, chỉ lưu trong trình duyệt này, không cần tài khoản.</p>
+</div>
+<form id="geo-form" method="post" action="/thoi-tiet/vi-tri" hidden>
+  <input type="hidden" name="lat"><input type="hidden" name="lon">
+</form>
 {% if notice %}
 <div class="{{ 'error-box' if notice[0] == 'error' else 'ok-box' }} notice" role="{{ 'alert' if notice[0] == 'error' else 'status' }}">{{ notice[1] }}</div>
 {% endif %}
@@ -76,4 +92,32 @@
   </div>
 </section>
 {% endif %}
+<script>
+  // Nút "Lấy vị trí hiện tại": hỏi quyền định vị, làm tròn 2 số lẻ (~1 km) rồi gửi form
+  // lưu vào cookie. Trình duyệt không có định vị (hoặc trang không chạy HTTPS) thì ẩn nút.
+  (function () {
+    var btn = document.getElementById('geo-btn');
+    var form = document.getElementById('geo-form');
+    var msg = document.getElementById('geo-msg');
+    if (!btn || !form || !navigator.geolocation || !window.isSecureContext) return;
+    var label = btn.lastChild.textContent;
+    btn.hidden = false;
+    msg.hidden = false;
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      btn.lastChild.textContent = 'Đang lấy vị trí…';
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        form.elements.lat.value = pos.coords.latitude.toFixed(2);
+        form.elements.lon.value = pos.coords.longitude.toFixed(2);
+        form.submit();
+      }, function (err) {
+        btn.disabled = false;
+        btn.lastChild.textContent = label;
+        msg.textContent = err.code === 1
+          ? 'Trình duyệt chưa cho trang này lấy vị trí. Bật quyền vị trí trong cài đặt trình duyệt rồi thử lại, hoặc gõ tên địa điểm.'
+          : 'Chưa lấy được vị trí lúc này. Thử lại ở nơi thoáng hơn hoặc gõ tên địa điểm.';
+      }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 });
+    });
+  })();
+</script>
 {% endblock %}

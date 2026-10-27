@@ -216,6 +216,12 @@ def _vi_place(part: str, typed: str = "") -> str:
     return part
 
 
+def forecast_cached(lat: float, lon: float, days: int) -> bool:
+    """Dự báo tại toạ độ này còn trong cache (chưa quá TTL) - tra lại không gọi mạng."""
+    cached = _forecast_cache.get((round(lat, 3), round(lon, 3), max(1, min(days, _MAX_DAYS))))
+    return cached is not None and time.monotonic() - cached[0] < _FORECAST_TTL_SEC
+
+
 def location_cached(location: str) -> bool:
     """Tra địa điểm này có cần gọi geocoding không: TP.HCM (toạ độ sẵn) hoặc đã có
     trong cache toạ độ - kể cả kết quả "không tìm thấy" - thì không."""

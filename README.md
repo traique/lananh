@@ -1571,6 +1571,15 @@ Cần đăng nhập bằng tài khoản admin (`ADMIN_USER`/`ADMIN_PASS`, chung 
 - thêm/xoá địa điểm hay xem ở `/thoi-tiet` (lưu trong bảng `settings`, key
   `web_weather_places`, tối đa 16 mục, cache RAM - `services/weather_places.py`).
 
+Vị trí hiện tại ở `/thoi-tiet` thì KHÔNG cần đăng nhập: nút "Lấy vị trí hiện tại" (chỉ
+hiện khi trình duyệt có JavaScript + định vị và trang chạy HTTPS) hỏi quyền vị trí, làm
+tròn toạ độ 2 số lẻ (~1 km) ngay trong trình duyệt rồi `POST /thoi-tiet/vi-tri` lưu vào
+cookie `lcta_vitri` của chính trình duyệt đó (Path=/thoi-tiet, HttpOnly, Secure, 1 năm).
+Máy chủ không lưu gì (không DB). Mở `/thoi-tiet` không nhập địa điểm thì xem ở vị trí đã
+lưu (chip "Vị trí của tôi"), gõ địa điểm khác vẫn xem bình thường; "Xoá vị trí đã lưu"
+(`POST /thoi-tiet/vi-tri/xoa`) về lại mặc định TP.HCM. Toạ độ chưa có trong cache dự báo
+tính vào cùng hạn mức tra địa điểm mới theo IP (cookie sửa tay được).
+
 Khách xem mọi trang không cần tài khoản nên thanh bên KHÔNG mời "Đăng nhập" (trang đó
 là trang admin, khách vào sẽ cụt đường). Chủ trang có link nhỏ "Chủ trang đăng nhập" ở
 chân trang và trong khối AI luận giải (về lại đúng trang sau khi đăng nhập); trang đăng

@@ -352,6 +352,12 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
 }
 .chip-x:hover { color: var(--negative); }
 .add-place { display: flex; margin-top: 16px; }
+/* vị trí hiện tại: nút định vị + xoá + một dòng giải thích, gập dòng trên điện thoại */
+.geo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 16px; }
+.geo-row form { margin: 0; }
+.geo-row .hint { flex: 1 1 240px; margin: 0; }
+.btn .pin, .links .pin { width: 16px; height: 16px; flex: none; }
+.links .pin { margin-right: 6px; }
 .add-place .input { flex: 1; min-width: 0; border-radius: 999px 0 0 999px; padding-left: 18px; }
 .add-place .btn { border-radius: 0 999px 999px 0; margin-left: -1px; }
 .add-place .input:focus-visible { position: relative; z-index: 1; }

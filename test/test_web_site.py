@@ -1082,3 +1082,75 @@ async def test_luoi_tu_vi_dien_thoai_co_o_giua(client):
     html = (await client.post("/tu-vi", data=_TUVI_FORM)).text
     center = html.split('<nav class="chart-map"')[1].split("</nav>")[0]
     assert '<div class="c"><b>Dương Nam</b>' in center and "Bấm một cung để xem" in center
+
+
+async def test_luu_vi_tri_hien_tai_trong_cookie_trinh_duyet(client, monkeypatch):
+    """Nút "Lấy vị trí hiện tại": toạ độ (làm tròn ~1 km) lưu trong cookie của trình duyệt,
+    trang /thoi-tiet không nhập địa điểm thì xem ở đó; không DB, không cần đăng nhập."""
+    calls = []
+
+    async def fake_at(lat, lon, label, days=1):
+        calls.append((lat, lon, label, days))
+        return {**_FAKE_WEATHER, "location": label}
+
+    async def fake_get_weather(location="", days=1):
+        calls.append(location)
+        return _FAKE_WEATHER
+
+    monkeypatch.setattr(web_site.weather, "get_weather_at", fake_at)
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    html = (await client.get("/thoi-tiet")).text
+    assert 'id="geo-btn" hidden' in html and "Lấy vị trí hiện tại" in html
+    assert "Vị trí của tôi</a>" not in html and "Xoá vị trí đã lưu" not in html
+
+    r = await client.post("/thoi-tiet/vi-tri", data={"lat": "11.940419", "lon": "108.458313"})
+    assert r.status_code == 303 and r.headers["location"] == "/thoi-tiet?tb=da-luu-vi-tri"
+    cookie = r.headers["set-cookie"]
+    assert cookie.startswith("lcta_vitri=11.94_108.46;") and "Path=/thoi-tiet" in cookie
+    assert "HttpOnly" in cookie and "Secure" in cookie and "SameSite=lax" in cookie
+
+    r = await client.get(r.headers["location"])
+    html = r.text
+    assert calls[-1] == (11.94, 108.46, "Vị trí của tôi (11,94; 108,46)", 7)
+    assert "<h1>Thời tiết ở vị trí của bạn</h1>" in html and "Đã lưu vị trí hiện tại" in html
+    assert 'href="/thoi-tiet" aria-current="page">' in html and "Xoá vị trí đã lưu" in html
+    assert 'href="/thoi-tiet?noi=TP.HCM" aria-current' not in html
+    assert r.headers["cache-control"] == "private, no-cache"
+    # Gõ địa điểm thì vẫn xem địa điểm đó.
+    await client.get("/thoi-tiet", params={"noi": "Huế"})
+    assert calls[-1] == "Huế"
+
+    r = await client.post("/thoi-tiet/vi-tri/xoa")
+    assert r.status_code == 303 and 'lcta_vitri=""' in r.headers["set-cookie"]
+    html = (await client.get(r.headers["location"])).text
+    assert "Đã xoá vị trí đã lưu." in html and calls[-1] == ""  # về mặc định TP.HCM
+
+    r = await client.post("/thoi-tiet/vi-tri", data={"lat": "abc", "lon": "200"})
+    assert r.headers["location"] == "/thoi-tiet?tb=vi-tri-loi" and "set-cookie" not in r.headers
+
+
+async def test_vi_tri_trong_cookie_sai_bo_qua_va_tinh_vao_han_muc(client, monkeypatch):
+    calls = []
+
+    async def fake_at(lat, lon, label, days=1):
+        calls.append((lat, lon))
+        return {**_FAKE_WEATHER, "location": label}
+
+    async def fake_get_weather(location="", days=1):
+        calls.append(location)
+        return _FAKE_WEATHER
+
+    monkeypatch.setattr(web_site.weather, "get_weather_at", fake_at)
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    monkeypatch.setattr(web_site, "_new_place_times", web_site.collections.deque())
+    monkeypatch.setattr(web_site, "_new_place_by_ip", web_site.collections.OrderedDict())
+    monkeypatch.setattr(web_site, "_NEW_PLACE_PER_IP", 1)
+    await client.get("/thoi-tiet", headers={"Cookie": "lcta_vitri=abc"})
+    assert calls == [""]  # cookie hỏng: như chưa lưu
+    # Toạ độ sửa tay trong cookie, chưa có trong cache: tính vào hạn mức tra địa điểm mới.
+    ip = {"X-Forwarded-For": "4.4.4.4"}
+    await client.get("/thoi-tiet", headers={**ip, "Cookie": "lcta_vitri=10.00_106.00"})
+    html = (
+        await client.get("/thoi-tiet", headers={**ip, "Cookie": "lcta_vitri=11.00_107.00"})
+    ).text
+    assert calls == ["", (10.0, 106.0)] and "Bạn vừa tra nhiều địa điểm mới" in html
