@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from pathlib import Path
 
 import jinja2
@@ -614,13 +615,39 @@ DIAGNOSE_PATH = "/diagnose"
 WEBHOOK_BASE_URL = (
     os.getenv("WEBHOOK_BASE_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()
 )
+
+
+def _site_url(raw: str) -> str:
+    """Gốc URL tuyệt đối cho link canonical/sitemap. Gõ thiếu giao thức
+    ("lananh.onrender.com") thì thêm https:// - không thì mọi link tuyệt đối thành
+    đường dẫn tương đối, Google báo sitemap có URL không hợp lệ."""
+    url = raw.strip().rstrip("/")
+    return f"https://{url}" if url and "://" not in url else url
+
+
 # Địa chỉ công khai của web LCTA cho link canonical, og:url, sitemap.xml (vd khi trỏ
 # tên miền riêng). Trống = WEBHOOK_BASE_URL.
-SITE_BASE_URL = (os.getenv("SITE_BASE_URL", "").strip() or WEBHOOK_BASE_URL).rstrip("/")
+SITE_BASE_URL = _site_url(os.getenv("SITE_BASE_URL", "").strip() or WEBHOOK_BASE_URL)
 # Tên địa điểm cho "vị trí hiện tại" ở /thoi-tiet: tra ngược toạ độ qua Nominatim của
 # OpenStreetMap (tối đa 1 lượt/giây, có cache). Tắt (=0) nếu bị chặn hoặc không muốn gửi
 # toạ độ ra ngoài - trang khi đó ghi toạ độ thay cho tên.
 NOMINATIM_ENABLED = _env_bool("NOMINATIM_ENABLED", True)
+
+
+def _site_verification(raw: str) -> str:
+    """Mã xác minh Google Search Console. Nhận phần content hoặc cả thẻ
+    <meta name="google-site-verification" content="..."> dán nguyên từ Search Console."""
+    found = re.search(r"""content\s*=\s*["']([^"']+)""", raw)
+    token = (found.group(1) if found else raw).strip()
+    if token and not re.fullmatch(r"[A-Za-z0-9_-]{10,100}", token):
+        logger.warning("GOOGLE_SITE_VERIFICATION không đúng dạng mã của Google, bỏ qua")
+        return ""
+    return token
+
+
+# Xác minh quyền sở hữu site trong Google Search Console bằng cách "Thẻ HTML": mọi trang
+# công khai in thẻ meta này (trống = không in).
+GOOGLE_SITE_VERIFICATION = _site_verification(os.getenv("GOOGLE_SITE_VERIFICATION", ""))
 
 # Khoá mã hoá đối xứng (Fernet) dùng để mã hoá các giá trị nhạy cảm (vd
 # __Secure-1PSIDTS đã rotate) trước khi lưu vào bảng settings trong DB. Tạo

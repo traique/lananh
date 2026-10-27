@@ -430,6 +430,7 @@ def _render(
             page_url=page_url,
             site_url=base,
             ld_json=ld_json,
+            site_verification=config.GOOGLE_SITE_VERIFICATION,
             **ctx,
         )
     )

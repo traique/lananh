@@ -6,6 +6,7 @@
   <title>{% block title %}{{ title }} | LCTA{% endblock %}</title>
   <meta name="description" content="{{ description }}">
   <meta name="color-scheme" content="light dark">
+  {% if site_verification %}<meta name="google-site-verification" content="{{ site_verification }}">{% endif %}
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0e100f" media="(prefers-color-scheme: dark)">
   {# Trang kết quả riêng (câu hỏi tự do, lá số, bàn theo giờ, 404): không đưa vào chỉ mục
