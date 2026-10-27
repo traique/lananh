@@ -97,8 +97,23 @@ def openai_compatible_cooldown(exc: BaseException) -> tuple[float, str]:
     return seconds, f"rate limit theo phút{suffix}"
 
 
+def live_cooldown(exc: BaseException) -> tuple[float, str]:
+    """Gemini Live (ai/live_client.py): lỗi quota thường đến dưới dạng mã đóng
+    WebSocket kèm câu chữ (không có QuotaFailure/RetryInfo) - đọc thêm câu chữ để
+    biết là quota NGÀY. Hạn mức free tier của Live chưa được Google công bố."""
+    seconds, reason = gemini_cooldown(exc)
+    if "NGÀY" in reason:
+        return seconds, f"Gemini Live {reason}"
+    if _DAILY_MARKERS_RE.search(str(exc)):
+        seconds = max(MIN_COOLDOWN_SEC, min(_daily_cap(), seconds_until_pacific_midnight()))
+        return seconds, "hết quota NGÀY của Gemini Live (reset nửa đêm giờ Mỹ)"
+    return seconds, f"Gemini Live {reason}"
+
+
 def cooldown_for(provider: str, exc: BaseException) -> tuple[float, str]:
     """(số giây cooldown, lý do tiếng Việt) cho lỗi 429 ``exc`` của ``provider``."""
+    if provider.startswith("live_"):
+        return live_cooldown(exc)
     if provider in ("api1", "api2"):
         return gemini_cooldown(exc)
     return openai_compatible_cooldown(exc)

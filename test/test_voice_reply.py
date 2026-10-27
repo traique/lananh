@@ -46,8 +46,8 @@ def tts(monkeypatch):
     """TTS giả: trả PCM thô như model 2.5 ("audio/L16;...;rate=24000")."""
     calls = []
 
-    async def synthesize(text, *, model, voice, timeout_sec):
-        calls.append({"text": text, "model": model, "voice": voice})
+    async def synthesize(text, *, model, voice, timeout_sec, engine="tts"):
+        calls.append({"text": text, "model": model, "voice": voice, "engine": engine})
         return orchestrator.Speech(PCM, "audio/L16;codec=pcm;rate=24000", "api1")
 
     monkeypatch.setattr(orchestrator, "synthesize_speech", synthesize)
@@ -220,7 +220,9 @@ async def test_clip_chi_khi_nguoi_dung_bat(settings, tts, monkeypatch):
     assert await voice_reply.make_clip(42, "Dạ chào anh.", channel="telegram") is None
     clip = await voice_reply.make_clip(42, "Dạ chào anh.", channel="telegram", voice_in=True)
     assert clip.ext == "wav" and clip.data[:4] == b"RIFF" and clip.duration_ms == 1000
-    assert tts == [{"text": "Dạ chào anh.", "model": "gemini-3.8-flash-tts", "voice": "Kore"}]
+    assert tts == [
+        {"text": "Dạ chào anh.", "model": "gemini-3.8-flash-tts", "voice": "Kore", "engine": "auto"}
+    ]
     monkeypatch.setenv("VOICE_REPLY_ENABLED", "0")
     assert await voice_reply.make_clip(42, "Dạ.", channel="telegram", voice_in=True) is None
 

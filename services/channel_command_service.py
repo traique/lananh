@@ -609,9 +609,12 @@ async def maybe_handle_command(
     if command == "/status":
         state = orchestrator.get_provider_state_snapshot()
         latency = "\n".join(await provider_health.latency_lines())
+        live = "\n".join(await provider_health.live_lines())
         return [
             f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}\n"
-            f"{await search_status.search_mode_line()}" + (f"\n\n{latency}" if latency else "")
+            f"{await search_status.search_mode_line()}"
+            + (f"\n{live}" if live else "")
+            + (f"\n\n{latency}" if latency else "")
         ], None
     if command == "/thongke":
         # Dùng chung logic/format với Telegram - xem services/usage_stats.py.

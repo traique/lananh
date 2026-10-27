@@ -33,6 +33,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from ai import (
     agnes_client,
     groq_client,
+    live_client,
     official_client,
     openrouter_client,
     orchestrator,
@@ -53,7 +54,15 @@ logger = logging.getLogger(__name__)
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
 _ADMIN_TEMPLATE_PATH = _TEMPLATES / "admin.html"
 _ADMIN_LOGIN_PATH = _TEMPLATES / "admin_login.html"
-_ADMIN_COOLDOWN_PROVIDERS = ("groq", "openrouter", "api1", "api2", "router9")
+_ADMIN_COOLDOWN_PROVIDERS = (
+    "groq",
+    "openrouter",
+    "api1",
+    "api2",
+    "router9",
+    "live_api1",
+    "live_api2",
+)
 _ADMIN_SESSION_COOKIE = "admin_session"
 _CHANNEL_LABELS = {"telegram": "Telegram", "zoom": "Zoom", "zalo": "Zalo"}
 # Key bảng settings giữ epoch phiên admin (xem SessionEpoch).
@@ -443,22 +452,33 @@ async def _provider_info(provider: str) -> dict:
             "openrouter": openrouter_client.model_name,
             "api1": lambda: official_client.model_for(1),
             "api2": lambda: official_client.model_for(2),
+            "live": live_client.model_name,
         }[provider]()
         enabled = await provider_overrides.is_enabled(provider)
+
+    async def _live_key() -> str | None:
+        # Gemini Live dùng chung key api1/api2 (không có key riêng).
+        return await official_client.api_key_for(1) or await official_client.api_key_for(2)
+
     api_key = await {
         "router9": router9_client.api_key,
         "groq": groq_client.api_key,
         "openrouter": openrouter_client.api_key,
         "api1": lambda: official_client.api_key_for(1),
         "api2": lambda: official_client.api_key_for(2),
+        "live": _live_key,
     }[provider]()
+    shared_key = provider in provider_overrides.SHARED_KEY_PROVIDERS
     return {
         "provider": provider,
         "model": effective_model,
         "model_overridden": bool(model_override),
         "api_key_configured": bool(api_key),
         "api_key_masked": _mask_api_key(api_key or ""),
-        "api_key_overridden": bool(await provider_overrides.get_api_key_override(provider)),
+        "api_key_overridden": (
+            False if shared_key else bool(await provider_overrides.get_api_key_override(provider))
+        ),
+        "api_key_shared": shared_key,
         "enabled": enabled,
         "enabled_editable": provider in provider_overrides.ENABLE_OVERRIDABLE,
         **base_url_info,
@@ -489,6 +509,11 @@ async def admin_providers_update(request: Request) -> Response:
         else:
             await provider_overrides.set_model_override(provider, model)
     if "api_key" in body:
+        if provider in provider_overrides.SHARED_KEY_PROVIDERS:
+            return JSONResponse(
+                {"error": "Gemini Live dùng chung key api1/api2 - đổi key ở thẻ api1/api2."},
+                status_code=400,
+            )
         try:
             await provider_overrides.set_api_key_override(provider, body["api_key"])
         except RuntimeError as exc:

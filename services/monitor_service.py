@@ -49,6 +49,12 @@ def _is_provider_down(name: str, now: float) -> bool:
             or (provider_state.router9_dead_since is not None)
             or provider_state.api_exhausted_until.get("router9", 0.0) > now
         )
+    if name == "live":
+        # Gemini Live: cooldown riêng theo từng key (live_api1/live_api2).
+        return all(
+            provider_state.api_exhausted_until.get(key, 0.0) > now
+            for key in ("live_api1", "live_api2")
+        )
     return provider_state.api_exhausted_until.get(name, 0.0) > now
 
 

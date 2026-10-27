@@ -28,6 +28,10 @@ tự core.config.PROVIDER_ORDER (mặc định router9 -> groq -> openrouter -> 
   "native") chỉ thử provider TỰ tra web được (Gemini Google Search, Groq
   browser_search, OpenRouter/9Router nếu bật), không ai tra được thì trả lời
   qua chuỗi thường kèm ghi chú "chưa tra được" - xem chat().
+- Gemini Live (ai/live_client.py, provider "live", mặc định đứng CUỐI chuỗi khi
+  LIVE_CHAT_FALLBACK=1): chỉ lượt chat thường (chat() truyền live_call) mới dùng -
+  ask()/utility/ảnh/tài liệu/tra web không có live_call nên bỏ qua. Live tự thử
+  api1 -> api2, tự ghi provider_calls "live_api1/2" và cooldown riêng "live_api*".
 """
 
 import asyncio
@@ -40,7 +44,7 @@ from typing import Awaitable, Callable, Iterator, NamedTuple, Optional
 
 from core import config, database as db, trace, untrusted
 from ai import openai_compatible, router9_client, groq_client, openrouter_client, official_client
-from ai import call_log, cooldown, prompt_budget, provider_overrides
+from ai import call_log, cooldown, live_client, prompt_budget, provider_overrides
 from ai import provider_state as provider_state_module
 from ai.provider_state import ProviderStateSnapshot, provider_state
 from ai.timeouts import (
@@ -227,6 +231,7 @@ PROVIDER_LABELS = {
     "openrouter": "OpenRouter",
     "api1": "API 1",
     "api2": "API 2",
+    "live": "Gemini Live",
 }
 
 
@@ -359,6 +364,8 @@ async def _effective_model(provider: str) -> str:
         return await official_client._model_for(1)
     if provider == "api2":
         return await official_client._model_for(2)
+    if provider == "live":
+        return await live_client.model_name()
     return provider
 
 
@@ -539,6 +546,7 @@ async def _run_provider_chain(
     openrouter_call: Optional[Callable[[], Awaitable]] = None,
     providers_override: Optional[list[str]] = None,
     allow_cjk: bool = False,
+    live_call: Optional[Callable[[], Awaitable]] = None,
 ):
     """Run providers in configured order with persisted health state.
 
@@ -546,6 +554,8 @@ async def _run_provider_chain(
     api1/api2/groq/openrouter đều single-try + cooldown-on-quota giống nhau,
     chỉ khác api_call() nhận idx (int) còn groq_call/openrouter_call() không
     nhận tham số - do api_call() đã có contract cũ (test_provider_chain.py).
+    ``live_call`` (chỉ chat() truyền): Gemini Live dự phòng - không truyền thì
+    provider "live" trong PROVIDER_ORDER bị bỏ qua.
 
     Cả chuỗi chạy trong hạn chót CHAT_TURN_TIMEOUT_SEC (hoặc hạn sớm hơn do
     caller đặt qua turn_deadline()); hết hạn -> TurnTimeoutError, không thử
@@ -559,6 +569,7 @@ async def _run_provider_chain(
             openrouter_call=openrouter_call,
             providers_override=providers_override,
             allow_cjk=allow_cjk,
+            live_call=live_call,
         )
 
 
@@ -570,6 +581,7 @@ async def _run_provider_chain_within_deadline(
     openrouter_call: Optional[Callable[[], Awaitable]],
     providers_override: Optional[list[str]],
     allow_cjk: bool,
+    live_call: Optional[Callable[[], Awaitable]] = None,
 ):
     await provider_state.ensure_loaded()
     order = providers_override if providers_override is not None else config.PROVIDER_ORDER
@@ -604,6 +616,15 @@ async def _run_provider_chain_within_deadline(
         await provider_state.set_active_provider(name)
         await _record_provider_call(name, latency_ms=latency_ms, usage=usage)
         return await _tag_answer(result, name)
+
+    async def _attempt_live():
+        # live_client tự ghi provider_calls (live_api1/2) + cooldown riêng cho từng
+        # key, nên ở đây không bọc _timed() (tránh ghi 2 lần).
+        assert live_call is not None
+        result = await bounded(live_call)
+        _assert_output_clean(result, "live", allow_cjk=allow_cjk)
+        await provider_state.set_active_provider("live")
+        return await _tag_answer(result, "live")
 
     async def _has_any_fallback_configured() -> bool:
         if await official_client.api_key_for(1) or await official_client.api_key_for(2):
@@ -708,6 +729,21 @@ async def _run_provider_chain_within_deadline(
                     last_exc = exc
                     continue
                 _log_provider_failure(provider, exc)
+                last_exc = exc
+        elif provider == "live":
+            if live_call is None or not live_client.chat_fallback_enabled():
+                continue
+            if not await live_client.configured():
+                continue
+            if not await live_client.usable_indices():
+                cooling_skipped.append("live")
+                continue
+            try:
+                return await _attempt_live()
+            except TurnTimeoutError:
+                raise
+            except Exception as exc:
+                logger.warning("Gemini Live (dự phòng cuối) lỗi: %s", _short_error(exc))
                 last_exc = exc
         else:
             call = generic_calls.get(provider)
@@ -884,6 +920,7 @@ async def chat(
     is_admin: bool = False,
     address_form: Optional[str] = None,
     style_rules: str = "",
+    allow_live: bool = True,
 ):
     """Chat with shared history/memory through the provider chain.
 
@@ -909,6 +946,9 @@ async def chat(
     ``style_rules``: "cách trả lời" người dùng đã dặn (services/memory_service) -
     nối vào system prompt ở lúc gọi (persona cache theo biến thể nên không
     nhét vào cache), không nằm trong memory_context để không bị cắt giữa chừng.
+    ``allow_live``: cho Gemini Live (ai/live_client.py) làm dự phòng cuối ở chuỗi
+    thường - caller tắt khi lượt có số liệu cổ phiếu chuẩn (câu trả lời còn qua
+    bước chặn câu nói ngược policy). Lượt tra web (native/forced) không dùng Live.
     """
     mode = _resolve_search_mode(search_mode, require_real_search, web_grounded)
     persona = config.load_chat_skill(
@@ -1019,6 +1059,14 @@ async def chat(
                 require_search_evidence=provider_search,
             )
 
+        async def _live_call():
+            # Live không tự tra web (không tool): chỉ chat thường; lịch sử rút gọn
+            # trong live_client (LIVE_HISTORY_MESSAGES).
+            return await live_client.converse(
+                prompt_with_time, system_instruction=persona, history=history
+            )
+
+        use_live = allow_live and not provider_search
         return _strip_citations(
             await _run_provider_chain(
                 router9_call=_router9_call,
@@ -1027,6 +1075,7 @@ async def chat(
                 openrouter_call=_openrouter_call,
                 providers_override=providers_override,
                 allow_cjk=allow_cjk,
+                live_call=_live_call if use_live else None,
             )
         )
 
@@ -1319,9 +1368,43 @@ class Speech(NamedTuple):
     provider: str
 
 
-async def synthesize_speech(text: str, *, model: str, voice: str, timeout_sec: float) -> Speech:
-    """Gemini TTS api1 -> api2, mỗi lượt qua bounded() (trong hạn chót lượt của caller).
-    Raise TurnTimeoutError (hết hạn lượt) hoặc lỗi cuối cùng."""
+VOICE_ENGINE_AUTO = "auto"
+VOICE_ENGINE_LIVE = "live"
+VOICE_ENGINE_TTS = "tts"
+VOICE_ENGINES = (VOICE_ENGINE_AUTO, VOICE_ENGINE_LIVE, VOICE_ENGINE_TTS)
+
+
+async def synthesize_speech(
+    text: str,
+    *,
+    model: str,
+    voice: str,
+    timeout_sec: float,
+    engine: str = VOICE_ENGINE_TTS,
+) -> Speech:
+    """Đọc ``text`` thành giọng theo ``engine`` (VOICE_ENGINE):
+
+    - "tts": Gemini TTS api1 -> api2 (model ``model``).
+    - "live": chỉ Gemini Live (ai/live_client.speak) - đọc nguyên văn, bản chép lời
+      lệch văn bản quá ngưỡng thì lỗi (không có tin thoại).
+    - "auto": Live trước; lỗi/quota/cooldown/đọc lệch -> Gemini TTS.
+
+    Mỗi lượt qua bounded() (trong hạn chót lượt của caller). Raise TurnTimeoutError
+    (hết hạn lượt) hoặc lỗi cuối cùng."""
+    if engine in (VOICE_ENGINE_AUTO, VOICE_ENGINE_LIVE):
+        try:
+            turn = await live_client.speak(text, voice=voice, timeout_sec=timeout_sec)
+            return Speech(turn.audio, turn.mime, turn.provider)
+        except TurnTimeoutError:
+            raise
+        except Exception as exc:
+            if engine == VOICE_ENGINE_LIVE:
+                raise
+            logger.info("Gemini Live không đọc được (%s) - dùng Gemini TTS.", _short_error(exc))
+    return await _synthesize_tts(text, model=model, voice=voice, timeout_sec=timeout_sec)
+
+
+async def _synthesize_tts(text: str, *, model: str, voice: str, timeout_sec: float) -> Speech:
     await provider_state.ensure_loaded()
     last_exc: Optional[BaseException] = None
     for idx in (1, 2):

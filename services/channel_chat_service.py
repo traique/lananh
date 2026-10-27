@@ -312,6 +312,9 @@ async def run_chat_turn(
                     is_admin=is_admin,
                     address_form=address_form,
                     style_rules="\n\n".join(p for p in (memory.style_rules, style_hint) if p),
+                    # Gemini Live (dự phòng cuối, trả lời bằng văn nói) không dùng cho
+                    # lượt có số liệu cổ phiếu chuẩn hay ngay sau báo cáo cổ phiếu.
+                    allow_live=not (grounding or stock_followup),
                 )
         form = address_form or reply_audience.current().address_form
         reply = conversation_log.guard_stock_reply(

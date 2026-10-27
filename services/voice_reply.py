@@ -11,12 +11,16 @@
   khối code, bảng, link, markdown, emoji, dòng "⚙️ API"; trần VOICE_REPLY_MAX_CHARS
   (600) - dài hơn thì đọc đoạn đầu (cắt ở cuối câu) và nói rõ phần còn lại xem
   trong tin chữ.
-- Tổng hợp giọng: Gemini TTS chính thức (``orchestrator.synthesize_speech``: api1 ->
-  api2, mỗi lượt qua ``ai.timeouts.bounded()`` trong hạn chót của lượt, cooldown
-  quota TTS riêng "tts_api1/2"). Model VOICE_TTS_MODEL (mặc định
-  gemini-3.8-flash-tts), giọng dựng sẵn VOICE_TTS_VOICE (mặc định Kore - các giọng
-  dựng sẵn đều đọc được tiếng Việt). Đầu ra PCM 16-bit mono 24 kHz (thô, hoặc WAV
-  có header với model 3.8) - ``to_pcm`` nhận cả hai.
+- Tổng hợp giọng (``orchestrator.synthesize_speech``) theo VOICE_ENGINE:
+  ``auto`` (mặc định) = Gemini Live trước (ai/live_client.py: đọc NGUYÊN VĂN, bản
+  chép lời phải giống văn bản >= LIVE_VOICE_MIN_MATCH%, cooldown quota riêng
+  "live_api1/2"), lỗi/quota/đọc lệch thì Gemini TTS; ``live`` = chỉ Live (lỗi thì
+  chỉ gửi chữ); ``tts`` = chỉ Gemini TTS (api1 -> api2, cooldown quota TTS riêng
+  "tts_api1/2"). Mỗi lượt qua ``ai.timeouts.bounded()`` trong hạn chót của lượt.
+  Model TTS VOICE_TTS_MODEL (mặc định gemini-3.8-flash-tts), giọng dựng sẵn
+  VOICE_TTS_VOICE (mặc định Kore - Live dùng cùng bộ giọng, đều đọc được tiếng
+  Việt). Đầu ra PCM 16-bit mono 24 kHz (thô, hoặc WAV có header với model TTS 3.8)
+  - ``to_pcm`` nhận cả hai.
 - Định dạng (không thêm package/apt): có ffmpeg trên PATH thì Telegram nhận
   OGG/Opus qua sendVoice; không có thì đóng gói WAV bằng module ``wave`` và gửi
   sendDocument (Bot API: sendVoice chỉ nhận OGG/Opus, MP3, M4A; sendAudio chỉ MP3,
@@ -105,6 +109,12 @@ def tts_model() -> str:
 
 def tts_voice() -> str:
     return os.getenv("VOICE_TTS_VOICE", DEFAULT_VOICE).strip() or DEFAULT_VOICE
+
+
+def voice_engine() -> str:
+    """VOICE_ENGINE: auto (Live rồi TTS) | live | tts; giá trị lạ -> auto."""
+    raw = os.getenv("VOICE_ENGINE", "auto").strip().lower()
+    return raw if raw in ("auto", "live", "tts") else "auto"
 
 
 def url_ttl_sec() -> int:
@@ -469,7 +479,11 @@ async def _synthesize(speech: str, channel: str, truncated: bool) -> Clip | None
         return None
     try:
         result = await orchestrator.synthesize_speech(
-            speech, model=tts_model(), voice=tts_voice(), timeout_sec=TTS_TIMEOUT_SEC
+            speech,
+            model=tts_model(),
+            voice=tts_voice(),
+            timeout_sec=TTS_TIMEOUT_SEC,
+            engine=voice_engine(),
         )
         pcm, rate, channels = to_pcm(result.audio, result.mime)
         if not pcm or len(pcm) > MAX_PCM_BYTES:

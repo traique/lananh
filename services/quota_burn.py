@@ -13,6 +13,10 @@ sổ quota của từng nơi, không theo ngày Việt Nam:
   cần đoán giới hạn; FREE_TIER_RPD_GROQ chỉ dùng khi chưa có header.
 - Tavily: credit theo THÁNG (gói free 1000; tìm "advanced" tính 2 credit).
 - Agnes: chỉ hiển thị số lượt (không rõ hạn mức).
+- Gemini Live (provider_calls "live_api1"/"live_api2", ai/live_client.py): Google
+  chưa công bố hạn mức free tier - mặc định chỉ đếm lượt trong ngày quota (0h giờ
+  Thái Bình Dương); chủ bot đặt FREE_TIER_RPD_GEMINI_LIVE khi đã thấy số thật ở
+  aistudio.google.com/rate-limit.
 
 Giới hạn 0 = chưa đặt -> chỉ hiển thị, không cảnh báo. Cảnh báo đi qua core.alerts
 tối đa 1 lần/provider/cửa sổ quota (đánh dấu ở bảng settings, sống qua restart);
@@ -114,6 +118,17 @@ def specs() -> list[BurnSpec]:
             unit="credit",
         ),
         BurnSpec("agnes", "Agnes (ảnh)", ("agnes",), "day", timezone.utc, "", 0),
+        # Gemini Live (ai/live_client.py): Google chưa công bố hạn mức free tier -
+        # mặc định 0 = chỉ hiển thị số lượt; cửa sổ ngày như Gemini (0h giờ Mỹ).
+        BurnSpec(
+            "live",
+            "Gemini Live (api1+api2)",
+            ("live_api1", "live_api2"),
+            "day",
+            PACIFIC,
+            "FREE_TIER_RPD_GEMINI_LIVE",
+            0,
+        ),
     ]
     return items
 
@@ -216,7 +231,7 @@ def _window_id(burn: Burn) -> str:
 def alert_text(burn: Burn) -> str:
     window = "tháng này" if burn.period == "month" else "hôm nay (theo cửa sổ quota)"
     extra = ""
-    if burn.name.startswith(("api", "gemini")):
+    if burn.name.startswith(("api", "gemini", "live")):
         extra = " Quota Gemini reset lúc 0h giờ Thái Bình Dương (~14-15h giờ VN)."
     elif burn.source == "header":
         extra = " (số chính xác từ header Groq)"
