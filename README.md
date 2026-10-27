@@ -610,7 +610,9 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
 - Khóa truy cập theo một Telegram user ID.
 - Xử lý text dài, ảnh, image document, tin thoại/audio, file PDF/TXT/MD/DOCX, vị
   trí; sticker, video, file lạ nhận 1 câu nói rõ em hiểu được những gì.
-- Lệnh quản lý memory, provider, model và Zalo.
+- Lệnh quản lý memory, provider, model và Zalo. Menu "/" chỉ còn 18 lệnh hay dùng
+  (`bot_app.MENU_COMMANDS`); mọi lệnh vẫn gõ được, hoặc nhắn tự nhiên (mục "Hỏi tự
+  nhiên thay cho lệnh").
 - Phản hồi khi chờ: Telegram luôn hiện "đang nhập…"; lượt quá
   `TELEGRAM_STATUS_DELAY_SEC` giây (mặc định 7, 0 = tắt) thì em gửi 1 dòng trạng
   thái theo việc đang làm ("🔎 Em đang tra web xíu nha anh…", "📖 Em đang đọc trang
@@ -931,6 +933,7 @@ Thoại, ảnh, tài liệu:
 | `VOICE_ENGINE` | `auto` | Bộ đọc `/noi`: `auto` = Gemini Live rồi Gemini TTS khi Live lỗi/hết quota/đọc lệch; `live` = chỉ Live; `tts` = chỉ TTS |
 | `LIVE_VOICE_MIN_MATCH` | 80 | % giống tối thiểu giữa bản chép lời của Live và văn bản cần đọc (50-100); thấp hơn thì bỏ âm thanh Live |
 | `VOICE_REPLY_URL_TTL_MIN` / `VOICE_REPLY_STORE_MB` | 10 / 8 | Zalo: link tin thoại ký HMAC sống N phút; kho RAM tối đa N MB (và 20 file) |
+| `NL_COMMANDS_ENABLED` / `NL_COMMANDS_LLM` | 1 / 1 | Hỏi tự nhiên thay cho lệnh: 0 = tắt hẳn / 0 = chỉ mẫu câu bằng code, không thêm lệnh vào router tool |
 | `NUTRITION_NL` / `NUTRITION_AI_ESTIMATE` | 0 / 0 | `/an`: 1 = ghi bữa ăn từ câu tự nhiên rất rõ; 1 = món lạ ước lượng kcal bằng 1 lượt AI |
 | `VISION_QA_ENABLED` / `PHOTO_NO_CAPTION_MODE` | 1 / `prompt` | Ảnh kèm câu hỏi được trả lời về ảnh; ảnh không caption: `prompt` hoặc `describe` |
 | `DOCUMENT_QA_ENABLED` / `DOCUMENT_MAX_BYTES` | 1 / 5242880 | Đọc PDF/TXT/MD/DOCX; trần file (64 KB-8 MB) |
@@ -1319,11 +1322,63 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 `zalo-gateway` thực hiện. `account_id` cho các lệnh `/fb_*` trên Telegram/Zoom
 được lấy từ Zalo session đang đăng nhập, nên không cần có nhóm `/tongket` trước.
 
+## Hỏi tự nhiên thay cho lệnh
+
+Không cần nhớ ~100 lệnh: nhắn tự nhiên (có dấu hay không dấu đều được) là em tự làm
+đúng việc; lệnh / vẫn chạy như cũ cho ai thích gõ. Cơ chế (`services/nl_commands.py`,
+danh bạ lệnh `services/command_catalog.py`, chi tiết ở `docs/nang-cap-jarvis.md` mục
+"Hỏi tự nhiên thay cho lệnh"):
+
+- Mẫu câu rõ ràng nhận bằng code (không tốn AI); câu có dấu hiệu là yêu cầu chức năng
+  thì lệnh của nhóm đó được thêm vào router tool sẵn có (vẫn 1 lượt router, chỉ nhóm
+  khớp vào prompt). Kết quả lệnh gửi NGUYÊN VĂN như khi gõ lệnh, không qua AI viết lại.
+- Thiếu tham số (tử vi thiếu giờ sinh/giới tính...) thì em hỏi lại, không đoán; câu
+  trả lời kế tiếp chạy tiếp lệnh. Router không chắc thì hỏi lại 1 câu ngắn.
+- Bật/tắt cài đặt (`/noi`, `/yenlang`, `/bantin`, `/hoithan`, `/memory on|off`,
+  `/tavily`) chỉ khi câu nói rõ bật/tắt; em nhắc lại lệnh đã chạy. Tin thoại không đổi
+  cài đặt.
+- Lệnh quản trị/nguy hiểm/xoá (`/fb_*`, `/zalo*`, `/forget`, `/xoadulieu`, `/reset`,
+  `/router9`, `/model`, `/themnhom`, `/xoanhom`, `/bangtinsang`...) KHÔNG BAO GIỜ tự
+  chạy: em chỉ ra đúng lệnh cần gõ, tham số điền sẵn.
+- Quyền giữ nguyên: thành viên Zalo không thấy/không gọi được lệnh admin (hỏi thì đi
+  chat thường, không lộ lệnh); dữ liệu luôn của đúng người hỏi; người lạ vẫn im lặng.
+- `NL_COMMANDS_ENABLED=0` tắt hẳn; `NL_COMMANDS_LLM=0` chỉ dùng mẫu câu bằng code.
+
+| Nhắn | Em làm |
+|---|---|
+| "em làm được gì?", "giúp gì được cho anh" | Bản `/help` ngắn theo vai trò |
+| "làm sao để dò vé số", "có lệnh nào xem vàng không" | Chỉ cách hỏi tự nhiên + lệnh tương ứng (`/xoso`, `/vang`) |
+| "xem tử vi 15/3/1990 9h30 nam", "luận giải tử vi chi tiết ..." | `/tuvi`, `/tuvi_chitiet` |
+| "xem tử vi giúp anh" → "15/3/1990 9h30 nam" | Hỏi ngày giờ sinh, giới tính rồi an lá số |
+| "thần số học 15/3/1990 tên Nguyễn Văn An" | `/tsh 15/3/1990 Nguyễn Văn An` |
+| "lập bàn kỳ môn lúc này", "kỳ môn 9h mai ký hợp đồng có thuận không" | `/kymon`, `/kymon_chitiet` |
+| "ngày tốt tháng này", "sao hạn 1990 nam năm 2027", "xem hợp tuổi 1990 và 1992" | `/lich <câu hỏi>` |
+| "tìm giá iPhone 16 Pro", "dịch giúp anh sang tiếng Nhật: cảm ơn" | `/gia`, `/dich vi>ja` |
+| "tạo ảnh con mèo đội nón lá", "viết prompt tạo ảnh ..." | `/anh`, `/prompt` |
+| "em đang nhớ gì về anh", "xem lịch sử chat gần đây" | `/memory`, `/history` |
+| "việc nền của anh tới đâu rồi", "xem các tác vụ định kỳ" | `/viec`, `/lichtacvu` |
+| "hôm nay anh ăn bao nhiêu calo", "các khoản chi gần đây" | `/an`, `/chitieu ds` |
+| "danh sách mã anh đang theo dõi", "sổ giao dịch FPT", "tháng 10 anh chốt lãi bao nhiêu" | `/theodoi`, `/lichsucp FPT`, `/laicp 10` |
+| "xem thử bản tin sáng" | `/bantin xem` |
+| "bật trả lời bằng giọng nói", "bật giờ yên lặng từ 22h đến 7h", "tắt hỏi thăm chủ động" | `/noi on`, `/yenlang 22-7`, `/hoithan off` |
+| "provider đang chạy cái nào", "thống kê lượt gọi 7 ngày", "hôm nay bot có lỗi gì không", "điểm tin sáng nay có gì" (chủ bot/admin) | `/status`, `/thongke 7d`, `/loi` (chủ bot), `/tintuc` |
+| "tóm tắt nhóm Gia đình hôm nay", "nhóm Gia đình đang nói gì" (chủ bot/admin) | `/tongket Gia đình homnay`, `/dangnoi Gia đình` |
+| "xoá hết trí nhớ đi em", "khoá zalo user 12345" | 🔐 Chỉ ra `/forget`, `/zalokhoa 12345` - không tự chạy |
+
+Đã có từ trước và giữ nguyên: giá vàng/tỷ giá/xăng/xổ số, thời tiết, âm lịch, "có gì
+cần anh chú ý", nhắc việc, ngày nhớ, ghi chú, "nhớ giúp anh", chi tiêu, ăn uống
+(`NUTRITION_NL`), danh mục và ngưỡng giá, tác vụ định kỳ, đọc link, tìm lại lịch sử
+chat, kho `rag/`.
+
+Trợ giúp: `/help` ngắn (vài câu mẫu + danh sách chủ đề), `/help <chủ đề>` (vd `/help
+vàng`, `/help nhắc việc`, `/help admin`), `/help all` bản đầy đủ. Menu "/" của
+Telegram chỉ còn 18 lệnh hay dùng; mọi lệnh khác vẫn gõ được.
+
 ## Lệnh chính
 
 | Lệnh | Chức năng |
 |---|---|
-| `/help` | Hướng dẫn đầy đủ (Telegram: `handlers/commands.py`; Zalo/Zoom: `services/channel_command_service.py`, theo vai trò) |
+| `/help [chủ đề\|all]` | Hướng dẫn ngắn "cứ nhắn tự nhiên như …" + chủ đề; `/help vàng`, `/help admin`... chi tiết 1 chủ đề; `/help all` bản đầy đủ (Telegram: `handlers/commands.py`; Zalo/Zoom: `services/channel_command_service.py`, theo vai trò) |
 | `/start` | Lời chào (Telegram có câu ví dụ) |
 | `/huy` | Dừng câu trả lời đang chạy dở (mọi kênh, cả thành viên Zalo) |
 | `/sai [lý do]` | Báo câu trả lời chat vừa rồi chưa ổn (ghi 👎 kèm lý do) |
@@ -1376,7 +1431,7 @@ Telegram và Zoom chỉ là kênh quản trị/duyệt; việc thu thập bài n
 | `/hoc [ok\|bo]` | Duyệt cách trả lời em tự rút ra (Telegram còn có nút [Ghi nhớ] [Bỏ]) |
 | `/model` | Xem hoặc đổi model 9Router |
 | `/status` | Provider chain, chế độ tra web, cooldown (lý do, phút còn lại), khối "📈 24 giờ qua" (số lượt, p50/p95, tỉ lệ lỗi theo provider) |
-| `/loi` | Lỗi gom theo loại + vị trí code hôm nay/hôm qua, số lần khởi động lại 7 ngày (Telegram, chủ bot) |
+| `/loi` | Lỗi gom theo loại + vị trí code hôm nay/hôm qua, số lần khởi động lại 7 ngày (chủ bot: Telegram, Zoom) |
 | `/thongke [Nd\|Ngiờ]` | Thống kê lượt gọi theo user/kênh và theo model (mặc định 7 ngày, chỉ admin) |
 | `/danhgia [Nd]` | Số 👍/👎 theo provider/model, mặc định 30 ngày (chủ bot: Telegram, Zoom, Zalo controller) |
 | `/xuateval [Nd]` | Xuất các câu chủ bot bấm 👎 trên Telegram thành file YAML case ứng viên cho golden set |

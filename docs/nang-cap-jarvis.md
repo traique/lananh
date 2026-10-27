@@ -691,3 +691,259 @@ thêm Gemini Live (`ai/live_client.py`) ở 2 chỗ, cả hai đều có đườ
   cho hội thoại không thời gian thực; nếu Google đổi hành vi cho model Live mới thì
   cần chuyển sang `history_config.initial_history_in_client_content` +
   `send_realtime_input(text=...)`.
+
+## Hỏi tự nhiên thay cho lệnh
+
+Chủ bot: "Các lệnh hỏi, tra cứu có thể hỏi tự nhiên không để người dùng không phải nhớ
+các lệnh. Hiện tại có cả 100 lệnh. Mỗi lần dùng phải gõ help rất là phiền." Ý lấy từ
+EasyTool (microsoft/JARVIS: mô tả tool ngắn, tham số có kiểu) và cách isair/jarvis
+chọn tool theo nhóm để prompt không phình.
+
+### Cơ chế (MỘT đường, tái dùng danh bạ ToolSpec)
+
+- `services/command_catalog.py`: danh bạ MỌI lệnh / (103 mục + alias) - nhóm, ai dùng,
+  kênh, chủ đề trợ giúp, cú pháp, 1 câu nói mẫu, đường câu tự nhiên. Dùng cho `/help`,
+  câu "em làm được gì"/"làm sao để ...", và bảng kiểm kê dưới đây (test kiểm mọi lệnh
+  đăng ký trong `bot_app.py` đều có mặt).
+- `services/nl_commands.py`: ToolSpec "chạy lệnh" đăng ký vào CHÍNH danh bạ
+  `services/tool_registry.py` (surface mới `command`, cờ `verbatim`, `group`). Handler
+  dựng đúng dòng lệnh (vd `/tuvi_chitiet 2/9/1995 19h nữ`) rồi chạy qua đúng dispatcher
+  của lệnh / (`channel_command_service.maybe_handle_command`, `portfolio_service`,
+  `group_commands`) - cùng hàm service, cùng kiểm quyền, kết quả gửi NGUYÊN VĂN (không
+  AI viết lại; lệnh vốn có AI như `*_chitiet`, `/gia`, `/dich`, `/tongket` vẫn gọi AI
+  như khi gõ lệnh).
+  - `cmd_*` (26 tool, side_effect=False): tra cứu/đọc - lịch tự do, tử vi, thần số
+    học, kỳ môn, tìm giá, dịch, viết prompt, tạo ảnh, trí nhớ, lịch sử chat, việc nền,
+    tác vụ định kỳ, bản tin sáng (xem thử), ăn uống, danh sách theo dõi, sổ giao dịch,
+    lãi đã chốt, khoản chi gần đây, `/status`, `/thongke`, `/loi`, `/danhgia`,
+    `/tintuc`, `/nhom`, `/tongket`, `/dangnoi`.
+  - `set_*` (6 tool, side_effect=True): `/noi`, `/yenlang`, `/bantin`, `/hoithan`,
+    `/memory on|off`, `/tavily`. Câu phải nói rõ BẬT/TẮT - code kiểm lại trên chữ CÒN
+    DẤU của người dùng (bỏ dấu thì "dùng"/"dừng" trùng nhau), không tin router; câu trả
+    lời mở đầu "↪️ Em làm theo lệnh /noi on". Lượt chỉ đọc (tin thoại) và lượt đã đọc
+    nội dung web bị chặn như mọi tool ghi dữ liệu.
+  - `suggest_command`: lệnh quản trị/nguy hiểm/xoá KHÔNG BAO GIỜ tự chạy - bot chỉ ra
+    đúng lệnh cần gõ, tham số điền sẵn ("🔐 ... anh tự gõ lệnh để xác nhận nha:
+    /zalokhoa 12345"). Thành viên Zalo hỏi lệnh admin: không có trong prompt của họ,
+    router có chọn cũng coi như "none" (không lộ).
+  - `clarify_command`: router không chắc chức năng nào -> hỏi lại 1 câu ngắn do code
+    soạn ("Em chưa chắc anh muốn xem tử vi hay thần số học?").
+- Thiếu tham số bắt buộc (tử vi thiếu giờ/giới tính, tìm giá thiếu sản phẩm, tổng
+  kết thiếu tên nhóm...): hỏi lại, KHÔNG đoán; nhớ "đang chờ" 10 phút (RAM, tối đa 500
+  người) để câu trả lời kế tiếp ("15/3/1990 9h30 nam") chạy tiếp lệnh; nói chuyện khác
+  thì bỏ chờ.
+
+### Thứ tự và chi phí
+
+1. **Code trước (không AI)** - trong chuỗi trả lời nhanh của Telegram
+   (`handlers/chat_router._quick_reply`) và Zalo/Zoom (`handle_channel_text`), sau
+   `/chuy`, trước giá vàng/thời tiết/âm lịch:
+   - "em làm được gì", "giúp gì được", "có những lệnh nào" -> bản `/help` ngắn theo
+     vai trò; "làm sao để dò vé số", "có lệnh nào xem vàng không", "muốn xoá ghi chú
+     thì làm sao" -> tìm cụm từ khoá trong danh bạ, gợi ý câu nói tự nhiên trước, lệnh
+     sau; không khớp thì đi chat AI như cũ ("làm sao để giảm cân").
+   - Mẫu câu rõ: tử vi/thần số học có ngày sinh (parser của lệnh đọc cả câu), "lập bàn
+     kỳ môn lúc này", "ngày tốt tháng này"/"sao hạn 1990 nam năm 2027" (`calendar_query`,
+     câu không hiểu thì đi tiếp), "em đang nhớ gì về anh", "xem lịch sử chat", "các
+     khoản chi gần đây", "xem trạng thái provider", "bật trả lời bằng giọng nói", "bật
+     giờ yên lặng từ 22h đến 7h", "xoá hết trí nhớ" (chỉ chỉ ra `/forget`)...
+2. **Router LLM** (`NL_COMMANDS_LLM=1`) - KHÔNG thêm lượt gọi mới: câu có từ khoá của 1
+   nhóm (`huyen_hoc`, `lich`, `tien_ich`, `ca_nhan`, `so_sach`, `he_thong`, `nhom`,
+   `cai_dat`, `suggest`) thì ToolSpec của nhóm đó được thêm vào prompt router chat sẵn
+   có (tối đa 2 nhóm/lượt; router nhìn 2-3 lượt gần nhất như cũ). Lượt đó router chạy
+   TRƯỚC (không song song tra web/trí nhớ): chọn lệnh thì gửi nguyên văn, khỏi tra web
+   và khỏi lượt chat AI; không chọn thì dùng luôn kết quả router cho lượt chat (không
+   gọi router lần 2). Từ khoá viết thận trọng theo ranh giới từ (bộ test câu chat
+   thường: "vâng hôm nay em bận", "em nói về số liệu kinh tế đi", "nhắc anh trưa nay
+   ăn thuốc", "dịch bệnh năm nay thế nào", "giao dịch hôm nay thế nào"...). Một lượt
+   chạy tối đa 1 lệnh.
+3. Trần token: prompt router câu thường giữ nguyên (≤ 3.800 ký tự); câu có lệnh ≤ 5.200
+   ký tự (1-2 nhóm) - `test_nl_commands::test_tran_token_prompt_router_theo_nhom`.
+
+### Trợ giúp
+
+- `/help` (Telegram, Zalo, Zoom): vài dòng "cứ nhắn tự nhiên như: …" + danh sách chủ đề
+  theo vai trò; `/help <chủ đề>` (vd `/help vàng`, `/help nhắc việc`, `/help admin`,
+  `/help nhóm`, `/help quyền`) - lệnh của chủ đề kèm câu nói mẫu; `/help all` - bản đầy
+  đủ cũ (`HELP_TEXT` Telegram, `HELP_ADMIN`/`HELP_MEMBER` Zalo/Zoom). Thành viên Zalo
+  không thấy chủ đề/lệnh admin; chủ đề "quyền" chỉ chủ bot.
+- Menu "/" Telegram còn 18 lệnh hay dùng (`bot_app.MENU_COMMANDS`); mọi lệnh khác vẫn
+  chạy (handler đăng ký đủ, mô tả ở `bot_app.ALL_COMMANDS`). Bot chỉ phục vụ chủ bot nên
+  1 menu chung, không cần `BotCommandScope`.
+- `/loi` dùng được cả trên Zoom (chủ bot) - trước chỉ có trên Telegram.
+
+### Kiểm kê lệnh
+
+Tóm tắt (103 lệnh, không tính alias `/ths_chitiet`, `/bantinsang`, `/ngay_nho`):
+
+| | Trước gói này | Sau gói này |
+|---|---|---|
+| Chạy được từ câu tự nhiên | 22 | 51 (+29 lệnh: 27 qua 32 ToolSpec `cmd_*`/`set_*` mới, `/help` và `/start` qua câu "em làm được gì") |
+| Chỉ CHỈ RA lệnh (🔐, không tự chạy) | 0 | 49 |
+| Không có đường câu tự nhiên nào | 81 | 3 (`/huy`, `/sai` - nút 👎, `/agent` - chat thường đã tự tra web) |
+
+Lệnh cố ý KHÔNG cho chạy từ câu tự nhiên (chỉ chỉ ra lệnh, tham số điền sẵn):
+- Nguy hiểm: `/forget`, `/xoadulieu`, `/reset`, `/router9`, `/fb_reset`, `/zaloxoa`,
+  `/zoomxoa`.
+- Quản trị: `/model`, `/userouter9`, `/ragxuly`, `/bangtinsang` (gửi tới Zalo + Zoom),
+  `/xuateval`, `/themnhom`, `/xoanhom`, mọi `/fb_*` (kể cả xem), `/zalo`, `/zalologout`,
+  `/zalopair`, `/zaloadmin`, `/zalohaquyen`, `/zalokhoa`, `/zalomokhoa`, `/zalodanhsach`,
+  `/zoompair`, `/zoomstatus`, `/anh on|off`, `/tongket on|off`.
+- Ghi/xoá dữ liệu chưa có đường tự nhiên an toàn: `/quen`, `/ghim`, `/boghim`,
+  `/xoaghichu`, `/chitieu_xoa`, `/capnhatcp`, `/xoacp`, `/giaban`, `/botheodoi`,
+  `/xoacanhbao`, `/viec <yêu cầu>` (giao việc nền, tính lượt nặng), `/xuatdulieu`
+  (Telegram gửi file).
+- Đường ghi dữ liệu tự nhiên có từ trước giữ nguyên: nhắc việc, ngày nhớ, ghi chú,
+  "nhớ giúp anh", chi tiêu "cafe 45k", danh mục "đã mua FPT 100 giá 120", "báo anh khi
+  HPG về 25", tác vụ định kỳ, "hoãn 10p"/"xong", duyệt cách trả lời.
+
+Bảng đầy đủ (sinh từ `services/command_catalog.py`; "code" = đường nhanh không AI,
+"tool" = tool router chat, "cmd"/"set" = ToolSpec "chạy lệnh" mới):
+
+| Lệnh | Nhóm | Ai dùng | Kênh | Đường tự nhiên đã có TRƯỚC | Thêm trong gói này |
+|---|---|---|---|---|---|
+| `/start` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | code `nl_commands` (trợ giúp) |
+| `/help` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | code `nl_commands` (trợ giúp) |
+| `/huy` | cá nhân (xem) | mọi người | Telegram, Zalo, Zoom | — | không cần |
+| `/sai` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | không cần |
+| `/vang` | tra cứu | mọi người | Telegram, Zalo, Zoom | code `vn_daily_chat` | — (giữ đường cũ) |
+| `/tygia` | tra cứu | mọi người | Telegram, Zalo, Zoom | code `vn_daily_chat` | — (giữ đường cũ) |
+| `/xang` | tra cứu | mọi người | Telegram, Zalo, Zoom | code `vn_daily_chat` | — (giữ đường cũ) |
+| `/xoso` | tra cứu | mọi người | Telegram, Zalo, Zoom | code `vn_daily_chat` | — (giữ đường cũ) |
+| `/thoitiet` | tra cứu | mọi người | Telegram, Zalo, Zoom | code `weather_chat`, tool `get_weather`, code `weather_home` | — (giữ đường cũ) |
+| `/bantin` | cá nhân (xem) | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_bantin`, set `set_bantin` |
+| `/chuy` | tra cứu | mọi người | Telegram, Zalo, Zoom | code `attention` | — (giữ đường cũ) |
+| `/yenlang` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | set `set_yenlang` |
+| `/lich` | tra cứu | mọi người | Telegram, Zalo, Zoom | code `lunar_chat`, tool `lunar_calendar` | cmd `cmd_lich` |
+| `/tsh` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_tsh` |
+| `/tsh_chitiet, /ths_chitiet` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_tsh` |
+| `/tuvi` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_tuvi` |
+| `/tuvi_chitiet` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_tuvi` |
+| `/kymon` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_kymon` |
+| `/kymon_chitiet` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_kymon` |
+| `/nhac` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | tool `set_reminder`, tool `list_reminders`, tool `cancel_reminder`, code `reminder_service` | — (giữ đường cũ) |
+| `/ngaynho, /ngay_nho` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | tool `save_special_date`, tool `list_special_dates` | — (giữ đường cũ) |
+| `/viec` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_viec`, 🔐 chỉ chỉ ra lệnh |
+| `/lichtacvu` | ghi dữ liệu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | code `routines` | cmd `cmd_lichtacvu` |
+| `/chitieu` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | code `expense_service`, tool `add_expense`, tool `expense_summary` | cmd `cmd_chitieu_ds` |
+| `/chitieu_xoa` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/an` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | code `nutrition_service` | cmd `cmd_an` |
+| `/danhmuc` | cá nhân (xem) | mọi người | Telegram, Zalo, Zoom | code `portfolio_service`, tool `get_portfolio` | — (giữ đường cũ) |
+| `/themcp` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | code `portfolio_service` | — (giữ đường cũ) |
+| `/capnhatcp` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/bancp` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | code `portfolio_service` | — (giữ đường cũ) |
+| `/xoacp` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/lichsucp` | cá nhân (xem) | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_lichsucp` |
+| `/laicp` | cá nhân (xem) | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_laicp` |
+| `/giaban` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/theodoi` | cá nhân (xem) | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_theodoi`, 🔐 chỉ chỉ ra lệnh |
+| `/botheodoi` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/canhbaogia` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | code `portfolio_service` | — (giữ đường cũ) |
+| `/xoacanhbao` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/memory` | cá nhân (xem) | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_memory`, set `set_memory` |
+| `/nho` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | tool `remember_fact` | — (giữ đường cũ) |
+| `/quen` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/ghim` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/boghim` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/forget` | nguy hiểm | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/notes` | cá nhân (xem) | mọi người | Telegram, Zalo, Zoom | tool `list_notes`, tool `save_note` | — (giữ đường cũ) |
+| `/xoaghichu` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/history` | cá nhân (xem) | mọi người | Telegram, Zalo, Zoom | tool `search_history` | cmd `cmd_history` |
+| `/xuatdulieu` | cá nhân (xem) | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/xoadulieu` | nguy hiểm | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/reset` | nguy hiểm | mọi người | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/hoithan` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | code `proactive_service` | set `set_hoithan` |
+| `/hoc` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | code `style_approval` | — (giữ đường cũ) |
+| `/gia` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_gia` |
+| `/dich` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_dich` |
+| `/prompt` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_prompt` |
+| `/anh` | tra cứu | mọi người | Telegram, Zalo, Zoom | — | cmd `cmd_anh`, 🔐 chỉ chỉ ra lệnh |
+| `/noi` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | set `set_noi` |
+| `/status` | tra cứu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | cmd `cmd_status` |
+| `/loi` | tra cứu | chủ bot | Telegram, Zalo, Zoom | — | cmd `cmd_loi` |
+| `/thongke` | tra cứu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | cmd `cmd_thongke` |
+| `/danhgia` | tra cứu | chủ bot | Telegram, Zalo, Zoom | — | cmd `cmd_danhgia` |
+| `/xuateval` | quản trị | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/model` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/router9` | nguy hiểm | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/userouter9` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/tavily` | ghi dữ liệu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | set `set_tavily` |
+| `/agent` | tra cứu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | không cần |
+| `/rag` | tra cứu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | tool `rag_search` | — (giữ đường cũ) |
+| `/ragxuly` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/bangtinsang, /bantinsang` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/tintuc` | tra cứu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | cmd `cmd_tintuc` |
+| `/nhom` | tra cứu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | cmd `cmd_nhom` |
+| `/themnhom` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/xoanhom` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/tongket` | tra cứu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | cmd `cmd_tongket`, 🔐 chỉ chỉ ra lệnh |
+| `/dangnoi` | tra cứu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | cmd `cmd_dangnoi` |
+| `/fb_nhom` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_pages` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_market` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_themnhom` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_xoanhom` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_xem` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_sua` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_link` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_ok` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_check` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_reconcile` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_boqua` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_reset` | nguy hiểm | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_boloc` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/fb_loclai` | quản trị | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | 🔐 chỉ chỉ ra lệnh |
+| `/zalo` | quản trị | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/zalologout` | quản trị | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/zalopair` | quản trị | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/zaloadmin` | quản trị | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/zalohaquyen` | quản trị | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/zalokhoa` | quản trị | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/zalomokhoa` | quản trị | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/zaloxoa` | nguy hiểm | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/zalodanhsach` | tra cứu | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/zoompair` | quản trị | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/zoomxoa` | nguy hiểm | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+| `/zoomstatus` | tra cứu | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |
+
+### Việc chủ bot cần làm
+
+1. Không có migration. Biến mới (mặc định bật, có trong `.env.example` và `render.yaml`):
+   `NL_COMMANDS_ENABLED=1` (0 = tắt hẳn, chỉ còn lệnh /), `NL_COMMANDS_LLM=1` (0 = chỉ
+   mẫu câu bằng code, không thêm lệnh vào router).
+2. Menu Telegram tự thu gọn khi bot khởi động (`set_my_commands`).
+3. Thử: "em làm được gì", "làm sao để dò vé số", "xem tử vi giúp anh" rồi trả lời
+   "15/3/1990 9h30 nam", "provider đang chạy cái nào", "bật giờ yên lặng từ 22h đến
+   7h", "xoá hết trí nhớ" (phải chỉ ra `/forget`, không xoá), `/help vàng`; từ 1 Zalo
+   thành viên: "em làm được gì" không có admin, "provider đang chạy cái nào" đi chat
+   thường.
+
+### Quyết định đã chọn (chủ bot có thể đổi)
+
+- Bật/tắt cài đặt: chạy luôn khi câu nói rõ (không hỏi "ok" xác nhận) vì đều đảo lại
+  được bằng 1 câu; câu trả lời luôn nhắc lại lệnh đã chạy. Đổi giờ (`/bantin 7`,
+  `/yenlang 22-7`) cần thêm chữ "bật"/"đổi"/"đặt".
+- Lệnh quản trị/nguy hiểm: chỉ chỉ ra lệnh bằng chữ, chưa dùng nút xác nhận
+  callback trên Telegram (đỡ thêm 1 loại nút phải giữ trạng thái; gõ lại lệnh vẫn là
+  bước xác nhận rõ nhất).
+- `/fb_*` kể cả lệnh xem cũng chỉ chỉ ra lệnh (theo yêu cầu: fb_* không tự chạy).
+- Kết quả lệnh chạy từ câu tự nhiên không có nút 👍/👎/🔄 (giống khi gõ lệnh), vào lịch
+  sử kind `command` (bản đã làm sạch, không trích trí nhớ).
+
+### Cố ý chưa làm
+
+- Nút xác nhận Telegram cho lệnh nguy hiểm (xem trên).
+- Chạy nhiều lệnh trong 1 câu ("xem vàng và tử vi"): router chọn tối đa 1 tool/lượt.
+- Đọc giọng `/noi` cho kết quả lệnh (bản lệnh thường dài, toàn số).
+
+### Rủi ro
+
+- Router chọn nhầm lệnh tra cứu (vd hỏi kiến thức tử vi mà router vẫn chạy `cmd_tuvi`):
+  lệnh chỉ đọc nên vô hại, tham số thiếu thì hỏi lại; quy tắc router dặn "hỏi kiến
+  thức chung -> none", có case đánh giá `router-lenh-hoi-kien-thuc`.
+- Câu có từ khoá nhóm mà không phải yêu cầu (vd "anh thích xem tử vi lắm") tốn 1 lượt
+  router như câu có chữ "nhắc"/"nhớ" trước đây; mẫu code không chạy với câu đó.
+- `/tuvi_chitiet`, `/tsh_chitiet`, `/kymon_chitiet`, `/anh` từ câu tự nhiên vẫn kiểm
+  trần lượt nặng của thành viên Zalo trước khi chạy; nhưng bộ đếm nhanh 60 giây của
+  quota chỉ cộng khi lượt ghi `user_calls`, 2 câu liền nhau sát trần có thể vượt 1 lượt.
+- "Đang chờ bổ sung" giữ trong RAM: redeploy thì mất (người dùng nói lại là được).
