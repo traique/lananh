@@ -1,10 +1,11 @@
 """Web LCTA: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le), /tu-vi,
-/than-so-hoc (form -> trang kết quả riêng), /ky-mon, /thoi-tiet và JSON API /api/v1.
+/than-so-hoc (form -> trang kết quả riêng), /ky-mon, /thoi-tiet, /xo-so và JSON API /api/v1.
 
 Xem nội dung KHÔNG cần đăng nhập: lịch, tử vi, thần số học tính bằng code
 (services/site_data.py), không gọi AI, không đụng DB. /thoi-tiet tra Open-Meteo
-qua services/weather.py (cache có trần), giới hạn số lượt tra song song. Trang
-render sẵn ở server nên chạy được cả khi tắt JavaScript.
+qua services/weather.py (cache có trần), giới hạn số lượt tra song song. /xo-so đọc
+feed xskt.com.vn qua services/lottery_lookup.py (cache có trần theo đài, dò vé bằng
+code). Trang render sẵn ở server nên chạy được cả khi tắt JavaScript.
 
 Cần đăng nhập (tài khoản admin, chung phiên với /admin) cho việc tốn quota hoặc
 đổi dữ liệu chung: nút "AI luận giải" ở kết quả tử vi/thần số học/kỳ môn, thêm/xoá địa
@@ -15,6 +16,9 @@ JSON API (chỉ thêm trường mới, không đổi/bỏ trường cũ):
   GET  /api/v1/calendar/months/{YYYY-MM}
   GET  /api/v1/calendar/conversions?lunarDay=&lunarMonth=&lunarYear=&isLeapMonth=true|false
   GET  /api/v1/calendar/answers?q=
+  GET  /api/v1/lottery?province=mn|mt|mb|<khoá đài, vd tay-ninh>&date=YYYY-MM-DD&ticket=
+                                    (bỏ trống province = miền Nam, bỏ trống date = kỳ mới nhất;
+                                     nguồn lỗi -> 503 SOURCE_UNAVAILABLE)
   POST /api/v1/numerology/readings  {"birthDate": "YYYY-MM-DD"|"DD/MM/YYYY", "name"?: str}
   POST /api/v1/tuvi/charts          {"birthDate": "YYYY-MM-DD"|"DD/MM/YYYY",
                                      "calendar": "solar"|"lunar", "isLeapMonth"?: bool (chỉ lunar),
@@ -54,10 +58,13 @@ from services import (
     concurrency,
     divination_commands,
     kymon,
+    lottery_lookup,
+    lottery_provinces,
     lunar,
     numerology,
     site_data,
     tuvi,
+    vn_market_data,
     weather,
     weather_places,
 )
@@ -86,6 +93,7 @@ _NAV = [
         "Tra cứu",
         [
             ("/thoi-tiet", "Thời tiết", "cloud"),
+            ("/xo-so", "Xổ số", "ticket"),
             ("/tu-vi", "Lá số tử vi", "chart"),
             ("/ky-mon", "Kỳ Môn Độn Giáp", "compass"),
             ("/than-so-hoc", "Thần số học", "number"),
@@ -138,6 +146,10 @@ _weather_slots = asyncio.Semaphore(3)
 _NEW_PLACE_LIMIT, _NEW_PLACE_WINDOW_SEC = 30, 600
 _new_place_times: collections.deque[float] = collections.deque()
 _MAX_JSON_BYTES = 4096
+# Xổ số: mỗi đài/miền 1 bản cache 5 phút (vn_market_data), thêm trần lượt tải song song
+# để người lạ đổi đài liên tục không chiếm hết kết nối của worker.
+_lottery_slots = asyncio.Semaphore(3)
+_LOTTERY_TIMEOUT_SEC = 12
 
 
 # (đã đăng nhập, đường dẫn đang xem) của request hiện tại - để header hiện nút
@@ -480,6 +492,64 @@ async def weather_page(request: Request) -> HTMLResponse:
         notice=_PLACE_NOTICES.get(request.query_params.get("tb", "")),
         fmt=lambda x: "?" if x is None else round(float(x)),
     )
+
+
+async def _lottery_data(selector: str, day: str, ticket: str) -> dict:
+    async with _lottery_slots:
+        return await lottery_lookup.lookup(selector, day, ticket)
+
+
+async def _limited_lottery(selector: str, day: str, ticket: str) -> dict:
+    """Raise LookupInputError (nhập sai) hoặc MarketDataError (nguồn lỗi/chậm)."""
+    try:
+        # Hạn chót tính cả lúc xếp hàng chờ slot.
+        return await asyncio.wait_for(_lottery_data(selector, day, ticket), _LOTTERY_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        raise vn_market_data.MarketDataError("Nguồn xổ số chậm") from None
+
+
+@router.get("/xo-so", response_class=HTMLResponse)
+async def lottery_page(request: Request) -> HTMLResponse:
+    params = request.query_params
+    selector = params.get("dai", "").strip()[:60]
+    raw_day = params.get("ngay", "").strip()[:20]
+    raw_ticket = params.get("ve", "").strip()[:12]
+    today = site_data.today()
+    error, data = "", None
+    try:
+        data = await _limited_lottery(selector, raw_day, raw_ticket)
+    except lottery_lookup.LookupInputError as exc:
+        error = exc.message
+        if exc.code != "INVALID_PROVINCE":  # đài đúng mà ngày/vé sai: vẫn hiện kỳ mới nhất
+            try:
+                data = await _limited_lottery(selector, "", "")
+            except (lottery_lookup.LookupInputError, vn_market_data.MarketDataError):
+                data = None
+    except vn_market_data.MarketDataError:
+        error = (
+            "Nguồn kết quả xổ số đang lỗi hoặc chậm, thử lại sau ít phút. Trang không tự đoán số."
+        )
+    current = data["target"]["key"] if data else (selector or "mn")
+    today_names = [(p.key, p.name) for p in lottery_provinces.drawing_on(today) if p.region != "mb"]
+    title = "Xổ số"
+    if data:
+        title = f"Xổ số {data['target']['name']}"
+    page = _render(
+        "xo_so.html",
+        title=title,
+        description="Kết quả xổ số 3 miền và từng tỉnh, dò vé bằng code - nguồn xskt.com.vn.",
+        active="/xo-so",
+        data=data,
+        error=error,
+        form={"dai": current, "ngay": raw_day, "ve": raw_ticket},
+        groups=lottery_lookup.selector_groups(today),
+        today_iso=today.isoformat(),
+        today_names=today_names,
+        prize_order=lottery_lookup.PRIZE_ORDER,
+        prize_labels=lottery_lookup.PRIZE_LABELS,
+    )
+    page.headers["Cache-Control"] = "no-cache"  # kỳ hôm nay cập nhật dần theo giờ quay
+    return page
 
 
 async def _change_place(request: Request, action) -> Response:
@@ -846,3 +916,13 @@ async def api_qimen(request: Request) -> JSONResponse:
         return _ok(site_data.qimen_chart(moment))
     except InputError as exc:
         return _error(422, exc.code, exc.message)
+
+
+@api_router.get("/lottery")
+async def api_lottery(province: str = "", date: str = "", ticket: str = "") -> JSONResponse:
+    try:
+        return _ok(await _limited_lottery(province[:60], date[:20], ticket[:12]))
+    except lottery_lookup.LookupInputError as exc:
+        return _error(422, exc.code, exc.message)
+    except vn_market_data.MarketDataError:
+        return _error(503, "SOURCE_UNAVAILABLE", "Nguồn kết quả xổ số đang lỗi, thử lại sau.")
