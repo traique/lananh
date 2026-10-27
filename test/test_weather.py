@@ -248,3 +248,185 @@ def test_cau_hoi_chat_luong_khong_khi():
     assert weather.looks_like_air_question("chỉ số AQI hôm nay")
     assert weather.looks_like_air_question("bụi mịn pm2.5 cao không")
     assert not weather.looks_like_air_question("mua máy lọc nước")
+
+
+# ─── Sửa sau nhận xét dùng thử 27/10 ─────────────────────────────────────────
+
+
+async def test_ten_dia_diem_sua_chu_d_iceland_va_tinh_khong_dau(mock_http):
+    _sent, routes = mock_http
+    routes["geocoding-api.open-meteo.com"] = lambda r: httpx.Response(
+        200,
+        json={
+            "results": [
+                {
+                    "name": "Ðà Lạt",  # Ð (U+00D0) chứ không phải Đ (U+0110)
+                    "admin1": "Lam Dong",
+                    "country": "Việt Nam",
+                    "latitude": 11.94,
+                    "longitude": 108.44,
+                }
+            ]
+        },
+    )
+    assert await weather.resolve_location("Đà Lạt") == ("Đà Lạt, Lâm Đồng, Việt Nam", 11.94, 108.44)
+    assert "Ð" not in (await weather.resolve_location("Đà Lạt"))[0]
+
+
+async def test_ten_khong_dau_lay_chu_nguoi_go_co_dau(mock_http):
+    _sent, routes = mock_http
+    routes["geocoding-api.open-meteo.com"] = lambda r: httpx.Response(
+        200,
+        json={
+            "results": [
+                {"name": "Bao Loc", "admin1": "Lâm Đồng", "latitude": 11.5, "longitude": 107.8}
+            ]
+        },
+    )
+    assert (await weather.resolve_location("bảo lộc"))[0] == "Bảo Lộc, Lâm Đồng"
+
+
+async def test_cache_toa_do_gom_ca_khong_tim_thay(mock_http):
+    sent, routes = mock_http
+    routes["geocoding-api.open-meteo.com"] = lambda r: httpx.Response(200, json={})
+    assert not weather.location_cached("Xyzabc")
+    assert "error" in await weather.get_weather("Xyzabc")
+    calls = len(sent)
+    assert weather.location_cached("xyzabc") and weather.location_cached("Sài Gòn")
+    assert "error" in await weather.get_weather("Xyzabc")
+    assert len(sent) == calls  # "không tìm thấy" cũng được cache, không gọi lại
+
+
+async def test_wttr_mo_ta_tieng_viet_va_bao_chu_bot(mock_http, monkeypatch):
+    from core import alerts
+
+    sent_alerts = []
+    monkeypatch.setattr(
+        alerts, "send", lambda text, **kw: sent_alerts.append((text, kw.get("key"))) or True
+    )
+    _sent, routes = mock_http
+    routes["api.open-meteo.com"] = lambda r: httpx.Response(503)
+    hourly = [{"chanceofrain": "10", "weatherCode": "113"}] * 8
+    hourly[4] = {
+        "chanceofrain": "70",
+        "weatherCode": "176",
+        "weatherDesc": [{"value": "Patchy rain nearby"}],
+    }
+    day = {"mintempC": "15", "maxtempC": "22", "uvIndex": "5", "hourly": hourly}
+    routes["wttr.in"] = lambda r: httpx.Response(
+        200,
+        json={
+            "current_condition": [
+                {
+                    "temp_C": "18",
+                    "FeelsLikeC": "17",
+                    "humidity": "90",
+                    "windspeedKmph": "7",
+                    "precipMM": "0.2",
+                    "weatherCode": "999",  # mã lạ, không có lang_vi
+                    "weatherDesc": [{"value": "Patchy rain nearby"}],
+                }
+            ],
+            "weather": [{**day, "date": f"2026-10-2{7 + i}"} for i in range(3)],
+        },
+    )
+
+    data = await weather.get_weather("", days=7)
+
+    assert data["fallback"] is True and len(data["daily"]) == 3
+    assert data["daily"][0]["description"] == "có mưa rải rác"
+    assert data["now"]["description"] == "không rõ"
+    assert "Patchy" not in weather.describe_weather(data)
+    assert sent_alerts and sent_alerts[0][1] == "weather:open-meteo-fallback"
+    assert "wttr.in" in sent_alerts[0][0]
+
+
+async def test_forecast_cached_theo_toa_do(mock_http):
+    _sent, routes = mock_http
+    routes["api.open-meteo.com"] = lambda r: httpx.Response(200, json=_FORECAST)
+    assert not weather.forecast_cached(11.94, 108.46, 7)
+    await weather.get_weather_at(11.94, 108.46, "Vị trí của tôi", days=7)
+    assert weather.forecast_cached(11.94, 108.46, 7) and not weather.forecast_cached(
+        11.94, 108.46, 2
+    )
+
+
+# ─── Tên nơi của toạ độ (Nominatim) ─────────────────────────────────────────
+
+
+@pytest.fixture
+def nominatim(mock_http, monkeypatch):
+    weather._reverse_cache.clear()
+    monkeypatch.setitem(weather._reverse_state, "last", 0.0)
+    monkeypatch.setitem(weather._reverse_state, "down_until", 0.0)
+    monkeypatch.setattr(weather.config, "NOMINATIM_ENABLED", True)
+    monkeypatch.setattr(weather.config, "SITE_BASE_URL", "https://lcta.example")
+    sent, routes = mock_http
+    address = {
+        "suburb": "Phường 1",
+        "city": "Thành phố Đà Lạt",
+        "state": "Tỉnh Lâm Đồng",
+        "country": "Việt Nam",
+    }
+    routes["nominatim.openstreetmap.org"] = lambda r: httpx.Response(
+        200, json={"display_name": "...", "address": address}
+    )
+    yield sent, routes
+    weather._reverse_cache.clear()
+
+
+async def test_reverse_geocode_ten_noi_va_cache(nominatim):
+    sent, _routes = nominatim
+    assert await weather.reverse_geocode(11.940419, 108.458313) == "Phường 1, Đà Lạt"
+    req = sent[-1]
+    assert req.url.params["lat"] == "11.94" and req.url.params["lon"] == "108.46"
+    assert req.url.params["accept-language"] == "vi" and req.url.params["format"] == "jsonv2"
+    # Chính sách OSMF: User-Agent riêng của app, không phải mặc định của thư viện.
+    assert req.headers["user-agent"] == "LCTA-thoi-tiet/1.0 (+https://lcta.example)"
+    assert weather.reverse_cached(11.94, 108.46)
+    assert await weather.reverse_geocode(11.9401, 108.4599) == "Phường 1, Đà Lạt"
+    assert len(sent) == 1  # cùng ô ~1 km: dùng cache, không gọi lại
+
+
+async def test_reverse_geocode_toi_da_1_luot_moi_giay(nominatim, monkeypatch):
+    waits = []
+    real_sleep = weather.asyncio.sleep
+
+    async def fake_sleep(delay):
+        waits.append(delay)
+        await real_sleep(0)
+
+    monkeypatch.setattr(weather.asyncio, "sleep", fake_sleep)
+    await weather.reverse_geocode(10.0, 106.0)
+    await weather.reverse_geocode(21.0, 105.8)
+    assert len(waits) == 1 and 0.9 < waits[0] <= 1.0
+
+
+async def test_reverse_geocode_loi_thi_nghi_va_tat_duoc(nominatim, monkeypatch):
+    sent, routes = nominatim
+    routes["nominatim.openstreetmap.org"] = lambda r: httpx.Response(429)
+    assert await weather.reverse_geocode(10.0, 106.0) is None
+    calls = len(sent)
+    assert await weather.reverse_geocode(16.05, 108.2) is None and len(sent) == calls  # đang nghỉ
+    assert not weather.reverse_cached(10.0, 106.0)  # lỗi không cache: lần sau thử lại
+    monkeypatch.setitem(weather._reverse_state, "down_until", 0.0)
+    monkeypatch.setattr(weather.config, "NOMINATIM_ENABLED", False)
+    assert await weather.reverse_geocode(16.05, 108.2) is None and len(sent) == calls
+
+
+@pytest.mark.parametrize(
+    "address, expected",
+    [
+        (
+            {"suburb": "Phường Bến Nghé", "city": "Thành phố Hồ Chí Minh"},
+            "Phường Bến Nghé, Hồ Chí Minh",
+        ),
+        ({"village": "Xã Tả Van", "state": "Tỉnh Lào Cai"}, "Xã Tả Van, Lào Cai"),
+        ({"town": "Thị xã Sa Pa", "state": "Lao Cai"}, "Thị xã Sa Pa, Lào Cai"),
+        ({"city": "Hà Nội"}, "Hà Nội"),
+        ({"city": "Thành phố Huế", "state": "Huế"}, "Huế"),
+        ({"country": "Việt Nam"}, None),
+    ],
+)
+def test_ten_noi_tu_dia_chi_nominatim(address, expected):
+    assert weather._place_label(address) == expected

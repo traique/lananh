@@ -1,5 +1,8 @@
 """Test web công khai (web_site.py): trang HTML, JSON API, health check giữ nguyên."""
 
+import datetime as dt
+import json
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -47,18 +50,39 @@ async def test_root_tra_html_cho_trinh_duyet_json_cho_health_check(monkeypatch):
 
     transport = httpx.ASGITransport(app=web.api)
     async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
-        health = await c.get("/")
-        assert health.status_code == 200 and health.json() == {"status": "ok"}
+        # Health check Render/UptimeRobot và client xin JSON: vẫn JSON nhẹ.
+        for headers in (
+            {"Accept": "application/json"},
+            {"Accept": "*/*", "User-Agent": "Render/1.0"},
+            {"User-Agent": "Mozilla/5.0+(compatible; UptimeRobot/2.0)"},
+        ):
+            health = await c.get("/", headers=headers)
+            assert health.status_code == 200 and health.json() == {"status": "ok"}, headers
         assert (await c.head("/")).status_code == 200
         page = await c.get("/", headers={"Accept": "text/html,application/xhtml+xml"})
         assert page.status_code == 200
         assert "Hôm nay" in page.text and 'alt="LCTA"' in page.text
+        # Trình đọc link Facebook/Zalo gửi Accept: */* -> trang HTML có thẻ og:, không
+        # phải {"status":"ok"} (link chia sẻ hiện trắng).
+        for agent in ("facebookexternalhit/1.1", "Zalo", "python-httpx"):
+            crawl = await c.get("/", headers={"Accept": "*/*", "User-Agent": agent})
+            assert crawl.headers["content-type"].startswith("text/html"), agent
+            assert '<meta property="og:title"' in crawl.text
+            assert (
+                '<meta property="og:image" content="https://testserver/static/og-image.png?v='
+                in (crawl.text)
+            )
 
 
-async def test_chua_dang_nhap_van_xem_duoc_header_co_nut_dang_nhap(client):
+async def test_trang_cong_khai_khong_co_dang_nhap(client):
+    """Khách xem tự do; chỉ /admin có ô đăng nhập. Trang công khai không có nút hay câu
+    nào nhắc đăng nhập/tài khoản/AI cho khách."""
     r = await client.get("/lich/hoi", params={"q": "rằm tháng 8"})
     assert r.status_code == 200 and "rằm" in r.text
-    assert 'href="/admin?next=%2Flich%2Fhoi%3Fq%3D' in r.text and ">Đăng nhập</a>" in r.text
+    for path in ("/", "/lich/hoi", "/thoi-tiet", "/tu-vi", "/than-so-hoc", "/ky-mon"):
+        html = (await client.get(path)).text.lower()
+        assert "đăng nhập" not in html and "/admin?next" not in html, path
+        assert "tài khoản" not in html and "luận giải bằng ai" not in html, path
     assert ">Quản trị</a>" not in r.text and "/admin/logout" not in r.text
     for path in ("/lich", "/tu-vi", "/than-so-hoc", "/lich/ngay-le", "/lich/doi-ngay"):
         assert (await client.get(path)).status_code == 200, path
@@ -79,10 +103,10 @@ async def test_root_html_cong_khai_health_check_van_json(monkeypatch):
     monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_out)
     transport = httpx.ASGITransport(app=web.api)
     async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
-        assert (await c.get("/")).json() == {"status": "ok"}
+        assert (await c.get("/", headers={"Accept": "application/json"})).json() == {"status": "ok"}
         page = await c.get("/", headers={"Accept": "text/html"})
         assert page.status_code == 200 and "Hôm nay" in page.text
-        assert 'href="/admin?next=%2F"' in page.text
+        assert "đăng nhập" not in page.text.lower()
 
 
 _TUVI_FORM = {
@@ -103,11 +127,11 @@ async def test_ai_luan_giai_chi_khi_dang_nhap(client, monkeypatch):
         return "## Tổng quan\n**Mệnh** vững vàng."
 
     monkeypatch.setattr(web_site.divination_commands, "ai_text", fake_ai_text)
-    # Chưa đăng nhập: bấm AI (ai=1) cũng không gọi AI, chỉ hiện nút đăng nhập.
+    # Chưa đăng nhập: bấm AI (ai=1) cũng không gọi AI, và không thấy khối AI.
     html = (await client.post("/tu-vi", data={**_TUVI_FORM, "ai": "1"})).text
-    assert calls == [] and "Đăng nhập để dùng AI" in html and 'href="/admin?next=%2Ftu-vi"' in html
+    assert calls == [] and "Luận giải bằng AI" not in html
     html = (await client.post("/than-so-hoc", data={"ngay": "1990-03-15", "ai": "1"})).text
-    assert calls == [] and "Đăng nhập để dùng AI" in html
+    assert calls == [] and "Luận giải bằng AI" not in html
 
     monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_in)
     html = (await client.post("/tu-vi", data=_TUVI_FORM)).text
@@ -142,7 +166,7 @@ async def test_them_xoa_dia_diem_thoi_tiet(client, monkeypatch):
     html = (await client.get("/thoi-tiet")).text
     assert ">Nha Trang</a>" in html and 'class="chip-x"' not in html and "dia-diem/them" not in html
     r = await client.post("/thoi-tiet/dia-diem/them", data={"ten": "Vũng Tàu"})
-    assert r.status_code == 303 and "tb=dang-nhap" in r.headers["location"] and store == {}
+    assert r.status_code == 303 and r.headers["location"] == "/thoi-tiet" and store == {}
 
     monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_in)
     html = (await client.get("/thoi-tiet", params={"noi": "Vũng Tàu"})).text
@@ -164,7 +188,7 @@ async def test_them_xoa_dia_diem_thoi_tiet(client, monkeypatch):
     r = await client.post("/thoi-tiet/dia-diem/them", data={"ten": "<script>"})
     assert "tb=ten" in r.headers["location"]
     html = (await client.get("/thoi-tiet", params={"tb": "XyzLaHoat"})).text
-    assert "XyzLaHoat" not in html and "ok-box" not in html.split("</style>")[1]  # chỉ mã cố định
+    assert "XyzLaHoat" not in html and "ok-box" not in html.split("</head>")[1]  # chỉ mã cố định
 
 
 async def test_trang_lich_thang(client):
@@ -243,9 +267,30 @@ def test_clean_ai_text_bo_markdown_ca_dong_thut_dau():
 async def test_hoi_lich_nam_ngoai_khoang_khong_500(client):
     for q in ("25/12/9999", "noel năm 9999", "ngày 25 tháng 12 năm 9999"):
         page = await client.get("/lich/hoi", params={"q": q})
-        assert page.status_code == 200 and "chưa hiểu" in page.text, q
+        text = page.text.lower()
+        assert page.status_code == 200 and ("chưa hiểu" in text or "1900-2100" in text), q
         api = await client.get("/api/v1/calendar/answers", params={"q": q})
         assert api.status_code == 200, q
+
+
+async def test_hoi_lich_tren_web_khong_lo_giong_bot(client):
+    """Câu không hiểu: gợi ý cách hỏi kiểu web, không có cú pháp /lich hay "Em chưa hiểu"."""
+    for q in ("abc", "help", "tuổi ty hợp tuổi nào"):
+        html = (await client.get("/lich/hoi", params={"q": q})).text
+        answer = html.split('<div class="answer-body">')[1].split("</div>")[0]
+        assert "/lich" not in answer and "Em chưa" not in answer, q
+    html = (await client.get("/lich/hoi", params={"q": "abc"})).text
+    assert "Chưa hiểu câu hỏi này" in html and "xem ngày động thổ" in html
+    # Chữ kiểu tin nhắn chat thành chữ của trang: không emoji đầu dòng, "• " là danh sách.
+    html = (await client.get("/lich/hoi", params={"q": "các ngày lễ"})).text
+    answer = html.split('<div class="answer-body">')[1].split("</div>")[0]
+    assert "🎉" not in answer and "•" not in answer and " - " not in answer
+    assert answer.startswith("<p>Các ngày lễ sắp tới:</p><ul><li>")
+    assert web_site._answer_html("📅 Tháng 10:\n10 T7 | âm 1/9 ⭐ ·hđ\n<b>") == (
+        "<p>Tháng 10:<br>10 T7 | âm 1/9 ★ (hđ)<br>&lt;b&gt;</p>"
+    )
+    api = await client.get("/api/v1/calendar/answers", params={"q": "29/2/2027"})
+    assert api.json()["answer"].startswith("Năm 2027 không có ngày 29/2")
 
 
 async def test_thoi_tiet_gioi_han_dia_diem_la(client, monkeypatch):
@@ -257,19 +302,44 @@ async def test_thoi_tiet_gioi_han_dia_diem_la(client, monkeypatch):
 
     monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
     monkeypatch.setattr(web_site, "_new_place_times", web_site.collections.deque())
+    monkeypatch.setattr(web_site, "_new_place_by_ip", web_site.collections.OrderedDict())
+    monkeypatch.setattr(web_site, "_NEW_PLACE_PER_IP", 2)
     monkeypatch.setattr(web_site, "_NEW_PLACE_LIMIT", 3)
-    for i in range(3):
-        assert "°C" in (await client.get("/thoi-tiet", params={"noi": f"La{i}"})).text
-    html = (await client.get("/thoi-tiet", params={"noi": "La9"})).text
-    assert "tạm giới hạn" in html and 'role="alert"' in html and len(calls) == 3
+    ip_a = {"X-Forwarded-For": "1.1.1.1"}
+    for i in range(2):
+        assert "°C" in (await client.get("/thoi-tiet", params={"noi": f"La{i}"}, headers=ip_a)).text
+    html = (await client.get("/thoi-tiet", params={"noi": "La9"}, headers=ip_a)).text
+    assert "Bạn vừa tra nhiều địa điểm mới" in html and 'role="alert"' in html
+    # Một người gõ liên tục không khoá được người khác.
+    ip_b = {"X-Forwarded-For": "2.2.2.2"}
+    assert "°C" in (await client.get("/thoi-tiet", params={"noi": "Lb"}, headers=ip_b)).text
+    assert len(calls) == 3
+    # Trần chung toàn site vẫn còn (3 lượt đã dùng).
+    html = (
+        await client.get("/thoi-tiet", params={"noi": "Lc"}, headers={"X-Forwarded-For": "3.3.3.3"})
+    ).text
+    assert "tạm giới hạn" in html and len(calls) == 3
     # Địa điểm trong danh sách hay xem và mặc định không bị giới hạn.
-    assert "°C" in (await client.get("/thoi-tiet", params={"noi": "đà lạt"})).text
-    assert "°C" in (await client.get("/thoi-tiet")).text
+    assert "°C" in (await client.get("/thoi-tiet", params={"noi": "đà lạt"}, headers=ip_a)).text
+    assert "°C" in (await client.get("/thoi-tiet", headers=ip_a)).text
     assert len(calls) == 5
+    # Địa điểm đã có trong cache toạ độ (kể cả "không tìm thấy") tra lại không trừ lượt.
+    monkeypatch.setitem(web_site.weather._geo_cache, "xyzabc", None)
+    html = (await client.get("/thoi-tiet", params={"noi": "Xyzabc"}, headers=ip_a)).text
+    assert "giới hạn" not in html and calls[-1] == "Xyzabc"
     # Cửa sổ 10 phút đã qua. Tính từ đồng hồ thật: hằng số cố định (10_000) sai
     # khi máy chạy test đã bật quá ~2,6 giờ (time.monotonic() lớn hơn).
     later = web_site.time.monotonic() + web_site._NEW_PLACE_WINDOW_SEC + 1
-    assert web_site._new_place_allowed(now=later)
+    assert web_site._new_place_allowed("1.1.1.1", now=later) == ""
+
+
+def test_bang_ip_tra_dia_diem_co_tran(monkeypatch):
+    monkeypatch.setattr(web_site, "_new_place_times", web_site.collections.deque())
+    monkeypatch.setattr(web_site, "_new_place_by_ip", web_site.collections.OrderedDict())
+    monkeypatch.setattr(web_site, "_NEW_PLACE_LIMIT", 10_000)
+    for i in range(web_site._NEW_PLACE_MAX_IPS + 20):
+        assert web_site._new_place_allowed(f"10.0.{i // 256}.{i % 256}") == ""
+    assert len(web_site._new_place_by_ip) == web_site._NEW_PLACE_MAX_IPS
 
 
 async def test_trang_than_so_hoc_escape_ho_ten(client):
@@ -324,6 +394,7 @@ async def test_trang_thoi_tiet(client, monkeypatch):
     assert 'href="/thoi-tiet" aria-current="page"' in html  # tab Thời tiết trên menu
     assert "18°C" in html and "Mưa nhẹ" in html and "Hôm nay" in html and "Ngày mai" in html
     assert html.count('class="when"') == 7
+    assert "<dd>0,3 mm</dd>" in html  # dấu phẩy thập phân kiểu Việt, không "0.3"
 
     html = (await client.get("/thoi-tiet", params={"noi": "Xyzabc"})).text
     assert 'role="alert"' in html and "Không tìm thấy địa điểm" in html and "°C" not in html
@@ -337,7 +408,9 @@ async def test_static_chi_phuc_vu_file_trong_danh_sach(client):
     assert (await client.get("/static/logo-light.webp")).headers["content-type"] == "image/webp"
     assert (await client.get("/static/favicon.png")).status_code == 200
     assert (await client.get("/favicon.ico")).headers["content-type"] == "image/png"
-    assert (await client.get("/static/site.css")).status_code == 404  # CSS nhúng trong HTML
+    css = await client.get("/static/site.css")
+    assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")
+    assert (await client.get("/static/og-image.png")).headers["content-type"] == "image/png"
     assert (await client.get("/static/..%2Fweb.py")).status_code == 404
     assert (await client.get("/static/web.py")).status_code == 404
 
@@ -512,22 +585,25 @@ async def test_api_body_qua_lon(client):
     assert r.json()["error"]["code"] == "BODY_TOO_LARGE"
 
 
-async def test_trang_khong_keo_css_rieng_anh_cache_dai(client):
-    """CSS nhúng sẵn trong HTML; chỉ logo/favicon là file riêng, có ?v=<hash> và
-    cache 1 năm. Trước đây mỗi lượt xem tải 3 file song song, vài người xem
-    cùng lúc vượt --limit-concurrency của uvicorn -> 503 cả webhook Telegram/Zalo.
-    Phông chữ tải từ Google Fonts (máy chủ khác, không tính vào giới hạn đó)."""
+async def test_css_rieng_cache_dai_trang_nhe(client):
+    """CSS là 1 file riêng có ?v=<hash nội dung>, cache 1 năm (immutable): chỉ lượt xem
+    đầu tải thêm 1 request, các trang sau dùng bản đã lưu, không hỏi lại server (giữ
+    --limit-concurrency của uvicorn cho webhook Telegram/Zalo). HTML không còn mang
+    ~50 KB CSS mỗi trang. Phông chữ tải từ Google Fonts (máy chủ khác)."""
     import re
 
     for path in ("/lich", "/lich/hoi", "/tu-vi", "/than-so-hoc"):
         html = (await client.get(path)).text
+        assert "<style>" not in html and len(html) < 30_000, path
         sheets = re.findall(r'<link rel="stylesheet" href="([^"]+)"', html)
-        assert "<style>" in html and html.count('rel="stylesheet"') == len(sheets)
-        assert all(h.startswith("https://fonts.googleapis.com/") for h in sheets), path
+        assert [h for h in sheets if h.startswith("/static/")] == [
+            f"/static/site.css?v={web_site._assets()[0]}"
+        ], path
         refs = re.findall(r'(?:src|href|srcset)="(/static/[^"]+)"', html)
         assert refs and all(re.search(r"\?v=[0-9a-f]{10}$", r) for r in refs), path
-    r = await client.get("/static/logo-dark.webp")
-    assert "immutable" in r.headers["cache-control"]
+    for name in ("site.css", "logo-dark.webp"):
+        r = await client.get(f"/static/{name}")
+        assert "immutable" in r.headers["cache-control"], name
 
 
 def test_uvicorn_limit_concurrency_du_cho_web_va_webhook():
@@ -541,11 +617,12 @@ def test_uvicorn_limit_concurrency_du_cho_web_va_webhook():
 
 async def test_nut_doi_sang_toi_va_logo_theo_giao_dien(client):
     html = (await client.get("/lich")).text
-    # Nút ẩn khi không có JS (theo hệ máy); script đọc lựa chọn TRƯỚC thẻ <style>.
+    # Nút ẩn khi không có JS (theo hệ máy); script đọc lựa chọn TRƯỚC khi nạp CSS.
     assert 'id="theme-toggle"' in html and "hidden>" in html
-    assert html.index("lcta.theme") < html.index("<style>")
+    assert html.index("lcta.theme") < html.index('href="/static/site.css')
     assert 'class="logo-light"' in html and 'class="logo-dark"' in html
-    assert ':root[data-theme="dark"]' in html  # CSS ghi đè theo lựa chọn
+    css = (await client.get("/static/site.css")).text
+    assert ':root[data-theme="dark"]' in css  # CSS ghi đè theo lựa chọn
 
 
 def test_dai_gio_hoang_dao_trang_chu():
@@ -767,17 +844,24 @@ async def test_trang_gia_vang(client, price_sources):
     for name in ("SJC miếng 9999", "Nhẫn SJC 9999", "DOJI Hà Nội", "DOJI TP.HCM", "PNJ 24K"):
         assert name in html
     assert "Bảo Tín 9999" in html and "Viettin SJC" in html and "VN Gold SJC" in html
-    assert "141,7" in html and "Cập nhật 07:30 27/10/2026" in html
+    # Bảng giá: mọi ô 2 số lẻ (135,00 thẳng cột với 138,70), đơn vị ghi ngay trên bảng.
+    assert (
+        ">141,70</span>" in html
+        and ">135,00</span>" in html
+        and "Cập nhật 07:30 27/10/2026" in html
+    )
+    assert "Triệu đồng/lượng" in html and "1 lượng = 10 chỉ = 37,5 g" in html
     # ▲▼ kèm chữ cho trình đọc màn hình, màu theo lớp up/down; 0 không ghi "đứng giá".
     up = (
         '<span class="delta up"><span aria-hidden="true">▲</span><span class="sr-only">tăng </span>'
     )
     down = '<span class="delta down"><span aria-hidden="true">▼</span><span class="sr-only">giảm '
-    assert up + "0,5</span>" in html and down + "</span>0,3</span>" in html
+    assert up + "0,50</span>" in html and down + "</span>0,30</span>" in html
     assert "đứng giá" not in html
     # Vàng thế giới + quy đổi theo giá bán USD Vietcombank, chênh với SJC miếng.
-    assert "4.015,1" in html and "≈ 126,01 triệu/lượng" in html and "26.030" in html
-    assert "Cao hơn ≈ 15,69 triệu" in html and "chưa gồm thuế" in html
+    assert "4.015,1" in html and "USD/ounce" in html and "26.030" in html
+    assert "≈ 126,01 triệu đồng/lượng" in html and "Cao hơn ≈ 15,69 triệu đồng/lượng" in html
+    assert "chưa gồm thuế" in html
     # Mục tỷ giá các ngoại tệ chính, số kiểu Việt Nam.
     assert 'id="fx-title"' in html and "25.650" in html and "173,65" in html
     assert "Đô la Mỹ" in html and "Yên Nhật" in html
@@ -790,7 +874,7 @@ async def test_trang_gia_vang_du_phong_sjc_va_nguon_loi(client, price_sources):
     html = (await client.get("/gia-vang")).text
     assert "tạm hiện bảng giá SJC" in html and "Vàng SJC 1L, 10L, 1KG" in html
     assert "Hồ Chí Minh" in html and "Hà Nội" not in html  # giữ chi nhánh đầu
-    assert ">150</span>" in html and 'id="world-title"' not in html and "sjc.com.vn" in html
+    assert ">150,00</span>" in html and 'id="world-title"' not in html and "sjc.com.vn" in html
     price_sources["sjc"] = True
     r = await client.get("/gia-vang")
     assert r.status_code == 200 and 'role="alert"' in r.text and "không tự đoán giá" in r.text
@@ -800,7 +884,7 @@ async def test_trang_gia_vang_du_phong_sjc_va_nguon_loi(client, price_sources):
 async def test_trang_gia_vang_thieu_ty_gia_van_hien_bang(client, price_sources):
     price_sources["fx"] = True
     html = (await client.get("/gia-vang")).text
-    assert "141,7" in html and "4.015,1" in html and "tạm chưa quy đổi" in html
+    assert "141,70" in html and "4.015,1" in html and "tạm chưa quy đổi" in html
     assert 'id="fx-title"' not in html and 'role="alert"' not in html
 
 
@@ -923,3 +1007,289 @@ def test_thanh_ben_va_trang_chu_co_gia_vang_gia_xang():
     assert 'class="btn" href="/gia-vang"' in html and 'class="btn" href="/gia-xang"' in html
     css = (web_site._STATIC / "site.css").read_text("utf-8")
     assert ".i-gold" in css and ".i-fuel" in css and ".delta.up" in css
+
+
+# ─── Sửa sau nhận xét dùng thử 27/10 ─────────────────────────────────────────
+
+
+async def test_404_html_cho_trinh_duyet_json_cho_api(monkeypatch):
+    import web
+
+    monkeypatch.setattr(web_site.web_admin, "is_logged_in", _logged_out)
+    transport = httpx.ASGITransport(app=web.api)
+    async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
+        page = await c.get("/khong-co-trang-nay", headers={"Accept": "text/html"})
+        assert page.status_code == 404 and page.headers["content-type"].startswith("text/html")
+        assert (
+            "Không tìm thấy trang" in page.text
+            and 'name="robots" content="noindex, follow"' in page.text
+        )
+        assert 'href="/lich"' in page.text  # có đường đi tiếp
+        assert (await c.get("/khong-co-trang-nay")).json() == {"detail": "Not Found"}
+        api = await c.get("/api/v1/khong-co", headers={"Accept": "text/html"})
+        assert api.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_robots_sitemap_va_the_seo(client, monkeypatch):
+    robots = (await client.get("/robots.txt")).text
+    assert "Disallow: /admin" in robots and "Disallow: /api/" in robots
+    assert "Sitemap: https://testserver/sitemap.xml" in robots
+    sitemap = await client.get("/sitemap.xml")
+    assert sitemap.headers["content-type"].startswith("application/xml")
+    assert "<loc>https://testserver/gia-vang</loc>" in sitemap.text and "/admin" not in sitemap.text
+    # Có SITE_BASE_URL (tên miền riêng) thì link tuyệt đối theo đó.
+    monkeypatch.setattr(web_site.config, "SITE_BASE_URL", "https://lcta.vn")
+    html = (
+        await client.get("/lich", params={"thang": "2026-10", "fbclid": "x", "utm_source": "zalo"})
+    ).text
+    assert '<link rel="canonical" href="https://lcta.vn/lich?thang=2026-10">' in html
+    assert '<meta property="og:url" content="https://lcta.vn/lich?thang=2026-10">' in html
+    assert (
+        '<meta property="og:title" content="Lịch âm tháng 10/2026: ngày hoàng đạo, ngày lễ">'
+        in html
+    )
+    assert "<title>Lịch âm tháng 10/2026: ngày hoàng đạo, ngày lễ | LCTA</title>" in html
+    assert '<meta name="twitter:card" content="summary_large_image">' in html
+
+
+def _json_ld(html: str) -> list[dict]:
+    raw = html.split('<script type="application/ld+json">', 1)[1].split("</script>", 1)[0]
+    return json.loads(raw)["@graph"]
+
+
+async def test_seo_tieu_de_co_ngay_json_ld_va_noindex(client, price_sources, monkeypatch):
+    monkeypatch.setattr(web_site.config, "SITE_BASE_URL", "https://lcta.vn")
+    monkeypatch.setattr(web_site.site_data, "today", lambda: dt.date(2026, 10, 27))
+    html = (await client.get("/gia-vang")).text
+    # Trang giá: tiêu đề có ngày, mô tả có giá dòng đầu, JSON-LD có giờ cập nhật số liệu.
+    assert "<title>Giá vàng hôm nay 27/10/2026: SJC, nhẫn 9999, DOJI, PNJ | LCTA</title>" in html
+    assert "hôm nay 27/10/2026: mua 138,70, bán 141,70 triệu đồng/lượng" in html
+    page, crumbs = _json_ld(html)
+    assert page["@type"] == "WebPage" and page["url"] == "https://lcta.vn/gia-vang"
+    assert page["dateModified"] == "2026-10-27T07:30:00+07:00"
+    assert [c["name"] for c in crumbs["itemListElement"]] == ["Hôm nay", "Giá vàng"]
+    assert '<link rel="apple-touch-icon" href="/static/icon.png?v=' in html
+    assert '<meta name="theme-color" content="#ffffff"' in html
+    # Trang chủ: WebSite + tổ chức có logo vuông (ảnh tĩnh phục vụ được).
+    token = web_site._viewer.set((False, "/", "https://lcta.vn"))
+    try:
+        home = bytes(web_site.home_page().body).decode()
+    finally:
+        web_site._viewer.reset(token)
+    site, org = _json_ld(home)
+    assert site["@type"] == "WebSite" and org["logo"] == "https://lcta.vn/static/icon.png"
+    day = web_site.site_data.now().date()
+    assert f"<title>Lịch âm hôm nay {day:%d/%m/%Y}: giờ hoàng đạo, ngày tốt xấu | LCTA" in home
+    assert (await client.get("/static/icon.png")).headers["content-type"] == "image/png"
+    # Đổi ngày có kết quả: tiêu đề trả lời luôn câu hỏi.
+    html = (await client.get("/lich/doi-ngay", params={"am": "15/8/2027"})).text
+    assert "<title>15/8/2027 âm lịch là ngày 15/09/2027 dương lịch | LCTA</title>" in html
+    # Trang kết quả riêng: không vào chỉ mục, không canonical/JSON-LD; trang gốc thì có.
+    noindex = '<meta name="robots" content="noindex, follow">'
+    for path, params in (("/lich/hoi", {"q": "rằm tháng 8"}), ("/ky-mon", {"gio": "08:30"})):
+        html = (await client.get(path, params=params)).text
+        assert noindex in html and 'rel="canonical"' not in html and "ld+json" not in html
+    for path in ("/lich/hoi", "/ky-mon", "/tu-vi"):
+        html = (await client.get(path)).text
+        assert noindex not in html and 'rel="canonical"' in html, path
+    html = (await client.post("/than-so-hoc", data={"ngay": "1990-03-15"})).text
+    assert noindex in html
+
+
+async def test_sitemap_co_lastmod_va_trang_tra_cuu(client, monkeypatch):
+    monkeypatch.setattr(web_site.site_data, "today", lambda: dt.date(2026, 10, 27))  # thứ Ba
+    text = (await client.get("/sitemap.xml")).text
+    assert "<loc>https://testserver/gia-vang</loc><lastmod>2026-10-27</lastmod>" in text
+    assert "<loc>https://testserver/tu-vi</loc></url>" in text  # trang tĩnh: không đoán lastmod
+    # Đài TP.HCM quay thứ Hai, thứ Bảy: lastmod là ngày quay gần nhất.
+    assert (
+        "<loc>https://testserver/xo-so?dai=ho-chi-minh</loc><lastmod>2026-10-26</lastmod>" in text
+    )
+    assert "/thoi-tiet?noi=H%C3%A0%20N%E1%BB%99i" in text and "noi=TP.HCM" not in text
+    assert "/lich?thang=2026-11<" in text and "/lich?thang=2027-09<" in text
+    assert "/lich?thang=2027-10<" not in text
+
+
+async def test_trang_dang_nhap_noi_ro_chi_cho_chu_trang_va_co_duong_ve(monkeypatch):
+    import web
+
+    transport = httpx.ASGITransport(app=web.api)
+    async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
+        html = (await c.get("/admin", params={"next": "/lich?thang=2026-10"})).text
+        assert "chỉ dành cho chủ trang" in html
+        assert '<a href="/lich?thang=2026-10">← Quay lại trang đang xem</a>' in html
+        assert '<a href="/">← Quay lại' in (await c.get("/admin")).text
+
+
+async def test_nhap_sai_bao_loi_ngay_duoi_o(client, lottery_sources):
+    html = (await client.get("/lich/doi-ngay", params={"am": "abc"})).text
+    assert 'aria-invalid="true"' in html and "“abc” không phải ngày âm lịch" in html
+    assert html.count('role="alert"') == 1
+    html = (await client.get("/xo-so", params={"dai": "mn", "ve": "123"})).text
+    assert 'id="ve"' in html and 'aria-invalid="true"' in html
+    assert '<span class="field-error" id="form-error" role="alert">Vé xổ số' in html
+    html = (await client.get("/lich", params={"thang": "abc"})).text
+    assert "Không đọc được tháng “abc”" in html and "YYYY-MM" not in html
+    html = (await client.get("/lich", params={"thang": "11/2026"})).text
+    assert "<h1>Tháng 11/2026</h1>" in html
+
+
+async def test_bang_cuon_ngang_nhan_focus_va_tsh_khong_lap_tieu_de(client, monkeypatch):
+    async def fake_get_weather(location="", days=1):
+        return _FAKE_WEATHER
+
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    html = (await client.get("/thoi-tiet")).text
+    assert '<div class="table-wrap" tabindex="0" role="region"' in html
+    html = (await client.post("/than-so-hoc", data={"ngay": "1990-03-15", "ten": "An"})).text
+    assert html.count("Các con số khác") == 1
+
+
+async def test_thoi_tiet_nguon_du_phong_ghi_dung_so_ngay(client, monkeypatch):
+    async def fallback(location="", days=1):
+        return {
+            **_FAKE_WEATHER,
+            "source": "wttr.in (dự phòng, tối đa 3 ngày)",
+            "fallback": True,
+            "daily": _FAKE_WEATHER["daily"][:3],
+        }
+
+    monkeypatch.setattr(web_site.weather, "get_weather", fallback)
+    html = (await client.get("/thoi-tiet")).text
+    assert "Hiện tại và dự báo 3 ngày" in html and "dự báo 7 ngày" not in html
+    assert "Open-Meteo đang lỗi" in html
+
+
+async def test_luoi_tu_vi_dien_thoai_co_o_giua(client):
+    html = (await client.post("/tu-vi", data=_TUVI_FORM)).text
+    center = html.split('<nav class="chart-map"')[1].split("</nav>")[0]
+    assert '<div class="c"><b>Dương Nam</b>' in center and "Bấm một cung để xem" in center
+
+
+async def test_luu_vi_tri_hien_tai_trong_cookie_trinh_duyet(client, monkeypatch):
+    """Nút "Lấy vị trí hiện tại": toạ độ (làm tròn ~1 km) lưu trong cookie của trình duyệt,
+    trang /thoi-tiet không nhập địa điểm thì xem ở đó; không DB, không cần đăng nhập."""
+    calls = []
+
+    async def fake_at(lat, lon, label, days=1):
+        calls.append((lat, lon, label, days))
+        return {**_FAKE_WEATHER, "location": label}
+
+    async def fake_get_weather(location="", days=1):
+        calls.append(location)
+        return _FAKE_WEATHER
+
+    async def no_name(lat, lon):
+        return None  # Nominatim lỗi/tắt: vẫn lưu toạ độ, trang ghi toạ độ thay tên
+
+    monkeypatch.setattr(web_site.weather, "get_weather_at", fake_at)
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    monkeypatch.setattr(web_site.weather, "reverse_geocode", no_name)
+    html = (await client.get("/thoi-tiet")).text
+    assert 'id="geo-btn" hidden' in html and "Lấy vị trí hiện tại" in html
+    assert "Vị trí của tôi</a>" not in html and "Xoá vị trí đã lưu" not in html
+
+    r = await client.post("/thoi-tiet/vi-tri", data={"lat": "11.940419", "lon": "108.458313"})
+    assert r.status_code == 303 and r.headers["location"] == "/thoi-tiet?tb=da-luu-vi-tri"
+    cookie = r.headers["set-cookie"]
+    assert cookie.startswith("lcta_vitri=11.94_108.46;") and "Path=/thoi-tiet" in cookie
+    assert "HttpOnly" in cookie and "Secure" in cookie and "SameSite=lax" in cookie
+
+    r = await client.get(r.headers["location"])
+    html = r.text
+    assert calls[-1] == (11.94, 108.46, "Vị trí của tôi (11,94; 108,46)", 7)
+    assert "<h1>Thời tiết ở vị trí của bạn</h1>" in html and "Đã lưu vị trí hiện tại" in html
+    assert 'href="/thoi-tiet" aria-current="page">' in html and "Xoá vị trí đã lưu" in html
+    assert 'href="/thoi-tiet?noi=TP.HCM" aria-current' not in html
+    assert r.headers["cache-control"] == "private, no-cache"
+    # Gõ địa điểm thì vẫn xem địa điểm đó.
+    await client.get("/thoi-tiet", params={"noi": "Huế"})
+    assert calls[-1] == "Huế"
+
+    r = await client.post("/thoi-tiet/vi-tri/xoa")
+    assert r.status_code == 303 and 'lcta_vitri=""' in r.headers["set-cookie"]
+    html = (await client.get(r.headers["location"])).text
+    assert "Đã xoá vị trí đã lưu." in html and calls[-1] == ""  # về mặc định TP.HCM
+
+    r = await client.post("/thoi-tiet/vi-tri", data={"lat": "abc", "lon": "200"})
+    assert r.headers["location"] == "/thoi-tiet?tb=vi-tri-loi" and "set-cookie" not in r.headers
+
+
+async def test_vi_tri_trong_cookie_sai_bo_qua_va_tinh_vao_han_muc(client, monkeypatch):
+    calls = []
+
+    async def fake_at(lat, lon, label, days=1):
+        calls.append((lat, lon))
+        return {**_FAKE_WEATHER, "location": label}
+
+    async def fake_get_weather(location="", days=1):
+        calls.append(location)
+        return _FAKE_WEATHER
+
+    monkeypatch.setattr(web_site.weather, "get_weather_at", fake_at)
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    monkeypatch.setattr(web_site, "_new_place_times", web_site.collections.deque())
+    monkeypatch.setattr(web_site, "_new_place_by_ip", web_site.collections.OrderedDict())
+    monkeypatch.setattr(web_site, "_NEW_PLACE_PER_IP", 1)
+    await client.get("/thoi-tiet", headers={"Cookie": "lcta_vitri=abc"})
+    assert calls == [""]  # cookie hỏng: như chưa lưu
+    # Toạ độ sửa tay trong cookie, chưa có trong cache: tính vào hạn mức tra địa điểm mới.
+    ip = {"X-Forwarded-For": "4.4.4.4"}
+    await client.get("/thoi-tiet", headers={**ip, "Cookie": "lcta_vitri=10.00_106.00"})
+    html = (
+        await client.get("/thoi-tiet", headers={**ip, "Cookie": "lcta_vitri=11.00_107.00"})
+    ).text
+    assert calls == ["", (10.0, 106.0)] and "Bạn vừa tra nhiều địa điểm mới" in html
+
+
+async def test_luu_vi_tri_kem_ten_noi_tu_openstreetmap(client, monkeypatch):
+    """Tên nơi tra 1 lần lúc lưu rồi cất trong cookie: xem lại không gọi Nominatim."""
+    labels, reverse_calls = [], []
+
+    async def fake_at(lat, lon, label, days=1):
+        labels.append(label)
+        return {**_FAKE_WEATHER, "location": label}
+
+    async def fake_reverse(lat, lon):
+        reverse_calls.append((lat, lon))
+        return "Phường 1, Đà Lạt"
+
+    monkeypatch.setattr(web_site.weather, "get_weather_at", fake_at)
+    monkeypatch.setattr(web_site.weather, "reverse_geocode", fake_reverse)
+    monkeypatch.setattr(web_site.weather, "reverse_cached", lambda lat, lon: False)
+    monkeypatch.setattr(web_site, "_new_place_times", web_site.collections.deque())
+    monkeypatch.setattr(web_site, "_new_place_by_ip", web_site.collections.OrderedDict())
+    r = await client.post("/thoi-tiet/vi-tri", data={"lat": "11.94", "lon": "108.46"})
+    cookie = r.headers["set-cookie"]
+    assert cookie.startswith(
+        "lcta_vitri=11.94_108.46_Ph%C6%B0%E1%BB%9Dng%201%2C%20%C4%90%C3%A0%20L%E1%BA%A1t;"
+    )
+    html = (await client.get("/thoi-tiet")).text
+    html = (await client.get("/thoi-tiet")).text
+    assert reverse_calls == [(11.94, 108.46)]  # chỉ lúc lưu
+    assert labels[-1] == "Phường 1, Đà Lạt" and "<h1>Thời tiết Phường 1, Đà Lạt</h1>" in html
+    assert 'href="https://www.openstreetmap.org/copyright"' in html  # ghi công ODbL
+
+    # Hết lượt tra địa điểm mới của IP: vẫn lưu toạ độ, không gọi Nominatim.
+    monkeypatch.setattr(web_site, "_NEW_PLACE_PER_IP", 0)
+    r = await client.post("/thoi-tiet/vi-tri", data={"lat": "21.03", "lon": "105.85"})
+    assert r.headers["set-cookie"].startswith("lcta_vitri=21.03_105.85;")
+    assert len(reverse_calls) == 1
+
+
+async def test_ten_noi_trong_cookie_sua_tay_van_an_toan(client, monkeypatch):
+    async def fake_at(lat, lon, label, days=1):
+        return {**_FAKE_WEATHER, "location": label}
+
+    monkeypatch.setattr(web_site.weather, "get_weather_at", fake_at)
+    monkeypatch.setattr(web_site.weather, "forecast_cached", lambda *a: True)
+    raw = "10.78_106.70_%3Cscript%3Ex%3C%2Fscript%3E%0A" + "a" * 200
+    html = (await client.get("/thoi-tiet", headers={"Cookie": f"lcta_vitri={raw}"})).text
+    assert "<script>x" not in html and "&lt;script&gt;x&lt;/script&gt;" in html
+    assert web_site._parse_my_place(raw)[2] == ("<script>x</script>" + "a" * 200)[:80]
+    # Tên dài nhất (80 ký tự tiếng Việt, percent-encode ~720 ký tự) vẫn đọc lại được.
+    longest = "Đường Ngọc Hồi Phường Hoàng Liệt Quận Hoàng Mai Thành phố Hà Nội Việt Nam ỡỡỡỡỡỡỡ"[
+        :80
+    ]
+    value = "21.03_105.85_" + web_site.quote(longest, safe="")
+    assert web_site._parse_my_place(value) == (21.03, 105.85, longest)

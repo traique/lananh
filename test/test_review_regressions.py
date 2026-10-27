@@ -53,11 +53,11 @@ def test_ngay_hoang_dao_khac_gio_hoang_dao():
     assert "23/12/2026" in lunar_chat.answer("rằm tháng mười một", OCT)
 
 
-# 4. /lich: "cưới/họp/hàn" (có dấu) không bị hiểu là "cuối/hợp/hạn".
+# 4. /lich: "cưới/họp/hàn" (có dấu) không bị hiểu là "cuối/hợp/hạn". "Cưới ngày X"
+# được xem theo việc cưới hỏi (không phải cuối tuần/cuối tháng).
 def test_lich_tu_khoa_so_tren_chu_co_dau():
-    assert calendar_query.answer("cưới ngày 20/12/2026 được không", OCT).startswith(
-        "📅 Ngày 20/12/2026"
-    )
+    reply = calendar_query.answer("cưới ngày 20/12/2026 được không", OCT)
+    assert reply.startswith("⚠️ Chủ Nhật 20/12/2026") and "cưới hỏi" in reply
     assert "Tết Hàn thực" in calendar_query.answer("hàn thực năm 2027", OCT)
     assert calendar_query.answer("họp ngày 20/11/2026", OCT).startswith("📅 Ngày 20/11/2026")
     assert "Sao hạn (nam): Thổ Tú" in calendar_query.answer("sao hạn 1990 nam năm 2027", OCT)

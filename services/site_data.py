@@ -137,10 +137,15 @@ def lunar_to_solar(lunar_day: int, lunar_month: int, lunar_year: int, is_leap: b
 
 
 def calendar_answer(question: str) -> str:
+    """Trả lời ô "Hỏi lịch" trên web: cùng bộ tra với lệnh /lich nhưng câu gợi ý không
+    có cú pháp lệnh chat."""
     question = (question or "").strip()
     if len(question) > 200:
         raise InputError("QUESTION_TOO_LONG", "Câu hỏi tối đa 200 ký tự.")
-    return calendar_query.answer(question)
+    reply = calendar_query.understand(question)
+    if reply is None:
+        return "Chưa hiểu câu hỏi này nên chưa tra được.\n\n" + calendar_query.WEB_HELP
+    return reply.replace("/lich ", "")
 
 
 def numerology_reading(birth: dt.date, name: str = "") -> dict:

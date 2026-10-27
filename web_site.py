@@ -4,7 +4,8 @@
 
 Xem nội dung KHÔNG cần đăng nhập: lịch, tử vi, thần số học tính bằng code
 (services/site_data.py), không gọi AI, không đụng DB. /thoi-tiet tra Open-Meteo
-qua services/weather.py (cache có trần), giới hạn số lượt tra song song. /xo-so đọc
+qua services/weather.py (cache có trần), giới hạn số lượt tra song song và số lượt tra
+địa điểm mới theo từng IP. /xo-so đọc
 feed xskt.com.vn qua services/lottery_lookup.py (cache có trần theo đài, dò vé bằng
 code). /gia-vang, /gia-xang đọc bảng giá qua services/price_lookup.py (dùng lại cache
 1 bản/nguồn của vn_market_data + fuel_prices). Trang render sẵn ở server nên chạy được
@@ -12,7 +13,11 @@ cả khi tắt JavaScript.
 
 Cần đăng nhập (tài khoản admin, chung phiên với /admin) cho việc tốn quota hoặc
 đổi dữ liệu chung: nút "AI luận giải" ở kết quả tử vi/thần số học/kỳ môn, thêm/xoá địa
-điểm thời tiết. Đăng nhập rồi header mới hiện nút "Quản trị".
+điểm thời tiết. Khách chỉ thấy link nhỏ "Chủ trang đăng nhập" ở chân trang; đăng nhập
+rồi thanh bên mới hiện nút "Quản trị".
+
+SEO/chia sẻ link: mọi trang có canonical + thẻ og:/twitter:, /robots.txt, /sitemap.xml;
+trình duyệt gặp đường dẫn không có nhận trang 404 HTML (web.py gọi ``not_found``).
 
 JSON API (chỉ thêm trường mới, không đổi/bỏ trường cũ):
   GET  /api/v1/calendar/days/{YYYY-MM-DD}
@@ -51,13 +56,21 @@ import json
 import re
 import time
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, quote, unquote, urlencode
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request
 from fastapi.routing import APIRoute
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from markupsafe import Markup
+from markupsafe import Markup, escape
 
 import web_admin
 from core import config
@@ -81,11 +94,40 @@ from services.site_data import InputError
 
 _ROOT = Path(__file__).resolve().parent
 _STATIC = _ROOT / "static"
+_VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _STATIC_FILES = {
+    "site.css": "text/css; charset=utf-8",
     "logo-light.webp": "image/webp",
     "logo-dark.webp": "image/webp",
     "favicon.png": "image/png",
+    "og-image.png": "image/png",
+    "icon.png": "image/png",
 }
+# Trang công khai cho robots.txt / sitemap.xml (trang có form POST vẫn có bản GET).
+_SITEMAP_PATHS = (
+    "/",
+    "/lich",
+    "/lich/hoi",
+    "/lich/doi-ngay",
+    "/lich/ngay-le",
+    "/thoi-tiet",
+    "/xo-so",
+    "/gia-vang",
+    "/gia-xang",
+    "/tu-vi",
+    "/ky-mon",
+    "/than-so-hoc",
+)
+# Tham số làm nên nội dung trang - link canonical/og:url chỉ giữ các tham số này (bỏ
+# fbclid/utm_* do Facebook/Zalo gắn, mã thông báo tạm ?tb=, số vé dò).
+_LOTTERY_SHORT = {"mn": "XSMN", "mt": "XSMT", "mb": "XSMB"}
+# Trang đổi số liệu mỗi ngày (lastmod hôm nay trong sitemap).
+_DAILY_PATHS = frozenset({"/", "/lich", "/thoi-tiet", "/xo-so", "/gia-vang", "/gia-xang"})
+_CANONICAL_PARAMS = frozenset({"thang", "ngay", "q", "am", "nhuan", "noi", "dai", "gio"})
+# Health check (Render, UptimeRobot...) chỉ cần mã 200: GET / trả JSON nhẹ cho các client
+# này; mọi client khác (trình duyệt, trình đọc link Facebook/Zalo gửi Accept: */*)
+# nhận trang chủ HTML có thẻ og:.
+_HEALTH_AGENTS = re.compile(r"\bRender/|UptimeRobot|kube-probe|ELB-HealthChecker|GoogleHC")
 # Thanh bên: (nhóm, [(đường dẫn, nhãn, biểu tượng)]); biểu tượng là lớp .i-* trong site.css.
 _NAV = [
     ("", [("/", "Hôm nay", "home")]),
@@ -130,6 +172,7 @@ _ASK_EXAMPLES = [
     "rằm tháng 8",
     "còn mấy ngày nữa Tết",
     "ngày tốt tháng này",
+    "xem ngày động thổ",
     "tuổi 15/3/1990",
     "sao hạn 1990 nam năm 2027",
     "1990 và 1995 có hợp không",
@@ -144,18 +187,39 @@ _PLACE_NOTICES = {
     ),
     "day": ("error", f"Tối đa {weather_places.MAX_PLACES} địa điểm, xoá bớt trước khi thêm."),
     "luu": ("error", "Không lưu được, thử lại sau."),
-    "dang-nhap": ("error", "Cần đăng nhập để thêm/xoá địa điểm."),
+    "da-luu-vi-tri": ("ok", "Đã lưu vị trí hiện tại. Lần sau mở trang Thời tiết sẽ xem ở đây."),
+    "da-xoa-vi-tri": ("ok", "Đã xoá vị trí đã lưu."),
+    "vi-tri-loi": ("error", "Không đọc được vị trí, thử lại."),
 }
+# Vị trí hiện tại của khách (nút "Lấy vị trí hiện tại", navigator.geolocation): lưu TRONG
+# TRÌNH DUYỆT bằng cookie chỉ gửi kèm trang /thoi-tiet, toạ độ làm tròn 2 số lẻ (~1 km).
+# Máy chủ không lưu (không DB, không RAM ngoài cache dự báo có trần), không cần đăng nhập.
+# Tên nơi tra 1 lần lúc lưu (Nominatim, weather.reverse_geocode) rồi cất luôn trong cookie
+# - xem lại không gọi Nominatim nữa.
+_MY_PLACE_COOKIE = "lcta_vitri"
+_MY_PLACE_PATH = "/thoi-tiet"
+_MY_PLACE_MAX_AGE = 365 * 86400
+_MY_PLACE_NAME_MAX = 80
+# Tên nơi là phần phụ: quá hạn chót (kể cả chờ lượt 1 giây của Nominatim) thì lưu toạ độ.
+_REVERSE_TIMEOUT_SEC = 6
+# "vĩ độ_kinh độ" ("_" không phải bọc ngoặc kép như ","); form gửi ",".
+_COORDS_RE = re.compile(r"\s*(-?\d{1,3}(?:\.\d{1,8})?)\s*[,_]\s*(-?\d{1,3}(?:\.\d{1,8})?)\s*")
+# Cookie: "vĩ_kinh" hoặc "vĩ_kinh_<tên nơi đã percent-encode>" (80 ký tự tiếng Việt, mỗi
+# ký tự tối đa 3 byte UTF-8 = 9 ký tự "%XX" -> tên dài nhất 720 ký tự).
+_MY_PLACE_RE = re.compile(r"([^_]{1,20}_[^_]{1,20})(?:_(.{1,900}))?")
 _WEATHER_DAYS = 7
 _WEATHER_TIMEOUT_SEC = 15
 # Trang công khai: chặn số lượt gọi Open-Meteo song song để người lạ spam
 # địa danh không chiếm hết kết nối/RAM của 1 worker (webhook Telegram/Zalo).
 _weather_slots = asyncio.Semaphore(3)
-# Địa điểm LẠ (không có trong danh sách hay xem) tốn 3-4 request Open-Meteo mỗi
-# lượt (geocoding + dự báo) và dùng chung hạn mức miễn phí với tool thời tiết
-# của chat: giới hạn tổng số lượt tra địa điểm lạ toàn site trong 10 phút.
-_NEW_PLACE_LIMIT, _NEW_PLACE_WINDOW_SEC = 30, 600
+# Địa điểm LẠ (không có trong danh sách hay xem, chưa có trong cache toạ độ) tốn 3-4
+# request Open-Meteo mỗi lượt (geocoding + dự báo) và dùng chung hạn mức miễn phí với
+# tool thời tiết của chat. Giới hạn theo từng IP (một người gõ liên tục không khoá được
+# người khác) cộng một trần chung toàn site trong 10 phút. Bảng IP có trần.
+_NEW_PLACE_PER_IP, _NEW_PLACE_LIMIT, _NEW_PLACE_WINDOW_SEC = 10, 60, 600
+_NEW_PLACE_MAX_IPS = 512
 _new_place_times: collections.deque[float] = collections.deque()
+_new_place_by_ip: collections.OrderedDict[str, collections.deque[float]] = collections.OrderedDict()
 _MAX_JSON_BYTES = 4096
 # Xổ số: mỗi đài/miền 1 bản cache 5 phút (vn_market_data), thêm trần lượt tải song song
 # để người lạ đổi đài liên tục không chiếm hết kết nối của worker.
@@ -167,10 +231,11 @@ _price_slots = asyncio.Semaphore(3)
 _PRICE_TIMEOUT_SEC = 15
 
 
-# (đã đăng nhập, đường dẫn đang xem) của request hiện tại - để header hiện nút
-# Quản trị/Đăng xuất hay Đăng nhập mà không phải truyền request qua mọi hàm.
-_viewer: contextvars.ContextVar[tuple[bool, str]] = contextvars.ContextVar(
-    "site_viewer", default=(False, "/")
+# (đã đăng nhập, đường dẫn đang xem, gốc URL công khai) của request hiện tại - để thanh
+# bên hiện nút Quản trị/Đăng xuất và trang có link canonical/og:url mà không phải truyền
+# request qua mọi hàm.
+_viewer: contextvars.ContextVar[tuple[bool, str, str]] = contextvars.ContextVar(
+    "site_viewer", default=(False, "/", "")
 )
 
 
@@ -178,16 +243,24 @@ def _current_path(request: Request) -> str:
     return request.url.path + (f"?{request.url.query}" if request.url.query else "")
 
 
-def _login_url(path: str) -> str:
-    return "/admin?" + urlencode({"next": web_admin.safe_next(path)})
+def _base_url(request: Request) -> str:
+    return config.SITE_BASE_URL or str(request.base_url).rstrip("/")
 
 
 async def _set_viewer(request: Request) -> bool:
     logged_in = await web_admin.is_logged_in(request)
     # POST (kết quả form) không mở lại được bằng link: đăng nhập xong về trang form.
     path = _current_path(request) if request.method == "GET" else request.url.path
-    _viewer.set((logged_in, path))
+    _viewer.set((logged_in, path, _base_url(request)))
     return logged_in
+
+
+def _canonical_path(path: str) -> str:
+    """Đường dẫn đang xem chỉ giữ tham số nội dung (_CANONICAL_PARAMS) - cho canonical/og:url."""
+    base, _, query = path.partition("?")
+    pairs = [(k, v) for k, v in parse_qsl(query) if k in _CANONICAL_PARAMS]
+    # %20 cho dấu cách (không "+"): trùng link nội bộ (bộ lọc urlencode) và sitemap
+    return base + (f"?{urlencode(pairs, quote_via=quote)}" if pairs else "")
 
 
 class _ViewerRoute(APIRoute):
@@ -208,6 +281,40 @@ api_router = APIRouter(prefix="/api/v1")
 static_router = APIRouter(include_in_schema=False)
 
 
+# Câu trả lời Hỏi lịch là chữ của lệnh /lich (dùng chung với chat). Trên web: bỏ emoji đầu
+# dòng, đổi dấu đánh dấu emoji/chấm giữa sang ký hiệu chữ, " - " thành dấu phẩy, dòng "• "
+# thành danh sách thật; đoạn cách nhau bằng dòng trống.
+_ANSWER_LEAD = re.compile(r"^(?:📅|🎉|✅|⚠️|ℹ️|❌)\s*")
+_ANSWER_MARKS = (("⭐", "★"), ("🌕", "●"), ("·hđ", "(hđ)"), (" - ", ", "))
+
+
+def _answer_html(text: str) -> Markup:
+    html = []
+    for chunk in re.split(r"\n\s*\n", str(text).strip()):
+        lines: list[str] = []
+        items: list[str] = []
+        for raw in chunk.splitlines():
+            line = _ANSWER_LEAD.sub("", raw.strip())
+            for old, new in _ANSWER_MARKS:
+                line = line.replace(old, new)
+            if line.startswith("• "):
+                if lines:
+                    html.append(f"<p>{'<br>'.join(lines)}</p>")
+                    lines = []
+                items.append(f"<li>{escape(line[2:])}</li>")
+                continue
+            if items:
+                html.append(f"<ul>{''.join(items)}</ul>")
+                items = []
+            if line:
+                lines.append(str(escape(line)))
+        if lines:
+            html.append(f"<p>{'<br>'.join(lines)}</p>")
+        if items:
+            html.append(f"<ul>{''.join(items)}</ul>")
+    return Markup("".join(html))
+
+
 @functools.lru_cache(maxsize=1)
 def _env() -> Environment:
     env = Environment(
@@ -222,22 +329,92 @@ def _env() -> Environment:
     env.filters["trieu"] = vn_market_data.trieu
     env.filters["fx_rate"] = lambda v: vn_market_data.vnd(v, 0 if v is None or v >= 1000 else 2)
     env.filters["usd"] = lambda v: vn_market_data.vnd(v, 1 if v is not None and v % 1 else 0)
+    # Ý nghĩa trong assets/*.yaml (dùng chung với chat) viết "nhãn - giải thích"; trên web
+    # gạch nối có cách thành dấu hai chấm (hoặc phẩy), không để gạch làm dấu câu.
+    env.filters["clause"] = lambda text, sep=": ": str(text).replace(" - ", sep)
+    env.filters["answer_html"] = _answer_html
     return env
 
 
 @functools.lru_cache(maxsize=1)
-def _assets() -> tuple[Markup, str]:
-    """(CSS nhúng thẳng vào HTML, phiên bản ảnh). CSS inline để trang không kéo
-    thêm request song song: uvicorn chạy --limit-concurrency (đếm cả kết nối
-    keep-alive rảnh), nhiều request phụ từng làm webhook Telegram/Zalo nhận 503.
-    Logo/favicon vẫn là file riêng nhưng cache 1 năm theo phiên bản nội dung."""
-    css = Markup((_STATIC / "site.css").read_text(encoding="utf-8"))
-    digest = hashlib.sha256(b"".join((_STATIC / n).read_bytes() for n in sorted(_STATIC_FILES)))
-    return css, digest.hexdigest()[:10]
+def _assets() -> tuple[str, str]:
+    """(phiên bản CSS, phiên bản ảnh) = hash nội dung, gắn vào URL dạng ?v=<hash>.
+    CSS là file riêng cache 1 năm (immutable): chỉ lượt xem đầu tiên tải thêm 1
+    request, các trang sau trình duyệt dùng bản đã lưu, không hỏi lại server - nên
+    không đè lên --limit-concurrency của uvicorn (webhook Telegram/Zalo dùng chung)."""
+
+    def digest(names: list[str]) -> str:
+        data = b"".join((_STATIC / n).read_bytes() for n in names)
+        return hashlib.sha256(data).hexdigest()[:10]
+
+    return digest(["site.css"]), digest(sorted(n for n in _STATIC_FILES if n != "site.css"))
 
 
-def _render(name: str, *, title: str, description: str, active: str, **ctx) -> HTMLResponse:
-    css, version = _assets()
+_NAV_LABELS = {href: label for _, items in _NAV for href, label, _ in items}
+
+
+def _structured_data(
+    title: str, description: str, active: str, url: str, base: str, modified: str
+) -> Markup:
+    """JSON-LD cho máy tìm kiếm: trang chủ khai WebSite + tổ chức kèm logo; trang khác
+    khai WebPage (kèm dateModified nếu biết giờ cập nhật số liệu) + đường dẫn mục."""
+    website = {"@type": "WebSite", "@id": f"{base}/#website", "url": f"{base}/", "name": "LCTA"}
+    if active == "/":
+        org = {
+            "@type": "Organization",
+            "name": "LCTA",
+            "url": f"{base}/",
+            "logo": f"{base}/static/icon.png",
+        }
+        graph = [{**website, "inLanguage": "vi", "description": description}, org]
+    else:
+        page = {
+            "@type": "WebPage",
+            "url": url,
+            "name": title,
+            "description": description,
+            "inLanguage": "vi",
+            "isPartOf": website,
+        }
+        if modified:
+            page["dateModified"] = modified
+        graph = [page]
+        if active in _NAV_LABELS:
+            crumbs = [("Hôm nay", "/"), (_NAV_LABELS[active], active)]
+            graph.append(
+                {
+                    "@type": "BreadcrumbList",
+                    "itemListElement": [
+                        {"@type": "ListItem", "position": i, "name": n, "item": f"{base}{href}"}
+                        for i, (n, href) in enumerate(crumbs, 1)
+                    ],
+                }
+            )
+    text = json.dumps({"@context": "https://schema.org", "@graph": graph}, ensure_ascii=False)
+    return Markup(text.replace("<", "\\u003c"))  # chữ từ nguồn ngoài không đóng được <script>
+
+
+def _vn_stamp(text: str | None) -> str:
+    """Giờ cập nhật dạng 07:30 27/10/2026 (giờ VN của nguồn giá) -> ISO 8601 cho
+    dateModified; sai dạng thì chuỗi rỗng."""
+    try:
+        stamp = dt.datetime.strptime(str(text or "").strip(), "%H:%M %d/%m/%Y")
+    except ValueError:
+        return ""
+    return stamp.replace(tzinfo=_VN_TZ).isoformat()
+
+
+def _render(
+    name: str, *, title: str, description: str, active: str, modified: str = "", **ctx
+) -> HTMLResponse:
+    css_version, version = _assets()
+    logged_in, path, base = _viewer.get()
+    page_url = f"{base}{_canonical_path(path)}" if base else ""
+    ld_json = (
+        _structured_data(title, description, active, page_url, base, modified)
+        if base and not ctx.get("noindex")
+        else ""
+    )
     html = (
         _env()
         .get_template(name)
@@ -246,10 +423,13 @@ def _render(name: str, *, title: str, description: str, active: str, **ctx) -> H
             description=description,
             active=active,
             nav=_NAV,
-            inline_css=css,
+            css_v=css_version,
             v=version,
-            logged_in=_viewer.get()[0],
-            login_url=_login_url(_viewer.get()[1]),
+            logged_in=logged_in,
+            # Link tuyệt đối cho canonical/og: (chưa biết gốc URL thì bỏ các thẻ này).
+            page_url=page_url,
+            site_url=base,
+            ld_json=ld_json,
             **ctx,
         )
     )
@@ -262,8 +442,17 @@ def _render_lich(name: str, *, tab: str, title: str, description: str, **ctx) ->
     return _render(name, title=title, description=description, active=tab, **ctx)
 
 
-def wants_html(request: Request) -> bool:
+def is_browser(request: Request) -> bool:
     return "text/html" in request.headers.get("accept", "")
+
+
+def wants_html(request: Request) -> bool:
+    """GET /: trang chủ HTML cho mọi client trừ health check và client chỉ xin JSON."""
+    if is_browser(request):
+        return True
+    if "application/json" in request.headers.get("accept", ""):
+        return False
+    return not _HEALTH_AGENTS.search(request.headers.get("user-agent", ""))
 
 
 # ─── Trang ───────────────────────────────────────────────────────────────────
@@ -324,10 +513,13 @@ def home_page() -> HTMLResponse:
         info["luckyHours"] if hours_day == today else site_data.day_info(hours_day)["luckyHours"]
     )
     hours = _hour_strip(lucky, now.hour)
+    ld = info["lunar"]
     page = _render(
         "home.html",
-        title="Lịch âm, tử vi, thần số học",
-        description="Tra lịch âm dương, ngày tốt xấu, lá số tử vi và thần số học - tính bằng thuật toán.",
+        title=f"Lịch âm hôm nay {today:%d/%m/%Y}: giờ hoàng đạo, ngày tốt xấu",
+        description=f"Hôm nay {today:%d/%m/%Y} dương lịch, tức ngày {ld['day']}/{ld['month']} âm lịch, "
+        f"ngày {'hoàng đạo' if info['isHoangDao'] else 'hắc đạo'}. Giờ hoàng đạo, ngày lễ sắp tới, "
+        "tra lịch âm, tử vi, thần số học, giá vàng, thời tiết.",
         active="/",
         today=info,
         today_date=today,
@@ -367,13 +559,18 @@ async def lich_page(request: Request) -> Response:
     error = ""
     selected_date = today
     month_year, month = today.year, today.month
-    raw_month = params.get("thang", "")
+    raw_month = params.get("thang", "").strip()[:20]
     if raw_month:
-        m = re.fullmatch(r"(\d{4})-(\d{1,2})", raw_month)
+        # Link của trang là 2026-10; người gõ tay hay viết 10/2026.
+        m = re.fullmatch(r"(\d{4})-(\d{1,2})|(\d{1,2})[/-](\d{4})", raw_month)
         if m:
-            month_year, month = int(m.group(1)), int(m.group(2))
+            month_year = int(m.group(1) or m.group(4))
+            month = int(m.group(2) or m.group(3))
         else:
-            error = "Tháng phải có dạng YYYY-MM."
+            error = (
+                f"Không đọc được tháng “{raw_month}”. Bấm Tháng trước/Tháng sau, "
+                "hoặc ghi tháng/năm như 10/2026."
+            )
     raw_day = params.get("ngay", "")
     try:
         if raw_day:
@@ -387,8 +584,9 @@ async def lich_page(request: Request) -> Response:
     return _render_lich(
         "lich.html",
         tab="/lich",
-        title="Lịch tháng",
-        description="Lịch tháng dương - âm, ngày hoàng đạo, ngày lễ.",
+        title=f"Lịch âm tháng {grid['month']}/{grid['year']}: ngày hoàng đạo, ngày lễ",
+        description=f"Lịch âm dương tháng {grid['month']}/{grid['year']}: ngày âm từng ngày, ngày "
+        "hoàng đạo, mùng 1, rằm, ngày lễ. Bấm một ngày để xem can chi, giờ tốt.",
         month=grid,
         weeks=_weeks(grid),
         selected=site_data.day_info(selected_date),
@@ -404,8 +602,10 @@ async def lich_ask_page(request: Request) -> HTMLResponse:
     return _render_lich(
         "lich_hoi.html",
         tab="/lich/hoi",
-        title="Hỏi lịch",
-        description="Hỏi tự do về lịch âm, ngày tốt, tuổi, sao hạn - trả lời bằng thuật toán.",
+        title=f"{q[:60]}: hỏi lịch" if q else "Hỏi lịch âm: ngày tốt, tuổi, sao hạn",
+        description="Hỏi tự do về lịch âm: ngày tốt cưới hỏi, khai trương, động thổ, rằm, Tết, "
+        "tuổi, sao hạn, đổi ngày; trả lời bằng thuật toán, không dùng AI.",
+        noindex=bool(q),
         q=q,
         answer=site_data.calendar_answer(q) if q else "",
         examples=_ASK_EXAMPLES,
@@ -420,7 +620,10 @@ async def lich_convert_page(request: Request) -> HTMLResponse:
     if am:
         m = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", am)
         if not m:
-            error = "Ngày âm phải có dạng ngày/tháng hoặc ngày/tháng/năm, ví dụ 15/8/2027."
+            error = (
+                f"“{am}” không phải ngày âm lịch. Nhập ngày/tháng hoặc ngày/tháng/năm, "
+                "ví dụ 15/8 hoặc 15/8/2027."
+            )
         else:
             day, _, msg = lunar.find_lunar_date(
                 int(m.group(1)),
@@ -433,11 +636,23 @@ async def lich_convert_page(request: Request) -> HTMLResponse:
                 error = msg
             else:
                 result = site_data.day_info(day)
+    title, description = (
+        "Đổi ngày âm sang dương lịch",
+        "Đổi ngày âm lịch sang dương lịch, có tháng nhuận: nhập 15/8 để biết Trung thu năm nay "
+        "là ngày nào, kèm can chi, giờ tốt.",
+    )
+    if result:
+        solar = dt.date.fromisoformat(result["date"])
+        title = f"{am} âm lịch là ngày {solar:%d/%m/%Y} dương lịch"
+        description = (
+            f"Ngày {am} âm lịch ({result['lunar']['text']}) là {result['weekday']}, "
+            f"{solar:%d/%m/%Y} dương lịch; kèm can chi, ngày hoàng đạo, giờ tốt."
+        )
     return _render_lich(
         "lich_doi.html",
         tab="/lich/doi-ngay",
-        title="Đổi ngày âm sang dương",
-        description="Đổi ngày âm lịch sang dương lịch, có tháng nhuận.",
+        title=title,
+        description=description,
         am=am,
         nhuan=nhuan,
         result=result,
@@ -450,26 +665,73 @@ async def lich_holidays_page() -> HTMLResponse:
     return _render_lich(
         "lich_le.html",
         tab="/lich/ngay-le",
-        title="Ngày lễ sắp tới",
-        description="Các ngày lễ âm lịch và dương lịch sắp tới.",
+        title="Ngày lễ sắp tới trong năm: âm lịch và dương lịch",
+        description="Các ngày lễ, Tết âm lịch và dương lịch trong 12 tháng tới, kèm thứ, ngày "
+        "dương lịch và số ngày còn lại.",
         holidays=_upcoming_holidays(site_data.today(), len(calendar_query.HOLIDAYS)),
     )
 
 
-async def _limited_weather(place: str) -> dict:
+async def _limited_weather(
+    place: str, coords: tuple[float, float] | None = None, name: str = ""
+) -> dict:
     async with _weather_slots:
+        if coords:
+            label = name or f"Vị trí của tôi ({coords[0]:.2f}; {coords[1]:.2f})".replace(".", ",")
+            return await weather.get_weather_at(*coords, label, days=_WEATHER_DAYS)
         return await weather.get_weather(place, days=_WEATHER_DAYS)
 
 
-def _new_place_allowed(now: float | None = None) -> bool:
-    """Lấy 1 lượt trong ngân sách tra địa điểm lạ; hết thì False (không gọi API)."""
+def _parse_my_place(raw: str) -> tuple[float, float, str] | None:
+    """Cookie vị trí đã lưu -> (lat, lon, tên nơi hoặc ""); hỏng -> None. Cookie sửa tay
+    được nên tên chỉ hiện lại cho chính người đó (vẫn escape), cắt độ dài, bỏ ký tự điều
+    khiển."""
+    m = _MY_PLACE_RE.fullmatch(raw or "")
+    coords = _parse_coords(m.group(1)) if m else None
+    if coords is None:
+        return None
+    name = unquote(m.group(2) or "")
+    name = "".join(ch for ch in name if ch.isprintable()).strip()[:_MY_PLACE_NAME_MAX]
+    return coords[0], coords[1], name
+
+
+def _parse_coords(raw: str) -> tuple[float, float] | None:
+    """Toạ độ "vĩ,kinh" hoặc "vĩ_kinh" -> (lat, lon) làm tròn 2 số lẻ; sai dạng hoặc
+    ngoài khoảng -> None."""
+    m = _COORDS_RE.fullmatch(raw or "")
+    if not m:
+        return None
+    lat, lon = float(m.group(1)), float(m.group(2))
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None
+    return round(lat, 2), round(lon, 2)
+
+
+def _expire(times: collections.deque[float], now: float) -> None:
+    while times and now - times[0] > _NEW_PLACE_WINDOW_SEC:
+        times.popleft()
+
+
+def _new_place_allowed(ip: str, now: float | None = None) -> str:
+    """Lấy 1 lượt tra địa điểm lạ cho ``ip``: "" = được tra, "ip" = IP này hết lượt,
+    "site" = cả site hết lượt (không gọi API)."""
     now = time.monotonic() if now is None else now
-    while _new_place_times and now - _new_place_times[0] > _NEW_PLACE_WINDOW_SEC:
-        _new_place_times.popleft()
-    if len(_new_place_times) >= _NEW_PLACE_LIMIT:
-        return False
-    _new_place_times.append(now)
-    return True
+    mine = _new_place_by_ip.pop(ip, None) or collections.deque()
+    _expire(mine, now)
+    _expire(_new_place_times, now)
+    if len(mine) >= _NEW_PLACE_PER_IP:
+        verdict = "ip"
+    elif len(_new_place_times) >= _NEW_PLACE_LIMIT:
+        verdict = "site"
+    else:
+        verdict = ""
+        mine.append(now)
+        _new_place_times.append(now)
+    if mine:
+        _new_place_by_ip[ip] = mine  # đưa về cuối: IP vừa dùng
+        while len(_new_place_by_ip) > _NEW_PLACE_MAX_IPS:
+            _new_place_by_ip.popitem(last=False)
+    return verdict
 
 
 @router.get("/thoi-tiet", response_class=HTMLResponse)
@@ -477,13 +739,32 @@ async def weather_page(request: Request) -> HTMLResponse:
     place = request.query_params.get("noi", "").strip()[:60]
     places = await weather_places.get()
     error, data = "", None
+    mine = _parse_my_place(request.cookies.get(_MY_PLACE_COOKIE, "")[:1000])
+    # Không nhập địa điểm mà đã lưu vị trí hiện tại: xem ở đó thay cho TP.HCM.
+    coords = mine[:2] if mine and not place else None
+    mine_name = mine[2] if mine else ""
     known = {weather_places.fold(p) for p in places}
-    if place and weather_places.fold(place) not in known and not _new_place_allowed():
-        error = "Đang tạm giới hạn tra địa điểm mới, chọn một địa điểm trong danh sách."
+    limited = ""
+    if coords:
+        # Toạ độ trong cookie do trình duyệt gửi (sửa tay được): chưa có trong cache thì
+        # tính vào cùng hạn mức tra địa điểm mới.
+        if not weather.forecast_cached(*coords, _WEATHER_DAYS):
+            limited = _new_place_allowed(web_admin.client_ip(request))
+    elif place and weather_places.fold(place) not in known and not weather.location_cached(place):
+        limited = _new_place_allowed(web_admin.client_ip(request))
+    if limited:
+        error = (
+            "Bạn vừa tra nhiều địa điểm mới, thử lại sau ít phút hoặc chọn một địa điểm "
+            "trong danh sách."
+            if limited == "ip"
+            else "Đang tạm giới hạn tra địa điểm mới, chọn một địa điểm trong danh sách."
+        )
     else:
         try:
             # Hạn chót tính cả lúc xếp hàng chờ slot, không chỉ lúc tra.
-            data = await asyncio.wait_for(_limited_weather(place), _WEATHER_TIMEOUT_SEC)
+            data = await asyncio.wait_for(
+                _limited_weather(place, coords, mine_name), _WEATHER_TIMEOUT_SEC
+            )
         except (weather.WeatherError, asyncio.TimeoutError):
             error = "Nguồn thời tiết đang chậm hoặc lỗi, thử lại sau ít phút."
     if data and data.get("error"):
@@ -500,18 +781,36 @@ async def weather_page(request: Request) -> HTMLResponse:
                 left = (float(day["min_c"]) - low) / span * 100
                 width = (float(day["max_c"]) - low) / span * 100 - left
                 day["bar"] = (round(left), max(round(width), 4))
-    return _render(
+    days = len(data["daily"]) if data and data.get("daily") else _WEATHER_DAYS
+    heading = "Thời tiết"
+    if coords:
+        heading = f"Thời tiết {mine_name}" if mine_name else "Thời tiết ở vị trí của bạn"
+    elif data:
+        heading = f"Thời tiết {data['location']}"
+    page = _render(
         "thoi_tiet.html",
-        title=f"Thời tiết {data['location']}" if data else "Thời tiết",
-        description="Thời tiết hiện tại và dự báo 7 ngày cho các tỉnh thành Việt Nam.",
+        title=f"{heading} hôm nay và {days} ngày tới",
+        description=f"{heading}: nhiệt độ, cảm giác, độ ẩm, gió, lượng mưa hiện tại và dự báo "
+        f"{days} ngày, cập nhật khoảng 10 phút một lần.",
         active="/thoi-tiet",
+        heading=heading,
         place=place,
         data=data,
+        days=days,
         error=error,
         places=places,
+        mine=mine,
+        mine_name=mine_name,
+        showing_mine=coords is not None,
         notice=_PLACE_NOTICES.get(request.query_params.get("tb", "")),
         fmt=lambda x: "?" if x is None else round(float(x)),
+        # lượng mưa có số lẻ: dấu phẩy thập phân kiểu Việt (0,2 mm), số chẵn bỏ ",0"
+        mm=lambda x: "?" if x is None else vn_market_data.vnd(float(x), 1).removesuffix(",0"),
     )
+    if mine:
+        # Trang theo cookie riêng của người xem: không cho bộ đệm dùng chung giữ lại.
+        page.headers["Cache-Control"] = "private, no-cache"
+    return page
 
 
 async def _lottery_data(selector: str, day: str, ticket: str) -> dict:
@@ -535,11 +834,13 @@ async def lottery_page(request: Request) -> HTMLResponse:
     raw_day = params.get("ngay", "").strip()[:20]
     raw_ticket = params.get("ve", "").strip()[:12]
     today = site_data.today()
-    error, data = "", None
+    error, error_field, data = "", "", None
     try:
         data = await _limited_lottery(selector, raw_day, raw_ticket)
     except lottery_lookup.LookupInputError as exc:
         error = exc.message
+        # Ô nhập sai được tô đỏ và ghi lỗi ngay bên dưới (trang vẫn hiện kỳ mới nhất).
+        error_field = {"INVALID_TICKET": "ve", "INVALID_DATE": "ngay"}.get(exc.code, "dai")
         if exc.code != "INVALID_PROVINCE":  # đài đúng mà ngày/vé sai: vẫn hiện kỳ mới nhất
             try:
                 data = await _limited_lottery(selector, "", "")
@@ -551,16 +852,24 @@ async def lottery_page(request: Request) -> HTMLResponse:
         )
     current = data["target"]["key"] if data else (selector or "mn")
     today_names = [(p.key, p.name) for p in lottery_provinces.drawing_on(today) if p.region != "mb"]
-    title = "Xổ số"
-    if data:
-        title = f"Xổ số {data['target']['name']}"
+    title = "Kết quả xổ số 3 miền và từng tỉnh"
+    description = "Kết quả xổ số 3 miền và từng tỉnh, dò vé bằng code. Nguồn xskt.com.vn."
+    if data and data.get("draw"):
+        name, day = data["target"]["name"], dt.date.fromisoformat(data["draw"]["date"])
+        short = _LOTTERY_SHORT.get(data["target"]["key"])
+        title = f"Kết quả xổ số {name} {day:%d/%m/%Y}" + (f" ({short})" if short else "")
+        description = (
+            f"Kết quả xổ số {name} kỳ {data['draw']['weekday']} {day:%d/%m/%Y}: giải đặc biệt "
+            "đến giải tám, dò vé bằng code. Nguồn xskt.com.vn."
+        )
     page = _render(
         "xo_so.html",
         title=title,
-        description="Kết quả xổ số 3 miền và từng tỉnh, dò vé bằng code - nguồn xskt.com.vn.",
+        description=description,
         active="/xo-so",
         data=data,
         error=error,
+        error_field=error_field,
         form={"dai": current, "ngay": raw_day, "ve": raw_ticket},
         groups=lottery_lookup.selector_groups(today),
         today_iso=today.isoformat(),
@@ -593,11 +902,23 @@ async def gold_page() -> HTMLResponse:
         data = await _limited_prices(price_lookup.gold)
     except vn_market_data.MarketDataError:
         error = "Nguồn giá vàng đang lỗi hoặc chậm, thử lại sau ít phút. Trang không tự đoán giá."
+    today = f"{site_data.today():%d/%m/%Y}"
+    description = (
+        "Giá vàng SJC, nhẫn, DOJI, PNJ, Bảo Tín, vàng thế giới quy đổi và tỷ giá "
+        "Vietcombank. Nguồn vang.today, SJC dự phòng."
+    )
+    if data and data.get("domestic"):
+        r = data["domestic"][0]
+        trieu = functools.partial(vn_market_data.trieu, fixed=True)
+        description = (
+            f"Giá vàng {r['name']} hôm nay {today}: mua {trieu(r['buy'])}, bán {trieu(r['sell'])} "
+            "triệu đồng/lượng. Bảng giá nhẫn SJC, DOJI, PNJ, Bảo Tín, vàng thế giới, tỷ giá."
+        )
     page = _render(
         "gia_vang.html",
-        title="Giá vàng hôm nay",
-        description="Giá vàng SJC, nhẫn, DOJI, PNJ, Bảo Tín, vàng thế giới quy đổi và tỷ giá "
-        "Vietcombank - nguồn vang.today, SJC dự phòng.",
+        title=f"Giá vàng hôm nay {today}: SJC, nhẫn 9999, DOJI, PNJ",
+        description=description,
+        modified=_vn_stamp(data and data.get("updated")),
         active="/gia-vang",
         data=data,
         error=error,
@@ -615,11 +936,22 @@ async def fuel_page() -> HTMLResponse:
         error = (
             "Nguồn giá xăng dầu đang lỗi hoặc chậm, thử lại sau ít phút. Trang không tự đoán giá."
         )
+    today = f"{site_data.today():%d/%m/%Y}"
+    description = (
+        "Giá xăng dầu Petrolimex (vùng 1, vùng 2) và PVOIL theo kỳ điều hành. "
+        "Nguồn giaxanghomnay.com."
+    )
+    if data and data.get("petrolimex"):
+        r, vnd = data["petrolimex"][0], vn_market_data.vnd
+        description = (
+            f"Giá {r['name']} hôm nay {today}: {vnd(r['zone1'])} đồng/lít vùng 1, "
+            f"{vnd(r['zone2'])} đồng/lít vùng 2. Bảng giá xăng dầu Petrolimex, PVOIL theo kỳ điều hành."
+        )
     page = _render(
         "gia_xang.html",
-        title="Giá xăng dầu hôm nay",
-        description="Giá xăng dầu Petrolimex (vùng 1, vùng 2) và PVOIL theo kỳ điều hành - "
-        "nguồn giaxanghomnay.com.",
+        title=f"Giá xăng dầu hôm nay {today}: Petrolimex, PVOIL",
+        description=description,
+        modified=_vn_stamp(data and data.get("updated")),
         active="/gia-xang",
         data=data,
         error=error,
@@ -629,20 +961,60 @@ async def fuel_page() -> HTMLResponse:
 
 
 async def _change_place(request: Request, action) -> Response:
-    form: dict[str, str] = {}
     if not _viewer.get()[0]:
-        code = "dang-nhap"  # chưa đăng nhập: không đọc form
-    else:
-        form = await _form(request)
-        try:
-            await action(form.get("ten", ""))
-            code = "da-them" if action is weather_places.add else "da-xoa"
-        except weather_places.PlacesError as exc:
-            code = exc.code
+        # Chưa đăng nhập (trang không có nút này, chỉ ai tự gửi form): bỏ qua, không đọc form.
+        return RedirectResponse("/thoi-tiet", status_code=303)
+    form = await _form(request)
+    try:
+        await action(form.get("ten", ""))
+        code = "da-them" if action is weather_places.add else "da-xoa"
+    except weather_places.PlacesError as exc:
+        code = exc.code
     query = {"tb": code}
     if form.get("noi"):
         query["noi"] = form["noi"]
     return RedirectResponse("/thoi-tiet?" + urlencode(query), status_code=303)
+
+
+@router.post("/thoi-tiet/vi-tri")
+async def weather_my_place_save(request: Request) -> Response:
+    """Lưu vị trí hiện tại (JS gửi lat/lon đã làm tròn) vào cookie của trình duyệt, kèm
+    tên nơi tra qua Nominatim. Toạ độ chưa tra tên lần nào tính vào hạn mức tra địa điểm
+    mới theo IP; hết lượt, lỗi hay chậm thì vẫn lưu, chỉ thiếu tên."""
+    form = await _form(request)
+    coords = _parse_coords(f"{form.get('lat', '')},{form.get('lon', '')}")
+    if coords is None:
+        return RedirectResponse("/thoi-tiet?tb=vi-tri-loi", status_code=303)
+    name = None
+    ip = web_admin.client_ip(request)
+    if weather.reverse_cached(*coords) or _new_place_allowed(ip) == "":
+        try:
+            name = await asyncio.wait_for(weather.reverse_geocode(*coords), _REVERSE_TIMEOUT_SEC)
+        except asyncio.TimeoutError:
+            name = None
+    value = f"{coords[0]:.2f}_{coords[1]:.2f}"
+    if name:
+        value += "_" + quote(name[:_MY_PLACE_NAME_MAX], safe="")
+    response = RedirectResponse("/thoi-tiet?tb=da-luu-vi-tri", status_code=303)
+    response.set_cookie(
+        _MY_PLACE_COOKIE,
+        value,
+        max_age=_MY_PLACE_MAX_AGE,
+        path=_MY_PLACE_PATH,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+    )
+    return response
+
+
+@router.post("/thoi-tiet/vi-tri/xoa")
+async def weather_my_place_remove() -> Response:
+    response = RedirectResponse("/thoi-tiet?tb=da-xoa-vi-tri", status_code=303)
+    response.delete_cookie(
+        _MY_PLACE_COOKIE, path=_MY_PLACE_PATH, httponly=True, secure=True, samesite="lax"
+    )
+    return response
 
 
 @router.post("/thoi-tiet/dia-diem/them")
@@ -663,8 +1035,9 @@ async def _form(request: Request) -> dict[str, str]:
 def _tuvi_form(form: dict, error: str = "") -> HTMLResponse:
     return _render(
         "tuvi.html",
-        title="Lá số tử vi",
-        description="An lá số Tử Vi Đẩu Số: 12 cung, chính tinh, phụ tinh, đại hạn.",
+        title="Lá số tử vi: an sao 12 cung theo ngày giờ sinh",
+        description="Lập lá số Tử Vi Đẩu Số theo ngày, giờ sinh dương lịch hoặc âm lịch: 12 cung, "
+        "chính tinh kèm độ sáng, phụ tinh, Tứ hóa, Tuần Triệt, đại hạn.",
         active="/tu-vi",
         # Theo giờ đồng hồ từ 23h: Tý đầu (23h-24h) đứng trước Tý (0h-1h).
         hours=[site_data.HOUR_OPTIONS[site_data.EARLY_TY], *site_data.HOUR_OPTIONS[:12]],
@@ -732,6 +1105,7 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
         "tuvi_result.html",
         title="Lá số tử vi",
         description="Lá số Tử Vi Đẩu Số.",
+        noindex=True,  # kết quả theo ngày sinh của từng người
         active="/tu-vi",
         chart=tuvi.chart_data(c),
         ai_text=ai_text,
@@ -744,8 +1118,9 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
 def _tsh_form(form: dict, error: str = "") -> HTMLResponse:
     return _render(
         "tsh.html",
-        title="Thần số học",
-        description="Con số chủ đạo, biểu đồ ngày sinh, năm cá nhân theo thần số học Pythagoras.",
+        title="Thần số học: tính con số chủ đạo theo ngày sinh",
+        description="Tính thần số học Pythagoras theo ngày sinh và họ tên: con số chủ đạo, biểu "
+        "đồ ngày sinh, mũi tên, 4 đỉnh cao, năm và tháng cá nhân.",
         active="/than-so-hoc",
         form=form,
         error=error,
@@ -781,6 +1156,7 @@ async def tsh_submit(request: Request) -> HTMLResponse:
         "tsh_result.html",
         title="Thần số học",
         description="Kết quả thần số học.",
+        noindex=True,
         active="/than-so-hoc",
         reading=reading,
         rows=rows,
@@ -804,7 +1180,8 @@ def _kymon_page(form: dict, *, ai_text: str = "", error: str = "") -> HTMLRespon
     data = kymon.chart_data(chart)
     page = _render(
         "kymon.html",
-        title="Kỳ Môn Độn Giáp",
+        title="Kỳ Môn Độn Giáp: lập bàn 9 cung theo giờ",
+        noindex=not is_now,  # bàn của một giờ tự chọn: vô số URL, chỉ trang gốc vào chỉ mục
         description="Lập bàn Kỳ Môn Độn Giáp theo giờ (chuyển bàn, chiết bổ): cửu tinh, bát môn, "
         "bát thần, cách cục - tính bằng thuật toán.",
         active="/ky-mon",
@@ -866,6 +1243,79 @@ async def static_file(name: str) -> Response:
 @static_router.get("/favicon.ico", include_in_schema=False)
 async def favicon() -> Response:
     return await static_file("favicon.png")
+
+
+@static_router.get("/robots.txt", include_in_schema=False)
+async def robots(request: Request) -> Response:
+    """Cho máy tìm kiếm đọc trang công khai; chặn trang quản trị, API và webhook."""
+    lines = [
+        "User-agent: *",
+        "Allow: /",
+        "Disallow: /admin",
+        "Disallow: /api/",
+        "Disallow: /internal/",
+        "Disallow: /webhook",
+        f"Sitemap: {_base_url(request)}/sitemap.xml",
+    ]
+    return PlainTextResponse(
+        "\n".join(lines) + "\n", headers={"Cache-Control": "public, max-age=86400"}
+    )
+
+
+@static_router.get("/sitemap.xml", include_in_schema=False)
+async def sitemap(request: Request) -> Response:
+    """Trang công khai + trang tra cứu hay tìm (từng đài xổ số, thời tiết các nơi có sẵn,
+    lịch 12 tháng tới). lastmod chỉ ghi khi biết chắc: trang đổi số liệu mỗi ngày ghi hôm
+    nay, đài xổ số ghi ngày quay gần nhất; trang công cụ tĩnh bỏ trống."""
+    base, today = _base_url(request), site_data.today()
+    entries: list[tuple[str, dt.date | None]] = [
+        (path, today if path in _DAILY_PATHS else None) for path in _SITEMAP_PATHS
+    ]
+    entries += [(f"/xo-so?dai={key}", today) for key in _LOTTERY_SHORT if key != "mb"]
+    entries += [
+        (f"/xo-so?dai={p.key}", lottery_provinces.last_draw_day(p, today))
+        for p in lottery_provinces.PROVINCES
+    ]
+    entries += [
+        (f"/thoi-tiet?{urlencode({'noi': place}, quote_via=quote)}", today)
+        for place in weather_places.DEFAULT_PLACES[1:]  # chỗ đầu (TP.HCM) chính là /thoi-tiet
+    ]
+    first = today.replace(day=1)
+    for i in range(1, 12):
+        month = (first.month - 1 + i) % 12 + 1
+        entries.append(
+            (f"/lich?thang={first.year + (first.month - 1 + i) // 12}-{month:02d}", None)
+        )
+    urls = "".join(
+        f"<url><loc>{escape(base + path)}</loc>"
+        + (f"<lastmod>{day.isoformat()}</lastmod>" if day else "")
+        + "</url>"
+        for path, day in entries
+    )
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>'
+    )
+    return Response(
+        body,
+        media_type="application/xml",
+        # lastmod theo ngày: bộ đệm 1 giờ để sang ngày mới không giữ bản cũ quá lâu
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+async def not_found(request: Request) -> HTMLResponse:
+    """Trang 404 cho trình duyệt (web.py gọi khi đường dẫn không tồn tại)."""
+    await _set_viewer(request)
+    page = _render(
+        "404.html",
+        title="Không tìm thấy trang",
+        description="Trang bạn tìm không có hoặc đã đổi địa chỉ.",
+        active="",
+        noindex=True,
+    )
+    page.status_code = 404
+    return page
 
 
 # ─── JSON API ───────────────────────────────────────────────────────────────

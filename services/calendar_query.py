@@ -4,17 +4,22 @@ Thứ tự thử (chữ đã bỏ dấu, xem ``answer``):
 1. Sao hạn / Tam tai / Kim lâu / Hoang ốc theo năm sinh.
 2. Tuổi hợp/xung (hai năm sinh, hoặc "tuổi Ngọ hợp tuổi nào").
 3. Tuổi, mệnh, con giáp của 1 năm/ngày sinh; "năm 2027 là năm con gì".
-4. Ngày tốt xấu: hoàng đạo/hắc đạo, Tam nương, Nguyệt kỵ (1 ngày hoặc cả tháng).
+4. Xem ngày theo việc (cưới hỏi, khai trương, động thổ...): hoàng đạo + Thập nhị trực.
+   Ngày tốt xấu chung: hoàng đạo/hắc đạo, Tam nương, Nguyệt kỵ (1 ngày, cuối tuần, cả
+   tháng - tháng này thì chỉ từ hôm nay).
 5. Đếm ngày: "còn mấy ngày tới 30/4", "từ 1/1 đến 20/11 bao nhiêu ngày".
 6. Ngày lễ theo tên ("trung thu", "vu lan năm sau") và danh sách lễ sắp tới.
 7. Bảng lịch tháng (dương, hoặc tháng âm khi có chữ "âm").
 8. Rằm / mùng 1 sắp tới; thứ trong tuần ("thứ 7 tuần sau", "cuối tuần").
 9. Câu âm lịch chung (services/lunar_chat.py) và 1 ngày dương bất kỳ.
-Không hiểu -> trả gợi ý cách hỏi (vẫn không gọi AI).
+Ngày dương không có thật ("29/2/2027", "32/12") được báo đúng lỗi. Không hiểu ->
+``understand`` trả None; ``answer`` (lệnh chat) trả gợi ý cách hỏi (vẫn không gọi AI),
+web dùng câu gợi ý riêng (services/site_data.py).
 """
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 import re
 from zoneinfo import ZoneInfo
@@ -33,6 +38,7 @@ HELP = """📅 /lich <câu hỏi> - tra lịch, không tốn lượt AI. Ví d�
 • /lich trung thu, /lich vu lan năm sau, /lich các ngày lễ
 • /lich còn mấy ngày tới 30/4, /lich từ 1/1 đến 20/11
 • /lich ngày tốt tháng này, /lich hôm nay hoàng đạo không
+• /lich xem ngày cưới tháng 12, /lich ngày khai trương, /lich xem ngày động thổ
 • /lich tuổi 15/3/1990, /lich 1990 mệnh gì, /lich tuổi Ngọ hợp tuổi nào
 • /lich 1990 và 1995 có hợp không
 • /lich sao hạn 1990 nam năm 2027, /lich 1995 kim lâu năm 2027"""
@@ -76,14 +82,81 @@ HOLIDAYS = [
     ("Tết Nguyên đán", True, 1, 1, ("tet nguyen dan", "tet am", "tet")),
 ]
 
+# Gợi ý cách hỏi cho trang web /lich/hoi (không có cú pháp lệnh, không xưng "em").
+WEB_HELP = """Có thể hỏi theo các cách sau:
+• Một ngày: 20/11, mai, thứ 7 tuần sau, cuối tuần này
+• Âm lịch: rằm tháng 8, âm 15/6n/2025 (n = tháng nhuận), rằm tới
+• Lịch tháng: tháng này, tháng 12/2026, tháng 8 âm
+• Ngày lễ: trung thu, vu lan năm sau, Tết 2028, các ngày lễ
+• Đếm ngày: còn mấy ngày tới 30/4, từ 1/1 đến 20/11
+• Ngày tốt: ngày tốt tháng này, xem ngày cưới tháng 12, ngày khai trương, xem ngày động thổ
+• Tuổi: tuổi 15/3/1990, 1990 mệnh gì, tuổi Ngọ hợp tuổi nào, 1990 và 1995 có hợp không
+• Sao hạn: sao hạn 1990 nam năm 2027, 1995 kim lâu năm 2027"""
+
+# Xem ngày theo việc: ngày hoàng đạo, không phạm Tam nương/Nguyệt kỵ, và trực (Thập nhị
+# trực, can_chi.day_truc) hợp việc theo bảng phổ biến của lịch vạn sự.
+# (tên việc, các trực hợp, cách gọi có dấu, cách gọi bỏ dấu) - xem _keyword.
+_PURPOSES = [
+    (
+        "cưới hỏi",
+        ("Định", "Thành", "Khai"),
+        r"cưới|ăn hỏi|đám hỏi|kết hôn|rước dâu|lấy (?:vợ|chồng)|dạm ngõ",
+        # "cuoi" trần trùng "cuối" (cuối tuần, cuối tháng) nên chỉ nhận khi đi sau ngày/để/xem.
+        r"cuoi (?:hoi|vo|chong)|an hoi|dam hoi|dam cuoi|ket hon|ruoc dau|lay (?:vo|chong)|"
+        r"dam ngo|(?:de|cho) cuoi|(?:ngay|xem) cuoi(?! (?:tuan|thang|nam|cung|ky))",
+    ),
+    (
+        "khai trương",
+        ("Mãn", "Thành", "Khai"),
+        r"khai trương|mở (?:cửa hàng|hàng|quán|tiệm|shop|công ty)",
+        r"khai truong|mo (?:cua hang|hang|quan|tiem|shop|cong ty)",
+    ),
+    (
+        "động thổ, xây sửa nhà",
+        ("Bình", "Định", "Chấp", "Thành"),
+        r"động thổ|xây (?:nhà|dựng)|làm nhà|sửa nhà|cất nhà|đổ móng|đổ mái",
+        r"dong tho|xay (?:nha|dung)|lam nha|sua nha|cat nha|do mong|do mai",
+    ),
+    (
+        "nhập trạch, về nhà mới",
+        ("Định", "Thành", "Khai"),
+        r"nhập trạch|về nhà mới|chuyển nhà|dọn nhà|dọn về nhà",
+        r"nhap trach|ve nha moi|chuyen nha|don nha|don ve nha",
+    ),
+    (
+        "xuất hành, đi xa",
+        ("Kiến", "Mãn", "Thành", "Khai"),
+        r"xuất hành|đi xa|khởi hành|lên đường",
+        r"xuat hanh|di xa|khoi hanh|len duong",
+    ),
+    (
+        "ký kết, giao dịch",
+        ("Mãn", "Định", "Chấp", "Thành"),
+        r"ký (?:hợp đồng|kết)|giao dịch|mua (?:nhà|đất|xe)",
+        r"ky (?:hop dong|ket)|giao dich|mua (?:nha|dat|xe)",
+    ),
+]
+# Ngày tốt chung (không nói việc): nhắc cách lọc theo việc để khỏi hiểu nhầm.
+_PURPOSE_HINT = (
+    "Đây là ngày tốt chung, chưa lọc theo việc. Muốn lọc theo việc, hỏi ví dụ: "
+    "ngày cưới tháng này, xem ngày khai trương, xem ngày động thổ."
+)
+
 _YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2}|2100)\b")
+# Năm đứng riêng sau tên lễ ("Tết 2028"), không phải phần năm của 1 ngày "25/12/2026".
+_BARE_YEAR_RE = re.compile(r"(?<![\d/-])(\d{4})\b")
+# Mọi cụm dạng ngày/tháng(/năm) để báo ngày không có thật; bỏ qua khung giờ "13-15h".
+_ANY_DATE_RE = re.compile(
+    r"(?<![\d/:-])(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}))?(?![\d/-]|\s*(?:h|g|gio)\b)"
+)
+_WEEKEND_RE = re.compile(r"\bcuoi tuan\b|\bthu (?:bay|7)(?: va)? (?:chu nhat|cn)\b")
 _FULL_DATE_RE = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b")
 _SOLAR_DATE_RE = re.compile(
     r"\b(?:ngay )?(?P<d>\d{1,2})(?:[/-]|\s+thang\s+)(?P<m>\d{1,2})"
     r"(?:(?:[/-]|\s+nam\s+)(?P<y>\d{4}))?\b(?!\s*(?:am|al|n\b|nhuan))"
 )
 _LUNAR_PREFIX_RE = re.compile(
-    r"^(?:am lich|am|al)\s+(?P<d>\d{1,2})[/-](?P<m>\d{1,2})(?P<leap>n)?(?:[/-](?P<y>\d{4}))?"
+    r"^(?:ngay )?(?:am lich|am|al)\s+(?P<d>\d{1,2})[/-](?P<m>\d{1,2})(?P<leap>n)?(?:[/-](?P<y>\d{4}))?"
     r"(?P<leap2>\s*(?:n|nhuan))?$"
 )
 _MONTH_RE = re.compile(
@@ -181,6 +254,29 @@ def _year_modifier(t: str, today: dt.date) -> int | None:
     return today.year + {"nay": 0, "sau": 1, "toi": 1, "truoc": -1, "ngoai": -1}[raw]
 
 
+def _holiday_year(t: str, today: dt.date) -> int | None:
+    """Năm của lễ: "năm 2027/nay/sau" hoặc năm đứng riêng ("Tết 2028", "trung thu 2027")."""
+    year = _year_modifier(t, today)
+    if year is None:
+        m = _BARE_YEAR_RE.search(t)
+        year = int(m.group(1)) if m else None
+    return year
+
+
+def _weekend_days(t: str, today: dt.date) -> list[tuple[dt.date, str]] | None:
+    """Thứ Bảy + Chủ Nhật của "cuối tuần (này/sau)", "thứ 7 chủ nhật"; bỏ ngày đã qua
+    (Chủ Nhật hỏi "cuối tuần này" thì còn mỗi hôm nay)."""
+    if not _WEEKEND_RE.search(t):
+        return None
+    saturday = today + dt.timedelta(days=(5 - today.weekday()) % 7)
+    if today.weekday() == 6:
+        saturday = today - dt.timedelta(days=1)
+    if re.search(r"\btuan (?:sau|toi)\b", t):
+        saturday += dt.timedelta(days=7)
+    days = [(saturday, "Thứ Bảy"), (saturday + dt.timedelta(days=1), "Chủ Nhật")]
+    return [(day, label) for day, label in days if day >= today]
+
+
 def _relative_day(t: str, today: dt.date) -> tuple[dt.date, str] | None:
     """hôm nay/mai/hôm qua/ngày kia/thứ X tuần này|sau|trước/chủ nhật."""
     for word, offset, label in (
@@ -206,6 +302,16 @@ def _relative_day(t: str, today: dt.date) -> tuple[dt.date, str] | None:
     if re.fullmatch(r"(?:hom )?mai", t):
         return today + dt.timedelta(days=1), "Ngày mai"
     return None
+
+
+def _asked_day(t: str, today: dt.date) -> tuple[dt.date, str] | None:
+    """Như _relative_day, nhận thêm "mai" đầu câu ("mai xuất hành được không") hoặc sau
+    "tốt/xấu/hoàng đạo" ("ngày tốt mai") - chỉ cho câu hỏi ngày tốt, không đổi bộ đọc
+    giờ nhắc việc dùng chung _relative_day."""
+    rel = _relative_day(t, today)
+    if rel is None and re.search(r"^(?:hom )?mai\b|\b(?:tot|xau|dao) mai\b", t):
+        rel = today + dt.timedelta(days=1), "Ngày mai"
+    return rel
 
 
 def relative_day(text: str, today: dt.date) -> dt.date | None:
@@ -359,41 +465,187 @@ def month_days(year: int, month: int) -> list[dt.date]:
     return [first + dt.timedelta(days=i) for i in range((nxt - first).days)]
 
 
+def _is_good_day(day: dt.date, trucs: tuple[str, ...] | None = None) -> bool:
+    """Hoàng đạo, không Tam nương/Nguyệt kỵ, và (khi xem theo việc) trực hợp việc."""
+    ld = lunar.solar_to_lunar(day.day, day.month, day.year)[0]
+    return (
+        can_chi.day_god(day)[1]
+        and ld not in can_chi.TAM_NUONG | can_chi.NGUYET_KY
+        and (trucs is None or can_chi.day_truc(day) in trucs)
+    )
+
+
+def _good_day_line(day: dt.date) -> str:
+    ld = lunar.solar_to_lunar(day.day, day.month, day.year)[0]
+    god = can_chi.day_god(day)[0]
+    return (
+        f"• {lunar.WEEKDAYS[day.weekday()]} {day:%d/%m} (âm {ld}) - {god}, "
+        f"trực {can_chi.day_truc(day)}"
+    )
+
+
+def _day_head(day: dt.date, label: str) -> str:
+    """ "Thứ Bảy 31/10/2026" hoặc "Ngày mai (Thứ Tư 28/10/2026)" - không lặp tên thứ."""
+    when = f"{lunar.WEEKDAYS[day.weekday()]} {day:%d/%m/%Y}"
+    return when if label == lunar.WEEKDAYS[day.weekday()] else f"{label} ({when})"
+
+
+def _day_range(t: str, today: dt.date) -> tuple[list[dt.date], str, bool] | None:
+    """(các ngày còn xét, nhãn, là phần còn lại của tháng này?) cho câu có tháng; tháng
+    này thì chỉ từ hôm nay. None = câu không nói tháng, hoặc tháng ngoài 1900-2100."""
+    month = _MONTH_RE.search(t)
+    if not month:
+        return None
+    year, mon = _resolve_month(month, today)
+    if year is None:
+        return None
+    days = month_days(year, mon)
+    if days[0] <= today <= days[-1]:
+        label = f"từ hôm nay ({today:%d/%m}) đến hết tháng {mon}/{year}"
+        return [d for d in days if d >= today], label, True
+    return days, f"tháng {mon}/{year}" + (" (đã qua)" if days[-1] < today else ""), False
+
+
+def _good_lines(days: list[dt.date], rest_of_month: bool, trucs=None) -> list[str]:
+    """Dòng các ngày tốt; tháng này đã hết ngày tốt thì gợi ý luôn tháng sau."""
+    good = [_good_day_line(day) for day in days if _is_good_day(day, trucs)]
+    if good or not rest_of_month:
+        return good or ["(Không có ngày nào hợp.)"]
+    nxt = days[-1] + dt.timedelta(days=1)
+    lines = [f"Tháng này không còn ngày hợp. Sang tháng {nxt.month}/{nxt.year}:"]
+    good = [_good_day_line(d) for d in month_days(nxt.year, nxt.month) if _is_good_day(d, trucs)]
+    return lines + (good or ["(Không có ngày nào hợp.)"])
+
+
 def _good_days_answer(t: str, today: dt.date) -> str | None:
     if not re.search(r"\b(ngay tot|ngay xau|tot xau|hoang dao|hac dao|tam nuong|nguyet ky)\b", t):
         return None
     if re.search(r"\bgio hoang dao\b", t) and not re.search(r"\bngay (tot|hoang dao)\b", t):
         return None  # giờ hoàng đạo -> thông tin ngày (lunar_chat / describe_full)
-    month = _MONTH_RE.search(t)
-    if month:
-        year, mon = _resolve_month(month, today)
-        if year is None:
-            return None
-        days = month_days(year, mon)
-        good = []
-        for day in days:
-            god, ok = can_chi.day_god(day)
-            ld = lunar.solar_to_lunar(day.day, day.month, day.year)[0]
-            if ok and ld not in can_chi.TAM_NUONG and ld not in can_chi.NGUYET_KY:
-                good.append(f"• {lunar.WEEKDAYS[day.weekday()]} {day:%d/%m} (âm {ld}) - {god}")
+    span = _day_range(t, today)
+    if span:
+        days, label, rest_of_month = span
         bad = [
             f"{day:%d/%m}"
             for day in days
             if lunar.solar_to_lunar(day.day, day.month, day.year)[0]
             in can_chi.TAM_NUONG | can_chi.NGUYET_KY
         ]
-        return (
-            f"📅 Ngày hoàng đạo tháng {mon}/{year} (đã bỏ Tam nương, Nguyệt kỵ):\n"
-            + "\n".join(good)
-            + f"\nNgày Tam nương/Nguyệt kỵ nên tránh: {', '.join(bad)}."
-            + "\n(Tính theo tháng âm lịch; chọn việc lớn nên xem thêm tuổi.)"
-        )
-    rel = _relative_day(t, today)
-    dates = _solar_dates(t, today)
-    day, label = (
-        rel if rel else ((dates[0], f"{dates[0]:%d/%m/%Y}") if dates else (today, "Hôm nay"))
+        lines = [f"📅 Ngày hoàng đạo {label} (đã bỏ Tam nương, Nguyệt kỵ):"]
+        lines += _good_lines(days, rest_of_month)
+        if bad:
+            lines.append(f"Ngày Tam nương/Nguyệt kỵ nên tránh: {', '.join(bad)}.")
+        lines.append(_PURPOSE_HINT)
+        return "\n".join(lines)
+    weekend = _weekend_days(t, today)
+    if weekend:
+        picked = weekend
+    else:
+        rel = _asked_day(t, today)
+        dates = _solar_dates(t, today)
+        picked = [
+            rel
+            if rel
+            else ((dates[0], lunar.WEEKDAYS[dates[0].weekday()]) if dates else (today, "Hôm nay"))
+        ]
+    return "\n".join(
+        f"{_day_head(day, label)}: {can_chi.day_quality(day)}." for day, label in picked
     )
-    return f"{label} ({lunar.WEEKDAYS[day.weekday()]} {day:%d/%m/%Y}): {can_chi.day_quality(day)}."
+
+
+def _find_purpose(text: str, t: str):
+    for purpose in _PURPOSES:
+        if _keyword(text, t, rf"\b(?:{purpose[2]})\b", rf"\b(?:{purpose[3]})\b"):
+            return purpose
+    return None
+
+
+def _purpose_verdict(day: dt.date, label: str, name: str, trucs: tuple[str, ...]) -> str:
+    """Một ngày có hợp việc không, kèm lý do."""
+    god, good = can_chi.day_god(day)
+    ld, lm = lunar.solar_to_lunar(day.day, day.month, day.year)[:2]
+    truc = can_chi.day_truc(day)
+    reasons = []
+    if not good:
+        reasons.append(f"ngày hắc đạo ({god})")
+    if ld in can_chi.TAM_NUONG:
+        reasons.append("phạm Tam nương")
+    if ld in can_chi.NGUYET_KY:
+        reasons.append("phạm Nguyệt kỵ")
+    if truc not in trucs:
+        reasons.append(f"trực {truc} không hợp {name}")
+    head = f"{_day_head(day, label)}, âm {ld}/{lm}"
+    if not reasons:
+        return f"✅ {head}: hợp {name} - ngày hoàng đạo ({god}), trực {truc}."
+    return f"⚠️ {head}: chưa hợp {name} - {', '.join(reasons)}."
+
+
+def _purpose_answer(text: str, t: str, today: dt.date) -> str | None:
+    """Xem ngày theo việc: "xem ngày cưới tháng 12", "ngày khai trương", "20/12 động
+    thổ được không". Không áp cho câu đếm ngày ("còn mấy ngày tới đám cưới")."""
+    purpose = _find_purpose(text, t)
+    if purpose is None or not re.search(r"\b(?:ngay|xem|chon|coi|nen|tot|hop|duoc)\b", t):
+        return None
+    if re.search(r"\b(?:con|bao) (?:bao nhieu|may) ngay\b", t):
+        return None
+    name, trucs = purpose[0], purpose[1]
+    rule = (
+        f"(Cách chọn: ngày hoàng đạo, không phạm Tam nương/Nguyệt kỵ, trực "
+        f"{'/'.join(trucs)} theo Thập nhị trực. Việc lớn nên xem thêm tuổi người làm.)"
+    )
+    picked = _weekend_days(t, today)
+    if not picked and not re.search(r"\bthang (?:nay|sau|toi|truoc)\b", t):
+        rel = _asked_day(t, today)
+        dates = _solar_dates(t, today)
+        picked = [rel] if rel else [(d, lunar.WEEKDAYS[d.weekday()]) for d in dates[:1]]
+    if picked:
+        lines = [_purpose_verdict(day, label, name, trucs) for day, label in picked]
+        if not any(_is_good_day(day, trucs) for day, _ in picked):
+            after = picked[-1][0] + dt.timedelta(days=1)
+            nxt = next(
+                (after + dt.timedelta(days=i) for i in range(60)
+                 if _is_good_day(after + dt.timedelta(days=i), trucs)),
+                None,
+            )  # fmt: skip
+            if nxt:
+                lines.append(f"Ngày hợp gần nhất sau đó: {_good_day_line(nxt)[2:]}.")
+        return "\n".join([*lines, rule])
+    span = _day_range(t, today) or (
+        [today + dt.timedelta(days=i) for i in range(30)],
+        f"30 ngày tới ({today:%d/%m} - {today + dt.timedelta(days=29):%d/%m/%Y})",
+        False,
+    )
+    days, label, rest_of_month = span
+    return "\n".join(
+        [f"📅 Ngày tốt cho {name}, {label}:", *_good_lines(days, rest_of_month, trucs), rule]
+    )
+
+
+def _invalid_date_message(t: str, today: dt.date) -> str | None:
+    """Câu báo ngày dương không có thật: "29/2/2027", "32/12", "31/4", "5/13".
+    Bỏ qua ngày âm ("âm 30/2", "ngày âm lịch 30/2", "30/2 âm", "15/6n") - phần âm lịch
+    tự kiểm."""
+    for m in _ANY_DATE_RE.finditer(t):
+        if re.match(r"\s*(?:am|al|n|nhuan)\b", t[m.end() :]) or re.search(
+            r"\b(?:am|al|am lich)\s*$", t[: m.start()]
+        ):
+            continue
+        day, month = int(m.group(1)), int(m.group(2))
+        year = int(m.group(3)) if m.group(3) else None
+        if not 1 <= month <= 12:
+            return f"Không có tháng {month}: tháng dương lịch chỉ từ 1 đến 12."
+        if year is not None and not _MIN_YEAR <= year <= _MAX_YEAR:
+            return f"Lịch chỉ tra được năm {_MIN_YEAR}-{_MAX_YEAR}."
+        if year is None and (day, month) == (29, 2):
+            continue  # 29/2 không ghi năm: có ở năm nhuận
+        size = calendar.monthrange(year or 2000, month)[1]
+        if day < 1:
+            return f"Không có ngày {day}/{month}: ngày bắt đầu từ 1."
+        if day > size:
+            if month == 2 and day == 29:
+                return f"Năm {year} không có ngày 29/2 (tháng 2/{year} chỉ có 28 ngày)."
+            return f"Tháng {month} chỉ có {size} ngày, không có ngày {day}/{month}."
+    return None
 
 
 def _target_date(
@@ -403,7 +655,7 @@ def _target_date(
     thì lấy năm sau ("còn mấy ngày tới 1/1"); tắt khi đếm "từ ... đến ..."."""
     holiday = _find_holiday(fragment)
     if holiday:
-        day = holiday_entry_date(holiday, today, _year_modifier(fragment, today))
+        day = holiday_entry_date(holiday, today, _holiday_year(fragment, today))
         return (day, holiday[0]) if day else None
     if re.search(r"\btet\b", fragment):
         tet = lunar.next_tet(today)
@@ -469,13 +721,19 @@ def _holiday_answer(t: str, today: dt.date) -> str | None:
     holiday = _find_holiday(t)
     if not holiday:
         return None
-    day = holiday_entry_date(holiday, today, _year_modifier(t, today))
+    day = holiday_entry_date(holiday, today, _holiday_year(t, today))
     if day is None:
         return None
     info = lunar.date_info(day)
     when = f"{info['weekday']} {info['date_vn']} dương lịch, tức {info['lunar']['text']} âm lịch"
     days = (day - today).days
-    tail = f" - còn {days} ngày" if days > 0 else " - là hôm nay" if days == 0 else ""
+    tail = (
+        f" - còn {days} ngày"
+        if days > 0
+        else " - là hôm nay"
+        if days == 0
+        else f" - đã qua {-days} ngày"
+    )
     return f"🎉 {holiday[0]}: {when}{tail}."
 
 
@@ -570,20 +828,22 @@ def _lunar_prefix_answer(t: str, today: dt.date) -> str | None:
     return describe_full(day, f"{lunar.lunar_text(ld, lm, year, leap)} âm lịch rơi vào:")
 
 
-def answer(query: str, today: dt.date | None = None) -> str:
-    """Câu trả lời cho /lich <query>; không bao giờ gọi AI."""
+def understand(query: str, today: dt.date | None = None) -> str | None:
+    """Câu trả lời tra lịch; None khi không hiểu câu hỏi. Không bao giờ gọi AI."""
     today = today or _today()
     text = (query or "").strip()
     t = _norm(text)
     if not t or t in ("hom nay", "nay", "am lich", "lich am", "lich"):
         return describe_full(today, "Hôm nay")
-    if t in ("help", "huong dan", "?"):
-        return HELP
+    invalid = _invalid_date_message(t, today)
+    if invalid:
+        return invalid
     for handler in (
         lambda: _lunar_prefix_answer(t, today),
         lambda: _han_answer(text, t, today),
         lambda: _hop_answer(text, t),
         lambda: _tuoi_answer(t, today),
+        lambda: _purpose_answer(text, t, today),
         lambda: _good_days_answer(t, today),
         lambda: _count_answer(t, today),
         lambda: _holiday_answer(t, today),
@@ -594,14 +854,9 @@ def answer(query: str, today: dt.date | None = None) -> str:
         reply = handler()
         if reply:
             return reply
-    if re.search(r"\bcuoi tuan\b", t):
-        saturday = today + dt.timedelta(days=(5 - today.weekday()) % 7)
-        if re.search(r"\btuan (sau|toi)\b", t):
-            saturday += dt.timedelta(days=7)
-        return "\n\n".join(
-            describe_full(saturday + dt.timedelta(days=i), label)
-            for i, label in ((0, "Thứ Bảy"), (1, "Chủ Nhật"))
-        )
+    weekend = _weekend_days(t, today)
+    if weekend:
+        return "\n\n".join(describe_full(day, label) for day, label in weekend)
     rel = _relative_day(t, today)
     if rel:
         return describe_full(rel[0], rel[1])
@@ -611,4 +866,14 @@ def answer(query: str, today: dt.date | None = None) -> str:
     year = _YEAR_RE.fullmatch(t) or re.fullmatch(r"nam (\d{4})", t)
     if year:
         return can_chi.describe_year(int(year.group(1)))
-    return "Em chưa hiểu câu này nên chưa tra được (lệnh /lich không dùng AI).\n\n" + HELP
+    return None
+
+
+def answer(query: str, today: dt.date | None = None) -> str:
+    """Câu trả lời cho lệnh /lich <query>; không hiểu thì gợi ý cú pháp lệnh."""
+    if _norm(query or "") in ("help", "huong dan", "?"):
+        return HELP
+    reply = understand(query, today)
+    if reply is None:
+        return "Em chưa hiểu câu này nên chưa tra được (lệnh /lich không dùng AI).\n\n" + HELP
+    return reply

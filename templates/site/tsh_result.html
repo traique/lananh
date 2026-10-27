@@ -3,27 +3,28 @@
 <div class="title-row">
   <div>
     <h1>Thần số học</h1>
-    <p class="sub">Sinh {{ reading.birthDate | vn_date }}{% if reading.name %} · {{ reading.name }}{% endif %} · {{ reading.age }} tuổi</p>
+    <p class="sub">{% if reading.name %}{{ reading.name }}, sinh{% else %}Sinh{% endif %} {{ reading.birthDate | vn_date }}, {{ reading.age }} tuổi</p>
   </div>
   <div class="title-actions"><a class="btn" href="/than-so-hoc">Tính cho người khác</a></div>
 </div>
+<section class="panel lp-panel" aria-labelledby="lp-title">
+  <header><h2 id="lp-title">Con số chủ đạo</h2></header>
+  <div class="lp">
+    <div class="lp-num" aria-hidden="true">{{ reading.lifePath.value }}</div>
+    <p><span class="sr-only">Số {{ reading.lifePath.value }}. </span>{{ reading.lifePath.meaning | clause }}</p>
+  </div>
+</section>
 <div class="grid top">
-  <section class="panel s7" aria-labelledby="lp-title">
-    <header><h2 id="lp-title">Con số chủ đạo</h2></header>
-    <div class="lp">
-      <div class="lp-num" aria-hidden="true">{{ reading.lifePath.value }}</div>
-      <p><span class="sr-only">Số {{ reading.lifePath.value }}. </span>{{ reading.lifePath.meaning }}</p>
-    </div>
-    <h3>Các con số khác</h3>
-    <div class="table-wrap">
+  <section class="sect s7" aria-labelledby="numbers-title">
+    <header><h2 id="numbers-title">Các con số khác</h2></header>
+    <div class="table-wrap" tabindex="0" role="region" aria-labelledby="numbers-title">
       <table class="numbers">
-        <caption class="sr-only">Các con số khác</caption>
         <tbody>
           {% for label, item in rows %}{% if item %}
-          <tr><th scope="row">{{ label }}</th><td class="n">{{ item.value }}</td><td>{{ item.meaning }}</td></tr>
+          <tr><th scope="row">{{ label }}</th><td class="n">{{ item.value }}</td><td>{{ item.meaning | clause }}</td></tr>
           {% endif %}{% endfor %}
-          <tr><th scope="row">Năm cá nhân {{ reading.personalYear.year }}</th><td class="n">{{ reading.personalYear.value }}</td><td>{{ reading.personalYear.meaning }}</td></tr>
-          <tr><th scope="row">Tháng cá nhân (tháng {{ reading.personalMonthDetail.month }})</th><td class="n">{{ reading.personalMonth }}</td><td>{{ reading.personalMonthDetail.meaning }}</td></tr>
+          <tr><th scope="row">Năm cá nhân {{ reading.personalYear.year }}</th><td class="n">{{ reading.personalYear.value }}</td><td>{{ reading.personalYear.meaning | clause }}</td></tr>
+          <tr><th scope="row">Tháng cá nhân (tháng {{ reading.personalMonthDetail.month }})</th><td class="n">{{ reading.personalMonth }}</td><td>{{ reading.personalMonthDetail.meaning | clause }}</td></tr>
         </tbody>
       </table>
     </div>
@@ -31,7 +32,7 @@
     <p class="hint spaced">Nhập họ tên để tính thêm số sứ mệnh, linh hồn, nhân cách, trưởng thành và biểu đồ tên.</p>
     {% endif %}
   </section>
-  <section class="panel s5" aria-labelledby="grid-title">
+  <section class="sect s5" aria-labelledby="grid-title">
     <header><h2 id="grid-title">Biểu đồ ngày sinh</h2></header>
     <div class="grids">
       <div>
@@ -54,19 +55,19 @@
       </div>
       {% endif %}
     </div>
-    {% if reading.arrows %}<h3>Mũi tên có</h3><ul class="rows" role="list">{% for a in reading.arrows %}<li class="row"><span>{{ a.meaning }}</span></li>{% endfor %}</ul>{% endif %}
-    {% if reading.emptyArrows %}<h3>Mũi tên trống</h3><ul class="rows" role="list">{% for a in reading.emptyArrows %}<li class="row"><span>{{ a.meaning }}</span></li>{% endfor %}</ul>{% endif %}
+    {% if reading.arrows %}<h3>Mũi tên có</h3><ul class="rows" role="list">{% for a in reading.arrows %}<li class="row"><span>{{ a.meaning | clause }}</span></li>{% endfor %}</ul>{% endif %}
+    {% if reading.emptyArrows %}<h3>Mũi tên trống</h3><ul class="rows" role="list">{% for a in reading.emptyArrows %}<li class="row"><span>{{ a.meaning | clause }}</span></li>{% endfor %}</ul>{% endif %}
   </section>
 </div>
-<section class="panel" aria-labelledby="stage-title">
+<section class="sect" aria-labelledby="stage-title">
   <header><h2 id="stage-title">Các giai đoạn cuộc đời</h2></header>
   <h3 class="first">4 đỉnh cao</h3>
   <ol class="stages" role="list">
     {% for s in reading.pinnacles %}
     <li{% if s.isCurrent %} class="is-now"{% endif %}>
-      <span class="age">Đỉnh {{ loop.index }} · {{ s.label }}{% if s.isCurrent %} · hiện tại{% endif %}</span>
-      <span class="n">{{ s.value }}</span>
-      <p>{{ s.meaning }}</p>
+      <span class="age">Đỉnh {{ loop.index }}: {{ s.label }}</span>
+      <span class="n">{{ s.value }}{% if s.isCurrent %}<span class="pill sm pos">Hiện tại</span>{% endif %}</span>
+      <p>{{ s.meaning | clause }}</p>
     </li>
     {% endfor %}
   </ol>
@@ -74,9 +75,9 @@
   <ol class="stages" role="list">
     {% for s in reading.challenges %}
     <li{% if s.isCurrent %} class="is-now"{% endif %}>
-      <span class="age">Thử thách {{ loop.index }} · {{ s.label }}{% if s.isCurrent %} · hiện tại{% endif %}</span>
-      <span class="n">{{ s.value }}</span>
-      <p>{{ s.meaning }}</p>
+      <span class="age">Thử thách {{ loop.index }}: {{ s.label }}</span>
+      <span class="n">{{ s.value }}{% if s.isCurrent %}<span class="pill sm pos">Hiện tại</span>{% endif %}</span>
+      <p>{{ s.meaning | clause }}</p>
     </li>
     {% endfor %}
   </ol>

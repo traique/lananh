@@ -1,3 +1,15 @@
+/* Hallmark · shape: app screen · genre: modern-minimal (inferred) · theme: brand · redesign: full (trang chủ / và 13 màn công cụ)
+ * paper: #ffffff · accent: #1f6b45 · display: Newsreader (chỉ tiêu đề ngày) · body: Be Vietnam Pro
+ * nav: kept (thanh bên, 12 mục) · signature: kept, dải 12 giờ hoàng đạo · states: không vùng nào tải dữ liệu (tính ở server)
+ * axes: light/roman-serif/chromatic-green · posture: restrained · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, lượt đầu trên hệ thương hiệu giữ nguyên; đổi nhịp bề mặt (nền trắng, khối sage, vạch mảnh) thay cho bảy thẻ sage giống hệt */
+/* Hallmark · finish-review: subagent · 7 findings · 7 resolved (bước 861-1100px, ngắt tiêu đề ngày, cỡ h2 Tra cứu, link ngày lễ, chú giải dải giờ, vạch kép, cột nút) · gap: partial, câu giờ hoàng đạo lên 24px, số liệu ngày xuống 24px
+ * dismissed 26a, 34, 56, 62 · tầng tĩnh đọc template riêng lẻ nên không thấy site.css; đo trên trình duyệt: overflow-x clip ở html và body, vòng focus 2px màu nhấn, một phần tử sticky mỗi bề rộng, menu điện thoại mở bằng #menu khi tắt JavaScript */
+/* Hallmark · redesign: full · app scope · 13 màn công cụ (/lich, /lich/hoi, /lich/doi-ngay, /lich/ngay-le, /thoi-tiet, /xo-so, /gia-vang, /gia-xang, /tu-vi + kết quả, /ky-mon, /than-so-hoc + kết quả)
+ * screens: form ngắn thành hàng nhập dưới tiêu đề (gập theo bề rộng của chính form); một khối sage mỗi màn cho vật chính (lưới tháng, bàn 9 cung, lá số, bảng giá vàng, bảng Petrolimex, kết quả xổ số giải x đài, khối "Bây giờ", số chủ đạo); phần phụ trên nền giấy, tiêu đề 18px, vạch mảnh, tầng cách 40px
+ * kept: links 111/111 · fields 16/16 · script hooks 59/59 · dropped: câu "Chưa đổi được ngày" ở khối kết quả rỗng /lich/doi-ngay (lỗi đã nằm dưới ô nhập), thẻ trắng từng đài xổ số (thành cột của một bảng)
+ * waived: 38iii (.title-row .sub là đoạn phụ màu xám, không phải chữ nhấn trong tiêu đề) · dismissed: 56, 62 (như trên), 67 ("TP.HCM", "DOJI" là tên riêng), F6 (.lead-figure, .lp-num đã có tabular-nums ở luật chung), F7 (viên thuốc chỉ cho điều khiển/chip là link)
+ * finish-review: subagent · fix · 8 findings · 8 resolved (4 đài trên điện thoại, bảng ngày lễ hẹp, nhóm nút rớt dòng, bảng một đài lệch cột, chú giải lịch ở nền tối, gợi ý Hỏi lịch trông như link, ô số thiếu ở nền tối, "Kết quả gồm" thành danh sách) · open: form tử vi vẫn nằm trong khối sage (6 ô, là vật chính của màn đó) · v2.0.0 */
 /* LCTA - giao diện web công khai (lịch, thời tiết, tử vi, thần số học).
 
    Thiết kế theo skill ui-craft (Taste, app screens), style "editorial greeting":
@@ -19,6 +31,7 @@
   --active: #e3e9df;   /* mục điều hướng đang xem */
   --sheet: #ffffff;    /* thẻ trắng bên trong khối (dùng một lần mỗi màn) */
   --border: #e3e8df;   /* mép thanh bên, khung bảng */
+  --empty-cell: #dde3d8; /* viền ô số thiếu (thần số học) */
   --rule: #dde3d8;     /* vạch giữa các hàng trong khối */
   --control: #7d887f;  /* viền ô nhập, nút viền: ≥ 3:1 */
   --text: #121a15;
@@ -55,7 +68,7 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --ground: #0e100f; --panel: #171a18; --raised: #1f2320; --active: #232825; --sheet: #1c201d;
-  --border: #242926; --rule: #2a302c; --control: #6f7871;
+  --border: #242926; --rule: #2a302c; --control: #6f7871; --empty-cell: #6f7871;
   --text: #eef1ee; --muted: #b2bab4; --faint: #949d97;
   --primary: #eef1ee; --primary-ink: #0e100f;
   --accent: #63c08f; --accent-ink: #0b1f13;
@@ -70,7 +83,7 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --ground: #0e100f; --panel: #171a18; --raised: #1f2320; --active: #232825; --sheet: #1c201d;
-    --border: #242926; --rule: #2a302c; --control: #6f7871;
+    --border: #242926; --rule: #2a302c; --control: #6f7871; --empty-cell: #6f7871;
     --text: #eef1ee; --muted: #b2bab4; --faint: #949d97;
     --primary: #eef1ee; --primary-ink: #0e100f;
     --accent: #63c08f; --accent-ink: #0b1f13;
@@ -86,17 +99,20 @@
 /* ---------- nền ---------- */
 *, *::before, *::after { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html, body { overflow-x: clip; }
 body {
   margin: 0; background: var(--ground); color: var(--text);
   font: 400 var(--fs-body)/1.6 var(--font); -webkit-font-smoothing: antialiased;
 }
 h1, h2, h3, p, figure, dl, dd, ol, ul { margin: 0; }
+h1, h2, h3 { overflow-wrap: break-word; min-width: 0; text-wrap: balance; }
 ul[class], ol[class] { padding: 0; list-style: none; }
 img, svg { display: block; max-width: 100%; }
 button, input, select { font: inherit; color: inherit; }
 a { color: inherit; text-underline-offset: 3px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-.num, table, .lead-figure, .tile-value { font-variant-numeric: tabular-nums; }
+.num, table, .lead-figure, .lp-num { font-variant-numeric: tabular-nums; }
+.nowrap { white-space: nowrap; }
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
@@ -150,7 +166,6 @@ a { color: inherit; text-underline-offset: 3px; }
 .i-fuel { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 20.5V5a1.5 1.5 0 0 1 1.5-1.5h6A1.5 1.5 0 0 1 13.5 5v15.5M3 20.5h12M4.5 10h9M13.5 9h2a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 0 3 0V8l-2.5-2.5'/%3E%3C/svg%3E"); }
 .i-admin { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10M18 7h2M4 17h4M12 17h8'/%3E%3Ccircle cx='16' cy='7' r='2'/%3E%3Ccircle cx='10' cy='17' r='2'/%3E%3C/svg%3E"); }
 .i-logout { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 20.5H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h3.5M15.5 16.5 20 12l-4.5-4.5M20 12H9.5'/%3E%3C/svg%3E"); }
-.i-login { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.5 3.5H18a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2h-3.5M10 16.5 14.5 12 10 7.5M14.5 12H4'/%3E%3C/svg%3E"); }
 @media (hover: hover) and (pointer: fine) { .nav-item:hover { background: var(--raised); color: var(--text); } }
 .nav-item[aria-current="page"] { background: var(--active); color: var(--text); font-weight: 500; }
 .sidebar-foot { margin-top: auto; padding-top: 20px; display: grid; gap: 4px; }
@@ -183,40 +198,44 @@ h1.date {
   font-family: var(--font-date); font-size: var(--fs-date); line-height: 1.05; font-weight: 500;
   letter-spacing: -0.02em;
 }
-.date + .sub { margin-top: 12px; font-size: var(--fs-section); color: var(--text); }
+.date + .sub { margin-top: 12px; font-size: var(--fs-section); color: var(--text); text-wrap: pretty; }
 .date + .sub .muted { color: var(--muted); }
 
 /* ---------- lưới 12 cột ---------- */
-.grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--gap); }
-.grid + .grid, .grid + .panel, .panel + .grid, .panel + .panel { margin-top: var(--gap); }
+.grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 40px; }
+/* tầng của màn công cụ (khối sage, mục trên nền giấy, lưới) cách nhau 40px */
+:is(.grid, .panel, .sect) + :is(.grid, .panel, .sect) { margin-top: 40px; }
+.stack { min-width: 0; }
 .grid.top { align-items: start; }
 .grid > * { margin-top: 0 !important; } /* xếp chồng chỉ áp ngoài lưới */
-.s3 { grid-column: span 3; } .s4 { grid-column: span 4; } .s5 { grid-column: span 5; }
-.s6 { grid-column: span 6; } .s7 { grid-column: span 7; } .s8 { grid-column: span 8; }
-.s9 { grid-column: span 9; } .s12 { grid-column: 1 / -1; }
+.s4 { grid-column: span 4; } .s5 { grid-column: span 5; } .s7 { grid-column: span 7; }
+.s8 { grid-column: span 8; } .s12 { grid-column: 1 / -1; }
 
 /* ---------- khối ---------- */
-.panel { background: var(--panel); border-radius: var(--radius); padding: var(--pad); min-width: 0; }
+.panel { background: var(--panel); color: var(--text); border-radius: var(--radius); padding: var(--pad); min-width: 0; }
 .panel > header {
   display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
   gap: 4px 12px; margin-bottom: 14px;
 }
 .panel h2 { font-size: var(--fs-body); font-weight: 600; line-height: 1.4; }
 .panel .meta, .meta { color: var(--muted); font-size: var(--fs-small); }
-.sheet { background: var(--sheet); border-radius: var(--radius-inner); padding: 16px; }
-.card-link { color: var(--text); font-weight: 500; font-size: var(--fs-small); text-decoration: none; white-space: nowrap; }
-.card-link::after { content: " →"; }
-.card-link:hover { text-decoration: underline; }
+/* Mục trên nền giấy: tiêu đề 18px, nội dung kẻ vạch mảnh. Khối sage chỉ dành cho vật
+   chính của mỗi màn (lưới tháng, bàn 9 cung, bảng giá, kết quả xổ số...). */
+.sect { min-width: 0; }
+.sect > header {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  gap: 4px 12px; margin-bottom: 12px;
+}
+.sect h2 { font-size: var(--fs-section); font-weight: 600; line-height: 1.4; }
+.card-link { color: var(--text); font-weight: 500; font-size: var(--fs-small); text-decoration: underline; text-decoration-color: var(--control); white-space: nowrap; }
+.card-link:hover { text-decoration-color: currentColor; }
 .muted { color: var(--muted); }
 .small { font-size: var(--fs-small); }
 .answer { white-space: pre-line; }
+.answer-body > * + * { margin-top: 12px; }
+.answer-body ul { padding-left: 20px; }
+.answer-body li + li { margin-top: 4px; }
 .prose p + p { margin-top: 10px; }
-
-/* ô đếm: nhãn, số ở trọng lượng thường, chú thích */
-.tile { display: flex; flex-direction: column; min-height: 128px; padding: 16px var(--pad); }
-.tile-label { color: var(--muted); font-size: var(--fs-small); }
-.tile-value { margin-top: 6px; font-size: var(--fs-lead); line-height: 1.15; font-weight: 400; letter-spacing: -0.01em; }
-.tile-note { margin-top: auto; padding-top: 10px; color: var(--muted); font-size: var(--fs-small); }
 
 /* hàng trong khối: vạch giữa các hàng */
 .rows > * + * { border-top: 1px solid var(--rule); }
@@ -230,6 +249,8 @@ h1.date {
 
 /* bảng: vạch hàng, tiêu đề cột nhỏ xám, số căn phải */
 .table-wrap { overflow-x: auto; }
+/* bảng cuộn ngang được: nhận focus (tabindex="0") để cuộn bằng phím mũi tên */
+.table-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-inner); }
 table { width: 100%; border-collapse: collapse; }
 th {
   height: 36px; padding: 0 12px; text-align: left; font-weight: 400; font-size: var(--fs-small);
@@ -351,6 +372,12 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
 }
 .chip-x:hover { color: var(--negative); }
 .add-place { display: flex; margin-top: 16px; }
+/* vị trí hiện tại: nút định vị + xoá + một dòng giải thích, gập dòng trên điện thoại */
+.geo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 16px; }
+.geo-row form { margin: 0; }
+.geo-row .hint { flex: 1 1 240px; margin: 0; }
+.btn .pin, .links .pin { width: 16px; height: 16px; flex: none; }
+.links .pin { margin-right: 6px; }
 .add-place .input { flex: 1; min-width: 0; border-radius: 999px 0 0 999px; padding-left: 18px; }
 .add-place .btn { border-radius: 0 999px 999px 0; margin-left: -1px; }
 .add-place .input:focus-visible { position: relative; z-index: 1; }
@@ -361,15 +388,103 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
   background: var(--pill-neg-bg); color: var(--pill-neg-ink);
 }
 .ok-box { background: var(--pill-pos-bg); color: var(--pill-pos-ink); }
+/* ô nhập sai: viền đỏ + câu lỗi ngay dưới ô (ngoài khung báo lỗi đầu form) */
+.input[aria-invalid="true"] { border-color: var(--negative); box-shadow: inset 0 0 0 1px var(--negative); }
+.field-error { color: var(--negative); font-size: var(--fs-small); font-weight: 500; }
 
-/* ---------- trang chủ ---------- */
-.home-head { margin: 32px 0 50px; }
+/* ---------- màn công cụ: thanh nhập trên nền giấy ----------
+   Form ngắn (xổ số, Kỳ Môn, đổi ngày, thần số học) nằm ngay dưới tiêu đề, các ô trên một
+   hàng; nút và công tắc chừa chỗ bằng dòng nhãn (24px) + khoảng 8px nên thẳng hàng với
+   ô nhập dù ô bên cạnh có gợi ý hay câu lỗi ở dưới. Thanh hẹp hơn một hàng (đo bề rộng
+   của chính form) thì mỗi ô, công tắc, nhóm nút một dòng, không còn khoảng chừa nhãn -
+   nên nút không bao giờ lơ lửng một mình khi rớt dòng. */
+.toolbar { container: toolbar / inline-size; margin-bottom: 40px; }
+.toolbar-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 16px; }
+.toolbar-row > .field { flex: 0 1 200px; min-width: 0; }
+.toolbar-row > .field.f-wide { flex: 1 1 320px; max-width: 440px; }
+.toolbar-row > .switch-row, .toolbar-actions { margin-top: 32px; }
+.toolbar-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.toolbar-row > .switch-row { min-height: var(--control-h); }
+/* xổ số (3 ô + nút): vừa một hàng từ 920px; hẹp hơn thì ô chọn đài một dòng riêng */
+@container toolbar (max-width: 919px) {
+  .toolbar.wide .field.f-wide { flex-basis: 100%; }
+}
+@container toolbar (max-width: 659px) {
+  .toolbar-row > .field, .toolbar-row > .field.f-wide { flex: 1 1 100%; max-width: 440px; }
+  .toolbar-row > .switch-row, .toolbar-actions { flex-basis: 100%; margin-top: 0; }
+}
+.toolbar > .hint { display: block; margin-top: 8px; }
+.inline-sect { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.inline-sect > h2 { font-size: var(--fs-body); }
+.inline-sect > p { flex-basis: 100%; }
+.empty-line { color: var(--muted); max-width: 70ch; }
+/* Hỏi lịch: ô hỏi lớn ngay dưới tiêu đề */
+.ask-bar { max-width: 640px; margin-bottom: 40px; }
+.ask-bar .input, .ask-bar .btn { height: 44px; }
+/* danh sách kẻ vạch trên nền giấy: mỗi mục một vạch trên, cùng nhịp ở mọi bề rộng */
+.ex-list > li, .plain-list > li { padding: 12px 0; border-top: 1px solid var(--rule); }
+.plain-list { max-width: 640px; }
+.ex-list a { text-decoration: underline; text-decoration-color: var(--control); }
+.ex-list a:hover { text-decoration-color: currentColor; }
+.examples-wide .ex-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 40px; }
+
+/* ---------- trang chủ: màn "Hôm nay" ----------
+   Ngày hôm nay mở màn trên nền trang, ô Hỏi lịch (hành động chính) bên phải. Mỗi tầng
+   một bậc bề mặt khác nhau: dải giờ trong khối sage, số liệu ngày trên nền trắng tách
+   bằng vạch mảnh, ngày lễ trong khối sage, danh sách tra cứu là các hàng kẻ vạch. */
+.today-head {
+  display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 24px 40px;
+  align-items: end; margin: 32px 0 40px;
+}
+.today-ask { display: grid; gap: 8px; }
+.today-ask label { font-weight: 600; }
+.today-facts {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 40px 0; padding: 20px 0; border-block: 1px solid var(--rule);
+}
+.today-facts > div { min-width: 0; padding: 0 20px; border-left: 1px solid var(--rule); }
+.today-facts > div:first-child { padding-left: 0; border-left: 0; }
+.today-facts > div:last-child { padding-right: 0; }
+.today-facts dt { color: var(--muted); font-size: var(--fs-small); }
+.today-facts .fig {
+  margin-top: 4px; font-size: var(--fs-title); line-height: 1.2; letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.today-facts .note { margin-top: 8px; color: var(--muted); font-size: var(--fs-small); }
+.holiday-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.holiday-strip > li {
+  position: relative; display: grid; gap: 4px; min-width: 0; padding: 0 20px;
+  border-left: 1px solid var(--rule);
+}
+.holiday-strip > li:first-child { padding-left: 0; border-left: 0; }
+.holiday-strip > li:last-child { padding-right: 0; }
+/* Tên lễ là link: gạch chân sẵn (màn cảm ứng không có hover), vùng bấm phủ cả ô. */
+.holiday-strip a { font-weight: 500; text-decoration-color: var(--control); }
+.holiday-strip a::after { content: ""; position: absolute; inset: 0; }
+.holiday-strip a:hover { text-decoration-color: currentColor; }
+.holiday-strip .when { color: var(--muted); font-size: var(--fs-small); }
+.holiday-strip .left { font-size: var(--fs-section); font-variant-numeric: tabular-nums; }
+.tools { margin-top: 40px; }
+.tools > h2 { font-size: var(--fs-section); font-weight: 600; line-height: 1.4; margin-bottom: 8px; }
+/* Mỗi hàng: tên + mô tả bên trái, nút (hoặc ô ngày sinh) bên phải; khối bọc tên và mô tả
+   dùng display: contents để trên điện thoại nút lên ngang tên, mô tả trải bên dưới. */
+.tool-list > li {
+  display: grid; grid-template-columns: minmax(0, 1fr) 26rem; gap: 4px 40px;
+  align-items: center; padding: 20px 0; border-top: 1px solid var(--rule);
+}
+.tool-list > li > div { display: contents; }
+.tool-list h3 { grid-column: 1; font-size: var(--fs-body); font-weight: 600; line-height: 1.4; }
+.tool-list p { grid-column: 1; color: var(--muted); max-width: 65ch; }
+/* Cột thao tác cố định: mọi nút bắt đầu cùng một mép với ô ngày sinh của Thần số học. */
+.tool-list > li > .btn, .tool-form { grid-column: 2; grid-row: 1 / span 2; justify-self: start; }
+.tool-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; width: 100%; }
+.tool-form label { grid-column: 1 / -1; font-size: var(--fs-small); color: var(--muted); }
 /* dải 12 giờ địa chi: phần tử riêng của LCTA. Giờ thường là ô viền mảnh, giờ hoàng
    đạo nền xanh nhạt; chỉ một ô tô đặc màu nhấn (giờ hiện tại nếu tốt, không thì giờ tốt
    kế tiếp). Giờ đã qua lùi xuống, giờ hiện tại có vòng ngoài. Gập theo bề rộng của chính
    khối (container query): đủ chỗ thì 12 cột, hẹp thì 4 cột x 3 hàng, mỗi hàng 8 tiếng. */
 .hours-panel { container-type: inline-size; }
-.next-hour { margin: -4px 0 16px; font-size: var(--fs-section); }
+.next-hour { margin: -4px 0 16px; font-size: var(--fs-title); line-height: 1.3; }
 .next-hour b { font-weight: 600; }
 .hours { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 6px; }
 .hour {
@@ -378,12 +493,15 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
 }
 .hour b { font-weight: 500; }
 .hour span { font-size: 12px; color: var(--muted); white-space: nowrap; }
-.hour.good { background: var(--pill-pos-bg); color: var(--pill-pos-ink); outline-color: transparent; }
+/* viền liền = giờ hoàng đạo sắp tới, viền nét đứt = đã qua (khớp chú giải bên dưới) */
+.hour.good { background: var(--pill-pos-bg); color: var(--pill-pos-ink); outline-color: var(--pill-pos-ink); }
 .hour.good span { color: var(--pill-pos-ink); }
-.hour.focus { background: var(--accent); color: var(--accent-ink); }
+.hour.focus { background: var(--accent); color: var(--accent-ink); outline-color: transparent; }
 .hour.focus span { color: var(--accent-ink); }
 .hour.past { color: var(--muted); }
-.hour.past.good { background: transparent; outline-color: var(--pill-pos-bg); color: var(--pill-pos-ink); }
+/* giờ hoàng đạo đã qua: bỏ nền nhưng giữ viền nét đứt xanh đậm (≥ 3:1) để vẫn tách được
+   với giờ thường đã qua (viền mảnh xám) */
+.hour.past.good { background: transparent; outline: 1px dashed var(--pill-pos-ink); outline-offset: -1px; color: var(--pill-pos-ink); }
 .hour.now { outline: 2px solid var(--text); outline-offset: 2px; }
 @container (max-width: 760px) {
   .hours { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -398,9 +516,9 @@ input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; margin:
 .key.good::before { background: var(--pill-pos-bg); outline-color: var(--pill-pos-ink); }
 .key.focus::before { background: var(--accent); outline: 0; }
 .key.now::before { outline: 2px solid var(--text); outline-offset: -2px; }
+.key.past-good::before { outline: 1px dashed var(--pill-pos-ink); outline-offset: -1px; }
 
 /* ---------- lịch tháng ---------- */
-.month-nav { display: flex; gap: 8px; }
 table.month { table-layout: fixed; }
 table.month th { text-align: center; padding: 0; border: 0; }
 table.month td { padding: 2px; border: 0; vertical-align: top; }
@@ -413,7 +531,11 @@ table.month td:last-child { padding-right: 2px; }
 @media (hover: hover) and (pointer: fine) { .day:hover { background: var(--raised); } }
 .day .d { font-size: var(--fs-section); line-height: 1.2; }
 .day .l { font-size: 12px; color: var(--muted); }
-.day .note { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* tên lễ trong ô: tối đa 2 dòng thay vì cắt "Ngày Phụ …" (điện thoại ẩn, aria-label đủ tên) */
+.day .note {
+  font-size: 12px; line-height: 1.3; color: var(--muted); overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
+}
 .day.weekend { background: transparent; outline: 1px solid var(--rule); outline-offset: -1px; }
 .day.is-lunar-mark .l { color: var(--text); font-weight: 600; }
 .day.is-holiday .note { color: var(--text); }
@@ -437,15 +559,22 @@ table.month td:last-child { padding-right: 2px; }
 .facts dd { min-width: 0; }
 .lunar-line { margin: -6px 0 16px; color: var(--muted); }
 .facts + .form-actions { padding-top: 20px; }
+/* đổi ngày: kết quả là câu trả lời của màn, ngày dương đặt cỡ tiêu đề */
+.result-day { max-width: 760px; }
+.result-day > header h2 { font-size: var(--fs-title); line-height: 1.25; }
 .lunar-line::first-letter { text-transform: uppercase; }
 
 /* ---------- thời tiết ---------- */
 .lead-figure { font-size: var(--fs-lead); line-height: 1.1; letter-spacing: -0.01em; }
-.strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.strip > div { padding: 2px 16px; }
-.strip > div:first-child { padding-left: 0; }
-.strip > div + div { border-left: 1px solid var(--rule); }
-.strip .v { margin-top: 4px; font-size: var(--fs-section); }
+/* khối "Bây giờ": nhiệt độ là con số lớn nhất màn, bốn chỉ số 2x2 dưới vạch mảnh */
+.now-temp { font-size: 64px; line-height: 1; font-weight: 500; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.now-sky { margin-top: 8px; font-size: var(--fs-section); }
+.now-stats {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px;
+  margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--rule);
+}
+.now-stats dt, .stat-list dt { color: var(--muted); font-size: var(--fs-small); }
+.now-stats dd { margin-top: 4px; font-size: var(--fs-section); font-variant-numeric: tabular-nums; }
 .range { position: relative; height: 6px; border-radius: 999px; background: var(--raised); min-width: 80px; }
 .range i { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: var(--accent); }
 
@@ -480,8 +609,18 @@ table.month td:last-child { padding-right: 2px; }
   border-radius: var(--radius-inner); background: var(--sheet); text-decoration: none;
   font-size: var(--fs-small);
 }
-.chart-map a b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chart-map a span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Ô hẹp (~75px trên điện thoại 360px): tên cung xuống dòng thay vì bị cắt "Điền Tr…",
+   sao chính tối đa 2 dòng. */
+.chart-map a b { font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+.chart-map a span {
+  color: var(--muted); font-size: 12px; line-height: 1.3; overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
+}
+.chart-map > .c {
+  grid-area: c; display: grid; align-content: center; justify-items: center; gap: 2px; padding: 8px;
+  text-align: center; font-size: var(--fs-small); color: var(--muted);
+}
+.chart-map > .c b { color: var(--text); font-weight: 600; }
 .chart-map a.is-menh { outline: 2px solid var(--accent); outline-offset: -2px; }
 .chart-map a.is-menh b { color: var(--accent); }
 .chart-map > .b0 { grid-area: tys; } .chart-map > .b1 { grid-area: suu; } .chart-map > .b2 { grid-area: dan; }
@@ -509,27 +648,30 @@ table.month td:last-child { padding-right: 2px; }
 }
 
 /* ---------- thần số học ---------- */
-.lp { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px; align-items: center; }
-.lp-num {
-  display: grid; place-items: center; width: 88px; height: 88px; border-radius: 50%;
-  background: var(--accent); color: var(--accent-ink); font-size: 40px; line-height: 1;
-}
+/* số chủ đạo: vật chính của màn, chữ số lớn màu nhấn (không đồng xu nền màu) cạnh ý nghĩa */
+.lp { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 28px; align-items: center; }
+.lp-num { color: var(--accent); font-size: 96px; line-height: 0.9; font-weight: 500; letter-spacing: -0.03em; }
+.lp p { max-width: 60ch; font-size: var(--fs-section); line-height: 1.55; }
 .birth-grid { display: grid; grid-template-columns: repeat(3, 64px); gap: 6px; }
 .birth-grid div {
   display: grid; place-items: center; height: 64px; border-radius: var(--radius-inner);
-  background: var(--sheet); font-size: var(--fs-section); font-variant-numeric: tabular-nums;
+  background: var(--panel); font-size: var(--fs-section); font-variant-numeric: tabular-nums;
 }
-.birth-grid div.empty { background: transparent; color: var(--faint); outline: 1px solid var(--rule); outline-offset: -1px; }
+.birth-grid div.empty { background: transparent; color: var(--faint); outline: 1px solid var(--empty-cell); outline-offset: -1px; }
 .grids { display: flex; flex-wrap: wrap; gap: 24px 40px; }
 .grids h3 { font-size: var(--fs-small); font-weight: 500; color: var(--muted); margin-bottom: 8px; }
-.stages { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.stages li { border-radius: var(--radius-inner); background: var(--sheet); padding: 14px 16px; }
-.stages .age { display: block; color: var(--muted); font-size: 12px; }
-.stages .n { display: block; margin: 4px 0 6px; font-size: 28px; line-height: 1.1; }
-.stages li.is-now { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* 4 đỉnh cao / 4 thử thách: bốn cột trên nền giấy tách bằng vạch dọc; giai đoạn hiện tại
+   có vạch màu nhấn phía trên, số màu nhấn và nhãn "Hiện tại" */
+.stages { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--rule); }
+.stages li { min-width: 0; padding: 16px 20px 4px; border-left: 1px solid var(--rule); }
+.stages li:first-child { padding-left: 0; border-left: 0; }
+.stages li:last-child { padding-right: 0; }
+.stages .age { display: block; color: var(--muted); font-size: var(--fs-small); }
+.stages .n { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; font-size: 28px; line-height: 1.1; }
+.stages li.is-now { box-shadow: inset 0 2px 0 var(--accent); }
 .stages li.is-now .n { color: var(--accent); }
 .stages p { font-size: var(--fs-small); color: var(--muted); }
-.panel h3 { font-size: var(--fs-small); font-weight: 500; color: var(--muted); margin: 20px 0 10px; }
+.panel h3, .sect h3 { font-size: var(--fs-small); font-weight: 500; color: var(--muted); margin: 20px 0 8px; }
 
 /* ---------- kỳ môn: bàn 9 cung 3x3 (Nam ở trên) ---------- */
 /* Giữ 3x3 ở mọi bề rộng (vị trí cung là thông tin chính); khối hẹp thì thu chữ và đệm. */
@@ -544,7 +686,8 @@ table.month td:last-child { padding-right: 2px; }
 .qm-cell header .dir { color: var(--muted); font-weight: 400; font-size: var(--fs-small); text-align: right; }
 .qm-god { color: var(--muted); }
 .qm-star { font-weight: 600; }
-.qm-stems { font-size: var(--fs-small); }
+/* can Thiên và Địa là hai mục, tách bằng khoảng trống thay cho dấu chấm giữa */
+.qm-stems { display: flex; flex-wrap: wrap; gap: 0 12px; font-size: var(--fs-small); }
 .qm-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: auto; padding-top: 4px; }
 .qm-cell.is-zhifu { outline: 2px solid var(--accent); outline-offset: -2px; }
 .qm-cell.is-zhifu .qm-star { color: var(--accent); }
@@ -576,25 +719,19 @@ textarea.input { height: auto; min-height: 88px; padding: 10px 14px; resize: ver
 .pill.sm { height: 20px; padding: 0 7px; font-size: 12px; vertical-align: 1px; }
 .hint.spaced { display: block; margin-top: 12px; }
 .note-line { margin-top: 16px; max-width: 90ch; color: var(--muted); font-size: var(--fs-small); }
-.panel h3.first { margin-top: 0; }
+.panel h3.first, .sect h3.first { margin-top: 0; }
 .panel > p + .form-actions, .panel form > p + .form-actions { margin-top: 16px; }
-/* khối cùng hàng kéo cao bằng nhau: đẩy nút xuống đáy để hàng nút thẳng nhau */
-.grid > .panel { display: flex; flex-direction: column; }
-.grid > .panel.form, .grid > .panel > .form { flex: 1; display: flex; flex-direction: column; gap: 16px; }
-.grid > .panel .form-actions:last-child { margin-top: auto; }
-.grid > .panel > p + .form-actions { padding-top: 16px; }
 tbody th {
   height: auto; padding: 12px 16px 12px 0; vertical-align: baseline; white-space: normal;
   font-size: var(--fs-body); font-weight: 500; color: var(--text);
 }
 tbody tr:last-child th { border-bottom: 0; }
 .links { margin-bottom: 16px; }
+.inline-sect .links { margin: 0; }
 .links li { display: inline-flex; }
 .add-place { margin: 0 0 16px; max-width: 520px; }
 .notice { margin: 0 0 16px; }
 .title-row .search { flex: 1 1 320px; max-width: 440px; }
-.panel.search { padding: 12px; }
-.panel.search .input { background: var(--sheet); }
 .range-col { width: 26%; }
 table.compact td { padding-top: 7px; padding-bottom: 7px; }
 table.forecast td { white-space: nowrap; }
@@ -602,13 +739,31 @@ table.forecast td:nth-child(2) { white-space: normal; }
 
 /* ---------- xổ số ---------- */
 .lottery-note { background: var(--pill-warn-bg); color: var(--pill-warn-ink); }
-.lottery-grid { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-.lottery-card { min-width: 0; }
-.lottery-card h3 { margin: 0 0 6px; font-size: var(--fs-body); font-weight: 600; color: var(--text); }
-.lottery-table th { width: 7.5em; padding-right: 10px; font-size: var(--fs-small); font-weight: 400; color: var(--muted); }
-.lottery-table td { overflow-wrap: anywhere; letter-spacing: 0.02em; }
+/* Bảng kết quả kiểu quen thuộc của xổ số: mỗi hàng một giải, mỗi cột một đài, vạch dọc
+   giữa các đài. Cột hẹp (4 đài trên điện thoại) thì các số cùng giải xếp dọc. */
+.draw-panel { container-type: inline-size; }
+.lottery-table { table-layout: fixed; }
+.lottery-table th[scope="col"] { text-align: center; color: var(--text); font-weight: 600; font-size: var(--fs-body); white-space: normal; }
+.lottery-table th[scope="col"]:first-child { width: 6.5em; text-align: left; color: var(--muted); font-weight: 400; font-size: var(--fs-small); }
+.lottery-table th[scope="row"] { padding-right: 12px; font-size: var(--fs-small); font-weight: 400; color: var(--muted); }
+.lottery-table td { padding: 8px 12px; text-align: center; letter-spacing: 0.02em; }
+.lottery-table :is(td, th) + :is(td, th) { border-left: 1px solid var(--rule); }
+/* các số cùng giải: mỗi số một mục, xuống dòng nguyên số, tách bằng khoảng trống */
+.nums { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 16px; }
+.lottery-table.cols-1 :is(td, th[scope="col"]) { text-align: left; }
+.lottery-table.cols-1 .nums { justify-content: flex-start; }
 .lottery-table tr.special td { font-size: 22px; font-weight: 600; color: var(--accent); }
-.lottery-form .form-row { align-items: start; }
+@container (max-width: 560px) {
+  .lottery-table th[scope="col"]:first-child { width: 5em; }
+  .lottery-table td { padding: 8px 4px; }
+  .lottery-table th[scope="col"] + th { padding: 0 4px; font-size: var(--fs-small); }
+  .lottery-table th[scope="row"] { padding-right: 4px; }
+  .lottery-table tr.special td { font-size: 17px; }
+  .nums { gap: 0 12px; }
+  .lottery-table.cols-4 th[scope="col"]:first-child { width: 4em; }
+  .lottery-table.cols-4 td { padding: 8px 2px; }
+  .lottery-table.cols-4 tr.special td { font-size: 14px; letter-spacing: 0; }
+}
 
 /* ---------- giá vàng, giá xăng, tỷ giá ---------- */
 /* ▲ tăng xanh, ▼ giảm đỏ theo quy ước bảng giá Việt Nam; dùng đúng màu nhấn / màu lỗi của
@@ -623,27 +778,38 @@ table.forecast td:nth-child(2) { white-space: normal; }
 .delta.down { color: var(--negative); }
 .delta.flat { color: var(--muted); font-weight: 400; }
 .gold-table .delta { display: block; }
-.strip.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.strip .lead-figure + .small { margin-top: 4px; }
-/* Khối hẹp (điện thoại 360px, cạnh thanh bên): bảng gập thành từng thẻ - tên mặt hàng một
-   dòng, các ô số xếp 2 cột kèm nhãn cột lấy từ data-label. Không cuộn ngang. */
+/* cột phải trang vàng: số thế giới xếp dọc, ngăn bằng vạch mảnh */
+.stat-list > div { padding: 16px 0; border-top: 1px solid var(--rule); }
+.stat-list > div:first-child { padding-top: 0; border-top: 0; }
+.stat-list dd { margin-top: 4px; }
+.stat-list .v { font-size: var(--fs-section); }
+.unit { color: var(--muted); font-size: var(--fs-small); letter-spacing: 0; }
+caption.unit { caption-side: top; text-align: left; padding-bottom: 8px; }
+/* Khối hẹp (điện thoại 360px, cạnh thanh bên). Vàng và tỷ giá giữ dạng bảng gọn (dễ so
+   giá các hiệu theo cột, trang ngắn); bảng xăng nhiều cột hơn gập thành từng thẻ - tên
+   mặt hàng một dòng, các ô số xếp 2 cột kèm nhãn cột lấy từ data-label. Không cuộn ngang. */
 @container (max-width: 560px) {
-  .price-table thead {
+  .gold-table th, .gold-table td, .fx-table th, .fx-table td { padding: 8px 6px; font-size: var(--fs-small); }
+  .gold-table th:first-child, .gold-table td:first-child, .fx-table th:first-child { padding-left: 0; }
+  .gold-table th:last-child, .gold-table td:last-child, .fx-table th:last-child, .fx-table td:last-child { padding-right: 0; }
+  .gold-table thead th, .fx-table thead th { white-space: normal; line-height: 1.3; height: auto; }
+  .gold-table tbody th, .fx-table tbody th { font-size: var(--fs-small); overflow-wrap: anywhere; }
+  .gold-table .price { font-size: var(--fs-body); }
+}
+@container (max-width: 560px) {
+  .fuel-table thead {
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
   }
-  .price-table, .price-table tbody { display: block; }
-  .price-table tr {
+  .fuel-table, .fuel-table tbody { display: block; }
+  .fuel-table tr {
     display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px;
     padding: 12px 0; border-bottom: 1px solid var(--rule);
   }
-  .price-table tbody tr:first-child { padding-top: 0; }
-  .price-table tbody tr:last-child { padding-bottom: 0; border-bottom: 0; }
-  .price-table tbody th[scope="row"] { grid-column: 1 / -1; padding: 0; border: 0; }
-  .price-table td, .price-table td.n { min-width: 0; padding: 0; border: 0; text-align: left; white-space: normal; }
-  .price-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--fs-small); }
-}
-@media (max-width: 860px) {
-  .strip.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fuel-table tbody tr:first-child { padding-top: 0; }
+  .fuel-table tbody tr:last-child { padding-bottom: 0; border-bottom: 0; }
+  .fuel-table tbody th[scope="row"] { grid-column: 1 / -1; padding: 0; border: 0; }
+  .fuel-table td, .fuel-table td.n { min-width: 0; padding: 0; border: 0; text-align: left; white-space: normal; }
+  .fuel-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--fs-small); }
 }
 
 /* ---------- chân trang ---------- */
@@ -661,7 +827,19 @@ main.column { padding-bottom: 48px; }
 
 /* ---------- máy tính bảng ---------- */
 @media (max-width: 1100px) {
-  .s3 { grid-column: span 6; } .s9, .s8, .s7, .s5, .s4 { grid-column: 1 / -1; }
+  /* hẹp hơn: mọi phần một cột (khe 40px x 11 của lưới 12 cột không còn chỗ) */
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .grid > * { grid-column: 1 / -1; }
+  .today-head { grid-template-columns: minmax(0, 1fr); }
+  .today-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
+  .today-facts > div:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .today-facts > div:nth-child(even) { padding-right: 0; }
+  .today-facts > div:nth-child(n + 3) { padding-top: 16px; border-top: 1px solid var(--rule); }
+  .tool-list > li { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .tool-list p { grid-column: 1 / -1; }
+  .tool-list > li > .btn { grid-row: 1; justify-self: end; }
+  .tool-form { grid-column: 1 / -1; grid-row: auto; width: min(100%, 26rem); }
+  .examples-wide .ex-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 /* ---------- điện thoại: thanh bên gập thành thanh trên 52px + bảng trượt ---------- */
 @media (max-width: 860px) {
@@ -691,22 +869,44 @@ main.column { padding-bottom: 48px; }
   .title-row { margin-bottom: 20px; }
   h1.date { font-size: 32px; }
   .date + .sub { font-size: var(--fs-body); }
-  .home-head { margin: 8px 0 28px; }
-  .grid > * { grid-column: 1 / -1; }
-  .grid > .tile.s3 { grid-column: span 6; }
-  .tile { min-height: 112px; padding: 14px 16px; }
-  .tile-value { font-size: 24px; }
+  .today-head { margin: 8px 0 28px; }
+  .today-facts { margin: 28px 0; }
+  .next-hour { font-size: var(--fs-section); }
+  .holiday-strip { grid-template-columns: minmax(0, 1fr); }
+  .holiday-strip > li {
+    grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px;
+    padding: 12px 0; border-left: 0; border-top: 1px solid var(--rule);
+  }
+  .holiday-strip .left { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: var(--fs-body); }
+  .holiday-strip > li:first-child { padding-top: 0; border-top: 0; }
+  .holiday-strip > li:last-child { padding-bottom: 0; }
+  .tools { margin-top: 28px; }
+  .tool-list > li { padding: 16px 0; }
   .panel { padding: 16px; }
   .form-row { grid-template-columns: minmax(0, 1fr); }
-  .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
-  .strip > div { padding: 0; }
-  .strip > div + div { border-left: 0; }
-  .strip > div:first-child { grid-column: 1 / -1; }
   .stages { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stages li:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .stages li:nth-child(even) { padding-right: 0; }
+  .stages li:nth-child(n + 3) { border-top: 1px solid var(--rule); }
+  .toolbar-row > .field, .toolbar-row > .field.f-wide { max-width: none; }
+  .toolbar, .ask-bar { margin-bottom: 32px; }
+  .examples-wide .ex-list { grid-template-columns: minmax(0, 1fr); }
+  .lp { gap: 20px; }
+  .lp-num { font-size: 64px; }
+  .lp p { font-size: var(--fs-body); }
+  .now-temp { font-size: 56px; }
   .day { min-height: 56px; padding: 6px; }
   .day .note { display: none; }
   .day .d { font-size: var(--fs-body); white-space: nowrap; }
   .day.is-good .d::after { width: 5px; height: 5px; margin-left: 3px; }
+}
+td .sub.kind { display: none; }
+@media (max-width: 560px) {
+  /* bảng dự báo trên điện thoại: bỏ thanh biên độ để đủ chỗ cho cột UV, không cuộn ngang */
+  .forecast .range-col { display: none; }
+  /* bảng ngày lễ: âm/dương lịch xuống dưới ngày thay cho một cột riêng */
+  .kind-col { display: none; }
+  td .sub.kind { display: block; }
 }
 @media (max-width: 420px) {
   .day .l { font-size: 11px; }
@@ -717,6 +917,7 @@ main.column { padding-bottom: 48px; }
   .btn:active { transform: none; }
   .switch::after { transition: none; }
   .sidebar, .sidebar:target, .sidebar.open { transition: none; }
+  .palace:target { animation: none; }
 }
 /* Màn cảm ứng: mọi điều khiển và liên kết lẻ cao tối thiểu 44px. */
 @media (pointer: coarse) {

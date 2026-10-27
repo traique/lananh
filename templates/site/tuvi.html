@@ -6,7 +6,7 @@
     <p class="sub">An lá số Tử Vi Đẩu Số theo cách phổ biến ở Việt Nam (Thái Thứ Lang). Thông tin chỉ dùng để tính, không lưu lại.</p>
   </div>
 </div>
-<div class="grid">
+<div class="grid top">
   <form class="panel form s7" action="/tu-vi" method="post" novalidate>
     {% include "_errors.html" %}
     <p class="hint">Mục có <span aria-hidden="true">*</span><span class="sr-only">dấu sao</span> là bắt buộc.</p>
@@ -38,7 +38,7 @@
           <option value="{{ idx }}"{% if form.gio == idx|string %} selected{% endif %}>Giờ {{ name }} ({{ span }})</option>
           {% endfor %}
         </select>
-        <span class="hint" id="gio-hint">Sinh 23h-24h chọn "Tý đầu": an theo ngày hôm sau, như cách phổ biến ở Việt Nam.</span>
+        <span class="hint" id="gio-hint">Sinh 23h-24h chọn “Tý đầu”: an theo ngày hôm sau, như cách phổ biến ở Việt Nam.</span>
       </div>
       <fieldset>
         <legend>Giới tính <span aria-hidden="true">*</span></legend>
@@ -50,7 +50,7 @@
     </div>
     <div class="form-actions"><button class="btn primary" type="submit">An lá số</button></div>
   </form>
-  <section class="panel s5" aria-labelledby="hours-title">
+  <section class="sect s5" aria-labelledby="hours-title">
     <header><h2 id="hours-title">Giờ sinh theo địa chi</h2><span class="meta">giờ đồng hồ Việt Nam</span></header>
     <table class="compact">
       <caption class="sr-only">Mười hai giờ địa chi và khoảng giờ tương ứng</caption>

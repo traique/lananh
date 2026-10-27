@@ -4,7 +4,7 @@
 <div class="title-row">
   <div>
     <h1>Giá vàng hôm nay</h1>
-    <p class="sub">Giá mua vào, bán ra của các thương hiệu trong nước, đơn vị triệu đồng/lượng; ▲▼ là tăng, giảm so với hôm trước. Đối chiếu lại tại cửa hàng trước khi giao dịch.</p>
+    <p class="sub">Giá mua vào, bán ra của các thương hiệu trong nước, tính bằng triệu đồng một lượng (1 lượng = 10 chỉ = 37,5 g). Đối chiếu lại tại cửa hàng trước khi giao dịch.</p>
   </div>
 </div>
 {% include "_errors.html" %}
@@ -12,77 +12,82 @@
 {% if data.fallback %}
 <div class="ok-box notice price-note" role="status">Nguồn vang.today đang lỗi, tạm hiện bảng giá SJC (không có tăng giảm và vàng thế giới).</div>
 {% endif %}
-<section class="panel price-panel" aria-labelledby="gold-title">
-  <header>
-    <h2 id="gold-title">Vàng trong nước</h2>
-    <span class="meta">{% if data.updated %}Cập nhật {{ data.updated }} · {% endif %}triệu đồng/lượng</span>
-  </header>
-  <table class="price-table gold-table">
-    <thead><tr><th scope="col">Loại vàng</th><th scope="col" class="n">Mua vào</th><th scope="col" class="n">Bán ra</th></tr></thead>
-    <tbody>
-      {% for r in data.domestic %}
-      <tr>
-        <th scope="row">{{ r.name }}{% if r.branch %}<span class="sub">{{ r.branch }}</span>{% endif %}</th>
-        <td class="n" data-label="Mua vào"><span class="price">{{ r.buy | trieu }}</span>{% if not data.fallback %} {{ delta(r.changeBuy, "trieu") }}{% endif %}</td>
-        <td class="n" data-label="Bán ra"><span class="price">{{ r.sell | trieu }}</span>{% if not data.fallback %} {{ delta(r.changeSell, "trieu") }}{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
-{% if data.world %}
-{% set w = data.world %}
-<section class="panel" aria-labelledby="world-title">
-  <header><h2 id="world-title">Vàng thế giới</h2><span class="meta">XAU/USD, USD/ounce</span></header>
-  <div class="strip three">
-    <div>
-      <span class="meta">Giá XAU/USD</span>
-      <p class="lead-figure">{{ w.priceUsdPerOunce | usd }}</p>
-      <p class="small">{{ delta(w.change, "usd") }} <span class="muted">USD so với hôm trước</span></p>
-    </div>
-    {% if w.conversion %}
-    <div>
-      <span class="meta">Quy đổi tham khảo</span>
-      <p class="v">≈ {{ w.conversion.vndPerTael | trieu }} triệu/lượng</p>
-      <p class="muted small">USD Vietcombank bán {{ w.conversion.usdVnd | fx_rate }} đ</p>
-    </div>
-    {% if w.conversion.sjcSellGap is not none %}
-    <div>
-      <span class="meta">Chênh lệch với SJC miếng</span>
-      <p class="v">{{ "Cao hơn" if w.conversion.sjcSellGap >= 0 else "Thấp hơn" }} ≈ {{ w.conversion.sjcSellGap | abs | trieu }} triệu</p>
-      <p class="muted small">giá bán SJC so với giá quy đổi</p>
-    </div>
+<div class="grid top">
+  <section class="panel price-panel s7" aria-labelledby="gold-title">
+    <header>
+      <h2 id="gold-title">Vàng trong nước</h2>
+      {% if data.updated %}<span class="meta">Cập nhật {{ data.updated }}</span>{% endif %}
+    </header>
+    <table class="price-table gold-table">
+      <caption class="unit">Triệu đồng/lượng{% if not data.fallback %}; ▲▼ tăng, giảm so với hôm trước{% endif %}</caption>
+      <thead><tr><th scope="col">Loại vàng</th><th scope="col" class="n">Mua vào</th><th scope="col" class="n">Bán ra</th></tr></thead>
+      <tbody>
+        {% for r in data.domestic %}
+        <tr>
+          <th scope="row">{{ r.name }}{% if r.branch %}<span class="sub">{{ r.branch }}</span>{% endif %}</th>
+          <td class="n" data-label="Mua vào"><span class="price">{{ r.buy | trieu(fixed=true) }}</span>{% if not data.fallback %} {{ delta(r.changeBuy, "trieu") }}{% endif %}</td>
+          <td class="n" data-label="Bán ra"><span class="price">{{ r.sell | trieu(fixed=true) }}</span>{% if not data.fallback %} {{ delta(r.changeSell, "trieu") }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  <div class="s5 stack">
+    {% if data.world %}
+    {% set w = data.world %}
+    <section class="sect" aria-labelledby="world-title">
+      <header><h2 id="world-title">Vàng thế giới</h2></header>
+      <dl class="stat-list">
+        <div>
+          <dt>Giá XAU/USD</dt>
+          <dd class="lead-figure">{{ w.priceUsdPerOunce | usd }} <span class="unit">USD/ounce</span></dd>
+          <dd class="small">{{ delta(w.change, "usd") }} <span class="muted">USD so với hôm trước</span></dd>
+        </div>
+        {% if w.conversion %}
+        <div>
+          <dt>Quy đổi tham khảo</dt>
+          <dd class="v">≈ {{ w.conversion.vndPerTael | trieu }} triệu đồng/lượng</dd>
+          <dd class="muted small">Theo giá bán USD của Vietcombank: {{ w.conversion.usdVnd | fx_rate }} đồng</dd>
+        </div>
+        {% if w.conversion.sjcSellGap is not none %}
+        <div>
+          <dt>Chênh lệch với SJC miếng</dt>
+          <dd class="v">{{ "Cao hơn" if w.conversion.sjcSellGap >= 0 else "Thấp hơn" }} ≈ {{ w.conversion.sjcSellGap | abs | trieu }} triệu đồng/lượng</dd>
+          <dd class="muted small">Giá bán SJC so với giá quy đổi</dd>
+        </div>
+        {% endif %}
+        {% endif %}
+      </dl>
+      {% if w.conversion %}
+      <p class="note-line">{{ w.conversion.note }}</p>
+      {% else %}
+      <p class="note-line">Chưa lấy được tỷ giá Vietcombank nên tạm chưa quy đổi ra đồng.</p>
+      {% endif %}
+    </section>
     {% endif %}
+    {% if data.fx and data.fx.rates %}
+    <section class="sect price-panel" aria-labelledby="fx-title">
+      <header>
+        <h2 id="fx-title">Tỷ giá Vietcombank</h2>
+        <span class="meta">{% if data.fx.updated %}Cập nhật {{ data.fx.updated }}, đơn vị{% else %}Đơn vị{% endif %} đồng</span>
+      </header>
+      <table class="price-table fx-table">
+        <thead><tr><th scope="col">Ngoại tệ</th><th scope="col" class="n">Mua tiền mặt</th><th scope="col" class="n">Mua chuyển khoản</th><th scope="col" class="n">Bán ra</th></tr></thead>
+        <tbody>
+          {% for r in data.fx.rates %}
+          <tr>
+            <th scope="row">{{ r.code }}{% if r.nameVi or r.name %}<span class="sub">{{ r.nameVi or r.name }}</span>{% endif %}</th>
+            <td class="n" data-label="Mua tiền mặt">{{ r.cashBuy | fx_rate }}</td>
+            <td class="n" data-label="Mua CK">{{ r.transferBuy | fx_rate }}</td>
+            <td class="n" data-label="Bán ra">{{ r.sell | fx_rate }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
     {% endif %}
   </div>
-  {% if w.conversion %}
-  <p class="note-line">{{ w.conversion.note }}</p>
-  {% else %}
-  <p class="note-line">Chưa lấy được tỷ giá Vietcombank nên tạm chưa quy đổi ra đồng.</p>
-  {% endif %}
-</section>
-{% endif %}
-{% if data.fx and data.fx.rates %}
-<section class="panel price-panel" aria-labelledby="fx-title">
-  <header>
-    <h2 id="fx-title">Tỷ giá Vietcombank</h2>
-    <span class="meta">{% if data.fx.updated %}Cập nhật {{ data.fx.updated }} · {% endif %}đồng</span>
-  </header>
-  <table class="price-table fx-table">
-    <thead><tr><th scope="col">Ngoại tệ</th><th scope="col" class="n">Mua tiền mặt</th><th scope="col" class="n">Mua chuyển khoản</th><th scope="col" class="n">Bán ra</th></tr></thead>
-    <tbody>
-      {% for r in data.fx.rates %}
-      <tr>
-        <th scope="row">{{ r.code }}{% if r.nameVi or r.name %}<span class="sub">{{ r.nameVi or r.name }}</span>{% endif %}</th>
-        <td class="n" data-label="Mua tiền mặt">{{ r.cashBuy | fx_rate }}</td>
-        <td class="n" data-label="Mua CK">{{ r.transferBuy | fx_rate }}</td>
-        <td class="n" data-label="Bán ra">{{ r.sell | fx_rate }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
-{% endif %}
+</div>
 <p class="note-line">Nguồn: {% if data.fallback %}sjc.com.vn (dự phòng khi vang.today lỗi){% else %}vang.today, SJC dự phòng{% endif %}{% if data.fx %}; tỷ giá Vietcombank{% endif %}. Giá cập nhật khoảng 10 phút một lần, trang không tự đoán giá. Dữ liệu JSON: <a href="/api/v1/gold">/api/v1/gold</a>, <a href="/api/v1/fx">/api/v1/fx</a>.</p>
 {% endif %}
 {% endblock %}

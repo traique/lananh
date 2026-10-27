@@ -70,4 +70,8 @@ async def test_root_health_khong_cham_db(monkeypatch):
     transport = httpx.ASGITransport(app=web.api)
     async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as client:
         response = await client.get("/", headers={"Accept": "application/json"})
+        # Health check không nhận diện được (Accept: */*) nhận trang chủ HTML: vẫn 200,
+        # vẫn không chạm DB (chưa có cookie phiên thì không đọc epoch đăng nhập).
+        page = await client.get("/", headers={"Accept": "*/*", "User-Agent": "Go-http-client/1.1"})
     assert response.status_code == 200 and response.json() == {"status": "ok"}
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")

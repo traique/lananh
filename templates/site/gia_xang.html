@@ -12,7 +12,7 @@
 <section class="panel price-panel" aria-labelledby="plx-title">
   <header>
     <h2 id="plx-title">Petrolimex</h2>
-    <span class="meta">{% if data.updated %}Cập nhật {{ data.updated }} · {% endif %}đồng/lít</span>
+    <span class="meta">{% if data.updated %}Cập nhật {{ data.updated }}, đơn vị{% else %}Đơn vị{% endif %} đồng/lít</span>
   </header>
   <table class="price-table fuel-table">
     <thead><tr><th scope="col">Mặt hàng</th><th scope="col" class="n">Vùng 1</th><th scope="col" class="n">Vùng 2</th><th scope="col" class="n">Kỳ này</th><th scope="col" class="n">Kỳ trước</th></tr></thead>
@@ -22,16 +22,16 @@
         <th scope="row">{{ r.name }}</th>
         <td class="n" data-label="Vùng 1"><span class="price">{{ r.zone1 | vnd }}</span></td>
         <td class="n" data-label="Vùng 2">{{ r.zone2 | vnd }}</td>
-        <td class="n" data-label="Kỳ này">{{ delta(r.change, zero="0") }}</td>
-        <td class="n" data-label="Kỳ trước">{{ delta(r.prevChange, zero="0") }}</td>
+        <td class="n" data-label="Kỳ này">{{ delta(r.change, zero="Giữ nguyên") }}</td>
+        <td class="n" data-label="Kỳ trước">{{ delta(r.prevChange, zero="Giữ nguyên") }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 {% if data.pvoil %}
-<section class="panel price-panel" aria-labelledby="pvoil-title">
-  <header><h2 id="pvoil-title">PVOIL</h2><span class="meta">đồng/lít</span></header>
+<section class="sect price-panel" aria-labelledby="pvoil-title">
+  <header><h2 id="pvoil-title">PVOIL</h2><span class="meta">Đơn vị đồng/lít</span></header>
   <table class="price-table fuel-table">
     <thead><tr><th scope="col">Mặt hàng</th><th scope="col" class="n">Giá</th><th scope="col" class="n">Kỳ này</th><th scope="col" class="n">Kỳ trước</th></tr></thead>
     <tbody>
@@ -39,14 +39,14 @@
       <tr>
         <th scope="row">{{ r.name }}</th>
         <td class="n" data-label="Giá"><span class="price">{{ r.price | vnd }}</span></td>
-        <td class="n" data-label="Kỳ này">{{ delta(r.change, zero="0") }}</td>
-        <td class="n" data-label="Kỳ trước">{{ delta(r.prevChange, zero="0") }}</td>
+        <td class="n" data-label="Kỳ này">{{ delta(r.change, zero="Giữ nguyên") }}</td>
+        <td class="n" data-label="Kỳ trước">{{ delta(r.prevChange, zero="Giữ nguyên") }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 {% endif %}
-<p class="note-line">Nguồn: {{ data.source }} theo bảng giá Petrolimex và PVOIL; cập nhật khoảng 1 giờ một lần, trang không tự đoán giá. ▲▼ là tăng, giảm (đồng/lít), 0 là giữ nguyên. Dữ liệu JSON: <a href="/api/v1/fuel">/api/v1/fuel</a>.</p>
+<p class="note-line">Nguồn: {{ data.source }} theo bảng giá Petrolimex và PVOIL; cập nhật khoảng 1 giờ một lần, trang không tự đoán giá. ▲▼ là tăng, giảm (đồng/lít). Dữ liệu JSON: <a href="/api/v1/fuel">/api/v1/fuel</a>.</p>
 {% endif %}
 {% endblock %}

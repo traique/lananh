@@ -441,12 +441,13 @@ async def get_gold_live() -> LiveGoldTable:
     return await _cached("gold_live", _GOLD_TTL_SEC, _load_gold_live)
 
 
-def trieu(value: float | None) -> str:
-    """Đồng -> triệu, tối đa 2 số lẻ, bỏ số 0 thừa: 138700000 -> "138,7"."""
+def trieu(value: float | None, fixed: bool = False) -> str:
+    """Đồng -> triệu, 2 số lẻ: 138700000 -> "138,7" (bỏ số 0 thừa, cho câu chữ) hoặc
+    "138,70" với ``fixed`` (bảng giá: mọi ô cùng số lẻ nên thẳng cột, 135 không lệch 138,7)."""
     if value is None:
         return "-"
     text = vnd(value / 1_000_000, 2)
-    return text.rstrip("0").rstrip(",") if "," in text else text
+    return text if fixed else text.rstrip("0").rstrip(",")
 
 
 def _arrow(change: float | None, unit: Callable[[float], str]) -> str:

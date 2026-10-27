@@ -1,5 +1,5 @@
-"""Can chi, nạp âm, tuổi hợp/xung, sao hạn, Tam tai, Kim lâu, Hoang ốc và
-ngày hoàng đạo/hắc đạo - toàn bộ là tra bảng cố định, không gọi AI.
+"""Can chi, nạp âm, tuổi hợp/xung, sao hạn, Tam tai, Kim lâu, Hoang ốc, ngày
+hoàng đạo/hắc đạo và Thập nhị trực - toàn bộ là tra bảng cố định, không gọi AI.
 
 Dùng chung cho /lich (services/calendar_query.py) và /tuvi (services/tuvi.py).
 Chi đánh số 0=Tý ... 11=Hợi; can 0=Giáp ... 9=Quý.
@@ -86,6 +86,10 @@ _THAN_NGAY = ["Thanh Long", "Minh Đường", "Thiên Hình", "Chu Tước", "Ki
 _THAN_HOANG_DAO = {"Thanh Long", "Minh Đường", "Kim Quỹ", "Kim Đường", "Ngọc Đường", "Tư Mệnh"}
 TAM_NUONG = {3, 7, 13, 18, 22, 27}
 NGUYET_KY = {5, 14, 23}
+# Thập nhị trực (Kiến trừ): ngày có chi trùng chi của tháng TIẾT KHÍ là trực Kiến (tháng
+# Giêng kiến Dần, đổi tháng ở Lập xuân, Kinh trập, Thanh minh...), rồi lần lượt theo chi
+# ngày - nên ngày giao tiết lặp lại trực của hôm trước.
+TRUC = ["Kiến", "Trừ", "Mãn", "Bình", "Định", "Chấp", "Phá", "Nguy", "Thành", "Thu", "Khai", "Bế"]
 
 
 def jiazi_index(can: int, chi: int) -> int:
@@ -259,6 +263,20 @@ def day_god(date: dt.date) -> tuple[str, bool]:
     day_chi = (lunar._jd_from_date(date.day, date.month, date.year) + 1) % 12
     god = _THAN_NGAY[(day_chi - start) % 12]
     return god, god in _THAN_HOANG_DAO
+
+
+def month_chi_by_term(date: dt.date) -> int:
+    """Chi của tháng tiết khí chứa ``date``: Lập xuân..Kinh trập -> Dần, Kinh trập..Thanh
+    minh -> Mão... Tiết đầu tháng là các tiết số lẻ trong lunar.TIET_KHI (Lập xuân = 21)."""
+    term = lunar.TIET_KHI.index(lunar.solar_term(date.day, date.month, date.year))
+    jie = term if term % 2 else term - 1
+    return ((jie - 21) // 2 + 2) % 12
+
+
+def day_truc(date: dt.date) -> str:
+    """Trực của ngày trong Thập nhị trực (Kiến, Trừ, Mãn...)."""
+    day_chi = (lunar._jd_from_date(date.day, date.month, date.year) + 1) % 12
+    return TRUC[(day_chi - month_chi_by_term(date)) % 12]
 
 
 def day_quality(date: dt.date) -> str:
