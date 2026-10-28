@@ -428,7 +428,8 @@ async def _news_section(ctx: BriefContext) -> str | None:
     if ctx.absorb_news and not ctx.preview:
         content = await morning_news.shared_digest(ctx.now)
         if content:
-            return content
+            # Bản tin cá nhân đã có tiêu đề "☀️ Chào buổi sáng...": bỏ tiêu đề thứ 2.
+            return morning_news.without_header(content) or None
     items, from_digest = await morning_news.today_headlines(ctx.now)
     return morning_news.format_headlines(items, from_digest) if items else None
 

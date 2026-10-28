@@ -289,6 +289,7 @@ async def test_gop_tin_controller_zalo_va_zoom(world):
     world["controller"] = "z-5"
     zalo = await mb.build(-5, "zalo", now=MONDAY, settings=mb.BriefSettings(on=True))
     assert "TỔNG HỢP AI" in zalo and world["digest"] == 1 and world["headlines"] == 0
+    assert "BẢN TIN SÁNG —" not in zalo  # 1 tin chỉ 1 tiêu đề "☀️ Chào buổi sáng..."
     preview = await mb.build(
         -5, "zalo", now=MONDAY, settings=mb.BriefSettings(on=True), preview=True
     )

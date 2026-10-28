@@ -62,7 +62,13 @@ class _NewsItem:
 _GROUNDING = (
     "Bên dưới LUÔN có ít nhất 1 nguồn tin RSS thật với tiêu đề cụ thể. PHẢI "
     "tổng hợp từ đúng dữ liệu được cung cấp; không bịa thêm số liệu, sự kiện, "
-    "nhân vật hoặc kết luận không có trong nguồn."
+    "nhân vật hoặc kết luận không có trong nguồn.\n"
+    "- Mỗi câu phải dựa trên ít nhất 1 tin cụ thể bên dưới; không viết câu nhận định, "
+    'dự đoán hay câu chung chung không có trong tin (vd "người dùng đang chờ đợi...").\n'
+    "- Gọi người và tổ chức đúng như nguồn gọi. KHÔNG tự thêm chức danh, chức vụ, tuổi "
+    'hay mốc thời gian theo hiểu biết riêng (hiểu biết của bạn có thể đã cũ - vd không gọi ai là "cựu ..." '
+    "khi nguồn không viết vậy).\n"
+    "- Chỉ dùng con số có trong nguồn; câu có số không có trong nguồn sẽ bị hệ thống xoá."
 )
 _STYLE = (
     "Viết tiếng Việt, gọn và dễ đọc trên điện thoại. KHÔNG thêm tiêu đề tổng "
@@ -81,18 +87,25 @@ _STYLE = (
     "[CafeF], (theo VnExpress), và KHÔNG tự viết URL/link trong phần nội dung.\n"
     "Mỗi tin trong dữ liệu có ID như F1I1. Ở DÒNG CUỐI response, bắt buộc ghi "
     "duy nhất theo mẫu: IMPORTANT_IDS: F1I1,F2I3,F4I1. Hãy chọn 5-8 tin đáng "
-    "chú ý nhất và CHỈ dùng ID thật sự xuất hiện trong dữ liệu. Dòng này là dữ "
-    "liệu máy, không giải thích thêm."
+    "chú ý nhất, mỗi tin một sự kiện khác nhau (không chọn 2 bài cùng một chuyện, vd "
+    "2 bài giá vàng cùng ngày), và CHỈ dùng ID thật sự xuất hiện trong dữ liệu. Dòng "
+    "này là dữ liệu máy, không giải thích thêm."
 )
 _MIN_VALID_DIGEST_CHARS = 80
 _IMPORTANT_IDS_RE = re.compile(r"(?mi)^\s*IMPORTANT_IDS\s*:\s*([^\n]+)\s*$")
 _ITEM_ID_RE = re.compile(r"F\d+I\d+", re.IGNORECASE)
 _FEED_TITLE_RE = re.compile(r"^\[Feed:\s*(.*?)\]\s*$")
 _ITEM_HEADER_RE = re.compile(r"^(\d+)\.\s+(.+)$")
+# Ngày đăng read_rss nối sau tiêu đề: "(Wed, 28 Oct 2026 ...)", Tuổi Trẻ ghi tháng/ngày/năm
+# kèm giờ AM/PM, ISO "(2026-10-28T08:33:00+07:00)".
 _PUBLISHED_SUFFIX_RE = re.compile(
-    r"\s+\((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+.*\)\s*$",
+    r"\s+\((?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+[^)]*|\d{1,4}[/-]\d{1,2}[/-]\d{1,4}[^)]*"
+    r"|\d{4}-\d{2}-\d{2}[T ][^)]*)\)\s*$",
     re.IGNORECASE,
 )
+_SECTION_HEADER_RE = re.compile(r"\n+(?=(?:📈|🇻🇳|🌍|💻|🧭) [^\n]*$)", re.MULTILINE)
+_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
 _SOURCE_LABELS = {
     "vnexpress.net": "VnExpress",
     "cafef.vn": "CafeF",
@@ -168,13 +181,62 @@ def _annotate_feed(feed_text: str, feed_index: int) -> str:
     )
 
 
-def _build_prompt(feed_texts: list[str]) -> str:
+def _build_prompt(feed_texts: list[str], now: datetime | None = None) -> str:
     annotated = [_annotate_feed(text, i) for i, text in enumerate(feed_texts, start=1)]
     combined = "\n\n--- NGUỒN KHÁC ---\n\n".join(annotated)
     # Nội dung RSS là dữ liệu ngoài: rào lại (core.untrusted) để câu lệnh cài
     # trong tiêu đề/tóm tắt tin không điều khiển được bản tin.
     fenced = untrusted.wrap_untrusted(combined, "tin RSS")
-    return f"Tổng hợp các tin RSS dưới đây thành bản tin.\n{_GROUNDING}\n{_STYLE}\n\n{fenced}"
+    today = (now or datetime.now(_VN_TZ)).strftime("%d/%m/%Y")
+    return (
+        f"Hôm nay là {today} (giờ Việt Nam). Tổng hợp các tin RSS dưới đây thành bản tin.\n"
+        f"{_GROUNDING}\n{_STYLE}\n\n{fenced}"
+    )
+
+
+def _digits(text: str) -> set[str]:
+    """Các con số trong câu, bỏ dấu chấm/phẩy phân cách: "4.060" thành "4060"."""
+    return {re.sub(r"[.,]", "", number) for number in _NUMBER_RE.findall(text)}
+
+
+def _drop_unsourced_numbers(body: str, feed_texts: list[str]) -> str:
+    """Bỏ câu có con số không xuất hiện trong RSS (model tự thêm "VN-Index giảm 35 điểm"
+    khi nguồn không có), rồi bỏ mục chỉ còn tiêu đề. Lời dặn thôi chưa đủ chặn."""
+    known = _digits("\n".join(feed_texts))
+    lines: list[str] = []
+    for line in body.splitlines():
+        sentences = _SENTENCE_SPLIT_RE.split(line)
+        kept = [s for s in sentences if _digits(s) <= known]
+        if len(kept) < len(sentences):
+            logger.warning(
+                "morning_news: bỏ câu có số không có trong RSS: %r",
+                [s for s in sentences if s not in kept],
+            )
+            if not kept:
+                continue
+        lines.append(" ".join(kept))
+    tidy: list[str] = []
+    for i, line in enumerate(lines):
+        is_header = bool(_SECTION_HEADER_RE.match("\n" + line))
+        following = next((x for x in lines[i + 1 :] if x.strip()), "")
+        if is_header and (not following or _SECTION_HEADER_RE.match("\n" + following)):
+            continue  # mục rỗng sau khi bỏ câu
+        tidy.append(line)
+    return "\n".join(tidy).strip()
+
+
+def _drop_invented_former(body: str, feed_texts: list[str]) -> str:
+    """Model hay gọi người đương chức là "cựu ..." theo hiểu biết đã cũ (bản tin 28/10/2026
+    viết "cựu Tổng thống Donald Trump"). Nguồn không có chữ "cựu" thì chữ đó là bịa."""
+    if "cựu" in "\n".join(feed_texts).lower():
+        return body
+    body = re.sub(r"\bCựu\s+(\w)", lambda m: m.group(1).upper(), body)  # đầu câu
+    return re.sub(r"\bcựu\s+", "", body)
+
+
+def _tidy_sections(body: str) -> str:
+    """Mỗi tiêu đề mục cách đoạn trước đúng 1 dòng trống (model hay quên)."""
+    return _SECTION_HEADER_RE.sub("\n\n", body).strip()
 
 
 def _extract_important_ids(body: str) -> tuple[str, list[str]]:
@@ -243,10 +305,20 @@ def _format_important_links(items: list[_NewsItem]) -> str:
     return "\n".join(lines)
 
 
+_MORNING_HEADER = "☀️ BẢN TIN SÁNG — "
+
+
+def without_header(content: str) -> str:
+    """Bản tin sáng bỏ dòng tiêu đề - để gộp vào bản tin cá nhân đã có tiêu đề riêng."""
+    if content.startswith(_MORNING_HEADER):
+        return content.split("\n\n", 1)[1] if "\n\n" in content else ""
+    return content
+
+
 def _header(mode: str, now: datetime) -> str:
     if mode == "on_demand":
         return f"📰 ĐIỂM TIN — {now.strftime('%d/%m/%Y %H:%M')}"
-    return f"☀️ BẢN TIN SÁNG — {now.strftime('%d/%m/%Y')}"
+    return f"{_MORNING_HEADER}{now.strftime('%d/%m/%Y')}"
 
 
 async def build_digest(mode: str = "morning") -> str | None:
@@ -285,6 +357,8 @@ async def build_digest(mode: str = "morning") -> str | None:
         return None
 
     body, important_ids = _extract_important_ids(raw_body)
+    body = _drop_invented_former(_drop_unsourced_numbers(body, feed_texts), feed_texts)
+    body = _tidy_sections(body)
     if len(body) < _MIN_VALID_DIGEST_CHARS:
         logger.warning(
             "morning_news: model trả lời bất thường (%d ký tự: %r) dù có %d feed đọc được - bỏ, không gửi.",

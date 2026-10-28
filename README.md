@@ -1580,6 +1580,12 @@ dùng đúng 2 kênh bạn yêu cầu; trên Telegram dùng `/tintuc` hoặc `/b
   lúc quanh giờ chạy (free tier có thể spin down/redeploy).
 - Mục "🔗 TIN ĐÁNG CHÚ Ý" đánh số bài; danh sách link lưu ở setting
   `morning_news:last_links` để người dùng nhắn "đọc bài N" đọc nguyên bài.
+- Code soát bản AI viết: câu có con số không xuất hiện trong RSS bị bỏ (mục chỉ còn
+  tiêu đề thì bỏ cả mục); chữ "cựu" mà nguồn không có thì bỏ (model hay gọi người
+  đương chức là "cựu ..." theo hiểu biết đã cũ); tiêu đề bài bỏ giờ đăng dính kèm (vd
+  Tuổi Trẻ "(10/28/2026 8:33:00 AM)"); mỗi mục cách nhau 1 dòng trống. Lời dặn kèm
+  ngày hôm nay, cấm câu chung chung không có trong tin và cấm chọn 2 bài cùng sự kiện.
+  Gộp vào bản tin sáng cá nhân thì bỏ dòng tiêu đề "☀️ BẢN TIN SÁNG" (1 tin 1 tiêu đề).
 - `/bangtinsang` (hoặc `/bantinsang`; chỉ admin, Telegram/Zalo/Zoom) gửi thử ngay
   lập tức, bỏ qua guard "đã gửi hôm nay" - dùng để test mà không cần đợi tới 8h
   sáng hôm sau.
