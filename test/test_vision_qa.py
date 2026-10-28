@@ -259,7 +259,7 @@ async def test_telegram_anh_hoi_dap_tra_loi_chu(telegram_photo, monkeypatch, tmp
         raise AssertionError("câu hỏi về ảnh không được viết prompt")
 
     monkeypatch.setattr(media_handler.vision_service, "answer", fake_answer)
-    monkeypatch.setattr(media_handler.orchestrator, "analyze_image", no_prompt)
+    monkeypatch.setattr(media_handler.photo_prompt.orchestrator, "analyze_image", no_prompt)
     update = _Update("con gì đây?")
     await media_handler.photo_msg(update, _Context())
     assert sent == ["Đây là con mèo mướp đang ngủ."]

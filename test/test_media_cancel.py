@@ -274,7 +274,7 @@ async def test_huy_luc_dang_viet_prompt_tu_anh(owner, monkeypatch):
     async def failure(prompt_id, kind, exc):
         failures.append((prompt_id, kind, type(exc).__name__))
 
-    monkeypatch.setattr(media_handler.orchestrator, "analyze_image", slow_analyze)
+    monkeypatch.setattr(media_handler.photo_prompt.orchestrator, "analyze_image", slow_analyze)
     monkeypatch.setattr(media_handler.telemetry, "start", AsyncMock(return_value=5))
     monkeypatch.setattr(media_handler.telemetry, "failure", failure)
     update = _Update(photo=[SimpleNamespace(file_id="p")], caption="")

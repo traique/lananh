@@ -43,9 +43,63 @@ def test_image_prompt_template_has_reference_analysis_controls():
         subject_rule=identity.subject_rule,
     )
 
-    assert "REFERENCE PRIORITY" in rendered
+    assert "SOURCE PRIORITY" in rendered
     assert "IDENTITY PRIORITY" in rendered
     assert "Do not invent hidden anatomy" in rendered
     assert "CAMERA AND LENS MUST BE INFERRED" in rendered
     assert "REALISM CHECK" in rendered
     assert "{subject_phrase}" not in rendered
+
+
+# Prompt thật bot từng trả cho ảnh cô gái đạp xe dưới cây hoa giấy, caption "đính kèm mặt
+# tôi": chép nguyên khuôn mẫu cũ, không tả gì của ảnh.
+COPIED_PROMPT = (
+    "Identity lock: the attached reference photo is the sole source of the subject's "
+    "identity.\n\nPhotographic portrait of the subject from the attached reference image "
+    "in a simple outdoor park setting. Vertical 9:16 portrait orientation, three-quarter "
+    "body shot. Her hair follows the requested hairstyle naturally. She wears simple "
+    "everyday clothing appropriate to the described setting, with realistic fabric texture."
+)
+GOOD_PROMPT = (
+    "Photographic portrait of the subject from the attached reference image sitting on a "
+    "white city bicycle on a paved garden path under a blooming magenta bougainvillea tree. "
+    "Vertical 4:5 portrait orientation, three-quarter body shot from knee level upward. "
+    "Both hands grip the mint-green handlebar grips at waist height; her long dark hair is "
+    "tied in a high ponytail. She wears a white ruffled off-shoulder top and high-waisted "
+    "light-blue wide-leg jeans; a plastic cup of iced matcha sits on the rear rack."
+)
+
+
+def test_bat_duoc_prompt_chep_khuon_mau():
+    from services.prompt_templates import copies_template
+
+    assert copies_template(COPIED_PROMPT)
+    assert copies_template("Photographic portrait of her [doing what, where].")
+    assert not copies_template(GOOD_PROMPT)
+
+
+async def test_prompt_chep_khuon_mau_thi_hoi_lai_mot_lan(monkeypatch):
+    from types import SimpleNamespace
+
+    from services import photo_prompt
+    from services.prompt_templates import TEMPLATE_RETRY_NOTE
+
+    seen = []
+
+    async def analyze(instruction, path):
+        seen.append(instruction)
+        return SimpleNamespace(text=COPIED_PROMPT if len(seen) == 1 else GOOD_PROMPT)
+
+    monkeypatch.setattr(photo_prompt.orchestrator, "analyze_image", analyze)
+    response = await photo_prompt.generate("PHÂN TÍCH ẢNH", "/x.jpg")
+    assert response.text == GOOD_PROMPT
+    assert seen == ["PHÂN TÍCH ẢNH", "PHÂN TÍCH ẢNH" + TEMPLATE_RETRY_NOTE]
+
+    async def good(instruction, path):
+        seen.append(instruction)
+        return SimpleNamespace(text=GOOD_PROMPT)
+
+    seen.clear()
+    monkeypatch.setattr(photo_prompt.orchestrator, "analyze_image", good)
+    response = await photo_prompt.generate("PHÂN TÍCH ẢNH", "/x.jpg")
+    assert seen == ["PHÂN TÍCH ẢNH"] and response.text == GOOD_PROMPT  # tốt rồi: không hỏi lại

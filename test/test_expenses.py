@@ -221,7 +221,7 @@ async def test_zalo_anh_hoa_don_khong_viet_prompt(fake, monkeypatch, tmp_path):
 
     monkeypatch.setattr(cis.config, "MEDIA_DIR", tmp_path)
     monkeypatch.setattr(cis.expense_service, "analyze_receipt", receipt)
-    monkeypatch.setattr(cis.orchestrator, "analyze_image", no_prompt)
+    monkeypatch.setattr(cis.photo_prompt.orchestrator, "analyze_image", no_prompt)
     monkeypatch.setattr(cis.conversation_log, "record_exchange", record)
     messages, _ = await cis.handle_channel_image(-5, b"jpg", "image/jpeg", "bill", "m1")
     assert messages == ["đã đọc -5"] and not list(tmp_path.iterdir())

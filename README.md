@@ -570,6 +570,11 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   đơn. Ảnh biểu đồ chỉ được mô tả: dòng khuyến nghị mua/bán, vùng mua, cắt lỗ, mục
   tiêu bị code lọc bỏ. `VISION_QA_ENABLED=0` quay về chỉ viết prompt;
   `PHOTO_NO_CAPTION_MODE=describe` cho ảnh không chữ được mô tả ngắn.
+- Viết prompt từ ảnh mẫu (`services/photo_prompt.py`): caption "mặt tôi"/"giữ mặt" →
+  prompt khoá mặt theo 1 ảnh rõ mặt đính kèm trên app Gemini, còn dáng, tóc, đồ, đạo
+  cụ, bối cảnh, ánh sáng vẫn tả đủ theo ảnh mẫu; "cô gái 20" → mặt cố định viết sẵn;
+  không từ khoá → tả lại người trong ảnh bằng chữ. Prompt nào còn chép khuôn mẫu (ô
+  `[..]`, câu chung chung kiểu "the requested hairstyle") thì bot hỏi lại model 1 lần.
 - Đọc tài liệu: PDF, TXT/MD, Word .docx (tối đa 5 MB, `DOCUMENT_MAX_BYTES`). Không
   chú thích thì tóm tắt, có câu hỏi thì trả lời theo tài liệu. PDF do Gemini đọc,
   dự phòng OpenRouter với engine miễn phí `cloudflare-ai` (không bao giờ dùng

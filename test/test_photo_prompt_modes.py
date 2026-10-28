@@ -139,16 +139,16 @@ def test_bat_buoc_ta_dang_nguoi_chi_tiet():
 
 def test_vi_du_co_doan_ta_dang_nguoi():
     example = _render_described().split("---")[1]
-    assert "elbows slightly relaxed" in example
-    assert "hands near hip level" in example
-    assert "weight is distributed naturally" in example
+    pose = next(line for line in example.splitlines() if line.startswith("[Pose:"))
+    for need in ("elbow", "each hand", "palms", "weight", "head tilt", "gaze", "hair"):
+        assert need in pose, f"ô dáng người thiếu {need}"
 
 
 # ─── Chất ảnh ───────────────────────────────────────
 def test_chat_anh_bam_theo_anh_goc():
     for render in _ALL_MODES:
         text = render()
-        assert "LIGHTING AND FINISH MUST MATCH THE REFERENCE" in text
+        assert "LIGHTING AND FINISH MUST MATCH THE SOURCE PHOTO" in text
         assert "contradictory raw and beauty-filter" in text
 
 
@@ -260,6 +260,38 @@ def test_dang_3_cam_bia_dac_diem_khuon_mat():
     rule = resolve_prompt_identity(CAPTION_REFERENCE).subject_rule
     assert "DO NOT invent concrete facial features" in rule
     assert "eye colour" in rule and "face shape" in rule
+
+
+def test_dang_3_anh_dinh_kem_chi_cho_mat_van_phai_ta_du_canh():
+    """ "đính kèm mặt tôi": luật cũ dặn chỉ tả dáng/đồ/bối cảnh "khi ảnh tham chiếu chưa
+    quyết định" -> model bỏ trống hết, prompt ra chung chung không có gì của ảnh mẫu."""
+    rule = resolve_prompt_identity("đính kèm mặt tôi").subject_rule
+    assert "only when they are not already determined" not in rule
+    assert "supplies ONLY the face" in rule
+    for need in ("pose", "hairstyle", "outfit", "props", "setting", "lighting"):
+        assert need in rule, f"luật mặt tôi thiếu yêu cầu tả {need}"
+    assert "describe all of it in full" in rule
+    assert "ảnh rõ mặt" in resolve_prompt_identity("đính kèm mặt tôi").mode_hint
+
+
+# ─── Ví dụ là khuôn có ô trống, không phải prompt chép được ───
+def test_vi_du_khong_con_cau_chung_chung_chep_nguyen_van_duoc():
+    """Bản cũ: "in a simple outdoor setting", "the requested hairstyle", "simple everyday
+    clothing appropriate to the described setting" - hợp với mọi ảnh nên model chép ra
+    nguyên văn (prompt thật từ ảnh cô gái đạp xe dưới cây hoa giấy không có xe đạp, hoa,
+    áo quần hay ly nước nào)."""
+    for render in _ALL_MODES:
+        example = render().split("---")[1]
+        for filler in (
+            "a simple outdoor setting",
+            "the requested hairstyle",
+            "simple everyday clothing",
+            "appropriate to the described setting",
+        ):
+            assert filler not in example
+        for slot in ("[Pose:", "[Outfit:", "[Setting:", "[Lens:", "[Light and finish:"):
+            assert slot in example
+        assert "replace each slot with concrete details" in render()
 
 
 def test_ba_dang_cho_ra_ba_prompt_khac_nhau():

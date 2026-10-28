@@ -22,9 +22,8 @@ from telegram.ext import ContextTypes
 import messages
 from core import config
 from core.text_normalize import nfc
-from ai import orchestrator
 from handlers import common, turn_feedback
-from services import conversation_log, expense_service, vision_service
+from services import conversation_log, expense_service, photo_prompt, vision_service
 from services.concurrency import TurnCancelled
 from services.prompt_identity import resolve_prompt_identity
 from services.prompt_templates import build_image_instruction
@@ -165,7 +164,7 @@ async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         # Task con dưới khoá chủ bot: /huy huỷ được (None = đã trả lời "em dừng rồi").
         response = await turn_feedback.owner_cancellable(
-            update.message, lambda: orchestrator.analyze_image(instruction, str(local_path))
+            update.message, lambda: photo_prompt.generate(instruction, str(local_path))
         )
         if response is None:
             await telemetry.failure(prompt_id, "promptify", TurnCancelled())

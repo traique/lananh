@@ -111,14 +111,20 @@ PHOTO_SUBJECT_RULE_GIRL = (
     "clothing, expression, camera angle or scene details alter the locked face."
 )
 
+# "mặt tôi": user dán prompt vào Gemini kèm 1 ảnh MẶT của họ - thường là ảnh khác với
+# ảnh mẫu đang phân tích, nên ảnh đính kèm chỉ cho khuôn mặt. Bản cũ dặn "chỉ tả dáng,
+# đồ, bối cảnh khi ảnh tham chiếu chưa quyết định" -> model bỏ trống hết, prompt ra
+# chung chung (không xe đạp, không cây hoa, không áo quần thật trong ảnh mẫu).
 PHOTO_SUBJECT_RULE_REFERENCE = (
-    "2. CRITICAL - the user will attach the reference photo together with this prompt, "
-    'so that attachment is the sole identity source. Refer to the person as "the subject '
-    'from the attached reference image" and state that the generated face must match the '
-    "attached photo exactly. DO NOT invent concrete facial features such as eye colour, "
-    "face shape, nose or lip shape when they are supplied by the attachment. Describe pose, "
-    "expression, outfit, setting, lighting and camera only when they are not already "
-    "determined by the reference."
+    "2. CRITICAL - the face comes from a SEPARATE identity photo that the user will attach "
+    "together with this prompt in the image app. That photo is usually a different picture "
+    "from the source photo you are analysing and supplies ONLY the face. Refer to the person "
+    'as "the subject from the attached reference image" and state that the generated face '
+    "must match the attached photo exactly. DO NOT invent concrete facial features such as "
+    "eye colour, face shape, nose or lip shape - the attachment supplies them. Everything "
+    "else - action, pose, expression, hairstyle, outfit, accessories, props, setting, "
+    "lighting and camera - is NOT supplied by that attachment, so describe all of it in full, "
+    "concrete detail from the source photo."
 )
 
 # Text-mode rules (used by /prompt: there is no source photo, so unlike the PHOTO_*
@@ -143,7 +149,15 @@ TEXT_SUBJECT_RULE_GIRL = (
     "description. Never let scene details alter the locked face."
 )
 
-TEXT_SUBJECT_RULE_REFERENCE = PHOTO_SUBJECT_RULE_REFERENCE
+TEXT_SUBJECT_RULE_REFERENCE = (
+    "2. CRITICAL - the user will attach a photo of their face together with this prompt "
+    "in the image app, so that attachment is the sole identity source. Refer to the person "
+    'as "the subject from the attached reference image" and state that the generated face '
+    "must match the attached photo exactly. DO NOT invent concrete facial features such as "
+    "eye colour, face shape, nose or lip shape. The attachment supplies only the face: take "
+    "the pose, expression, hairstyle, outfit, setting, lighting and camera from the user's "
+    "description and write them out in full."
+)
 
 IDENTITY_RULE_LOCK = (
     "1. ALWAYS place the exact lock text provided above at the start of the prompt, "
@@ -232,7 +246,7 @@ def resolve_prompt_identity(
         face_lock = IDENTITY_LOCK_REFERENCE
         subject_phrase = SUBJECT_PHRASE_REFERENCE
         subject_rule = rules["reference"]
-        mode_hint = "📎 Hãy đính kèm ảnh gốc cùng prompt này trên app Gemini."
+        mode_hint = "📎 Dán prompt này vào app Gemini kèm 1 ảnh rõ mặt của người cần giữ."
     elif any(keyword in normalized_description for keyword in GIRL_KEYWORDS):
         mode = "girl"
         face_lock = IDENTITY_LOCK_GIRL
