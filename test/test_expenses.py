@@ -320,6 +320,31 @@ def test_tien_noi_kieu_1_trieu_2_va_ruoi(text, amount, note):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "text",
+    [
+        "thần số học ngày 18/09/1988",  # từng bị ghi thành khoản chi 1.988đ
+        "than so hoc 18-09-1988",
+        "xem tử vi 18.9.1988",
+        "tử vi tuổi 1990",
+        "sinh năm 1988",
+        "tu vi 1995 nam",
+    ],
+)
+async def test_ngay_sinh_va_nam_sinh_khong_phai_tien(fake, text):
+    assert ex.parse_expense(text, today=TODAY) is None, text
+    assert await ex.maybe_handle_chat(1, text) is None and not fake.rows
+
+
+def test_khoan_chi_co_ngay_van_doc_dung_so_tien():
+    assert ex.parse_expense("18/10 ăn phở 50k", today=TODAY).amount == 50_000
+    assert ex.parse_expense("gửi xe 2000", today=TODAY).amount == 2_000
+    assert ex.parse_expense("xem tử vi 200k", today=TODAY).amount == 200_000
+    # /chitieu: số trong ngày tháng không bị hiểu là nghìn đồng
+    assert ex.parse_expense("18/10 cafe 45", today=TODAY, strict=False).amount == 45_000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
     ["con trai anh giờ cao 1m7 rồi", "bơi 500m", "chạy bộ 5k sáng nay", "nay chạy 10k mệt quá"],
 )
 async def test_chieu_cao_quang_duong_khong_phai_tien(fake, text):

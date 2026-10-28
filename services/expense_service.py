@@ -202,6 +202,15 @@ _AMOUNT_RE = re.compile(
     r"|(?![\w]))",
     re.IGNORECASE,
 )
+# Ngày tháng và năm sinh không phải tiền: "thần số học ngày 18/09/1988" từng bị ghi thành
+# khoản chi 1.988đ. Số trần (không đơn vị) nằm trong ngày dd/mm[/yyyy], dd-mm-yyyy,
+# dd.mm.yyyy; hoặc là năm 1900-2100 đứng sau "năm/sinh/tuổi", hay trong câu tử vi,
+# thần số học, Kỳ Môn thì bỏ qua.
+_DATE_SPAN_RE = re.compile(
+    r"(?<!\d)\d{1,2}([/.-])\d{1,2}\1\d{2,4}(?!\d)|(?<![\d.,])\d{1,2}/\d{1,2}(?![\d/])"
+)
+_YEAR_WORD_RE = re.compile(r"(?:năm|nam|sinh|tuổi|tuoi)\s*$", re.IGNORECASE)
+_DIVINATION_RE = re.compile(r"\b(?:tu vi|la so|than so hoc|ky mon)\b")
 # Số đo/quãng đường, không phải tiền: "cao 1m7", "chạy bộ 5k" (chỉ xét khi bắt từ chat).
 _MEASURE_RE = re.compile(r"\b(?:cao|nặng|dài|rộng|bơi|chạy|đi bộ|bước|km|mét|cm|kg)\b")
 _MEASURE_PLAIN_RE = re.compile(r"\b(?:cao|nang|dai|rong|boi|chay|di bo|buoc|km|met|cm|kg)\b")
@@ -319,9 +328,12 @@ def parse_amount(text: str, *, bare_thousands: bool = False) -> tuple[int, tuple
     """(số tiền VND, vị trí) của số tiền DUY NHẤT trong câu; None nếu 0 hoặc >1 số.
     Số trần < 1.000 chỉ hiểu là nghìn đồng khi ``bare_thousands`` (lệnh /chitieu)."""
     found: list[tuple[int, tuple[int, int]]] = []
+    dates = [d.span() for d in _DATE_SPAN_RE.finditer(text)]
     for m in _AMOUNT_RE.finditer(text):
         unit = m.group("u")
         if not unit:
+            if any(a <= m.start() < b for a, b in dates):
+                continue
             raw = m.group("n")
             plain = (
                 float(re.sub(r"[.,]", "", raw))
@@ -333,6 +345,10 @@ def parse_amount(text: str, *, bare_thousands: bool = False) -> tuple[int, tuple
                     plain = float(raw.replace(",", "."))
                 except ValueError:
                     continue
+            if 1900 <= plain <= 2100 and (
+                _YEAR_WORD_RE.search(text[: m.start()]) or _DIVINATION_RE.search(fold(text.lower()))
+            ):
+                continue
             if plain < 1000:
                 if not bare_thousands:
                     continue

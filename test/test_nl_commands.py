@@ -305,6 +305,9 @@ async def test_than_so_hoc_ky_mon_lich_bang_code():
     assert tsh is not None and "Nguyễn Văn An" in tsh.text and "Con số chủ đạo" in tsh.text
     plain = await nl.maybe_handle(OWNER, "than so hoc 15/3/1990", channel="zoom")
     assert plain is not None and "Con số chủ đạo" in plain.text
+    # câu thật từ chat (từng bị bắt nhầm thành khoản chi 1.988đ ở bước ghi chi tiêu)
+    asked = await nl.maybe_handle(OWNER, "thần số học ngày 18/09/1988", channel="zoom")
+    assert asked is not None and "Con số chủ đạo" in asked.text
     kymon = await nl.maybe_handle(OWNER, "lập bàn kỳ môn lúc này", channel="zoom")
     assert kymon is not None and kymon.text.startswith("🧭 Kỳ Môn")
     for text in ("ngày tốt tháng này", "ngay tot thang nay", "xem sao hạn 1990 nam năm 2027"):
