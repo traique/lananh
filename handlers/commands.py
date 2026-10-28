@@ -22,6 +22,7 @@ from services import (
     concurrency,
     conversation_log,
     divination_commands,
+    image_prompt,
     memory_commands,
     memory_control,
     memory_service,
@@ -255,7 +256,7 @@ async def prompt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     instruction, identity = prompt_templates.build_text_instruction(user_desc)
 
     try:
-        response = await orchestrator.ask(instruction)
+        response = await image_prompt.from_text(instruction)
         result_text = (response.text or "").strip()
 
         if not result_text:

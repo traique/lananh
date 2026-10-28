@@ -183,7 +183,7 @@ async def test_loi_anh_cua_thanh_vien_khong_lo_exception(monkeypatch, tmp_path):
         return True
 
     monkeypatch.setattr(config, "MEDIA_DIR", tmp_path)
-    monkeypatch.setattr(cis.photo_prompt.orchestrator, "analyze_image", broken)
+    monkeypatch.setattr(cis.image_prompt.orchestrator, "analyze_image", broken)
     monkeypatch.setattr(cis.telemetry, "start", noop)
     monkeypatch.setattr(cis.telemetry, "failure", noop)
 
@@ -210,7 +210,7 @@ async def test_anh_khong_ra_prompt_cau_than_thien(monkeypatch, tmp_path):
         return 1
 
     monkeypatch.setattr(config, "MEDIA_DIR", tmp_path)
-    monkeypatch.setattr(cis.photo_prompt.orchestrator, "analyze_image", empty)
+    monkeypatch.setattr(cis.image_prompt.orchestrator, "analyze_image", empty)
     monkeypatch.setattr(cis.telemetry, "start", noop)
     monkeypatch.setattr(cis.telemetry, "success", noop)
     with reply_audience.use(reply_audience.ReplyAudience(address_form="chị")):

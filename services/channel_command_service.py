@@ -11,6 +11,7 @@ from core.text_utils import parse_on_off
 from services import (
     conversation_log,
     divination_commands,
+    image_prompt,
     memory_commands,
     memory_service,
     price_search,
@@ -250,7 +251,7 @@ async def _prompt(
     hint = identity.mode_hint
     prompt_id = await telemetry.start(user_id, "prompt_generator", description, channel=channel)
     try:
-        response = await orchestrator.ask(instruction)
+        response = await image_prompt.from_text(instruction)
         output = (response.text or "").strip()
         await telemetry.success(prompt_id, "prompt_generator", output or "(không có nội dung)")
         if not output:

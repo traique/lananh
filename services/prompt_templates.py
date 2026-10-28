@@ -26,7 +26,7 @@ Ví dụ trong IMAGE_ANALYZE_INSTRUCTION_BASE là KHUÔN có ô [..] phải đi�
 phải một prompt hoàn chỉnh: bản cũ viết câu chung chung hợp với mọi ảnh ("a
 simple outdoor setting", "the requested hairstyle") nên model chép nguyên văn
 ra mà không tả gì của ảnh. ``copies_template`` bắt dấu hiệu đó để chạy lại 1 lần
-(services/photo_prompt.py).
+(services/image_prompt.py).
 
 Ngoài khuôn mặt, 4 thứ dưới đây bắt buộc phải có trong prompt, vì thiếu
 chúng thì ảnh tạo ra sai hoàn toàn dù mặt có đúng:
@@ -148,6 +148,29 @@ def copies_template(prompt: str) -> bool:
     return any(leak in low for leak in _TEMPLATE_LEAKS)
 
 
+# /prompt: ví dụ là 1 cảnh cụ thể; prompt mang từ 2 chi tiết riêng của cảnh đó trở lên là
+# chép ví dụ thay vì làm theo mô tả của người dùng (1 chi tiết có thể trùng thật).
+_TEXT_EXAMPLE_MARKERS = (
+    "quiet residential sidewalk",
+    "oversized grey cotton t-shirt",
+    "low garden wall and parked cars",
+    "48mm-equivalent lens at f/1.8",
+    "soft, warm late-afternoon daylight",
+)
+
+TEXT_RETRY_NOTE = (
+    "\n\nYour previous answer reused the example scene (the residential sidewalk, the grey "
+    "t-shirt, the garden wall, the 48mm lens) instead of the user's description. Write the "
+    "prompt again, taking the scene, outfit, framing, lens and light only from the user's "
+    "description."
+)
+
+
+def copies_text_example(prompt: str) -> bool:
+    low = prompt.lower()
+    return sum(marker in low for marker in _TEXT_EXAMPLE_MARKERS) >= 2
+
+
 def build_text_instruction(user_desc: str) -> tuple[str, PromptIdentityConfig]:
     """Instruction cho /prompt (mọi kênh) kèm identity đã chọn (để lấy mode_hint)."""
     identity = resolve_prompt_identity(user_desc, context="text")
@@ -158,7 +181,13 @@ def build_image_instruction(caption: str, identity: PromptIdentityConfig) -> str
     """Instruction phân tích ảnh -> prompt; caption (nếu có) nối thêm ở cuối."""
     instruction = render_instruction(IMAGE_ANALYZE_INSTRUCTION_BASE, identity)
     if caption:
-        instruction += f"\n\nAdditional user instruction: {caption}"
+        # Caption kiểu "đính kèm mặt tôi" chỉ để chọn chế độ, không phải lệnh bỏ tả cảnh.
+        instruction += (
+            '\n\nAdditional user instruction (in Vietnamese; words such as "mặt tôi", '
+            '"giữ mặt", "cô gái 20", "giữ trang phục" only select the identity and '
+            "lock mode above; anything else it asks to change overrides the source photo for "
+            f"that detail only): {caption}"
+        )
     return instruction
 
 

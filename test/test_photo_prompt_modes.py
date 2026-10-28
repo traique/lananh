@@ -18,15 +18,15 @@ chất ảnh và ống kính theo ảnh gốc - thiếu chúng thì ảnh tạo 
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _prompt_render import ROOT, read_string_constant  # noqa: E402
 from services.prompt_identity import (  # noqa: E402
-    GIRL_KEYWORDS,
     IDENTITY_LOCK_GIRL,
     IDENTITY_LOCK_REFERENCE,
-    KEEP_FACE_KEYWORDS,
     render_instruction,
     resolve_prompt_identity,
 )
@@ -182,7 +182,7 @@ def test_dang_1_khong_co_dong_identity_lock():
 
 def test_dang_1_khong_tro_toi_anh_trong_vi_du():
     text = _render_described()
-    assert "Photographic portrait of a woman in her early 20s" in text
+    assert "Photographic portrait of [the person in the source photo" in text
     assert "photo of the subject from" not in text
 
 
@@ -203,9 +203,18 @@ def test_dang_1_bat_buoc_ta_du_dac_diem_khuon_mat():
 
 
 def test_dang_1_vi_du_chu_the_co_san_mo_ta_mat():
-    phrase = resolve_prompt_identity(CAPTION_DESCRIBED).subject_phrase.lower()
+    # /prompt chữ: không có ảnh, ví dụ cho sẵn 1 khuôn mặt bịa để model biết mức chi tiết.
+    phrase = resolve_prompt_identity(CAPTION_DESCRIBED, "text").subject_phrase.lower()
     for feature in ("face", "eyes", "eyebrows", "nose", "lips", "skin", "hair"):
         assert feature in phrase
+
+
+def test_dang_1_anh_chu_the_la_o_phai_dien_khong_phai_mat_bia_san():
+    """Có ảnh mẫu: viết sẵn "a woman in her early 20s with long dark hair..." thì model dễ
+    chép nguyên khuôn mặt bịa đó (ảnh đàn ông vẫn ra "a woman in her early 20s")."""
+    phrase = resolve_prompt_identity(CAPTION_DESCRIBED).subject_phrase
+    assert phrase.startswith("[the person in the source photo") and "rule 2" in phrase
+    assert "early 20s" not in _render_described().split("---")[1]
 
 
 # ─── Dạng 2: cô gái 20 ──────────────────────────────
@@ -300,12 +309,7 @@ def test_ba_dang_cho_ra_ba_prompt_khac_nhau():
 
 
 def _route(caption: str) -> str:
-    low = caption.lower()
-    if any(kw in low for kw in KEEP_FACE_KEYWORDS):
-        return "reference"
-    if any(kw in low for kw in GIRL_KEYWORDS):
-        return "girl"
-    return "described"
+    return resolve_prompt_identity(caption).mode
 
 
 def test_dinh_tuyen_theo_tu_khoa():
@@ -317,5 +321,49 @@ def test_dinh_tuyen_theo_tu_khoa():
     assert _route("gái 20 tuổi đứng ở suối") == "girl"
 
 
+@pytest.mark.parametrize(
+    "caption,mode",
+    [
+        ("đính kèm mặt tôi", "reference"),
+        ("giữ nguyên khuôn mặt nha", "reference"),
+        ("ghép mặt chị vào", "reference"),
+        ("mặt mình nhé", "reference"),
+        ("giu mat", "reference"),  # gõ không dấu
+        ("giu nguyen khuon mat", "reference"),
+        ("co gai 20", "girl"),
+        # Bỏ dấu thì "mặt anh" trùng "mắt anh": câu không dấu kiểu này không bật khoá mặt.
+        ("chinh mat anh to hon", "described"),
+    ],
+)
+def test_bien_the_tu_khoa_va_go_khong_dau(caption, mode):
+    assert _route(caption) == mode
+
+
 def test_giu_mat_uu_tien_hon_co_gai_20():
     assert _route("giữ mặt cô gái 20") == "reference"
+
+
+def test_khoa_mat_toi_giu_nguyen_cau_khoa_de_dinh_kem_anh_mat():
+    """Chủ bot: "mặt tôi" giữ nguyên yêu cầu khoá mặt để đính kèm ảnh mặt tham chiếu."""
+    lock = resolve_prompt_identity("đính kèm mặt tôi").identity_lock
+    assert lock == IDENTITY_LOCK_REFERENCE
+    assert lock.startswith(
+        "Identity lock: the attached reference photo is the sole source of the subject's identity."
+    )
+    assert "Do not redesign, beautify, age or reinterpret the face" in lock
+
+
+def test_khoa_trang_phuc_san_pham_luon_nhac_dinh_kem_anh():
+    """Trước đây "giữ trang phục" vẫn nhắc "không cần đính kèm ảnh" trong khi khoá trỏ vào
+    ảnh tham chiếu - Gemini không có ảnh nào để giữ đồ theo."""
+    for context in ("photo", "text"):
+        outfit = resolve_prompt_identity("giữ trang phục", context)
+        assert "không cần đính kèm" not in outfit.mode_hint
+        assert "ảnh có bộ đồ cần giữ" in outfit.mode_hint
+        assert "attached outfit photo" in outfit.identity_lock
+        both = resolve_prompt_identity("giữ mặt giữ sản phẩm", context)
+        assert "1 ảnh rõ mặt của người cần giữ + ảnh có sản phẩm cần giữ" in both.mode_hint
+        assert "attached product photo" in both.identity_lock
+    assert "chính ảnh mẫu này" in resolve_prompt_identity("giữ trang phục", "photo").mode_hint
+    assert "chính ảnh mẫu này" not in resolve_prompt_identity("giữ trang phục", "text").mode_hint
+    assert resolve_prompt_identity("cô gái 20").mode_hint.endswith("không cần đính kèm ảnh.")

@@ -570,11 +570,19 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   đơn. Ảnh biểu đồ chỉ được mô tả: dòng khuyến nghị mua/bán, vùng mua, cắt lỗ, mục
   tiêu bị code lọc bỏ. `VISION_QA_ENABLED=0` quay về chỉ viết prompt;
   `PHOTO_NO_CAPTION_MODE=describe` cho ảnh không chữ được mô tả ngắn.
-- Viết prompt từ ảnh mẫu (`services/photo_prompt.py`): caption "mặt tôi"/"giữ mặt" →
-  prompt khoá mặt theo 1 ảnh rõ mặt đính kèm trên app Gemini, còn dáng, tóc, đồ, đạo
-  cụ, bối cảnh, ánh sáng vẫn tả đủ theo ảnh mẫu; "cô gái 20" → mặt cố định viết sẵn;
-  không từ khoá → tả lại người trong ảnh bằng chữ. Prompt nào còn chép khuôn mẫu (ô
-  `[..]`, câu chung chung kiểu "the requested hairstyle") thì bot hỏi lại model 1 lần.
+- Viết prompt tạo ảnh (`services/image_prompt.py`, từ ảnh mẫu trên Telegram/Zalo và
+  `/prompt <mô tả>` mọi kênh), chọn chế độ theo caption/mô tả (gõ không dấu cũng được):
+  - "mặt tôi", "giữ mặt", "giữ nguyên khuôn mặt", "ghép mặt"... → giữ nguyên khối
+    "Identity lock" để người dùng đính kèm 1 ảnh rõ mặt khi tạo ảnh trên Gemini; dáng,
+    tóc, đồ, đạo cụ, bối cảnh, ánh sáng vẫn tả đủ theo ảnh mẫu (hoặc theo mô tả chữ).
+  - "cô gái 20" → khuôn mặt cố định viết sẵn, không cần ảnh mặt.
+  - Không từ khoá → tả lại người trong ảnh (hoặc người trong mô tả) bằng chữ.
+  - Cộng thêm "giữ trang phục"/"giữ sản phẩm" → khoá đồ/sản phẩm theo ảnh đính kèm; câu
+    nhắc kèm prompt nói rõ phải đính kèm những ảnh nào.
+  Prompt còn chép khuôn mẫu (ô `[..]`, câu chung chung kiểu "the requested hairstyle",
+  hoặc cảnh vỉa hè/áo thun xám của ví dụ `/prompt`) thì bot hỏi lại model 1 lần. Zoom:
+  chatbot Team Chat không nhận được ảnh người dùng gửi (giới hạn của Zoom), nên viết prompt
+  từ ảnh chỉ có trên Telegram/Zalo; trên Zoom dùng `/prompt <mô tả> mặt tôi`.
 - Đọc tài liệu: PDF, TXT/MD, Word .docx (tối đa 5 MB, `DOCUMENT_MAX_BYTES`). Không
   chú thích thì tóm tắt, có câu hỏi thì trả lời theo tài liệu. PDF do Gemini đọc,
   dự phòng OpenRouter với engine miễn phí `cloudflare-ai` (không bao giờ dùng
