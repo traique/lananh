@@ -9,6 +9,11 @@ RSS được tổng hợp bằng AI nhưng danh sách link cuối bài KHÔNG đ
 mỗi item được gắn ID nội bộ, model chỉ chọn ID đáng chú ý, còn code lấy lại đúng
 tiêu đề + URL gốc từ RSS để người dùng bấm trực tiếp.
 
+Tóm tắt dựa trên NỘI DUNG bài, không chỉ tiêu đề (tiêu đề + mô tả RSS ngắn cho ra bản
+tin na ná tiêu đề): lượt AI 1 chọn 6-8 tin, code đọc phần đầu từng bài
+(article_reader, có trần ký tự/thời gian/số bài đọc cùng lúc), lượt AI 2 tóm tắt nội
+dung và ghi "(bài N)" khớp mục "đọc bài N". Bài không đọc được thì dùng mô tả RSS.
+
 Bản tin sáng cá nhân (services/morning_brief.py) dùng chung, KHÔNG gọi AI thêm:
 - ``shared_digest()``: bản tin sáng của hôm nay, tổng hợp TỐI ĐA 1 lần/ngày rồi
   giữ trong RAM (1 chuỗi) cho cả lượt 8h lẫn bản tin cá nhân gộp tin.
@@ -57,6 +62,7 @@ class _NewsItem:
     title: str
     url: str
     source: str
+    summary: str = ""  # mô tả ngắn trong RSS (dự phòng khi không đọc được bài)
 
 
 _GROUNDING = (
@@ -84,13 +90,25 @@ _STYLE = (
     "ảnh hưởng rộng. Phải giữ nội dung kinh tế/chứng khoán nếu nguồn có dữ liệu, "
     "đồng thời bổ sung thời sự, xã hội, quốc tế và công nghệ đáng chú ý.\n"
     "Không dùng markdown heading (#), không dùng bảng, không chèn tên nguồn kiểu "
-    "[CafeF], (theo VnExpress), và KHÔNG tự viết URL/link trong phần nội dung.\n"
-    "Mỗi tin trong dữ liệu có ID như F1I1. Ở DÒNG CUỐI response, bắt buộc ghi "
-    "duy nhất theo mẫu: IMPORTANT_IDS: F1I1,F2I3,F4I1. Hãy chọn 5-8 tin đáng "
-    "chú ý nhất, mỗi tin một sự kiện khác nhau (không chọn 2 bài cùng một chuyện, vd "
-    "2 bài giá vàng cùng ngày), và CHỈ dùng ID thật sự xuất hiện trong dữ liệu. Dòng "
-    "này là dữ liệu máy, không giải thích thêm."
+    "[CafeF], (theo VnExpress), và KHÔNG tự viết URL/link trong phần nội dung."
 )
+_SELECT_TASK = (
+    "Chọn 6-8 tin đáng chú ý nhất cho bản tin sáng từ danh sách tin RSS dưới đây: ưu tiên "
+    "tin mới, ảnh hưởng rộng; giữ tin kinh tế/chứng khoán nếu có, kèm thời sự trong nước, "
+    "quốc tế, công nghệ; mỗi tin một sự kiện khác nhau (không chọn 2 bài cùng một chuyện, vd "
+    "2 bài giá vàng cùng ngày). Chỉ dùng ID thật sự có trong dữ liệu. CHỈ trả đúng 1 dòng, "
+    "không giải thích: IMPORTANT_IDS: F1I1,F2I3,F4I1"
+)
+_SUMMARY_TASK = (
+    "Dưới đây là phần đầu các bài báo đã chọn, mỗi bài có số thứ tự. Viết bản tin tóm tắt "
+    "NỘI DUNG các bài: mỗi bài 1-3 câu nêu ý chính cụ thể lấy từ thân bài (ai, làm gì, con "
+    "số, vì sao đáng chú ý) - KHÔNG chép lại hay diễn đạt lại tiêu đề. Cuối ý của mỗi bài ghi "
+    'số bài trong ngoặc, vd "(bài 3)", để người đọc nhắn "đọc bài 3" đọc nguyên bài. Bài chỉ '
+    "có tiêu đề thì viết ngắn, không đoán thêm."
+)
+_EXCERPT_CHARS = 1500
+_EXCERPT_TIMEOUT_SEC = 15
+_EXCERPT_CONCURRENCY = 2  # bóc HTML tốn RAM (Render 512 MB): tối đa 2 bài cùng lúc
 _MIN_VALID_DIGEST_CHARS = 80
 _IMPORTANT_IDS_RE = re.compile(r"(?mi)^\s*IMPORTANT_IDS\s*:\s*([^\n]+)\s*$")
 _ITEM_ID_RE = re.compile(r"F\d+I\d+", re.IGNORECASE)
@@ -161,12 +179,16 @@ def _parse_feed_items(feed_text: str, feed_index: int, source: str) -> list[_New
         )
         if not url:
             continue
+        summary = " ".join(
+            line for line in block_lines[1:] if not line.startswith(("https://", "http://"))
+        )
         items.append(
             _NewsItem(
                 item_id=f"F{feed_index}I{ordinal}",
                 title=title or "Tin đáng chú ý",
                 url=url,
                 source=source,
+                summary=summary[:400],
             )
         )
     return items
@@ -187,11 +209,61 @@ def _build_prompt(feed_texts: list[str], now: datetime | None = None) -> str:
     # Nội dung RSS là dữ liệu ngoài: rào lại (core.untrusted) để câu lệnh cài
     # trong tiêu đề/tóm tắt tin không điều khiển được bản tin.
     fenced = untrusted.wrap_untrusted(combined, "tin RSS")
-    today = (now or datetime.now(_VN_TZ)).strftime("%d/%m/%Y")
     return (
-        f"Hôm nay là {today} (giờ Việt Nam). Tổng hợp các tin RSS dưới đây thành bản tin.\n"
+        f"{_today_line(now)} Tổng hợp các tin RSS dưới đây thành bản tin.\n"
         f"{_GROUNDING}\n{_STYLE}\n\n{fenced}"
     )
+
+
+def _today_line(now: datetime | None) -> str:
+    return f"Hôm nay là {(now or datetime.now(_VN_TZ)).strftime('%d/%m/%Y')} (giờ Việt Nam)."
+
+
+async def _choose_items(feed_texts: list[str], all_items: list[_NewsItem]) -> list[_NewsItem]:
+    """Lượt AI 1: chọn tin. Lỗi hoặc không ra ID hợp lệ thì chọn tất định."""
+    annotated = [_annotate_feed(text, i) for i, text in enumerate(feed_texts, start=1)]
+    fenced = untrusted.wrap_untrusted("\n\n--- NGUỒN KHÁC ---\n\n".join(annotated), "tin RSS")
+    ids: list[str] = []
+    try:
+        response = await orchestrator.ask(f"{_today_line(None)} {_SELECT_TASK}\n\n{fenced}")
+        _, ids = _extract_important_ids(getattr(response, "text", None) or "")
+    except Exception:
+        logger.warning("morning_news: lượt chọn tin lỗi, chọn tất định.", exc_info=True)
+    return _select_important_items(all_items, ids)
+
+
+async def _excerpt(item: _NewsItem) -> str:
+    article = await article_reader.read_article(item.url)
+    return " ".join(p for p in (article.sapo, *article.paragraphs) if p)[:_EXCERPT_CHARS]
+
+
+async def _read_excerpts(items: list[_NewsItem]) -> dict[str, str]:
+    """Phần đầu từng bài (item_id -> chữ); bài lỗi/quá giờ thì bỏ trống."""
+    gate = asyncio.Semaphore(_EXCERPT_CONCURRENCY)
+
+    async def one(item: _NewsItem) -> tuple[str, str]:
+        async with gate:
+            try:
+                return item.item_id, await asyncio.wait_for(_excerpt(item), _EXCERPT_TIMEOUT_SEC)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.info("morning_news: không đọc được bài '%s': %r", item.url, exc)
+                return item.item_id, ""
+
+    return dict(await asyncio.gather(*(one(item) for item in items)))
+
+
+def _build_summary_prompt(
+    items: list[_NewsItem], excerpts: dict[str, str], now: datetime | None = None
+) -> str:
+    blocks = [
+        f"Bài {number} - {item.title} ({item.source})\n"
+        + (excerpts.get(item.item_id) or item.summary or "(chỉ có tiêu đề)")
+        for number, item in enumerate(items, 1)
+    ]
+    fenced = untrusted.wrap_untrusted("\n\n".join(blocks), "bài báo")
+    return f"{_today_line(now)} {_SUMMARY_TASK}\n{_GROUNDING}\n{_STYLE}\n\n{fenced}"
 
 
 def _digits(text: str) -> set[str]:
@@ -351,13 +423,29 @@ async def build_digest(mode: str = "morning") -> str | None:
         logger.warning("morning_news: tất cả %d feed đều lỗi, không có gì để tổng hợp.", len(feeds))
         return None
 
-    response = await orchestrator.ask(_build_prompt(feed_texts))
+    known_texts = list(feed_texts)  # chữ nguồn để soát số và chức danh trong bản AI viết
+    if all_items:
+        important_items = await _choose_items(feed_texts, all_items)
+        excerpts = await _read_excerpts(important_items)
+        # Tải RSS + bóc HTML các bài (cả /tintuc): dọn heap khi xong (core/memtrim.py).
+        memtrim.request("tin sáng")
+        logger.info(
+            "morning_news: đọc được %d/%d bài để tóm tắt.",
+            sum(1 for text in excerpts.values() if text),
+            len(important_items),
+        )
+        known_texts += [*excerpts.values(), " ".join(str(n) for n in range(1, 9))]  # "(bài N)"
+        response = await orchestrator.ask(_build_summary_prompt(important_items, excerpts))
+    else:
+        # Feed lạ, không tách được tin có link: tổng hợp thẳng từ chữ RSS như trước.
+        important_items = []
+        response = await orchestrator.ask(_build_prompt(feed_texts))
     raw_body = (getattr(response, "text", None) or "").strip()
     if not raw_body:
         return None
 
-    body, important_ids = _extract_important_ids(raw_body)
-    body = _drop_invented_former(_drop_unsourced_numbers(body, feed_texts), feed_texts)
+    body, _ = _extract_important_ids(raw_body)
+    body = _drop_invented_former(_drop_unsourced_numbers(body, known_texts), known_texts)
     body = _tidy_sections(body)
     if len(body) < _MIN_VALID_DIGEST_CHARS:
         logger.warning(
@@ -368,7 +456,6 @@ async def build_digest(mode: str = "morning") -> str | None:
         )
         return None
 
-    important_items = _select_important_items(all_items, important_ids)
     now = datetime.now(_VN_TZ)
     if important_items:
         await article_reader.save_digest_links([(i.title, i.url) for i in important_items])
@@ -543,8 +630,6 @@ async def run_once(force: bool = False) -> RunResult:
 
     sent_zalo = "zalo" not in absorbed and await _send_to_zalo(content)
     sent_zoom = "zoom" not in absorbed and await _send_to_zoom(content)
-    # Tải RSS + đọc bài: dọn heap khi xong (core/memtrim.py).
-    memtrim.request("tin sáng")
     if sent_zalo or sent_zoom or absorbed:
         await _mark_sent(now)
     else:

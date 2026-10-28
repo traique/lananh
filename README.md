@@ -1565,6 +1565,12 @@ phiếu, Tuổi Trẻ, GenK - đổi qua env, phân cách bằng dấu phẩy), 
 thành 1 bản tin gọn, gửi cho chủ bot qua **cả Zalo và Zoom** (không gửi Telegram -
 dùng đúng 2 kênh bạn yêu cầu; trên Telegram dùng `/tintuc` hoặc `/bantin tin on`).
 
+Tóm tắt theo NỘI DUNG bài chứ không chỉ tiêu đề: lượt AI 1 chọn 6-8 tin (mỗi tin một
+sự kiện), code đọc phần đầu từng bài bằng bộ đọc bài báo (`services/article_reader.py`,
+tối đa ~1.500 ký tự/bài, 2 bài cùng lúc, 15 giây/bài; bài lỗi thì dùng mô tả RSS), lượt
+AI 2 viết tóm tắt (ai, làm gì, con số, vì sao đáng chú ý) và ghi "(bài N)" khớp mục
+"đọc bài N". Feed lạ không tách được tin có link thì tổng hợp thẳng từ chữ RSS như cũ.
+
 - Zalo controller hoặc Zoom chủ bot đã bật bản tin sáng cá nhân (`/bantin`) thì
   lần chạy 8h tự động bỏ qua kênh đó: tin RSS được gộp vào bản tin sáng
   (`MORNING_BRIEF_ABSORB_NEWS`), bản AI tổng hợp dựng tối đa 1 lần/ngày và dùng

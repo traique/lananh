@@ -358,8 +358,12 @@ async def test_bo_so_va_chuc_danh_khong_co_trong_rss(monkeypatch):
             )
         )
 
+    async def no_article(url):
+        raise morning_news.article_reader.ArticleError("không đọc được")
+
     monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
     monkeypatch.setattr(orchestrator, "ask", fake_ask)
+    monkeypatch.setattr(morning_news.article_reader, "read_article", no_article)
     digest = await morning_news.build_digest("on_demand")
 
     assert "SJC lên 142 triệu đồng mỗi lượng, thế giới vượt 4,060 USD." in digest
@@ -367,8 +371,8 @@ async def test_bo_so_va_chuc_danh_khong_co_trong_rss(monkeypatch):
     assert "CÔNG NGHỆ" not in digest and "120.000" not in digest  # mục rỗng: bỏ luôn tiêu đề
     assert "Tại Mỹ, Tổng thống Donald Trump" in digest and "cựu" not in digest
     assert "\n\n🌍 THẾ GIỚI\n" in digest  # tiêu đề mục cách đoạn trước 1 dòng trống
-    assert "Hôm nay là " in prompts[0] and 'không gọi ai là "cựu ..."' in prompts[0]
-    assert "mỗi tin một sự kiện khác nhau" in prompts[0]
+    assert "Hôm nay là " in prompts[-1] and 'không gọi ai là "cựu ..."' in prompts[-1]
+    assert "mỗi tin một sự kiện khác nhau" in prompts[0]  # lượt chọn tin
 
 
 def test_tieu_de_tuoi_tre_khong_dinh_gio_dang():
@@ -387,3 +391,87 @@ def test_tieu_de_tuoi_tre_khong_dinh_gio_dang():
 def test_bo_tieu_de_khi_gop_vao_ban_tin_ca_nhan():
     assert morning_news.without_header("☀️ BẢN TIN SÁNG — 28/10/2026\n\nNội dung") == "Nội dung"
     assert morning_news.without_header("Nội dung khác") == "Nội dung khác"
+
+
+@pytest.mark.asyncio
+async def test_tom_tat_tu_noi_dung_bai_khong_chi_tieu_de(monkeypatch):
+    """Tiêu đề + mô tả RSS ngắn cho ra bản tin na ná tiêu đề: lượt 1 chọn tin, code đọc
+    phần đầu từng bài, lượt 2 tóm tắt nội dung và ghi "(bài N)" khớp "đọc bài N"."""
+    from services import article_reader
+
+    feed = (
+        "[Feed: CafeF]\n"
+        "1. DHG báo lãi quý III thấp nhất 15 năm\nMô tả RSS ngắn.\nhttps://cafef.vn/dhg.chn\n\n"
+        "2. Bảo Minh mua lại trái phiếu\nMô tả RSS B.\nhttps://cafef.vn/bm.chn\n\n"
+        "3. Tin C\nhttps://cafef.vn/c.chn"
+    )
+    prompts, read = [], []
+
+    async def fake_read_rss(url: str) -> str:
+        return feed
+
+    async def fake_read_article(url):
+        read.append(url)
+        if url.endswith("bm.chn"):
+            raise article_reader.ArticleError("bị chặn")
+        return article_reader.Article(
+            url=url,
+            sapo="Dược Hậu Giang lãi sau thuế 61 tỷ đồng quý III, giảm 52% so với cùng kỳ.",
+            paragraphs=["Doanh thu thuần đạt 1.020 tỷ đồng.", "Đoạn dài " * 400],
+        )
+
+    async def fake_ask(prompt: str):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return SimpleNamespace(text="IMPORTANT_IDS: F1I1,F1I2")
+        return SimpleNamespace(
+            text="📈 KINH TẾ & THỊ TRƯỜNG\nDược Hậu Giang lãi 61 tỷ đồng quý III, giảm 52% "
+            "so với cùng kỳ dù doanh thu 1.020 tỷ đồng (bài 1). Bảo Minh mua lại trái phiếu "
+            "trước hạn (bài 2)."
+        )
+
+    monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
+    monkeypatch.setattr(orchestrator, "ask", fake_ask)
+    monkeypatch.setattr(article_reader, "read_article", fake_read_article)
+    digest = await morning_news.build_digest("on_demand")
+
+    assert len(prompts) == 2 and "CHỈ trả đúng 1 dòng" in prompts[0]
+    # Bài model chọn đọc trước; dưới 5 bài thì bù theo thứ tự RSS như mục link cũ.
+    assert read == ["https://cafef.vn/dhg.chn", "https://cafef.vn/bm.chn", "https://cafef.vn/c.chn"]
+    summary = prompts[1]
+    assert "Bài 1 - DHG báo lãi quý III thấp nhất 15 năm (CafeF)" in summary
+    assert "giảm 52% so với cùng kỳ" in summary  # nội dung bài, không chỉ tiêu đề
+    assert "Bài 2 - Bảo Minh mua lại trái phiếu (CafeF)\nMô tả RSS B." in summary  # đọc lỗi
+    assert "Đoạn dài " * 180 not in summary  # mỗi bài chỉ lấy phần đầu (~1.500 ký tự)
+    assert '"(bài 3)"' in summary and "KHÔNG chép lại hay diễn đạt lại tiêu đề" in summary
+    assert "giảm 52%" in digest and "(bài 2)" in digest  # số có trong bài: giữ
+    assert "1. DHG báo lãi quý III thấp nhất 15 năm\n   https://cafef.vn/dhg.chn" in digest
+
+
+@pytest.mark.asyncio
+async def test_luot_chon_tin_loi_thi_chon_tat_dinh(monkeypatch):
+    from services import article_reader
+
+    async def fake_read_rss(url: str) -> str:
+        return "[Feed: VnExpress]\n1. Tin A\nhttps://vnexpress.net/a.html"
+
+    calls = []
+
+    async def fake_ask(prompt: str):
+        calls.append(prompt)
+        if len(calls) == 1:
+            raise RuntimeError("provider lỗi")
+        return SimpleNamespace(
+            text="Tin A kể một chuyện cụ thể lấy từ thân bài, nêu rõ ai làm gì và vì sao "
+            "đáng chú ý với người đọc sáng nay (bài 1)."
+        )
+
+    async def fake_read_article(url):
+        return article_reader.Article(url=url, sapo="Thân bài tin A.")
+
+    monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
+    monkeypatch.setattr(orchestrator, "ask", fake_ask)
+    monkeypatch.setattr(article_reader, "read_article", fake_read_article)
+    digest = await morning_news.build_digest()
+    assert "Bài 1 - Tin A (VnExpress)\nThân bài tin A." in calls[1]
+    assert "1. Tin A\n   https://vnexpress.net/a.html" in digest

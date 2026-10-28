@@ -419,7 +419,8 @@ async def _portfolio_section(ctx: BriefContext) -> str | None:
     return await portfolio.build_report(ctx.user_id, digest=True)
 
 
-@register_section("news", 90, timeout=180)
+# 300 giây: bản tin AI gồm 2 lượt AI (chọn tin, tóm tắt) và đọc phần đầu tối đa 8 bài.
+@register_section("news", 90, timeout=300)
 async def _news_section(ctx: BriefContext) -> str | None:
     from services import morning_news
 
