@@ -256,7 +256,8 @@ async def _prompt(
         await telemetry.success(prompt_id, "prompt_generator", output or "(không có nội dung)")
         if not output:
             return [await reply_audience.error_text("prompt_empty", user_id)], None
-        return [f"{hint}\n\n{output}"], (
+        # Prompt là 1 tin riêng (Zalo/Zoom không có nút chép khối như Telegram).
+        return [f"📝 Prompt gợi ý ở tin dưới - nhấn giữ để chép.\n{hint}", output], (
             "api" if getattr(response, "used_fallback", False) else None
         )
     except Exception as exc:
