@@ -322,3 +322,156 @@ def test_is_due_khung_gui_bu(monkeypatch):
     assert morning_news.is_due(datetime(2026, 5, 4, 8, 0, tzinfo=tz)) is True
     assert morning_news.is_due(datetime(2026, 5, 4, 10, 59, tzinfo=tz)) is True
     assert morning_news.is_due(datetime(2026, 5, 4, 11, 0, tzinfo=tz)) is False
+
+
+# ─── Bản tin 28/10/2026: số bịa, chức danh bịa, tiêu đề dính giờ, dòng trống ──
+
+
+@pytest.mark.asyncio
+async def test_bo_so_va_chuc_danh_khong_co_trong_rss(monkeypatch):
+    feed = (
+        "[Feed: VnExpress]\n"
+        "1. Giá vàng đảo chiều tăng 1 triệu đồng (Wed, 28 Oct 2026 09:10:00 +0700)\n"
+        "Vàng miếng SJC lên 142 triệu đồng mỗi lượng; thế giới vượt 4.060 USD một ounce.\n"
+        "https://vnexpress.net/vang.html\n\n"
+        "2. Ông Trump nêu điều kiện chấp nhận kết quả bầu cử giữa kỳ\n"
+        "Tổng thống Mỹ Donald Trump nói sẽ chấp nhận nếu bầu cử công bằng.\n"
+        "https://vnexpress.net/trump.html"
+    )
+    prompts = []
+
+    async def fake_read_rss(url: str) -> str:
+        return feed
+
+    async def fake_ask(prompt: str):
+        prompts.append(prompt)
+        return SimpleNamespace(
+            text=(
+                "📈 KINH TẾ & THỊ TRƯỜNG\n"
+                "SJC lên 142 triệu đồng mỗi lượng, thế giới vượt 4,060 USD. "
+                "VN-Index giảm 35 điểm trong phiên sáng.\n"
+                "🌍 THẾ GIỚI\n"
+                "Tại Mỹ, cựu Tổng thống Donald Trump nêu điều kiện chấp nhận kết quả bầu cử.\n"
+                "💻 CÔNG NGHỆ & KHOA HỌC\n"
+                "Redmi bán 120.000 máy trong 5 phút.\n"
+                "IMPORTANT_IDS: F1I1,F1I2"
+            )
+        )
+
+    async def no_article(url):
+        raise morning_news.article_reader.ArticleError("không đọc được")
+
+    monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
+    monkeypatch.setattr(orchestrator, "ask", fake_ask)
+    monkeypatch.setattr(morning_news.article_reader, "read_article", no_article)
+    digest = await morning_news.build_digest("on_demand")
+
+    assert "SJC lên 142 triệu đồng mỗi lượng, thế giới vượt 4,060 USD." in digest
+    assert "35 điểm" not in digest  # số không có trong RSS: bỏ cả câu
+    assert "CÔNG NGHỆ" not in digest and "120.000" not in digest  # mục rỗng: bỏ luôn tiêu đề
+    assert "Tại Mỹ, Tổng thống Donald Trump" in digest and "cựu" not in digest
+    assert "\n\n🌍 THẾ GIỚI\n" in digest  # tiêu đề mục cách đoạn trước 1 dòng trống
+    assert "Hôm nay là " in prompts[-1] and 'không gọi ai là "cựu ..."' in prompts[-1]
+    assert "mỗi tin một sự kiện khác nhau" in prompts[0]  # lượt chọn tin
+
+
+def test_tieu_de_tuoi_tre_khong_dinh_gio_dang():
+    items = morning_news._parse_feed_items(
+        "[Feed: Tuổi Trẻ]\n1. Giá vàng hôm nay 28-10: SJC cũng đi lên (10/28/2026 8:33:00 AM)\n"
+        "Tóm tắt\nhttps://tuoitre.vn/vang.htm\n\n2. Apple ra iPhone (bản Pro)\nhttps://tuoitre.vn/ip.htm",
+        1,
+        "Tuổi Trẻ",
+    )
+    assert [i.title for i in items] == [
+        "Giá vàng hôm nay 28-10: SJC cũng đi lên",
+        "Apple ra iPhone (bản Pro)",  # ngoặc không phải ngày đăng: giữ
+    ]
+
+
+def test_bo_tieu_de_khi_gop_vao_ban_tin_ca_nhan():
+    assert morning_news.without_header("☀️ BẢN TIN SÁNG — 28/10/2026\n\nNội dung") == "Nội dung"
+    assert morning_news.without_header("Nội dung khác") == "Nội dung khác"
+
+
+@pytest.mark.asyncio
+async def test_tom_tat_tu_noi_dung_bai_khong_chi_tieu_de(monkeypatch):
+    """Tiêu đề + mô tả RSS ngắn cho ra bản tin na ná tiêu đề: lượt 1 chọn tin, code đọc
+    phần đầu từng bài, lượt 2 tóm tắt nội dung và ghi "(bài N)" khớp "đọc bài N"."""
+    from services import article_reader
+
+    feed = (
+        "[Feed: CafeF]\n"
+        "1. DHG báo lãi quý III thấp nhất 15 năm\nMô tả RSS ngắn.\nhttps://cafef.vn/dhg.chn\n\n"
+        "2. Bảo Minh mua lại trái phiếu\nMô tả RSS B.\nhttps://cafef.vn/bm.chn\n\n"
+        "3. Tin C\nhttps://cafef.vn/c.chn"
+    )
+    prompts, read = [], []
+
+    async def fake_read_rss(url: str) -> str:
+        return feed
+
+    async def fake_read_article(url):
+        read.append(url)
+        if url.endswith("bm.chn"):
+            raise article_reader.ArticleError("bị chặn")
+        return article_reader.Article(
+            url=url,
+            sapo="Dược Hậu Giang lãi sau thuế 61 tỷ đồng quý III, giảm 52% so với cùng kỳ.",
+            paragraphs=["Doanh thu thuần đạt 1.020 tỷ đồng.", "Đoạn dài " * 400],
+        )
+
+    async def fake_ask(prompt: str):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return SimpleNamespace(text="IMPORTANT_IDS: F1I1,F1I2")
+        return SimpleNamespace(
+            text="📈 KINH TẾ & THỊ TRƯỜNG\nDược Hậu Giang lãi 61 tỷ đồng quý III, giảm 52% "
+            "so với cùng kỳ dù doanh thu 1.020 tỷ đồng (bài 1). Bảo Minh mua lại trái phiếu "
+            "trước hạn (bài 2)."
+        )
+
+    monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
+    monkeypatch.setattr(orchestrator, "ask", fake_ask)
+    monkeypatch.setattr(article_reader, "read_article", fake_read_article)
+    digest = await morning_news.build_digest("on_demand")
+
+    assert len(prompts) == 2 and "CHỈ trả đúng 1 dòng" in prompts[0]
+    # Bài model chọn đọc trước; dưới 5 bài thì bù theo thứ tự RSS như mục link cũ.
+    assert read == ["https://cafef.vn/dhg.chn", "https://cafef.vn/bm.chn", "https://cafef.vn/c.chn"]
+    summary = prompts[1]
+    assert "Bài 1 - DHG báo lãi quý III thấp nhất 15 năm (CafeF)" in summary
+    assert "giảm 52% so với cùng kỳ" in summary  # nội dung bài, không chỉ tiêu đề
+    assert "Bài 2 - Bảo Minh mua lại trái phiếu (CafeF)\nMô tả RSS B." in summary  # đọc lỗi
+    assert "Đoạn dài " * 180 not in summary  # mỗi bài chỉ lấy phần đầu (~1.500 ký tự)
+    assert '"(bài 3)"' in summary and "KHÔNG chép lại hay diễn đạt lại tiêu đề" in summary
+    assert "giảm 52%" in digest and "(bài 2)" in digest  # số có trong bài: giữ
+    assert "1. DHG báo lãi quý III thấp nhất 15 năm\n   https://cafef.vn/dhg.chn" in digest
+
+
+@pytest.mark.asyncio
+async def test_luot_chon_tin_loi_thi_chon_tat_dinh(monkeypatch):
+    from services import article_reader
+
+    async def fake_read_rss(url: str) -> str:
+        return "[Feed: VnExpress]\n1. Tin A\nhttps://vnexpress.net/a.html"
+
+    calls = []
+
+    async def fake_ask(prompt: str):
+        calls.append(prompt)
+        if len(calls) == 1:
+            raise RuntimeError("provider lỗi")
+        return SimpleNamespace(
+            text="Tin A kể một chuyện cụ thể lấy từ thân bài, nêu rõ ai làm gì và vì sao "
+            "đáng chú ý với người đọc sáng nay (bài 1)."
+        )
+
+    async def fake_read_article(url):
+        return article_reader.Article(url=url, sapo="Thân bài tin A.")
+
+    monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
+    monkeypatch.setattr(orchestrator, "ask", fake_ask)
+    monkeypatch.setattr(article_reader, "read_article", fake_read_article)
+    digest = await morning_news.build_digest()
+    assert "Bài 1 - Tin A (VnExpress)\nThân bài tin A." in calls[1]
+    assert "1. Tin A\n   https://vnexpress.net/a.html" in digest

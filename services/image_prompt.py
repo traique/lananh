@@ -11,19 +11,25 @@ from services.prompt_templates import (
     TEXT_RETRY_NOTE,
     copies_template,
     copies_text_example,
+    strip_slot_labels,
 )
 
 logger = logging.getLogger(__name__)
 
 
 async def from_photo(instruction: str, image_path: str):
-    """Phản hồi của orchestrator.analyze_image (có .text, .used_fallback)."""
-    return await _ask_once_more(
+    """Phản hồi của orchestrator.analyze_image (có .text, .used_fallback); nhãn ô của
+    khuôn ("Outfit:", "Setting:"...) đã được bỏ khỏi .text."""
+    response = await _ask_once_more(
         lambda text: orchestrator.analyze_image(text, image_path),
         instruction,
         copies_template,
         TEMPLATE_RETRY_NOTE,
     )
+    text = getattr(response, "text", None)
+    if text:
+        response.text = strip_slot_labels(text)
+    return response
 
 
 async def from_text(instruction: str):

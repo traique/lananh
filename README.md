@@ -1565,6 +1565,12 @@ phiếu, Tuổi Trẻ, GenK - đổi qua env, phân cách bằng dấu phẩy), 
 thành 1 bản tin gọn, gửi cho chủ bot qua **cả Zalo và Zoom** (không gửi Telegram -
 dùng đúng 2 kênh bạn yêu cầu; trên Telegram dùng `/tintuc` hoặc `/bantin tin on`).
 
+Tóm tắt theo NỘI DUNG bài chứ không chỉ tiêu đề: lượt AI 1 chọn 6-8 tin (mỗi tin một
+sự kiện), code đọc phần đầu từng bài bằng bộ đọc bài báo (`services/article_reader.py`,
+tối đa ~1.500 ký tự/bài, 2 bài cùng lúc, 15 giây/bài; bài lỗi thì dùng mô tả RSS), lượt
+AI 2 viết tóm tắt (ai, làm gì, con số, vì sao đáng chú ý) và ghi "(bài N)" khớp mục
+"đọc bài N". Feed lạ không tách được tin có link thì tổng hợp thẳng từ chữ RSS như cũ.
+
 - Zalo controller hoặc Zoom chủ bot đã bật bản tin sáng cá nhân (`/bantin`) thì
   lần chạy 8h tự động bỏ qua kênh đó: tin RSS được gộp vào bản tin sáng
   (`MORNING_BRIEF_ABSORB_NEWS`), bản AI tổng hợp dựng tối đa 1 lần/ngày và dùng
@@ -1580,6 +1586,12 @@ dùng đúng 2 kênh bạn yêu cầu; trên Telegram dùng `/tintuc` hoặc `/b
   lúc quanh giờ chạy (free tier có thể spin down/redeploy).
 - Mục "🔗 TIN ĐÁNG CHÚ Ý" đánh số bài; danh sách link lưu ở setting
   `morning_news:last_links` để người dùng nhắn "đọc bài N" đọc nguyên bài.
+- Code soát bản AI viết: câu có con số không xuất hiện trong RSS bị bỏ (mục chỉ còn
+  tiêu đề thì bỏ cả mục); chữ "cựu" mà nguồn không có thì bỏ (model hay gọi người
+  đương chức là "cựu ..." theo hiểu biết đã cũ); tiêu đề bài bỏ giờ đăng dính kèm (vd
+  Tuổi Trẻ "(10/28/2026 8:33:00 AM)"); mỗi mục cách nhau 1 dòng trống. Lời dặn kèm
+  ngày hôm nay, cấm câu chung chung không có trong tin và cấm chọn 2 bài cùng sự kiện.
+  Gộp vào bản tin sáng cá nhân thì bỏ dòng tiêu đề "☀️ BẢN TIN SÁNG" (1 tin 1 tiêu đề).
 - `/bangtinsang` (hoặc `/bantinsang`; chỉ admin, Telegram/Zalo/Zoom) gửi thử ngay
   lập tức, bỏ qua guard "đã gửi hôm nay" - dùng để test mà không cần đợi tới 8h
   sáng hôm sau.

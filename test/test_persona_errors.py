@@ -254,6 +254,10 @@ async def test_prompt_tu_anh_chi_chu_bot_thay_model_doc_anh(monkeypatch, tmp_pat
     with reply_audience.use(reply_audience.ReplyAudience(owner_check=is_controller)):
         owner, _ = await cis.handle_channel_image(-4, b"\x89PNG", "image/png", "", "m5")
     assert "🤖 Đọc ảnh: router9 (gpt-4o-mini)" in owner[0]
+    # Prompt là tin riêng: nhấn giữ chép trên Zalo không dính dòng hướng dẫn.
+    for replies in (member, owner):
+        assert replies[0].startswith("📝 Prompt gợi ý ở tin dưới")
+        assert replies[1] == "Photographic portrait of a woman on a white bicycle."
 
 
 # ─── Router Zalo: chủ bot = controller, KHÔNG phải role admin ────────────────

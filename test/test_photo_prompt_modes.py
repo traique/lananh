@@ -122,10 +122,14 @@ def test_bat_buoc_ta_khung_hinh():
 
 
 def test_vi_du_co_san_cau_ta_khung_hinh():
+    """Các ô khung hình chỉ nói phải tả gì, không cho giá trị mẫu: bản trước có e.g.
+    "three-quarter body shot framed from mid-thigh upward", "camera at chest height" và
+    model chép y nguyên dù ảnh cắt tới bắp chân, thấy cả 2 bánh xe đạp."""
     example = _render_described().split("---")[1]
-    assert "Vertical 9:16 portrait orientation" in example
-    assert "three-quarter body shot" in example
-    assert "chest height" in example
+    for slot in ("[orientation", "[shot size", "[camera height and angle", "headroom"):
+        assert slot in example
+    for copied in ("mid-thigh upward", "chest height", "Vertical 9:16"):
+        assert copied not in example
 
 
 # ─── Dáng người ─────────────────────────────────────

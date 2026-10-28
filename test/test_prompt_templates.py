@@ -145,3 +145,59 @@ async def test_prompt_chu_chep_vi_du_thi_hoi_lai_mot_lan(monkeypatch):
     response = await image_prompt.from_text("VIẾT PROMPT")
     assert response.text == GOOD_PROMPT
     assert seen == ["VIẾT PROMPT", "VIẾT PROMPT" + TEXT_RETRY_NOTE]
+
+
+def test_bo_nhan_o_cua_khuon_giu_khoi_khoa():
+    from services.prompt_templates import IMAGE_ANALYZE_INSTRUCTION_BASE, strip_slot_labels
+
+    text = (
+        "Identity lock: keep her face.\n\nOutfit lock: keep the top.\n\n"
+        "Outfit: a white off-the-shoulder crop top.\n\nLight and finish: bright daylight."
+    )
+    assert strip_slot_labels(text) == (
+        "Identity lock: keep her face.\n\nOutfit lock: keep the top.\n\n"
+        "A white off-the-shoulder crop top.\n\nBright daylight."
+    )
+    assert "never print a slot name" in IMAGE_ANALYZE_INSTRUCTION_BASE
+    # Chỉ nhắc khoá đồ/sản phẩm khi khoá đó bật ("identity/outfit details" khi không khoá đồ).
+    assert "identity/outfit/product" not in IMAGE_ANALYZE_INSTRUCTION_BASE
+    # Điều kiện nằm ngoài danh sách chọn, không trong ngoặc ngay sau mục (model chép nguyên ngoặc).
+    assert "no altered locked details, no watermark" in IMAGE_ANALYZE_INSTRUCTION_BASE
+    assert (
+        '"no altered locked details" only when a lock is present' in IMAGE_ANALYZE_INSTRUCTION_BASE
+    )
+    # "mặt tôi" chỉ khoá mặt: dáng người vẫn lấy theo ảnh mẫu, chỉ cấm khi khoá có tả dáng.
+    assert "nor their body build when the lock defines one" in IMAGE_ANALYZE_INSTRUCTION_BASE
+
+
+async def test_prompt_tu_anh_bo_nhan_o(monkeypatch):
+    from types import SimpleNamespace
+
+    from services import image_prompt
+
+    async def analyze(instruction, path):
+        return SimpleNamespace(text=GOOD_PROMPT + "\n\nLens: 50mm equivalent at f/2.8.")
+
+    monkeypatch.setattr(image_prompt.orchestrator, "analyze_image", analyze)
+    response = await image_prompt.from_photo("PHÂN TÍCH ẢNH", "/x.jpg")
+    assert response.text.endswith("\n\n50mm equivalent at f/2.8.")
+
+
+async def test_prompt_chu_zalo_zoom_tach_tin_de_chep(monkeypatch):
+    from types import SimpleNamespace
+
+    from services import channel_command_service as ccs
+
+    async def ask(instruction):
+        return SimpleNamespace(text=GOOD_PROMPT, used_fallback=False)
+
+    async def noop(*args, **kwargs):
+        return 1
+
+    monkeypatch.setattr(ccs.image_prompt.orchestrator, "ask", ask)
+    monkeypatch.setattr(ccs.telemetry, "start", noop)
+    monkeypatch.setattr(ccs.telemetry, "success", noop)
+    messages, _ = await ccs._prompt(42, "mặt tôi đạp xe dưới cây hoa giấy", channel="zoom")
+    assert messages[0].startswith("📝 Prompt gợi ý ở tin dưới")
+    assert "ảnh rõ mặt" in messages[0]
+    assert messages[1] == GOOD_PROMPT  # tin riêng, chép là dán thẳng sang Gemini

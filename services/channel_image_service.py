@@ -80,7 +80,10 @@ async def handle_channel_image(
             # Chủ bot thấy model nào đã đọc ảnh (prompt tả sai cảnh = model không thấy ảnh).
             model = getattr(response, "model", "") or ""
             hint += f"\n🤖 Đọc ảnh: {reader}" + (f" ({model})" if model else "")
-        return [f"📝 Prompt gợi ý\n{hint}\n\n{output}"], "api" if fallback else None
+        # Prompt là 1 tin RIÊNG: Zalo không có nút chép khối như Telegram, nhấn giữ chép
+        # cả tin thì không dính các dòng hướng dẫn vào prompt dán sang Gemini.
+        header = f"📝 Prompt gợi ý ở tin dưới - nhấn giữ để chép.\n{hint}"
+        return [header, output], "api" if fallback else None
     except Exception as exc:
         await telemetry.failure(prompt_id, "promptify", exc)
         # Thông điệp lỗi có thể mang thân response upstream: chỉ chủ bot (Zalo
