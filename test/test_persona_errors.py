@@ -219,6 +219,43 @@ async def test_anh_khong_ra_prompt_cau_than_thien(monkeypatch, tmp_path):
     assert "Gemini" not in result[0]
 
 
+@pytest.mark.asyncio
+async def test_prompt_tu_anh_chi_chu_bot_thay_model_doc_anh(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from core import config
+    from services import channel_image_service as cis
+
+    async def read(instruction, path):
+        return SimpleNamespace(
+            text="Photographic portrait of a woman on a white bicycle.",
+            used_fallback=False,
+            provider="router9",
+            model="gpt-4o-mini",
+        )
+
+    async def noop(*args, **kwargs):
+        return 1
+
+    async def is_controller():
+        return True
+
+    async def no_record(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(config, "MEDIA_DIR", tmp_path)
+    monkeypatch.setattr(cis.image_prompt.orchestrator, "analyze_image", read)
+    monkeypatch.setattr(cis.telemetry, "start", noop)
+    monkeypatch.setattr(cis.telemetry, "success", noop)
+    monkeypatch.setattr(cis.conversation_log, "record_exchange", no_record)
+
+    member, _ = await cis.handle_channel_image(-4, b"\x89PNG", "image/png", "", "m4")
+    assert "Đọc ảnh" not in member[0] and "router9" not in member[0]
+    with reply_audience.use(reply_audience.ReplyAudience(owner_check=is_controller)):
+        owner, _ = await cis.handle_channel_image(-4, b"\x89PNG", "image/png", "", "m5")
+    assert "🤖 Đọc ảnh: router9 (gpt-4o-mini)" in owner[0]
+
+
 # ─── Router Zalo: chủ bot = controller, KHÔNG phải role admin ────────────────
 
 

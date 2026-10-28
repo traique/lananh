@@ -60,6 +60,11 @@ Repository được thiết kế cho **một chủ sở hữu**:
   9Router (gateway OpenAI-compatible) → Groq (miễn phí, chat mặc định
   `openai/gpt-oss-20b`) → OpenRouter (model `:free`) → AI Studio key 1 → key 2 →
   Gemini Live (`live`, tự thêm vào cuối khi `LIVE_CHAT_FALLBACK=1`).
+- Ảnh (viết prompt từ ảnh, hỏi đáp về ảnh, đọc hoá đơn) đi chuỗi riêng
+  `VISION_PROVIDER_ORDER` (mặc định `api1,api2,openrouter,groq,router9`): 9Router gửi
+  ảnh cho model chat chung, gateway có thể lặng lẽ bỏ ảnh với model không đọc ảnh và
+  model vẫn trả lời, tự bịa cả cảnh. Telegram ghi "🤖 Đọc ảnh: <provider> (<model>)" ở
+  đầu prompt từ ảnh.
 - Gemini Live (`ai/live_client.py`, model `LIVE_MODEL` = `gemini-3.8-live`, WebSocket
   qua `client.aio.live.connect` của google-genai): provider chat dự phòng CUỐI, chỉ
   chạy khi mọi provider trước lỗi hoặc đang cooldown. Model âm thanh gốc chỉ trả
@@ -885,6 +890,7 @@ Provider, tra web, quota:
 | `GEMINI_KEYS_SAME_PROJECT` | 0 | 1 = API 1 và API 2 cùng project Google Cloud (cộng chung quota) |
 | `FREE_TIER_RPD_GEMINI` / `FREE_TIER_RPD_GROQ` | 0 / 0 | Hạn mức lượt/ngày (0 = chưa đặt, chỉ hiển thị); Groq ưu tiên số từ header response |
 | `FREE_TIER_RPD_OPENROUTER` / `FREE_TIER_TAVILY_MONTHLY` | 50 / 1000 | OpenRouter `:free` 50 lượt/ngày (1000 khi đã nạp từ 10 USD); Tavily credit/tháng (tìm advanced = 2) |
+| `VISION_PROVIDER_ORDER` | `api1,api2,openrouter,groq,router9` | Thứ tự provider cho ảnh (prompt từ ảnh, hỏi đáp ảnh, hoá đơn); provider thiếu tự thêm vào cuối |
 | `LIVE_CHAT_FALLBACK` | 1 | Gemini Live làm provider chat dự phòng cuối (tự thêm `live` vào cuối `PROVIDER_ORDER`); 0 = bỏ `live` khỏi chuỗi |
 | `LIVE_MODEL` | `gemini-3.8-live` | Model Gemini Live (đổi được ở `/admin` → Provider → `live`) |
 | `LIVE_MAX_SESSIONS` / `LIVE_CALL_TIMEOUT_SEC` / `LIVE_MAX_AUDIO_MB` | 1 / 60 / 8 | Số phiên Live cùng lúc (1-4), trần giây 1 lượt (10-180, không vượt hạn chót lượt), trần MB âm thanh 1 lượt (1-32) |

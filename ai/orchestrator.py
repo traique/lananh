@@ -1201,6 +1201,7 @@ async def analyze_image(instruction: str, image_path: str):
         api_call=_api_call,
         groq_call=_groq_call,
         openrouter_call=_openrouter_call,
+        providers_override=config.VISION_PROVIDER_ORDER,
         allow_cjk=cjk_output_expected(instruction),
     )
 

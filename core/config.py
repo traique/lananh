@@ -318,6 +318,14 @@ def _parse_provider_order(raw: str, *, live: bool = True) -> list[str]:
 
 
 PROVIDER_ORDER = _parse_provider_order(_PROVIDER_ORDER_RAW, live=LIVE_CHAT_FALLBACK)
+# Ảnh (viết prompt từ ảnh, hỏi đáp về ảnh, đọc hoá đơn - orchestrator.analyze_image) đi
+# chuỗi riêng. 9Router gửi ảnh cho model chat chung (ROUTER9_MODEL); gateway có thể lặng
+# lẽ bỏ ảnh khi model phía sau không đọc ảnh, model vẫn trả lời và tự bịa cả cảnh (ảnh cô
+# gái đạp xe dưới cây hoa giấy ra prompt "áo trench coat, tựa tường bê tông"). Mặc định
+# ưu tiên Gemini (đọc ảnh chắc chắn), rồi OpenRouter/Groq với model vision riêng.
+VISION_PROVIDER_ORDER = _parse_provider_order(
+    os.getenv("VISION_PROVIDER_ORDER", "api1,api2,openrouter,groq,router9"), live=False
+)
 
 # ─── Scheduler: reminder + daily digest danh mục (Bước 6) ──────────────────
 REMINDER_CHECK_INTERVAL_SEC = _env_int("REMINDER_CHECK_INTERVAL_SEC", 30)

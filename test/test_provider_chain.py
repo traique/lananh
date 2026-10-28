@@ -687,3 +687,26 @@ async def test_utility_json_dung_groq_key_trang_admin(admin_keys, monkeypatch):
     monkeypatch.setattr(orchestrator.call_log, "record", no_record)
 
     assert await orchestrator.utility_json("{}") == {"ok": True} and seen == ["{}"]
+
+
+@pytest.mark.asyncio
+async def test_anh_di_chuoi_rieng_uu_tien_provider_doc_duoc_anh(monkeypatch):
+    """9Router gửi ảnh cho model chat chung (vd "notion/GPT-5.6 Luna"): gateway lặng lẽ bỏ
+    ảnh thì model vẫn trả lời và bịa cả cảnh. Ảnh đi VISION_PROVIDER_ORDER, Gemini trước."""
+    assert config._parse_provider_order("api1,api2,openrouter,groq,router9", live=False) == [
+        "api1",
+        "api2",
+        "openrouter",
+        "groq",
+        "router9",
+    ]
+    seen = {}
+
+    async def fake_chain(**kwargs):
+        seen.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(config, "VISION_PROVIDER_ORDER", ["api1", "api2", "router9"])
+    monkeypatch.setattr(orchestrator, "_run_provider_chain", fake_chain)
+    assert await orchestrator.analyze_image("tả ảnh", "/x.jpg") == "ok"
+    assert seen["providers_override"] == ["api1", "api2", "router9"]

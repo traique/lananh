@@ -75,6 +75,11 @@ async def handle_channel_image(
         await conversation_log.record_exchange(
             user_id, f"[Gửi ảnh] {caption}".strip(), "-", conversation_log.KIND_IMAGE
         )
+        reader = getattr(response, "provider", "") or ""
+        if reader and await reply_audience.is_owner(user_id):
+            # Chủ bot thấy model nào đã đọc ảnh (prompt tả sai cảnh = model không thấy ảnh).
+            model = getattr(response, "model", "") or ""
+            hint += f"\n🤖 Đọc ảnh: {reader}" + (f" ({model})" if model else "")
         return [f"📝 Prompt gợi ý\n{hint}\n\n{output}"], "api" if fallback else None
     except Exception as exc:
         await telemetry.failure(prompt_id, "promptify", exc)

@@ -204,6 +204,11 @@ async def photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     header = "📝 <b>Prompt gợi ý (dùng cho app Gemini)</b> — chạm vào khối bên dưới để chép:"
     if used_fallback:
         header += "  ⚙️ API"
+    # Model nào đã đọc ảnh: prompt tả sai cảnh thì biết ngay provider nào không thấy ảnh.
+    reader = getattr(response, "provider", "") or ""
+    if reader:
+        model = getattr(response, "model", "") or ""
+        header += f"\n🤖 Đọc ảnh: {reader}" + (f" ({model})" if model else "")
     header += mode_hint
     try:
         await update.message.reply_text(header, parse_mode="HTML")
