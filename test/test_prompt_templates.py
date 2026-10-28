@@ -145,3 +145,35 @@ async def test_prompt_chu_chep_vi_du_thi_hoi_lai_mot_lan(monkeypatch):
     response = await image_prompt.from_text("VIẾT PROMPT")
     assert response.text == GOOD_PROMPT
     assert seen == ["VIẾT PROMPT", "VIẾT PROMPT" + TEXT_RETRY_NOTE]
+
+
+def test_bo_nhan_o_cua_khuon_giu_khoi_khoa():
+    from services.prompt_templates import IMAGE_ANALYZE_INSTRUCTION_BASE, strip_slot_labels
+
+    text = (
+        "Identity lock: keep her face.\n\nOutfit lock: keep the top.\n\n"
+        "Outfit: a white off-the-shoulder crop top.\n\nLight and finish: bright daylight."
+    )
+    assert strip_slot_labels(text) == (
+        "Identity lock: keep her face.\n\nOutfit lock: keep the top.\n\n"
+        "A white off-the-shoulder crop top.\n\nBright daylight."
+    )
+    assert "never print a slot name" in IMAGE_ANALYZE_INSTRUCTION_BASE
+    # Chỉ nhắc khoá đồ/sản phẩm khi khoá đó bật ("identity/outfit details" khi không khoá đồ).
+    assert "identity/outfit/product" not in IMAGE_ANALYZE_INSTRUCTION_BASE
+    assert (
+        "no altered locked details (only when a lock is present)" in IMAGE_ANALYZE_INSTRUCTION_BASE
+    )
+
+
+async def test_prompt_tu_anh_bo_nhan_o(monkeypatch):
+    from types import SimpleNamespace
+
+    from services import image_prompt
+
+    async def analyze(instruction, path):
+        return SimpleNamespace(text=GOOD_PROMPT + "\n\nLens: 50mm equivalent at f/2.8.")
+
+    monkeypatch.setattr(image_prompt.orchestrator, "analyze_image", analyze)
+    response = await image_prompt.from_photo("PHÂN TÍCH ẢNH", "/x.jpg")
+    assert response.text.endswith("\n\n50mm equivalent at f/2.8.")

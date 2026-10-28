@@ -44,6 +44,8 @@ Identity lock / keyword-mode logic (giữ mặt / cô gái 20 / tự mô tả) s
 services/prompt_identity.py.
 """
 
+import re
+
 from services.prompt_identity import (
     PromptIdentityConfig,
     render_instruction,
@@ -81,7 +83,7 @@ Rules for what you generate:
 8. THE FINISH MUST MATCH THE LOOK THE USER ASKS FOR, and this overrides any default preference for raw photography. If the user wants an ordinary unpolished snapshot, use terms like "candid", "unretouched", "raw photo", "natural skin texture", "visible pores", "film grain", "amateur lighting" - and name one or two concrete everyday imperfections that belong in this exact scene (a scuffed curb, a faint puddle reflection, dust on the pavement, a light crease in the fabric), since concrete detail reads as real while the word "realistic" on its own reads as AI. If instead the user asks for something polished, glamorous, dreamy, cinematic or social-media styled, say so plainly: "softly retouched", "smooth luminous skin", "gentle beauty-filter finish", "rich saturated colour", "strong creamy background blur", and in that case you MUST NOT write "visible pores", "unretouched", "skin imperfections" or "zero airbrushing", because those terms fight the requested look. Whichever branch you choose, always keep the shot reading as a real photograph.
 9. DO NOT append any tool-specific flags or parameters such as "--ar 4:5", "--v 6", "--style raw" or "::". These belong to other tools and are meaningless here; the aspect ratio belongs in the framing sentence required by rule 4, written in plain words.
 10. FORBIDDEN WORDS: NEVER use terms like "masterpiece", "8k", "ultra-photorealistic", "perfect", "flawless" or "editorial". These are empty booster words and make the image look fake.
-11. CLOSE WITH ONE SHORT EXCLUSION SENTENCE: end the prompt with a single concise sentence naming only the safeguards genuinely relevant to this scene (choose from: natural hand and finger anatomy, no extra or missing fingers, no warped or duplicated facial features, no distorted body proportions, no altered locked identity/outfit/product details, no watermark or stray text, and - for a candid outdoor or street scene - no illustration or anime look, no CGI rendering, no studio lighting, no overly staged composition). Pick 2 to 4 relevant items - do not pad with irrelevant ones and do not repeat wording already used earlier in the prompt.
+11. CLOSE WITH ONE SHORT EXCLUSION SENTENCE: end the prompt with a single concise sentence naming only the safeguards genuinely relevant to this scene (choose from: natural hand and finger anatomy, no extra or missing fingers, no warped or duplicated facial features, no distorted body proportions, no altered locked details (only when a lock is present), no watermark or stray text, and - for a candid outdoor or street scene - no illustration or anime look, no CGI rendering, no studio lighting, no overly staged composition). Pick 2 to 4 relevant items - do not pad with irrelevant ones and do not repeat wording already used earlier in the prompt.
 12. Output ONLY the final prompt as plain text: no markdown headers, no preamble, no separate negative-prompt section, no tool-specific flags.
 
 User's basic description: {user_desc}"""
@@ -89,10 +91,10 @@ User's basic description: {user_desc}"""
 
 IMAGE_ANALYZE_INSTRUCTION_BASE = """You are an expert prompt engineer for AI image generation. Analyze the attached SOURCE photo and produce ONE complete English prompt that recreates what is visible in it - the action, pose, framing, hairstyle, outfit, accessories, props, setting, lighting and photographic finish - as closely as possible while respecting the selected identity mode. Whatever the mode, the prompt you write is the only description of the scene that the image generator will receive, so every visible element of the source photo must be written out in it.
 
-Use the template below only for its STRUCTURE. Every [square-bracket slot] is an instruction telling you what to write in that place: replace each slot with concrete details you can actually see in the source photo, in natural prose. The short examples inside the slots belong to a different photo - never copy them.
+Use the template below only for its STRUCTURE. Every [square-bracket slot] is an instruction telling you what to write in that place: replace each slot with concrete details you can actually see in the source photo, in natural prose. The short examples inside the slots belong to a different photo - never copy them. Write each paragraph as flowing sentences: never print a slot name ("Pose:", "Outfit:", "Setting:", "Lens:", "Light and finish:") as a label.
 
 ---
-{identity_lock_block}Photographic portrait of {subject_phrase} [what the subject is doing and where, in concrete words - e.g. "leaning on a wooden railing at the edge of a harbour pier"]. [Orientation - e.g. "Vertical 9:16 portrait orientation"], [shot size - e.g. "three-quarter body shot framed from mid-thigh upward"], [camera height and angle - e.g. "camera at chest height and level with the subject"], [approximate distance], [how much of the frame the subject fills and how much headroom there is].
+{identity_lock_block}Photographic portrait of {subject_phrase} [what the subject is doing and where, in concrete words - e.g. "leaning on a wooden railing at the edge of a harbour pier"]. [orientation - the closest of the four in rule 5], [shot size, judged from where the bottom edge of the frame cuts the body - head-and-shoulders, waist-up, mid-thigh-up, knee-up, full body...], [camera height and angle as seen in the photo], [approximate distance], [how much of the frame the subject fills and how much headroom there is].
 
 [Pose: each arm and elbow, the height of each hand, which way the palms face, what each hand holds or touches, the stance or seated position and where the weight rests, the shoulder and torso rotation, head tilt, chin height, gaze direction, mouth and expression, and how the hair is styled and falls - e.g. "Her left hand rests on the railing at waist height while her right arm hangs nearly straight beside her thigh".]
 
@@ -118,7 +120,7 @@ Rules for what you generate:
 8. LIGHTING AND FINISH MUST MATCH THE SOURCE PHOTO. For genuinely raw/candid photography, use natural skin texture and restrained processing. For visibly polished beauty/fashion imagery, use the appropriate refined treatment. Never combine contradictory raw and beauty-filter instructions.
 9. CAMERA AND LENS MUST BE INFERRED FROM PERSPECTIVE AND DEPTH OF FIELD. Use approximately 70-135mm for tight compressed portraits, 40-55mm for normal half-body/three-quarter views, and 24-35mm only when the environment is intentionally prominent. State an equivalent focal length, aperture and depth of field consistent with the source photo. Do not invent a camera brand or exact model unless it is provided.
 10. REALISM CHECK: preserve believable anatomy, perspective, skin texture, fabric behaviour, water/rain behaviour, reflections, shadows and depth of field. Avoid generic AI embellishment and details not supported by the source photo. Instead of only writing generic words like "realistic", name one or two concrete everyday imperfections that belong in this exact scene (a scuffed curb, a faint puddle reflection, fallen petals on the path, a light crease in the fabric, a slightly windblown strand of hair) - concrete detail reads as real, vague adjectives read as AI.
-11. CLOSE WITH ONE SHORT EXCLUSION SENTENCE: end the prompt with a single concise sentence naming only the safeguards genuinely relevant to this scene (choose from: natural hand and finger anatomy, no extra or missing fingers, no warped or duplicated facial features, no distorted body proportions, no altered locked identity/outfit/product details, no watermark or stray text, and - for a candid outdoor or street scene - no illustration or anime look, no CGI rendering, no studio lighting, no overly staged composition). Pick 2 to 4 relevant items - do not pad with irrelevant ones and do not repeat wording already used earlier in the prompt.
+11. CLOSE WITH ONE SHORT EXCLUSION SENTENCE: end the prompt with a single concise sentence naming only the safeguards genuinely relevant to this scene (choose from: natural hand and finger anatomy, no extra or missing fingers, no warped or duplicated facial features, no distorted body proportions, no altered locked details (only when a lock is present), no watermark or stray text, and - for a candid outdoor or street scene - no illustration or anime look, no CGI rendering, no studio lighting, no overly staged composition). Pick 2 to 4 relevant items - do not pad with irrelevant ones and do not repeat wording already used earlier in the prompt.
 12. OUTPUT ONLY the final English image prompt as plain text. No markdown, no headings, no explanations, no separate negative-prompt section and no tool-specific flags."""
 
 # Dấu hiệu model chép khuôn mẫu thay vì tả ảnh: còn ô [..]/"e.g." của template, hoặc câu
@@ -140,6 +142,17 @@ TEMPLATE_RETRY_NOTE = (
     "props, the specific setting and the light - in concrete words, with no square "
     'brackets, no "e.g." and no generic filler.'
 )
+
+
+# Tên ô của khuôn ("Outfit:", "Setting:"...) model hay in ra thành nhãn đầu đoạn. Chỉ bỏ
+# nhãn đứng đầu dòng và có dấu ":" ngay sau tên ô - "Outfit lock:", "Identity lock:" giữ nguyên.
+_SLOT_LABEL_RE = re.compile(
+    r"^(?:Pose|Outfit|Setting|Lens|Light and finish)\s*:\s*(\S)", re.IGNORECASE | re.MULTILINE
+)
+
+
+def strip_slot_labels(prompt: str) -> str:
+    return _SLOT_LABEL_RE.sub(lambda m: m.group(1).upper(), prompt)
 
 
 def copies_template(prompt: str) -> bool:
