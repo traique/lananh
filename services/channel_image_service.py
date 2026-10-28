@@ -9,10 +9,15 @@ import os
 from pathlib import Path
 
 import messages
-from ai import orchestrator
 from core import config
 from core.fileutil import safe_delete
-from services import conversation_log, expense_service, reply_audience, vision_service
+from services import (
+    conversation_log,
+    expense_service,
+    image_prompt,
+    reply_audience,
+    vision_service,
+)
 from services.prompt_identity import resolve_prompt_identity
 from services.prompt_templates import build_image_instruction
 from services.telemetry import telemetry
@@ -60,7 +65,7 @@ async def handle_channel_image(
     try:
         path.write_bytes(image)
         instruction, hint = _instruction(caption)
-        response = await orchestrator.analyze_image(instruction, str(path))
+        response = await image_prompt.from_photo(instruction, str(path))
         output = (getattr(response, "text", None) or "").strip()
         await telemetry.success(prompt_id, "promptify", output or "(không có nội dung)")
         if not output:

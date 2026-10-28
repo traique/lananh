@@ -34,6 +34,9 @@ TODAY = dt.date(2026, 10, 21)  # 12/9 năm Bính Ngọ
         ("hôm qua can chi", "là ngày Đinh Mão, tháng Mậu Tuất, năm Bính Ngọ"),
         # Tết.
         ("còn mấy ngày nữa tết", "Còn 108 ngày nữa là Tết Nguyên đán năm Đinh Mùi"),
+        # không có "còn" (câu chat thật từng đi sang AI)
+        ("bao nhiêu ngày nữa đến tết.", "Còn 108 ngày nữa là Tết Nguyên đán năm Đinh Mùi"),
+        ("mấy ngày nữa là tết", "Còn 108 ngày nữa là Tết Nguyên đán năm Đinh Mùi"),
         ("bao giờ tết?", "Còn 108 ngày nữa"),
         ("tết năm 2028 ngày nào", "Thứ Tư 26/01/2028"),
         # Xem tổng quan.
@@ -71,4 +74,31 @@ def test_hoi_ngay_am_khong_ke_them_gio_hoang_dao():
     ],
 )
 def test_khong_chac_thi_tra_none(text):
+    assert lunar_chat.answer(text, TODAY) is None
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # "tháng này/sau/trước" theo tháng ÂM chứa hôm nay (12/9 âm); "rằm tháng sau" từng
+        # bị đọc thành rằm tháng 6.
+        ("rằm tháng này là ngày nào", "Thứ Bảy 24/10/2026 dương lịch (ngày Tân Mùi). Còn 3 ngày."),
+        (
+            "rằm tháng sau là ngày nào",
+            "Ngày 15 tháng 10 năm Bính Ngọ âm lịch rơi vào Thứ Hai 23/11",
+        ),
+        ("ram thang sau la ngay nao", "Thứ Hai 23/11/2026"),
+        ("mùng 1 tháng sau là ngày nào", "Thứ Hai 09/11/2026"),
+        ("rằm tháng trước ngày nào", "Thứ Sáu 25/09/2026 dương lịch (ngày Nhâm Dần). Đã qua 26"),
+        ("rằm tháng sáu là ngày nào", "Ngày 15 tháng 6 năm Đinh Mùi"),
+        ("giờ tốt hôm nay", "Hôm nay (Thứ Tư 21/10/2026) giờ hoàng đạo: Dần (3h-5h)"),
+        ("hôm nay tốt hay xấu", "Hôm nay (Thứ Tư 21/10/2026): ngày hoàng đạo (Thanh Long)."),
+    ],
+)
+def test_thang_am_tuong_doi_gio_tot_ngay_tot_xau(text, expected):
+    assert expected in lunar_chat.answer(text, TODAY)
+
+
+@pytest.mark.parametrize("text", ["hôm nay cổ phiếu tốt hay xấu", "rằm tháng sau cúng gì"])
+def test_cau_khac_chu_de_van_de_ai(text):
     assert lunar_chat.answer(text, TODAY) is None

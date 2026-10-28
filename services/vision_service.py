@@ -39,6 +39,7 @@ from services.prompt_identity import (
     KEEP_FACE_KEYWORDS,
     OUTFIT_KEYWORDS,
     PRODUCT_KEYWORDS,
+    has_keyword,
 )
 from services.prompt_templates import build_vision_instruction
 from services.telemetry import telemetry
@@ -140,7 +141,7 @@ def classify_caption(caption: str) -> PhotoIntent:
     if not qa_enabled():
         return PhotoIntent(MODE_PROMPT)
     plain = fold(low) == low
-    if any(keyword in low for keyword in _IDENTITY_KEYWORDS) or _match(_PROMPT_RE, low, plain):
+    if has_keyword(low, _IDENTITY_KEYWORDS) or _match(_PROMPT_RE, low, plain):
         return PhotoIntent(MODE_PROMPT)
     if not _match(_QA_RE, low, plain):
         return PhotoIntent(MODE_PROMPT)

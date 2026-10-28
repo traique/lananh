@@ -3,14 +3,22 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from core.text_normalize import fold
+
 PromptIdentityMode = Literal["reference", "girl", "described"]
 
 KEEP_FACE_KEYWORDS: tuple[str, ...] = (
     "giữ mặt",
     "giữ khuôn mặt",
+    "giữ nguyên mặt",
+    "giữ nguyên khuôn mặt",
+    "đính kèm mặt",
+    "ghép mặt",
     "mặt tôi",
+    "mặt mình",
     "mặt anh",
     "mặt em",
+    "mặt chị",
 )
 GIRL_KEYWORDS: tuple[str, ...] = ("cô gái 20", "gái 20")
 
@@ -20,16 +28,32 @@ GIRL_KEYWORDS: tuple[str, ...] = ("cô gái 20", "gái 20")
 OUTFIT_KEYWORDS: tuple[str, ...] = ("giữ trang phục", "giữ đồ", "giữ quần áo", "giữ outfit")
 PRODUCT_KEYWORDS: tuple[str, ...] = ("giữ sản phẩm", "giữ logo", "giữ bao bì", "giữ nhãn")
 
+# Bỏ dấu thì "mặt tôi/anh/em..." trùng "mắt tôi/anh/em" ("chinh mat anh to hon"): câu gõ
+# không dấu chỉ nhận các cụm không nhầm được.
+_PLAIN_UNSAFE = frozenset({"mặt tôi", "mặt mình", "mặt anh", "mặt em", "mặt chị"})
+
+
+def has_keyword(text: str, keywords: tuple[str, ...]) -> bool:
+    """Câu có 1 từ khoá chế độ prompt; gõ không dấu ("giu mat", "co gai 20") cũng nhận."""
+    low = " ".join((text or "").lower().split())
+    if fold(low) != low:
+        return any(keyword in low for keyword in keywords)
+    return any(fold(k) in low for k in keywords if k not in _PLAIN_UNSAFE)
+
+
+# Khoá trang phục/sản phẩm trỏ tới ảnh người dùng đính kèm trên app tạo ảnh (ảnh mẫu có
+# bộ đồ/sản phẩm). Gọi tên riêng "outfit photo"/"product photo" để không lẫn với ảnh
+# mặt ("attached reference photo") khi dùng cùng chế độ "mặt tôi".
 OUTFIT_LOCK = (
     "Outfit lock: keep the exact clothing style, cut, colour, material, pattern and "
-    "accessories visible in the reference unchanged; only pose, setting and lighting "
-    "may vary."
+    "accessories shown in the attached outfit photo unchanged; only pose, setting and "
+    "lighting may vary."
 )
 
 PRODUCT_LOCK = (
     "Product lock: keep the exact product shape, proportions, colour, material, "
-    "packaging, logo, label, printed text and quantity visible in the reference "
-    "unchanged; never invent or alter any product detail."
+    "packaging, logo, label, printed text and quantity shown in the attached product "
+    "photo unchanged; never invent or alter any product detail."
 )
 
 IDENTITY_LOCK_REFERENCE = (
@@ -82,6 +106,12 @@ TEXT_SUBJECT_PHRASE_GIRL = "the same woman described by the identity lock above,
 
 SUBJECT_PHRASE_REFERENCE = "the subject from the attached reference image"
 
+# Ảnh không caption: chủ thể là MỘT Ô phải điền (tả người trong ảnh), không phải khuôn
+# mặt viết sẵn - viết sẵn thì model dễ chép nguyên khuôn mặt bịa đó thay vì tả ảnh.
+PHOTO_SUBJECT_PHRASE_DESCRIBED = (
+    "[the person in the source photo, written out as a complete identity blueprint - see rule 2],"
+)
+
 TEXT_SUBJECT_PHRASE_DESCRIBED = (
     "a woman in her early 20s with long dark hair, a soft oval face, large natural "
     "almond-shaped eyes, medium-thin natural eyebrows, a delicate straight nose, "
@@ -106,19 +136,26 @@ PHOTO_SUBJECT_RULE_GIRL = (
     'Name the subject only as "the same woman defined by the Identity Lock above" - do '
     "NOT restate the facial blueprint again elsewhere in the prompt, that would just "
     "duplicate the Identity Lock paragraph. Never describe or copy the face of the "
-    "person in the source image. Use the source image only for pose, framing, outfit, "
-    "accessories, setting, lighting, mood and photographic finish. Never let hairstyle, "
+    "person in the source image. Use the source image only for pose, framing, hairstyle, "
+    "outfit, accessories, props, setting, lighting, mood and photographic finish, and "
+    "describe all of those concretely. Never let hairstyle, "
     "clothing, expression, camera angle or scene details alter the locked face."
 )
 
+# "mặt tôi": user dán prompt vào Gemini kèm 1 ảnh MẶT của họ - thường là ảnh khác với
+# ảnh mẫu đang phân tích, nên ảnh đính kèm chỉ cho khuôn mặt. Bản cũ dặn "chỉ tả dáng,
+# đồ, bối cảnh khi ảnh tham chiếu chưa quyết định" -> model bỏ trống hết, prompt ra
+# chung chung (không xe đạp, không cây hoa, không áo quần thật trong ảnh mẫu).
 PHOTO_SUBJECT_RULE_REFERENCE = (
-    "2. CRITICAL - the user will attach the reference photo together with this prompt, "
-    'so that attachment is the sole identity source. Refer to the person as "the subject '
-    'from the attached reference image" and state that the generated face must match the '
-    "attached photo exactly. DO NOT invent concrete facial features such as eye colour, "
-    "face shape, nose or lip shape when they are supplied by the attachment. Describe pose, "
-    "expression, outfit, setting, lighting and camera only when they are not already "
-    "determined by the reference."
+    "2. CRITICAL - the face comes from a SEPARATE identity photo that the user will attach "
+    "together with this prompt in the image app. That photo is usually a different picture "
+    "from the source photo you are analysing and supplies ONLY the face. Refer to the person "
+    'as "the subject from the attached reference image" and state that the generated face '
+    "must match the attached photo exactly. DO NOT invent concrete facial features such as "
+    "eye colour, face shape, nose or lip shape - the attachment supplies them. Everything "
+    "else - action, pose, expression, hairstyle, outfit, accessories, props, setting, "
+    "lighting and camera - is NOT supplied by that attachment, so describe all of it in full, "
+    "concrete detail from the source photo."
 )
 
 # Text-mode rules (used by /prompt: there is no source photo, so unlike the PHOTO_*
@@ -143,7 +180,15 @@ TEXT_SUBJECT_RULE_GIRL = (
     "description. Never let scene details alter the locked face."
 )
 
-TEXT_SUBJECT_RULE_REFERENCE = PHOTO_SUBJECT_RULE_REFERENCE
+TEXT_SUBJECT_RULE_REFERENCE = (
+    "2. CRITICAL - the user will attach a photo of their face together with this prompt "
+    "in the image app, so that attachment is the sole identity source. Refer to the person "
+    'as "the subject from the attached reference image" and state that the generated face '
+    "must match the attached photo exactly. DO NOT invent concrete facial features such as "
+    "eye colour, face shape, nose or lip shape. The attachment supplies only the face: take "
+    "the pose, expression, hairstyle, outfit, setting, lighting and camera from the user's "
+    "description and write them out in full."
+)
 
 IDENTITY_RULE_LOCK = (
     "1. ALWAYS place the exact lock text provided above at the start of the prompt, "
@@ -204,12 +249,25 @@ _SUBJECT_RULES: dict[PromptIdentityContext, dict[PromptIdentityMode, str]] = {
     },
 }
 
-# Only "girl" mode's phrase differs by context (see PHOTO_SUBJECT_PHRASE_GIRL /
-# TEXT_SUBJECT_PHRASE_GIRL above); "reference" and "described" phrases are the
-# same invented-or-attached wording regardless of where they're rendered.
-_GIRL_SUBJECT_PHRASES: dict[PromptIdentityContext, str] = {
-    "photo": PHOTO_SUBJECT_PHRASE_GIRL,
-    "text": TEXT_SUBJECT_PHRASE_GIRL,
+# "reference" dùng chung 1 câu cho cả 2 ngữ cảnh; "girl" và "described" khác nhau giữa
+# ảnh (trỏ khối khoá / ô tả người trong ảnh) và /prompt chữ.
+_SUBJECT_PHRASES: dict[PromptIdentityContext, dict[PromptIdentityMode, str]] = {
+    "photo": {
+        "reference": SUBJECT_PHRASE_REFERENCE,
+        "girl": PHOTO_SUBJECT_PHRASE_GIRL,
+        "described": PHOTO_SUBJECT_PHRASE_DESCRIBED,
+    },
+    "text": {
+        "reference": SUBJECT_PHRASE_REFERENCE,
+        "girl": TEXT_SUBJECT_PHRASE_GIRL,
+        "described": TEXT_SUBJECT_PHRASE_DESCRIBED,
+    },
+}
+
+
+_FACE_HINTS: dict[PromptIdentityMode, str] = {
+    "girl": "🔒 Prompt dùng khóa khuôn mặt cố định",
+    "described": "🖼️ Prompt tự mô tả khuôn mặt bằng chữ",
 }
 
 
@@ -224,47 +282,44 @@ def resolve_prompt_identity(
     (prompt_templates.build_text_instruction), which has no source image
     and must not tell the model to look at or restate anything from one.
     """
-    normalized_description = description.lower()
-    rules = _SUBJECT_RULES[context]
-
-    if any(keyword in normalized_description for keyword in KEEP_FACE_KEYWORDS):
+    if has_keyword(description, KEEP_FACE_KEYWORDS):
         mode: PromptIdentityMode = "reference"
         face_lock = IDENTITY_LOCK_REFERENCE
-        subject_phrase = SUBJECT_PHRASE_REFERENCE
-        subject_rule = rules["reference"]
-        mode_hint = "📎 Hãy đính kèm ảnh gốc cùng prompt này trên app Gemini."
-    elif any(keyword in normalized_description for keyword in GIRL_KEYWORDS):
+    elif has_keyword(description, GIRL_KEYWORDS):
         mode = "girl"
         face_lock = IDENTITY_LOCK_GIRL
-        subject_phrase = _GIRL_SUBJECT_PHRASES[context]
-        subject_rule = rules["girl"]
-        mode_hint = "🔒 Prompt dùng khóa khuôn mặt cố định, không cần đính kèm ảnh."
     else:
         mode = "described"
         face_lock = ""
-        subject_phrase = TEXT_SUBJECT_PHRASE_DESCRIBED
-        subject_rule = rules["described"]
-        mode_hint = "🖼️ Prompt tự mô tả khuôn mặt bằng chữ, không cần đính kèm ảnh."
 
-    matched_extras = [
-        (name, lock)
-        for name, keywords, lock in (
-            ("trang phục", OUTFIT_KEYWORDS, OUTFIT_LOCK),
-            ("sản phẩm", PRODUCT_KEYWORDS, PRODUCT_LOCK),
+    extras = [
+        (name, lock, attachment)
+        for name, keywords, lock, attachment in (
+            ("trang phục", OUTFIT_KEYWORDS, OUTFIT_LOCK, "ảnh có bộ đồ cần giữ"),
+            ("sản phẩm", PRODUCT_KEYWORDS, PRODUCT_LOCK, "ảnh có sản phẩm cần giữ"),
         )
-        if any(keyword in normalized_description for keyword in keywords)
+        if has_keyword(description, keywords)
     ]
-    if matched_extras:
-        mode_hint += f" (khóa thêm: {', '.join(name for name, _ in matched_extras)})"
-    identity_lock = "\n\n".join(
-        lock for lock in (face_lock, *(l for _, l in matched_extras)) if lock
-    )
+    # Câu nhắc nói ĐÚNG những ảnh phải đính kèm trên Gemini: khoá trang phục/sản phẩm
+    # cũng cần ảnh (trước đây vẫn nói "không cần đính kèm ảnh" nên khoá trỏ vào khoảng không).
+    attachments = ["1 ảnh rõ mặt của người cần giữ"] if mode == "reference" else []
+    sample = " (chính ảnh mẫu này)" if context == "photo" else ""
+    attachments += [attachment + sample for _, _, attachment in extras]
+    if attachments:
+        mode_hint = f"📎 Dán prompt này vào app Gemini kèm {' + '.join(attachments)}."
+        if mode in _FACE_HINTS:
+            mode_hint = f"{_FACE_HINTS[mode]}. {mode_hint}"
+    else:
+        mode_hint = f"{_FACE_HINTS[mode]}, không cần đính kèm ảnh."
+    if extras:
+        mode_hint += f" (khóa thêm: {', '.join(name for name, _, _ in extras)})"
+    identity_lock = "\n\n".join(lock for lock in (face_lock, *(l for _, l, _ in extras)) if lock)
 
     return PromptIdentityConfig(
         mode=mode,
         identity_lock=identity_lock,
         identity_rule=IDENTITY_RULE_LOCK if identity_lock else IDENTITY_RULE_NONE,
-        subject_phrase=subject_phrase,
-        subject_rule=subject_rule,
+        subject_phrase=_SUBJECT_PHRASES[context][mode],
+        subject_rule=_SUBJECT_RULES[context][mode],
         mode_hint=mode_hint,
     )

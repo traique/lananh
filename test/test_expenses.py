@@ -221,7 +221,7 @@ async def test_zalo_anh_hoa_don_khong_viet_prompt(fake, monkeypatch, tmp_path):
 
     monkeypatch.setattr(cis.config, "MEDIA_DIR", tmp_path)
     monkeypatch.setattr(cis.expense_service, "analyze_receipt", receipt)
-    monkeypatch.setattr(cis.orchestrator, "analyze_image", no_prompt)
+    monkeypatch.setattr(cis.image_prompt.orchestrator, "analyze_image", no_prompt)
     monkeypatch.setattr(cis.conversation_log, "record_exchange", record)
     messages, _ = await cis.handle_channel_image(-5, b"jpg", "image/jpeg", "bill", "m1")
     assert messages == ["đã đọc -5"] and not list(tmp_path.iterdir())
@@ -315,6 +315,52 @@ def test_hoa_don_doc_tong_tien_dung_kieu_so(raw, amount):
 def test_tien_noi_kieu_1_trieu_2_va_ruoi(text, amount, note):
     parsed = ex.parse_expense(text, today=TODAY)
     assert parsed is not None and (parsed.amount, parsed.note) == (amount, note)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "thần số học ngày 18/09/1988",  # từng bị ghi thành khoản chi 1.988đ
+        "than so hoc 18-09-1988",
+        "xem tử vi 18.9.1988",
+        "tử vi tuổi 1990",
+        "sinh năm 1988",
+        "tu vi 1995 nam",
+    ],
+)
+async def test_ngay_sinh_va_nam_sinh_khong_phai_tien(fake, text):
+    assert ex.parse_expense(text, today=TODAY) is None, text
+    assert await ex.maybe_handle_chat(1, text) is None and not fake.rows
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "dò vé 123456 đài tây ninh",  # số vé: để bước xổ số dò
+        "do ve 123456 dai tay ninh",
+        "gọi số 0909123456",
+        "1990 mệnh gì",
+        "nhà số 1234 đường lê lợi",
+        "nha so 1234 duong le loi",
+        "mã 123456",
+    ],
+)
+async def test_so_ve_so_dien_thoai_so_nha_khong_phai_tien(fake, text):
+    assert ex.parse_expense(text, today=TODAY) is None, text
+    assert await ex.maybe_handle_chat(1, text) is None and not fake.rows
+
+
+def test_khoan_chi_co_ngay_van_doc_dung_so_tien():
+    assert ex.parse_expense("18/10 ăn phở 50k", today=TODAY).amount == 50_000
+    assert ex.parse_expense("gửi xe 2000", today=TODAY).amount == 2_000
+    assert ex.parse_expense("mua vé số 20000", today=TODAY).amount == 20_000
+    assert ex.parse_expense("vé số 50000", today=TODAY).amount == 50_000
+    assert ex.parse_expense("tiền nhà 3000000", today=TODAY).amount == 3_000_000
+    assert ex.parse_expense("xem tử vi 200k", today=TODAY).amount == 200_000
+    # /chitieu: số trong ngày tháng không bị hiểu là nghìn đồng
+    assert ex.parse_expense("18/10 cafe 45", today=TODAY, strict=False).amount == 45_000
 
 
 @pytest.mark.asyncio

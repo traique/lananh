@@ -637,3 +637,14 @@ async def test_hoi_lich_quay_cua_dai(sources):
     assert reply.startswith("📅 Đài Tây Ninh quay thứ năm lúc 16h15.") and "058734" in reply
     g = await daily.grounding_for("lịch quay xổ số tây ninh")
     assert g.skip_search and "Đài Tây Ninh quay thứ năm" in g.text
+
+
+def test_hom_nay_dai_nao_quay_theo_lich_co_dinh():
+    reply = daily.stations_text("hôm nay đài nào quay", TODAY)  # Thứ Hai 26/10
+    assert reply.startswith("🎰 Hôm nay (Thứ Hai 26/10) quay:")
+    assert "• Miền Nam (16h15): TP.HCM, Đồng Tháp, Cà Mau" in reply
+    assert "• Miền Bắc (18h15): quay hằng ngày" in reply
+    thu5 = daily.stations_text("thứ 5 miền nam đài nào quay", TODAY)
+    assert thu5.startswith("🎰 Thứ Năm 29/10 quay:") and "Tây Ninh" in thu5
+    assert "Miền Trung" not in thu5
+    assert daily.stations_text("đài nào hay nhất", TODAY) is None

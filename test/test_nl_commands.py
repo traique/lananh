@@ -305,6 +305,9 @@ async def test_than_so_hoc_ky_mon_lich_bang_code():
     assert tsh is not None and "Nguyễn Văn An" in tsh.text and "Con số chủ đạo" in tsh.text
     plain = await nl.maybe_handle(OWNER, "than so hoc 15/3/1990", channel="zoom")
     assert plain is not None and "Con số chủ đạo" in plain.text
+    # câu thật từ chat (từng bị bắt nhầm thành khoản chi 1.988đ ở bước ghi chi tiêu)
+    asked = await nl.maybe_handle(OWNER, "thần số học ngày 18/09/1988", channel="zoom")
+    assert asked is not None and "Con số chủ đạo" in asked.text
     kymon = await nl.maybe_handle(OWNER, "lập bàn kỳ môn lúc này", channel="zoom")
     assert kymon is not None and kymon.text.startswith("🧭 Kỳ Môn")
     for text in ("ngày tốt tháng này", "ngay tot thang nay", "xem sao hạn 1990 nam năm 2027"):
@@ -325,6 +328,39 @@ async def test_mau_cau_doc_du_lieu_rieng_theo_dung_user(lines):
     assert lines == ["/memory", "/history", "/chitieu ds"]
     await nl.maybe_handle(OWNER, "xem trạng thái provider", channel="telegram", is_admin=True)
     assert lines[-1] == "/status"
+
+
+@pytest.mark.asyncio
+async def test_xem_nhac_viec_va_tong_chi_tieu_bang_code_khong_qua_router(monkeypatch):
+    from services import expense_service, reminder_service
+
+    calls = []
+
+    async def fake_items(user_id):
+        calls.append(("nhac", user_id))
+        return []
+
+    async def fake_summary(user_id, period=""):
+        calls.append(("chi", user_id, period))
+        return f"💸 Chi tiêu {period}"
+
+    monkeypatch.setattr(reminder_service, "pending_items", fake_items)
+    monkeypatch.setattr(expense_service, "summary_text", fake_summary)
+    for text in ("xem nhắc việc", "các việc cần nhắc", "em đặt những nhắc gì rồi"):
+        reply = await nl.maybe_handle(MEMBER, text, channel="zalo")
+        assert reply is not None and "chưa có nhắc việc nào" in reply.text, text
+    for text in ("tháng này anh tiêu bao nhiêu", "chi tiêu tuần này", "tổng chi tháng trước"):
+        reply = await nl.maybe_handle(MEMBER, text, channel="zalo")
+        assert reply is not None and reply.text.startswith("💸 Chi tiêu"), text
+    assert [c[1] for c in calls] == [MEMBER] * 6  # dữ liệu đúng người hỏi
+    assert calls[3][2] == "thang nay anh tieu bao nhieu"
+    for text in (
+        "nhắc anh 8h tối mai gọi mẹ",
+        "chi tiêu hợp lý thế nào",
+        "tháng này nên tiêu bao nhiêu",
+    ):
+        assert await nl.maybe_handle(MEMBER, text, channel="zalo") is None, text
+    assert len(calls) == 6
 
 
 @pytest.mark.asyncio

@@ -171,6 +171,9 @@ _RESULT_PROVINCE_RE = re.compile(r"\b(?:ket qua|kq)\b")
 _SCHEDULE_QUESTION_RE = re.compile(
     r"\b(?:thu may|lich quay|lich mo thuong|quay ngay nao|ngay nao quay)\b"
 )
+# "hôm nay đài nào quay", "thứ 5 xổ số những đài nào": trả theo lịch quay cố định.
+_WHICH_STATIONS_RE = re.compile(r"\b(?:dai nao|may dai)\b")
+_DRAW_WORD_RE = re.compile(r"\b(?:quay|xo so|mo thuong|xs)\b")
 _WEEKDAY_RE = re.compile(r"\b(?:thu (2|3|4|5|6|7|hai|ba|tu|nam|sau|bay)|(chu nhat))\b")
 _WEEKDAY_WORDS = {"2": 0, "hai": 0, "3": 1, "ba": 1, "4": 2, "tu": 2, "5": 3, "nam": 3,
                   "6": 4, "sau": 4, "7": 5, "bay": 5}  # fmt: skip
@@ -332,6 +335,37 @@ def _weekday_day(folded: str, today: dt.date) -> dt.date | None:
     if re.search(r"\btuan truoc\b", folded):
         day -= dt.timedelta(days=7)
     return day
+
+
+def stations_text(text: str, today: dt.date | None = None) -> str | None:
+    """Các đài quay 1 ngày theo lịch cố định, hoặc None nếu câu không hỏi vậy."""
+    folded = fold(_low(text))
+    if not (_WHICH_STATIONS_RE.search(folded) and _DRAW_WORD_RE.search(folded)):
+        return None
+    today = today or _today()
+    day, label = today, "Hôm nay"
+    if re.search(r"\b(?:ngay mai|mai)\b", folded):
+        day, label = today + dt.timedelta(days=1), "Ngày mai"
+    elif re.search(r"\bhom qua\b", folded):
+        day, label = today - dt.timedelta(days=1), "Hôm qua"
+    elif (past := _weekday_day(folded, today)) is not None and past != today:
+        day, label = past + dt.timedelta(days=7), ""  # "thứ 5 đài nào quay": thứ 5 sắp tới
+    regions = [code for code, regex in _REGION_RE if regex.search(folded)] or list(
+        provinces.REGION_ORDER
+    )
+    when = f"{provinces.WEEKDAYS[day.weekday()]} {day:%d/%m}"
+    lines = [f"🎰 {f'{label} ({when})' if label else when} quay:"]
+    for region in provinces.REGION_ORDER:
+        if region not in regions:
+            continue
+        names = ", ".join(p.name for p in provinces.drawing_on(day, region))
+        if region == "mb":
+            names = "quay hằng ngày"
+        lines.append(
+            f"• {provinces.REGION_LABELS[region]} ({provinces.DRAW_TIMES[region]}): {names}"
+        )
+    lines.append('Lịch có thể đổi dịp lễ Tết. Xem kết quả: nhắn "xổ số <tên đài> hôm nay".')
+    return "\n".join(lines)
 
 
 def parse_lottery(text: str, today: dt.date | None = None) -> LotteryQuery | None:
@@ -667,6 +701,9 @@ async def maybe_handle(text: str, user_id: int | None = None) -> str | None:
         home = await weather_home.maybe_handle_statement(user_id, text)
         if home is not None:
             return home
+    stations = stations_text(text)
+    if stations is not None:
+        return stations
     lottery = parse_lottery(text)
     if lottery is not None:
         if not lottery.narrow:
