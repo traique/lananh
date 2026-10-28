@@ -685,8 +685,10 @@ def _count_answer(t: str, today: dt.date) -> str | None:
         if a and b:
             days = (b[0] - a[0]).days
             return f"Từ {a[0]:%d/%m/%Y} đến {b[0]:%d/%m/%Y} là {abs(days)} ngày."
+    # "còn" tuỳ chọn: "bao nhiêu ngày nữa đến 30/4", "mấy ngày nữa là tết" cũng là đếm ngày
+    # (trước đây chỉ nhận "còn ..." nên rơi sang tra một ngày, lấy 30/4 năm nay đã qua).
     m = re.search(
-        r"\b(?:con|bao) (?:bao nhieu|may) ngay(?: nua)?(?: (?:la|thi))? (?:den|toi|la|thi) (.+)$", t
+        r"\b(?:con )?(?:bao nhieu|may) ngay(?: nua)?(?: (?:la|thi))? (?:den|toi|la|thi) (.+)$", t
     )
     m = m or re.search(r"\b(?:den|toi) (.+?) con (?:bao nhieu|may) ngay", t)
     if not m:

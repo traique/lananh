@@ -32,8 +32,9 @@ _LUNAR_HINT_RE = re.compile(
     r"\b(?:am lich|lich am|ngay am|am|al|tet|ram|mung|mong|can chi|hoang dao|tiet khi|"
     r"gieng|chap|nhuan)\b"
 )
+# "còn" tuỳ chọn: "bao nhiêu ngày nữa đến tết" (không "còn") từng lọt sang chat AI.
 _TET_COUNTDOWN_RE = re.compile(
-    r"\b(?:con|bao) (?:may|bao nhieu) ngay (?:nua )?(?:(?:la|toi|den|thi) )?tet\b|"
+    r"\b(?:con )?(?:may|bao nhieu) ngay (?:nua )?(?:(?:la|toi|den|thi) )?tet\b|"
     r"\bbao (?:gio|lau)(?: nua)?(?: thi| la| moi)? (?:toi |den )?tet\b"
 )
 _YEAR_WORD = r"(?P<year>\d{4}|nay|sau|toi|truoc|ngoai)"

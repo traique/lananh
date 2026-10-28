@@ -34,6 +34,9 @@ TODAY = dt.date(2026, 10, 21)  # 12/9 năm Bính Ngọ
         ("hôm qua can chi", "là ngày Đinh Mão, tháng Mậu Tuất, năm Bính Ngọ"),
         # Tết.
         ("còn mấy ngày nữa tết", "Còn 108 ngày nữa là Tết Nguyên đán năm Đinh Mùi"),
+        # không có "còn" (câu chat thật từng đi sang AI)
+        ("bao nhiêu ngày nữa đến tết.", "Còn 108 ngày nữa là Tết Nguyên đán năm Đinh Mùi"),
+        ("mấy ngày nữa là tết", "Còn 108 ngày nữa là Tết Nguyên đán năm Đinh Mùi"),
         ("bao giờ tết?", "Còn 108 ngày nữa"),
         ("tết năm 2028 ngày nào", "Thứ Tư 26/01/2028"),
         # Xem tổng quan.

@@ -29,6 +29,9 @@ CASES = [
     ("tết", "Thứ Bảy 06/02/2027"),
     ("còn mấy ngày tới 30/4", "Còn 191 ngày nữa là tới Giải phóng miền Nam"),
     ("còn bao nhiêu ngày nữa đến trung thu", "Còn 329 ngày nữa"),
+    # không có "còn" vẫn là đếm ngày, lấy lần sắp tới (không phải 30/4 năm nay đã qua)
+    ("bao nhiêu ngày nữa đến 30/4", "Còn 191 ngày nữa là tới Giải phóng miền Nam"),
+    ("mấy ngày nữa là tết", "Còn 108 ngày nữa là tới Tết Nguyên đán"),
     ("từ 1/1 đến 20/11", "là 323 ngày"),
     ("ngày tốt tháng này", "Thứ Tư 21/10 (âm 12) - Thanh Long"),
     ("hôm nay hoàng đạo không", "ngày hoàng đạo (Thanh Long)"),
