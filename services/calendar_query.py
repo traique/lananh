@@ -155,9 +155,11 @@ _SOLAR_DATE_RE = re.compile(
     r"\b(?:ngay )?(?P<d>\d{1,2})(?:[/-]|\s+thang\s+)(?P<m>\d{1,2})"
     r"(?:(?:[/-]|\s+nam\s+)(?P<y>\d{4}))?\b(?!\s*(?:am|al|n\b|nhuan))"
 )
+# "âm 15/8", "âm 15/8 là ngày nào dương" (trước đây phải hết câu ngay sau ngày, nên
+# câu có đuôi hỏi bị hiểu thành ngày DƯƠNG 15/8).
 _LUNAR_PREFIX_RE = re.compile(
     r"^(?:ngay )?(?:am lich|am|al)\s+(?P<d>\d{1,2})[/-](?P<m>\d{1,2})(?P<leap>n)?(?:[/-](?P<y>\d{4}))?"
-    r"(?P<leap2>\s*(?:n|nhuan))?$"
+    r"(?P<leap2>\s*(?:nhuan|n)\b)?(?![\d/-])"
 )
 _MONTH_RE = re.compile(
     r"\bthang\s+(?P<rel>nay|sau|toi|truoc)\b|\bthang\s+(?P<m>\d{1,2})(?:[/-](?P<y>\d{4})|\s+nam\s+(?P<y2>\d{4}))?\b"
@@ -449,13 +451,26 @@ def _tuoi_answer(t: str, today: dt.date) -> str | None:
     if birth is None:
         return None
     year, note = birth
+    this_year = can_chi.lunar_year_of(today)
+    if re.search(r"\b(?:bao nhieu|may) tuoi\b", t):
+        # Hỏi tuổi: nói tuổi trước. "năm 2026 tôi bao nhiêu tuổi" không có năm sinh.
+        years = [int(y) for y in _YEAR_RE.findall(t)]
+        target = max(years) if len(years) > 1 else this_year
+        if year >= target:
+            return None
+        when = f"Năm nay ({target})" if target == this_year else f"Năm {target}"
+        return (
+            f"{when} người sinh năm {year} là {can_chi.tuoi_am(year, target)} tuổi âm.\n"
+            + can_chi.describe_year(year)
+            + note
+        )
     profile = can_chi.year_profile(year)
     return (
         can_chi.describe_year(year)
         + note
         + "\n"
         + can_chi.describe_chi_relations(profile["chi"])
-        + f"\nNăm nay ({can_chi.lunar_year_of(today)}) {can_chi.tuoi_am(year, can_chi.lunar_year_of(today))} tuổi âm."
+        + f"\nNăm nay ({this_year}) {can_chi.tuoi_am(year, this_year)} tuổi âm."
     )
 
 
@@ -682,6 +697,9 @@ def _count_answer(t: str, today: dt.date) -> str | None:
     if m and re.search(r"\d", m.group(1) + m.group(2)):
         a = _target_date(m.group(1), today, roll_forward=False)
         b = _target_date(m.group(2), today, roll_forward=False)
+        if a and b and b[0] < a[0]:
+            # "từ hôm nay đến 30/4": ngày cuối không ghi năm mà trước ngày đầu -> lần sắp tới.
+            b = _target_date(m.group(2), today) or b
         if a and b:
             days = (b[0] - a[0]).days
             return f"Từ {a[0]:%d/%m/%Y} đến {b[0]:%d/%m/%Y} là {abs(days)} ngày."
@@ -791,10 +809,13 @@ def _month_table_answer(t: str, today: dt.date) -> str | None:
     return "\n".join(lines)
 
 
+_RAM_MUNG1_RE = re.compile(
+    r"(?:(?:ngay )?(?:ram|mung 1|mong 1)(?: (?:toi|sap toi|nay|ke tiep))?(?: va )?)+"
+)
+
+
 def _ram_mung1_answer(t: str, today: dt.date) -> str | None:
-    if not re.fullmatch(
-        r"(?:(?:ngay )?(?:ram|mung 1|mong 1)(?: (?:toi|sap toi|nay|ke tiep))?(?: va )?)+", t
-    ):
+    if not _RAM_MUNG1_RE.fullmatch(t):
         return None
     ld, lm, ly, leap = lunar.solar_to_lunar(today.day, today.month, today.year)
     out = []
@@ -859,7 +880,7 @@ def understand(query: str, today: dt.date | None = None) -> str | None:
     weekend = _weekend_days(t, today)
     if weekend:
         return "\n\n".join(describe_full(day, label) for day, label in weekend)
-    rel = _relative_day(t, today)
+    rel = _asked_day(t, today)
     if rel:
         return describe_full(rel[0], rel[1])
     dates = _solar_dates(t, today)
@@ -869,6 +890,55 @@ def understand(query: str, today: dt.date | None = None) -> str | None:
     if year:
         return can_chi.describe_year(int(year.group(1)))
     return None
+
+
+# Câu chat thường (không phải lệnh /lich) chỉ đưa vào bộ tra lịch khi RÕ là hỏi lịch:
+# từ hỏi đi kèm 1 mốc lịch. "nghỉ tết mấy ngày", "tết này anh về quê", "hẹn 20/11 đi
+# ăn" vẫn để chat trả lời.
+_CHAT_DAY_ASK_RE = re.compile(r"\b(?:thu may|ngay (?:may|bao nhieu)|ngay nao(?! cung))\b")
+_CHAT_WHEN_ASK_RE = re.compile(r"\b(?:bao gio|khi nao|hom nao|luc nao)\b")
+_CHAT_COUNT_ASK_RE = re.compile(
+    r"\b(?:bao nhieu|may) ngay (?:nua )?(?:(?:la|thi) )?(?:den|toi|la|thi)\b|"
+    r"\bcon (?:bao nhieu|may) ngay\b"
+)
+# "năm nay con gì cũng đắt" không phải hỏi con giáp; "mạng gì" xét trên chữ có dấu
+# ("năm nay mang gì đi Đà Lạt").
+_CHAT_YEAR_ASK_RE = re.compile(
+    r"\b(?:con gi(?! cung)|tuoi gi|menh gi|menh nao|can chi gi|con giap gi|(?:bao nhieu|may) tuoi)\b"
+)
+_CHAT_HOP_ASK_RE = re.compile(r"\b(?:nao|khong|ko|gi)\b")
+_CHAT_PURPOSE_ASK_RE = re.compile(r"\b(?:xem|coi|chon) ngay\b|\bngay nao tot\b")
+_CHAT_TABLE_RE = re.compile(r"(?:xem |coi )?lich (?:thang|am|duong|van nien)\b.*")
+_CHI_RE = re.compile(r"\btuoi (?:ty|suu|dan|mao|thin|ngo|mui|than|dau|tuat|hoi)\b")
+
+
+def _chat_asks_calendar(text: str, t: str, today: dt.date) -> bool:
+    holiday = bool(_find_holiday(t) or re.search(r"\btet\b", t))
+    day = holiday or bool(_asked_day(t, today) or _ANY_DATE_RE.search(t))
+    year = bool(_YEAR_RE.search(t) or re.search(r"\bnam (?:nay|sau|toi|truoc)\b", t))
+    hop = _keyword(text, t, r"\b(?:hợp|xung)\b", r"\b(?:hop|xung)\b")
+    year_ask = _CHAT_YEAR_ASK_RE.search(t) or _keyword(text, t, r"\bmạng gì\b", r"\bmang gi\b")
+    return bool(
+        (day and (_CHAT_DAY_ASK_RE.search(t) or _CHAT_COUNT_ASK_RE.search(t)))
+        or (holiday and _CHAT_WHEN_ASK_RE.search(t))
+        or (year and year_ask)
+        or (hop and _CHAT_HOP_ASK_RE.search(t) and (year or _CHI_RE.search(t)))
+        or (_CHAT_PURPOSE_ASK_RE.search(t) and _find_purpose(text, t))
+        or _CHAT_TABLE_RE.fullmatch(t)
+        or _LUNAR_PREFIX_RE.match(t)
+        or _RAM_MUNG1_RE.fullmatch(t)
+    )
+
+
+def chat_answer(text: str, today: dt.date | None = None) -> str | None:
+    """Tra lịch cho câu chat tự nhiên ("20/11 là thứ mấy", "noel còn mấy ngày", "1990
+    mệnh gì"); None khi câu không rõ là hỏi lịch (để chat AI trả lời)."""
+    today = today or _today()
+    t = _norm(text)
+    # "nghỉ tết mấy ngày", "bao giờ được nghỉ lễ": lịch nghỉ do nhà nước công bố, không tính được.
+    if not t or len(t) > 100 or re.search(r"\bnghi\b", t):
+        return None
+    return understand(text, today) if _chat_asks_calendar(text, t, today) else None
 
 
 def answer(query: str, today: dt.date | None = None) -> str:

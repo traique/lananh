@@ -231,6 +231,9 @@ async def test_cau_hoi_am_lich_tra_loi_thang_khong_goi_ai(chat_fakes, monkeypatc
 
     assert result.messages[0].startswith("Còn ")
     assert "Tết Nguyên đán" in result.messages[0]
+    # Câu lịch dương cũng trả bằng code (bộ tra lịch /lich), không sang router/chat AI.
+    weekday = await ccs.handle_channel_text(1, "20/11 là thứ mấy", channel="zalo")
+    assert "20/11" in weekday.messages[0] and "dương lịch" in weekday.messages[0]
     assert chat_fakes["chat"] is None  # không gọi AI chat
     assert chat_fakes["telemetry"] == []  # không ghi lượt chat AI
 

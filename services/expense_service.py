@@ -33,7 +33,7 @@ from core import address, config
 from core import database as db
 from core.text_normalize import fold, nfc
 from core.text_utils import strip_json_fence
-from services import morning_brief, reply_audience, write_intent
+from services import morning_brief, reply_audience, vn_daily_chat, write_intent
 from services import tool_registry as reg
 from services.reminder_delivery import current_event_key
 
@@ -204,13 +204,25 @@ _AMOUNT_RE = re.compile(
 )
 # Ngày tháng và năm sinh không phải tiền: "thần số học ngày 18/09/1988" từng bị ghi thành
 # khoản chi 1.988đ. Số trần (không đơn vị) nằm trong ngày dd/mm[/yyyy], dd-mm-yyyy,
-# dd.mm.yyyy; hoặc là năm 1900-2100 đứng sau "năm/sinh/tuổi", hay trong câu tử vi,
-# thần số học, Kỳ Môn thì bỏ qua.
+# dd.mm.yyyy; hoặc là năm 1900-2100 đứng sau "năm/sinh/tuổi", trước "mệnh/con gì/hợp"
+# ("1990 mệnh gì"), hay trong câu tử vi, thần số học, Kỳ Môn thì bỏ qua.
 _DATE_SPAN_RE = re.compile(
     r"(?<!\d)\d{1,2}([/.-])\d{1,2}\1\d{2,4}(?!\d)|(?<![\d.,])\d{1,2}/\d{1,2}(?![\d/])"
 )
 _YEAR_WORD_RE = re.compile(r"(?:năm|nam|sinh|tuổi|tuoi)\s*$", re.IGNORECASE)
+_YEAR_TAIL_RE = re.compile(
+    r"\s*(?:là năm|la nam|mệnh|menh|mạng|mang|tuổi|tuoi|con gì|con gi|cầm tinh|cam tinh|"
+    r"can chi|hợp|hop|xung)\b",
+    re.IGNORECASE,
+)
 _DIVINATION_RE = re.compile(r"\b(?:tu vi|la so|than so hoc|ky mon)\b")
+# Số trần ngay sau các chữ này là số nhà, số điện thoại, mã... ("nhà số 1234 đường Lê
+# Lợi", "mã 123456"); "vé số 20000" vẫn là tiền vé.
+_LABEL_BEFORE_RE = re.compile(
+    r"(?:(?<!vé )\bsố|\b(?:đường|quận|phường|tầng|lầu|hẻm|ngõ|kiệt|mã|sđt|stk|otp))\s*$",
+    re.IGNORECASE,
+)
+_LABEL_BEFORE_PLAIN_RE = re.compile(r"(?:(?<!ve )\bso|\b(?:hem|ngo|sdt|stk|otp))\s*$")
 # Số đo/quãng đường, không phải tiền: "cao 1m7", "chạy bộ 5k" (chỉ xét khi bắt từ chat).
 _MEASURE_RE = re.compile(r"\b(?:cao|nặng|dài|rộng|bơi|chạy|đi bộ|bước|km|mét|cm|kg)\b")
 _MEASURE_PLAIN_RE = re.compile(r"\b(?:cao|nang|dai|rong|boi|chay|di bo|buoc|km|met|cm|kg)\b")
@@ -335,6 +347,13 @@ def parse_amount(text: str, *, bare_thousands: bool = False) -> tuple[int, tuple
             if any(a <= m.start() < b for a, b in dates):
                 continue
             raw = m.group("n")
+            before = text[: m.start()]
+            if (
+                re.fullmatch(r"0\d+", raw)  # số điện thoại, mã: "gọi số 0909123456"
+                or _LABEL_BEFORE_RE.search(before)
+                or _LABEL_BEFORE_PLAIN_RE.search(before.lower())
+            ):
+                continue
             plain = (
                 float(re.sub(r"[.,]", "", raw))
                 if re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", raw)
@@ -346,7 +365,9 @@ def parse_amount(text: str, *, bare_thousands: bool = False) -> tuple[int, tuple
                 except ValueError:
                     continue
             if 1900 <= plain <= 2100 and (
-                _YEAR_WORD_RE.search(text[: m.start()]) or _DIVINATION_RE.search(fold(text.lower()))
+                _YEAR_WORD_RE.search(before)
+                or _YEAR_TAIL_RE.match(text, m.end())
+                or _DIVINATION_RE.search(fold(text.lower()))
             ):
                 continue
             if plain < 1000:
@@ -442,6 +463,15 @@ def parse_expense(
             return None
         if not _SPEND_VERB_RE.match(clean) and write_intent.asks_remind_or_remember(clean):
             return None  # "nhắc anh 9h mai trả 500k": nhắc việc/ghi chú, để router tool lo
+        # "dò vé 123456 đài Tây Ninh": số vé, để vn_daily_chat dò ("mua vé số 20000" vẫn là
+        # khoản chi).
+        lottery = vn_daily_chat.parse_lottery(clean)
+        if (
+            lottery
+            and lottery.ticket
+            and (lottery.region_explicit or re.search(r"\bd[òo]\b", low_check))
+        ):
+            return None
     found = parse_amount(clean, bare_thousands=not strict)
     if found is None:
         return None

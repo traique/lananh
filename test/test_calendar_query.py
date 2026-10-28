@@ -173,3 +173,63 @@ def test_cuoi_tuan_du_thu_bay_chu_nhat():
 def test_khong_hieu_tra_none_lenh_chat_van_goi_y_cu_phap():
     assert calendar_query.understand("abc", REVIEW_TODAY) is None
     assert calendar_query.answer("abc", REVIEW_TODAY).startswith("Em chưa hiểu")
+
+
+def test_ngay_am_dung_dau_cau_co_duoi_hoi_van_la_ngay_am():
+    # Trước đây "âm 15/8" phải hết câu; có đuôi hỏi thì bị hiểu thành ngày DƯƠNG 15/8.
+    for text in ("âm 15/8 là ngày nào dương", "âm 15/8 cúng gì"):
+        assert "Thứ Tư 15/09/2027" in calendar_query.understand(text, TODAY), text
+
+
+def test_dem_tu_ngay_toi_ngay_lay_lan_sap_toi_cua_ngay_cuoi():
+    assert (
+        calendar_query.understand("từ hôm nay đến 30/4 còn bao nhiêu ngày", TODAY)
+        == "Từ 21/10/2026 đến 30/04/2027 là 191 ngày."
+    )
+    assert calendar_query.understand("từ 1/12 đến 1/1", TODAY).endswith("01/01/2027 là 31 ngày.")
+    assert calendar_query.understand("từ 30/4 đến hôm nay", TODAY).startswith("Từ 30/04/2026")
+
+
+def test_hoi_tuoi_noi_tuoi_truoc():
+    reply = calendar_query.understand("anh sinh 1988 năm nay bao nhiêu tuổi", TODAY)
+    assert reply.startswith("Năm nay (2026) người sinh năm 1988 là 39 tuổi âm.")
+    assert calendar_query.understand("năm 2026 tôi bao nhiêu tuổi", TODAY) is None
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("20/11 là thứ mấy", "Thứ Sáu 20/11/2026"),
+        ("mai thứ mấy", "📅 Ngày mai\nThứ Năm 22/10/2026"),
+        ("noel còn mấy ngày", "Giáng sinh (Noel): Thứ Sáu 25/12/2026"),
+        ("bao giờ trung thu", "Tết Trung thu: Thứ Tư 15/09/2027"),
+        ("1990 mệnh gì", "Canh Ngọ (con Ngựa), mệnh Thổ"),
+        ("tuổi ngọ hợp tuổi nào", "Tuổi Ngọ: tam hợp với Dần, Tuất"),
+        ("xem ngày khai trương tháng sau", "Ngày tốt cho khai trương, tháng 11/2026"),
+        ("lịch tháng này", "📅 Tháng 10/2026"),
+        ("âm 15/8 là ngày nào dương", "Thứ Tư 15/09/2027"),
+        ("rằm", "Rằm sắp tới: Thứ Bảy 24/10/2026"),
+    ],
+)
+def test_chat_hoi_lich_tra_bang_code(text, expected):
+    assert expected in calendar_query.chat_answer(text, TODAY)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "nghỉ tết mấy ngày",  # lịch nghỉ do nhà nước công bố
+        "tết này anh về quê",
+        "hẹn 20/11 đi ăn",
+        "anh họp lúc 3h không",
+        "lịch họp tháng này",
+        "năm 2026 tôi bao nhiêu tuổi",
+        "tết trung thu là gì",
+        "mai khi nào mưa",
+        "ngày nào cũng vậy, hôm nay mệt quá",
+        "năm nay con gì cũng đắt",
+        "năm nay mang gì đi đà lạt",
+    ],
+)
+def test_chat_khong_ro_hoi_lich_thi_de_ai(text):
+    assert calendar_query.chat_answer(text, TODAY) is None

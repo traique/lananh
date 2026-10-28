@@ -98,9 +98,13 @@ Repository được thiết kế cho **một chủ sở hữu**:
     Đức chạy offline - đổi âm ↔ dương, tháng nhuận, can chi, tiết khí, giờ hoàng
     đạo, số ngày tới Tết.
   - `services/lunar_chat.py`: câu hỏi âm lịch hay gặp ("rằm tháng 8 là ngày
-    nào", "hôm nay âm lịch ngày mấy", "còn mấy ngày nữa Tết", "mai giờ hoàng
-    đạo"...) trả lời thẳng bằng code, KHÔNG tốn lượt AI nào. Câu không rõ âm hay
-    dương mới đi router tool `lunar_calendar` + chat AI như cũ.
+    nào", "rằm tháng sau", "hôm nay âm lịch ngày mấy", "còn mấy ngày nữa Tết",
+    "mai giờ hoàng đạo", "hôm nay tốt hay xấu"...) trả lời thẳng bằng code, KHÔNG
+    tốn lượt AI nào. Câu hỏi lịch khác mà RÕ là hỏi lịch (từ hỏi + mốc lịch: "20/11
+    là thứ mấy", "noel còn mấy ngày", "1990 mệnh gì", "tuổi ngọ hợp tuổi nào", "xem
+    ngày động thổ", "lịch tháng này") đi tiếp bộ tra lịch `/lich`
+    (`calendar_query.chat_answer`). Câu không rõ ("nghỉ tết mấy ngày", "hẹn 20/11 đi
+    ăn") mới đi router tool `lunar_calendar` + chat AI như cũ.
   - Chuyển từ gói vn-info (MIT); HTTP API aiohttp của gói đó không đưa vào.
 - Đọc nguyên bài báo ngay trong chat (`services/article_reader.py`, mọi kênh):
   gửi link bài trên báo Việt Nam (VnExpress, Tuổi Trẻ, CafeF, Vietstock, GenK,
@@ -365,7 +369,9 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
 - Chi tiêu (`/chitieu`, migration 020): nhắn "cafe 45k", "đổ xăng 1tr2", "2 củ
   tiền điện", "hôm qua ăn phở 50k" là bot ghi ngay bằng code, kèm số # và cách huỷ
   ("huỷ" trong 10 phút hoặc `/chitieu xoa <số>`). Câu hỏi, cổ phiếu, thu nhập hay
-  câu có 2 số tiền thì không tự ghi; tối đa 100 khoản/24 giờ. Ảnh kèm chữ "hoá
+  câu có 2 số tiền thì không tự ghi; số trần không đơn vị mà là ngày tháng, năm sinh
+  ("thần số học 18/09/1988", "1990 mệnh gì"), số vé ("dò vé 123456"), số điện thoại,
+  số nhà, mã cũng không bị coi là tiền; tối đa 100 khoản/24 giờ. Ảnh kèm chữ "hoá
   đơn"/"bill"/"chi tiêu" thì bot đọc tổng tiền và lưu dạng nháp. `/chitieu [hôm
   nay|tuần này|tháng trước|tháng 10|năm nay]` cho tổng theo danh mục (cộng bằng
   SQL), `/chitieu ds` xem 10 khoản gần nhất. `EXPENSE_CHAT_CAPTURE=false` tắt ghi
@@ -389,8 +395,8 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
 - Hỏi "giá vàng hôm nay", "giá vàng doji", "vàng thế giới", "tỷ giá đô", "100 đô
   bằng bao nhiêu tiền Việt", "1 triệu đổi được bao nhiêu đô", "giá xăng hôm nay",
   "dầu diesel bao nhiêu", "xổ số miền Nam hôm qua", "xổ số tây ninh hôm nay", "kết quả
-  đà lạt chủ nhật", "dò vé 123456 đồng nai" → trả lời thẳng bằng số liệu thật, không
-  gọi AI (`services/vn_daily_chat.py`). Nguồn: vàng vang.today `/api/prices` (SJC
+  đà lạt chủ nhật", "dò vé 123456 đồng nai", "hôm nay đài nào quay" → trả lời thẳng
+  bằng số liệu thật, không gọi AI (`services/vn_daily_chat.py`). Nguồn: vàng vang.today `/api/prices` (SJC
   miếng, nhẫn SJC, DOJI, PNJ, Bảo Tín, Viettin, VN Gold, XAU/USD kèm tăng giảm so với
   hôm trước; sjc.com.vn làm dự phòng), Vietcombank (feed XML, cache 10 phút), xăng dầu
   giaxanghomnay.com (bảng Petrolimex vùng 1/vùng 2 + PVOIL, `services/fuel_prices.py`,
@@ -1375,6 +1381,7 @@ danh bạ lệnh `services/command_catalog.py`, chi tiết ở `docs/nang-cap-ja
 | "em đang nhớ gì về anh", "xem lịch sử chat gần đây" | `/memory`, `/history` |
 | "việc nền của anh tới đâu rồi", "xem các tác vụ định kỳ" | `/viec`, `/lichtacvu` |
 | "hôm nay anh ăn bao nhiêu calo", "các khoản chi gần đây" | `/an`, `/chitieu ds` |
+| "xem nhắc việc", "tháng này anh tiêu bao nhiêu", "chi tiêu tuần này" | Danh sách nhắc việc, tổng chi theo danh mục (đúng văn bản `/nhac`, `/chitieu`) - không qua router AI |
 | "danh sách mã anh đang theo dõi", "sổ giao dịch FPT", "tháng 10 anh chốt lãi bao nhiêu" | `/theodoi`, `/lichsucp FPT`, `/laicp 10` |
 | "xem thử bản tin sáng" | `/bantin xem` |
 | "bật trả lời bằng giọng nói", "bật giờ yên lặng từ 22h đến 7h", "tắt hỏi thăm chủ động" | `/noi on`, `/yenlang 22-7`, `/hoithan off` |

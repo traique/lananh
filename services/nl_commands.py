@@ -1401,6 +1401,45 @@ async def _kymon_or_lich(user_id: int, text: str, low: str) -> CommandRun | None
     return None
 
 
+# "xem nhắc việc", "tháng này anh tiêu bao nhiêu": chạy thẳng tool đọc của chat (đúng văn
+# bản /nhac, /chitieu) thay vì router AI chọn tool rồi chat AI viết lại (2 lượt AI).
+_WHO = r"(?:(?:anh|chi|em|minh|toi|tui) )?"
+_REMINDER_LIST_RE = re.compile(
+    r"(?:xem |liet ke |kiem tra )?(?:(?:cac|nhung) )?(?:nhac viec|viec can nhac|loi nhac)"
+    r"(?: (?:dang cho|sap toi))?(?: cua (?:anh|chi|minh|toi))?|"
+    rf"{_WHO}(?:da )?dat (?:nhung |may )?(?:nhac|loi nhac) (?:gi|nao)(?: roi)?|"
+    rf"{_WHO}co (?:nhung )?(?:nhac viec|loi nhac|viec can nhac) (?:gi|nao)(?: (?:khong|ko|chua))?"
+)
+_PERIOD = (
+    r"(?:hom nay|hom qua|tuan nay|tuan truoc|tuan roi|thang nay|thang truoc|thang roi|"
+    r"thang \d{1,2}(?:/\d{4})?|nam nay)"
+)
+_EXPENSE_SUMMARY_RE = re.compile(
+    rf"{_PERIOD} {_WHO}(?:da )?(?:tieu|chi|xai|chi tieu|tieu xai)(?: het| mat)? "
+    r"(?:bao nhieu|het bao nhieu)(?: tien)?(?: (?:roi|vay|the))?|"
+    rf"(?:xem |tong )?(?:chi tieu|tong chi)(?: cua (?:anh|chi|minh|toi))? {_PERIOD}"
+    r"(?: (?:bao nhieu|het bao nhieu|the nao|ra sao))?(?: (?:roi|vay))?"
+)
+
+
+async def _read_list(user_id: int, core: str, role: str) -> CommandRun | None:
+    from services import tools
+
+    if _REMINDER_LIST_RE.fullmatch(core):
+        name, args = "list_reminders", {}
+    elif _EXPENSE_SUMMARY_RE.fullmatch(core):
+        name, args = "expense_summary", {"period": core}
+    else:
+        return None
+    spec = reg.get(name)
+    if spec is None or role not in spec.roles:
+        return None
+    outcome = await tools.execute(spec, user_id, args)
+    if outcome.status != reg.STATUS_OK or not outcome.text:
+        return None  # lỗi tra: để đường router/chat cũ lo
+    return CommandRun((outcome.text,))
+
+
 async def _structured(user_id: int, text: str, low: str) -> CommandRun | None:
     """Tử vi / thần số học / kỳ môn / tra lịch đọc được bằng code."""
     waiting = pending(user_id)
@@ -1444,7 +1483,7 @@ async def maybe_handle(
     from services import tools
 
     with turn_scope(channel, is_admin), tools.turn_text_scope(text):
-        structured = await _structured(user_id, text, low)
+        structured = await _structured(user_id, text, low) or await _read_list(user_id, core, role)
         if structured is not None:
             return structured
         for command in COMMANDS.values():
