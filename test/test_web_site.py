@@ -1045,6 +1045,12 @@ async def test_404_html_cho_trinh_duyet_json_cho_api(monkeypatch):
 async def test_robots_sitemap_va_the_seo(client, monkeypatch):
     robots = (await client.get("/robots.txt")).text
     assert "Disallow: /admin" in robots and "Disallow: /api/" in robots
+    # Bot huấn luyện AI: một nhóm riêng chặn hết; bot tìm kiếm (kể cả của AI) theo nhóm "*".
+    training, everyone = robots.split("\n\n", 1)
+    assert "User-agent: GPTBot" in training and "User-agent: ClaudeBot" in training
+    assert "User-agent: Google-Extended" in training and training.endswith("Disallow: /")
+    assert everyone.startswith("User-agent: *\nDisallow: /admin\n")
+    assert "SearchBot" not in robots and "Googlebot" not in robots
     assert "Sitemap: https://testserver/sitemap.xml" in robots
     sitemap = await client.get("/sitemap.xml")
     assert sitemap.headers["content-type"].startswith("application/xml")

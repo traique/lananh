@@ -1364,12 +1364,35 @@ async def favicon() -> Response:
     return await static_file("favicon.png")
 
 
+# Bot lấy dữ liệu HUẤN LUYỆN AI (chủ trang chọn chặn): không đem người đọc về, lại quét
+# hàng chục nghìn trang ngày trên máy chủ 512 MB. Bot tìm kiếm (Googlebot - kể cả AI
+# Overviews, Bingbot, OAI-SearchBot, Claude-SearchBot, PerplexityBot) và bot đọc trang theo
+# yêu cầu người dùng (ChatGPT-User, Claude-User) vẫn theo nhóm "*". Google-Extended chỉ là
+# token tắt dùng cho Gemini, không ảnh hưởng Google Search.
+_AI_TRAINING_BOTS = (
+    "GPTBot",
+    "ClaudeBot",
+    "Google-Extended",
+    "Applebot-Extended",
+    "CCBot",
+    "Bytespider",
+    "meta-externalagent",
+    "cohere-ai",
+)
+
+
 @static_router.get("/robots.txt", include_in_schema=False)
 async def robots(request: Request) -> Response:
-    """Cho máy tìm kiếm đọc trang công khai; chặn trang quản trị, API và webhook."""
+    """Cho máy tìm kiếm đọc trang công khai; chặn trang quản trị, API, webhook và bot
+    huấn luyện AI. Bot theo nhóm nêu đúng tên nó (RFC 9309), nên nhóm riêng phải đứng
+    tách khỏi "*"."""
     lines = [
+        *(f"User-agent: {bot}" for bot in _AI_TRAINING_BOTS),
+        "Disallow: /",
+        "",
+        # Không ghi "Allow: /": mặc định đã cho phép, và trình đọc khớp dòng đầu tiên
+        # (không theo luật dài nhất như Google) sẽ hiểu "Allow: /" là mở cả /admin.
         "User-agent: *",
-        "Allow: /",
         "Disallow: /admin",
         "Disallow: /api/",
         "Disallow: /internal/",
