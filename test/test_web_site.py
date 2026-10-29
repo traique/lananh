@@ -1051,6 +1051,7 @@ async def test_robots_sitemap_va_the_seo(client, monkeypatch):
     assert "<loc>https://testserver/gia-vang</loc>" in sitemap.text and "/admin" not in sitemap.text
     # Có SITE_BASE_URL (tên miền riêng) thì link tuyệt đối theo đó.
     monkeypatch.setattr(web_site.config, "SITE_BASE_URL", "https://lcta.vn")
+    monkeypatch.setattr(web_site.site_data, "today", lambda: dt.date(2026, 9, 15))
     html = (
         await client.get("/lich", params={"thang": "2026-10", "fbclid": "x", "utm_source": "zalo"})
     ).text
@@ -1159,6 +1160,34 @@ async def test_moi_ngay_mot_trang_rieng_co_tieu_de_va_canonical(client):
     assert 'Tết Trung thu.">' in html  # ngày lễ ghi thêm vào mô tả
     html = (await client.get("/lich", params={"thang": "2026-10"})).text
     assert "<title>Lịch âm tháng 10/2026: ngày hoàng đạo, ngày lễ | LCTA</title>" in html
+
+
+async def test_cung_noi_dung_mot_url_chuan(client, lottery_sources, monkeypatch):
+    """Nhiều kiểu URL cho cùng một trang (link trong site, tên gõ tay) quy về một canonical."""
+
+    async def fake_get_weather(location="", days=1):
+        return _FAKE_WEATHER
+
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    cases = (
+        ("/lich", {"thang": "2026-10"}, "/lich"),  # tháng này (hôm nay 26/10/2026)
+        ("/lich", {"thang": "11/2026"}, "/lich?thang=2026-11"),
+        ("/thoi-tiet", {"noi": "TP.HCM"}, "/thoi-tiet"),  # chỗ đầu danh sách = trang gốc
+        ("/thoi-tiet", {"noi": "ha noi"}, "/thoi-tiet?noi=H%C3%A0%20N%E1%BB%99i"),
+        ("/xo-so", {"dai": "xsmn"}, "/xo-so"),
+        ("/xo-so", {"dai": "mien-bac"}, "/xo-so?dai=mb"),
+        (
+            "/xo-so",
+            {"dai": "Tây Ninh", "ngay": "22/10/2026"},
+            "/xo-so?dai=tay-ninh&ngay=2026-10-22",
+        ),
+    )
+    for path, params, want in cases:
+        html = (await client.get(path, params=params)).text
+        want = want.replace("&", "&amp;")  # thuộc tính HTML: & được escape
+        assert f'<link rel="canonical" href="https://testserver{want}">' in html, params
+    sitemap = (await client.get("/sitemap.xml")).text
+    assert "dai=mn<" not in sitemap and "dai=mien-bac" not in sitemap and "dai=mb<" in sitemap
 
 
 async def test_url_nhap_sai_khong_vao_chi_muc_nguon_loi_tra_503(

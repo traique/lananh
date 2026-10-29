@@ -657,6 +657,10 @@ async def lich_page(request: Request) -> Response:
         if selected["holidays"]:
             description += f" {', '.join(selected['holidays'])}."
         canonical = f"/lich?ngay={selected_date.isoformat()}"
+    elif not error:
+        # Tháng này (nút Tháng trước/sau dẫn tới) là /lich; tháng gõ 10/2026 quy về ?thang=2026-10.
+        current = (grid["year"], grid["month"]) == (today.year, today.month)
+        canonical = "/lich" if current else f"/lich?thang={grid['year']}-{grid['month']:02d}"
     return _render_lich(
         "lich.html",
         tab="/lich",
@@ -869,12 +873,22 @@ async def weather_page(request: Request) -> HTMLResponse:
         heading = f"Thời tiết {mine_name}" if mine_name else "Thời tiết ở vị trí của bạn"
     elif data:
         heading = f"Thời tiết {data['location']}"
+    canonical = ""
+    if place and weather.is_default_location(place):
+        canonical = "/thoi-tiet"  # TP.HCM, Sài Gòn...: cùng nội dung với trang gốc
+    elif place:
+        listed = next(
+            (p for p in places if weather_places.fold(p) == weather_places.fold(place)), ""
+        )
+        if listed:  # "ha noi" -> "Hà Nội" như link trong danh sách và sitemap
+            canonical = f"/thoi-tiet?{urlencode({'noi': listed}, quote_via=quote)}"
     page = _render(
         "thoi_tiet.html",
         title=f"{heading} hôm nay và {days} ngày tới",
         description=f"{heading}: nhiệt độ, cảm giác, độ ẩm, gió, lượng mưa hiện tại và dự báo "
         f"{days} ngày, cập nhật khoảng 10 phút một lần.",
         active="/thoi-tiet",
+        canonical=canonical,
         noindex=not_found,
         heading=heading,
         place=place,
@@ -942,7 +956,16 @@ async def lottery_page(request: Request) -> HTMLResponse:
         "Kết quả xổ số miền Nam, miền Trung, miền Bắc và từng đài tỉnh mới nhất: giải đặc biệt "
         "đến giải tám, xem theo ngày, dò vé bằng code. Nguồn xskt.com.vn."
     )
-    modified = ""
+    modified = canonical = ""
+    if data and not error:
+        # Một kỳ một URL: tên đài, viết tắt (Tây Ninh, xsmn, mien-bac) quy về khoá đài, ngày
+        # 26/10/2026 về dạng ISO; miền Nam là trang mặc định /xo-so.
+        key = data["target"]["key"]
+        query = {} if key == "mn" else {"dai": key}
+        # lookup đã kiểm ngày (không ở tương lai): ở đây chỉ đổi dạng, không so lại với hôm nay.
+        if asked := lottery_lookup.parse_day(raw_day, dt.date.max):
+            query["ngay"] = asked.isoformat()
+        canonical = "/xo-so" + (f"?{urlencode(query)}" if query else "")
     if data and data.get("draw"):
         modified = data["draw"]["date"]
         name, day = data["target"]["name"], dt.date.fromisoformat(data["draw"]["date"])
@@ -957,6 +980,7 @@ async def lottery_page(request: Request) -> HTMLResponse:
         title=title,
         description=description,
         modified=modified,
+        canonical=canonical,
         active="/xo-so",
         # Nhập sai đài/ngày/vé: trang báo lỗi không vào chỉ mục (URL gõ bừa thành trang trùng).
         noindex=bool(error) and not unavailable,
@@ -1428,10 +1452,12 @@ async def sitemap(request: Request) -> Response:
     entries: list[tuple[str, dt.date | None]] = [
         (path, today if path in _DAILY_PATHS else None) for path in _SITEMAP_PATHS
     ]
-    entries += [(f"/xo-so?dai={key}", today) for key in _LOTTERY_SHORT if key != "mb"]
+    # Miền Nam chính là /xo-so; đài "mien-bac" là kỳ chung miền Bắc (?dai=mb).
+    entries += [(f"/xo-so?dai={key}", today) for key in ("mt", "mb")]
     entries += [
         (f"/xo-so?dai={p.key}", lottery_provinces.last_draw_day(p, today))
         for p in lottery_provinces.PROVINCES
+        if p.region != "mb"
     ]
     entries += [
         (f"/thoi-tiet?{urlencode({'noi': place}, quote_via=quote)}", today)
