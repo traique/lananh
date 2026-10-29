@@ -794,17 +794,21 @@ async def _synthesize_edge(speech: str, truncated: bool, voice: str) -> Clip | N
         timeout = edge_timeout_sec()
 
         async def collect() -> bytes:
+            prosody = edge_prosody()
             communicate = edge_tts.Communicate(
                 speech,
                 EDGE_VOICES[voice],
-                **edge_prosody(),
+                rate=prosody["rate"],
+                volume=prosody["volume"],
+                pitch=prosody["pitch"],
                 connect_timeout=min(10, timeout),
                 receive_timeout=timeout,
             )
             audio = bytearray()
             async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    audio += chunk["data"]
+                data = chunk.get("data")
+                if chunk["type"] == "audio" and data:
+                    audio += data
                     if len(audio) > MAX_EDGE_BYTES:
                         raise ValueError(f"Edge TTS trả quá {MAX_EDGE_BYTES} byte")
             return bytes(audio)
