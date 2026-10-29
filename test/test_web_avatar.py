@@ -3,6 +3,7 @@ Telegram trong khoá chủ bot với lời dặn "người iu", giọng đọc s
 chào/nghe thử có cache, chọn giọng, chép lời, upload ảnh chân dung."""
 
 import base64
+import dataclasses
 import hashlib
 import io
 import json
@@ -105,17 +106,18 @@ def speech(monkeypatch):
     """web_clip giả: ghi lại câu đọc + khoá chủ bot có đang giữ lúc đọc không."""
     calls = []
 
-    async def web_clip(user_id, text, *, voice, style):
+    async def web_clip(user_id, text, *, voice, style, fallback_voice=None):
         calls.append(
             {
                 "user_id": user_id,
                 "text": text,
                 "voice": voice,
                 "style": style,
+                "fallback": fallback_voice,
                 "busy": concurrency.is_busy(concurrency.OWNER_TURN_KEY),
             }
         )
-        return CLIP
+        return dataclasses.replace(CLIP, voice=voice)
 
     monkeypatch.setattr(voice_reply, "web_clip", web_clip)
     return calls
@@ -271,6 +273,7 @@ async def test_chat_nhu_telegram_trong_khoa_chu_bot_giong_doc_sau_khi_nha_khoa(
     ]
     assert speech[0]["busy"] is False  # đọc sau khi nhả khoá
     assert speech[0]["voice"] == "HoaiMy" and speech[0]["user_id"] == OWNER
+    assert speech[0]["fallback"] == "Achernar"  # Edge lỗi thì đọc lại bằng giọng Gemini
     assert speech[0]["style"] == avatar_service.DEFAULT_VOICE_STYLE
     # Tắt loa: không tốn lượt TTS.
     r = await client.post("/admin/api/avatar/chat", json={"text": "hi", "voice": False})
@@ -361,7 +364,7 @@ async def test_chon_giong_va_nghe_thu(client, store, speech, monkeypatch):
     r = await client.post("/admin/api/avatar/voice/preview", json={"voice": "x"})
     assert r.status_code == 400
     r = await client.post("/admin/api/avatar/voice/preview", json={"voice": "Vindemiatrix"})
-    assert r.json() == {"audio": AUDIO, "mime": "audio/mp4"}
+    assert r.json() == {"audio": AUDIO, "mime": "audio/mp4", "voice": "Vindemiatrix"}
     assert (
         speech[-1]["voice"] == "Vindemiatrix" and speech[-1]["text"] == avatar_service.SAMPLE_TEXT
     )
@@ -369,10 +372,32 @@ async def test_chon_giong_va_nghe_thu(client, store, speech, monkeypatch):
     assert len(speech) == 1  # nghe thử lần 2: cache, không tốn lượt TTS
 
 
+async def test_nghe_thu_hoai_my_edge_loi_thi_doc_tam_khong_giu_cache(client, monkeypatch):
+    await _login(client)
+    calls = []
+    edge_down = True
+
+    async def web_clip(user_id, text, *, voice, style, fallback_voice=None):
+        calls.append((voice, fallback_voice))
+        # Edge lỗi: web_clip đọc lại bằng giọng Gemini dự phòng.
+        return dataclasses.replace(CLIP, voice=fallback_voice if edge_down else voice)
+
+    monkeypatch.setattr(voice_reply, "web_clip", web_clip)
+    for _ in range(2):
+        r = await client.post("/admin/api/avatar/voice/preview", json={"voice": "hoaimy"})
+        assert r.status_code == 200 and r.json()["voice"] == "Achernar"
+    assert calls == [("HoaiMy", "Achernar")] * 2  # bản đọc tạm không vào cache
+    edge_down = False
+    for _ in range(2):
+        r = await client.post("/admin/api/avatar/voice/preview", json={"voice": "HoaiMy"})
+        assert r.json()["voice"] == "HoaiMy"
+    assert len(calls) == 3  # Edge chạy lại: đọc 1 lần rồi lấy từ cache
+
+
 async def test_nghe_thu_tts_loi_bao_503(client, monkeypatch):
     await _login(client)
 
-    async def no_clip(user_id, text, *, voice, style):
+    async def no_clip(user_id, text, *, voice, style, fallback_voice=None):
         return None
 
     monkeypatch.setattr(voice_reply, "web_clip", no_clip)

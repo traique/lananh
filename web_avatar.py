@@ -8,9 +8,11 @@
   với Telegram/Zoom; nhắc việc tạo từ avatar gửi về Telegram. Kiểu "người iu" chỉ ở
   trang này qua style_hint của lượt (AVATAR_STYLE_HINT) - không đổi persona, giọng
   hay /noi của Telegram/Zalo/Zoom.
-- Giọng: ``voice_reply.web_clip`` (M4A, không có ffmpeg thì WAV) trả base64 trong JSON,
-  đọc SAU khi nhả khoá lượt; khẩu hình tính ở trình duyệt theo âm lượng. Câu chào và
-  câu nghe thử giữ trong ClipCache (trần 10 clip).
+- Giọng: ``voice_reply.web_clip`` trả base64 trong JSON, đọc SAU khi nhả khoá lượt;
+  khẩu hình tính ở trình duyệt theo âm lượng. Hoài My (mặc định) qua Microsoft Edge TTS
+  ra MP3, lỗi thì đọc lại bằng giọng Gemini ``avatar_service.gemini_voice()``; giọng
+  Gemini ra M4A (không có ffmpeg thì WAV). Câu chào và câu nghe thử giữ trong ClipCache
+  (trần 10 clip) - bản đọc lại thay giọng Edge lỗi thì không giữ.
 - Nghe: trình duyệt dùng Web Speech API; không có thì ghi âm gửi /stt (Groq Whisper
   như tin thoại, trần VOICE_MAX_BYTES).
 - Ảnh: services/avatar_photo.py; chỉ phục vụ qua route kiểm phiên, ``no-store``.
@@ -28,7 +30,7 @@ kind lạ - nhận 400/415 mặc định của FastAPI):
   GET    /admin/api/avatar/greeting       [?id=&audio=1]       -> {id, text, mood, audio?, mime?}
   GET    /admin/api/avatar/voices                              -> {voices, current}
   PUT    /admin/api/avatar/voice          {voice}              -> {current}
-  POST   /admin/api/avatar/voice/preview  {voice}              -> {audio, mime}
+  POST   /admin/api/avatar/voice/preview  {voice}              -> {audio, mime, voice}
   GET    /admin/api/avatar/photo?kind=main|blink               -> ảnh WebP
   PUT    /admin/api/avatar/photo?kind=    multipart image (+ landmarks cho main) -> {..., photo}
   DELETE /admin/api/avatar/photo?kind=                         -> {removed, photo}
@@ -123,17 +125,22 @@ async def _speak(text: str, voice: str | None = None) -> voice_reply.Clip | None
     voice = voice or await avatar_service.current_voice()
     with turn_deadline():
         return await voice_reply.web_clip(
-            config.ALLOWED_USER_ID, text, voice=voice, style=avatar_service.voice_style()
+            config.ALLOWED_USER_ID,
+            text,
+            voice=voice,
+            style=avatar_service.voice_style(),
+            fallback_voice=avatar_service.gemini_voice(),
         )
 
 
 async def _cached_clip(text: str, voice: str) -> voice_reply.Clip | None:
-    """Giọng đọc câu soạn sẵn (chào, nghe thử): đọc 1 lần rồi giữ trong ClipCache."""
+    """Giọng đọc câu soạn sẵn (chào, nghe thử): đọc 1 lần rồi giữ trong ClipCache. Bản
+    đọc lại bằng giọng Gemini vì giọng Edge lỗi thì không giữ - lần sau thử lại Edge."""
     key = (voice, avatar_service.voice_style(), text)
     clip = _clips.get(key)
     if clip is None:
         clip = await _speak(text, voice)
-        if clip is not None:
+        if clip is not None and clip.voice == voice:
             _clips.put(key, clip)
     return clip
 
@@ -362,13 +369,14 @@ async def avatar_voice_set(request: Request) -> Response:
 @api_router.post("/voice/preview")
 async def avatar_voice_preview(request: Request) -> Response:
     body = await _json_body(request)
-    voice = voice_reply.canonical_voice(str(body.get("voice") or ""))
+    voice = avatar_service.canonical_voice(str(body.get("voice") or ""))
     if voice is None:
         return _error("Không có giọng này.", 400)
     clip = await _cached_clip(avatar_service.SAMPLE_TEXT, voice)
     if clip is None:
         return _error("Em chưa đọc thử được giọng này, lát anh thử lại nha.", 503)
-    return JSONResponse(_audio(clip), headers=_NO_STORE)
+    # voice: giọng đã đọc thật - khác giọng chọn khi Edge lỗi, trang báo "đọc tạm".
+    return JSONResponse({**_audio(clip), "voice": clip.voice}, headers=_NO_STORE)
 
 
 # ─── Ảnh ─────────────────────────────────────────────────────────────────────

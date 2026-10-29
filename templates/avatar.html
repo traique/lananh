@@ -753,6 +753,10 @@ function settingsNote(text, bad = false) {
   note.classList.toggle('bad', bad);
 }
 
+function voiceTitle(name) {
+  return cfg.voices.find((voice) => voice.name === name)?.title ?? name;
+}
+
 function renderVoices() {
   const groups = [
     ['Gợi ý cho em', cfg.voices.filter((voice) => voice.suggested)],
@@ -771,7 +775,7 @@ $('voice').addEventListener('change', async () => {
   try {
     const {current} = await api('/voice', {method: 'PUT', json: {voice: select.value}});
     cfg.voice = current;
-    settingsNote(`Từ giờ em nói bằng giọng ${current} nha.`);
+    settingsNote(`Từ giờ em nói bằng giọng ${voiceTitle(current)} nha.`);
   } catch (err) {
     select.value = cfg.voice;
     settingsNote(err.message, true);
@@ -784,8 +788,10 @@ $('preview').addEventListener('click', async () => {
   settingsNote('Em đang đọc thử…');
   stopListening();
   try {
-    const {audio} = await api('/voice/preview', {method: 'POST', json: {voice: $('voice').value}});
-    settingsNote('');
+    const chosen = $('voice').value;
+    const {audio, voice} = await api('/voice/preview', {method: 'POST', json: {voice: chosen}});
+    // Giọng Edge (Hoài My) lỗi thì máy chủ đọc tạm bằng giọng Gemini.
+    settingsNote(voice === chosen ? '' : `Giọng ${voiceTitle(chosen)} đang lỗi, em đọc tạm bằng giọng ${voiceTitle(voice)} nha.`);
     await speak(audio);
   } catch (err) {
     settingsNote(err.message, true);
