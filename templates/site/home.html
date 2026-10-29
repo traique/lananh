@@ -3,7 +3,7 @@
 {% set ld = today.lunar %}
 <div class="today-head">
   <div>
-    <h1 class="date">{{ today.weekday }}, <span class="nowrap">{{ today_date.day }} tháng {{ today_date.month }} năm {{ today_date.year }}</span></h1>
+    <h1 class="date"><span class="eyebrow">Lịch âm hôm nay</span> {{ today.weekday }}, <span class="nowrap">{{ today_date.day }} tháng {{ today_date.month }} năm {{ today_date.year }}</span></h1>
     <p class="sub">
       {% if ld.day == 15 %}Rằm{% elif ld.day == 1 %}Mùng 1{% else %}Ngày {{ ld.day }}{% endif %} tháng {{ ld.month }}{% if ld.isLeapMonth %} nhuận{% endif %} âm lịch,
       ngày {{ "hoàng đạo" if today.isHoangDao else "hắc đạo" }} ({{ today.dayGod }}){% if today.isTamNuong %}, phạm Tam nương{% endif %}{% if today.isNguyetKy %}, phạm Nguyệt kỵ{% endif %}.

@@ -198,6 +198,11 @@ h1.date {
   font-family: var(--font-date); font-size: var(--fs-date); line-height: 1.05; font-weight: 500;
   letter-spacing: -0.02em;
 }
+/* nhãn nhỏ trong h1: tiêu đề đọc thành "Lịch âm hôm nay Thứ Năm, 29 tháng 10..." */
+h1.date .eyebrow {
+  display: block; margin-bottom: 10px; font: 600 var(--fs-body)/1.4 var(--font);
+  letter-spacing: 0; color: var(--muted);
+}
 .date + .sub { margin-top: 12px; font-size: var(--fs-section); color: var(--text); text-wrap: pretty; }
 .date + .sub .muted { color: var(--muted); }
 

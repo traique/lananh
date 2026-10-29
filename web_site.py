@@ -16,8 +16,9 @@ Cần đăng nhập (tài khoản admin, chung phiên với /admin) cho việc t
 điểm thời tiết. Khách chỉ thấy link nhỏ "Chủ trang đăng nhập" ở chân trang; đăng nhập
 rồi thanh bên mới hiện nút "Quản trị".
 
-SEO/chia sẻ link: mọi trang có canonical + thẻ og:/twitter:, /robots.txt, /sitemap.xml;
-trình duyệt gặp đường dẫn không có nhận trang 404 HTML (web.py gọi ``not_found``).
+SEO/chia sẻ link: mọi trang có canonical + thẻ og:/twitter:, /robots.txt, /sitemap.xml,
+/llms.txt; trình duyệt gặp đường dẫn không có nhận trang 404 HTML (web.py gọi
+``not_found``). Nhập sai (URL gõ bừa) -> noindex; nguồn ngoài lỗi -> 503 + Retry-After.
 
 JSON API (chỉ thêm trường mới, không đổi/bỏ trường cũ):
   GET  /api/v1/calendar/days/{YYYY-MM-DD}
@@ -362,11 +363,20 @@ def _structured_data(
     if active == "/":
         org = {
             "@type": "Organization",
+            "@id": f"{base}/#organization",
             "name": "LCTA",
             "url": f"{base}/",
             "logo": f"{base}/static/icon.png",
         }
-        graph = [{**website, "inLanguage": "vi", "description": description}, org]
+        graph = [
+            {
+                **website,
+                "inLanguage": "vi",
+                "description": description,
+                "publisher": {"@id": org["@id"]},
+            },
+            org,
+        ]
     else:
         page = {
             "@type": "WebPage",
@@ -405,11 +415,20 @@ def _vn_stamp(text: str | None) -> str:
 
 
 def _render(
-    name: str, *, title: str, description: str, active: str, modified: str = "", **ctx
+    name: str,
+    *,
+    title: str,
+    description: str,
+    active: str,
+    modified: str = "",
+    canonical: str = "",
+    **ctx,
 ) -> HTMLResponse:
+    """``canonical``: đường dẫn chuẩn khi cùng nội dung mở được bằng nhiều kiểu URL;
+    trống thì lấy đường dẫn đang xem (chỉ giữ tham số nội dung)."""
     css_version, version = _assets()
     logged_in, path, base = _viewer.get()
-    page_url = f"{base}{_canonical_path(path)}" if base else ""
+    page_url = f"{base}{canonical or _canonical_path(path)}" if base else ""
     ld_json = (
         _structured_data(title, description, active, page_url, base, modified)
         if base and not ctx.get("noindex")
@@ -435,8 +454,17 @@ def _render(
         )
     )
     # Lỗi nhập liệu hiện ngay trên trang (role=alert) với HTTP 200: trang HTML
-    # trả 4xx làm trình duyệt ghi lỗi console dù người dùng chỉ nhập sai.
+    # trả 4xx làm trình duyệt ghi lỗi console dù người dùng chỉ nhập sai. Trang lỗi
+    # nhập liệu truyền noindex để URL gõ bừa không thành trang trùng trong chỉ mục.
     return HTMLResponse(html)
+
+
+def _source_down(page: HTMLResponse) -> HTMLResponse:
+    """Nguồn ngoài lỗi/chậm: 503 + Retry-After để máy tìm kiếm giữ bản đã lập chỉ mục và
+    quay lại sau, không lấy trang báo lỗi thay vào. Người xem vẫn thấy trang có thông báo."""
+    page.status_code = 503
+    page.headers["Retry-After"] = "300"
+    return page
 
 
 def _render_lich(name: str, *, tab: str, title: str, description: str, **ctx) -> HTMLResponse:
@@ -573,24 +601,49 @@ async def lich_page(request: Request) -> Response:
                 "hoặc ghi tháng/năm như 10/2026."
             )
     raw_day = params.get("ngay", "")
+    day_page = False
     try:
         if raw_day:
             selected_date = site_data.parse_date(raw_day)
+            day_page = True
             if not raw_month:
                 month_year, month = selected_date.year, selected_date.month
         grid = site_data.month_grid(month_year, month)
     except InputError as exc:
         error, grid = exc.message, site_data.month_grid(today.year, today.month)
-        selected_date = today
+        selected_date, day_page = today, False
+    selected = site_data.day_info(selected_date)
+    title = f"Lịch âm tháng {grid['month']}/{grid['year']}: ngày hoàng đạo, ngày lễ"
+    description = (
+        f"Lịch âm dương tháng {grid['month']}/{grid['year']}: ngày âm từng ngày, ngày "
+        "hoàng đạo, mùng 1, rằm, ngày lễ. Bấm một ngày để xem can chi, giờ tốt."
+    )
+    canonical = ""
+    if day_page and not error:
+        # Mỗi ngày một trang riêng (người ta hay tìm "lịch âm ngày 5/10/2026"): tiêu đề, mô
+        # tả theo ngày đó, URL chuẩn chỉ giữ ?ngay= (link cũ kèm ?thang= trỏ về đây).
+        ld = selected["lunar"]
+        lunar_short = f"{ld['day']}/{ld['month']}{' nhuận' if ld['isLeapMonth'] else ''}"
+        kind = "hoàng đạo" if selected["isHoangDao"] else "hắc đạo"
+        hours = ", ".join(h.split(" (")[0] for h in selected["luckyHours"])
+        title = f"Lịch âm ngày {selected_date:%d/%m/%Y}: {lunar_short} âm lịch, ngày {kind}"
+        description = (
+            f"{selected['weekday']}, {selected_date:%d/%m/%Y} dương lịch là {ld['text']} âm "
+            f"lịch, ngày {ld['dayCanChi']}, {kind} ({selected['dayGod']}). Giờ tốt: {hours}."
+        )
+        if selected["holidays"]:
+            description += f" {', '.join(selected['holidays'])}."
+        canonical = f"/lich?ngay={selected_date.isoformat()}"
     return _render_lich(
         "lich.html",
         tab="/lich",
-        title=f"Lịch âm tháng {grid['month']}/{grid['year']}: ngày hoàng đạo, ngày lễ",
-        description=f"Lịch âm dương tháng {grid['month']}/{grid['year']}: ngày âm từng ngày, ngày "
-        "hoàng đạo, mùng 1, rằm, ngày lễ. Bấm một ngày để xem can chi, giờ tốt.",
+        title=title,
+        description=description,
+        canonical=canonical,
+        noindex=bool(error),
         month=grid,
         weeks=_weeks(grid),
-        selected=site_data.day_info(selected_date),
+        selected=selected,
         selected_date=selected_date,
         today_iso=today.isoformat(),
         error=error,
@@ -654,6 +707,7 @@ async def lich_convert_page(request: Request) -> HTMLResponse:
         tab="/lich/doi-ngay",
         title=title,
         description=description,
+        noindex=bool(error),
         am=am,
         nhuan=nhuan,
         result=result,
@@ -667,8 +721,8 @@ async def lich_holidays_page() -> HTMLResponse:
         "lich_le.html",
         tab="/lich/ngay-le",
         title="Ngày lễ sắp tới trong năm: âm lịch và dương lịch",
-        description="Các ngày lễ, Tết âm lịch và dương lịch trong 12 tháng tới, kèm thứ, ngày "
-        "dương lịch và số ngày còn lại.",
+        description="Ngày lễ, Tết âm lịch và dương lịch 12 tháng tới: Tết Nguyên đán, Giỗ Tổ "
+        "Hùng Vương, Vu Lan, Trung thu, Quốc khánh, kèm thứ, ngày dương lịch, số ngày còn lại.",
         holidays=_upcoming_holidays(site_data.today(), len(calendar_query.HOLIDAYS)),
     )
 
@@ -753,7 +807,9 @@ async def weather_page(request: Request) -> HTMLResponse:
             limited = _new_place_allowed(web_admin.client_ip(request))
     elif place and weather_places.fold(place) not in known and not weather.location_cached(place):
         limited = _new_place_allowed(web_admin.client_ip(request))
+    unavailable = not_found = False
     if limited:
+        unavailable = True
         error = (
             "Bạn vừa tra nhiều địa điểm mới, thử lại sau ít phút hoặc chọn một địa điểm "
             "trong danh sách."
@@ -767,8 +823,10 @@ async def weather_page(request: Request) -> HTMLResponse:
                 _limited_weather(place, coords, mine_name), _WEATHER_TIMEOUT_SEC
             )
         except (weather.WeatherError, asyncio.TimeoutError):
+            unavailable = True
             error = "Nguồn thời tiết đang chậm hoặc lỗi, thử lại sau ít phút."
     if data and data.get("error"):
+        not_found = True
         error, data = f"Không tìm thấy địa điểm “{place}”. Thử gõ tên tỉnh/thành phố.", None
     if data:
         daily = data.get("daily") or []
@@ -794,6 +852,7 @@ async def weather_page(request: Request) -> HTMLResponse:
         description=f"{heading}: nhiệt độ, cảm giác, độ ẩm, gió, lượng mưa hiện tại và dự báo "
         f"{days} ngày, cập nhật khoảng 10 phút một lần.",
         active="/thoi-tiet",
+        noindex=not_found,
         heading=heading,
         place=place,
         data=data,
@@ -811,7 +870,7 @@ async def weather_page(request: Request) -> HTMLResponse:
     if mine:
         # Trang theo cookie riêng của người xem: không cho bộ đệm dùng chung giữ lại.
         page.headers["Cache-Control"] = "private, no-cache"
-    return page
+    return _source_down(page) if unavailable else page
 
 
 async def _lottery_data(selector: str, day: str, ticket: str) -> dict:
@@ -836,6 +895,7 @@ async def lottery_page(request: Request) -> HTMLResponse:
     raw_ticket = params.get("ve", "").strip()[:12]
     today = site_data.today()
     error, error_field, data = "", "", None
+    unavailable = False
     try:
         data = await _limited_lottery(selector, raw_day, raw_ticket)
     except lottery_lookup.LookupInputError as exc:
@@ -848,14 +908,20 @@ async def lottery_page(request: Request) -> HTMLResponse:
             except (lottery_lookup.LookupInputError, vn_market_data.MarketDataError):
                 data = None
     except vn_market_data.MarketDataError:
+        unavailable = True
         error = (
             "Nguồn kết quả xổ số đang lỗi hoặc chậm, thử lại sau ít phút. Trang không tự đoán số."
         )
     current = data["target"]["key"] if data else (selector or "mn")
     today_names = [(p.key, p.name) for p in lottery_provinces.drawing_on(today) if p.region != "mb"]
     title = "Kết quả xổ số 3 miền và từng tỉnh"
-    description = "Kết quả xổ số 3 miền và từng tỉnh, dò vé bằng code. Nguồn xskt.com.vn."
+    description = (
+        "Kết quả xổ số miền Nam, miền Trung, miền Bắc và từng đài tỉnh mới nhất: giải đặc biệt "
+        "đến giải tám, xem theo ngày, dò vé bằng code. Nguồn xskt.com.vn."
+    )
+    modified = ""
     if data and data.get("draw"):
+        modified = data["draw"]["date"]
         name, day = data["target"]["name"], dt.date.fromisoformat(data["draw"]["date"])
         short = _LOTTERY_SHORT.get(data["target"]["key"])
         title = f"Kết quả xổ số {name} {day:%d/%m/%Y}" + (f" ({short})" if short else "")
@@ -867,7 +933,10 @@ async def lottery_page(request: Request) -> HTMLResponse:
         "xo_so.html",
         title=title,
         description=description,
+        modified=modified,
         active="/xo-so",
+        # Nhập sai đài/ngày/vé: trang báo lỗi không vào chỉ mục (URL gõ bừa thành trang trùng).
+        noindex=bool(error) and not unavailable,
         data=data,
         error=error,
         error_field=error_field,
@@ -879,7 +948,7 @@ async def lottery_page(request: Request) -> HTMLResponse:
         prize_labels=lottery_lookup.PRIZE_LABELS,
     )
     page.headers["Cache-Control"] = "no-cache"  # kỳ hôm nay cập nhật dần theo giờ quay
-    return page
+    return _source_down(page) if unavailable else page
 
 
 async def _price_data(load) -> dict:
@@ -925,7 +994,7 @@ async def gold_page() -> HTMLResponse:
         error=error,
     )
     page.headers["Cache-Control"] = "no-cache"  # giá đổi trong ngày, cache ở server
-    return page
+    return _source_down(page) if data is None else page
 
 
 @router.get("/gia-xang", response_class=HTMLResponse)
@@ -958,7 +1027,7 @@ async def fuel_page() -> HTMLResponse:
         error=error,
     )
     page.headers["Cache-Control"] = "no-cache"
-    return page
+    return _source_down(page) if data is None else page
 
 
 async def _change_place(request: Request, action) -> Response:
@@ -1263,6 +1332,68 @@ async def robots(request: Request) -> Response:
     return PlainTextResponse(
         "\n".join(lines) + "\n", headers={"Cache-Control": "public, max-age=86400"}
     )
+
+
+# /llms.txt: cách mở từng trang bằng URL (tham số nội dung, trang dùng form POST).
+_LLMS_NOTES = {
+    "/": "ngày âm hôm nay, giờ hoàng đạo, ngày lễ sắp tới",
+    "/lich": "lịch âm dương theo tháng (?thang=YYYY-MM) hoặc một ngày (?ngay=YYYY-MM-DD)",
+    "/lich/hoi": "hỏi tự do bằng tiếng Việt (?q=rằm tháng 8)",
+    "/lich/doi-ngay": "ngày âm sang dương (?am=15/8 hoặc 15/8/2027, &nhuan=1 cho tháng nhuận)",
+    "/lich/ngay-le": "ngày lễ âm lịch và dương lịch trong 12 tháng tới",
+    "/thoi-tiet": "thời tiết hiện tại và 7 ngày tới (?noi=Hà Nội)",
+    "/xo-so": "kết quả xổ số (?dai=mn, mt, mb hoặc mã đài như tay-ninh; &ngay=YYYY-MM-DD)",
+    "/gia-vang": "giá vàng trong nước, vàng thế giới quy đổi, tỷ giá Vietcombank",
+    "/gia-xang": "giá xăng dầu Petrolimex, PVOIL theo kỳ điều hành",
+    "/tu-vi": "lập lá số tử vi theo ngày giờ sinh (form POST)",
+    "/ky-mon": "bàn Kỳ Môn Độn Giáp theo giờ (?ngay=YYYY-MM-DD&gio=HH:MM)",
+    "/than-so-hoc": "thần số học theo ngày sinh, họ tên (form POST)",
+}
+
+
+@static_router.get("/llms.txt", include_in_schema=False)
+async def llms_txt(request: Request) -> Response:
+    """Tóm tắt site cho trợ lý AI/agent theo llmstxt.org: trang công khai và JSON API.
+    Google không dùng file này để xếp hạng; nó chỉ giúp agent biết tra gì ở đâu."""
+    base, today = _base_url(request), site_data.today()
+    pages = [f"- [{_NAV_LABELS[p]}]({base}{p}): {note}" for p, note in _LLMS_NOTES.items()]
+    api = [
+        f"- [Một ngày âm dương]({base}/api/v1/calendar/days/{today.isoformat()})",
+        f"- [Lưới tháng]({base}/api/v1/calendar/months/{today:%Y-%m})",
+        f"- [Đổi ngày âm]({base}/api/v1/calendar/conversions?lunarDay=15&lunarMonth=8"
+        f"&lunarYear={today.year}&isLeapMonth=false)",
+        f"- [Hỏi lịch]({base}/api/v1/calendar/answers?q={quote('rằm tháng 8')})",
+        f"- [Xổ số]({base}/api/v1/lottery?province=mn): province, date, ticket",
+        f"- [Giá vàng]({base}/api/v1/gold)",
+        f"- [Giá xăng dầu]({base}/api/v1/fuel)",
+        f"- [Tỷ giá]({base}/api/v1/fx)",
+        '- POST /api/v1/tuvi/charts {"birthDate", "calendar", "hourBranch", "gender"}: lá số',
+        '- POST /api/v1/numerology/readings {"birthDate", "name"}: thần số học',
+        '- POST /api/v1/qimen/charts {"dateTime"}: bàn Kỳ Môn',
+    ]
+    text = "\n".join(
+        [
+            "# LCTA",
+            "",
+            "> Lịch âm dương Việt Nam và tra cứu hằng ngày bằng tiếng Việt: ngày âm, giờ "
+            "hoàng đạo, ngày lễ, thời tiết, kết quả xổ số, giá vàng, giá xăng dầu, lá số tử "
+            "vi, Kỳ Môn Độn Giáp, thần số học.",
+            "",
+            "Lịch, tử vi, Kỳ Môn, thần số học tính bằng thuật toán; thời tiết, xổ số, giá đọc "
+            "từ nguồn công khai ghi trên từng trang. Trang render sẵn ở server, không cần "
+            "JavaScript.",
+            "",
+            "## Trang",
+            *pages,
+            "",
+            "## API JSON",
+            "",
+            'Lỗi nhập liệu: HTTP 422 dạng {"error": {"code", "message"}}; nguồn ngoài lỗi: 503.',
+            "",
+            *api,
+        ]
+    )
+    return PlainTextResponse(text + "\n", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @static_router.get("/sitemap.xml", include_in_schema=False)
