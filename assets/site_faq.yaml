@@ -1,7 +1,8 @@
 # Hỏi đáp cuối các trang web công khai (web_site.py -> templates/site/_faq.html).
 # Chỉ hiện ở trang gốc (không tham số: /lich, /xo-so...) để không lặp trên hàng nghìn
 # trang ngày/tháng/đài. Câu trả lời mở đầu bằng ý chính; link nội bộ viết
-# [chữ](/đường-dẫn). Số liệu, luật: ghi nguồn ngay trong câu.
+# [chữ](/đường-dẫn). Số liệu, luật: ghi nguồn ngay trong câu. Chủ trang yêu cầu web không
+# nhắc tới Trung Quốc (test_web_khong_nhac_trung_quoc kiểm).
 
 "/":
   - q: Giờ hoàng đạo là gì?
@@ -28,12 +29,12 @@
       Âm lịch thực chất là âm dương lịch: tháng theo Mặt Trăng, mùng 1 là ngày trăng non
       (ngày sóc); năm theo Mặt Trời, chia 24 tiết khí. Tháng âm có 29 hoặc 30 ngày, năm
       thường có 12 tháng, năm nhuận có 13 tháng để lịch không trôi lệch mùa.
-  - q: Vì sao lịch âm Việt Nam có năm khác lịch Trung Quốc?
+  - q: Vì sao nên xem lịch âm tính theo giờ Việt Nam?
     a: >-
-      Việt Nam tính lịch theo múi giờ UTC+7, Trung Quốc theo UTC+8. Khi trăng non rơi gần
-      nửa đêm, ngày mùng 1 ở hai nơi lệch nhau một ngày, có năm lệch cả tháng nhuận. Ví dụ
-      Tết năm 2007 ở Việt Nam là 17/2, ở Trung Quốc là 18/2; Tết năm 1985 ở Việt Nam là
-      21/1, ở Trung Quốc là 20/2.
+      Mùng 1 là ngày có trăng non, mà thời điểm trăng non phụ thuộc múi giờ. Lịch âm Việt
+      Nam tính theo giờ Hà Nội (UTC+7); lịch tính theo múi giờ khác có năm lệch một ngày,
+      thậm chí lệch cả tháng nhuận khi trăng non rơi gần nửa đêm. Trang tính đúng theo giờ
+      Việt Nam, ví dụ Tết năm 2007 là ngày 17/2, Tết năm 1985 là ngày 21/1.
   - q: Tam nương, Nguyệt kỵ là những ngày nào?
     a: >-
       Tam nương là các ngày 3, 7, 13, 18, 22, 27 âm lịch; Nguyệt kỵ là ngày 5, 14, 23 âm
