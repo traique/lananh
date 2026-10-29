@@ -2077,6 +2077,7 @@ quyền admin như Zalo admin. Zoom dùng Zalo session hiện tại để xác �
 
 ## Tài liệu bổ sung
 
+- `docs/avatar.md` — trang `/admin/avatar`: Lan Anh "người iu" qua ảnh chân dung sống có giọng nói (cách dùng, yêu cầu ảnh, biến `AVATAR_*`, giới hạn, đóng gói lại MediaPipe)
 - `docs/nang-cap-jarvis.md` — các tính năng lấy ý từ các dự án Jarvis: `/chuy`, gom thông báo + giờ yên lặng (migration 026), việc nền `/viec` + tác vụ định kỳ `/lichtacvu` (migration 027), che bí mật trước khi gửi provider, duyệt cách trả lời, mô tả tool gọn, trả lời bằng giọng nói `/noi`, trang Nhật ký trong `/admin`, ghi ăn uống `/an` (migration 028), Gemini Live (chat dự phòng cuối + bộ đọc `/noi`), sửa sau chạy thật 27/10 (RAM: đường giá không nạp pandas/vnstock, `malloc_trim`, trần chỉ mục rag; Zoom link nghe; chuẩn hoá chữ + phong cách giọng `/noi`; hỏi giá sản phẩm không bị chặn)
 - `docs/nang-cap-2026-10-26.md` — đợt nâng cấp 26/10/2026: thay đổi theo nhóm, danh sách việc khi deploy (migration 017-025, biến Render, GitHub secrets), việc chủ bot còn phải quyết, phần cố ý chưa làm, rủi ro
 - `docs/backup-restore.md` — sao lưu/khôi phục DB, role chỉ-đọc, diễn tập, xoay khoá

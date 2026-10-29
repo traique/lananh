@@ -1476,6 +1476,38 @@ async def expense_recent(telegram_user_id: int, limit: int = 10) -> list[dict]:
     return await expenses.recent(await get_pool(), telegram_user_id, limit)
 
 
+# ─── Ảnh avatar (/admin/avatar, services/avatar_photo.py) ────────────────────
+# SQL ở core/repositories/avatar.py; UPSERT/DELETE theo khoá kind nên chạy lại an toàn.
+
+
+@_with_reconnect
+async def avatar_photo_meta() -> dict[str, dict]:
+    from core.repositories import avatar
+
+    return await avatar.meta(await get_pool())
+
+
+@_with_reconnect
+async def avatar_photo_get(kind: str) -> dict | None:
+    from core.repositories import avatar
+
+    return await avatar.photo(await get_pool(), kind)
+
+
+@_with_reconnect
+async def avatar_photo_put(kind: str, **kw) -> None:
+    from core.repositories import avatar
+
+    await avatar.put(await get_pool(), kind, **kw)
+
+
+@_with_reconnect
+async def avatar_photo_delete(kind: str) -> int:
+    from core.repositories import avatar
+
+    return await avatar.delete(await get_pool(), kind)
+
+
 # ─── Nhật ký ăn uống (services/nutrition_service.py) ────────────────────────
 # SQL ở core/repositories/meals.py; ngày truyền dạng text YYYY-MM-DD. Món không có
 # event_key (lệnh ngoài webhook) INSERT không idempotent -> không retry.

@@ -43,6 +43,9 @@
   (cần WEBHOOK_BASE_URL/RENDER_EXTERNAL_URL) - channels/tts_media.py.
 - Thành viên Zalo: mỗi tin thoại tính 1 lượt nặng (services/usage_quota.py); hết
   lượt nặng thì chỉ gửi chữ.
+- Trang avatar (/admin/avatar, web_avatar.py): ``web_clip`` đọc với giọng và phong cách
+  riêng của trang (không xét /noi hay kênh), ra M4A cho trình duyệt (không có ffmpeg
+  thì WAV).
 
 RAM: tối đa 1 lượt tổng hợp + đổi định dạng cùng lúc (semaphore); PCM tối đa
 MAX_PCM_BYTES; ffmpeg ghi file tạm trong MEDIA_DIR rồi xoá ngay.
@@ -570,12 +573,12 @@ async def ffmpeg_encode(pcm: bytes, rate: int, channels: int, fmt: str) -> bytes
 
 async def _encode(pcm: bytes, rate: int, channels: int, channel: str) -> tuple[bytes, str] | None:
     """(dữ liệu, đuôi) theo kênh: Telegram OGG (ffmpeg) hoặc WAV; Zalo M4A (ffmpeg);
-    Zoom (link nghe trên trình duyệt) M4A - trình duyệt nào cũng phát được, không có
-    ffmpeg thì WAV."""
+    Zoom (link nghe trên trình duyệt) và trang avatar ("web") M4A - trình duyệt nào
+    cũng phát được, không có ffmpeg thì WAV."""
     if channel == "zalo":
         data = await ffmpeg_encode(pcm, rate, channels, "m4a")
         return (data, "m4a") if data else None
-    if channel == "zoom":
+    if channel in ("zoom", "web"):
         data = await ffmpeg_encode(pcm, rate, channels, "m4a")
         if data:
             return data, "m4a"
@@ -631,8 +634,47 @@ async def make_clip(
         return None
 
 
+async def web_clip(user_id: int, text: str, *, voice: str, style: str) -> Clip | None:
+    """Giọng đọc cho trang avatar (/admin/avatar): như ``make_clip`` nhưng không xét /noi
+    và kênh - giọng ``voice`` (tên lạ -> VOICE_TTS_VOICE) và chỉ dẫn đọc ``style`` do
+    trang chọn. Vẫn che bí mật, lọc chữ đọc được, cắt theo VOICE_REPLY_MAX_CHARS, chuẩn
+    hoá số/viết tắt, tính quota TTS như chủ bot Telegram. KHÔNG raise."""
+    try:
+        you, _ = reply_audience.forms()
+        hidden = prompt_redaction.Redactor().text(text)
+        speech, truncated = fit(speakable_text(hidden), max_chars(), you)
+        speech = tts_normalize.normalize(speech)
+        if len(speech) < MIN_SPEAK_CHARS:
+            return None
+        remaining = remaining_turn_seconds()
+        if remaining is not None and remaining < MIN_REMAINING_SEC:
+            logger.info("Còn %.1fs của lượt - bỏ giọng đọc avatar.", remaining)
+            return None
+        if not await usage_quota.heavy_available(user_id, channel="telegram", is_admin=True):
+            return None
+        clip = await _synthesize(
+            speech, "web", truncated, voice=canonical_voice(voice) or tts_voice(), style=style
+        )
+        if clip is not None:
+            await usage_quota.record_heavy(
+                user_id, usage_quota.KIND_TTS, channel="telegram", is_admin=True
+            )
+        return clip
+    except TurnTimeoutError:
+        logger.info("Hết hạn chót khi đọc giọng avatar - chỉ hiện chữ.")
+        return None
+    except Exception:
+        logger.warning("Không tạo được giọng đọc avatar - chỉ hiện chữ.", exc_info=True)
+        return None
+
+
 async def _synthesize(
-    speech: str, channel: str, truncated: bool, *, voice: str | None = None
+    speech: str,
+    channel: str,
+    truncated: bool,
+    *,
+    voice: str | None = None,
+    style: str | None = None,
 ) -> Clip | None:
     from ai import orchestrator
 
@@ -650,7 +692,7 @@ async def _synthesize(
             voice=voice or tts_voice(),
             timeout_sec=TTS_TIMEOUT_SEC,
             engine=voice_engine(),
-            style=style_prompt(),
+            style=style_prompt() if style is None else style,
         )
         pcm, rate, channels = to_pcm(result.audio, result.mime)
         if not pcm or len(pcm) > MAX_PCM_BYTES:

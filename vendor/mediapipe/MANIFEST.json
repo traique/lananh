@@ -1,0 +1,40 @@
+{
+  "package": "@mediapipe/tasks-vision",
+  "version": "0.10.35",
+  "license": "Apache-2.0",
+  "tarball": "https://registry.npmjs.org/@mediapipe/tasks-vision/-/tasks-vision-0.10.35.tgz",
+  "integrity": "sha512-HOvadwVRE6JC+45nyYhmnywnr5h/J8KZvOeUNVOG9q/0875pZgItznFB9bRTvLc264YSJqiZ1NsIpCStJw/egg==",
+  "model": {
+    "name": "face_landmarker float16 v1 (BlazeFace short range + Face Mesh V2 + Blendshape V2)",
+    "license": "Apache-2.0 (theo 3 model card)",
+    "docs": "https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker",
+    "model_cards": [
+      "https://storage.googleapis.com/mediapipe-assets/MediaPipe%20BlazeFace%20Model%20Card%20(Short%20Range).pdf",
+      "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20MediaPipe%20Face%20Mesh%20V2.pdf",
+      "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Blendshape%20V2.pdf"
+    ],
+    "gcs_md5": "sOcnSQehZEQE/vZrKN1thQ=="
+  },
+  "files": {
+    "vision_bundle.mjs": {
+      "bytes": 136993,
+      "sha256": "55d7ab624fbb70dcc5adc4ae6d7ea9cfcb569139d3dbfbf2b1deafcb966bc0fe",
+      "source": "package/vision_bundle.mjs"
+    },
+    "vision_wasm_internal.js": {
+      "bytes": 322044,
+      "sha256": "e7fd9858e8e8f221d9b96eddc11f8e077f263e0b7bbd79d3cbe882b134274f8c",
+      "source": "package/wasm/vision_wasm_internal.js"
+    },
+    "vision_wasm_internal.wasm": {
+      "bytes": 11153617,
+      "sha256": "6a5c64584c2ab61c763b6e204afbdbc7ce1caf7f5216187322bca8df94f646bc",
+      "source": "package/wasm/vision_wasm_internal.wasm"
+    },
+    "face_landmarker.task": {
+      "bytes": 3758596,
+      "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+      "source": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+    }
+  }
+}
