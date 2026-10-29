@@ -184,7 +184,7 @@ async def test_trang_avatar_nhung_cau_hinh_khong_cache(client, store):
     data = json.loads(raw)
     assert data["photo"] is None and data["voice"] == "Leda" and data["textMax"] == 2000
     assert data["greeting"]["text"] and data["greeting"]["mood"] in avatar_service.MOODS
-    assert data["voices"][0]["name"] == "Achernar" and data["stt"]["maxBytes"] > 0
+    assert data["voices"][0]["name"] == "HoaiMy" and data["stt"]["maxBytes"] > 0
     assert data["vendor"]["vision_bundle.mjs"].startswith("/admin/avatar/vendor/")
 
 
@@ -270,7 +270,7 @@ async def test_chat_nhu_telegram_trong_khoa_chu_bot_giong_doc_sau_khi_nha_khoa(
         }
     ]
     assert speech[0]["busy"] is False  # đọc sau khi nhả khoá
-    assert speech[0]["voice"] == "Achernar" and speech[0]["user_id"] == OWNER
+    assert speech[0]["voice"] == "HoaiMy" and speech[0]["user_id"] == OWNER
     assert speech[0]["style"] == avatar_service.DEFAULT_VOICE_STYLE
     # Tắt loa: không tốn lượt TTS.
     r = await client.post("/admin/api/avatar/chat", json={"text": "hi", "voice": False})
@@ -350,7 +350,7 @@ async def test_chon_giong_va_nghe_thu(client, store, speech, monkeypatch):
     await _login(client)
     monkeypatch.setenv("AVATAR_TTS_VOICE", "Sulafat")
     voices = (await client.get("/admin/api/avatar/voices")).json()
-    assert voices["current"] == "Sulafat" and voices["voices"][0]["name"] == "Achernar"
+    assert voices["current"] == "Sulafat" and voices["voices"][0]["name"] == "HoaiMy"
     r = await client.put("/admin/api/avatar/voice", json={"voice": "giọng lạ"})
     assert r.status_code == 400
     r = await client.put("/admin/api/avatar/voice", json={"voice": "leda"})

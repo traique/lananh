@@ -761,9 +761,7 @@ function renderVoices() {
   $('voice').replaceChildren(...groups.map(([label, voices]) => {
     const group = document.createElement('optgroup');
     group.label = label;
-    group.append(...voices.map((voice) => new Option(
-      `${voice.name} (${voice.description})`, voice.name, false, voice.name === cfg.voice,
-    )));
+    group.append(...voices.map((voice) => new Option(voice.label, voice.name, false, voice.name === cfg.voice)));
     return group;
   }));
 }
