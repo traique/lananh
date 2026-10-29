@@ -235,35 +235,52 @@ def hoang_oc(age: int) -> str:
     return _HOANG_OC[(tens + units - 1) % 6]
 
 
+def han_profile(birth_lunar_year: int, target_lunar_year: int) -> dict:
+    """Sao hạn (nam, nữ), Tam tai, Kim lâu, Hoang ốc của 1 tuổi trong năm target, dạng
+    dữ liệu (chat dùng describe_han, trang web /tuoi dùng bảng). Gọi khi target > năm sinh."""
+    age = tuoi_am(birth_lunar_year, target_lunar_year)
+    born_chi = year_chi(birth_lunar_year)
+    tai = tam_tai_years(born_chi)
+    ho = hoang_oc(age)
+    return {
+        "year": target_lunar_year,
+        "canChi": year_profile(target_lunar_year)["can_chi"],
+        "age": age,
+        "saoNam": sao_han(age, True),
+        "saoNu": sao_han(age, False),
+        "tamTai": year_chi(target_lunar_year) in tai,
+        "tamTaiYears": [CHI[c] for c in tai],
+        "kimLau": kim_lau(age),
+        "hoangOc": ho,
+        "hoangOcBad": ho in _HOANG_OC_XAU,
+    }
+
+
 def describe_han(birth_lunar_year: int, target_lunar_year: int, male: bool | None) -> str:
     """Sao hạn, Tam tai, Kim lâu, Hoang ốc của 1 tuổi trong năm target."""
-    age = tuoi_am(birth_lunar_year, target_lunar_year)
-    if age < 1:
+    if tuoi_am(birth_lunar_year, target_lunar_year) < 1:
         return "Năm xem phải sau năm sinh."
+    h = han_profile(birth_lunar_year, target_lunar_year)
     born = year_profile(birth_lunar_year)
-    target = year_profile(target_lunar_year)
     lines = [
-        f"Tuổi {born['can_chi']} ({birth_lunar_year}) năm {target['can_chi']} "
-        f"({target_lunar_year}): {age} tuổi âm."
+        f"Tuổi {born['can_chi']} ({birth_lunar_year}) năm {h['canChi']} "
+        f"({target_lunar_year}): {h['age']} tuổi âm."
     ]
     if male is None:
         lines.append(
-            f"• Sao hạn: nam gặp {sao_han(age, True)}, nữ gặp {sao_han(age, False)} "
-            "(thêm nam/nữ để xem riêng)."
+            f"• Sao hạn: nam gặp {h['saoNam']}, nữ gặp {h['saoNu']} (thêm nam/nữ để xem riêng)."
         )
     else:
-        lines.append(f"• Sao hạn ({'nam' if male else 'nữ'}): {sao_han(age, male)}.")
-    tai = tam_tai_years(born["chi"])
-    if target["chi"] in tai:
-        lines.append(f"• Tam tai: CÓ (tuổi {CHI[born['chi']]} gặp tam tai các năm "
-                     f"{', '.join(CHI[c] for c in tai)}).")  # fmt: skip
+        lines.append(f"• Sao hạn ({'nam' if male else 'nữ'}): {h['saoNam' if male else 'saoNu']}.")
+    tai = ", ".join(h["tamTaiYears"])
+    if h["tamTai"]:
+        lines.append(f"• Tam tai: CÓ (tuổi {CHI[born['chi']]} gặp tam tai các năm {tai}).")
     else:
-        lines.append(f"• Tam tai: không (gặp vào các năm {', '.join(CHI[c] for c in tai)}).")
-    kl = kim_lau(age)
+        lines.append(f"• Tam tai: không (gặp vào các năm {tai}).")
+    kl = h["kimLau"]
     lines.append(f"• Kim lâu (cưới hỏi): {'CÓ - ' + kl if kl else 'không'}.")
-    ho = hoang_oc(age)
     lines.append(
-        f"• Hoang ốc (làm nhà): {ho}{' - nên tránh' if ho in _HOANG_OC_XAU else ' - tốt'}."
+        f"• Hoang ốc (làm nhà): {h['hoangOc']}{' - nên tránh' if h['hoangOcBad'] else ' - tốt'}."
     )
     return "\n".join(lines)
 

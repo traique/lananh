@@ -76,7 +76,7 @@
   <ul class="holiday-strip" role="list">
     {% for h in holidays %}
     <li>
-      <a href="/lich?ngay={{ h.date.isoformat() }}">{{ h.name }}</a>
+      <a href="/lich/ngay-le/{{ h.slug }}">{{ h.name }}</a>
       <span class="when">{{ h.date.strftime('%d/%m') }}{{ ", âm lịch" if h.isLunar }}</span>
       <span class="left">{% if h.days == 0 %}hôm nay{% else %}{{ h.days }} ngày{% endif %}</span>
     </li>

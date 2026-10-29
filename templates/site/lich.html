@@ -45,6 +45,7 @@
     <p class="lunar-line">{{ selected.lunar.text }} âm lịch</p>
     {% with day = selected %}{% include "_day_facts.html" %}{% endwith %}
     <div class="form-actions">
+      <a class="btn" href="/lich/ngay-tot{% if month.year * 12 + month.month != today_month %}?thang={{ month.year }}-{{ '%02d' % month.month }}{% endif %}">Ngày tốt tháng {{ month.month }}</a>
       <a class="btn" href="/lich/doi-ngay">Đổi ngày âm sang dương</a>
     </div>
   </section>

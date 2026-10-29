@@ -1075,10 +1075,10 @@ async def test_robots_sitemap_va_the_seo(client, monkeypatch):
     assert '<link rel="canonical" href="https://lcta.vn/lich?thang=2026-10">' in html
     assert '<meta property="og:url" content="https://lcta.vn/lich?thang=2026-10">' in html
     assert (
-        '<meta property="og:title" content="Lịch âm tháng 10/2026: ngày hoàng đạo, ngày lễ">'
+        '<meta property="og:title" content="Lịch vạn niên tháng 10/2026: lịch âm, ngày hoàng đạo">'
         in html
     )
-    assert "<title>Lịch âm tháng 10/2026: ngày hoàng đạo, ngày lễ | LCTA</title>" in html
+    assert "<title>Lịch vạn niên tháng 10/2026: lịch âm, ngày hoàng đạo | LCTA</title>" in html
     assert '<meta name="twitter:card" content="summary_large_image">' in html
 
 
@@ -1158,6 +1158,12 @@ async def test_sitemap_co_lastmod_va_trang_tra_cuu(client, monkeypatch):
     assert "/thoi-tiet?noi=H%C3%A0%20N%E1%BB%99i" in text and "noi=TP.HCM" not in text
     assert "/lich?thang=2026-11<" in text and "/lich?thang=2027-09<" in text
     assert "/lich?thang=2027-10<" not in text
+    # Trang từng ngày lễ, ngày tốt 6 tháng tới theo việc, tuổi theo năm sinh.
+    assert "<loc>https://testserver/lich/ngay-le/tet-nguyen-dan</loc>" in text
+    assert "<loc>https://testserver/lich/ngay-tot?viec=cuoi-hoi</loc>" in text
+    assert "<loc>https://testserver/lich/ngay-tot?thang=2027-03&amp;viec=dong-tho</loc>" in text
+    assert "ngay-tot?thang=2027-04" not in text and "/lich/ngay-tot?thang=2026-10" not in text
+    assert "<loc>https://testserver/tuoi/1990</loc>" in text and "/tuoi/1939<" not in text
 
 
 async def test_moi_ngay_mot_trang_rieng_co_tieu_de_va_canonical(client):
@@ -1176,7 +1182,7 @@ async def test_moi_ngay_mot_trang_rieng_co_tieu_de_va_canonical(client):
     html = (await client.get("/lich", params={"ngay": "2026-09-25"})).text
     assert 'Tết Trung thu.">' in html  # ngày lễ ghi thêm vào mô tả
     html = (await client.get("/lich", params={"thang": "2026-10"})).text
-    assert "<title>Lịch âm tháng 10/2026: ngày hoàng đạo, ngày lễ | LCTA</title>" in html
+    assert "<title>Lịch vạn niên tháng 10/2026: lịch âm, ngày hoàng đạo | LCTA</title>" in html
 
 
 async def test_cung_noi_dung_mot_url_chuan(client, lottery_sources, monkeypatch):
@@ -1293,7 +1299,8 @@ async def test_web_khong_nhac_trung_quoc(client, price_sources, lottery_sources,
 
     monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
     pages = [bytes(web_site.home_page().body).decode()]
-    for path in (*web_site._SITEMAP_PATHS[1:], "/lich?ngay=2026-10-05", "/llms.txt"):
+    holidays = (f"/lich/ngay-le/{key}" for key in web_site.site_data.HOLIDAY_SLUGS)
+    for path in (*web_site._SITEMAP_PATHS[1:], *holidays, "/tuoi/1990", "/llms.txt"):
         pages.append((await client.get(path)).text)
     for path in ("/api/v1/fx", "/api/v1/gold"):
         pages.append(json.dumps((await client.get(path)).json(), ensure_ascii=False))
@@ -1308,6 +1315,94 @@ async def test_web_khong_nhac_trung_quoc(client, price_sources, lottery_sources,
         re.I,
     )
     assert found == []
+
+
+_NOINDEX = '<meta name="robots" content="noindex, follow">'
+
+
+async def test_trang_tung_ngay_le(client, monkeypatch):
+    from markupsafe import escape
+
+    monkeypatch.setattr(web_site.site_data, "today", lambda: dt.date(2026, 10, 26))
+    html = (await client.get("/lich/ngay-le/tet-nguyen-dan")).text
+    assert "<title>Tết Nguyên đán 2027 là ngày nào? Còn bao nhiêu ngày | LCTA</title>" in html
+    assert (
+        "rơi vào Thứ Bảy, 06/02/2027 dương lịch (ngày 1 tháng 1 năm Đinh Mùi âm lịch), "
+        "còn 103 ngày." in html
+    )
+    assert "Thứ Tư, 26/01/2028" in html  # các năm sau
+    # Số ngày còn lại tính từ hôm nay; ô "Tết: Hôm nay là Tết" (tính từ chính ngày đó) bỏ.
+    assert "Hôm nay là Tết" not in html and "Theo Điều 112 Bộ luật Lao động 2019." in html
+    _, crumbs = _json_ld(html)
+    items = crumbs["itemListElement"]
+    assert [c["name"] for c in items] == ["Hôm nay", "Ngày lễ", "Tết Nguyên đán"]
+    assert items[-1]["item"] == "https://testserver/lich/ngay-le/tet-nguyen-dan"
+    # Lễ nào cũng có trang và lời giới thiệu; danh sách ngày lễ, trang chủ dẫn tới.
+    texts = web_site._holiday_texts()
+    assert set(texts) == set(web_site.site_data.HOLIDAY_SLUGS)
+    for key, text in texts.items():
+        r = await client.get(f"/lich/ngay-le/{key}")
+        assert r.status_code == 200 and str(escape(text["about"])) in r.text, key
+    listing = (await client.get("/lich/ngay-le")).text
+    assert '<a href="/lich/ngay-le/tet-trung-thu">Tết Trung thu</a>' in listing
+    assert 'href="/lich/ngay-le/' in bytes(web_site.home_page().body).decode()
+    r = await client.get("/lich/ngay-le/khong-co", headers={"Accept": "text/html"})
+    assert r.status_code == 404 and _NOINDEX in r.text
+
+
+async def test_trang_ngay_tot_theo_thang_va_viec(client, monkeypatch):
+    from services import calendar_query
+
+    monkeypatch.setattr(web_site.site_data, "today", lambda: dt.date(2026, 10, 26))
+    html = (
+        await client.get("/lich/ngay-tot", params={"thang": "11/2026", "viec": "dong-tho"})
+    ).text
+    assert "<title>Ngày tốt động thổ tháng 11/2026: ngày hoàng đạo, giờ tốt | LCTA</title>" in html
+    canonical = "https://testserver/lich/ngay-tot?thang=2026-11&amp;viec=dong-tho"
+    assert f'<link rel="canonical" href="{canonical}">' in html
+    # Cùng cách chọn với Hỏi lịch (calendar_query): hoàng đạo, tránh Tam nương/Nguyệt kỵ, trực.
+    trucs = ("Bình", "Định", "Chấp", "Thành")
+    want = [d for d in calendar_query.month_days(2026, 11) if calendar_query.is_good_day(d, trucs)]
+    assert [d.day for d in want] == [14, 17, 29]
+    assert "3 ngày tốt để động thổ, xây sửa nhà trong tháng 11/2026: 14/11, 17/11, 29/11." in html
+    assert all(f'href="/lich?ngay={d.isoformat()}"' in html for d in want)
+    # Tháng này: URL chuẩn không có ?thang=, tóm tắt các ngày tốt còn lại.
+    html = (await client.get("/lich/ngay-tot", params={"thang": "2026-10"})).text
+    assert '<link rel="canonical" href="https://testserver/lich/ngay-tot">' in html
+    assert "2 ngày hoàng đạo tốt còn lại trong tháng 10/2026: 26/10, 28/10." in html
+    assert 'href="/lich/ngay-tot?viec=cuoi-hoi"' in html  # nút lọc theo việc
+    # Việc không có, tháng quá xa: không vào chỉ mục.
+    for params in ({"viec": "abc"}, {"thang": "2090-01"}, {"thang": "abc"}):
+        assert _NOINDEX in (await client.get("/lich/ngay-tot", params=params)).text, params
+    html = (await client.get("/lich", params={"thang": "2026-11"})).text
+    assert '<a class="btn" href="/lich/ngay-tot?thang=2026-11">Ngày tốt tháng 11</a>' in html
+
+
+async def test_trang_tuoi_theo_nam_sinh(client, monkeypatch):
+    from services import can_chi
+
+    monkeypatch.setattr(web_site.site_data, "today", lambda: dt.date(2026, 10, 26))
+    r = await client.get("/tuoi", params={"nam": "1990"})
+    assert r.status_code == 303 and r.headers["location"] == "/tuoi/1990"
+    html = (await client.get("/tuoi/1990")).text
+    # Từ tháng 10 tiêu đề nói sao hạn năm sau (người ta bắt đầu tìm hạn năm mới).
+    assert "<title>Tuổi Canh Ngọ 1990: mệnh Thổ, hợp tuổi nào, sao hạn 2027 | LCTA</title>" in html
+    assert "(từ 27/01/1990 đến 14/02/1991 dương lịch)" in html and "Lộ Bàng Thổ" in html
+    assert '<a href="/tuoi/1986">1986</a>' in html  # tam hợp Dần, kèm năm sinh gần
+    assert "<td>La Hầu (sao xấu)</td>" in html and "<td>Kim lâu Thân (hại bản thân)</td>" in html
+    # Cùng số liệu với chat (/lich sao hạn 1990 năm 2027).
+    assert "nam gặp Thổ Tú, nữ gặp Vân Hớn" in can_chi.describe_han(1990, 2027, None)
+    assert "<td>Thổ Tú</td>" in html and "<td>Vân Hớn</td>" in html
+    _, crumbs = _json_ld(html)
+    assert [c["name"] for c in crumbs["itemListElement"]][-1] == "Tuổi Canh Ngọ 1990"
+    for bad in ("2030", "abcd", "1899"):
+        r = await client.get(f"/tuoi/{bad}", headers={"Accept": "text/html"})
+        assert r.status_code == 404, bad
+    hub = (await client.get("/tuoi")).text
+    assert '<a href="/tuoi/1990">1990 Canh Ngọ</a>' in hub and "/tuoi/1939" not in hub
+    assert _NOINDEX in (await client.get("/tuoi", params={"nam": "3000"})).text
+    nav = hub[hub.index('aria-label="Điều hướng chính"') :]
+    assert 'href="/lich/ngay-tot"' in nav and 'href="/tuoi" aria-current="page"' in nav
 
 
 async def test_trang_dang_nhap_noi_ro_chi_cho_chu_trang_va_co_duong_ve(monkeypatch):

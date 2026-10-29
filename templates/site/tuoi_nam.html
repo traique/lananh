@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="title-row">
+  <div>
+    <h1>Tuổi {{ p.canChi }} {{ p.year }}</h1>
+    <p class="sub">Sinh năm {{ p.year }} âm lịch (từ {{ p.solarStart | vn_date }} đến {{ p.solarEnd | vn_date }} dương lịch) là tuổi {{ p.canChi }}, con {{ p.conGiap }}, mệnh {{ p.menh }} ({{ p.napAm }}).</p>
+  </div>
+  <nav class="btn-group" aria-label="Năm sinh khác">
+    {% if prev_year %}<a class="btn" href="/tuoi/{{ prev_year }}">{{ prev_year }}</a>{% endif %}
+    <a class="btn" href="/tuoi">Năm khác</a>
+    {% if next_year %}<a class="btn" href="/tuoi/{{ next_year }}">{{ next_year }}</a>{% endif %}
+  </nav>
+</div>
+<div class="grid top">
+  <section class="panel result-day s5" aria-labelledby="menh-title">
+    <header><h2 id="menh-title">Con {{ p.conGiap }}, mệnh {{ p.menh }}</h2></header>
+    <dl class="facts">
+      <dt>Can chi</dt><dd>{{ p.canChi }}</dd>
+      <dt>Mệnh</dt><dd>{{ p.menh }} ({{ p.napAm }})</dd>
+      <dt>Âm dương</dt><dd>{{ p.amDuong }}</dd>
+      <dt>Tuổi âm</dt><dd>{{ p.ageNow }} tuổi (năm {{ p.thisYear }})</dd>
+    </dl>
+  </section>
+  <section class="sect s7" aria-labelledby="hop-title">
+    <header><h2 id="hop-title">Tuổi {{ p.canChi }} hợp tuổi nào, kỵ tuổi nào?</h2></header>
+    <div class="table-wrap" tabindex="0" role="region" aria-labelledby="hop-title">
+      <table>
+        <thead><tr><th scope="col">Quan hệ</th><th scope="col">Tuổi</th><th scope="col">Năm sinh gần</th></tr></thead>
+        <tbody>
+          {% for r in p.hop + p.ky %}
+          <tr>
+            <td>{% if loop.index <= p.hop | length %}<span class="pill pos">{{ r.kind }}</span>{% else %}<span class="pill warn">{{ r.kind }}</span>{% endif %}</td>
+            <td>{{ r.chi }}</td>
+            <td>{% for y in r.years %}<a href="/tuoi/{{ y }}">{{ y }}</a>{{ ", " if not loop.last }}{% endfor %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% if p.han %}
+<section class="sect" aria-labelledby="han-title">
+  <header><h2 id="han-title">Sao hạn tuổi {{ p.canChi }} {% for h in p.han %}{{ h.year }}{{ ", " if not loop.last }}{% endfor %}</h2></header>
+  <div class="table-wrap" tabindex="0" role="region" aria-labelledby="han-title">
+    <table class="han-table">
+      <thead><tr><th scope="col"><span class="sr-only">Mục</span></th>{% for h in p.han %}<th scope="col">{{ h.year }} ({{ h.canChi }})</th>{% endfor %}</tr></thead>
+      <tbody>
+        <tr><th scope="row">Tuổi âm</th>{% for h in p.han %}<td>{{ h.age }}</td>{% endfor %}</tr>
+        <tr><th scope="row">Sao nam</th>{% for h in p.han %}<td>{{ h.saoNam }}</td>{% endfor %}</tr>
+        <tr><th scope="row">Sao nữ</th>{% for h in p.han %}<td>{{ h.saoNu }}</td>{% endfor %}</tr>
+        <tr><th scope="row">Tam tai</th>{% for h in p.han %}<td>{{ "Có" if h.tamTai else "Không" }}</td>{% endfor %}</tr>
+        <tr><th scope="row">Kim lâu</th>{% for h in p.han %}<td>{{ h.kimLau or "Không" }}</td>{% endfor %}</tr>
+        <tr><th scope="row">Hoang ốc</th>{% for h in p.han %}<td>{{ h.hoangOc }}{{ " (nên tránh)" if h.hoangOcBad else " (tốt)" }}</td>{% endfor %}</tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="rule-note">Tuổi {{ p.canChi }} gặp Tam tai vào các năm {{ p.han[0].tamTaiYears | join(", ") }}. Kim lâu xem khi cưới hỏi, Hoang ốc xem khi làm nhà. Sao hạn, Tam tai, Kim lâu, Hoang ốc theo quan niệm dân gian, để tham khảo. Hai tuổi có hợp nhau không: <a href="/lich/hoi">hỏi lịch</a>, ví dụ "1990 và 1995 có hợp không". Xem chi tiết hơn: <a href="/tu-vi">lá số tử vi</a>.</p>
+</section>
+{% endif %}
+{% endblock %}
