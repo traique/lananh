@@ -20,6 +20,9 @@ pyyaml==6.0.2
 feedparser==6.0.11
 beautifulsoup4==4.14.3
 lxml==6.1.3
+# Giọng Hoài My trang /admin/avatar (Microsoft Edge TTS, LGPLv3): nạp lười lúc đọc,
+# kéo theo aiohttp.
+edge-tts==7.3.1
 # ─── Dependency thật của vnstock 4.0.9 / vnai 2.6.2 / vnstock_ezchart 1.0.2 ───
 # Ba package đó cài --no-deps nên mọi dependency của chúng phải liệt kê (và ghim)
 # ở đây, lấy từ PyPI. Đổi phiên bản vnstock thì đối chiếu lại Requires-Dist trong
