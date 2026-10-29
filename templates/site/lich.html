@@ -2,7 +2,7 @@
 {% block content %}
 <div class="title-row">
   <div>
-    <h1>Tháng {{ month.month }}/{{ month.year }}</h1>
+    <h1>Lịch âm tháng {{ month.month }}/{{ month.year }}</h1>
     <p class="sub">Ngày dương kèm ngày âm. Bấm một ngày để xem can chi, giờ tốt.</p>
   </div>
   <nav class="btn-group" aria-label="Chuyển tháng">
@@ -24,7 +24,7 @@
           {% if d %}
           {% set mark = d.lunarDay == 1 or d.lunarDay == 15 %}
           <td><a class="day{% if loop.index > 5 %} weekend{% endif %}{% if mark %} is-lunar-mark{% endif %}{% if d.holidays %} is-holiday{% endif %}{% if d.isHoangDao %} is-good{% endif %}{% if d.date == today_iso %} is-today{% endif %}"
-                 href="/lich?thang={{ month.year }}-{{ '%02d' % month.month }}&amp;ngay={{ d.date }}"
+                 href="/lich?ngay={{ d.date }}"
                  {% if d.date == selected.date %}aria-current="date"{% endif %}
                  aria-label="{{ d.day }}/{{ month.month }}, âm {{ d.lunarDay }}/{{ d.lunarMonth }}{% if d.lunarDay == 15 %}, rằm{% elif d.lunarDay == 1 %}, mùng 1{% endif %}{% if d.isHoangDao %}, hoàng đạo{% endif %}{% for h in d.holidays %}, {{ h }}{% endfor %}{% if d.date == today_iso %}, hôm nay{% endif %}">
             <span class="d">{{ d.day }}</span>

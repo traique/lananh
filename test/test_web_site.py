@@ -200,7 +200,7 @@ async def test_them_xoa_dia_diem_thoi_tiet(client, monkeypatch):
 async def test_trang_lich_thang(client):
     r = await client.get("/lich", params={"ngay": "2026-10-24"})
     assert r.status_code == 200
-    assert "Tháng 10/2026" in r.text and 'aria-current="date"' in r.text
+    assert "<h1>Lịch âm tháng 10/2026</h1>" in r.text and 'aria-current="date"' in r.text
     assert "ngày 15 tháng 9 năm Bính Ngọ âm lịch" in r.text
     assert 'href="/lich/hoi"' in r.text  # thanh mục con
 
@@ -745,7 +745,11 @@ async def test_trang_xo_so_mac_dinh_va_theo_tinh(client, lottery_sources):
     assert "Kiên Giang" in html and "729510" in html and "Chủ Nhật 25/10/2026" in html
     assert '<option value="ho-chi-minh">★ TP.HCM (T2/T7)</option>' in html
     html = (await client.get("/xo-so", params={"dai": "tay-ninh"})).text
-    assert "Xổ số Tây Ninh" in html and "058734" in html and "Thứ Năm 22/10/2026" in html
+    assert (
+        "<h1>Kết quả xổ số Tây Ninh</h1>" in html
+        and "058734" in html
+        and "Thứ Năm 22/10/2026" in html
+    )
     assert '<option value="tay-ninh" selected>Tây Ninh (T5)</option>' in html
     assert "Đài Tây Ninh quay Thứ Năm lúc 16h15." in html
     html = (await client.get("/xo-so", params={"dai": "tay-ninh", "ngay": "2026-10-26"})).text
@@ -763,7 +767,9 @@ async def test_trang_xo_so_do_ve_va_escape(client, lottery_sources):
     assert "có 6 chữ số" in html and "729510" in html  # vé sai: vẫn hiện kỳ mới nhất
     lottery_sources["down"] = True
     r = await client.get("/xo-so", params={"dai": "tay-ninh"})
-    assert r.status_code == 200 and "không tự đoán số" in r.text
+    # Nguồn lỗi: 503 + Retry-After cho máy tìm kiếm, người xem vẫn thấy trang báo lỗi.
+    assert r.status_code == 503 and r.headers["retry-after"] == "300"
+    assert "không tự đoán số" in r.text
 
 
 async def test_api_lottery(client, lottery_sources):
@@ -883,7 +889,7 @@ async def test_trang_gia_vang_du_phong_sjc_va_nguon_loi(client, price_sources):
     assert ">150,00</span>" in html and 'id="world-title"' not in html and "sjc.com.vn" in html
     price_sources["sjc"] = True
     r = await client.get("/gia-vang")
-    assert r.status_code == 200 and 'role="alert"' in r.text and "không tự đoán giá" in r.text
+    assert r.status_code == 503 and 'role="alert"' in r.text and "không tự đoán giá" in r.text
     assert 'id="gold-title"' not in r.text
 
 
@@ -925,7 +931,7 @@ async def test_trang_gia_xang(client, price_sources):
     assert 'data-label="Vùng 2"' in html  # nhãn cột cho bảng gập trên điện thoại
     price_sources["fuel"] = True
     r = await client.get("/gia-xang")
-    assert r.status_code == 200 and 'role="alert"' in r.text and "giá xăng dầu đang lỗi" in r.text
+    assert r.status_code == 503 and 'role="alert"' in r.text and "giá xăng dầu đang lỗi" in r.text
 
 
 async def test_api_gold_fuel_fx(client, price_sources):
@@ -996,7 +1002,7 @@ async def test_gia_vang_het_han_chot_bao_loi_lich_su(client, price_sources, monk
     monkeypatch.setattr(market, "get_gold_live", slow)
     monkeypatch.setattr(web_site, "_PRICE_TIMEOUT_SEC", 0.05)
     r = await client.get("/gia-vang")
-    assert r.status_code == 200 and "đang lỗi hoặc chậm" in r.text
+    assert r.status_code == 503 and "đang lỗi hoặc chậm" in r.text
     r = await client.get("/api/v1/gold")
     assert r.status_code == 503 and r.json()["error"]["code"] == "SOURCE_UNAVAILABLE"
 
@@ -1039,12 +1045,19 @@ async def test_404_html_cho_trinh_duyet_json_cho_api(monkeypatch):
 async def test_robots_sitemap_va_the_seo(client, monkeypatch):
     robots = (await client.get("/robots.txt")).text
     assert "Disallow: /admin" in robots and "Disallow: /api/" in robots
+    # Bot huấn luyện AI: một nhóm riêng chặn hết; bot tìm kiếm (kể cả của AI) theo nhóm "*".
+    training, everyone = robots.split("\n\n", 1)
+    assert "User-agent: GPTBot" in training and "User-agent: ClaudeBot" in training
+    assert "User-agent: Google-Extended" in training and training.endswith("Disallow: /")
+    assert everyone.startswith("User-agent: *\nDisallow: /admin\n")
+    assert "SearchBot" not in robots and "Googlebot" not in robots
     assert "Sitemap: https://testserver/sitemap.xml" in robots
     sitemap = await client.get("/sitemap.xml")
     assert sitemap.headers["content-type"].startswith("application/xml")
     assert "<loc>https://testserver/gia-vang</loc>" in sitemap.text and "/admin" not in sitemap.text
     # Có SITE_BASE_URL (tên miền riêng) thì link tuyệt đối theo đó.
     monkeypatch.setattr(web_site.config, "SITE_BASE_URL", "https://lcta.vn")
+    monkeypatch.setattr(web_site.site_data, "today", lambda: dt.date(2026, 9, 15))
     html = (
         await client.get("/lich", params={"thang": "2026-10", "fbclid": "x", "utm_source": "zalo"})
     ).text
@@ -1136,6 +1149,156 @@ async def test_sitemap_co_lastmod_va_trang_tra_cuu(client, monkeypatch):
     assert "/lich?thang=2027-10<" not in text
 
 
+async def test_moi_ngay_mot_trang_rieng_co_tieu_de_va_canonical(client):
+    # Ô ngày trong lưới tháng mở /lich?ngay=: tiêu đề, mô tả theo ngày (không trùng tiêu
+    # đề trang tháng); link cũ kèm ?thang= trỏ canonical về cùng một URL.
+    html = (await client.get("/lich", params={"thang": "2026-10", "ngay": "2026-10-05"})).text
+    assert "<title>Lịch âm ngày 05/10/2026: 25/8 âm lịch, ngày hoàng đạo | LCTA</title>" in html
+    assert '<link rel="canonical" href="https://testserver/lich?ngay=2026-10-05">' in html
+    assert (
+        "Thứ Hai, 05/10/2026 dương lịch là ngày 25 tháng 8 năm Bính Ngọ âm lịch, ngày Nhâm "
+        "Tý, hoàng đạo (Tư Mệnh). Giờ tốt: Tý, Sửu, Mão, Ngọ, Thân, Dậu." in html
+    )
+    assert 'href="/lich?ngay=2026-10-01"' in html and "&amp;ngay=" not in html
+    page, _ = _json_ld(html)
+    assert page["url"] == "https://testserver/lich?ngay=2026-10-05"
+    html = (await client.get("/lich", params={"ngay": "2026-09-25"})).text
+    assert 'Tết Trung thu.">' in html  # ngày lễ ghi thêm vào mô tả
+    html = (await client.get("/lich", params={"thang": "2026-10"})).text
+    assert "<title>Lịch âm tháng 10/2026: ngày hoàng đạo, ngày lễ | LCTA</title>" in html
+
+
+async def test_cung_noi_dung_mot_url_chuan(client, lottery_sources, monkeypatch):
+    """Nhiều kiểu URL cho cùng một trang (link trong site, tên gõ tay) quy về một canonical."""
+
+    async def fake_get_weather(location="", days=1):
+        return _FAKE_WEATHER
+
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    cases = (
+        ("/lich", {"thang": "2026-10"}, "/lich"),  # tháng này (hôm nay 26/10/2026)
+        ("/lich", {"thang": "11/2026"}, "/lich?thang=2026-11"),
+        ("/thoi-tiet", {"noi": "TP.HCM"}, "/thoi-tiet"),  # chỗ đầu danh sách = trang gốc
+        ("/thoi-tiet", {"noi": "ha noi"}, "/thoi-tiet?noi=H%C3%A0%20N%E1%BB%99i"),
+        ("/xo-so", {"dai": "xsmn"}, "/xo-so"),
+        ("/xo-so", {"dai": "mien-bac"}, "/xo-so?dai=mb"),
+        (
+            "/xo-so",
+            {"dai": "Tây Ninh", "ngay": "22/10/2026"},
+            "/xo-so?dai=tay-ninh&ngay=2026-10-22",
+        ),
+    )
+    for path, params, want in cases:
+        html = (await client.get(path, params=params)).text
+        want = want.replace("&", "&amp;")  # thuộc tính HTML: & được escape
+        assert f'<link rel="canonical" href="https://testserver{want}">' in html, params
+    sitemap = (await client.get("/sitemap.xml")).text
+    assert "dai=mn<" not in sitemap and "dai=mien-bac" not in sitemap and "dai=mb<" in sitemap
+
+
+async def test_url_nhap_sai_khong_vao_chi_muc_nguon_loi_tra_503(
+    client, lottery_sources, monkeypatch
+):
+    async def fake_get_weather(location="", days=1):
+        if location == "Xyzabc":
+            return {"error": "Không tìm thấy"}
+        if location == "loi":
+            raise web_site.weather.WeatherError("down")
+        return _FAKE_WEATHER
+
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    noindex = '<meta name="robots" content="noindex, follow">'
+    for path, params in (
+        ("/lich", {"thang": "abc"}),
+        ("/lich", {"ngay": "2026-02-30"}),
+        ("/lich/doi-ngay", {"am": "abc"}),
+        ("/xo-so", {"dai": "khong-co"}),
+        ("/xo-so", {"dai": "mn", "ve": "12ab"}),
+        ("/thoi-tiet", {"noi": "Xyzabc"}),
+    ):
+        r = await client.get(path, params=params)
+        assert r.status_code == 200 and noindex in r.text, params
+        assert 'rel="canonical"' not in r.text
+    for path, params in (("/lich", {"ngay": "2026-10-05"}), ("/xo-so", {"dai": "mn"})):
+        assert noindex not in (await client.get(path, params=params)).text
+    r = await client.get("/thoi-tiet", params={"noi": "loi"})
+    assert r.status_code == 503 and r.headers["retry-after"] == "300"
+    assert "thử lại sau" in r.text
+
+
+async def test_tieu_de_trang_chu_co_tu_khoa_va_llms_txt(client):
+    token = web_site._viewer.set((False, "/", "https://lcta.vn"))
+    try:
+        home = bytes(web_site.home_page().body).decode()
+    finally:
+        web_site._viewer.reset(token)
+    assert '<h1 class="date"><span class="eyebrow">Lịch âm hôm nay</span> ' in home
+    site, org = _json_ld(home)
+    assert site["publisher"] == {"@id": org["@id"]} == {"@id": "https://lcta.vn/#organization"}
+
+    r = await client.get("/llms.txt")
+    assert r.headers["content-type"].startswith("text/plain")
+    text = r.text
+    assert text.startswith("# LCTA\n\n> Lịch âm dương Việt Nam")
+    for path in web_site._SITEMAP_PATHS:  # mọi trang công khai đều có link
+        assert f"](https://testserver{path}):" in text, path
+    assert "[Giá vàng](https://testserver/api/v1/gold)" in text
+    assert "api/v1/calendar/answers?q=r%E1%BA%B1m%20th%C3%A1ng%208" in text
+
+
+async def test_hoi_dap_chi_o_trang_goc(client, lottery_sources):
+    faq = web_site._faq()
+    assert set(faq) == set(web_site._SITEMAP_PATHS)  # trang công khai nào cũng có hỏi đáp
+    html = (await client.get("/lich")).text
+    assert '<h2 id="faq-title">Hỏi đáp</h2>' in html
+    assert "<h3>Tam nương, Nguyệt kỵ là những ngày nào?</h3>" in html
+    html = (await client.get("/lich/ngay-le")).text
+    assert '<a href="/lich/doi-ngay">đổi ngày âm</a>' in html  # [chữ](/đường-dẫn) -> link
+    # Trang theo tham số (ngày, tháng, đài) và trang noindex: không lặp khối hỏi đáp.
+    for path, params in (
+        ("/lich", {"ngay": "2026-10-05"}),
+        ("/lich", {"thang": "2026-11"}),
+        ("/xo-so", {"dai": "tay-ninh"}),
+        ("/lich/hoi", {"q": "rằm tháng 8"}),
+    ):
+        assert 'id="faq-title"' not in (await client.get(path, params=params)).text, params
+    assert 'id="faq-title"' in (await client.get("/xo-so", params={"utm_source": "zalo"})).text
+
+
+def test_hoi_dap_escape_chi_doi_link_noi_bo():
+    html = web_site._faq_html('<b>x</b> [ngoài](https://evil.example) [lịch](/lich?ngay=1&x="y")')
+    assert "<b>" not in html and "&lt;b&gt;" in html
+    assert "[ngoài](https://evil.example)" in html  # chỉ link nội bộ bắt đầu bằng /
+    assert '<a href="/lich?ngay=1&amp;x=&#34;y&#34;">lịch</a>' in html
+
+
+async def test_web_khong_nhac_trung_quoc(client, price_sources, lottery_sources, monkeypatch):
+    """Chủ trang yêu cầu: chữ hiện trên web (trang, kết quả, hỏi đáp, llms.txt, API) không
+    có từ liên quan tới Trung Quốc. Riêng bảng tỷ giá vẫn giữ CNY (chủ trang đồng ý)."""
+    import re
+
+    async def fake_get_weather(location="", days=1):
+        return _FAKE_WEATHER
+
+    monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
+    pages = [bytes(web_site.home_page().body).decode()]
+    for path in (*web_site._SITEMAP_PATHS[1:], "/lich?ngay=2026-10-05", "/llms.txt"):
+        pages.append((await client.get(path)).text)
+    for path in ("/api/v1/fx", "/api/v1/gold"):
+        pages.append(json.dumps((await client.get(path)).json(), ensure_ascii=False))
+    tuvi = {"ngay": "15", "thang": "3", "nam": "1990", "gio": "4", "gioi": "male", "lich": "duong"}
+    pages.append((await client.post("/tu-vi", data=tuvi)).text)
+    pages.append((await client.post("/than-so-hoc", data={"ngay": "1990-03-15", "ten": "An"})).text)
+    text = "\n".join(pages)
+    assert "Đô la Mỹ" in text and "Lá số" in text  # đúng là đã render nội dung
+    found = re.findall(
+        r"trung\s+qu[ốo]c|trung\s+hoa|china|chinese|bắc kinh|[\u4e00-\u9fff]",
+        text,
+        re.I,
+    )
+    assert found == []
+
+
 async def test_trang_dang_nhap_noi_ro_chi_cho_chu_trang_va_co_duong_ve(monkeypatch):
     import web
 
@@ -1157,7 +1320,7 @@ async def test_nhap_sai_bao_loi_ngay_duoi_o(client, lottery_sources):
     html = (await client.get("/lich", params={"thang": "abc"})).text
     assert "Không đọc được tháng “abc”" in html and "YYYY-MM" not in html
     html = (await client.get("/lich", params={"thang": "11/2026"})).text
-    assert "<h1>Tháng 11/2026</h1>" in html
+    assert "<h1>Lịch âm tháng 11/2026</h1>" in html
 
 
 async def test_bang_cuon_ngang_nhan_focus_va_tsh_khong_lap_tieu_de(client, monkeypatch):
