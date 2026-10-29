@@ -569,9 +569,11 @@ def home_page() -> HTMLResponse:
     page = _render(
         "home.html",
         title=f"Lịch âm hôm nay {today:%d/%m/%Y}: giờ hoàng đạo, ngày tốt xấu",
+        # Mô tả nêu luôn giờ hoàng đạo của ngày: Google lấy làm đoạn trích kết quả tìm kiếm.
         description=f"Hôm nay {today:%d/%m/%Y} dương lịch, tức ngày {ld['day']}/{ld['month']} âm lịch, "
-        f"ngày {'hoàng đạo' if info['isHoangDao'] else 'hắc đạo'}. Giờ hoàng đạo, ngày lễ sắp tới, "
-        "tra lịch âm, tử vi, thần số học, giá vàng, thời tiết.",
+        f"ngày {'hoàng đạo' if info['isHoangDao'] else 'hắc đạo'}. Giờ hoàng đạo: "
+        f"{', '.join(h.split(' (')[0] for h in info['luckyHours'])}. Kèm ngày lễ sắp tới, giá "
+        "vàng, thời tiết.",
         active="/",
         today=info,
         today_date=today,

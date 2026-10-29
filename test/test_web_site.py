@@ -650,6 +650,17 @@ def test_dai_gio_hoang_dao_trang_chu():
     assert web_site._hour_strip(lucky, 22)[11]["isNow"]
 
 
+def test_trang_chu_doan_trich_tim_kiem_gon():
+    """Google lấy mô tả làm đoạn trích: có giờ hoàng đạo của ngày. Dải 12 giờ (chữ ẩn
+    "đã qua", đổi theo giờ) nằm trong data-nosnippet để không bị cắt vào đoạn trích."""
+    html = bytes(web_site.home_page().body).decode()
+    info = web_site.site_data.day_info(web_site.site_data.now().date())
+    hours = ", ".join(h.split(" (")[0] for h in info["luckyHours"])
+    assert f"Giờ hoàng đạo: {hours}. Kèm ngày lễ sắp tới" in html
+    block = html.split("<div data-nosnippet>", 1)[1].split("</div>", 1)[0]
+    assert 'class="next-hour"' in block and '<ol class="hours"' in block
+
+
 def test_dai_gio_chi_to_dam_mot_gio_tot_gan_nhat():
     lucky = ["Dần (3h-5h)", "Tỵ (9h-11h)", "Thân (15h-17h)"]
     at_ngo = web_site._hour_strip(lucky, 12)  # giờ Ngọ: không tốt
