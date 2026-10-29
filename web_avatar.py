@@ -14,6 +14,9 @@
 - Nghe: trình duyệt dùng Web Speech API; không có thì ghi âm gửi /stt (Groq Whisper
   như tin thoại, trần VOICE_MAX_BYTES).
 - Ảnh: services/avatar_photo.py; chỉ phục vụ qua route kiểm phiên, ``no-store``.
+- Điểm mặt: MediaPipe Face Landmarker chạy 1 lần trong trình duyệt lúc upload ảnh
+  (vendor/mediapipe, docs/avatar.md); trang hằng ngày chỉ đọc điểm đã lưu. File phục vụ
+  qua /admin/avatar/vendor/<hash>/<tên> (chỉ chủ bot, cache vĩnh viễn theo hash).
 - Chống CSRF ngoài cookie SameSite=Lax: POST/PUT dữ liệu chỉ nhận JSON, upload ảnh dùng
   PUT, /stt nhận body audio/* - form chéo trang không gửi được các kiểu này, còn fetch
   chéo trang phải qua preflight CORS (app không mở).
@@ -34,13 +37,14 @@ kind lạ - nhận 400/415 mặc định của FastAPI):
 from __future__ import annotations
 
 import base64
+import functools
 import json
 import os
 import secrets
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.datastructures import UploadFile
 
 import messages
@@ -57,6 +61,13 @@ PAGE_PATH = "/admin/avatar"
 MAX_TEXT_CHARS = 2000
 _TEMPLATE_PATH = Path(__file__).resolve().parent / "templates" / "avatar.html"
 _NO_STORE = {"Cache-Control": "private, no-store"}
+_VENDOR_DIR = Path(__file__).resolve().parent / "vendor" / "mediapipe"
+_VENDOR_TYPES = {
+    ".mjs": "text/javascript; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".wasm": "application/wasm",
+    ".task": "application/octet-stream",
+}
 
 # Lời dặn "người iu" cho lượt chat từ avatar; env AVATAR_STYLE_HINT (nếu đặt) thay thế.
 AVATAR_STYLE_HINT = (
@@ -156,12 +167,38 @@ async def _page_config() -> dict:
         "voices": avatar_service.voices(),
         "textMax": MAX_TEXT_CHARS,
         "photoMaxBytes": avatar_photo.MAX_UPLOAD_BYTES,
+        "vendor": vendor_urls(),
         "stt": {
             "enabled": voice_service.enabled(),
             "maxBytes": voice_service.max_bytes(),
             "maxSeconds": voice_service.max_seconds(),
         },
     }
+
+
+@functools.lru_cache(maxsize=1)
+def _vendor_digests() -> dict[str, str]:
+    """Tên file MediaPipe -> 16 ký tự đầu sha256 (MANIFEST.json; test kiểm khớp file)."""
+    manifest = json.loads((_VENDOR_DIR / "MANIFEST.json").read_text(encoding="utf-8"))
+    return {name: meta["sha256"][:16] for name, meta in manifest["files"].items()}
+
+
+def vendor_urls() -> dict[str, str]:
+    return {
+        name: f"{PAGE_PATH}/vendor/{digest}/{name}" for name, digest in _vendor_digests().items()
+    }
+
+
+@router.get(PAGE_PATH + "/vendor/{digest}/{name}", dependencies=[Depends(web_admin.require_admin)])
+async def avatar_vendor(digest: str, name: str) -> Response:
+    """MediaPipe cho bước upload ảnh: URL đổi theo nội dung nên cache vĩnh viễn được."""
+    if _vendor_digests().get(name) != digest:
+        return Response(status_code=404)
+    return FileResponse(
+        _VENDOR_DIR / name,
+        media_type=_VENDOR_TYPES[Path(name).suffix],
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
 @router.get(PAGE_PATH)

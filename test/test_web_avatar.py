@@ -3,6 +3,7 @@ Telegram trong khoá chủ bot với lời dặn "người iu", giọng đọc s
 chào/nghe thử có cache, chọn giọng, chép lời, upload ảnh chân dung."""
 
 import base64
+import hashlib
 import io
 import json
 import re
@@ -184,6 +185,46 @@ async def test_trang_avatar_nhung_cau_hinh_khong_cache(client, store):
     assert data["photo"] is None and data["voice"] == "Leda" and data["textMax"] == 2000
     assert data["greeting"]["text"] and data["greeting"]["mood"] in avatar_service.MOODS
     assert data["voices"][0]["name"] == "Achernar" and data["stt"]["maxBytes"] > 0
+    assert data["vendor"]["vision_bundle.mjs"].startswith("/admin/avatar/vendor/")
+
+
+def test_mediapipe_dong_goi_khop_manifest_chi_ban_simd():
+    vendor = ROOT / "vendor" / "mediapipe"
+    manifest = json.loads((vendor / "MANIFEST.json").read_text(encoding="utf-8"))
+    assert manifest["package"] == "@mediapipe/tasks-vision" and manifest["license"] == "Apache-2.0"
+    assert set(manifest["files"]) == {
+        "vision_bundle.mjs",
+        "vision_wasm_internal.js",
+        "vision_wasm_internal.wasm",
+        "face_landmarker.task",
+    }
+    total = 0
+    for name, meta in manifest["files"].items():
+        data = (vendor / name).read_bytes()
+        assert len(data) == meta["bytes"], name
+        assert hashlib.sha256(data).hexdigest() == meta["sha256"], name
+        total += len(data)
+    assert total < 16 * 1024 * 1024
+    assert "Apache License" in (vendor / "LICENSE").read_text(encoding="utf-8")
+
+
+async def test_file_mediapipe_chi_chu_bot_cache_vinh_vien_theo_hash(client):
+    urls = web_avatar.vendor_urls()
+    assert (await client.get(urls["vision_bundle.mjs"])).status_code == 403
+    await _login(client)
+    r = await client.get(urls["vision_bundle.mjs"])
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/javascript")
+    assert r.headers["cache-control"] == "private, max-age=31536000, immutable"
+    r = await client.get(urls["vision_wasm_internal.wasm"])
+    assert r.headers["content-type"] == "application/wasm" and r.content[:4] == b"\0asm"
+    digest = urls["face_landmarker.task"].split("/")[-2]
+    for bad in (
+        "/admin/avatar/vendor/0000000000000000/vision_bundle.mjs",  # hash cũ/sai
+        f"/admin/avatar/vendor/{digest}/vision_bundle.mjs",  # hash của file khác
+        f"/admin/avatar/vendor/{digest}/MANIFEST.json",
+        f"/admin/avatar/vendor/{digest}/..%2F..%2Fweb.py",
+    ):
+        assert (await client.get(bad)).status_code == 404, bad
 
 
 def test_link_avatar_trong_trang_admin():
