@@ -45,7 +45,10 @@
   lượt nặng thì chỉ gửi chữ.
 - Trang avatar (/admin/avatar, web_avatar.py): ``web_clip`` đọc với giọng và phong cách
   riêng của trang (không xét /noi hay kênh), ra M4A cho trình duyệt (không có ffmpeg
-  thì WAV).
+  thì WAV). Riêng trang avatar có thêm giọng Hoài My của Microsoft Edge TTS (gói
+  edge-tts, dịch vụ không chính thức, miễn phí - không tính quota TTS): MP3 phát thẳng
+  trên trình duyệt; lỗi/hết giờ/rỗng thì đọc lại bằng giọng Gemini. /noi và
+  ``canonical_voice`` vẫn chỉ biết giọng Gemini.
 
 RAM: tối đa 1 lượt tổng hợp + đổi định dạng cùng lúc (semaphore); PCM tối đa
 MAX_PCM_BYTES; ffmpeg ghi file tạm trong MEDIA_DIR rồi xoá ngay.
@@ -56,6 +59,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import dataclasses
+import functools
 import hashlib
 import hmac
 import io
@@ -74,7 +78,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from ai.timeouts import TurnTimeoutError, remaining_turn_seconds
+from ai.timeouts import TurnTimeoutError, bounded, remaining_turn_seconds
 from core import config, memtrim
 from core import database as db
 from core.envutil import env_int, env_on
@@ -151,6 +155,13 @@ FFMPEG_TIMEOUT_SEC = 20.0
 GATE_WAIT_SEC = 10.0
 # 600 ký tự đọc ~45-60 giây = ~2,9 MB PCM 24 kHz; trần dư cho câu đọc chậm.
 MAX_PCM_BYTES = 8 * _MB
+# Giọng Microsoft Edge TTS - chỉ trang avatar dùng (web_clip), /noi không nhận.
+EDGE_VOICES = {"HoaiMy": "vi-VN-HoaiMyNeural"}
+# edge-tts trả MP3 24 kHz 48 kbps CBR = 6 byte mỗi ms; 600 ký tự ~60 giây ~360 KB.
+EDGE_MP3_BYTES_PER_MS = 6
+MAX_EDGE_BYTES = 2 * _MB
+_PERCENT = re.compile(r"[+-]\d{1,3}%")
+_HERTZ = re.compile(r"[+-]\d{1,3}Hz")
 # Kho clip Zalo/Zoom: tin thoại M4A 48 kbps ~0,35 MB/phút -> 12 file / 4 MB đủ cho
 # vài người trong 10 phút hiệu lực link (trước 27/10: 20 file / 8 MB).
 STORE_MAX_FILES = 12
@@ -446,9 +457,10 @@ def fit(text: str, limit: int, you: str) -> tuple[str, bool]:
 class Clip:
     data: bytes
     mime: str
-    ext: str  # "ogg" | "m4a" | "wav"
+    ext: str  # "ogg" | "m4a" | "wav" | "mp3"
     duration_ms: int
     truncated: bool = False
+    voice: str = ""  # giọng đã đọc thật (giọng Edge lỗi thì là giọng Gemini đọc lại)
 
     @property
     def duration_sec(self) -> int:
@@ -490,7 +502,7 @@ _FFMPEG_ARGS = {
     "ogg": ("-c:a", "libopus", "-b:a", "32k", "-application", "voip"),
     "m4a": ("-c:a", "aac", "-b:a", "48k", "-movflags", "+faststart"),
 }
-MIMES = {"ogg": "audio/ogg", "m4a": "audio/mp4", "wav": "audio/wav"}
+MIMES = {"ogg": "audio/ogg", "m4a": "audio/mp4", "wav": "audio/wav", "mp3": "audio/mpeg"}
 
 
 def _remove_quietly(path: str) -> None:
@@ -634,11 +646,16 @@ async def make_clip(
         return None
 
 
-async def web_clip(user_id: int, text: str, *, voice: str, style: str) -> Clip | None:
+async def web_clip(
+    user_id: int, text: str, *, voice: str, style: str, fallback_voice: str | None = None
+) -> Clip | None:
     """Giọng đọc cho trang avatar (/admin/avatar): như ``make_clip`` nhưng không xét /noi
-    và kênh - giọng ``voice`` (tên lạ -> VOICE_TTS_VOICE) và chỉ dẫn đọc ``style`` do
-    trang chọn. Vẫn che bí mật, lọc chữ đọc được, cắt theo VOICE_REPLY_MAX_CHARS, chuẩn
-    hoá số/viết tắt, tính quota TTS như chủ bot Telegram. KHÔNG raise."""
+    và kênh - giọng ``voice`` và chỉ dẫn đọc ``style`` do trang chọn. Vẫn che bí mật,
+    lọc chữ đọc được, cắt theo VOICE_REPLY_MAX_CHARS, chuẩn hoá số/viết tắt.
+
+    ``voice`` trong EDGE_VOICES: đọc bằng Edge TTS (miễn phí, không tính quota TTS);
+    Edge lỗi/hết giờ/rỗng thì đọc lại bằng giọng Gemini ``fallback_voice``. Giọng Gemini
+    (tên lạ -> VOICE_TTS_VOICE) tính quota TTS như chủ bot Telegram. KHÔNG raise."""
     try:
         you, _ = reply_audience.forms()
         hidden = prompt_redaction.Redactor().text(text)
@@ -650,6 +667,20 @@ async def web_clip(user_id: int, text: str, *, voice: str, style: str) -> Clip |
         if remaining is not None and remaining < MIN_REMAINING_SEC:
             logger.info("Còn %.1fs của lượt - bỏ giọng đọc avatar.", remaining)
             return None
+        if voice in EDGE_VOICES:
+            try:
+                return await _synthesize_edge(speech, truncated, voice)
+            except TurnTimeoutError:
+                raise
+            except Exception as exc:
+                logger.info(
+                    "Giọng Edge %s lỗi (%s: %s) - đọc lại bằng giọng %s.",
+                    voice,
+                    type(exc).__name__,
+                    str(exc)[:200],
+                    fallback_voice or tts_voice(),
+                )
+                voice = fallback_voice or tts_voice()
         if not await usage_quota.heavy_available(user_id, channel="telegram", is_admin=True):
             return None
         clip = await _synthesize(
@@ -702,11 +733,94 @@ async def _synthesize(
         if encoded is None:
             return None
         data, ext = encoded
-        return Clip(data, MIMES[ext], ext, duration_ms(pcm, rate, channels), truncated)
+        return Clip(
+            data, MIMES[ext], ext, duration_ms(pcm, rate, channels), truncated, voice or tts_voice()
+        )
     finally:
         _gate.release()
         # PCM vài MB + tiến trình ffmpeg: trả heap rảnh về hệ điều hành (core/memtrim.py).
         memtrim.request("tin thoại")
+
+
+def edge_timeout_sec() -> int:
+    return env_int("AVATAR_EDGE_TIMEOUT_SEC", 15, 3, 60)
+
+
+@functools.lru_cache(maxsize=16)
+def _edge_setting(name: str, raw: str, default: str, pattern: re.Pattern) -> str:
+    # lru_cache: giá trị sai chỉ ghi log 1 lần thay vì mỗi câu đọc.
+    raw = raw.strip()
+    if not raw:
+        return default
+    if pattern.fullmatch(raw):
+        return raw
+    logger.warning("%s=%r sai định dạng edge-tts - dùng %s.", name, raw, default)
+    return default
+
+
+def edge_prosody() -> dict[str, str]:
+    """Tốc độ/cao độ/âm lượng cho Edge TTS (Edge không nhận chỉ dẫn phong cách bằng lời):
+    AVATAR_EDGE_RATE "-6%", AVATAR_EDGE_PITCH "+12Hz", AVATAR_EDGE_VOLUME "+0%" - giọng
+    chậm và cao hơn chút cho nhẹ nhàng. Sai định dạng (cần dấu +/- và % hoặc Hz) -> mặc định."""
+    return {
+        "rate": _edge_setting(
+            "AVATAR_EDGE_RATE", os.getenv("AVATAR_EDGE_RATE", ""), "-6%", _PERCENT
+        ),
+        "pitch": _edge_setting(
+            "AVATAR_EDGE_PITCH", os.getenv("AVATAR_EDGE_PITCH", ""), "+12Hz", _HERTZ
+        ),
+        "volume": _edge_setting(
+            "AVATAR_EDGE_VOLUME", os.getenv("AVATAR_EDGE_VOLUME", ""), "+0%", _PERCENT
+        ),
+    }
+
+
+async def _synthesize_edge(speech: str, truncated: bool, voice: str) -> Clip | None:
+    """MP3 của giọng Edge ``voice`` (EDGE_VOICES) - trình duyệt phát thẳng, không qua
+    ffmpeg, không ghi file tạm. None = đang có lượt đọc khác (chỉ hiện chữ); Edge lỗi,
+    hết giờ (AVATAR_EDGE_TIMEOUT_SEC), trả rỗng hoặc quá MAX_EDGE_BYTES -> raise để
+    ``web_clip`` đọc lại bằng giọng Gemini."""
+    # Nạp lười: edge-tts kéo theo aiohttp (~10 MB RAM) - chỉ khi có người chọn giọng Edge.
+    import edge_tts
+
+    remaining = remaining_turn_seconds()
+    wait = GATE_WAIT_SEC if remaining is None else max(0.5, min(GATE_WAIT_SEC, remaining - 5))
+    try:
+        await asyncio.wait_for(_gate.acquire(), wait)
+    except TimeoutError:
+        logger.info("Đang có lượt đọc giọng khác - bỏ giọng avatar lần này.")
+        return None
+    try:
+        timeout = edge_timeout_sec()
+
+        async def collect() -> bytes:
+            prosody = edge_prosody()
+            communicate = edge_tts.Communicate(
+                speech,
+                EDGE_VOICES[voice],
+                rate=prosody["rate"],
+                volume=prosody["volume"],
+                pitch=prosody["pitch"],
+                connect_timeout=min(10, timeout),
+                receive_timeout=timeout,
+            )
+            audio = bytearray()
+            async for chunk in communicate.stream():
+                data = chunk.get("data")
+                if chunk["type"] == "audio" and data:
+                    audio += data
+                    if len(audio) > MAX_EDGE_BYTES:
+                        raise ValueError(f"Edge TTS trả quá {MAX_EDGE_BYTES} byte")
+            return bytes(audio)
+
+        data = await bounded(collect, timeout)
+        if not data:
+            raise ValueError("Edge TTS không trả âm thanh")
+        duration = len(data) // EDGE_MP3_BYTES_PER_MS
+        return Clip(data, MIMES["mp3"], "mp3", duration, truncated, voice)
+    finally:
+        _gate.release()
+        memtrim.request("giọng avatar")
 
 
 # ─── Kho RAM cho Zalo (link ký HMAC có hạn) ──────────────────────────────────

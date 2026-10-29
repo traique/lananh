@@ -269,6 +269,14 @@ services:
         value: "10"
       - key: VOICE_REPLY_STORE_MB
         value: "4"
+      # Trang avatar: giọng Hoài My (Microsoft Edge TTS, dịch vụ không chính thức - lỗi thì
+      # đọc lại bằng giọng Gemini). Tốc độ/cao độ/âm lượng theo định dạng edge-tts.
+      - key: AVATAR_EDGE_RATE
+        value: "-6%"
+      - key: AVATAR_EDGE_PITCH
+        value: "+12Hz"
+      - key: AVATAR_EDGE_VOLUME
+        value: "+0%"
       - key: VISION_QA_ENABLED
         value: "1"
       - key: PHOTO_NO_CAPTION_MODE

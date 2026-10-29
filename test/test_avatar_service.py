@@ -1,7 +1,11 @@
 """Logic trang avatar (services/avatar_service.py) và giọng đọc ``voice_reply.web_clip``:
-biểu cảm theo câu trả lời, câu chào theo giờ VN, chọn giọng (cài đặt > env > mặc định),
-cache giọng có trần, chữ hiển thị không markdown, TTS lỗi/hết quota không raise."""
+biểu cảm theo câu trả lời, câu chào theo giờ VN, chọn giọng (cài đặt > env > mặc định
+Hoài My), cache giọng có trần, chữ hiển thị không markdown, TTS lỗi/hết quota không
+raise, giọng Hoài My qua Edge TTS (giả, không gọi mạng) và đọc lại bằng Gemini khi lỗi."""
 
+import asyncio
+import sys
+import types
 from datetime import datetime, timezone
 
 import pytest
@@ -49,6 +53,32 @@ def tts(monkeypatch):
     monkeypatch.setattr(orchestrator, "synthesize_speech", synthesize)
     monkeypatch.setattr(voice_reply, "ffmpeg_path", lambda: None)
     return calls
+
+
+@pytest.fixture
+def edge(monkeypatch):
+    """edge-tts giả: ghi lại tham số; ``state`` chọn MP3 trả về, lỗi hoặc độ trễ."""
+    state = {"calls": [], "chunks": [b"\xff\xf3" + bytes(2998), bytes(3000)], "error": None}
+    state["delay"] = 0.0
+
+    class Communicate:
+        def __init__(self, text, voice, *, rate, volume, pitch, connect_timeout, receive_timeout):
+            state["calls"].append(
+                {"text": text, "voice": voice, "rate": rate, "pitch": pitch, "volume": volume}
+            )
+
+        async def stream(self):
+            await asyncio.sleep(state["delay"])
+            if state["error"] is not None:
+                raise state["error"]
+            yield {"type": "SentenceBoundary", "offset": 0, "duration": 1, "text": "x"}
+            for data in state["chunks"]:
+                yield {"type": "audio", "data": data}
+
+    monkeypatch.setitem(sys.modules, "edge_tts", types.SimpleNamespace(Communicate=Communicate))
+    for name in ("AVATAR_EDGE_RATE", "AVATAR_EDGE_PITCH", "AVATAR_EDGE_VOLUME"):
+        monkeypatch.delenv(name, raising=False)
+    return state
 
 
 # ─── Biểu cảm ────────────────────────────────────────────────────────────────
@@ -130,8 +160,13 @@ def test_cache_giong_co_tran_lru():
 
 
 async def test_giong_cai_dat_uu_tien_hon_env_ten_la_ve_mac_dinh(settings, monkeypatch):
-    assert avatar_service.default_voice() == "Achernar"
-    assert await avatar_service.current_voice() == "Achernar"
+    # Chưa chọn trên trang, chưa đặt env: Hoài My (Edge); Edge lỗi thì đọc lại bằng Achernar.
+    assert avatar_service.default_voice() == "HoaiMy"
+    assert await avatar_service.current_voice() == "HoaiMy"
+    assert avatar_service.gemini_voice() == "Achernar"
+    monkeypatch.setenv("AVATAR_TTS_VOICE", "Sulafat")  # env vẫn thắng mặc định
+    assert await avatar_service.current_voice() == "Sulafat"
+    assert avatar_service.gemini_voice() == "Sulafat"
     monkeypatch.setenv("AVATAR_TTS_VOICE", "leda")
     assert await avatar_service.current_voice() == "Leda"
     # Tên lạ trong env -> VOICE_TTS_VOICE (không lỗi).
@@ -143,6 +178,10 @@ async def test_giong_cai_dat_uu_tien_hon_env_ten_la_ve_mac_dinh(settings, monkey
     assert await avatar_service.current_voice() == "Vindemiatrix"
     with pytest.raises(ValueError):
         await avatar_service.set_voice("GiọngLạ")
+    assert await avatar_service.set_voice("hoaimy") == "HoaiMy"
+    assert settings[avatar_service.VOICE_SETTING_KEY] == "HoaiMy"
+    assert await avatar_service.current_voice() == "HoaiMy"
+    assert avatar_service.gemini_voice() == "Achernar"  # env là tên lạ -> giọng dự phòng
     settings[avatar_service.VOICE_SETTING_KEY] = "hỏng"  # giá trị hỏng trong DB -> env
     assert await avatar_service.current_voice() == "Kore"
     # Không giữ chung cài đặt /noi giong của Telegram.
@@ -154,14 +193,18 @@ async def test_doc_cai_dat_loi_thi_dung_mac_dinh(settings, monkeypatch):
         raise RuntimeError("db down")
 
     monkeypatch.setattr(db, "get_setting", broken)
-    assert await avatar_service.current_voice() == "Achernar"
+    assert await avatar_service.current_voice() == "HoaiMy"
 
 
-def test_danh_sach_giong_goi_y_dung_dau_va_phong_cach(settings, monkeypatch):
+def test_danh_sach_giong_hoai_my_dung_dau_va_phong_cach(settings, monkeypatch):
     voices = avatar_service.voices()
-    assert [v["name"] for v in voices[:4]] == ["Achernar", "Vindemiatrix", "Leda", "Sulafat"]
-    assert all(v["suggested"] for v in voices[:4]) and not voices[4]["suggested"]
-    assert len(voices) == len(voice_reply.VOICES)
+    names = [v["name"] for v in voices[:5]]
+    assert names == ["HoaiMy", "Achernar", "Vindemiatrix", "Leda", "Sulafat"]
+    assert voices[0]["title"] == "Hoài My"
+    assert voices[0]["label"] == "Hoài My · Microsoft · tiếng Việt · miễn phí"
+    assert voices[1]["label"] == "Achernar (mềm)" and voices[1]["title"] == "Achernar"
+    assert all(v["suggested"] for v in voices[:5]) and not voices[5]["suggested"]
+    assert len(voices) == len(voice_reply.VOICES) + 1
     assert avatar_service.voice_style() == avatar_service.DEFAULT_VOICE_STYLE
     monkeypatch.setenv("AVATAR_VOICE_STYLE", "  giọng  vui  ")
     assert avatar_service.voice_style() == "giọng vui"
@@ -180,6 +223,14 @@ def test_chu_hien_thi_bo_markdown_giu_emoji():
         "Tiêu đề\nDạ anh, xem nguồn nha 🥰\ný 1\ný hai\n\nmã cũ"
     )
     assert avatar_service.display_text("2*3*4 = 24") == "2*3*4 = 24"
+
+
+def test_hoai_my_chi_cho_trang_avatar_khong_lan_sang_noi():
+    assert voice_reply.canonical_voice("HoaiMy") is None
+    assert voice_reply.canonical_voice("hoaimy") is None
+    assert avatar_service.canonical_voice("hoaimy") == "HoaiMy"
+    assert avatar_service.canonical_voice("leda") == "Leda"
+    assert avatar_service.canonical_voice("GiọngLạ") is None
 
 
 # ─── Giọng đọc web_clip ──────────────────────────────────────────────────────
@@ -245,3 +296,104 @@ async def test_web_clip_tinh_quota_tts_nhu_chu_bot(settings, tts, monkeypatch):
     monkeypatch.setattr(usage_quota, "record_heavy", record)
     assert await voice_reply.web_clip(42, "Dạ anh.", voice="Leda", style="") is not None
     assert recorded == [(42, usage_quota.KIND_TTS, "telegram", True)]
+
+
+# ─── Giọng Hoài My (Edge TTS) ───────────────────────────────────────────────
+
+
+async def test_web_clip_hoai_my_doc_bang_edge_mien_phi(settings, tts, edge, monkeypatch):
+    recorded = []
+
+    async def no_quota(user_id, *, channel, is_admin):
+        return False  # hết lượt nặng vẫn đọc được bằng Edge
+
+    async def record(user_id, kind, *, channel, is_admin):
+        recorded.append(kind)
+
+    monkeypatch.setattr(usage_quota, "heavy_available", no_quota)
+    monkeypatch.setattr(usage_quota, "record_heavy", record)
+    clip = await voice_reply.web_clip(
+        42, "**Dạ** anh 🥰 150k nha", voice="HoaiMy", style="thủ thỉ", fallback_voice="Achernar"
+    )
+    assert (clip.mime, clip.ext, clip.voice) == ("audio/mpeg", "mp3", "HoaiMy")
+    assert clip.data == b"".join(edge["chunks"]) and clip.duration_ms == 1000  # 48 kbps
+    assert edge["calls"] == [
+        {
+            "text": "Dạ anh một trăm năm mươi nghìn nha.",
+            "voice": "vi-VN-HoaiMyNeural",
+            "rate": "-6%",
+            "pitch": "+12Hz",
+            "volume": "+0%",
+        }
+    ]
+    assert tts == [] and recorded == []  # không gọi Gemini, không tính quota TTS
+    monkeypatch.setenv("AVATAR_EDGE_RATE", "-10%")
+    monkeypatch.setenv("AVATAR_EDGE_PITCH", "+20Hz")
+    await voice_reply.web_clip(42, "Dạ anh.", voice="HoaiMy", style="")
+    assert (edge["calls"][-1]["rate"], edge["calls"][-1]["pitch"]) == ("-10%", "+20Hz")
+
+
+async def test_edge_loi_het_gio_rong_thi_doc_lai_bang_gemini(settings, tts, edge, monkeypatch):
+    monkeypatch.setattr(voice_reply, "edge_timeout_sec", lambda: 0.05)
+    monkeypatch.setattr(voice_reply, "MAX_EDGE_BYTES", 5000)
+
+    def broken():
+        edge["error"] = RuntimeError("403 Forbidden")
+
+    def slow():
+        edge["delay"] = 1.0
+
+    def silent():
+        edge["chunks"] = []
+
+    def too_big():
+        edge["chunks"] = [bytes(6000)]
+
+    def missing_package():
+        monkeypatch.setitem(sys.modules, "edge_tts", None)
+
+    for make_fail in (broken, slow, silent, too_big, missing_package):
+        edge.update(error=None, delay=0.0, chunks=[bytes(600)])
+        make_fail()
+        clip = await voice_reply.web_clip(
+            42, "Dạ anh.", voice="HoaiMy", style="thủ thỉ", fallback_voice="Achernar"
+        )
+        assert clip is not None and (clip.ext, clip.voice) == ("wav", "Achernar"), make_fail
+        assert tts[-1]["voice"] == "Achernar" and tts[-1]["style"] == "thủ thỉ", make_fail
+    assert len(tts) == 5
+    # Không truyền giọng dự phòng: VOICE_TTS_VOICE.
+    monkeypatch.setitem(sys.modules, "edge_tts", None)
+    clip = await voice_reply.web_clip(42, "Dạ anh.", voice="HoaiMy", style="")
+    assert clip.voice == "Sulafat"
+
+
+async def test_edge_ban_hoac_het_han_chot_thi_khong_doc_lai(settings, tts, edge, monkeypatch):
+    # Cổng đọc đang bận (lượt /noi khác): chỉ hiện chữ, không đọc lại bằng Gemini.
+    monkeypatch.setattr(voice_reply, "GATE_WAIT_SEC", 0.05)
+    await voice_reply._gate.acquire()
+    try:
+        assert await voice_reply.web_clip(42, "Dạ anh.", voice="HoaiMy", style="") is None
+    finally:
+        voice_reply._gate.release()
+    # Hết hạn chót của lượt trong lúc Edge đang đọc: thôi, không đọc lại.
+    monkeypatch.setattr(voice_reply, "MIN_REMAINING_SEC", 0.0)
+    edge["delay"] = 1.0
+    with turn_deadline(0.1):
+        assert await voice_reply.web_clip(42, "Dạ anh.", voice="HoaiMy", style="") is None
+    assert tts == []
+
+
+def test_tham_so_edge_sai_dinh_dang_thi_dung_mac_dinh(monkeypatch):
+    monkeypatch.setenv("AVATAR_EDGE_RATE", "-10%")
+    monkeypatch.setenv("AVATAR_EDGE_PITCH", " +5Hz ")
+    monkeypatch.setenv("AVATAR_EDGE_VOLUME", "-20%")
+    assert voice_reply.edge_prosody() == {"rate": "-10%", "pitch": "+5Hz", "volume": "-20%"}
+    for rate, pitch, volume in (
+        ("10%", "+12", "loud"),
+        ("-6", "12Hz", "+5Hz"),
+        ("+5 %", "+1hz", ""),
+    ):
+        monkeypatch.setenv("AVATAR_EDGE_RATE", rate)
+        monkeypatch.setenv("AVATAR_EDGE_PITCH", pitch)
+        monkeypatch.setenv("AVATAR_EDGE_VOLUME", volume)
+        assert voice_reply.edge_prosody() == {"rate": "-6%", "pitch": "+12Hz", "volume": "+0%"}

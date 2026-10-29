@@ -1,10 +1,11 @@
 """Logic trang avatar Lan Anh (/admin/avatar, web_avatar.py) - không gọi AI.
 
 - Giọng: ``current_voice()`` = giọng chủ bot chọn trên trang (settings "avatar:voice")
-  > AVATAR_TTS_VOICE > mặc định Achernar ("mềm"); tên lạ -> VOICE_TTS_VOICE
-  (voice_reply.canonical_voice). ``voice_style()`` = AVATAR_VOICE_STYLE hoặc lời dặn
-  "thủ thỉ" mặc định; "off" = không gửi phong cách. Không đụng /noi của
-  Telegram/Zalo/Zoom (giọng và cài đặt riêng).
+  > AVATAR_TTS_VOICE > mặc định Hoài My (Microsoft Edge TTS, miễn phí); tên lạ ->
+  VOICE_TTS_VOICE. Ngoài Hoài My là các giọng Gemini (voice_reply.VOICES); Edge lỗi thì
+  đọc lại bằng ``gemini_voice()``. ``voice_style()`` = AVATAR_VOICE_STYLE hoặc lời dặn
+  "thủ thỉ" mặc định (chỉ giọng Gemini nhận); "off" = không gửi phong cách. Không đụng
+  /noi của Telegram/Zalo/Zoom (giọng và cài đặt riêng).
 - ``guess_mood(text)``: biểu cảm từ emoji + từ khoá tiếng Việt, ranh giới từ theo chữ
   Unicode ("tôi" không khớp "ôi", "anh ơi" không khớp "ơ"): happy, love, shy, sad,
   angry, surprised, neutral.
@@ -36,8 +37,12 @@ logger = logging.getLogger(__name__)
 
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 VOICE_SETTING_KEY = "avatar:voice"
-# Thứ tự gợi ý đầu menu "Giọng": mềm, dịu dàng, trẻ trung, ấm. Mặc định là giọng đầu.
-SUGGESTED_VOICES = ("Achernar", "Vindemiatrix", "Leda", "Sulafat")
+# Thứ tự gợi ý đầu menu "Giọng": Hoài My, rồi giọng Gemini mềm, dịu dàng, trẻ trung, ấm.
+# Mặc định là giọng đầu.
+SUGGESTED_VOICES = ("HoaiMy", "Achernar", "Vindemiatrix", "Leda", "Sulafat")
+# Giọng Edge (voice_reply.EDGE_VOICES): (tên ngắn, dòng hiện trong menu).
+EDGE_LABELS = {"HoaiMy": ("Hoài My", "Hoài My · Microsoft · tiếng Việt · miễn phí")}
+GEMINI_FALLBACK_VOICE = "Achernar"
 DEFAULT_VOICE_STYLE = (
     "Giọng nữ trẻ, nhẹ nhàng, ngọt ngào, ấm áp, hơi nũng nịu, tốc độ chậm vừa, như đang "
     "thủ thỉ với người yêu; cuối câu hơi kéo dài nhẹ, có ý cười trong giọng."
@@ -51,16 +56,24 @@ _OFF_WORDS = ("off", "0", "-", "none", "tat", "tắt")
 # ─── Giọng ───────────────────────────────────────────────────────────────────
 
 
+def canonical_voice(name: str) -> str | None:
+    """Tên giọng của trang avatar đúng chữ hoa: giọng Edge hoặc giọng Gemini; None nếu lạ."""
+    wanted = (name or "").strip().lower()
+    edge = next((voice for voice in voice_reply.EDGE_VOICES if voice.lower() == wanted), None)
+    return edge or voice_reply.canonical_voice(name or "")
+
+
 def default_voice() -> str:
     """AVATAR_TTS_VOICE (tên lạ -> VOICE_TTS_VOICE), không đặt thì giọng gợi ý đầu."""
     raw = os.getenv("AVATAR_TTS_VOICE", "").strip()
     if raw:
-        return voice_reply.canonical_voice(raw) or voice_reply.tts_voice()
-    for name in SUGGESTED_VOICES:
-        voice = voice_reply.canonical_voice(name)
-        if voice:
-            return voice
-    return voice_reply.tts_voice()
+        return canonical_voice(raw) or voice_reply.tts_voice()
+    return SUGGESTED_VOICES[0]
+
+
+def gemini_voice() -> str:
+    """Giọng Gemini đọc lại khi giọng Edge lỗi: AVATAR_TTS_VOICE nếu là giọng Gemini."""
+    return voice_reply.canonical_voice(os.getenv("AVATAR_TTS_VOICE", "")) or GEMINI_FALLBACK_VOICE
 
 
 async def current_voice() -> str:
@@ -70,12 +83,12 @@ async def current_voice() -> str:
     except Exception:
         logger.warning("Không đọc được giọng avatar đã chọn, dùng mặc định.", exc_info=True)
         raw = None
-    return voice_reply.canonical_voice(raw or "") or default_voice()
+    return canonical_voice(raw or "") or default_voice()
 
 
 async def set_voice(name: str) -> str:
     """Lưu giọng chọn trên trang; tên không có trong danh sách -> ValueError."""
-    voice = voice_reply.canonical_voice(name)
+    voice = canonical_voice(name)
     if voice is None:
         raise ValueError(f"Không có giọng {name!r}.")
     await db.set_setting(VOICE_SETTING_KEY, voice)
@@ -91,13 +104,16 @@ def voice_style() -> str:
 
 
 def voices() -> list[dict]:
-    """Giọng dựng sẵn của model TTS (voice_reply.VOICES), giọng gợi ý đứng đầu."""
-    suggested = [v for v in SUGGESTED_VOICES if v in voice_reply.VOICES]
-    rest = [v for v in voice_reply.VOICES if v not in suggested]
-    return [
-        {"name": name, "description": voice_reply.VOICES[name], "suggested": name in suggested}
-        for name in [*suggested, *rest]
-    ]
+    """Menu "Giọng": giọng gợi ý đứng đầu (Hoài My trước), rồi các giọng Gemini còn lại.
+    ``title`` là tên ngắn, ``label`` là dòng hiện trong menu."""
+    rest = [voice for voice in voice_reply.VOICES if voice not in SUGGESTED_VOICES]
+    items = []
+    for name in [*SUGGESTED_VOICES, *rest]:
+        title, label = EDGE_LABELS.get(name) or (name, f"{name} ({voice_reply.VOICES[name]})")
+        items.append(
+            {"name": name, "title": title, "label": label, "suggested": name in SUGGESTED_VOICES}
+        )
+    return items
 
 
 # ─── Biểu cảm ────────────────────────────────────────────────────────────────
