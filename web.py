@@ -16,6 +16,7 @@ from telegram.ext import Application
 
 import bot_app
 import web_admin
+import web_avatar
 from handlers import callbacks, turn_feedback
 import web_site
 import logging_setup
@@ -238,6 +239,8 @@ api.include_router(tts_media.internal_router)
 api.include_router(tts_media.public_router)
 api.include_router(web_admin.router)
 api.include_router(web_admin.api_router)
+api.include_router(web_avatar.router)
+api.include_router(web_avatar.api_router)
 api.include_router(web_site.static_router)
 api.include_router(web_site.router)
 api.include_router(web_site.api_router)
