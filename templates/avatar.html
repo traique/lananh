@@ -2,18 +2,1558 @@
 <html lang="vi">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="robots" content="noindex, nofollow">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex,nofollow">
 <title>Lan Anh</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&amp;display=swap">
+<script>
+  // Cùng lựa chọn sáng/tối với /admin, áp TRƯỚC khi vẽ để không nháy màu.
+  (function () {
+    try {
+      var saved = localStorage.getItem('lcta.theme') || localStorage.getItem('admin.theme');
+      if (saved === 'dark' || saved === 'light') document.documentElement.dataset.theme = saved;
+    } catch (e) {}
+  })();
+</script>
 <style>
-:root{--bg:#fff7f9;--text:#3a2a30;color-scheme:light}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#1d1418;--text:#f6e9ee;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#1d1418;--text:#f6e9ee;color-scheme:dark}
-body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}
+  :root{
+    color-scheme:light;
+    --bg:#fff7f8;
+    --surface:#ffffff;
+    --surface-2:#fff0f3;
+    --border:#f4d9e0;
+    --text:#3b2a31;
+    --muted:#7d616b;
+    --accent:#c2456c;
+    --accent-ink:#ffffff;
+    --accent-soft:#ffe1ea;
+    --me:#ffdbe5;
+    --me-ink:#3b2a31;
+    --her:#ffffff;
+    --err-fg:#a8324d;
+    --err-bg:#ffe8ed;
+    --stage:#fde8ee;
+    --hint-bg:rgba(255,255,255,.9);
+    --hint-ink:#3b2a31;
+    --backdrop:rgba(60,20,35,.42);
+    --shadow:0 14px 34px -22px rgba(150,50,80,.55);
+    --radius:22px;
+    --ease-out:cubic-bezier(.22,1,.36,1);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      color-scheme:dark;
+      --bg:#1a1215; --surface:#24191d; --surface-2:#2e2026; --border:#3b2a31;
+      --text:#f8eaef; --muted:#c7a7b2; --accent:#f28cab; --accent-ink:#2b0f19; --accent-soft:#40232d;
+      --me:#4a2633; --me-ink:#f8eaef; --her:#24191d;
+      --err-fg:#ffb3c4; --err-bg:#3b1b24; --stage:#2a1c21;
+      --hint-bg:rgba(36,25,29,.88); --hint-ink:#f8eaef; --backdrop:rgba(0,0,0,.6);
+      --shadow:0 14px 34px -22px rgba(0,0,0,.85);
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --bg:#1a1215; --surface:#24191d; --surface-2:#2e2026; --border:#3b2a31;
+    --text:#f8eaef; --muted:#c7a7b2; --accent:#f28cab; --accent-ink:#2b0f19; --accent-soft:#40232d;
+    --me:#4a2633; --me-ink:#f8eaef; --her:#24191d;
+    --err-fg:#ffb3c4; --err-bg:#3b1b24; --stage:#2a1c21;
+    --hint-bg:rgba(36,25,29,.88); --hint-ink:#f8eaef; --backdrop:rgba(0,0,0,.6);
+    --shadow:0 14px 34px -22px rgba(0,0,0,.85);
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;height:100dvh;overflow:hidden;background:var(--bg);color:var(--text);
+    font-family:"Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    font-size:15px;line-height:1.5;-webkit-tap-highlight-color:transparent;
+  }
+  button,select,textarea{font:inherit;color:inherit}
+  button{cursor:pointer}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+
+  .app{
+    display:grid;grid-template-rows:auto auto minmax(0,1fr);
+    height:var(--app-h,100dvh);max-width:1180px;margin:0 auto;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  }
+  .top{display:flex;align-items:center;gap:8px;padding:8px 12px}
+  .who{flex:1;min-width:0}
+  .who b{display:block;font-size:17px;font-weight:600;line-height:1.3}
+  .who span{display:block;color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .icon-btn{
+    flex:none;display:inline-grid;place-items:center;width:44px;height:44px;padding:0;
+    border:0;border-radius:50%;background:transparent;color:var(--text);text-decoration:none;
+    transition:background-color 150ms var(--ease-out),transform 120ms var(--ease-out);
+  }
+  .icon-btn:hover{background:var(--surface-2)}
+  .icon-btn:active{transform:scale(.94)}
+  .icon-btn svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .icon-btn .dots{fill:currentColor;stroke:none}
+
+  .stage-wrap{display:flex;justify-content:center;align-items:center;min-height:0;padding:0 16px 10px}
+  .stage{
+    position:relative;display:block;padding:0;border:0;border-radius:var(--radius);overflow:hidden;
+    background:var(--stage);box-shadow:var(--shadow);touch-action:manipulation;
+  }
+  .stage[hidden]{display:none}
+  .stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  /* Má hồng, khoang miệng vẽ "nhân" lên ảnh: tối đi/ửng hồng tự nhiên theo màu da. */
+  #fx{mix-blend-mode:multiply;pointer-events:none}
+  .stage::after{
+    content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    box-shadow:inset 0 0 0 3px transparent;transition:box-shadow 200ms var(--ease-out);
+  }
+  [data-state="listening"] .stage::after{box-shadow:inset 0 0 0 3px var(--accent)}
+  .hint{
+    position:absolute;left:50%;bottom:14px;transform:translateX(-50%);
+    padding:8px 14px;border-radius:999px;background:var(--hint-bg);color:var(--hint-ink);
+    font-size:14px;font-weight:500;white-space:nowrap;box-shadow:0 6px 18px -10px rgba(0,0,0,.45);
+  }
+  .hint[hidden]{display:none}
+
+  .empty{
+    width:min(440px,100%);padding:20px 20px 16px;border-radius:var(--radius);
+    background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow);
+  }
+  .empty[hidden]{display:none}
+  .empty h1{margin:0 0 8px;font-size:18px;font-weight:600;line-height:1.35}
+  .empty ul{margin:0 0 14px;padding-left:20px;color:var(--muted)}
+  .empty li+li{margin-top:2px}
+
+  .chat{display:flex;flex-direction:column;min-height:0;border-top:1px solid var(--border)}
+  .log{
+    flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;margin:0;padding:14px 16px;
+    list-style:none;display:flex;flex-direction:column;gap:8px;
+  }
+  .msg{
+    max-width:min(85%,560px);padding:9px 14px;border-radius:18px;border:1px solid var(--border);
+    background:var(--her);align-self:flex-start;border-bottom-left-radius:6px;overflow-wrap:anywhere;
+  }
+  .msg p{margin:0;white-space:pre-wrap}
+  .msg img{display:block;max-width:100%;border-radius:12px}
+  .msg p+img{margin-top:8px}
+  .msg.me{align-self:flex-end;background:var(--me);color:var(--me-ink);border-color:transparent;border-radius:18px 18px 6px 18px}
+  .msg.err{background:var(--err-bg);color:var(--err-fg);border-color:transparent}
+  .typing{display:flex;gap:5px;padding:14px 16px}
+  .typing i{width:7px;height:7px;border-radius:50%;background:var(--muted);opacity:.5}
+
+  .composer{
+    display:flex;align-items:flex-end;gap:4px;padding:8px 10px max(10px,env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--bg);
+  }
+  .composer textarea{
+    flex:1;min-width:0;min-height:44px;max-height:132px;resize:none;padding:10px 14px;
+    border-radius:22px;border:1px solid var(--border);background:var(--surface);font-size:16px;line-height:1.4;
+  }
+  .composer textarea::placeholder{color:var(--muted)}
+  .composer textarea:focus-visible{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  #mic[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+  #speaker[aria-pressed="true"] .speaker-on,#speaker[aria-pressed="false"] .speaker-off{display:none}
+  .send{background:var(--accent);color:var(--accent-ink)}
+  .send:hover{background:var(--accent)}
+  .send:disabled{opacity:.55;cursor:default}
+
+  dialog{
+    width:min(440px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:0;border:0;
+    border-radius:var(--radius);background:var(--surface);color:var(--text);box-shadow:var(--shadow);
+  }
+  dialog::backdrop{background:var(--backdrop)}
+  .sheet{display:grid;gap:12px;padding:20px}
+  .sheet h2{margin:0;font-size:18px;font-weight:600}
+  .sheet h3{margin:6px 0 0;font-size:15px;font-weight:600}
+  .sheet label{font-weight:500}
+  .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .row[hidden]{display:none}
+  select{
+    flex:1;min-width:0;height:44px;padding:0 12px;border-radius:12px;
+    border:1px solid var(--border);background:var(--surface);
+  }
+  .btn{
+    height:44px;padding:0 16px;border-radius:12px;border:1px solid var(--border);
+    background:var(--surface-2);font-weight:500;transition:transform 120ms var(--ease-out);
+  }
+  .btn:active{transform:scale(.97)}
+  .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+  .btn.danger{color:var(--err-fg)}
+  .btn:disabled{opacity:.5;cursor:default;transform:none}
+  .help{margin:0;color:var(--muted);font-size:13px}
+  .note{min-height:1.5em;margin:0;font-size:14px}
+  .note.bad{color:var(--err-fg)}
+  .spinner{width:28px;height:28px;border-radius:50%;border:3px solid var(--accent-soft);border-top-color:var(--accent)}
+  .spinner[hidden]{display:none}
+
+  @media (prefers-reduced-motion:no-preference){
+    [data-state="listening"] .stage::after{animation:listen 1.6s ease-in-out infinite}
+    .typing i{animation:typing 1.2s ease-in-out infinite}
+    .typing i:nth-child(2){animation-delay:.15s}
+    .typing i:nth-child(3){animation-delay:.3s}
+    .spinner{animation:spin .9s linear infinite}
+  }
+  @keyframes listen{50%{box-shadow:inset 0 0 0 6px var(--accent-soft)}}
+  @keyframes typing{30%{opacity:1;transform:translateY(-3px)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  @media (min-width:900px){
+    .app{grid-template-columns:minmax(0,1.15fr) minmax(380px,1fr);grid-template-rows:auto minmax(0,1fr)}
+    .top{grid-column:1 / -1;padding:12px 20px}
+    .stage-wrap{padding:8px 24px 24px}
+    .chat{border-top:0;border-left:1px solid var(--border)}
+  }
 </style>
 </head>
-<body>
-<main id="app"></main>
+<body data-state="idle">
+<div class="app">
+  <header class="top">
+    <a class="icon-btn" href="/admin" aria-label="Về trang quản trị">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+    </a>
+    <div class="who"><b>Lan Anh</b><span id="status" role="status">Đang ở đây với anh</span></div>
+    <button class="icon-btn" id="menu-btn" type="button" aria-haspopup="dialog" aria-label="Giọng và ảnh">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><g class="dots"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></g></svg>
+    </button>
+  </header>
+
+  <div class="stage-wrap" id="stage-wrap">
+    <button class="stage" id="stage" type="button" aria-label="Ảnh Lan Anh: chạm để nghe em nói, chạm lần nữa để ngắt lời" hidden>
+      <canvas id="gl" aria-hidden="true"></canvas>
+      <canvas id="fx" aria-hidden="true"></canvas>
+      <span class="hint" id="hint" hidden>Chạm để nghe em nói</span>
+    </button>
+    <section class="empty" id="empty" hidden>
+      <h1>Chọn 1 tấm ảnh chân dung cho em nha</h1>
+      <ul>
+        <li>Nhìn thẳng vào máy, mặt chiếm khoảng 1/3 khung hình.</li>
+        <li>Miệng ngậm tự nhiên, cằm không bị che (tóc, tay, khẩu trang).</li>
+        <li>Đủ sáng, không đeo kính râm.</li>
+      </ul>
+      <div class="row"><button class="btn primary" type="button" data-pick="main">Chọn ảnh</button></div>
+      <p class="help">Ảnh chỉ lưu trên máy chủ của bot và chỉ anh xem được.</p>
+    </section>
+  </div>
+
+  <section class="chat" aria-label="Trò chuyện">
+    <ol class="log" id="log" aria-live="polite"></ol>
+    <form class="composer" id="composer">
+      <button class="icon-btn" id="mic" type="button" aria-pressed="false" aria-label="Nói chuyện rảnh tay">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></svg>
+      </button>
+      <label class="sr-only" for="text">Nhắn cho Lan Anh</label>
+      <textarea id="text" rows="1" enterkeyhint="send" autocomplete="off" placeholder="Nhắn cho em nè…"></textarea>
+      <button class="icon-btn" id="speaker" type="button" aria-pressed="false" aria-label="Tắt giọng đọc">
+        <svg class="speaker-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+        <svg class="speaker-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
+      </button>
+      <button class="icon-btn send" id="send" type="submit" aria-label="Gửi">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+      </button>
+    </form>
+  </section>
+</div>
+
+<dialog id="settings" aria-labelledby="settings-title">
+  <form method="dialog" class="sheet">
+    <h2 id="settings-title">Giọng và ảnh</h2>
+    <label for="voice">Giọng của em</label>
+    <div class="row">
+      <select id="voice"></select>
+      <button class="btn" id="preview" type="button">Nghe thử</button>
+    </div>
+    <p class="note" id="settings-note" role="status"></p>
+    <h3>Ảnh chân dung</h3>
+    <div class="row">
+      <button class="btn" type="button" data-pick="main">Đổi ảnh</button>
+      <button class="btn" type="button" data-pick="blink" id="blink-btn">Ảnh mắt nhắm</button>
+      <button class="btn danger" type="button" id="delete-photo">Xoá ảnh</button>
+    </div>
+    <p class="help">Ảnh mắt nhắm (tuỳ chọn): chụp cùng khung với ảnh chính, chỉ nhắm mắt, để em chớp mắt tự nhiên hơn.</p>
+    <div class="row"><button class="btn primary" value="close">Xong</button></div>
+  </form>
+</dialog>
+
+<dialog id="photo-dialog" aria-labelledby="photo-title">
+  <div class="sheet">
+    <h2 id="photo-title">Ảnh chân dung</h2>
+    <div class="spinner" id="photo-spinner" hidden></div>
+    <p class="note" id="photo-note" role="status"></p>
+    <div class="row" id="photo-actions" hidden>
+      <button class="btn primary" type="button" id="photo-retry">Chọn ảnh khác</button>
+      <button class="btn" type="button" id="photo-close">Đóng</button>
+    </div>
+  </div>
+</dialog>
+<input type="file" id="file" accept="image/png,image/jpeg,image/webp" hidden>
+
 <script type="application/json" id="avatar-config"><!--CONFIG--></script>
+<script type="module">
+const cfg = JSON.parse(document.getElementById('avatar-config').textContent);
+const $ = (id) => document.getElementById(id);
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const wideLayout = matchMedia('(min-width: 900px)');
+const LOGIN_URL = '/admin?next=' + encodeURIComponent('/admin/avatar');
+const MAX_LOG = 150;
+
+function stored(key, fallback) {
+  try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+}
+function store(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* chế độ riêng tư: chỉ nhớ trong phiên */ }
+}
+
+async function api(path, {method = 'GET', json, body, headers} = {}) {
+  const init = {method, headers, body};
+  if (json !== undefined) {
+    init.body = JSON.stringify(json);
+    init.headers = {'Content-Type': 'application/json'};
+  }
+  let res;
+  try {
+    res = await fetch('/admin/api/avatar' + path, init);
+  } catch {
+    throw new Error('Mạng chập chờn rồi, anh thử lại nha.');
+  }
+  if (res.status === 403) {
+    location.href = LOGIN_URL;
+    throw new Error('Phiên đăng nhập hết hạn, anh đăng nhập lại nha.');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw Object.assign(new Error(data.error || `Có lỗi (${res.status}), anh thử lại sau nha.`), {kind: data.kind});
+  }
+  return data;
+}
+
+// ─── Khung chat ──────────────────────────────────────────────────────────────
+
+const log = $('log');
+
+function scrollToEnd(item) {
+  item.scrollIntoView({block: 'end', behavior: reduceMotion.matches ? 'auto' : 'smooth'});
+}
+
+function addMessage(who, text, {image = null, error = false} = {}) {
+  const item = document.createElement('li');
+  item.className = `msg ${who}${error ? ' err' : ''}`;
+  if (text) item.append(Object.assign(document.createElement('p'), {textContent: text}));
+  if (image) item.append(Object.assign(document.createElement('img'), {src: image, alt: 'Ảnh em gửi anh'}));
+  log.append(item);
+  while (log.children.length > MAX_LOG) log.firstElementChild.remove();
+  scrollToEnd(item);
+  return item;
+}
+
+function addTyping() {
+  const item = document.createElement('li');
+  item.className = 'msg typing';
+  item.setAttribute('aria-label', 'Em đang soạn tin');
+  item.append(...Array.from({length: 3}, () => document.createElement('i')));
+  log.append(item);
+  scrollToEnd(item);
+  return item;
+}
+
+const STATUS = {
+  idle: 'Đang ở đây với anh',
+  listening: 'Em đang nghe anh nói…',
+  thinking: 'Em đang nghĩ…',
+  speaking: 'Em đang nói…',
+};
+let state = 'idle';
+
+function setState(next) {
+  state = next;
+  document.body.dataset.state = next;
+  $('status').textContent = STATUS[next];
+}
+
+// ─── Âm thanh ────────────────────────────────────────────────────────────────
+
+let audioCtx = null;
+let analyser = null;
+let playing = null;
+const wave = new Uint8Array(1024);
+
+function rms(samples) {
+  let sum = 0;
+  for (const sample of samples) {
+    const x = (sample - 128) / 128;
+    sum += x * x;
+  }
+  return Math.sqrt(sum / samples.length);
+}
+
+// Gọi trong mọi cú chạm/phím: trình duyệt (nhất là iOS) chỉ cho phát tiếng sau thao tác của người dùng.
+function unlockAudio() {
+  if (!audioCtx) {
+    const Context = window.AudioContext || window.webkitAudioContext;
+    if (!Context) return;
+    audioCtx = new Context();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = wave.length;
+    analyser.connect(audioCtx.destination);
+    const silent = audioCtx.createBufferSource();
+    silent.buffer = audioCtx.createBuffer(1, 1, 22050);
+    silent.connect(audioCtx.destination);
+    silent.start();
+    // iPhone đang gạt im lặng vẫn nghe được giọng (Safari 17+, Audio Session API).
+    if (navigator.audioSession) navigator.audioSession.type = 'playback';
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+for (const type of ['click', 'keydown']) document.addEventListener(type, unlockAudio, {capture: true});
+
+async function speak(base64) {
+  if (!audioCtx) return;
+  stopSpeaking();
+  const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0));
+  let buffer;
+  try {
+    buffer = await audioCtx.decodeAudioData(bytes.buffer);
+  } catch {
+    return; // không giải mã được thì chỉ còn chữ, câu trả lời đã hiện sẵn
+  }
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(analyser);
+  playing = source;
+  setState('speaking');
+  await new Promise((resolve) => {
+    source.addEventListener('ended', resolve);
+    // iOS tạm ngưng âm thanh (cuộc gọi chen vào) thì có thể không bao giờ báo 'ended'.
+    setTimeout(resolve, (buffer.duration + 2) * 1000);
+    source.start();
+  });
+  if (playing === source) playing = null;
+  if (state === 'speaking') setState('idle');
+  moodUntil = Math.max(moodUntil, performance.now() / 1000 + 1.5);
+}
+
+function stopSpeaking() {
+  if (!playing) return;
+  const source = playing;
+  playing = null;
+  source.stop();
+}
+
+// Âm lượng giọng đang phát (0..1) cho khẩu hình.
+function voiceLevel() {
+  if (!playing) return 0;
+  analyser.getByteTimeDomainData(wave);
+  return Math.min(1, Math.max(0, (rms(wave) - 0.02) * 3.5));
+}
+
+let muted = stored('avatar.muted', '0') === '1';
+let greetingPlayed = false;
+
+function renderMute() {
+  $('speaker').setAttribute('aria-pressed', String(muted));
+  $('hint').hidden = muted || greetingPlayed || !cfg.photo;
+}
+
+// Anh nhắn hay bật rảnh tay trước thì thôi đọc câu chào.
+function skipGreeting() {
+  greetingPlayed = true;
+  renderMute();
+}
+
+$('speaker').addEventListener('click', () => {
+  muted = !muted;
+  store('avatar.muted', muted ? '1' : '0');
+  if (muted) stopSpeaking();
+  renderMute();
+});
+
+// ─── Trò chuyện ──────────────────────────────────────────────────────────────
+
+let chatting = false;
+const textBox = $('text');
+textBox.maxLength = cfg.textMax;
+
+function autosize() {
+  textBox.style.height = 'auto';
+  textBox.style.height = `${Math.min(textBox.scrollHeight, 132)}px`;
+}
+
+async function send(raw) {
+  const text = raw.trim();
+  if (!text || chatting) return;
+  chatting = true;
+  skipGreeting();
+  $('send').disabled = true;
+  stopListening();
+  stopSpeaking();
+  addMessage('me', text);
+  textBox.value = '';
+  autosize();
+  setState('thinking');
+  const typing = addTyping();
+  let reply;
+  try {
+    reply = await api('/chat', {method: 'POST', json: {text, voice: !muted && Boolean(audioCtx)}});
+  } catch (err) {
+    reply = {text: err.message, mood: 'sad', error: true};
+  }
+  typing.remove();
+  chatting = false;
+  $('send').disabled = false;
+  setState('idle');
+  addMessage('her', reply.text, {image: reply.image, error: reply.error});
+  setMood(reply.mood);
+  // Gửi tin mới trong lúc em đang đọc thì ngắt giọng cũ (stopSpeaking trong send).
+  if (reply.audio && !muted) await speak(reply.audio);
+  listen();
+}
+
+textBox.addEventListener('input', autosize);
+textBox.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    $('composer').requestSubmit();
+  }
+});
+$('composer').addEventListener('submit', (event) => {
+  event.preventDefault();
+  send(textBox.value);
+});
+
+// ─── Rảnh tay: nghe -> gửi -> đọc -> nghe tiếp ─────────────────────────────
+
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let handsFree = false;
+let listening = null;
+let misses = 0;
+let useRecorder = !Recognition;
+
+function renderMic() {
+  $('mic').setAttribute('aria-pressed', String(handsFree));
+  // Đang nói chuyện rảnh tay thì phiên âm thanh iOS phải cho cả ghi âm.
+  if (navigator.audioSession && audioCtx) navigator.audioSession.type = handsFree ? 'play-and-record' : 'playback';
+}
+
+function stopHandsFree(message) {
+  handsFree = false;
+  stopListening();
+  renderMic();
+  if (message) addMessage('her', message, {error: true});
+}
+
+$('mic').addEventListener('click', () => {
+  stopSpeaking();
+  if (handsFree) {
+    stopHandsFree();
+    return;
+  }
+  handsFree = true;
+  misses = 0;
+  skipGreeting();
+  renderMic();
+  listen();
+});
+
+function stopListening() {
+  if (listening) {
+    listening.cancel();
+    listening = null;
+  }
+  if (state === 'listening') setState('idle');
+}
+
+function listen() {
+  if (!handsFree || listening || chatting || playing) return;
+  if (!useRecorder) listenWithRecognition();
+  else if (cfg.stt.enabled && window.MediaRecorder && navigator.mediaDevices) listenWithRecorder();
+  else stopHandsFree('Trình duyệt này chưa cho em nghe, anh gõ chữ giúp em nha.');
+}
+
+function heardNothing() {
+  misses += 1;
+  if (misses < 3) {
+    listen();
+    return;
+  }
+  stopHandsFree();
+  addMessage('her', 'Em chờ hoài hông nghe anh nói gì, khi nào muốn nói tiếp thì anh chạm mic nha.');
+}
+
+const MIC_DENIED = 'Anh cho em dùng micro trong cài đặt trình duyệt nha, hoặc gõ chữ cũng được.';
+
+function listenWithRecognition() {
+  const recognition = new Recognition();
+  recognition.lang = 'vi-VN';
+  recognition.interimResults = true;
+  let transcript = '';
+  let error = '';
+  let cancelled = false;
+  let started = false;
+  recognition.addEventListener('start', () => {
+    started = true;
+  });
+  // Có trình duyệt nhận start() rồi im luôn (Chromium không có dịch vụ nghe của Google):
+  // 8 giây chưa bắt đầu nghe thì chuyển sang ghi âm gửi máy chủ.
+  const watchdog = setTimeout(() => {
+    if (started || cancelled) return;
+    cancelled = true;
+    recognition.abort();
+    listening = null;
+    useRecorder = true;
+    setState('idle');
+    listen();
+  }, 8000);
+  recognition.addEventListener('result', (event) => {
+    transcript = Array.from(event.results, (result) => result[0].transcript).join('');
+    textBox.value = transcript;
+    autosize();
+  });
+  recognition.addEventListener('error', (event) => {
+    error = event.error;
+  });
+  recognition.addEventListener('end', () => {
+    clearTimeout(watchdog);
+    if (cancelled) return;
+    listening = null;
+    setState('idle');
+    if (transcript.trim()) {
+      misses = 0;
+      send(transcript);
+    } else if (error === 'not-allowed' || error === 'service-not-allowed') {
+      stopHandsFree(MIC_DENIED);
+    } else if (error === 'network' || error === 'language-not-supported') {
+      // Dịch vụ nghe của trình duyệt không dùng được: chuyển sang ghi âm gửi máy chủ.
+      useRecorder = true;
+      listen();
+    } else if (error && error !== 'no-speech' && error !== 'aborted') {
+      stopHandsFree(`Em chưa nghe được (${error}), anh gõ chữ giúp em nha.`);
+    } else {
+      heardNothing();
+    }
+  });
+  listening = {
+    cancel() {
+      cancelled = true;
+      clearTimeout(watchdog);
+      recognition.abort();
+    },
+  };
+  setState('listening');
+  recognition.start();
+}
+
+async function listenWithRecorder() {
+  const session = {
+    cancelled: false,
+    stop() {},
+    cancel() {
+      this.cancelled = true;
+      this.stop();
+    },
+  };
+  listening = session;
+  setState('listening');
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true}});
+  } catch {
+    if (!session.cancelled) {
+      listening = null;
+      stopHandsFree(MIC_DENIED);
+    }
+    return;
+  }
+  if (session.cancelled) {
+    stream.getTracks().forEach((track) => track.stop());
+    return;
+  }
+  const recorder = new MediaRecorder(stream);
+  const chunks = [];
+  const meter = audioCtx.createAnalyser();
+  meter.fftSize = 1024;
+  const input = audioCtx.createMediaStreamSource(stream);
+  input.connect(meter);
+  const samples = new Uint8Array(meter.fftSize);
+  const started = performance.now();
+  const limitMs = Math.min(cfg.stt.maxSeconds, 60) * 1000;
+  let heard = false;
+  let quietSince = 0;
+  // Dò im lặng bằng âm lượng: nói xong ~1,3 giây thì gửi; 8 giây không nói gì thì thôi.
+  const timer = setInterval(() => {
+    meter.getByteTimeDomainData(samples);
+    const now = performance.now();
+    if (rms(samples) > 0.04) {
+      heard = true;
+      quietSince = 0;
+    } else if (heard && !quietSince) {
+      quietSince = now;
+    }
+    const finished = heard && quietSince && now - quietSince > 1300;
+    if (finished || now - started > limitMs || (!heard && now - started > 8000)) session.stop();
+  }, 100);
+  recorder.addEventListener('dataavailable', (event) => chunks.push(event.data));
+  recorder.addEventListener('stop', async () => {
+    clearInterval(timer);
+    input.disconnect();
+    stream.getTracks().forEach((track) => track.stop());
+    if (session.cancelled) return;
+    listening = null;
+    if (!heard) {
+      setState('idle');
+      heardNothing();
+      return;
+    }
+    const audio = new Blob(chunks, {type: recorder.mimeType || 'application/octet-stream'});
+    setState('thinking');
+    try {
+      const {text} = await api('/stt', {method: 'POST', body: audio, headers: {'Content-Type': audio.type}});
+      setState('idle');
+      misses = 0;
+      send(text);
+    } catch (err) {
+      setState('idle');
+      if (err.kind === 'empty') heardNothing();
+      else stopHandsFree(err.message);
+    }
+  });
+  session.stop = () => {
+    if (recorder.state !== 'inactive') recorder.stop();
+  };
+  recorder.start();
+}
+
+// ─── Câu chào, chạm ảnh để ngắt lời ─────────────────────────────────────────
+
+async function playGreeting() {
+  skipGreeting();
+  try {
+    const greeting = await api(`/greeting?id=${encodeURIComponent(cfg.greeting.id)}&audio=1`);
+    setMood(greeting.mood);
+    if (greeting.audio && state === 'idle' && !chatting && !muted) await speak(greeting.audio);
+  } catch {
+    // Câu chào bằng chữ đã hiện sẵn, thiếu giọng cũng không sao.
+  }
+}
+
+$('stage').addEventListener('click', () => {
+  if (!greetingPlayed && !muted && state === 'idle' && !chatting) {
+    playGreeting();
+  } else if (state === 'speaking') {
+    stopSpeaking();
+  } else if (state === 'listening') {
+    stopHandsFree();
+  }
+});
+
+// ─── Giọng ───────────────────────────────────────────────────────────────────
+
+function settingsNote(text, bad = false) {
+  const note = $('settings-note');
+  note.textContent = text;
+  note.classList.toggle('bad', bad);
+}
+
+function renderVoices() {
+  const groups = [
+    ['Gợi ý cho em', cfg.voices.filter((voice) => voice.suggested)],
+    ['Giọng khác', cfg.voices.filter((voice) => !voice.suggested)],
+  ];
+  $('voice').replaceChildren(...groups.map(([label, voices]) => {
+    const group = document.createElement('optgroup');
+    group.label = label;
+    group.append(...voices.map((voice) => new Option(
+      `${voice.name} (${voice.description})`, voice.name, false, voice.name === cfg.voice,
+    )));
+    return group;
+  }));
+}
+
+$('voice').addEventListener('change', async () => {
+  const select = $('voice');
+  try {
+    const {current} = await api('/voice', {method: 'PUT', json: {voice: select.value}});
+    cfg.voice = current;
+    settingsNote(`Từ giờ em nói bằng giọng ${current} nha.`);
+  } catch (err) {
+    select.value = cfg.voice;
+    settingsNote(err.message, true);
+  }
+});
+
+$('preview').addEventListener('click', async () => {
+  const button = $('preview');
+  button.disabled = true;
+  settingsNote('Em đang đọc thử…');
+  stopListening();
+  try {
+    const {audio} = await api('/voice/preview', {method: 'POST', json: {voice: $('voice').value}});
+    settingsNote('');
+    await speak(audio);
+  } catch (err) {
+    settingsNote(err.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('menu-btn').addEventListener('click', () => {
+  settingsNote('');
+  $('blink-btn').disabled = !cfg.photo;
+  $('delete-photo').disabled = !cfg.photo;
+  $('settings').showModal();
+});
+
+// ─── Ảnh chân dung: điểm mặt dò 1 lần trong trình duyệt lúc upload ─────────
+
+let pickKind = 'main';
+
+function pickPhoto(kind) {
+  pickKind = kind;
+  $('settings').close();
+  $('file').value = '';
+  $('file').click();
+}
+document.querySelectorAll('[data-pick]').forEach((button) => {
+  button.addEventListener('click', () => pickPhoto(button.dataset.pick));
+});
+$('file').addEventListener('change', () => {
+  const [file] = $('file').files;
+  if (file) uploadPhoto(file, pickKind);
+});
+
+function photoStatus(text, busy) {
+  const dialog = $('photo-dialog');
+  $('photo-note').textContent = text;
+  $('photo-spinner').hidden = !busy;
+  $('photo-actions').hidden = busy;
+  dialog.dataset.busy = busy ? '1' : '';
+  if (!dialog.open) dialog.showModal();
+}
+$('photo-dialog').addEventListener('cancel', (event) => {
+  if ($('photo-dialog').dataset.busy) event.preventDefault();
+});
+$('photo-retry').addEventListener('click', () => {
+  $('photo-dialog').close();
+  pickPhoto(pickKind);
+});
+$('photo-close').addEventListener('click', () => $('photo-dialog').close());
+
+// Ảnh đã xoay đúng chiều (trình duyệt đọc EXIF), cạnh dài tối đa 1280 px như bản máy chủ lưu.
+async function scaledCanvas(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const scale = Math.min(1, 1280 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(image.naturalWidth * scale);
+    canvas.height = Math.round(image.naturalHeight * scale);
+    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  } catch {
+    throw new Error('Em không mở được ảnh này, anh chọn ảnh JPG hoặc PNG khác nha.');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+let landmarkerReady = null;
+
+function faceLandmarker() {
+  landmarkerReady ??= (async () => {
+    const {FaceLandmarker} = await import(cfg.vendor['vision_bundle.mjs']);
+    return FaceLandmarker.createFromOptions(
+      {
+        wasmLoaderPath: cfg.vendor['vision_wasm_internal.js'],
+        wasmBinaryPath: cfg.vendor['vision_wasm_internal.wasm'],
+      },
+      {
+        baseOptions: {modelAssetPath: cfg.vendor['face_landmarker.task'], delegate: 'CPU'},
+        runningMode: 'IMAGE',
+        numFaces: 1,
+      },
+    );
+  })();
+  landmarkerReady.catch(() => {
+    landmarkerReady = null;
+  });
+  return landmarkerReady;
+}
+
+async function detectFace(canvas) {
+  let landmarker;
+  try {
+    landmarker = await faceLandmarker();
+  } catch {
+    throw new Error('Trình duyệt này chưa chạy được bộ nhận diện khuôn mặt, anh thử Chrome hoặc Safari bản mới nha.');
+  }
+  const face = landmarker.detect(canvas).faceLandmarks[0];
+  if (!face) throw new Error('Em không thấy rõ khuôn mặt trong ảnh, anh chọn ảnh nhìn thẳng, đủ sáng nha.');
+  // Mặt sát mép ảnh có thể ra ngoài 0..1 một chút; máy chủ chỉ nhận 0..1.
+  const round = (value) => Math.round(clamp01(value) * 1e5) / 1e5;
+  const points = face.slice(0, 478).map(({x, y}) => [round(x), round(y)]);
+  const faceWidth = Math.hypot(
+    (points[454][0] - points[234][0]) * canvas.width,
+    (points[454][1] - points[234][1]) * canvas.height,
+  );
+  if (faceWidth < 0.12 * Math.min(canvas.width, canvas.height)) {
+    throw new Error('Mặt hơi nhỏ trong ảnh, anh chọn ảnh chụp gần hơn (khoảng nửa người) nha.');
+  }
+  return points;
+}
+
+async function uploadPhoto(file, kind) {
+  try {
+    photoStatus('Em đang xem ảnh…', true);
+    const canvas = await scaledCanvas(file);
+    const form = new FormData();
+    if (kind === 'main') {
+      photoStatus('Em đang nhận diện khuôn mặt… Lần đầu cần tải bộ nhận diện khoảng 15 MB.', true);
+      form.append('landmarks', JSON.stringify(await detectFace(canvas)));
+    }
+    const jpeg = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+    if (!jpeg) throw new Error('Em không đọc được ảnh này, anh chọn ảnh khác nha.');
+    form.append('image', jpeg, 'avatar.jpg');
+    photoStatus('Em đang lưu ảnh…', true);
+    const saved = await api(`/photo?kind=${kind}`, {method: 'PUT', body: form});
+    cfg.photo = saved.photo;
+    await setupStage();
+    $('photo-dialog').close();
+    if (saved.blinkRemoved) addMessage('her', 'Ảnh mắt nhắm cũ không khớp khung ảnh mới nên em bỏ rồi nha.');
+  } catch (err) {
+    photoStatus(err.message, false);
+  }
+}
+
+$('delete-photo').addEventListener('click', async () => {
+  if (!confirm('Xoá ảnh chân dung (kèm ảnh mắt nhắm nếu có)?')) return;
+  try {
+    const {photo} = await api('/photo?kind=main', {method: 'DELETE'});
+    cfg.photo = photo;
+    $('settings').close();
+    await setupStage();
+  } catch (err) {
+    settingsNote(err.message, true);
+  }
+});
+
+// ─── Ảnh sống: lưới tam giác theo 478 điểm mặt MediaPipe + điểm neo ────────
+
+const LANDMARKS = 478;
+const UPPER_INNER = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308];
+const LOWER_INNER = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308];
+// Môi có 4 vòng viền (ngoài -> trong), mỗi vòng chung 2 điểm khoé.
+const UPPER_LIP = [
+  185, 40, 39, 37, 0, 267, 269, 270, 409, 184, 74, 73, 72, 11, 302, 303, 304, 408,
+  183, 42, 41, 38, 12, 268, 271, 272, 407, 191, 80, 81, 82, 13, 312, 311, 310, 415,
+];
+const LOWER_LIP = [
+  146, 91, 181, 84, 17, 314, 405, 321, 375, 77, 90, 180, 85, 16, 315, 404, 320, 307,
+  96, 89, 179, 86, 15, 316, 403, 319, 325, 95, 88, 178, 87, 14, 317, 402, 318, 324,
+];
+const MOUTH_CORNERS = [61, 76, 62, 78, 291, 306, 292, 308];
+const MOUTH_PATH = [...UPPER_INNER, ...LOWER_INNER.slice(1, -1).reverse()];
+const EYES = [
+  {upper: [33, 246, 161, 160, 159, 158, 157, 173, 133], lower: [33, 7, 163, 144, 145, 153, 154, 155, 133]},
+  {upper: [263, 466, 388, 387, 386, 385, 384, 398, 362], lower: [263, 249, 390, 373, 374, 380, 381, 382, 362]},
+];
+const BROWS_INNER = [[55, 107], [285, 336]];
+const BROWS = [[52, 105], [282, 334]];
+const CHEEKS = [[50, 205], [280, 425]];
+
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+function smoothstep(edge0, edge1, x) {
+  const t = clamp01((x - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
+}
+
+// Bowyer–Watson: tam giác Delaunay của các điểm (O(n²), ~550 điểm chỉ vài chục ms).
+function triangulate(points) {
+  const n = points.length;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of points) {
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+  }
+  const size = Math.max(maxX - minX, maxY - minY) * 20;
+  const midX = (minX + maxX) / 2, midY = (minY + maxY) / 2;
+  const all = [...points, [midX - size, midY - size], [midX, midY + size], [midX + size, midY - size]];
+  const triangle = (a, b, c) => {
+    const [ax, ay] = all[a], [bx, by] = all[b], [cx, cy] = all[c];
+    const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+    const a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+    const x = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d;
+    const y = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d;
+    return {a, b, c, x, y, r2: (ax - x) ** 2 + (ay - y) ** 2};
+  };
+  let triangles = [triangle(n, n + 1, n + 2)];
+  for (let i = 0; i < n; i++) {
+    const [px, py] = all[i];
+    const kept = [];
+    const edges = new Map();
+    for (const t of triangles) {
+      if ((px - t.x) ** 2 + (py - t.y) ** 2 < t.r2) {
+        for (const [u, v] of [[t.a, t.b], [t.b, t.c], [t.c, t.a]]) {
+          const key = u < v ? u * 100000 + v : v * 100000 + u;
+          edges.set(key, edges.has(key) ? null : [u, v]);
+        }
+      } else {
+        kept.push(t);
+      }
+    }
+    for (const edge of edges.values()) if (edge) kept.push(triangle(edge[0], edge[1], i));
+    triangles = kept;
+  }
+  return triangles.filter((t) => t.a < n && t.b < n && t.c < n).flatMap((t) => [t.a, t.b, t.c]);
+}
+
+function buildRig(landmarks, W, H) {
+  const points = landmarks.map(([x, y]) => [x * W, y * H]);
+  const [top, chin, left, right] = [points[10], points[152], points[234], points[454]];
+  const faceW = Math.hypot(right[0] - left[0], right[1] - left[1]);
+  const faceH = Math.hypot(top[0] - chin[0], top[1] - chin[1]);
+  // Trục của mặt (mặt có thể hơi nghiêng): up từ cằm lên trán, side vuông góc sang phải ảnh.
+  const up = [(top[0] - chin[0]) / faceH, (top[1] - chin[1]) / faceH];
+  const side = [-up[1], up[0]];
+  const center = [(top[0] + chin[0] + left[0] + right[0]) / 4, (top[1] + chin[1] + left[1] + right[1]) / 4];
+  const toLocal = ([x, y]) => {
+    const dx = x - center[0], dy = y - center[1];
+    return [(dx * side[0] + dy * side[1]) / faceW, (dx * up[0] + dy * up[1]) / faceH];
+  };
+  const toImage = (s, v) => [
+    center[0] + side[0] * s * faceW + up[0] * v * faceH,
+    center[1] + side[1] * s * faceW + up[1] * v * faceH,
+  ];
+
+  // Neo: 2 vòng quanh đầu (tóc theo đầu), 2 hàng vai/ngực (thở), viền ảnh hơi cong ra ngoài
+  // (đứng yên; cong để không có 3 điểm thẳng hàng làm hỏng phép chia tam giác).
+  const all = points.map((p) => [...p]);
+  const minGap = 0.08 * faceH; // neo sát mặt quá thì cằm hạ xuống là vượt qua neo
+  const loose = [];
+  for (const [scale, count] of [[1, 18], [1.5, 22]]) {
+    for (let k = 0; k < count; k++) {
+      const angle = (2 * Math.PI * k) / count;
+      loose.push(toImage(0.62 * scale * Math.cos(angle), 0.12 + 0.74 * scale * Math.sin(angle)));
+    }
+  }
+  for (const drop of [0.6, 1.25]) {
+    for (let k = 0; k < 7; k++) loose.push([((k + 0.5) / 7) * W, chin[1] + drop * faceH]);
+  }
+  for (const p of loose) {
+    const inside = p[0] > 2 && p[1] > 2 && p[0] < W - 2 && p[1] < H - 2;
+    if (inside && all.every((q) => Math.hypot(p[0] - q[0], p[1] - q[1]) > minGap)) all.push(p);
+  }
+  const firstFixed = all.length;
+  const bulge = 0.01 * Math.min(W, H);
+  for (let i = 0; i < 6; i++) {
+    const t = i / 6, out = bulge * Math.sin(Math.PI * t);
+    all.push([t * W, -out], [W + out, t * H], [W - t * W, H + out], [-out, H - t * H]);
+  }
+  // Điểm trùng nhau (môi trên/dưới khi ngậm miệng) làm phép chia tam giác suy biến.
+  for (let i = 1; i < LANDMARKS; i++) {
+    for (let j = 0; j < i; j++) {
+      if (Math.abs(all[i][0] - all[j][0]) + Math.abs(all[i][1] - all[j][1]) < 0.05) {
+        all[i] = [all[i][0] + 0.07, all[i][1] + 0.11];
+      }
+    }
+  }
+  const n = all.length;
+  const base = new Float32Array(2 * n);
+  const uv = new Float32Array(2 * n);
+  all.forEach(([x, y], i) => {
+    base.set([x, y], 2 * i);
+    uv.set([x / W, y / H], 2 * i);
+  });
+
+  // Trọng số theo đầu (xoay, cúi) và theo nhịp thở cho từng điểm.
+  const headWeight = new Float32Array(n);
+  const breathWeight = new Float32Array(n);
+  const shoulderY = chin[1] + 0.6 * faceH;
+  for (let i = 0; i < firstFixed; i++) {
+    const [s, v] = toLocal(all[i]);
+    const ring = Math.hypot(s / 0.62, (v - 0.12) / 0.74);
+    headWeight[i] = i < LANDMARKS ? 1 : (1 - smoothstep(1, 1.85, ring)) * smoothstep(-0.95, -0.55, v);
+    breathWeight[i] = all[i][1] <= shoulderY ? 1 : clamp01((H - all[i][1]) / (H - shoulderY));
+  }
+
+  // Toạ độ mặt (đơn vị bề rộng/chiều cao mặt) và các vùng biểu cảm.
+  const S = new Float32Array(LANDMARKS), V = new Float32Array(LANDMARKS);
+  points.forEach((p, i) => ([S[i], V[i]] = toLocal(p)));
+  const mid = ([a, b]) => [(S[a] + S[b]) / 2, (V[a] + V[b]) / 2];
+  const near = (i, [s, v], sigma) => Math.exp(-((S[i] - s) ** 2 + (V[i] - v) ** 2) / (2 * sigma * sigma));
+  const mouth = mid([13, 14]);
+  const cornerHalf = Math.abs(S[291] - S[61]) / 2;
+  const cornerV = (V[61] + V[291]) / 2;
+  const lowerLip = new Set(LOWER_LIP);
+  const upperLip = new Set(UPPER_LIP);
+  const lipKind = new Uint8Array(LANDMARKS); // 1 môi trên, 2 khoé miệng
+  const jaw = new Float32Array(LANDMARKS);
+  const corner = new Float32Array(LANDMARKS), cornerSide = new Float32Array(LANDMARKS);
+  const cheek = new Float32Array(LANDMARKS), browInner = new Float32Array(LANDMARKS);
+  const browInnerSide = new Float32Array(LANDMARKS), brow = new Float32Array(LANDMARKS);
+  for (let i = 0; i < LANDMARKS; i++) {
+    // Hàm dưới hạ quanh khớp gần tai: giữa cằm hạ nhiều, hai bên hạ ít. Trong bề ngang
+    // miệng, mọi điểm dưới môi hạ đều nhau (điểm trên không bao giờ vượt điểm dưới -> không
+    // lật tam giác); má ngoài khoé miệng hạ dần theo độ sâu.
+    const across = 1 - smoothstep(0.2, 0.5, Math.abs(S[i] - mouth[0]));
+    const beside = smoothstep(cornerHalf - 0.02, cornerHalf + 0.06, Math.abs(S[i] - mouth[0]));
+    const below = mouth[1] + (cornerV - mouth[1]) * beside - V[i];
+    if (upperLip.has(i)) lipKind[i] = 1;
+    else if (MOUTH_CORNERS.includes(i)) lipKind[i] = 2;
+    else if (lowerLip.has(i)) jaw[i] = across;
+    else {
+      jaw[i] = below > 0 ? across * (1 - beside + beside * smoothstep(0, 0.06, below)) : 0;
+      // Sát môi dưới thì hạ theo môi (mặt nghiêng: viền hàm nằm ngay cạnh khoé miệng).
+      for (const j of LOWER_LIP) jaw[i] = Math.max(jaw[i], near(i, [S[j], V[j]], 0.035));
+    }
+    for (const index of [61, 291]) {
+      const weight = near(i, [S[index], V[index]], 0.09);
+      corner[i] += weight;
+      cornerSide[i] += weight * Math.sign(S[index] - mouth[0]);
+    }
+    for (const pair of BROWS_INNER) {
+      const browCenter = mid(pair);
+      const weight = near(i, browCenter, 0.07);
+      browInner[i] += weight;
+      browInnerSide[i] += weight * Math.sign(browCenter[0] - mouth[0]);
+    }
+    cheek[i] = Math.max(...CHEEKS.map((pair) => near(i, mid(pair), 0.1)));
+    brow[i] = Math.max(...BROWS.map((pair) => near(i, mid(pair), 0.14)));
+  }
+
+  // Mắt: điểm giữa 2 mí co giãn theo tỉ lệ khi chớp (không lật tam giác), vùng trên mí
+  // trượt theo và nhạt dần tới chân mày.
+  const eyeTravel = new Float32Array(LANDMARKS), upperWeight = new Float32Array(LANDMARKS);
+  const lowerWeight = new Float32Array(LANDMARKS);
+  const along = (curve, s) => {
+    for (let k = 1; k < curve.length; k++) {
+      if (s <= curve[k][0]) {
+        const [s0, v0] = curve[k - 1], [s1, v1] = curve[k];
+        return v0 + ((v1 - v0) * (s - s0)) / (s1 - s0 || 1);
+      }
+    }
+    return curve.at(-1)[1];
+  };
+  for (const eye of EYES) {
+    const curve = (ids) => ids.map((i) => [S[i], V[i]]).sort((a, b) => a[0] - b[0]);
+    const upper = curve(eye.upper), lower = curve(eye.lower);
+    for (let i = 0; i < LANDMARKS; i++) {
+      if (S[i] <= upper[0][0] || S[i] >= upper.at(-1)[0]) continue;
+      const lidTop = along(upper, S[i]), lidBottom = along(lower, S[i]);
+      const travel = lidTop - lidBottom;
+      if (travel <= 0) continue;
+      if (V[i] >= lidTop) {
+        if (V[i] - lidTop < 0.1) upperWeight[i] = 1 - (V[i] - lidTop) / 0.1;
+      } else if (V[i] > lidBottom || i >= 468) {
+        // Tròng mắt (468+) bị mí che một phần vẫn đi theo khe mắt.
+        upperWeight[i] = clamp01((V[i] - lidBottom) / travel);
+        lowerWeight[i] = 1 - upperWeight[i];
+      } else if (lidBottom - V[i] < 0.06) {
+        lowerWeight[i] = 1 - (lidBottom - V[i]) / 0.06;
+      }
+      if (upperWeight[i] || lowerWeight[i]) eyeTravel[i] = travel;
+    }
+  }
+
+  const pivot = [chin[0] - up[0] * 0.25 * faceH, chin[1] - up[1] * 0.25 * faceH];
+
+  // params: open/smile/frown/angry/surprise 0..1, eye (-0,4 mở to .. 1 nhắm), roll (rad),
+  // nod (cúi 0..1), tx/ty/breathe (px ảnh). Ghi toạ độ đã biến dạng vào out.
+  function deform(p, out) {
+    const drop = 0.055 * p.open; // miệng mở tối đa 5,5% chiều cao mặt
+    // Mí khép tối đa 90%: khe 10% còn lại giữ thứ tự điểm quanh khoé mắt.
+    const closing = 0.9 * p.eye;
+    const raise = Math.min(0.25 * p.smile, Math.max(0, 0.9 - closing));
+    const cornerLift = 0.03 * p.smile - 0.018 * p.frown - 0.008 * p.angry;
+    const cos = Math.cos(p.roll), sin = Math.sin(p.roll);
+    for (let i = 0; i < n; i++) {
+      let x = base[2 * i], y = base[2 * i + 1];
+      if (i < LANDMARKS) {
+        let ds = 0.018 * p.smile * cornerSide[i] - 0.012 * p.angry * browInnerSide[i];
+        let dv = cornerLift * corner[i] + 0.012 * p.smile * cheek[i]
+          + (0.022 * p.frown - 0.02 * p.angry) * browInner[i] + 0.03 * p.surprise * brow[i]
+          + eyeTravel[i] * (raise * lowerWeight[i] - closing * upperWeight[i]);
+        if (lipKind[i] === 1) dv += 0.12 * drop;
+        else if (lipKind[i] === 2) {
+          dv -= 0.45 * drop;
+          ds -= 0.1 * drop * Math.sign(S[i] - mouth[0]);
+        } else dv -= drop * jaw[i];
+        x += side[0] * ds * faceW + up[0] * dv * faceH;
+        y += side[1] * ds * faceW + up[1] * dv * faceH;
+      }
+      const weight = headWeight[i];
+      if (weight) {
+        let dx = x - pivot[0], dy = y - pivot[1];
+        const squash = -0.04 * p.nod * (dx * up[0] + dy * up[1]);
+        dx += up[0] * squash;
+        dy += up[1] * squash;
+        x += weight * (pivot[0] + dx * cos - dy * sin + p.tx - x);
+        y += weight * (pivot[1] + dx * sin + dy * cos + p.ty - y);
+      }
+      out[2 * i] = x;
+      out[2 * i + 1] = y - p.breathe * breathWeight[i];
+    }
+  }
+
+  // Chia tam giác ở tư thế há miệng: 2 môi đang ngậm gần trùng nhau, chia ở tư thế nghỉ
+  // thì tam giác vắt qua khe môi sẽ lật khi há. Lúc nghỉ ánh xạ là đồng nhất nên tam giác
+  // có chồng lên nhau cũng vẽ ra đúng ảnh gốc.
+  const open = new Float32Array(2 * n);
+  deform({open: 1, smile: 0, frown: 0, angry: 0, surprise: 0, eye: 0, roll: 0, nod: 0, tx: 0, ty: 0, breathe: 0}, open);
+  const triangles = Uint16Array.from(triangulate(Array.from({length: n}, (_, i) => [open[2 * i], open[2 * i + 1]])));
+
+  return {W, H, faceW, faceH, base, uv, triangles, deform};
+}
+
+const VERTEX_SHADER = `
+attribute vec2 a_pos;
+attribute vec2 a_uv;
+uniform vec2 u_size;
+varying vec2 v_uv;
+void main() {
+  v_uv = a_uv;
+  vec2 clip = a_pos / u_size * 2.0 - 1.0;
+  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+}`;
+const FRAGMENT_SHADER = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+varying vec2 v_uv;
+uniform sampler2D u_main;
+uniform sampler2D u_blink;
+uniform float u_mix;
+void main() {
+  gl_FragColor = mix(texture2D(u_main, v_uv), texture2D(u_blink, v_uv), u_mix);
+}`;
+
+function glRenderer(canvas, main, blink, rig) {
+  const gl = canvas.getContext('webgl', {alpha: false, antialias: true});
+  if (!gl) return null;
+  const program = gl.createProgram();
+  for (const [type, source] of [[gl.VERTEX_SHADER, VERTEX_SHADER], [gl.FRAGMENT_SHADER, FRAGMENT_SHADER]]) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    gl.attachShader(program, shader);
+  }
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return null;
+  gl.useProgram(program);
+  const bind = (name, data, usage) => {
+    const buffer = gl.createBuffer();
+    const location = gl.getAttribLocation(program, name);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, usage);
+    gl.enableVertexAttribArray(location);
+    gl.vertexAttribPointer(location, 2, gl.FLOAT, false, 0, 0);
+    return buffer;
+  };
+  bind('a_uv', rig.uv, gl.STATIC_DRAW);
+  const positions = bind('a_pos', rig.base, gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, rig.triangles, gl.STATIC_DRAW);
+  [main, blink ?? main].forEach((image, unit) => {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+    // Ảnh không phải lũy thừa của 2: WebGL1 bắt buộc CLAMP_TO_EDGE, không mipmap.
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, image);
+  });
+  gl.uniform1i(gl.getUniformLocation(program, 'u_main'), 0);
+  gl.uniform1i(gl.getUniformLocation(program, 'u_blink'), 1);
+  gl.uniform2f(gl.getUniformLocation(program, 'u_size'), rig.W, rig.H);
+  const mixLocation = gl.getUniformLocation(program, 'u_mix');
+  canvas.addEventListener('webglcontextlost', (event) => event.preventDefault());
+  canvas.addEventListener('webglcontextrestored', () => setupStage());
+  return {
+    idleFrameMs: 33,
+    speakingFrameMs: 0,
+    draw(points, blinkMix) {
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.bindBuffer(gl.ARRAY_BUFFER, positions);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, points);
+      gl.uniform1f(mixLocation, blinkMix);
+      gl.drawElements(gl.TRIANGLES, rig.triangles.length, gl.UNSIGNED_SHORT, 0);
+    },
+    destroy() {
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
+    },
+  };
+}
+
+// Không có WebGL: vẽ từng tam giác bằng biến đổi affine của Canvas 2D (chậm hơn, ~20 khung/giây).
+function canvasRenderer(canvas, main, blink, rig) {
+  const ctx = canvas.getContext('2d');
+  const {triangles, base} = rig;
+  function drawMesh(image, points) {
+    const k = canvas.width / rig.W;
+    for (let t = 0; t < triangles.length; t += 3) {
+      const [a, b, c] = [2 * triangles[t], 2 * triangles[t + 1], 2 * triangles[t + 2]];
+      const sx0 = base[a], sy0 = base[a + 1], sx1 = base[b], sy1 = base[b + 1], sx2 = base[c], sy2 = base[c + 1];
+      const dst = [points[a], points[a + 1], points[b], points[b + 1], points[c], points[c + 1]].map((v) => v * k);
+      const [dx0, dy0, dx1, dy1, dx2, dy2] = dst;
+      const det = (sx1 - sx0) * (sy2 - sy0) - (sx2 - sx0) * (sy1 - sy0);
+      if (!det) continue;
+      const m11 = ((dx1 - dx0) * (sy2 - sy0) - (dx2 - dx0) * (sy1 - sy0)) / det;
+      const m12 = ((dy1 - dy0) * (sy2 - sy0) - (dy2 - dy0) * (sy1 - sy0)) / det;
+      const m21 = ((sx1 - sx0) * (dx2 - dx0) - (sx2 - sx0) * (dx1 - dx0)) / det;
+      const m22 = ((sx1 - sx0) * (dy2 - dy0) - (sx2 - sx0) * (dy1 - dy0)) / det;
+      // Nới tam giác 0,6 px quanh trọng tâm để không lộ đường nối giữa các tam giác.
+      const cx = (dx0 + dx1 + dx2) / 3, cy = (dy0 + dy1 + dy2) / 3;
+      ctx.save();
+      ctx.beginPath();
+      for (let v = 0; v < 6; v += 2) {
+        const ex = dst[v] - cx, ey = dst[v + 1] - cy;
+        const grow = 0.6 / (Math.hypot(ex, ey) || 1);
+        ctx.lineTo(dst[v] + ex * grow, dst[v + 1] + ey * grow);
+      }
+      ctx.clip();
+      ctx.setTransform(m11, m12, m21, m22, dx0 - m11 * sx0 - m21 * sy0, dy0 - m12 * sx0 - m22 * sy0);
+      ctx.drawImage(image, 0, 0);
+      ctx.restore();
+    }
+  }
+  return {
+    idleFrameMs: 50,
+    speakingFrameMs: 50,
+    draw(points, blinkMix) {
+      drawMesh(main, points);
+      if (blink && blinkMix > 0) {
+        ctx.globalAlpha = blinkMix;
+        drawMesh(blink, points);
+        ctx.globalAlpha = 1;
+      }
+    },
+    destroy() {},
+  };
+}
+
+// ─── Chuyển động: chớp mắt, thở, lắc nhẹ, khẩu hình, biểu cảm ──────────────
+
+const MOODS = {
+  happy: {smile: 1, hold: 3.5},
+  love: {smile: 0.6, blush: 1, hold: 5},
+  shy: {smile: 0.35, blush: 0.85, shy: 1, hold: 4},
+  sad: {frown: 1, hold: 4},
+  angry: {angry: 1, hold: 3},
+  surprised: {surprise: 1, hold: 1.8},
+  neutral: {hold: 0},
+};
+const EXPRESSIONS = ['smile', 'frown', 'angry', 'surprise', 'blush', 'shy'];
+const motion = {mouth: 0, smile: 0, frown: 0, angry: 0, surprise: 0, blush: 0, shy: 0};
+let moodTarget = MOODS.neutral;
+let moodUntil = 0;
+
+const blinker = {
+  start: -1,
+  duration: 0.15,
+  next: 0,
+  // 0..1: nhắm nhanh, giữ chút, mở chậm hơn; thỉnh thoảng chớp đôi.
+  amount(t) {
+    if (!this.next) this.next = t + 1.5 + Math.random() * 2;
+    if (this.start < 0 && t >= this.next) this.start = t;
+    if (this.start < 0) return 0;
+    const p = (t - this.start) / this.duration;
+    if (p >= 1) {
+      this.start = -1;
+      this.duration = 0.15;
+      this.next = t + (Math.random() < 0.15 ? 0.2 : 2 + Math.random() * 4);
+      return 0;
+    }
+    const x = p < 0.4 ? p / 0.4 : p < 0.55 ? 1 : 1 - (p - 0.55) / 0.45;
+    return x * x * (3 - 2 * x);
+  },
+  slow(t) {
+    this.start = t;
+    this.duration = 0.42;
+  },
+};
+
+function setMood(mood) {
+  const preset = MOODS[mood] ?? MOODS.neutral;
+  const now = performance.now() / 1000;
+  moodTarget = preset;
+  moodUntil = now + preset.hold;
+  if (mood === 'love') blinker.slow(now);
+}
+
+let rig = null;
+let renderer = null;
+let blinkPhoto = null;
+let positions = null;
+let fx = null;
+let rafId = 0;
+let lastTime = 0;
+let lastDraw = 0;
+
+const approach = (value, target, tau, dt) => value + (target - value) * (1 - Math.exp(-dt / tau));
+
+function requestFrame() {
+  if (!rafId) rafId = requestAnimationFrame(frame);
+}
+
+function frame(now) {
+  rafId = 0;
+  if (!renderer) return;
+  requestFrame();
+  const t = now / 1000;
+  const dt = Math.min(0.1, (now - (lastTime || now)) / 1000);
+  lastTime = now;
+  // Khẩu hình: mở nhanh theo tiếng, khép chậm hơn để không giật.
+  const level = voiceLevel();
+  motion.mouth = approach(motion.mouth, level, level > motion.mouth ? 0.03 : 0.11, dt);
+  if (t > moodUntil && state !== 'speaking') moodTarget = MOODS.neutral;
+  let changing = motion.mouth > 0.002;
+  for (const key of EXPRESSIONS) {
+    const target = moodTarget[key] ?? 0;
+    motion[key] = approach(motion[key], target, 0.3, dt);
+    if (Math.abs(motion[key] - target) > 0.002) changing = true;
+  }
+  const blink = blinker.amount(t);
+  const calm = reduceMotion.matches;
+  if (now - lastDraw < (playing ? renderer.speakingFrameMs : renderer.idleFrameMs)) return;
+  if (calm && lastDraw && !changing && !blink && !playing) return;
+  lastDraw = now;
+
+  const params = {
+    open: Math.min(1, Math.max(motion.mouth * 1.2, 0.3 * motion.surprise)),
+    smile: motion.smile,
+    frown: motion.frown,
+    angry: motion.angry,
+    surprise: motion.surprise,
+    eye: (blinkPhoto ? 0 : blink) + 0.12 * motion.frown + 0.15 * motion.angry - 0.25 * motion.surprise,
+    roll: 0, nod: 0, tx: 0, ty: 0, breathe: 0,
+  };
+  if (!calm) {
+    params.roll = 0.018 * Math.sin(t * 0.95) + 0.007 * Math.sin(t * 2.3 + 1) + 0.05 * motion.shy
+      + (playing ? 0.008 * Math.sin(t * 2.7) : 0);
+    params.nod = motion.shy;
+    params.tx = rig.faceW * 0.006 * Math.sin(t * 0.83);
+    params.ty = rig.faceH * (0.004 * Math.sin(t * 1.17) + 0.025 * motion.shy - 0.006 * motion.mouth);
+    params.breathe = rig.H * 0.0045 * (0.5 - 0.5 * Math.cos(t * 1.5));
+  }
+  rig.deform(params, positions);
+  renderer.draw(positions, blinkPhoto ? blink : 0);
+  drawEffects(params);
+}
+
+// Khoang miệng tối khi mở miệng, má hồng khi thương/ngại (canvas phủ, hoà trộn multiply).
+function drawEffects(params) {
+  const canvas = $('fx');
+  const k = canvas.width / rig.W;
+  fx.setTransform(1, 0, 0, 1, 0, 0);
+  fx.clearRect(0, 0, canvas.width, canvas.height);
+  fx.setTransform(k, 0, 0, k, 0, 0);
+  if (params.open > 0.03) {
+    fx.beginPath();
+    for (const index of MOUTH_PATH) fx.lineTo(positions[2 * index], positions[2 * index + 1]);
+    fx.closePath();
+    fx.filter = 'blur(1px)'; // mép khoang miệng mềm (trình duyệt không hỗ trợ thì bỏ qua)
+    fx.fillStyle = `rgba(105, 34, 44, ${Math.min(0.85, params.open * 2)})`;
+    fx.fill();
+    fx.filter = 'none';
+  }
+  if (motion.blush > 0.01) {
+    for (const [a, b] of CHEEKS) {
+      const x = (positions[2 * a] + positions[2 * b]) / 2;
+      const y = (positions[2 * a + 1] + positions[2 * b + 1]) / 2;
+      const radius = rig.faceW * 0.17;
+      const glow = fx.createRadialGradient(x, y, 0, x, y, radius);
+      glow.addColorStop(0, `rgba(255, 110, 140, ${0.4 * motion.blush})`);
+      glow.addColorStop(1, 'rgba(255, 110, 140, 0)');
+      fx.fillStyle = glow;
+      fx.fillRect(x - radius, y - radius, 2 * radius, 2 * radius);
+    }
+  }
+}
+
+function freshCanvas(id) {
+  const old = $(id);
+  const canvas = old.cloneNode(false);
+  old.replaceWith(canvas);
+  return canvas;
+}
+
+function loadImage(src) {
+  const image = new Image();
+  image.src = src;
+  return image.decode().then(() => image);
+}
+
+function fitStage() {
+  const photo = cfg.photo;
+  if (!photo) return;
+  const wrap = $('stage-wrap');
+  const style = getComputedStyle(wrap);
+  const width = wrap.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  const height = wideLayout.matches
+    ? wrap.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+    : innerHeight * 0.46;
+  const scale = Math.min(width / photo.width, height / photo.height);
+  const stage = $('stage');
+  stage.style.width = `${Math.floor(photo.width * scale)}px`;
+  stage.style.height = `${Math.floor(photo.height * scale)}px`;
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  for (const id of ['gl', 'fx']) {
+    const canvas = $(id);
+    canvas.width = Math.round(photo.width * scale * dpr);
+    canvas.height = Math.round(photo.height * scale * dpr);
+  }
+  lastDraw = 0;
+}
+
+async function setupStage() {
+  renderer?.destroy();
+  renderer = null;
+  const photo = cfg.photo;
+  $('stage').hidden = !photo;
+  $('empty').hidden = Boolean(photo);
+  renderMute();
+  if (!photo) return;
+  const [main, blink] = await Promise.all([
+    loadImage(photo.main),
+    photo.blink ? loadImage(photo.blink).catch(() => null) : null,
+  ]);
+  rig = buildRig(photo.landmarks, photo.width, photo.height);
+  positions = new Float32Array(rig.base);
+  blinkPhoto = blink;
+  freshCanvas('gl');
+  fitStage();
+  fx = $('fx').getContext('2d');
+  renderer = glRenderer($('gl'), main, blink, rig);
+  if (!renderer) {
+    freshCanvas('gl');
+    fitStage();
+    renderer = canvasRenderer($('gl'), main, blink, rig);
+  }
+  requestFrame();
+}
+
+let resizeQueued = false;
+function onResize() {
+  if (window.visualViewport) document.documentElement.style.setProperty('--app-h', `${visualViewport.height}px`);
+  if (resizeQueued) return;
+  resizeQueued = true;
+  requestAnimationFrame(() => {
+    resizeQueued = false;
+    fitStage();
+  });
+}
+addEventListener('resize', onResize);
+window.visualViewport?.addEventListener('resize', onResize);
+
+renderVoices();
+renderMute();
+renderMic();
+addMessage('her', cfg.greeting.text);
+setMood(cfg.greeting.mood);
+setupStage().catch(() => addMessage('her', 'Em chưa tải được ảnh, anh tải lại trang giúp em nha.', {error: true}));
+</script>
 </body>
 </html>

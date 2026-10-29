@@ -227,6 +227,17 @@ async def test_file_mediapipe_chi_chu_bot_cache_vinh_vien_theo_hash(client):
         assert (await client.get(bad)).status_code == 404, bad
 
 
+def test_giao_dien_avatar_chay_khong_can_cdn_va_vua_dien_thoai():
+    html = (ROOT / "templates" / "avatar.html").read_text(encoding="utf-8")
+    assert html.count("<!--CONFIG-->") == 1 and '<script type="module">' in html
+    assert "viewport-fit=cover" in html and "safe-area-inset-bottom" in html
+    assert "prefers-reduced-motion" in html
+    # MediaPipe nạp động từ route vendor của trang (theo cấu hình), không phải CDN.
+    assert "import(cfg.vendor['vision_bundle.mjs'])" in html and "cdn" not in html.lower()
+    # Hết phiên: API trả 403 -> quay về đăng nhập rồi trở lại trang.
+    assert "'/admin?next=' + encodeURIComponent('/admin/avatar')" in html
+
+
 def test_link_avatar_trong_trang_admin():
     html = (ROOT / "templates" / "admin.html").read_text(encoding="utf-8")
     assert 'href="/admin/avatar"' in html
@@ -391,7 +402,7 @@ async def test_chep_loi_ghi_am(client, monkeypatch):
     r = await client.post("/admin/api/avatar/stt", content=b"big", headers=audio_headers)
     assert r.status_code == 413 and r.json()["error"]
     r = await client.post("/admin/api/avatar/stt", content=b"noise", headers=audio_headers)
-    assert r.status_code == 422 and r.json()["error"]
+    assert r.status_code == 422 and r.json()["error"] and r.json()["kind"] == "empty"
     r = await client.post("/admin/api/avatar/stt", content=b"", headers=audio_headers)
     assert r.status_code == 400
     r = await client.post(

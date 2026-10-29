@@ -24,7 +24,7 @@
 API (lỗi hiện cho người dùng: {"error": "..."}; request sai dạng - không phải JSON,
 kind lạ - nhận 400/415 mặc định của FastAPI):
   POST   /admin/api/avatar/chat           {text, voice?: bool} -> {text, mood, audio?, mime?, image?}
-  POST   /admin/api/avatar/stt            body audio/*         -> {text}
+  POST   /admin/api/avatar/stt            body audio/*         -> {text} (lỗi kèm kind)
   GET    /admin/api/avatar/greeting       [?id=&audio=1]       -> {id, text, mood, audio?, mime?}
   GET    /admin/api/avatar/voices                              -> {voices, current}
   PUT    /admin/api/avatar/voice          {voice}              -> {current}
@@ -311,8 +311,15 @@ async def avatar_stt(request: Request) -> Response:
                 audio, user_id=config.ALLOWED_USER_ID, channel="telegram"
             )
     except voice_service.VoiceError as exc:
-        reply = voice_service.error_reply(exc.kind, owner=True, detail=exc.detail)
-        return _error(reply, 413 if exc.kind == "too_big" else 422)
+        # kind: trang coi "empty" (không nghe ra chữ) là 1 lần nghe hụt, nghe tiếp.
+        return JSONResponse(
+            {
+                "error": voice_service.error_reply(exc.kind, owner=True, detail=exc.detail),
+                "kind": exc.kind,
+            },
+            status_code=413 if exc.kind == "too_big" else 422,
+            headers=_NO_STORE,
+        )
     except TurnTimeoutError:
         return _error(voice_service.error_reply("failed", owner=True), 504)
     return JSONResponse({"text": text}, headers=_NO_STORE)
