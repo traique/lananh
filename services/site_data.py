@@ -12,6 +12,7 @@ import datetime as dt
 import re
 from zoneinfo import ZoneInfo
 
+from core.text_normalize import fold
 from services import calendar_query, can_chi, kymon, lunar, numerology, tuvi
 
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -134,6 +135,125 @@ def lunar_to_solar(lunar_day: int, lunar_month: int, lunar_year: int, is_leap: b
     if day is None:
         raise InputError("LUNAR_DATE_NOT_FOUND", "Ngày âm lịch này không tồn tại.")
     return day_info(day)
+
+
+def slug(text: str) -> str:
+    """'Lễ Vu Lan (Rằm tháng 7)' -> 'le-vu-lan', 'động thổ, xây sửa nhà' -> 'dong-tho':
+    bỏ phần trong ngoặc và sau dấu phẩy, bỏ dấu, nối bằng gạch."""
+    base = re.sub(r"\s*\(.*?\)", "", text).split(",")[0]
+    return re.sub(r"[^a-z0-9]+", "-", fold(base)).strip("-")
+
+
+# Trang riêng cho từng ngày lễ (/lich/ngay-le/<slug>) và ngày tốt theo việc (?viec=<slug>).
+HOLIDAY_SLUGS = {slug(h[0]): h for h in calendar_query.HOLIDAYS}
+PURPOSE_SLUGS = {slug(name): (name, trucs) for name, trucs in calendar_query.purpose_rules()}
+
+
+def holiday_page(key: str, today: dt.date, count: int = 5) -> dict | None:
+    """Một ngày lễ: lần tới (kể cả hôm nay) và các lần sau; None nếu không có lễ này
+    hoặc đã ra ngoài khoảng lịch tính được."""
+    holiday = HOLIDAY_SLUGS.get(key)
+    if holiday is None:
+        return None
+    dates: list[dt.date] = []
+    start = today
+    while len(dates) < count:
+        day = calendar_query.holiday_entry_date(holiday, start)
+        if day is None or day.year > MAX_YEAR:
+            break
+        dates.append(day)
+        start = day + dt.timedelta(days=1)
+    if not dates:
+        return None
+    name = holiday[0]
+    short, _, aka = name.partition(" (")
+    return {
+        "slug": key,
+        "name": name,
+        "short": short,
+        "aka": aka.rstrip(")"),
+        "isLunar": holiday[1],
+        "dates": [{**day_info(d), "days": (d - today).days} for d in dates],
+    }
+
+
+def good_days(year: int, month: int, purpose: str = "") -> dict:
+    """Ngày tốt của 1 tháng: hoàng đạo, không Tam nương/Nguyệt kỵ; có việc (khoá trong
+    PURPOSE_SLUGS) thì thêm trực hợp việc - cùng cách chọn với Hỏi lịch."""
+    _check_year(year)
+    if not 1 <= month <= 12:
+        raise InputError("INVALID_MONTH", "Tháng cần từ 1 đến 12.")
+    if purpose and purpose not in PURPOSE_SLUGS:
+        raise InputError("INVALID_PURPOSE", "Chưa có cách xem ngày cho việc này.")
+    name, trucs = PURPOSE_SLUGS[purpose] if purpose else ("", None)
+    days = calendar_query.month_days(year, month)
+    good = [
+        {**day_info(d), "truc": can_chi.day_truc(d)}
+        for d in days
+        if calendar_query.is_good_day(d, trucs)
+    ]
+    avoid = [
+        d.isoformat()
+        for d in days
+        if lunar.solar_to_lunar(d.day, d.month, d.year)[0] in can_chi.TAM_NUONG | can_chi.NGUYET_KY
+    ]
+    return {
+        "year": year,
+        "month": month,
+        "purpose": purpose,
+        "purposeName": name,
+        "trucs": list(trucs or ()),
+        "days": good,
+        "avoid": avoid,
+    }
+
+
+def birth_year(year: int, today: dt.date) -> dict:
+    """Tuổi theo năm sinh (năm âm lịch): can chi, mệnh, khoảng ngày dương của năm âm,
+    hợp/xung kèm năm sinh gần, sao hạn năm nay và năm sau."""
+    if not MIN_YEAR <= year <= today.year:
+        raise InputError("YEAR_OUT_OF_RANGE", f"Năm sinh cần trong khoảng {MIN_YEAR}-{today.year}.")
+    profile = can_chi.year_profile(year)
+    first = calendar_query.lunar_to_solar_exact(1, 1, year)
+    nxt = calendar_query.lunar_to_solar_exact(1, 1, year + 1)
+    relations = can_chi.chi_relations(profile["chi"])
+
+    def near(kind: str, chi_names: list[str]) -> list[dict]:
+        # Mỗi chi kèm các năm sinh gần nhất (12 năm trước/sau) để đọc "hợp tuổi nào".
+        return [
+            {
+                "kind": kind,
+                "chi": name,
+                "years": [
+                    y
+                    for y in range(year - 11, year + 12)
+                    if y != year
+                    and MIN_YEAR <= y <= today.year
+                    and can_chi.CHI[can_chi.year_chi(y)] == name
+                ],
+            }
+            for name in chi_names
+        ]
+
+    this_year = can_chi.lunar_year_of(today)
+    return {
+        "year": year,
+        "canChi": profile["can_chi"],
+        "conGiap": profile["con_giap"],
+        "menh": profile["menh"],
+        "napAm": profile["nap_am"],
+        "amDuong": profile["am_duong"],
+        "solarStart": first.isoformat() if first else "",
+        "solarEnd": (nxt - dt.timedelta(days=1)).isoformat() if nxt else "",
+        "ageNow": can_chi.tuoi_am(year, this_year),
+        "thisYear": this_year,
+        "hop": near("Tam hợp", relations["tam_hop"]) + near("Lục hợp", relations["luc_hop"]),
+        # Tứ hành xung đã gồm chi xung đối: chỉ thêm 2 chi còn lại của nhóm.
+        "ky": near("Xung", relations["xung"])
+        + near("Tứ hành xung", [c for c in relations["tu_hanh_xung"] if c not in relations["xung"]])
+        + near("Lục hại", relations["hai"]),
+        "han": [can_chi.han_profile(year, y) for y in (this_year, this_year + 1) if y > year],
+    }
 
 
 def calendar_answer(question: str) -> str:

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+{% set nxt = holiday.dates[0] %}
+<div class="title-row">
+  <div>
+    <h1>{{ holiday.short }} {{ year }}</h1>
+    <p class="sub">{{ lead }}</p>
+  </div>
+  <div class="title-actions"><a class="btn" href="/lich/ngay-le">Tất cả ngày lễ</a></div>
+</div>
+<div class="grid top">
+  <section class="panel result-day s7" aria-labelledby="next-title">
+    <header><h2 id="next-title">{{ nxt.weekday }}, {{ nxt.date | vn_date }}</h2></header>
+    <p class="lunar-line">{{ nxt.lunar.text }} âm lịch, {% if nxt.days == 0 %}hôm nay{% else %}còn {{ nxt.days }} ngày{% endif %}</p>
+    {% with day = nxt, brief = true %}{% include "_day_facts.html" %}{% endwith %}
+  </section>
+  {% if about %}
+  <section class="sect s5" aria-labelledby="about-title">
+    <header><h2 id="about-title">{{ holiday.short }} là ngày gì?</h2></header>
+    <p>{{ about }}</p>
+    {% if off %}<p class="about-off">{{ off }} <span class="muted">Theo Điều 112 Bộ luật Lao động 2019.</span></p>{% endif %}
+  </section>
+  {% endif %}
+</div>
+<section class="sect" aria-labelledby="years-title">
+  <header><h2 id="years-title">{{ holiday.short }} các năm tới</h2></header>
+  <div class="table-wrap" tabindex="0" role="region" aria-labelledby="years-title">
+    <table>
+      <thead><tr><th scope="col">Năm</th><th scope="col">Ngày</th><th scope="col" class="n">Còn</th></tr></thead>
+      <tbody>
+        {% for d in holiday.dates %}
+        <tr>
+          <td>{{ d.date[:4] }}</td>
+          <td><a href="/lich?ngay={{ d.date }}">{{ d.weekday }}, {{ d.date | vn_date }}</a><span class="sub">Âm lịch {{ d.lunar.day }}/{{ d.lunar.month }}{% if d.lunar.isLeapMonth %} nhuận{% endif %} năm {{ d.lunar.yearCanChi }}</span></td>
+          <td class="n nowrap">{% if d.days == 0 %}Hôm nay{% else %}{{ d.days }} ngày{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

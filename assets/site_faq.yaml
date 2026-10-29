@@ -41,6 +41,22 @@
       lịch. Dân gian thường tránh bắt đầu việc lớn như cưới hỏi, khai trương, đi xa vào
       những ngày này. Bấm một ngày trong lịch để xem ngày đó có phạm không.
 
+"/lich/ngay-tot":
+  - q: Ngày tốt được chọn như thế nào?
+    a: >-
+      Ngày tốt là ngày hoàng đạo (do Thanh Long, Minh Đường, Kim Quỹ, Kim Đường, Ngọc Đường
+      hoặc Tư Mệnh trực) và không phạm Tam nương, Nguyệt kỵ. Khi chọn theo việc, trang lọc
+      thêm theo trực của ngày, ví dụ cưới hỏi chọn trực Định, Thành, Khai.
+  - q: Thập nhị trực là gì?
+    a: >-
+      Là 12 trực Kiến, Trừ, Mãn, Bình, Định, Chấp, Phá, Nguy, Thành, Thu, Khai, Bế luân phiên
+      theo ngày. Mỗi trực hợp một số việc: Khai, Thành hợp khai trương; Bình, Định, Chấp,
+      Thành hợp động thổ; Phá, Nguy thường tránh việc lớn.
+  - q: Có cần xem thêm tuổi không?
+    a: >-
+      Việc lớn như cưới hỏi, làm nhà nên xem thêm tuổi người làm: năm đó có phạm Kim lâu,
+      Hoang ốc, Tam tai không. Tra theo năm sinh ở trang [tuổi, sao hạn](/tuoi).
+
 "/lich/hoi":
   - q: Hỏi lịch trả lời được những gì?
     a: >-
@@ -157,6 +173,22 @@
       RON là chỉ số octan: càng cao thì xăng càng chống kích nổ tốt; nên đổ loại theo khuyến
       cáo của nhà sản xuất xe. E5, E10 là xăng sinh học pha 5% hoặc 10% ethanol. Chữ "Mức
       5" trong tên là tiêu chuẩn chất lượng nhiên liệu ứng với mức khí thải Euro 5.
+
+"/tuoi":
+  - q: Tuổi âm (tuổi mụ) tính thế nào?
+    a: >-
+      Tuổi âm bằng năm âm lịch đang xem trừ năm sinh âm lịch rồi cộng 1, vì tính cả năm nằm
+      trong bụng mẹ. Ví dụ người sinh năm 1990, đến năm 2026 là 37 tuổi âm.
+  - q: Sinh tháng 1, tháng 2 dương lịch thì tính tuổi năm nào?
+    a: >-
+      Tuổi tính theo năm âm lịch, đổi vào mùng 1 Tết. Sinh trước Tết thì thuộc năm âm trước:
+      ví dụ Tết năm 1990 là ngày 27/1/1990, nên người sinh ngày 20/1/1990 là tuổi Kỷ Tỵ
+      (1989), không phải Canh Ngọ.
+  - q: Sao hạn, Tam tai, Kim lâu, Hoang ốc là gì?
+    a: >-
+      Sao hạn là sao chiếu mệnh theo tuổi âm, nam và nữ khác nhau, xoay vòng 9 sao. Tam tai
+      là 3 năm liền cần cẩn trọng theo nhóm tuổi; Kim lâu xem khi cưới hỏi; Hoang ốc xem khi
+      làm nhà. Đây là quan niệm dân gian, nên đọc để tham khảo.
 
 "/tu-vi":
   - q: Lá số tử vi gồm những gì?

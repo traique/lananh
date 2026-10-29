@@ -13,7 +13,7 @@
       <tbody>
         {% for h in holidays %}
         <tr>
-          <td>{{ h.name }}</td>
+          <td><a href="/lich/ngay-le/{{ h.slug }}">{{ h.name }}</a></td>
           <td><a href="/lich?ngay={{ h.date.isoformat() }}">{{ h.weekday }}, {{ h.date.strftime('%d/%m/%Y') }}</a><span class="sub kind">{{ "Âm lịch" if h.isLunar else "Dương lịch" }}</span></td>
           <td class="kind-col">{% if h.isLunar %}<span class="pill">Âm lịch</span>{% else %}<span class="pill">Dương lịch</span>{% endif %}</td>
           <td class="n nowrap">{% if h.days == 0 %}Hôm nay{% else %}{{ h.days }} ngày{% endif %}</td>

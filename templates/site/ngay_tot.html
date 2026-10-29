@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="title-row">
+  <div>
+    <h1>{{ heading }}</h1>
+    <p class="sub">{{ summary }}</p>
+  </div>
+  <nav class="btn-group" aria-label="Chuyển tháng">
+    <a class="btn" href="{{ months.prev }}">Tháng trước</a>
+    <a class="btn" href="{{ months.now }}">Tháng này</a>
+    <a class="btn" href="{{ months.next }}">Tháng sau</a>
+  </nav>
+</div>
+{% include "_errors.html" %}
+<ul class="links purpose-links" aria-label="Xem ngày tốt theo việc" role="list">
+  {% for p in purposes %}
+  <li><a href="{{ p.href }}"{% if p.on %} aria-current="page"{% endif %}>{{ p.label }}</a></li>
+  {% endfor %}
+</ul>
+<section class="sect" aria-labelledby="days-title">
+  <header><h2 id="days-title">Các ngày tốt</h2></header>
+  {% if data.days %}
+  <div class="table-wrap" tabindex="0" role="region" aria-labelledby="days-title">
+    <table>
+      <thead><tr><th scope="col">Ngày</th><th scope="col">Âm lịch</th><th scope="col">Giờ hoàng đạo</th></tr></thead>
+      <tbody>
+        {% for d in data.days %}
+        <tr>
+          <td><a href="/lich?ngay={{ d.date }}">{{ d.weekday }}, {{ d.date | vn_date }}</a><span class="sub">Ngày {{ d.lunar.dayCanChi }}{{ ", đã qua" if d.date < today_iso }}</span></td>
+          <td>{{ d.lunar.day }}/{{ d.lunar.month }}{% if d.lunar.isLeapMonth %} nhuận{% endif %}<span class="sub">{{ d.dayGod }}, trực {{ d.truc }}</span></td>
+          <td>{% for h in d.luckyHours %}<span class="nowrap">{{ h.split(" (")[0] }}</span>{{ ", " if not loop.last }}{% endfor %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-line">Tháng này không có ngày nào hợp. Bấm Tháng sau để xem tiếp.</p>
+  {% endif %}
+  <p class="rule-note">{{ rule }}{% if data.avoid %} Ngày Tam nương, Nguyệt kỵ nên tránh: {% for iso in data.avoid %}<span class="nowrap">{{ iso[8:] }}/{{ iso[5:7] }}</span>{{ ", " if not loop.last }}{% endfor %}.{% endif %} Việc lớn nên xem thêm <a href="/tuoi">tuổi, sao hạn</a> của người làm.</p>
+</section>
+{% endblock %}

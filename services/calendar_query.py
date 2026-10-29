@@ -480,8 +480,13 @@ def month_days(year: int, month: int) -> list[dt.date]:
     return [first + dt.timedelta(days=i) for i in range((nxt - first).days)]
 
 
-def _is_good_day(day: dt.date, trucs: tuple[str, ...] | None = None) -> bool:
-    """Hoàng đạo, không Tam nương/Nguyệt kỵ, và (khi xem theo việc) trực hợp việc."""
+def purpose_rules() -> list[tuple[str, tuple[str, ...]]]:
+    """(tên việc, các trực hợp) - cho trang web xem ngày tốt theo việc."""
+    return [(name, trucs) for name, trucs, *_ in _PURPOSES]
+
+
+def is_good_day(day: dt.date, trucs: tuple[str, ...] | None = None) -> bool:
+    """Ngày tốt (dùng chung chat và web): hoàng đạo, không Tam nương/Nguyệt kỵ, và (khi xem theo việc) trực hợp việc."""
     ld = lunar.solar_to_lunar(day.day, day.month, day.year)[0]
     return (
         can_chi.day_god(day)[1]
@@ -523,12 +528,12 @@ def _day_range(t: str, today: dt.date) -> tuple[list[dt.date], str, bool] | None
 
 def _good_lines(days: list[dt.date], rest_of_month: bool, trucs=None) -> list[str]:
     """Dòng các ngày tốt; tháng này đã hết ngày tốt thì gợi ý luôn tháng sau."""
-    good = [_good_day_line(day) for day in days if _is_good_day(day, trucs)]
+    good = [_good_day_line(day) for day in days if is_good_day(day, trucs)]
     if good or not rest_of_month:
         return good or ["(Không có ngày nào hợp.)"]
     nxt = days[-1] + dt.timedelta(days=1)
     lines = [f"Tháng này không còn ngày hợp. Sang tháng {nxt.month}/{nxt.year}:"]
-    good = [_good_day_line(d) for d in month_days(nxt.year, nxt.month) if _is_good_day(d, trucs)]
+    good = [_good_day_line(d) for d in month_days(nxt.year, nxt.month) if is_good_day(d, trucs)]
     return lines + (good or ["(Không có ngày nào hợp.)"])
 
 
@@ -615,11 +620,11 @@ def _purpose_answer(text: str, t: str, today: dt.date) -> str | None:
         picked = [rel] if rel else [(d, lunar.WEEKDAYS[d.weekday()]) for d in dates[:1]]
     if picked:
         lines = [_purpose_verdict(day, label, name, trucs) for day, label in picked]
-        if not any(_is_good_day(day, trucs) for day, _ in picked):
+        if not any(is_good_day(day, trucs) for day, _ in picked):
             after = picked[-1][0] + dt.timedelta(days=1)
             nxt = next(
                 (after + dt.timedelta(days=i) for i in range(60)
-                 if _is_good_day(after + dt.timedelta(days=i), trucs)),
+                 if is_good_day(after + dt.timedelta(days=i), trucs)),
                 None,
             )  # fmt: skip
             if nxt:

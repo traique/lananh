@@ -1,0 +1,89 @@
+# Giới thiệu ngắn cho trang từng ngày lễ /lich/ngay-le/<khoá> (web_site.py). Khoá là
+# tên lễ trong services/calendar_query.HOLIDAYS đã bỏ dấu, bỏ phần trong ngoặc
+# (site_data.slug). "nghi_le": ngày nghỉ hưởng nguyên lương theo Điều 112 Bộ luật Lao động
+# 2019. Web không nhắc tới Trung Quốc (test_web_khong_nhac_trung_quoc kiểm).
+
+tet-duong-lich:
+  about: >-
+    Tết Dương lịch là ngày đầu năm mới theo dương lịch, mùng 1 tháng 1. Nhiều nơi tổ chức
+    đếm ngược và bắn pháo hoa vào đêm 31/12.
+  nghi_le: Người lao động được nghỉ 1 ngày hưởng nguyên lương.
+ram-thang-gieng:
+  about: >-
+    Rằm tháng Giêng (Tết Nguyên tiêu) là ngày trăng tròn đầu tiên của năm âm lịch. Nhiều
+    gia đình cúng rằm và đi chùa cầu bình an cho cả năm, như câu "lễ Phật quanh năm không
+    bằng rằm tháng Giêng".
+le-tinh-nhan:
+  about: >-
+    Lễ Tình nhân (Valentine) ngày 14/2 dương lịch là dịp các cặp đôi tặng hoa, sô-cô-la
+    và quà cho nhau.
+tet-han-thuc:
+  about: >-
+    Tết Hàn thực vào mùng 3 tháng 3 âm lịch. Ở Việt Nam, nhiều gia đình làm bánh trôi,
+    bánh chay để dâng cúng tổ tiên.
+quoc-te-phu-nu:
+  about: >-
+    Ngày Quốc tế Phụ nữ 8/3 là dịp tôn vinh phụ nữ; ở Việt Nam thường tặng hoa, quà cho mẹ,
+    vợ, chị em và đồng nghiệp nữ.
+gio-to-hung-vuong:
+  about: >-
+    Giỗ Tổ Hùng Vương ngày 10/3 âm lịch tưởng nhớ các Vua Hùng có công dựng nước. Lễ hội
+    chính diễn ra tại Đền Hùng (Phú Thọ).
+  nghi_le: Người lao động được nghỉ 1 ngày hưởng nguyên lương.
+giai-phong-mien-nam:
+  about: >-
+    Ngày Giải phóng miền Nam, thống nhất đất nước 30/4/1975. Ngày nghỉ này thường liền với
+    Quốc tế Lao động 1/5 thành kỳ nghỉ dài.
+  nghi_le: Người lao động được nghỉ 1 ngày hưởng nguyên lương.
+quoc-te-lao-dong:
+  about: >-
+    Ngày Quốc tế Lao động 1/5, thường nối với ngày 30/4 thành kỳ nghỉ lễ dài.
+  nghi_le: Người lao động được nghỉ 1 ngày hưởng nguyên lương.
+le-phat-dan:
+  about: >-
+    Lễ Phật đản vào rằm tháng 4 âm lịch, kỷ niệm ngày Đức Phật ra đời. Các chùa tổ chức lễ
+    tắm Phật, rước Phật và thả hoa đăng.
+quoc-te-thieu-nhi:
+  about: >-
+    Ngày Quốc tế Thiếu nhi 1/6 là dịp vui chơi và tặng quà cho trẻ em, cũng là lúc bắt đầu
+    kỳ nghỉ hè ở nhiều nơi.
+tet-doan-ngo:
+  about: >-
+    Tết Đoan ngọ mùng 5 tháng 5 âm lịch, dân gian gọi là Tết giết sâu bọ: sáng sớm ăn hoa
+    quả chua, rượu nếp, bánh tro.
+le-vu-lan:
+  about: >-
+    Lễ Vu Lan rằm tháng 7 âm lịch là dịp báo hiếu cha mẹ, tưởng nhớ tổ tiên; cũng là ngày
+    xá tội vong nhân, nhiều nhà cúng chúng sinh.
+quoc-khanh:
+  about: >-
+    Quốc khánh 2/9 kỷ niệm ngày Chủ tịch Hồ Chí Minh đọc Tuyên ngôn Độc lập năm 1945, khai
+    sinh nước Việt Nam Dân chủ Cộng hòa.
+  nghi_le: Người lao động được nghỉ 2 ngày (2/9 và một ngày liền kề trước hoặc sau) hưởng nguyên lương.
+tet-trung-thu:
+  about: >-
+    Tết Trung thu rằm tháng 8 âm lịch, còn gọi là Tết thiếu nhi: trẻ em rước đèn, phá cỗ,
+    cả nhà ăn bánh nướng, bánh dẻo và ngắm trăng.
+ngay-phu-nu-viet-nam:
+  about: >-
+    Ngày Phụ nữ Việt Nam 20/10 kỷ niệm ngày thành lập Hội Liên hiệp Phụ nữ Việt Nam
+    (20/10/1930), dịp tặng hoa, quà cho phụ nữ.
+ngay-nha-giao-viet-nam:
+  about: >-
+    Ngày Nhà giáo Việt Nam 20/11 là dịp học trò tri ân thầy cô; các trường thường tổ chức
+    lễ mít tinh và văn nghệ.
+giang-sinh:
+  about: >-
+    Lễ Giáng sinh (Noel) ngày 25/12 dương lịch. Ở Việt Nam, đêm 24/12 nhiều người đi chơi,
+    xem trang trí ở nhà thờ và trên phố.
+ong-cong-ong-tao:
+  about: >-
+    Ngày 23 tháng Chạp âm lịch, các gia đình cúng tiễn ông Công ông Táo về trời, thường kèm
+    thả cá chép, mở đầu những ngày chuẩn bị Tết.
+tet-nguyen-dan:
+  about: >-
+    Tết Nguyên đán (Tết Âm lịch) là ngày mùng 1 tháng Giêng âm lịch, dịp lễ lớn nhất năm của
+    người Việt. Mùng 1 Tết luôn rơi trong khoảng từ 21/1 đến 20/2 dương lịch.
+  nghi_le: >-
+    Người lao động được nghỉ 5 ngày Tết hưởng nguyên lương; lịch nghỉ cụ thể theo thông báo
+    hằng năm.

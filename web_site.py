@@ -1,6 +1,6 @@
-"""Web LCTA: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le), /tu-vi,
-/than-so-hoc (form -> trang kết quả riêng), /ky-mon, /thoi-tiet, /xo-so, /gia-vang,
-/gia-xang và JSON API /api/v1.
+"""Web LCTA: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le, /ngay-le/<lễ>, /ngay-tot),
+/tuoi (+ /tuoi/<năm sinh>), /tu-vi, /than-so-hoc (form -> trang kết quả riêng), /ky-mon,
+/thoi-tiet, /xo-so, /gia-vang, /gia-xang và JSON API /api/v1.
 
 Xem nội dung KHÔNG cần đăng nhập: lịch, tử vi, thần số học tính bằng code
 (services/site_data.py), không gọi AI, không đụng DB. /thoi-tiet tra Open-Meteo
@@ -78,6 +78,7 @@ import web_admin
 from core import config
 from services import (
     calendar_query,
+    can_chi,
     concurrency,
     divination_commands,
     kymon,
@@ -109,6 +110,7 @@ _STATIC_FILES = {
 _SITEMAP_PATHS = (
     "/",
     "/lich",
+    "/lich/ngay-tot",
     "/lich/hoi",
     "/lich/doi-ngay",
     "/lich/ngay-le",
@@ -116,6 +118,7 @@ _SITEMAP_PATHS = (
     "/xo-so",
     "/gia-vang",
     "/gia-xang",
+    "/tuoi",
     "/tu-vi",
     "/ky-mon",
     "/than-so-hoc",
@@ -125,7 +128,7 @@ _SITEMAP_PATHS = (
 _LOTTERY_SHORT = {"mn": "XSMN", "mt": "XSMT", "mb": "XSMB"}
 # Trang đổi số liệu mỗi ngày (lastmod hôm nay trong sitemap).
 _DAILY_PATHS = frozenset({"/", "/lich", "/thoi-tiet", "/xo-so", "/gia-vang", "/gia-xang"})
-_CANONICAL_PARAMS = frozenset({"thang", "ngay", "q", "am", "nhuan", "noi", "dai", "gio"})
+_CANONICAL_PARAMS = frozenset({"thang", "ngay", "q", "am", "nhuan", "noi", "dai", "gio", "viec"})
 # Health check (Render, UptimeRobot...) chỉ cần mã 200: GET / trả JSON nhẹ cho các client
 # này; mọi client khác (trình duyệt, trình đọc link Facebook/Zalo gửi Accept: */*)
 # nhận trang chủ HTML có thẻ og:.
@@ -137,6 +140,7 @@ _NAV = [
         "Lịch",
         [
             ("/lich", "Lịch tháng", "calendar"),
+            ("/lich/ngay-tot", "Ngày tốt", "star"),
             ("/lich/hoi", "Hỏi lịch", "ask"),
             ("/lich/doi-ngay", "Đổi ngày âm", "swap"),
             ("/lich/ngay-le", "Ngày lễ", "flag"),
@@ -149,6 +153,7 @@ _NAV = [
             ("/xo-so", "Xổ số", "ticket"),
             ("/gia-vang", "Giá vàng", "gold"),
             ("/gia-xang", "Giá xăng", "fuel"),
+            ("/tuoi", "Tuổi, sao hạn", "user"),
             ("/tu-vi", "Lá số tử vi", "chart"),
             ("/ky-mon", "Kỳ Môn Độn Giáp", "compass"),
             ("/than-so-hoc", "Thần số học", "number"),
@@ -373,10 +378,11 @@ _NAV_LABELS = {href: label for _, items in _NAV for href, label, _ in items}
 
 
 def _structured_data(
-    title: str, description: str, active: str, url: str, base: str, modified: str
+    title: str, description: str, active: str, url: str, base: str, modified: str, crumb: str = ""
 ) -> Markup:
     """JSON-LD cho máy tìm kiếm: trang chủ khai WebSite + tổ chức kèm logo; trang khác
-    khai WebPage (kèm dateModified nếu biết giờ cập nhật số liệu) + đường dẫn mục."""
+    khai WebPage (kèm dateModified nếu biết giờ cập nhật số liệu) + đường dẫn mục
+    (``crumb``: tên trang con dưới mục, vd một ngày lễ dưới "Ngày lễ")."""
     website = {"@type": "WebSite", "@id": f"{base}/#website", "url": f"{base}/", "name": "LCTA"}
     if active == "/":
         org = {
@@ -408,13 +414,15 @@ def _structured_data(
             page["dateModified"] = modified
         graph = [page]
         if active in _NAV_LABELS:
-            crumbs = [("Hôm nay", "/"), (_NAV_LABELS[active], active)]
+            crumbs = [("Hôm nay", f"{base}/"), (_NAV_LABELS[active], f"{base}{active}")]
+            if crumb:
+                crumbs.append((crumb, url))
             graph.append(
                 {
                     "@type": "BreadcrumbList",
                     "itemListElement": [
-                        {"@type": "ListItem", "position": i, "name": n, "item": f"{base}{href}"}
-                        for i, (n, href) in enumerate(crumbs, 1)
+                        {"@type": "ListItem", "position": i, "name": n, "item": item}
+                        for i, (n, item) in enumerate(crumbs, 1)
                     ],
                 }
             )
@@ -440,10 +448,12 @@ def _render(
     active: str,
     modified: str = "",
     canonical: str = "",
+    crumb: str = "",
     **ctx,
 ) -> HTMLResponse:
     """``canonical``: đường dẫn chuẩn khi cùng nội dung mở được bằng nhiều kiểu URL;
-    trống thì lấy đường dẫn đang xem (chỉ giữ tham số nội dung)."""
+    trống thì lấy đường dẫn đang xem (chỉ giữ tham số nội dung). ``crumb``: tên trang
+    con trong đường dẫn mục của JSON-LD."""
     css_version, version = _assets()
     logged_in, path, base = _viewer.get()
     canonical = canonical or _canonical_path(path)
@@ -452,7 +462,7 @@ def _render(
     # trang ngày/tháng/đài/địa điểm.
     faq = [] if ctx.get("noindex") or "?" in canonical else _faq().get(canonical, [])
     ld_json = (
-        _structured_data(title, description, active, page_url, base, modified)
+        _structured_data(title, description, active, page_url, base, modified, crumb)
         if base and not ctx.get("noindex")
         else ""
     )
@@ -520,6 +530,7 @@ def _upcoming_holidays(today: dt.date, limit: int) -> list[dict]:
     return [
         {
             "name": name,
+            "slug": site_data.slug(name),
             "date": day,
             "weekday": site_data.day_info(day)["weekday"],
             "isLunar": is_lunar,
@@ -569,9 +580,11 @@ def home_page() -> HTMLResponse:
     page = _render(
         "home.html",
         title=f"Lịch âm hôm nay {today:%d/%m/%Y}: giờ hoàng đạo, ngày tốt xấu",
+        # Mô tả nêu luôn giờ hoàng đạo của ngày: Google lấy làm đoạn trích kết quả tìm kiếm.
         description=f"Hôm nay {today:%d/%m/%Y} dương lịch, tức ngày {ld['day']}/{ld['month']} âm lịch, "
-        f"ngày {'hoàng đạo' if info['isHoangDao'] else 'hắc đạo'}. Giờ hoàng đạo, ngày lễ sắp tới, "
-        "tra lịch âm, tử vi, thần số học, giá vàng, thời tiết.",
+        f"ngày {'hoàng đạo' if info['isHoangDao'] else 'hắc đạo'}. Giờ hoàng đạo: "
+        f"{', '.join(h.split(' (')[0] for h in info['luckyHours'])}. Kèm ngày lễ sắp tới, giá "
+        "vàng, thời tiết.",
         active="/",
         today=info,
         today_date=today,
@@ -583,6 +596,18 @@ def home_page() -> HTMLResponse:
     # Dải giờ đánh dấu "bây giờ": trình duyệt phải hỏi lại server thay vì dùng bản cũ.
     page.headers["Cache-Control"] = "no-cache"
     return page
+
+
+def _parse_month(raw: str) -> tuple[int, int] | None:
+    """Link của trang là 2026-10; người gõ tay hay viết 10/2026. Sai dạng -> None."""
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})|(\d{1,2})[/-](\d{4})", raw)
+    return (int(m.group(1) or m.group(4)), int(m.group(2) or m.group(3))) if m else None
+
+
+def _month_error(raw: str) -> str:
+    return (
+        f"Không đọc được tháng “{raw}”. Bấm Tháng trước/Tháng sau, hoặc ghi tháng/năm như 10/2026."
+    )
 
 
 def _weeks(grid: dict) -> list[list[dict | None]]:
@@ -613,16 +638,11 @@ async def lich_page(request: Request) -> Response:
     month_year, month = today.year, today.month
     raw_month = params.get("thang", "").strip()[:20]
     if raw_month:
-        # Link của trang là 2026-10; người gõ tay hay viết 10/2026.
-        m = re.fullmatch(r"(\d{4})-(\d{1,2})|(\d{1,2})[/-](\d{4})", raw_month)
-        if m:
-            month_year = int(m.group(1) or m.group(4))
-            month = int(m.group(2) or m.group(3))
+        parsed = _parse_month(raw_month)
+        if parsed:
+            month_year, month = parsed
         else:
-            error = (
-                f"Không đọc được tháng “{raw_month}”. Bấm Tháng trước/Tháng sau, "
-                "hoặc ghi tháng/năm như 10/2026."
-            )
+            error = _month_error(raw_month)
     raw_day = params.get("ngay", "")
     day_page = False
     try:
@@ -636,10 +656,11 @@ async def lich_page(request: Request) -> Response:
         error, grid = exc.message, site_data.month_grid(today.year, today.month)
         selected_date, day_page = today, False
     selected = site_data.day_info(selected_date)
-    title = f"Lịch âm tháng {grid['month']}/{grid['year']}: ngày hoàng đạo, ngày lễ"
+    # "Lịch vạn niên" là cách gọi hay tìm nhất cho lịch âm dương theo tháng.
+    title = f"Lịch vạn niên tháng {grid['month']}/{grid['year']}: lịch âm, ngày hoàng đạo"
     description = (
-        f"Lịch âm dương tháng {grid['month']}/{grid['year']}: ngày âm từng ngày, ngày "
-        "hoàng đạo, mùng 1, rằm, ngày lễ. Bấm một ngày để xem can chi, giờ tốt."
+        f"Lịch vạn niên, lịch âm dương tháng {grid['month']}/{grid['year']}: ngày âm từng ngày, "
+        "ngày hoàng đạo, mùng 1, rằm, ngày lễ. Bấm một ngày để xem can chi, giờ tốt."
     )
     canonical = ""
     if day_page and not error:
@@ -673,6 +694,7 @@ async def lich_page(request: Request) -> Response:
         selected=selected,
         selected_date=selected_date,
         today_iso=today.isoformat(),
+        today_month=today.year * 12 + today.month,
         error=error,
     )
 
@@ -751,6 +773,213 @@ async def lich_holidays_page() -> HTMLResponse:
         description="Ngày lễ, Tết âm lịch và dương lịch 12 tháng tới: Tết Nguyên đán, Giỗ Tổ "
         "Hùng Vương, Vu Lan, Trung thu, Quốc khánh, kèm thứ, ngày dương lịch, số ngày còn lại.",
         holidays=_upcoming_holidays(site_data.today(), len(calendar_query.HOLIDAYS)),
+    )
+
+
+_HOLIDAY_TEXTS_PATH = _ROOT / "assets" / "site_holidays.yaml"
+
+
+@functools.lru_cache(maxsize=1)
+def _holiday_texts() -> dict[str, dict]:
+    """Giới thiệu ngắn + ngày nghỉ theo luật cho trang từng ngày lễ."""
+    with _HOLIDAY_TEXTS_PATH.open(encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
+
+
+@router.get("/lich/ngay-le/{key}", response_class=HTMLResponse)
+async def holiday_detail_page(request: Request, key: str) -> Response:
+    """Một ngày lễ (người ta hay tìm "Tết 2027 là ngày nào", "còn bao nhiêu ngày nữa đến
+    Tết"): lần tới, số ngày còn lại, các năm sau."""
+    data = site_data.holiday_page(key[:40], site_data.today())
+    if data is None:
+        return await not_found(request)
+    nxt = data["dates"][0]
+    day = dt.date.fromisoformat(nxt["date"])
+    left = "hôm nay" if nxt["days"] == 0 else f"còn {nxt['days']} ngày"
+    lead = (
+        f"{data['short']} {day.year} rơi vào {nxt['weekday']}, {day:%d/%m/%Y} dương lịch "
+        f"({nxt['lunar']['text']} âm lịch), {left}."
+    )
+    texts = _holiday_texts().get(key, {})
+    page = _render(
+        "ngay_le.html",
+        title=f"{data['short']} {day.year} là ngày nào? Còn bao nhiêu ngày",
+        description=f"{lead} Kèm ngày {data['short']} các năm sau.",
+        active="/lich/ngay-le",
+        crumb=data["short"],
+        holiday=data,
+        year=day.year,
+        lead=lead,
+        about=texts.get("about", ""),
+        off=texts.get("nghi_le", ""),
+    )
+    page.headers["Cache-Control"] = "no-cache"  # số ngày còn lại đổi mỗi ngày
+    return page
+
+
+def _good_days_link(month: str, purpose: str, current: str) -> str:
+    """URL chuẩn trang ngày tốt: tháng này bỏ ?thang= (như /lich), tham số theo một thứ tự."""
+    query = {"thang": month} if month and month != current else {}
+    if purpose:
+        query["viec"] = purpose
+    return "/lich/ngay-tot" + (f"?{urlencode(query)}" if query else "")
+
+
+@router.get("/lich/ngay-tot", response_class=HTMLResponse)
+async def good_days_page(request: Request) -> HTMLResponse:
+    """Ngày tốt theo tháng, lọc theo việc (cưới hỏi, khai trương, động thổ...) - cùng cách
+    chọn với Hỏi lịch, mỗi tháng/việc một URL cố định để máy tìm kiếm lập chỉ mục."""
+    params = request.query_params
+    today = site_data.today()
+    year, month, error = today.year, today.month, ""
+    raw_month = params.get("thang", "").strip()[:20]
+    purpose = params.get("viec", "").strip()[:30]
+    if raw_month:
+        parsed = _parse_month(raw_month)
+        if parsed:
+            year, month = parsed
+        else:
+            error = _month_error(raw_month)
+    try:
+        data = site_data.good_days(year, month, purpose)
+    except InputError as exc:
+        error, purpose = exc.message, ""
+        year, month = today.year, today.month
+        data = site_data.good_days(year, month)
+    current = f"{today:%Y-%m}"
+    shown = f"{year:04d}-{month:02d}"
+    index = year * 12 + month - 1
+    prev_month = f"{(index - 1) // 12:04d}-{(index - 1) % 12 + 1:02d}"
+    next_month = f"{(index + 1) // 12:04d}-{(index + 1) % 12 + 1:02d}"
+    name = data["purposeName"]
+    short = name.split(",")[0]
+    when = f"tháng {month}/{year}"
+    # Tháng này: tóm tắt các ngày tốt CÒN LẠI (bảng vẫn hiện cả tháng, ngày đã qua có ghi chú).
+    upcoming = [d for d in data["days"] if shown != current or d["date"] >= today.isoformat()]
+    dates = ", ".join(dt.date.fromisoformat(d["date"]).strftime("%d/%m") for d in upcoming[:8])
+    dates += "..." if len(upcoming) > 8 else "."
+    scope = f"còn lại trong {when}" if shown == current else f"trong {when}"
+    if short:
+        heading = f"Ngày tốt {short} {when}"
+        rule = (
+            f"Cách chọn: ngày hoàng đạo, không phạm Tam nương, Nguyệt kỵ, trực "
+            f"{'/'.join(data['trucs'])} theo Thập nhị trực."
+        )
+        kind = f"ngày tốt để {name}"
+    else:
+        heading = f"Ngày tốt {when}"
+        rule = "Cách chọn: ngày hoàng đạo, không phạm Tam nương, Nguyệt kỵ."
+        kind = "ngày hoàng đạo tốt"
+    summary = (
+        f"{len(upcoming)} {kind} {scope}: {dates}"
+        if upcoming
+        else f"Không có {kind} {scope}, xem tháng sau."
+    )
+    # Chỉ các tháng gần (tháng trước tới 2 năm sau) vào chỉ mục: nút Tháng trước/sau dẫn
+    # được tới mọi tháng 1900-2100, tháng quá xa ít người tìm.
+    offset = index - (today.year * 12 + today.month - 1)
+    return _render(
+        "ngay_tot.html",
+        title=f"{heading}: ngày hoàng đạo, giờ tốt",
+        description=f"{summary} Kèm ngày âm, giờ hoàng đạo từng ngày.",
+        active="/lich/ngay-tot",
+        canonical=_good_days_link(shown, purpose, current),
+        noindex=bool(error) or not -1 <= offset <= 24,
+        heading=heading,
+        summary=summary,
+        rule=rule,
+        data=data,
+        today_iso=today.isoformat(),
+        error=error,
+        purposes=[
+            {"label": label, "href": _good_days_link(shown, key, current), "on": key == purpose}
+            for key, label in [("", "Tất cả việc")]
+            + [(k, v[0].split(",")[0].capitalize()) for k, v in site_data.PURPOSE_SLUGS.items()]
+        ],
+        months={
+            "prev": _good_days_link(prev_month, purpose, current),
+            "now": _good_days_link(current, purpose, current),
+            "next": _good_days_link(next_month, purpose, current),
+        },
+    )
+
+
+_TUOI_FROM = 1940  # trang mục lục /tuoi và sitemap liệt kê từ năm này tới năm nay
+
+
+def _han_target(data: dict, today: dt.date) -> int | None:
+    """Năm sao hạn đưa lên tiêu đề: từ tháng 10 người ta tìm hạn năm sau."""
+    years = [h["year"] for h in data["han"]]
+    wanted = data["thisYear"] + (today.month >= 10)
+    return wanted if wanted in years else (years[-1] if years else None)
+
+
+@router.get("/tuoi", response_class=HTMLResponse)
+async def tuoi_index_page(request: Request) -> Response:
+    today = site_data.today()
+    raw = request.query_params.get("nam", "").strip()[:10]
+    error = ""
+    if raw:
+        if raw.isdigit() and site_data.MIN_YEAR <= int(raw) <= today.year:
+            return RedirectResponse(f"/tuoi/{int(raw)}", status_code=303)
+        error = f"Năm sinh cần từ {site_data.MIN_YEAR} đến {today.year}."
+    this_year = can_chi.lunar_year_of(today)
+    target = this_year + (today.month >= 10)
+    decades = [
+        (
+            start,
+            [
+                (y, can_chi.year_profile(y)["can_chi"])
+                for y in range(max(start, _TUOI_FROM), min(start + 9, today.year) + 1)
+            ],
+        )
+        for start in range(today.year // 10 * 10, _TUOI_FROM - 1, -10)
+    ]
+    return _render(
+        "tuoi.html",
+        title=f"Xem tuổi theo năm sinh: mệnh gì, hợp tuổi nào, sao hạn {target}",
+        description=f"Tra tuổi theo năm sinh từ {_TUOI_FROM} đến {today.year}: can chi, con giáp, "
+        f"mệnh ngũ hành, tuổi hợp và kỵ, sao hạn, Tam tai, Kim lâu, Hoang ốc năm {target}.",
+        active="/tuoi",
+        noindex=bool(error),
+        decades=decades,
+        error=error,
+        value=raw,
+        max_year=today.year,
+    )
+
+
+@router.get("/tuoi/{raw}", response_class=HTMLResponse)
+async def tuoi_year_page(request: Request, raw: str) -> Response:
+    today = site_data.today()
+    if not re.fullmatch(r"\d{4}", raw):
+        return await not_found(request)
+    try:
+        data = site_data.birth_year(int(raw), today)
+    except InputError:
+        return await not_found(request)
+    year = data["year"]
+    target = _han_target(data, today)
+    han = next((h for h in data["han"] if h["year"] == target), None)
+    hop = ", ".join(dict.fromkeys(r["chi"] for r in data["hop"]))
+    ky = ", ".join(dict.fromkeys(r["chi"] for r in data["ky"]))
+    description = (
+        f"Sinh năm {year} là tuổi {data['canChi']} (con {data['conGiap']}), mệnh {data['napAm']}. "
+        f"Hợp tuổi {hop}; kỵ tuổi {ky}."
+    )
+    if han:  # bỏ "(sao xấu)" cho mô tả gọn dưới 160 ký tự, trang vẫn ghi đủ
+        sao = {k: han[k].split(" (")[0] for k in ("saoNam", "saoNu")}
+        description += f" Sao hạn {target}: nam {sao['saoNam']}, nữ {sao['saoNu']}."
+    return _render(
+        "tuoi_nam.html",
+        title=f"Tuổi {data['canChi']} {year}: mệnh {data['menh']}, hợp tuổi nào"
+        + (f", sao hạn {target}" if han else ""),
+        description=description,
+        active="/tuoi",
+        crumb=f"Tuổi {data['canChi']} {year}",
+        p=data,
+        prev_year=year - 1 if year > site_data.MIN_YEAR else None,
+        next_year=year + 1 if year < today.year else None,
     )
 
 
@@ -1407,14 +1636,18 @@ async def robots(request: Request) -> Response:
 # /llms.txt: cách mở từng trang bằng URL (tham số nội dung, trang dùng form POST).
 _LLMS_NOTES = {
     "/": "ngày âm hôm nay, giờ hoàng đạo, ngày lễ sắp tới",
-    "/lich": "lịch âm dương theo tháng (?thang=YYYY-MM) hoặc một ngày (?ngay=YYYY-MM-DD)",
+    "/lich": "lịch vạn niên theo tháng (?thang=YYYY-MM) hoặc một ngày (?ngay=YYYY-MM-DD)",
+    "/lich/ngay-tot": "ngày tốt trong tháng (?thang=YYYY-MM), theo việc (&viec=cuoi-hoi, "
+    "khai-truong, dong-tho, nhap-trach, xuat-hanh, ky-ket)",
     "/lich/hoi": "hỏi tự do bằng tiếng Việt (?q=rằm tháng 8)",
     "/lich/doi-ngay": "ngày âm sang dương (?am=15/8 hoặc 15/8/2027, &nhuan=1 cho tháng nhuận)",
-    "/lich/ngay-le": "ngày lễ âm lịch và dương lịch trong 12 tháng tới",
+    "/lich/ngay-le": "ngày lễ trong 12 tháng tới; từng lễ ở /lich/ngay-le/<tên> (tet-nguyen-dan, "
+    "tet-trung-thu...)",
     "/thoi-tiet": "thời tiết hiện tại và 7 ngày tới (?noi=Hà Nội)",
     "/xo-so": "kết quả xổ số (?dai=mn, mt, mb hoặc mã đài như tay-ninh; &ngay=YYYY-MM-DD)",
     "/gia-vang": "giá vàng trong nước, vàng thế giới quy đổi, tỷ giá Vietcombank",
     "/gia-xang": "giá xăng dầu Petrolimex, PVOIL theo kỳ điều hành",
+    "/tuoi": "tuổi theo năm sinh: mệnh, hợp/xung, sao hạn (/tuoi/1990)",
     "/tu-vi": "lập lá số tử vi theo ngày giờ sinh (form POST)",
     "/ky-mon": "bàn Kỳ Môn Độn Giáp theo giờ (?ngay=YYYY-MM-DD&gio=HH:MM)",
     "/than-so-hoc": "thần số học theo ngày sinh, họ tên (form POST)",
@@ -1486,6 +1719,18 @@ async def sitemap(request: Request) -> Response:
         (f"/thoi-tiet?{urlencode({'noi': place}, quote_via=quote)}", today)
         for place in weather_places.DEFAULT_PLACES[1:]  # chỗ đầu (TP.HCM) chính là /thoi-tiet
     ]
+    # Trang từng ngày lễ, ngày tốt 6 tháng tới theo từng việc, tuổi theo năm sinh.
+    entries += [(f"/lich/ngay-le/{key}", None) for key in site_data.HOLIDAY_SLUGS]
+    current = f"{today:%Y-%m}"
+    for i in range(6):
+        index = today.year * 12 + today.month - 1 + i
+        month = f"{index // 12:04d}-{index % 12 + 1:02d}"
+        entries += [
+            (_good_days_link(month, purpose, current), None)
+            for purpose in ("", *site_data.PURPOSE_SLUGS)
+            if i or purpose  # /lich/ngay-tot (tháng này) đã có trong _SITEMAP_PATHS
+        ]
+    entries += [(f"/tuoi/{y}", None) for y in range(today.year, _TUOI_FROM - 1, -1)]
     first = today.replace(day=1)
     for i in range(1, 12):
         month = (first.month - 1 + i) % 12 + 1

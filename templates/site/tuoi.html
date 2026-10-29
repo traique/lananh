@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="title-row">
+  <div>
+    <h1>Tuổi và sao hạn theo năm sinh</h1>
+    <p class="sub">Can chi, con giáp, mệnh, tuổi hợp và kỵ, sao hạn. Tính theo năm âm lịch: sinh trước Tết thì xem năm trước.</p>
+  </div>
+</div>
+<form class="toolbar" action="/tuoi" method="get">
+  <div class="toolbar-row">
+    <div class="field">
+      <label for="nam">Năm sinh</label>
+      <input class="input" type="number" id="nam" name="nam" value="{{ value }}" min="1900" max="{{ max_year }}" inputmode="numeric" placeholder="1990"{% if error %} aria-invalid="true" aria-describedby="form-error"{% endif %}>
+      {% if error %}<span class="field-error" id="form-error" role="alert">{{ error }}</span>{% endif %}
+    </div>
+    <div class="toolbar-actions"><button class="btn primary" type="submit">Xem tuổi</button></div>
+  </div>
+</form>
+{% for start, years in decades %}
+<section class="sect" aria-labelledby="d{{ start }}">
+  <header><h2 id="d{{ start }}">Sinh từ {{ start }} đến {{ start + 9 }}</h2></header>
+  <ul class="links" role="list">
+    {% for y, cc in years %}<li><a href="/tuoi/{{ y }}">{{ y }} {{ cc }}</a></li>{% endfor %}
+  </ul>
+</section>
+{% endfor %}
+{% endblock %}
