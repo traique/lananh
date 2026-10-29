@@ -30,13 +30,12 @@ CONVERSION_NOTE = (
 )
 
 
-# Ngoại tệ hiện trên web/API (chủ trang yêu cầu web không có CNY; chat vẫn dùng
-# market.MAJOR_CURRENCIES) và tên tiếng Việt (nguồn chỉ ghi tên tiếng Anh viết hoa).
-WEB_CURRENCIES = tuple(c for c in market.MAJOR_CURRENCIES if c != "CNY")
+# Tên tiếng Việt cho các ngoại tệ chính (nguồn chỉ ghi tên tiếng Anh viết hoa).
 FX_NAMES_VI = {
     "USD": "Đô la Mỹ",
     "EUR": "Euro",
     "JPY": "Yên Nhật",
+    "CNY": "Nhân dân tệ",
     "KRW": "Won Hàn Quốc",
     "GBP": "Bảng Anh",
     "AUD": "Đô la Úc",
@@ -55,7 +54,7 @@ def _fx_rows(table: market.FxTable) -> list[dict]:
             "transferBuy": r.transfer,
             "sell": r.sell,
         }
-        for code in WEB_CURRENCIES
+        for code in market.MAJOR_CURRENCIES
         if (r := table.rates.get(code)) is not None
     ]
 

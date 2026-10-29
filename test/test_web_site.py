@@ -1239,28 +1239,12 @@ def test_hoi_dap_escape_chi_doi_link_noi_bo():
 
 async def test_web_khong_nhac_trung_quoc(client, price_sources, lottery_sources, monkeypatch):
     """Chủ trang yêu cầu: chữ hiện trên web (trang, kết quả, hỏi đáp, llms.txt, API) không
-    có từ liên quan tới Trung Quốc; bảng tỷ giá bỏ CNY kể cả khi nguồn có."""
+    có từ liên quan tới Trung Quốc. Riêng bảng tỷ giá vẫn giữ CNY (chủ trang đồng ý)."""
     import re
-
-    from _vn_data_samples import FX_XML
-
-    from services import vn_market_data as market
-
-    cny = b'<Exrate CurrencyCode="CNY" CurrencyName="YUAN RENMINBI       " '
-    fx = market.parse_fx_xml(
-        FX_XML.replace(
-            b"</ExrateList>", cny + b'Buy="3,600" Transfer="3,636" Sell="3,753" />\n</ExrateList>'
-        )
-    )
-    assert "CNY" in fx.rates
-
-    async def get_fx():
-        return fx
 
     async def fake_get_weather(location="", days=1):
         return _FAKE_WEATHER
 
-    monkeypatch.setattr(market, "get_fx", get_fx)
     monkeypatch.setattr(web_site.weather, "get_weather", fake_get_weather)
     pages = [bytes(web_site.home_page().body).decode()]
     for path in (*web_site._SITEMAP_PATHS[1:], "/lich?ngay=2026-10-05", "/llms.txt"):
@@ -1273,7 +1257,7 @@ async def test_web_khong_nhac_trung_quoc(client, price_sources, lottery_sources,
     text = "\n".join(pages)
     assert "Đô la Mỹ" in text and "Lá số" in text  # đúng là đã render nội dung
     found = re.findall(
-        r"trung\s+qu[ốo]c|trung\s+hoa|china|chinese|nhân dân tệ|\bCNY\b|bắc kinh|[\u4e00-\u9fff]",
+        r"trung\s+qu[ốo]c|trung\s+hoa|china|chinese|bắc kinh|[\u4e00-\u9fff]",
         text,
         re.I,
     )
