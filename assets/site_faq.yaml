@@ -1,0 +1,212 @@
+# Hỏi đáp cuối các trang web công khai (web_site.py -> templates/site/_faq.html).
+# Chỉ hiện ở trang gốc (không tham số: /lich, /xo-so...) để không lặp trên hàng nghìn
+# trang ngày/tháng/đài. Câu trả lời mở đầu bằng ý chính; link nội bộ viết
+# [chữ](/đường-dẫn). Số liệu, luật: ghi nguồn ngay trong câu.
+
+"/":
+  - q: Giờ hoàng đạo là gì?
+    a: >-
+      Một ngày chia 12 canh giờ theo địa chi, mỗi giờ 2 tiếng: giờ Tý từ 23h đến 1h, giờ
+      Sửu 1h-3h, cứ thế đến giờ Hợi 21h-23h. Theo phép chọn ngày giờ dân gian, mỗi ngày có 6
+      giờ hoàng đạo do thần tốt trực, hay được chọn để bắt đầu việc quan trọng như xuất
+      hành, khai trương, cưới hỏi.
+  - q: Ngày hoàng đạo và ngày hắc đạo khác nhau thế nào?
+    a: >-
+      Mỗi ngày có một trong 12 vị thần trực. Ngày do Thanh Long, Minh Đường, Kim Quỹ, Kim
+      Đường, Ngọc Đường hoặc Tư Mệnh trực là ngày hoàng đạo (tốt); ngày do Thiên Hình, Chu
+      Tước, Bạch Hổ, Thiên Lao, Huyền Vũ hoặc Câu Trận trực là ngày hắc đạo. Xem từng ngày
+      trong [lịch tháng](/lich).
+  - q: Lịch trên trang được tính bằng gì?
+    a: >-
+      Ngày âm, can chi, tiết khí và giờ hoàng đạo tính bằng thuật toán âm lịch của Hồ Ngọc
+      Đức theo múi giờ Việt Nam (UTC+7), chạy ngay trên máy chủ, không dùng AI. Thời tiết,
+      xổ số, giá vàng, giá xăng đọc từ nguồn công khai ghi trên từng trang.
+
+"/lich":
+  - q: Âm lịch Việt Nam tính như thế nào?
+    a: >-
+      Âm lịch thực chất là âm dương lịch: tháng theo Mặt Trăng, mùng 1 là ngày trăng non
+      (ngày sóc); năm theo Mặt Trời, chia 24 tiết khí. Tháng âm có 29 hoặc 30 ngày, năm
+      thường có 12 tháng, năm nhuận có 13 tháng để lịch không trôi lệch mùa.
+  - q: Vì sao lịch âm Việt Nam có năm khác lịch Trung Quốc?
+    a: >-
+      Việt Nam tính lịch theo múi giờ UTC+7, Trung Quốc theo UTC+8. Khi trăng non rơi gần
+      nửa đêm, ngày mùng 1 ở hai nơi lệch nhau một ngày, có năm lệch cả tháng nhuận. Ví dụ
+      Tết năm 2007 ở Việt Nam là 17/2, ở Trung Quốc là 18/2; Tết năm 1985 ở Việt Nam là
+      21/1, ở Trung Quốc là 20/2.
+  - q: Tam nương, Nguyệt kỵ là những ngày nào?
+    a: >-
+      Tam nương là các ngày 3, 7, 13, 18, 22, 27 âm lịch; Nguyệt kỵ là ngày 5, 14, 23 âm
+      lịch. Dân gian thường tránh bắt đầu việc lớn như cưới hỏi, khai trương, đi xa vào
+      những ngày này. Bấm một ngày trong lịch để xem ngày đó có phạm không.
+
+"/lich/hoi":
+  - q: Hỏi lịch trả lời được những gì?
+    a: >-
+      Ngày âm hay dương của một ngày, còn bao nhiêu ngày tới Tết, rằm hay ngày lễ, ngày tốt
+      trong tháng cho cưới hỏi, khai trương, động thổ, xuất hành; năm sinh cầm tinh con gì,
+      mệnh gì, sao hạn từng năm và hai tuổi có hợp nhau không. Gõ tự nhiên như nhắn tin,
+      ví dụ "rằm tháng 8" hay "tuổi 15/3/1990".
+  - q: Ngày tốt được chọn dựa vào đâu?
+    a: >-
+      Ngày tốt là ngày hoàng đạo, không phạm Tam nương, Nguyệt kỵ. Khi hỏi cho một việc cụ
+      thể (động thổ, cưới hỏi, khai trương...), trang lọc thêm theo Thập nhị trực, ví dụ
+      động thổ chọn các trực Bình, Định, Chấp, Thành. Việc lớn nên xem thêm tuổi người làm.
+  - q: Câu trả lời có dùng AI không?
+    a: >-
+      Không. Câu hỏi được nhận dạng bằng quy tắc rồi tính bằng thuật toán âm lịch và bảng
+      ngày tốt xấu dân gian, nên cùng một câu luôn ra cùng một kết quả và trả lời ngay.
+
+"/lich/doi-ngay":
+  - q: Tháng nhuận âm lịch là gì?
+    a: >-
+      Năm âm lịch 12 tháng chỉ dài khoảng 354-355 ngày, ngắn hơn năm Mặt Trời khoảng 11
+      ngày. Để không lệch mùa, cứ khoảng 19 năm lại có 7 năm thêm một tháng nhuận. Ở năm có
+      13 tháng, tháng nhuận là tháng đầu tiên không chứa trung khí và mang số của tháng liền
+      trước: năm 2025 có tháng 6 nhuận, năm 2028 có tháng 5 nhuận.
+  - q: Vì sao ngày âm mỗi năm rơi vào ngày dương khác nhau?
+    a: >-
+      Vì năm âm ngắn hơn năm dương khoảng 11 ngày và có năm thêm tháng nhuận, nên cùng một
+      ngày âm (sinh nhật, ngày giỗ) xê dịch qua lại khoảng một tháng trên lịch dương. Nhập
+      ngày âm không kèm năm, trang tự lấy lần sắp tới.
+  - q: Đổi ngày thuộc tháng nhuận thế nào?
+    a: >-
+      Nhập ngày/tháng/năm âm rồi bật "Là tháng nhuận". Nếu năm đó không có tháng nhuận như
+      vậy, trang sẽ báo, ví dụ năm Bính Ngọ 2026 không có tháng nhuận nào.
+
+"/lich/ngay-le":
+  - q: Những ngày lễ nào được nghỉ hưởng nguyên lương?
+    a: >-
+      Theo Điều 112 Bộ luật Lao động 2019: Tết Dương lịch 1 ngày, Tết Âm lịch 5 ngày, Giỗ
+      Tổ Hùng Vương (10/3 âm lịch) 1 ngày, Giải phóng miền Nam 30/4 1 ngày, Quốc tế Lao động
+      1/5 1 ngày và Quốc khánh 2 ngày (2/9 và một ngày liền kề). Lịch nghỉ cụ thể từng năm,
+      kể cả hoán đổi ngày làm việc, theo thông báo chính thức.
+  - q: Tết Nguyên đán thường rơi vào khoảng nào?
+    a: >-
+      Mùng 1 Tết Nguyên đán luôn nằm trong khoảng từ 21/1 đến 20/2 dương lịch. Muốn biết
+      chính xác một năm bất kỳ, nhập "1/1/năm" ở trang [đổi ngày âm](/lich/doi-ngay).
+  - q: Vì sao ngày lễ âm lịch mỗi năm một ngày khác?
+    a: >-
+      Rằm tháng Giêng, Giỗ Tổ, Phật đản, Tết Đoan ngọ, Vu Lan, Trung thu, ông Công ông Táo
+      và Tết cố định theo ngày âm nên ngày dương đổi hằng năm; còn các ngày như 1/1, 30/4,
+      1/5, 2/9, 20/10, 20/11 cố định theo ngày dương. Bảng trên tính sẵn ngày dương của 12 tháng tới.
+
+"/thoi-tiet":
+  - q: Số liệu thời tiết lấy từ đâu?
+    a: >-
+      Từ Open-Meteo, dịch vụ dự báo miễn phí tổng hợp các mô hình thời tiết số của nhiều cơ
+      quan khí tượng; khi Open-Meteo lỗi, trang tạm dùng wttr.in. Số liệu hiện tại cập nhật
+      khoảng 10 phút một lần. Dự báo 1-3 ngày đầu thường sát hơn; ngày thứ 5 đến 7 nên xem
+      như xu hướng.
+  - q: Nhiệt độ "cảm giác như" là gì?
+    a: >-
+      Là nhiệt độ cơ thể cảm nhận khi tính cả độ ẩm, gió và nắng. Trời oi ẩm làm cảm giác
+      nóng hơn số đo trên nhiệt kế, gió mạnh mùa lạnh làm cảm giác lạnh hơn.
+  - q: Lượng mưa 1 mm là bao nhiêu?
+    a: >-
+      1 mm mưa nghĩa là 1 lít nước rơi trên mỗi mét vuông mặt đất. Muốn xem đúng nơi đang
+      đứng, bấm "Lấy vị trí hiện tại": vị trí chỉ lưu trong trình duyệt của bạn.
+
+"/xo-so":
+  - q: Xổ số mở thưởng lúc mấy giờ?
+    a: >-
+      Miền Nam quay lúc 16h15, miền Trung 17h15, miền Bắc 18h15. Miền Bắc quay mỗi ngày một
+      kỳ; miền Nam mỗi ngày có 3-4 đài tỉnh, miền Trung 2-3 đài, theo lịch cố định trong
+      tuần. Trang ghi rõ hôm nay đài nào quay.
+  - q: Dò vé số thế nào?
+    a: >-
+      Chọn đài và ngày quay rồi nhập số trên vé: miền Nam, miền Trung 6 chữ số, miền Bắc 5
+      chữ số. Trang so phần cuối vé với từng giải, từ giải thấp nhất (2 số cuối) đến giải
+      đặc biệt (cả dãy số). Kết quả để tham khảo; đối chiếu với vé gốc và kết quả của công
+      ty xổ số trước khi lĩnh thưởng.
+  - q: Thời hạn lĩnh thưởng là bao lâu?
+    a: >-
+      Thời hạn in ở mặt sau vé, thường là 30 ngày kể từ ngày mở thưởng; quá hạn vé không
+      còn giá trị lĩnh thưởng.
+
+"/gia-vang":
+  - q: Giá mua vào, bán ra nghĩa là gì?
+    a: >-
+      Mua vào là giá cửa hàng mua lại vàng của bạn; bán ra là giá bạn trả khi mua. Khoảng
+      chênh giữa hai giá là phần thiệt ngay nếu mua rồi bán lại, nên khi so nơi mua hãy xem
+      cả giá mua vào.
+  - q: 1 lượng vàng bằng bao nhiêu chỉ, bao nhiêu gam?
+    a: >-
+      1 lượng (1 cây) = 10 chỉ = 37,5 g; 1 chỉ = 3,75 g. Bảng giá ghi theo triệu đồng một
+      lượng; giá 1 chỉ bằng giá 1 lượng chia 10.
+  - q: Vàng miếng SJC và vàng nhẫn 9999 khác nhau thế nào?
+    a: >-
+      Cùng là vàng 24K độ tinh khiết 99,99%, nhưng vàng miếng SJC thường có giá cao hơn vàng
+      nhẫn tròn trơn của các thương hiệu như DOJI, PNJ, Bảo Tín. Giá thế giới quy đổi (1
+      ounce = 31,1035 g, theo tỷ giá bán USD của Vietcombank) chưa gồm thuế, phí nên chỉ
+      dùng để so chênh lệch.
+
+"/gia-xang":
+  - q: Giá xăng thay đổi khi nào?
+    a: >-
+      Giá bán lẻ trong nước đổi theo kỳ điều hành của liên Bộ Công Thương - Tài chính; theo
+      Nghị định 80/2023/NĐ-CP, kỳ điều hành vào thứ Năm hằng tuần. Trang hiện giá kỳ mới
+      nhất kèm mức tăng giảm so với kỳ trước.
+  - q: Vùng 1 và vùng 2 khác nhau thế nào?
+    a: >-
+      Vùng 1 là địa bàn gần cảng, kho đầu mối; vùng 2 là địa bàn xa, tốn thêm chi phí vận
+      chuyển nên giá bán lẻ cao hơn vùng 1 khoảng 2%.
+  - q: RON 92, RON 95, E5, E10 nghĩa là gì?
+    a: >-
+      RON là chỉ số octan: càng cao thì xăng càng chống kích nổ tốt; nên đổ loại theo khuyến
+      cáo của nhà sản xuất xe. E5, E10 là xăng sinh học pha 5% hoặc 10% ethanol. Chữ "Mức
+      5" trong tên là tiêu chuẩn chất lượng nhiên liệu ứng với mức khí thải Euro 5.
+
+"/tu-vi":
+  - q: Lá số tử vi gồm những gì?
+    a: >-
+      Lá số Tử Vi Đẩu Số có 12 cung: Mệnh, Phụ Mẫu, Phúc Đức, Điền Trạch, Quan Lộc, Nô Bộc,
+      Thiên Di, Tật Ách, Tài Bạch, Tử Tức, Phu Thê, Huynh Đệ. Trên đó an 14 chính tinh kèm
+      độ sáng, các phụ tinh, Tứ hóa, Tuần, Triệt và đại hạn 10 năm, theo cách phổ biến ở
+      Việt Nam (Thái Thứ Lang).
+  - q: Vì sao cần nhập đúng giờ sinh?
+    a: >-
+      Cung Mệnh an theo tháng sinh âm lịch và giờ sinh, nên lệch một canh giờ (2 tiếng) là
+      ra lá số khác. Giờ sinh tính theo giờ đồng hồ Việt Nam; sinh từ 23h đến 24h chọn "Tý
+      đầu", lá số an theo ngày hôm sau.
+  - q: Xem tử vi có chính xác không?
+    a: >-
+      Tử vi là môn thuật số truyền thống, không được khoa học kiểm chứng; lá số nên đọc như
+      gợi ý để tham khảo, không thay cho lời khuyên chuyên môn về sức khỏe, tài chính hay
+      pháp lý. Ngày giờ sinh chỉ dùng để tính, không lưu lại.
+
+"/ky-mon":
+  - q: Kỳ Môn Độn Giáp là gì?
+    a: >-
+      Là một môn thuật số cổ phương Đông: lập bàn 9 cung theo thời điểm, rồi xếp Cửu tinh,
+      Bát môn, Bát thần và Tam kỳ Lục nghi lên từng cung để xem hướng và thời điểm làm
+      việc. Trang tự lập bàn theo giờ hiện tại; muốn xem giờ khác thì chọn ngày giờ ở trên.
+  - q: Âm độn, dương độn và cục là gì?
+    a: >-
+      Từ Đông chí đến trước Hạ chí dùng dương độn, từ Hạ chí đến trước Đông chí dùng âm độn.
+      Mỗi tiết khí chia 3 nguyên (thượng, trung, hạ), mỗi nguyên ứng một cục từ 1 đến 9;
+      số cục là cung bắt đầu xếp Mậu, can đầu của Lục nghi.
+  - q: Chuyển bàn và chiết bổ nghĩa là gì?
+    a: >-
+      Chuyển bàn là cách xoay cả vòng sao, cửa, thần quanh 8 cung ngoài. Chiết bổ là cách
+      định nguyên theo ngày phù đầu (ngày Giáp hoặc Kỷ gần nhất) và đổi cục đúng giờ giao
+      tiết khí, không dùng phép trí nhuận. Giờ tính theo đồng hồ Việt Nam, từ 23h tính sang
+      ngày hôm sau.
+
+"/than-so-hoc":
+  - q: Con số chủ đạo tính thế nào?
+    a: >-
+      Cộng tất cả chữ số của ngày sinh dương lịch, rồi cộng tiếp chữ số của tổng cho tới
+      khi còn từ 2 đến 11, gặp 22 hoặc 33 thì giữ nguyên. Ví dụ sinh 15/03/1990:
+      1+5+0+3+1+9+9+0 = 28, rồi 2+8 = 10, con số chủ đạo là 10. Theo hệ phổ biến ở Việt
+      Nam có số 10 và không có số 1.
+  - q: Họ tên dùng để tính gì?
+    a: >-
+      Mỗi chữ cái (đã bỏ dấu) quy ra số theo bảng Pythagoras: A, J, S là 1; B, K, T là 2; C,
+      L, U là 3... đến I, R là 9. Cả tên cho số sứ mệnh, các nguyên âm cho số linh hồn, các
+      phụ âm cho số nhân cách. Bỏ trống họ tên thì trang chỉ tính các số theo ngày sinh.
+  - q: Thần số học có cơ sở khoa học không?
+    a: >-
+      Không. Thần số học là hệ thống diễn giải truyền thống, không được khoa học kiểm chứng;
+      nên đọc như gợi ý để tự suy ngẫm, không dùng thay cho lời khuyên chuyên môn. Ngày sinh,
+      họ tên chỉ dùng để tính, không lưu lại.

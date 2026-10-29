@@ -60,6 +60,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, quote, unquote, urlencode
 from zoneinfo import ZoneInfo
 
+import yaml
 from fastapi import APIRouter, Request
 from fastapi.routing import APIRoute
 from fastapi.responses import (
@@ -316,6 +317,22 @@ def _answer_html(text: str) -> Markup:
     return Markup("".join(html))
 
 
+_FAQ_PATH = _ROOT / "assets" / "site_faq.yaml"
+_FAQ_LINK = re.compile(r"\[([^\]]+)\]\((/[^)\s]*)\)")
+
+
+@functools.lru_cache(maxsize=1)
+def _faq() -> dict[str, list[dict]]:
+    """Hỏi đáp cuối trang (assets/site_faq.yaml) theo đường dẫn trang gốc."""
+    with _FAQ_PATH.open(encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def _faq_html(text: str) -> Markup:
+    """Câu trả lời hỏi đáp: escape rồi đổi [chữ](/đường-dẫn) thành link nội bộ."""
+    return Markup(_FAQ_LINK.sub(r'<a href="\2">\1</a>', str(escape(text))))
+
+
 @functools.lru_cache(maxsize=1)
 def _env() -> Environment:
     env = Environment(
@@ -334,6 +351,7 @@ def _env() -> Environment:
     # gạch nối có cách thành dấu hai chấm (hoặc phẩy), không để gạch làm dấu câu.
     env.filters["clause"] = lambda text, sep=": ": str(text).replace(" - ", sep)
     env.filters["answer_html"] = _answer_html
+    env.filters["faq_html"] = _faq_html
     return env
 
 
@@ -428,7 +446,11 @@ def _render(
     trống thì lấy đường dẫn đang xem (chỉ giữ tham số nội dung)."""
     css_version, version = _assets()
     logged_in, path, base = _viewer.get()
-    page_url = f"{base}{canonical or _canonical_path(path)}" if base else ""
+    canonical = canonical or _canonical_path(path)
+    page_url = f"{base}{canonical}" if base else ""
+    # Hỏi đáp chỉ ở trang gốc (không tham số, vào chỉ mục): không lặp trên hàng nghìn
+    # trang ngày/tháng/đài/địa điểm.
+    faq = [] if ctx.get("noindex") or "?" in canonical else _faq().get(canonical, [])
     ld_json = (
         _structured_data(title, description, active, page_url, base, modified)
         if base and not ctx.get("noindex")
@@ -449,6 +471,7 @@ def _render(
             page_url=page_url,
             site_url=base,
             ld_json=ld_json,
+            faq=faq,
             site_verification=config.GOOGLE_SITE_VERIFICATION,
             **ctx,
         )

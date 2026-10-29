@@ -238,6 +238,16 @@ h1.date .eyebrow {
 .small { font-size: var(--fs-small); }
 .answer { white-space: pre-line; }
 .answer-body > * + * { margin-top: 12px; }
+
+/* ---------- hỏi đáp cuối trang gốc ----------
+   Trên nền giấy như các mục khác: mỗi cặp hỏi - đáp kẻ vạch mảnh phía trên, 3 cột khi
+   đủ rộng, 1 cột trên điện thoại. */
+.faq { margin-top: 56px; }
+.faq-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px 40px; }
+.faq .qa { border-top: 1px solid var(--rule); padding-top: 16px; min-width: 0; }
+.faq .qa h3 { margin: 0 0 6px; font-size: var(--fs-body); font-weight: 600; line-height: 1.4; color: var(--text); }
+.faq p { color: var(--muted); text-wrap: pretty; }
+.faq p a { color: var(--text); text-decoration-color: var(--control); }
 .answer-body ul { padding-left: 20px; }
 .answer-body li + li { margin-top: 4px; }
 .prose p + p { margin-top: 10px; }

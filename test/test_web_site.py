@@ -1211,6 +1211,32 @@ async def test_tieu_de_trang_chu_co_tu_khoa_va_llms_txt(client):
     assert "api/v1/calendar/answers?q=r%E1%BA%B1m%20th%C3%A1ng%208" in text
 
 
+async def test_hoi_dap_chi_o_trang_goc(client, lottery_sources):
+    faq = web_site._faq()
+    assert set(faq) == set(web_site._SITEMAP_PATHS)  # trang công khai nào cũng có hỏi đáp
+    html = (await client.get("/lich")).text
+    assert '<h2 id="faq-title">Hỏi đáp</h2>' in html
+    assert "<h3>Tam nương, Nguyệt kỵ là những ngày nào?</h3>" in html
+    html = (await client.get("/lich/ngay-le")).text
+    assert '<a href="/lich/doi-ngay">đổi ngày âm</a>' in html  # [chữ](/đường-dẫn) -> link
+    # Trang theo tham số (ngày, tháng, đài) và trang noindex: không lặp khối hỏi đáp.
+    for path, params in (
+        ("/lich", {"ngay": "2026-10-05"}),
+        ("/lich", {"thang": "2026-11"}),
+        ("/xo-so", {"dai": "tay-ninh"}),
+        ("/lich/hoi", {"q": "rằm tháng 8"}),
+    ):
+        assert 'id="faq-title"' not in (await client.get(path, params=params)).text, params
+    assert 'id="faq-title"' in (await client.get("/xo-so", params={"utm_source": "zalo"})).text
+
+
+def test_hoi_dap_escape_chi_doi_link_noi_bo():
+    html = web_site._faq_html('<b>x</b> [ngoài](https://evil.example) [lịch](/lich?ngay=1&x="y")')
+    assert "<b>" not in html and "&lt;b&gt;" in html
+    assert "[ngoài](https://evil.example)" in html  # chỉ link nội bộ bắt đầu bằng /
+    assert '<a href="/lich?ngay=1&amp;x=&#34;y&#34;">lịch</a>' in html
+
+
 async def test_trang_dang_nhap_noi_ro_chi_cho_chu_trang_va_co_duong_ve(monkeypatch):
     import web
 

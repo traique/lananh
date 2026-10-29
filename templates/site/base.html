@@ -95,6 +95,7 @@
     <div class="canvas">
       <main class="column" id="main" tabindex="-1">
         {% block content %}{% endblock %}
+        {% if faq %}{% include "_faq.html" %}{% endif %}
       </main>
       <footer class="foot column">
         <span>© LCTA, tính bằng thuật toán</span>

@@ -1,0 +1,14 @@
+{# Hỏi đáp cuối trang gốc (assets/site_faq.yaml). Câu hỏi là h3, câu trả lời ngay dưới:
+   máy tìm kiếm và trợ lý AI tách được từng cặp. Không khai JSON-LD FAQPage vì Google đã
+   bỏ kết quả nhiều định dạng của loại này. #}
+<section class="sect faq" aria-labelledby="faq-title">
+  <header><h2 id="faq-title">Hỏi đáp</h2></header>
+  <div class="faq-list">
+    {% for item in faq %}
+    <div class="qa">
+      <h3>{{ item.q }}</h3>
+      <p>{{ item.a | faq_html }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
