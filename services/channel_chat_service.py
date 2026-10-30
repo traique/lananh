@@ -374,14 +374,8 @@ async def run_chat_turn(
             # chặn câu nói ngược policy - conversation_log.guard_stock_reply), không
             # phát nháp. Link trong nháp đã bị turn_feedback.draft_text thay "…".
             stock_followup = (last_row or {}).get("kind") == conversation_log.KIND_STOCK
-            # Phần phân tích cổ phiếu của persona (core/config.load_chat_skill) chỉ
-            # kèm lượt liên quan cổ phiếu/đầu tư: chuyện đời thường không bị kéo sang
-            # cổ phiếu, và bớt ~1/3 token persona.
-            stock_rules = bool(
-                grounding
-                or stock_followup
-                or outcome.name == "get_portfolio"
-                or stock_analysis.chat_needs_stock_rules(text)
+            stock_rules = persona_stock_rules(
+                text, grounding=grounding, stock_followup=stock_followup, tool_name=outcome.name
             )
             with drafts.drafting(not grounding and not stock_followup), trace.stage("llm"):
                 response = await orchestrator.chat(
@@ -487,6 +481,22 @@ async def run_chat_turn(
         provider=provider,
         model=model,
         history_ids=tuple(history_ids),
+    )
+
+
+def persona_stock_rules(
+    text: str, *, grounding: str = "", stock_followup: bool = False, tool_name: str = ""
+) -> bool:
+    """Lượt chat có kèm phần phân tích cổ phiếu của persona (core/config.
+    load_chat_skill(stock=...)) không - chuyện đời thường không bị kéo sang cổ phiếu và
+    bớt ~1/3 token persona. Bật khi lượt có số liệu cổ phiếu (grounding), ngay sau
+    báo cáo cổ phiếu, router vừa đọc danh mục, hoặc câu cổ phiếu/đầu tư
+    (stock.analysis.chat_needs_stock_rules). test/evals/harness.py dùng chung hàm này."""
+    return bool(
+        grounding
+        or stock_followup
+        or tool_name == "get_portfolio"
+        or stock_analysis.chat_needs_stock_rules(text)
     )
 
 

@@ -139,6 +139,11 @@ def test_khong_phai_hoi_gia_san_pham(text):
         "gia vang hom nay",
         "bitcoin còn lên không",
         "tỷ giá USD hôm nay",
+        "vàng nhẫn hôm nay bao nhiêu",
+        "SJC hôm nay bao nhiêu",
+        "đô la hôm nay bao nhiêu",
+        "thị trường hôm nay thế nào em",
+        "sàn hôm nay đỏ quá",
     ],
 )
 def test_luot_co_phieu_dau_tu_can_phan_co_phieu(text):

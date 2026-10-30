@@ -828,11 +828,14 @@ _cmd(
     None,
     _fixed("/phienban"),
     roles=reg.STAFF_ROLES,
+    # _core() đã bỏ "em"/"anh" đầu câu; "bản mới có gì" trùng "bạn mới có gì" nên phải
+    # có chữ "phiên bản"/"cập nhật"/"bot".
     patterns=(
         r"(?:xem )?phien ban(?: (?:bot|moi nhat|hien tai|dang chay))?",
         r"(?:xem )?lich su cap nhat(?: bot)?",
-        r"(?:bot|em) (?:co gi moi|moi cap nhat (?:gi|nhung gi))(?: khong)?",
-        r"ban moi co gi(?: moi)?",
+        r"phien ban moi co gi(?: moi)?",
+        r"bot (?:co gi moi|moi cap nhat (?:gi|nhung gi))(?: khong)?",
+        r"moi cap nhat (?:gi|nhung gi)(?: the| vay)?",
     ),
 )
 _cmd(

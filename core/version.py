@@ -35,10 +35,6 @@ class Release:
     released: date
     notes: tuple[str, ...]
 
-    @property
-    def key(self) -> tuple[int, ...]:
-        return tuple(int(part) for part in self.version.split("."))
-
 
 def parse_changelog(text: str) -> tuple[Release, ...]:
     """Các mục ``## X.Y.Z - YYYY-MM-DD`` theo thứ tự trong file (mới nhất trước).

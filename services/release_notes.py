@@ -13,8 +13,8 @@ sang bản mới; bản deploy hỏng bị huỷ trước đó thì không báo 
   CHANGELOG chưa thêm mục vẫn báo (ghi rõ chưa có mục mới).
 - Gửi Telegram, cộng Zoom khi Zoom bật và đã pair, qua notify_hub nguồn "release"
   (URGENT): ngoài giờ yên lặng gửi ngay, trong giờ yên lặng giữ tới khi hết. Chỉ ghi
-  mốc khi ít nhất 1 kênh đã nhận; mỗi process thử đúng 1 lần (hỏng thì lần khởi động
-  sau thử lại), không gửi dồn mỗi vòng.
+  mốc khi ít nhất 1 kênh đã nhận; mỗi process gửi tối đa 1 lần (gửi hỏng thì lần khởi
+  động sau thử lại; chưa đọc được DB thì vòng giám sát sau thử lại), không gửi dồn.
 - RELEASE_NOTIFY=0 tắt.
 """
 
@@ -80,12 +80,24 @@ def history_text(argument: str = "") -> str:
         lines += block
         shown += 1
     if len(items) > shown:
-        lines += ["", f"Còn {len(items) - shown} bản cũ hơn - gõ /phienban all để xem thêm."]
+        # "/phienban all" chỉ giúp được khi lần này dừng vì số bản xin, không phải vì
+        # đã chạm HISTORY_MAX hay trần độ dài tin.
+        more = (
+            "gõ /phienban all để xem thêm"
+            if shown == count < HISTORY_MAX
+            else "lịch sử đầy đủ ở CHANGELOG.md trong repo"
+        )
+        lines += ["", f"Còn {len(items) - shown} bản cũ hơn - {more}."]
     return "\n".join(lines)
 
 
 def _previous_version(marker: str | None) -> str:
     return (marker or "").partition("@")[0]
+
+
+def _version_key(text: str) -> tuple[int, ...] | None:
+    parts = text.split(".")
+    return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else None
 
 
 def announcement_text(previous_marker: str | None) -> str:
@@ -101,6 +113,10 @@ def announcement_text(previous_marker: str | None) -> str:
             "bản (sửa nhỏ hoặc chạy lại). Xem lịch sử: /phienban"
         )
     since = f" (trước đó {previous})" if previous and previous != version.UNKNOWN else ""
+    older, newer = _version_key(release.version), _version_key(previous)
+    if older is not None and newer is not None and older < newer:
+        # Rollback (Render "Rollback" hoặc revert): không gọi là "bản mới".
+        return f"↩️ Em vừa quay về bản {label}{since}. Xem lịch sử: /phienban"
     lines = [f"🆕 Em đã lên bản mới {label}{since}.", "", "Có gì mới:"]
     lines += [f"• {note}" for note in release.notes]
     lines += ["", "Xem lịch sử cập nhật: /phienban"]
@@ -125,20 +141,21 @@ async def announce_if_new() -> bool:
     global _attempted
     if _attempted or not enabled() or not _on_render() or not config.ALLOWED_USER_ID:
         return False
-    _attempted = True
     marker = f"{version.version()}@{version.commit()}"
+    # DB lỗi ở đây (pool chưa sẵn ngay sau deploy) thì raise ra monitor_service, vòng
+    # sau thử lại; từ lúc đọc được mốc trở đi mỗi process chỉ gửi 1 lần.
     previous = await db.get_setting(ANNOUNCED_KEY)
+    _attempted = True
     if previous == marker:
         return False
     text = announcement_text(previous)
+    # Khoá chống trùng của hàng đợi giữ cả tin đã gửi: gắn mốc trước để quay lại 1
+    # bản cũ (A -> B -> A) vẫn là 1 tin mới.
+    dedup = f"{SOURCE}:{previous or '-'}>{marker}"
     delivered = False
     for channel in await _channels():
         sent = await notify_hub.send(
-            channel,
-            config.ALLOWED_USER_ID,
-            text,
-            source=SOURCE,
-            dedup=f"{SOURCE}:{marker}",
+            channel, config.ALLOWED_USER_ID, text, source=SOURCE, dedup=dedup
         )
         delivered = delivered or sent
     if not delivered:

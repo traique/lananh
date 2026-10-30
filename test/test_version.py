@@ -11,6 +11,10 @@ from services import release_notes
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _key(release: version.Release) -> tuple[int, ...]:
+    return tuple(int(part) for part in release.version.split("."))
+
+
 @pytest.fixture(autouse=True)
 def _fresh_cache():
     version.releases.cache_clear()
@@ -21,7 +25,7 @@ def _fresh_cache():
 def test_changelog_that_hop_le_moi_nhat_o_tren():
     items = version.releases()
     assert items, "CHANGELOG.md phải có ít nhất 1 mục ## X.Y.Z - YYYY-MM-DD"
-    keys = [release.key for release in items]
+    keys = [_key(release) for release in items]
     assert keys == sorted(keys, reverse=True) and len(set(keys)) == len(keys)
     days = [release.released for release in items]
     assert days == sorted(days, reverse=True)
@@ -65,7 +69,7 @@ Giới thiệu - bị bỏ qua.
         ("2.0.10", date(2026, 11, 1)),
     ]
     assert items[0].notes == ("Dòng một nối tiếp dòng một", "Dòng hai")
-    assert items[1].key == (2, 0, 10) and items[0].key > items[1].key
+    assert _key(items[1]) == (2, 0, 10) and _key(items[0]) > _key(items[1])
 
 
 def test_changelog_hong_thi_khong_raise(tmp_path, monkeypatch):
@@ -100,9 +104,11 @@ def test_phienban_mac_dinh_3_ban_all_toi_da_10(tmp_path, monkeypatch):
     text = release_notes.history_text()
     assert text.startswith("🏷️ Lan Anh đang chạy bản 1.12.0")
     assert "1.10.0 — 20/10/2026" in text and "• Tính năng 10" in text
-    assert "1.9.0" not in text and "Còn 9 bản cũ hơn" in text
-    assert "1.3.0" in release_notes.history_text("all")
-    assert "1.2.0" not in release_notes.history_text("all")
+    assert "1.9.0" not in text and "Còn 9 bản cũ hơn - gõ /phienban all" in text
+    full = release_notes.history_text("all")
+    assert "1.3.0" in full and "1.2.0" not in full
+    # Đã là "all" thì không bảo gõ lại "/phienban all" (in y hệt).
+    assert "/phienban all" not in full and "CHANGELOG.md" in full
     assert "1.11.0" in release_notes.history_text("2") and "1.10.0" not in (
         release_notes.history_text("2")
     )
@@ -118,4 +124,6 @@ def test_phienban_khong_vuot_tran_tin(tmp_path, monkeypatch):
     path.write_text("\n".join(blocks), encoding="utf-8")
     monkeypatch.setattr(version, "CHANGELOG_PATH", path)
     text = release_notes.history_text("all")
-    assert len(text) <= 3700 and "bản cũ hơn" in text
+    assert len(text) <= 3700 and "bản cũ hơn" in text and "/phienban all" not in text
+    # Mặc định 3 bản nhưng chạm trần độ dài: "/phienban all" cũng không giúp gì.
+    assert "/phienban all" not in release_notes.history_text()

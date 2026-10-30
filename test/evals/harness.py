@@ -494,12 +494,12 @@ def available_providers() -> list[str]:
 async def _run_chat(case: Case, fake: FakeDatabase):
     from ai import orchestrator
 
-    from stock import analysis as stock_analysis
+    from services import channel_chat_service
 
     fake.history[case.user_id] = list(case.history)
-    # Như services/channel_chat_service.run_chat_turn: phần phân tích cổ phiếu của
-    # persona chỉ kèm lượt có số liệu cổ phiếu hoặc câu cổ phiếu/đầu tư.
-    stock_rules = bool(case.grounding) or stock_analysis.chat_needs_stock_rules(case.prompt)
+    # Cùng quyết định với run_chat_turn (phần phân tích cổ phiếu của persona); case
+    # không ghi loại tin trước đó nên không có tín hiệu "ngay sau báo cáo cổ phiếu".
+    stock_rules = channel_chat_service.persona_stock_rules(case.prompt, grounding=case.grounding)
     return await orchestrator.chat(
         case.user_id,
         case.prompt,

@@ -54,7 +54,8 @@ async def test_ban_moi_bao_telegram_va_zoom_dung_mot_lan(env, monkeypatch):
     assert await release_notes.announce_if_new() is True
     assert [item[0] for item in env["sent"]] == ["telegram", "zoom"]
     _, user_id, text, source, dedup = env["sent"][0]
-    assert user_id == 777 and source == "release" and dedup == "release:1.1.0@abc1234"
+    assert user_id == 777 and source == "release"
+    assert dedup == "release:1.0.0@9999999>1.1.0@abc1234"
     assert text.startswith("🆕 Em đã lên bản mới 1.1.0 (abc1234) (trước đó 1.0.0).")
     assert "• Câu chuyện thường không kéo sang cổ phiếu" in text and "/phienban" in text
     assert env["settings"][release_notes.ANNOUNCED_KEY] == "1.1.0@abc1234"
@@ -92,6 +93,29 @@ async def test_commit_moi_cung_phien_ban_bao_deploy_lai(env):
     text = env["sent"][0][2]
     assert text.startswith("🔄 Em vừa được deploy lại bản 1.1.0 (abc1234)")
     assert "Có gì mới" not in text
+
+
+@pytest.mark.asyncio
+async def test_quay_lai_ban_cu_van_la_tin_moi(env):
+    """Khoá chống trùng của hàng đợi giữ cả tin đã gửi: A -> B -> A phải khác khoá."""
+    env["settings"][release_notes.ANNOUNCED_KEY] = "1.2.0@bbbbbbb"
+    assert await release_notes.announce_if_new() is True
+    assert env["sent"][0][4] == "release:1.2.0@bbbbbbb>1.1.0@abc1234"
+    assert env["sent"][0][2].startswith("↩️ Em vừa quay về bản 1.1.0 (abc1234) (trước đó 1.2.0).")
+
+
+@pytest.mark.asyncio
+async def test_db_loi_luc_doc_moc_thi_vong_sau_thu_lai(env, monkeypatch):
+    async def broken(key):
+        raise ConnectionError("pool chưa sẵn")
+
+    good = release_notes.db.get_setting
+    monkeypatch.setattr(release_notes.db, "get_setting", broken)
+    with pytest.raises(ConnectionError):
+        await release_notes.announce_if_new()
+    monkeypatch.setattr(release_notes.db, "get_setting", good)
+    assert await release_notes.announce_if_new() is True
+    assert len(env["sent"]) == 1
 
 
 @pytest.mark.asyncio

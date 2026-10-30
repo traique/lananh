@@ -248,7 +248,7 @@ def test_goi_y_kenh_noi_sau_persona_va_cache_co_tran():
             for channel in ("zalo", "telegram", "zoom", None):
                 config.load_chat_skill(variant=variant, channel=channel)
                 config.load_chat_skill(variant=variant, channel=channel, stock=False)
-        # Mỗi biến thể: 1 phần lõi + 1 phần cổ phiếu, gợi ý kênh không vào cache.
-        assert len(config._chat_skill_cache) <= 2 * len(config.PERSONA_VARIANTS)
+        # Mỗi biến thể 1 phần lõi + 1 phần cổ phiếu chung; gợi ý kênh không vào cache.
+        assert len(config._chat_skill_cache) <= len(config.PERSONA_VARIANTS) + 1
     finally:
         config._chat_skill_cache.clear()

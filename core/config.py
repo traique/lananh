@@ -445,7 +445,7 @@ _PROFILE_PLACEHOLDERS = {"", "...", "…"}
 # Cache theo (phần, biến thể persona, cách xưng hô riêng): cách xưng hô chỉ áp cho
 # biến thể Zalo và nằm trong danh sách đóng core/address.ADDRESS_FORMS, nên phần lõi
 # tối đa 1 + 2 * (len(ADDRESS_FORMS) + 1) chuỗi (~15 chuỗi x ~10 KB); phần cổ phiếu
-# không phụ thuộc cách xưng hô (3 chuỗi x ~5 KB).
+# không phụ thuộc biến thể hay cách xưng hô (1 chuỗi ~5 KB).
 _PART_CORE = "core"
 _PART_STOCK = "stock"
 _PART_TEMPLATES = {
@@ -591,7 +591,9 @@ def load_chat_skill(
         _chat_skill_cache.clear()
     persona = _cached_part(_PART_CORE, variant, form)
     if persona and (stock or not PERSONA_STOCK_SPLIT):
-        section = _cached_part(_PART_STOCK, variant, None)
+        # Phần cổ phiếu không đổi theo biến thể (luật theo biến thể nằm ở lõi): 1 bản
+        # cache chung. Template này mà đọc ``variant`` thì phải đổi lại khoá.
+        section = _cached_part(_PART_STOCK, PERSONA_OWNER, None)
         if section:
             persona = f"{persona}\n\n{section}"
     hint = channel_style_hint(channel)
