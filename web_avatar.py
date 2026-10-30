@@ -8,11 +8,16 @@
   với Telegram/Zoom; nhắc việc tạo từ avatar gửi về Telegram. Kiểu "người iu" chỉ ở
   trang này qua style_hint của lượt (AVATAR_STYLE_HINT) - không đổi persona, giọng
   hay /noi của Telegram/Zalo/Zoom.
-- Giọng: ``voice_reply.web_clip`` trả base64 trong JSON, đọc SAU khi nhả khoá lượt;
-  khẩu hình tính ở trình duyệt theo âm lượng. Hoài My (mặc định) qua Microsoft Edge TTS
-  ra MP3, lỗi thì đọc lại bằng giọng Gemini ``avatar_service.gemini_voice()``; giọng
-  Gemini ra M4A (không có ffmpeg thì WAV). Câu chào và câu nghe thử giữ trong ClipCache
-  (trần 10 clip) - bản đọc lại thay giọng Edge lỗi thì không giữ.
+- /chat trả luồng sự kiện (text/event-stream): chữ đang sinh (bản nháp ``ai/drafts`` như
+  Telegram, đã bỏ link/markdown) để bong bóng chạy chữ dần, rồi câu trả lời đã qua đủ bước
+  lọc. Lượt chạy trong task riêng: trình duyệt ngắt giữa chừng thì lượt vẫn chạy xong.
+- Giọng: /chat trả chữ ngay kèm ``speech`` (câu đọc chia đoạn, ``voice_reply.web_chunks``);
+  trang xin giọng từng đoạn qua /speak (``voice_reply.web_clip``, base64 trong JSON), đọc
+  đoạn này trong lúc tải đoạn sau - giọng không bao giờ nằm trong khoá lượt hay số đo
+  lượt chat. Khẩu hình tính ở trình duyệt theo âm lượng. Hoài My (mặc định) qua Microsoft
+  Edge TTS ra MP3, lỗi thì đọc lại bằng giọng Gemini ``avatar_service.gemini_voice()``;
+  giọng Gemini chỉ đọc bằng Gemini Live, ra M4A (không có ffmpeg thì WAV). Câu chào và câu
+  nghe thử giữ trong ClipCache (trần 10 clip) - bản đọc lại thay giọng Edge lỗi thì không giữ.
 - Nghe: trình duyệt dùng Web Speech API; không có thì ghi âm gửi /stt (Groq Whisper
   như tin thoại, trần VOICE_MAX_BYTES).
 - Ảnh: services/avatar_photo.py; chỉ phục vụ qua route kiểm phiên, ``no-store``.
@@ -25,7 +30,9 @@
 
 API (lỗi hiện cho người dùng: {"error": "..."}; request sai dạng - không phải JSON,
 kind lạ - nhận 400/415 mặc định của FastAPI):
-  POST   /admin/api/avatar/chat           {text, voice?: bool} -> {text, mood, audio?, mime?, image?}
+  POST   /admin/api/avatar/chat           {text}              -> luồng: {draft}... rồi
+                                                                 {text, mood, speech?, image?} | {error}
+  POST   /admin/api/avatar/speak          {text}              -> {audio?, mime?}
   POST   /admin/api/avatar/stt            body audio/*         -> {text} (lỗi kèm kind)
   GET    /admin/api/avatar/greeting       [?id=&audio=1]       -> {id, text, mood, audio?, mime?}
   GET    /admin/api/avatar/voices                              -> {voices, current}
@@ -38,19 +45,23 @@ kind lạ - nhận 400/415 mặc định của FastAPI):
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import functools
 import json
+import logging
 import os
 import secrets
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from starlette.datastructures import UploadFile
 
 import messages
 import web_admin
+from ai import drafts
 from ai.timeouts import TurnTimeoutError, turn_deadline
 from core import config, trace
 from core import database as db
@@ -59,8 +70,14 @@ from services import voice_service
 from services.channel_chat_service import ChatTurn, failure_message, run_chat_turn
 from services.reminder_delivery import NotificationTarget, notification_target
 
+logger = logging.getLogger(__name__)
+
 PAGE_PATH = "/admin/avatar"
 MAX_TEXT_CHARS = 2000
+# Luồng /chat: bản nháp gửi tối đa ~4 lần/giây (mỗi lần cả đoạn chữ đã sinh); im lặng quá
+# HEARTBEAT_SEC thì gửi dòng giữ kết nối để proxy không cắt lượt dài.
+DRAFT_INTERVAL_SEC = 0.25
+HEARTBEAT_SEC = 15.0
 _TEMPLATE_PATH = Path(__file__).resolve().parent / "templates" / "avatar.html"
 _NO_STORE = {"Cache-Control": "private, no-store"}
 _VENDOR_DIR = Path(__file__).resolve().parent / "vendor" / "mediapipe"
@@ -92,6 +109,8 @@ api_router = APIRouter(
     include_in_schema=False,
 )
 _clips = avatar_service.ClipCache()
+# Lượt chat đang chạy (giữ tham chiếu tới khi xong, kể cả khi trình duyệt đã ngắt luồng).
+_answers: set[asyncio.Task] = set()
 
 
 def style_hint() -> str:
@@ -273,6 +292,53 @@ def _reply(turn: ChatTurn | None) -> tuple[str, str, bool]:
     return text, avatar_service.guess_mood(raw), True
 
 
+class _DraftFeed:
+    """Sink bản nháp (ai/drafts) của 1 lượt: chỉ giữ chữ mới nhất, báo luồng /chat gửi đi."""
+
+    def __init__(self) -> None:
+        self.latest = ""
+        self.sent = ""
+        self.changed = asyncio.Event()
+
+    def push(self, text: str) -> None:
+        self.latest = text
+        self.changed.set()
+
+    def take(self) -> str:
+        """Chữ nháp (đã làm sạch) mới hơn lần gửi trước; "" nếu không có gì mới."""
+        draft = avatar_service.draft_text(self.latest)
+        if not draft or draft == self.sent:
+            return ""
+        self.sent = draft
+        return draft
+
+
+def _event(data: dict) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
+
+
+async def _events(task: asyncio.Task, feed: _DraftFeed) -> AsyncIterator[str]:
+    task.add_done_callback(lambda _: feed.changed.set())
+    yield ": ok\n\n"  # gửi header ngay, không để proxy chờ cả câu trả lời
+    while not task.done():
+        try:
+            await asyncio.wait_for(feed.changed.wait(), HEARTBEAT_SEC)
+        except TimeoutError:
+            yield ":\n\n"
+            continue
+        feed.changed.clear()
+        draft = feed.take()
+        if draft and not task.done():
+            yield _event({"draft": draft})
+            await asyncio.wait({task}, timeout=DRAFT_INTERVAL_SEC)
+    try:
+        payload = task.result()
+    except Exception:
+        logger.exception("Lỗi lượt chat avatar")
+        payload = {"error": messages.CHAT_GENERIC_ERROR}
+    yield _event(payload)
+
+
 @api_router.post("/chat")
 async def avatar_chat(request: Request) -> Response:
     body = await _json_body(request)
@@ -282,22 +348,50 @@ async def avatar_chat(request: Request) -> Response:
         return _error("Anh chưa nhập gì nè.", 400)
     if len(text) > MAX_TEXT_CHARS:
         return _error(f"Tin dài quá, tối đa {MAX_TEXT_CHARS} ký tự thôi anh.", 400)
+    feed = _DraftFeed()
+    task = asyncio.create_task(_answer(text, feed.push))
+    _answers.add(task)
+    task.add_done_callback(_answers.discard)
+    return StreamingResponse(
+        _events(task, feed),
+        media_type="text/event-stream",
+        headers={**_NO_STORE, "X-Accel-Buffering": "no"},
+    )
+
+
+async def _answer(text: str, sink: drafts.Sink) -> dict:
+    """1 lượt chat từ avatar -> sự kiện cuối của luồng /chat."""
     turn_id = f"web:avatar:{secrets.token_hex(8)}"
     with (
         trace.turn(turn_id, channel="web", user_kind="owner"),
         notification_target(
             NotificationTarget("telegram", str(config.ALLOWED_USER_ID), event_key=turn_id)
         ),
+        drafts.sink_scope(sink),
     ):
         turn = await _chat_turn(text)
-        reply, mood, speakable = _reply(turn)
-        # Đọc sau khi nhả khoá lượt: Telegram/Zoom không phải chờ phần giọng nói.
-        clip = await _speak(reply) if speakable and body.get("voice") is not False else None
-    payload = {"text": reply, "mood": mood, **_audio(clip)}
+    reply, mood, speakable = _reply(turn)
+    payload: dict = {"text": reply, "mood": mood}
+    # Giọng đọc xin riêng từng đoạn qua /speak: chữ hiện ngay, không chờ đọc cả câu trả lời.
+    speech = voice_reply.web_chunks(reply) if speakable else []
+    if speech:
+        payload["speech"] = speech
     image = _image(turn) if turn is not None and turn.verbatim else None
     if image:
         payload["image"] = image
-    return JSONResponse(payload, headers=_NO_STORE)
+    return payload
+
+
+@api_router.post("/speak")
+async def avatar_speak(request: Request) -> Response:
+    """Giọng đọc 1 đoạn trong ``speech`` của /chat bằng giọng đang chọn; {} = không đọc
+    được (Edge và Gemini Live đều lỗi, cổng đọc bận...) - trang bỏ qua đoạn đó."""
+    body = await _json_body(request)
+    text = body.get("text")
+    text = text.strip() if isinstance(text, str) else ""
+    if not text or len(text) > MAX_TEXT_CHARS:
+        return _error("Đoạn đọc không hợp lệ.", 400)
+    return JSONResponse(_audio(await _speak(text)), headers=_NO_STORE)
 
 
 @api_router.post("/stt")

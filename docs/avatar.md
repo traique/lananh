@@ -50,10 +50,20 @@ chào, giọng), `services/avatar_photo.py` (ảnh), `templates/avatar.html` (gi
 - Kiểu "người iu" chỉ áp cho lượt từ trang này (`style_hint`), không đổi persona, giọng
   hay `/noi` của Telegram/Zalo/Zoom. Lượt hỏng: câu báo lỗi như Telegram, mặt buồn,
   không đọc giọng.
-- Giọng: `voice_reply.web_clip` - giọng và phong cách riêng của trang, trả base64 trong
-  JSON. Đọc cả khi `VOICE_REPLY_ENABLED=0`; vẫn che bí mật, bỏ emoji/markdown khi đọc,
-  chuẩn hoá số/viết tắt, cắt theo `VOICE_REPLY_MAX_CHARS`. Giọng đọc chạy SAU khi nhả
-  khoá lượt.
+- `/chat` trả luồng sự kiện (`text/event-stream`): trong lúc AI soạn, bong bóng chat chạy
+  chữ dần từ bản nháp (`ai/drafts`, như bản nháp Telegram - chỉ provider trả chữ theo luồng
+  như 9Router/Groq/OpenRouter; Gemini API chính thức thì hiện cả câu một lần), đã bỏ link
+  và markdown, nháp lẫn chữ Trung/Nhật/Hàn thì không hiện. Sự kiện cuối là câu trả lời đã
+  qua đủ bước lọc, thay cho bản nháp. Không có chữ mới quá 15 giây thì gửi dòng giữ kết
+  nối để proxy không cắt lượt dài. Trình duyệt ngắt giữa chừng thì lượt vẫn chạy xong và
+  lưu lịch sử như Telegram.
+- Giọng: `/chat` trả chữ ngay khi AI soạn xong, kèm `speech` là câu đọc đã chia đoạn
+  (`voice_reply.web_chunks`: đoạn đầu ~40 ký tự cho giọng bắt đầu sớm, các đoạn sau gom
+  câu tới 220 ký tự). Trang xin giọng từng đoạn qua `/speak` (`voice_reply.web_clip`,
+  base64 trong JSON), đọc đoạn này trong lúc tải đoạn sau; gửi tin mới, chạm ảnh hay tắt
+  loa thì bỏ các đoạn còn lại. Giọng không nằm trong khoá lượt chủ bot, cũng không tính
+  vào số đo lượt chat (`turn_metrics`). Đọc cả khi `VOICE_REPLY_ENABLED=0`; vẫn che bí
+  mật, bỏ emoji/markdown khi đọc, chuẩn hoá số/viết tắt, cắt theo `VOICE_REPLY_MAX_CHARS`.
 - **Hoài My** (mặc định): giọng `vi-VN-HoaiMyNeural` của Microsoft Edge TTS qua gói
   [edge-tts](https://github.com/rany2/edge-tts) (LGPLv3), miễn phí, không tính quota TTS.
   MP3 phát thẳng trên trình duyệt (không qua ffmpeg, không ghi file tạm), chung cổng 1
@@ -61,14 +71,19 @@ chào, giọng), `services/avatar_photo.py` (ảnh), `templates/avatar.html` (gi
   chỉ dẫn phong cách bằng lời, nên giọng nhẹ nhàng hơn nhờ chỉnh tốc độ/cao độ
   (`AVATAR_EDGE_*`). Edge lỗi, hết giờ hoặc trả rỗng thì tự đọc lại bằng giọng Gemini
   (`AVATAR_TTS_VOICE` nếu là giọng Gemini, không thì Achernar) với `AVATAR_VOICE_STYLE`,
-  lượt chat vẫn chạy; nghe thử khi đó báo "đang đọc tạm bằng giọng ...".
+  lượt chat vẫn chạy; nghe thử khi đó báo "đang đọc tạm bằng giọng ...". Sau 1 lần lỗi,
+  10 phút tiếp theo đọc thẳng bằng giọng Gemini đó, không chờ Edge lại ở từng câu.
   Edge TTS là dịch vụ không chính thức của Microsoft, có thể đổi/chặn bất cứ lúc nào;
   khi lỗi trang tự chuyển sang giọng Gemini.
 - Giọng Gemini (Achernar, Vindemiatrix, Leda, Sulafat... - 30 giọng): M4A (không có
-  ffmpeg thì WAV), theo `VOICE_ENGINE`, tính quota TTS như chủ bot Telegram. `/noi` và
-  giọng Telegram/Zalo/Zoom không có Hoài My.
-- Khẩu hình tính ngay trong trình duyệt theo âm lượng giọng đang phát (mở nhanh, khép
-  chậm, có trần); máy chủ không xử lý thêm âm thanh hay ảnh.
+  ffmpeg thì WAV), chỉ đọc bằng Gemini Live (`LIVE_MODEL`), tính quota TTS như chủ bot
+  Telegram. Live lỗi, đang bận, hết quota hoặc đọc lệch chữ (`LIVE_VOICE_MIN_MATCH`) thì
+  câu đó chỉ hiện chữ, không chờ thêm Gemini TTS (`VOICE_ENGINE` chỉ áp cho `/noi`).
+  `/noi` và giọng Telegram/Zalo/Zoom không có Hoài My.
+- Khẩu hình tính ngay trong trình duyệt theo âm lượng giọng đang phát (mở mềm, khép chậm
+  hơn, tối đa 3,5% chiều cao mặt); hai môi mở hình hạt chanh, khoé gần như đứng yên, trong
+  miệng tô tối chuyển màu và có răng trên mờ khi mở đủ rộng. Máy chủ không xử lý thêm âm
+  thanh hay ảnh.
 - Câu chào soạn sẵn theo khung giờ Việt Nam (sáng/trưa/chiều/tối/khuya), không gọi AI,
   không ghi lịch sử. Giọng đọc câu chào và câu nghe thử giữ trong RAM tối đa 10 clip
   (bản đọc tạm bằng Gemini khi Edge lỗi thì không giữ, lần sau thử lại Edge).
@@ -86,9 +101,9 @@ chào, giọng), `services/avatar_photo.py` (ảnh), `templates/avatar.html` (gi
 | `AVATAR_EDGE_RATE` | `-6%` | Tốc độ Hoài My (dấu +/- và %). Sai định dạng → mặc định. |
 | `AVATAR_EDGE_PITCH` | `+12Hz` | Cao độ Hoài My (dấu +/- và Hz). Sai định dạng → mặc định. |
 | `AVATAR_EDGE_VOLUME` | `+0%` | Âm lượng Hoài My (dấu +/- và %). Sai định dạng → mặc định. |
-| `AVATAR_EDGE_TIMEOUT_SEC` | `15` | Chờ Edge TTS tối đa (3-60 giây), quá thì đọc lại bằng giọng Gemini. |
+| `AVATAR_EDGE_TIMEOUT_SEC` | `8` | Chờ Edge TTS tối đa (3-60 giây), quá thì đọc lại bằng giọng Gemini. |
 
-Dùng chung với bot: `VOICE_TTS_MODEL`, `VOICE_ENGINE`, `VOICE_REPLY_MAX_CHARS`,
+Dùng chung với bot: `LIVE_MODEL`, `LIVE_VOICE_MIN_MATCH`, `VOICE_REPLY_MAX_CHARS`,
 `VOICE_STT_ENABLED`, `VOICE_MAX_BYTES`, `VOICE_MAX_SECONDS`, `CHAT_TURN_TIMEOUT_SEC`.
 
 ## Giới hạn
@@ -103,7 +118,8 @@ Dùng chung với bot: `VOICE_TTS_MODEL`, `VOICE_ENGINE`, `VOICE_REPLY_MAX_CHARS
   Session API), bản cũ hơn phải tắt chế độ im lặng. Không có WebGL thì vẽ bằng Canvas 2D
   (~20 khung/giây).
 - Đây là ảnh 2D được biến dạng, không phải video: ảnh mặt nghiêng nhiều hoặc tóc che mặt
-  thì chuyển động kém tự nhiên hơn; khoang miệng là lớp tô tối, không có răng.
+  thì chuyển động kém tự nhiên hơn; trong miệng là lớp tô vẽ (răng trên mờ), không có
+  lưỡi hay răng dưới.
 - `prefers-reduced-motion`: bỏ lắc đầu, thở; vẫn chớp mắt và mấp máy môi.
 
 ## Bảo mật
@@ -118,7 +134,9 @@ Dùng chung với bot: `VOICE_TTS_MODEL`, `VOICE_ENGINE`, `VOICE_REPLY_MAX_CHARS
 
 ```
 GET    /admin/avatar                                   trang (chưa đăng nhập: form đăng nhập)
-POST   /admin/api/avatar/chat           {text, voice?: bool} -> {text, mood, audio?, mime?, image?}
+POST   /admin/api/avatar/chat           {text}               -> luồng: {draft}... rồi
+                                                                  {text, mood, speech?, image?} | {error}
+POST   /admin/api/avatar/speak          {text}               -> {audio?, mime?}
 POST   /admin/api/avatar/stt            body audio/*         -> {text} | {error, kind}
 GET    /admin/api/avatar/greeting       [?id=&audio=1]       -> {id, text, mood, audio?, mime?}
 GET    /admin/api/avatar/voices                              -> {voices, current}
@@ -175,10 +193,12 @@ Sửa `version`, `tarball`, `integrity` trong `MANIFEST.json` cho khớp bản m
 - `test/test_avatar_service.py` - biểu cảm 7 loại (ranh giới từ tiếng Việt), câu chào
   theo giờ VN, cache có trần, chọn giọng (Hoài My mặc định), `web_clip` không raise và
   tính quota; Hoài My qua edge-tts giả (không gọi mạng): đúng giọng/tốc độ/cao độ, MP3,
-  không tính quota; Edge lỗi/hết giờ/rỗng/quá trần/thiếu gói -> đọc lại bằng Gemini;
+  không tính quota; Edge lỗi/hết giờ/rỗng/quá trần/thiếu gói -> đọc lại bằng Gemini, 10
+  phút sau đó đọc thẳng bằng Gemini; giọng Gemini chỉ đọc bằng Live; chia đoạn đọc;
   tham số sai định dạng -> mặc định; `/noi` không nhận Hoài My.
-- `test/test_web_avatar.py` - quyền (403, form đăng nhập), tham số lượt chat, lỗi, chép
-  lời, upload, file MediaPipe, quy tắc giao diện.
+- `test/test_web_avatar.py` - quyền (403, form đăng nhập), tham số lượt chat, luồng chữ
+  nháp (bỏ link/markdown/CJK, giữ kết nối, lỗi cuối luồng, ngắt luồng lượt vẫn chạy), đọc
+  từng đoạn qua `/speak`, chép lời, upload, file MediaPipe, quy tắc giao diện.
 - `test/test_avatar_sql.py` - SQL thật trên PGlite (CI job `sql-pglite`).
 
 Ngoài phạm vi giai đoạn 1: nói chuyện song công thời gian thực (Gemini Live).

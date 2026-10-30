@@ -103,6 +103,7 @@
   .stage[hidden]{display:none}
   .stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   /* Má hồng, khoang miệng vẽ "nhân" lên ảnh: tối đi/ửng hồng tự nhiên theo màu da. */
+  #mouth{pointer-events:none}
   #fx{mix-blend-mode:multiply;pointer-events:none}
   .stage::after{
     content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
@@ -221,6 +222,7 @@
   <div class="stage-wrap" id="stage-wrap">
     <button class="stage" id="stage" type="button" aria-label="Ảnh Lan Anh: chạm để nghe em nói, chạm lần nữa để ngắt lời" hidden>
       <canvas id="gl" aria-hidden="true"></canvas>
+      <canvas id="mouth" aria-hidden="true"></canvas>
       <canvas id="fx" aria-hidden="true"></canvas>
       <span class="hint" id="hint" hidden>Chạm để nghe em nói</span>
     </button>
@@ -304,7 +306,9 @@ function store(key, value) {
   try { localStorage.setItem(key, value); } catch { /* chế độ riêng tư: chỉ nhớ trong phiên */ }
 }
 
-async function api(path, {method = 'GET', json, body, headers} = {}) {
+const NETWORK_ERROR = 'Mạng chập chờn rồi, anh thử lại nha.';
+
+async function request(path, {method = 'GET', json, body, headers} = {}) {
   const init = {method, headers, body};
   if (json !== undefined) {
     init.body = JSON.stringify(json);
@@ -314,17 +318,51 @@ async function api(path, {method = 'GET', json, body, headers} = {}) {
   try {
     res = await fetch('/admin/api/avatar' + path, init);
   } catch {
-    throw new Error('Mạng chập chờn rồi, anh thử lại nha.');
+    throw new Error(NETWORK_ERROR);
   }
   if (res.status === 403) {
     location.href = LOGIN_URL;
     throw new Error('Phiên đăng nhập hết hạn, anh đăng nhập lại nha.');
   }
-  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
     throw Object.assign(new Error(data.error || `Có lỗi (${res.status}), anh thử lại sau nha.`), {kind: data.kind});
   }
-  return data;
+  return res;
+}
+
+async function api(path, options) {
+  const res = await request(path, options);
+  return res.json().catch(() => ({}));
+}
+
+// /chat trả luồng sự kiện: {draft} là chữ đang soạn (hiện tạm), sự kiện cuối là câu trả lời đã lọc.
+async function chatStream(text, onDraft) {
+  const res = await request('/chat', {method: 'POST', json: {text}});
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    let chunk;
+    try {
+      chunk = await reader.read();
+    } catch {
+      break;
+    }
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, {stream: true});
+    let end;
+    while ((end = buffer.indexOf('\n\n')) >= 0) {
+      const data = buffer.slice(0, end).split('\n').filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).join('');
+      buffer = buffer.slice(end + 2);
+      if (!data) continue; // dòng giữ kết nối
+      const event = JSON.parse(data);
+      if ('draft' in event) onDraft(event.draft);
+      else if (event.error) throw new Error(event.error);
+      else return event;
+    }
+  }
+  throw new Error(NETWORK_ERROR);
 }
 
 // ─── Khung chat ──────────────────────────────────────────────────────────────
@@ -406,9 +444,10 @@ function unlockAudio() {
 }
 for (const type of ['click', 'keydown']) document.addEventListener(type, unlockAudio, {capture: true});
 
-async function speak(base64) {
-  if (!audioCtx) return;
-  stopSpeaking();
+// Mỗi lượt đọc mang 1 số; ngắt giọng thì tăng số để lượt cũ bỏ các đoạn còn lại.
+let speechRun = 0;
+
+async function playClip(base64, run) {
   const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0));
   let buffer;
   try {
@@ -416,11 +455,11 @@ async function speak(base64) {
   } catch {
     return; // không giải mã được thì chỉ còn chữ, câu trả lời đã hiện sẵn
   }
+  if (run !== speechRun) return;
   const source = audioCtx.createBufferSource();
   source.buffer = buffer;
   source.connect(analyser);
   playing = source;
-  setState('speaking');
   await new Promise((resolve) => {
     source.addEventListener('ended', resolve);
     // iOS tạm ngưng âm thanh (cuộc gọi chen vào) thì có thể không bao giờ báo 'ended'.
@@ -428,15 +467,38 @@ async function speak(base64) {
     source.start();
   });
   if (playing === source) playing = null;
-  if (state === 'speaking') setState('idle');
+}
+
+// Đọc lần lượt các đoạn; mỗi phần tử của loaders trả base64 (hoặc Promise của nó, null =
+// bỏ qua đoạn đó). Đoạn kế được tải sẵn trong lúc đọc đoạn trước.
+async function speak(loaders) {
+  if (!audioCtx || !loaders.length) return;
+  stopSpeaking();
+  const run = speechRun;
+  setState('speaking');
+  let next = loaders[0]();
+  for (let i = 0; i < loaders.length; i++) {
+    const base64 = await next;
+    if (run !== speechRun) return;
+    next = loaders[i + 1]?.();
+    if (base64) await playClip(base64, run);
+    if (run !== speechRun) return;
+  }
+  setState('idle');
   moodUntil = Math.max(moodUntil, performance.now() / 1000 + 1.5);
 }
 
 function stopSpeaking() {
+  speechRun += 1;
+  if (state === 'speaking') setState('idle');
   if (!playing) return;
   const source = playing;
   playing = null;
   source.stop();
+}
+
+function clipFor(text) {
+  return api('/speak', {method: 'POST', json: {text}}).then((clip) => clip.audio, () => null);
 }
 
 // Âm lượng giọng đang phát (0..1) cho khẩu hình.
@@ -491,20 +553,27 @@ async function send(raw) {
   autosize();
   setState('thinking');
   const typing = addTyping();
+  let draft = null;
   let reply;
   try {
-    reply = await api('/chat', {method: 'POST', json: {text, voice: !muted && Boolean(audioCtx)}});
+    reply = await chatStream(text, (part) => {
+      typing.remove();
+      draft ??= addMessage('her', ' ');
+      draft.firstElementChild.textContent = part;
+      scrollToEnd(draft);
+    });
   } catch (err) {
     reply = {text: err.message, mood: 'sad', error: true};
   }
   typing.remove();
+  draft?.remove();
   chatting = false;
   $('send').disabled = false;
   setState('idle');
   addMessage('her', reply.text, {image: reply.image, error: reply.error});
   setMood(reply.mood);
   // Gửi tin mới trong lúc em đang đọc thì ngắt giọng cũ (stopSpeaking trong send).
-  if (reply.audio && !muted) await speak(reply.audio);
+  if (reply.speech && !muted) await speak(reply.speech.map((part) => () => clipFor(part)));
   listen();
 }
 
@@ -729,7 +798,7 @@ async function playGreeting() {
   try {
     const greeting = await api(`/greeting?id=${encodeURIComponent(cfg.greeting.id)}&audio=1`);
     setMood(greeting.mood);
-    if (greeting.audio && state === 'idle' && !chatting && !muted) await speak(greeting.audio);
+    if (greeting.audio && state === 'idle' && !chatting && !muted) await speak([() => greeting.audio]);
   } catch {
     // Câu chào bằng chữ đã hiện sẵn, thiếu giọng cũng không sao.
   }
@@ -792,7 +861,7 @@ $('preview').addEventListener('click', async () => {
     const {audio, voice} = await api('/voice/preview', {method: 'POST', json: {voice: chosen}});
     // Giọng Edge (Hoài My) lỗi thì máy chủ đọc tạm bằng giọng Gemini.
     settingsNote(voice === chosen ? '' : `Giọng ${voiceTitle(chosen)} đang lỗi, em đọc tạm bằng giọng ${voiceTitle(voice)} nha.`);
-    await speak(audio);
+    await speak([() => audio]);
   } catch (err) {
     settingsNote(err.message, true);
   } finally {
@@ -1103,9 +1172,13 @@ function buildRig(landmarks, W, H) {
     const across = 1 - smoothstep(0.2, 0.5, Math.abs(S[i] - mouth[0]));
     const beside = smoothstep(cornerHalf - 0.02, cornerHalf + 0.06, Math.abs(S[i] - mouth[0]));
     const below = mouth[1] + (cornerV - mouth[1]) * beside - V[i];
-    if (upperLip.has(i)) lipKind[i] = 1;
-    else if (MOUTH_CORNERS.includes(i)) lipKind[i] = 2;
-    else if (lowerLip.has(i)) jaw[i] = across;
+    // Hai môi mở theo hình hạt chanh: giữa mở nhiều, sát khoé gần như đứng yên.
+    const lens = Math.max(0.2, Math.sqrt(clamp01(1 - ((S[i] - mouth[0]) / cornerHalf) ** 2)));
+    if (upperLip.has(i)) {
+      lipKind[i] = 1;
+      jaw[i] = lens;
+    } else if (MOUTH_CORNERS.includes(i)) lipKind[i] = 2;
+    else if (lowerLip.has(i)) jaw[i] = lens;
     else {
       jaw[i] = below > 0 ? across * (1 - beside + beside * smoothstep(0, 0.06, below)) : 0;
       // Sát môi dưới thì hạ theo môi (mặt nghiêng: viền hàm nằm ngay cạnh khoé miệng).
@@ -1165,7 +1238,7 @@ function buildRig(landmarks, W, H) {
   // params: open/smile/frown/angry/surprise 0..1, eye (-0,4 mở to .. 1 nhắm), roll (rad),
   // nod (cúi 0..1), tx/ty/breathe (px ảnh). Ghi toạ độ đã biến dạng vào out.
   function deform(p, out) {
-    const drop = 0.055 * p.open; // miệng mở tối đa 5,5% chiều cao mặt
+    const drop = 0.035 * p.open; // miệng mở tối đa 3,5% chiều cao mặt
     // Mí khép tối đa 90%: khe 10% còn lại giữ thứ tự điểm quanh khoé mắt.
     const closing = 0.9 * p.eye;
     const raise = Math.min(0.25 * p.smile, Math.max(0, 0.9 - closing));
@@ -1178,10 +1251,10 @@ function buildRig(landmarks, W, H) {
         let dv = cornerLift * corner[i] + 0.012 * p.smile * cheek[i]
           + (0.022 * p.frown - 0.02 * p.angry) * browInner[i] + 0.03 * p.surprise * brow[i]
           + eyeTravel[i] * (raise * lowerWeight[i] - closing * upperWeight[i]);
-        if (lipKind[i] === 1) dv += 0.12 * drop;
+        if (lipKind[i] === 1) dv += 0.18 * drop * jaw[i];
         else if (lipKind[i] === 2) {
-          dv -= 0.45 * drop;
-          ds -= 0.1 * drop * Math.sign(S[i] - mouth[0]);
+          dv -= 0.2 * drop;
+          ds -= 0.04 * drop * Math.sign(S[i] - mouth[0]);
         } else dv -= drop * jaw[i];
         x += side[0] * ds * faceW + up[0] * dv * faceH;
         y += side[1] * ds * faceW + up[1] * dv * faceH;
@@ -1207,7 +1280,7 @@ function buildRig(landmarks, W, H) {
   deform({open: 1, smile: 0, frown: 0, angry: 0, surprise: 0, eye: 0, roll: 0, nod: 0, tx: 0, ty: 0, breathe: 0}, open);
   const triangles = Uint16Array.from(triangulate(Array.from({length: n}, (_, i) => [open[2 * i], open[2 * i + 1]])));
 
-  return {W, H, faceW, faceH, base, uv, triangles, deform};
+  return {W, H, faceW, faceH, up, base, uv, triangles, deform};
 }
 
 const VERTEX_SHADER = `
@@ -1392,6 +1465,7 @@ let renderer = null;
 let blinkPhoto = null;
 let positions = null;
 let fx = null;
+let mouthFx = null;
 let rafId = 0;
 let lastTime = 0;
 let lastDraw = 0;
@@ -1409,9 +1483,9 @@ function frame(now) {
   const t = now / 1000;
   const dt = Math.min(0.1, (now - (lastTime || now)) / 1000);
   lastTime = now;
-  // Khẩu hình: mở nhanh theo tiếng, khép chậm hơn để không giật.
+  // Khẩu hình: mở theo tiếng, khép chậm hơn; cả hai đủ mềm để không giật theo từng âm tiết.
   const level = voiceLevel();
-  motion.mouth = approach(motion.mouth, level, level > motion.mouth ? 0.03 : 0.11, dt);
+  motion.mouth = approach(motion.mouth, level, level > motion.mouth ? 0.05 : 0.13, dt);
   if (t > moodUntil && state !== 'speaking') moodTarget = MOODS.neutral;
   let changing = motion.mouth > 0.002;
   for (const key of EXPRESSIONS) {
@@ -1444,25 +1518,63 @@ function frame(now) {
   }
   rig.deform(params, positions);
   renderer.draw(positions, blinkPhoto ? blink : 0);
-  drawEffects(params);
+  drawEffects();
 }
 
-// Khoang miệng tối khi mở miệng, má hồng khi thương/ngại (canvas phủ, hoà trộn multiply).
-function drawEffects(params) {
+// Trong miệng (canvas thường): khe tối chuyển màu, răng trên mờ khi mở đủ rộng.
+function drawMouth(k) {
+  const ctx = mouthFx;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  const at = (i) => [positions[2 * i], positions[2 * i + 1]];
+  const [x13, y13] = at(13), [x14, y14] = at(14);
+  const gap = Math.hypot(x14 - x13, y14 - y13);
+  if (gap < 0.6) return;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  const cavity = new Path2D();
+  for (const index of MOUTH_PATH) cavity.lineTo(...at(index));
+  cavity.closePath();
+  const strength = clamp01(gap / (rig.faceH * 0.012));
+  const shade = ctx.createLinearGradient(x13, y13, x14, y14);
+  shade.addColorStop(0, `rgba(58, 18, 24, ${0.92 * strength})`);
+  shade.addColorStop(0.6, `rgba(40, 10, 16, ${0.95 * strength})`);
+  shade.addColorStop(1, `rgba(96, 34, 42, ${0.9 * strength})`);
+  ctx.filter = 'blur(0.7px)'; // mép khoang miệng mềm (trình duyệt không hỗ trợ thì bỏ qua)
+  ctx.fillStyle = shade;
+  ctx.fill(cavity);
+  // Răng trên: dải ngà ngay dưới môi trên, mờ dần về 2 khoé, chỉ khi mở đủ rộng.
+  const tooth = Math.min(gap * 0.42, rig.faceH * 0.016);
+  const teethAlpha = 0.85 * smoothstep(rig.faceH * 0.008, rig.faceH * 0.018, gap);
+  if (teethAlpha > 0.02) {
+    ctx.save();
+    ctx.clip(cavity);
+    const [ux, uy] = [-rig.up[0] * tooth, -rig.up[1] * tooth];
+    const upper = UPPER_INNER.slice(2, -2).map(at);
+    const band = new Path2D();
+    upper.forEach(([x, y]) => band.lineTo(x, y));
+    upper.slice().reverse().forEach(([x, y]) => band.lineTo(x + ux, y + uy));
+    band.closePath();
+    const [lx, ly] = upper[0], [rx, ry] = upper.at(-1);
+    const ivory = ctx.createLinearGradient(lx, ly, rx, ry);
+    ivory.addColorStop(0, 'rgba(236, 228, 220, 0)');
+    ivory.addColorStop(0.25, `rgba(240, 233, 226, ${teethAlpha})`);
+    ivory.addColorStop(0.75, `rgba(240, 233, 226, ${teethAlpha})`);
+    ivory.addColorStop(1, 'rgba(236, 228, 220, 0)');
+    ctx.filter = 'blur(0.5px)';
+    ctx.fillStyle = ivory;
+    ctx.fill(band);
+    ctx.restore();
+  }
+  ctx.filter = 'none';
+}
+
+// Má hồng khi thương/ngại (canvas phủ, hoà trộn multiply), rồi vẽ trong miệng.
+function drawEffects() {
   const canvas = $('fx');
   const k = canvas.width / rig.W;
   fx.setTransform(1, 0, 0, 1, 0, 0);
   fx.clearRect(0, 0, canvas.width, canvas.height);
   fx.setTransform(k, 0, 0, k, 0, 0);
-  if (params.open > 0.03) {
-    fx.beginPath();
-    for (const index of MOUTH_PATH) fx.lineTo(positions[2 * index], positions[2 * index + 1]);
-    fx.closePath();
-    fx.filter = 'blur(1px)'; // mép khoang miệng mềm (trình duyệt không hỗ trợ thì bỏ qua)
-    fx.fillStyle = `rgba(105, 34, 44, ${Math.min(0.85, params.open * 2)})`;
-    fx.fill();
-    fx.filter = 'none';
-  }
   if (motion.blush > 0.01) {
     for (const [a, b] of CHEEKS) {
       const x = (positions[2 * a] + positions[2 * b]) / 2;
@@ -1475,6 +1587,7 @@ function drawEffects(params) {
       fx.fillRect(x - radius, y - radius, 2 * radius, 2 * radius);
     }
   }
+  drawMouth(k);
 }
 
 function freshCanvas(id) {
@@ -1504,7 +1617,7 @@ function fitStage() {
   stage.style.width = `${Math.floor(photo.width * scale)}px`;
   stage.style.height = `${Math.floor(photo.height * scale)}px`;
   const dpr = Math.min(devicePixelRatio || 1, 2);
-  for (const id of ['gl', 'fx']) {
+  for (const id of ['gl', 'mouth', 'fx']) {
     const canvas = $(id);
     canvas.width = Math.round(photo.width * scale * dpr);
     canvas.height = Math.round(photo.height * scale * dpr);
@@ -1530,6 +1643,7 @@ async function setupStage() {
   freshCanvas('gl');
   fitStage();
   fx = $('fx').getContext('2d');
+  mouthFx = $('mouth').getContext('2d');
   renderer = glRenderer($('gl'), main, blink, rig);
   if (!renderer) {
     freshCanvas('gl');
