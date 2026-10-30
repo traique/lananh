@@ -199,6 +199,7 @@ async def test_trang_avatar_nhung_cau_hinh_khong_cache(client, store):
     raw = re.search(r'id="avatar-config">(.*?)</script>', page.text, re.S).group(1)
     data = json.loads(raw)
     assert data["photo"] is None and data["voice"] == "Leda" and data["textMax"] == 2000
+    assert data["style"] == "photo"
     assert data["greeting"]["text"] and data["greeting"]["mood"] in avatar_service.MOODS
     assert data["voices"][0]["name"] == "HoaiMy" and data["stt"]["maxBytes"] > 0
     assert data["vendor"]["vision_bundle.mjs"].startswith("/admin/avatar/vendor/")
@@ -482,6 +483,23 @@ async def test_nghe_thu_hoai_my_edge_loi_thi_doc_tam_khong_giu_cache(client, mon
         r = await client.post("/admin/api/avatar/voice/preview", json={"voice": "HoaiMy"})
         assert r.json()["voice"] == "HoaiMy"
     assert len(calls) == 3  # Edge chạy lại: đọc 1 lần rồi lấy từ cache
+
+
+async def test_doi_kieu_anh_ve_chibi(client, store):
+    await _login(client)
+    r = await client.put("/admin/api/avatar/style", json={"style": "drawn"})
+    assert r.json() == {"style": "drawn"}
+    assert store["settings"][avatar_service.STYLE_SETTING_KEY] == "drawn"
+    for body in ({"style": "anime"}, {}):
+        r = await client.put("/admin/api/avatar/style", json=body)
+        assert r.status_code == 400 and r.json()["error"]
+    r = await client.put(
+        "/admin/api/avatar/style", content="style=drawn", headers={"content-type": "text/plain"}
+    )
+    assert r.status_code == 415
+    page = await client.get("/admin/avatar")
+    raw = re.search(r'id="avatar-config">(.*?)</script>', page.text, re.S).group(1)
+    assert json.loads(raw)["style"] == "drawn"
 
 
 async def test_nghe_thu_tts_loi_bao_503(client, monkeypatch):

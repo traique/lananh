@@ -38,6 +38,7 @@ kind lạ - nhận 400/415 mặc định của FastAPI):
   GET    /admin/api/avatar/voices                              -> {voices, current}
   PUT    /admin/api/avatar/voice          {voice}              -> {current}
   POST   /admin/api/avatar/voice/preview  {voice}              -> {audio, mime, voice}
+  PUT    /admin/api/avatar/style          {style: photo|drawn} -> {style}
   GET    /admin/api/avatar/photo?kind=main|blink               -> ảnh WebP
   PUT    /admin/api/avatar/photo?kind=    multipart image (+ landmarks cho main) -> {..., photo}
   DELETE /admin/api/avatar/photo?kind=                         -> {removed, photo}
@@ -191,6 +192,7 @@ async def _page_config() -> dict:
         "greeting": {"id": greeting.id, "text": greeting.text, "mood": greeting.mood},
         "voice": await avatar_service.current_voice(),
         "voices": avatar_service.voices(),
+        "style": await avatar_service.current_style(),
         "textMax": MAX_TEXT_CHARS,
         "photoMaxBytes": avatar_photo.MAX_UPLOAD_BYTES,
         "vendor": vendor_urls(),
@@ -474,6 +476,17 @@ async def avatar_voice_preview(request: Request) -> Response:
 
 
 # ─── Ảnh ─────────────────────────────────────────────────────────────────────
+
+
+@api_router.put("/style")
+async def avatar_style_set(request: Request) -> Response:
+    """Kiểu ảnh: ảnh chụp (cử động nhẹ) hay ảnh vẽ/chibi (cử động rõ)."""
+    body = await _json_body(request)
+    try:
+        style = await avatar_service.set_style(str(body.get("style") or ""))
+    except ValueError:
+        return _error("Không có kiểu ảnh này.", 400)
+    return JSONResponse({"style": style})
 
 
 def _kind(request: Request) -> str:
