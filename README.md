@@ -256,6 +256,16 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   thì Telegram được dùng tiêu đề và bảng).
 - Quy tắc `rules.no_false_action_claims`: không nói đã đặt nhắc/ghi chú/ghi chi
   tiêu khi hệ thống chưa lưu.
+- Persona tách 2 phần: phần lõi (`templates/chat_skill_prompt.j2` - giọng, xưng hô,
+  luật chống bịa số, giờ VN, luật cấm khuyến nghị cho thành viên/admin Zalo) luôn gửi;
+  phần phân tích cổ phiếu (`templates/chat_skill_stock.j2` - danh tính "broker", giờ
+  sàn, miễn trừ đầu tư, ví dụ FPT) chỉ kèm lượt có số liệu cổ phiếu, ngay sau báo cáo
+  cổ phiếu, router đọc danh mục, hoặc câu cổ phiếu/đầu tư
+  (`stock.analysis.chat_needs_stock_rules`: từ chứng khoán, mã/chỉ số, "danh mục",
+  "cắt lỗ", vàng/ngoại tệ/crypto kèm ý mua bán). Câu đời thường không bị kéo sang
+  cổ phiếu và bớt khoảng 1/3 persona (~14,7k còn ~9,2k ký tự). Phần lõi còn dặn
+  không tự lái câu chuyện sang cổ phiếu dù trí nhớ có danh mục.
+  `PERSONA_STOCK_SPLIT=0` quay lại gửi đủ mọi lượt (không cần deploy code).
 - Câu báo lỗi giọng Lan Anh (`messages.friendly_error`): lý do ngắn + việc nên làm,
   không tên provider, loại lỗi hay chú thích "API dự phòng". Chủ bot (Telegram,
   Zoom, tài khoản Zalo controller - khác role admin) vẫn thấy chi tiết kỹ thuật,
@@ -851,6 +861,7 @@ bền/bảo mật (đều có mặc định an toàn, chỉ đặt khi cần đ�
 | `CHAT_TURN_TIMEOUT_SEC` | 200 | Hạn chót tổng cho 1 lượt trả lời (30-230) |
 | `MEMORY_UPDATE_TIMEOUT_SEC` / `RAG_CLEAN_TOTAL_TIMEOUT_SEC` | 90 / 900 | Trần 1 lượt trích trí nhớ nền (theo lô); trần TỔNG 1 lượt `/ragxuly` (chạy nền ngoài khoá chat) |
 | `PROMPT_BUDGET_CHARS` / `HISTORY_MESSAGE_MAX_CHARS` / `GROUNDING_MAX_CHARS` / `MEMORY_MAX_CHARS` | 40000 / 1500 / 9000 / 3000 | Ngân sách ký tự prompt gửi provider và trần từng khối |
+| `PERSONA_STOCK_SPLIT` | 1 | Lượt chat không liên quan cổ phiếu/đầu tư chỉ gửi phần lõi của persona; 0 = luôn gửi cả phần phân tích cổ phiếu |
 | `DATABASE_SSL_MODE` / `DATABASE_SSL_CA` | `require` / (trống) | `verify-full` xác thực chứng chỉ + hostname Postgres (cần CA Supabase); `disable` chỉ cho DB local |
 | `SETTINGS_ENC_KEY_OLD` / `SETTINGS_REJECT_PLAINTEXT` | (trống) / 0 | Khoá Fernet cũ khi xoay khoá (MultiFernet); từ chối giá trị settings chưa mã hoá |
 | `ENABLE_PORTFOLIO_ALERTS` | true | Cảnh báo danh mục cuối phiên (chạm stop/target, breakout) |

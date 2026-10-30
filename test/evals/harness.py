@@ -56,7 +56,7 @@ import yaml
 CASES_DIR = Path(__file__).resolve().parent
 ROOT = CASES_DIR.parent.parent
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
-HARNESS_VERSION = "1"
+HARNESS_VERSION = "2"
 
 CATEGORIES = (
     "persona",
@@ -494,7 +494,12 @@ def available_providers() -> list[str]:
 async def _run_chat(case: Case, fake: FakeDatabase):
     from ai import orchestrator
 
+    from stock import analysis as stock_analysis
+
     fake.history[case.user_id] = list(case.history)
+    # Như services/channel_chat_service.run_chat_turn: phần phân tích cổ phiếu của
+    # persona chỉ kèm lượt có số liệu cổ phiếu hoặc câu cổ phiếu/đầu tư.
+    stock_rules = bool(case.grounding) or stock_analysis.chat_needs_stock_rules(case.prompt)
     return await orchestrator.chat(
         case.user_id,
         case.prompt,
@@ -504,6 +509,7 @@ async def _run_chat(case: Case, fake: FakeDatabase):
         channel=case.channel,
         is_admin=case.is_admin,
         address_form=case.address_form,
+        stock_rules=stock_rules,
     )
 
 
@@ -617,7 +623,11 @@ async def judge_reply(case: Case, reply: str) -> dict:
 def prompt_fingerprint() -> str:
     """Hash persona + template: đổi prompt thì cache cũ hết hiệu lực."""
     digest = hashlib.sha256(HARNESS_VERSION.encode())
-    for path in (ROOT / "chat_skill.yaml", ROOT / "templates" / "chat_skill_prompt.j2"):
+    for path in (
+        ROOT / "chat_skill.yaml",
+        ROOT / "templates" / "chat_skill_prompt.j2",
+        ROOT / "templates" / "chat_skill_stock.j2",
+    ):
         if path.exists():
             digest.update(path.read_bytes())
     return digest.hexdigest()[:16]
