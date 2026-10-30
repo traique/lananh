@@ -80,8 +80,10 @@ chào, giọng), `services/avatar_photo.py` (ảnh), `templates/avatar.html` (gi
   Telegram. Live lỗi, đang bận, hết quota hoặc đọc lệch chữ (`LIVE_VOICE_MIN_MATCH`) thì
   câu đó chỉ hiện chữ, không chờ thêm Gemini TTS (`VOICE_ENGINE` chỉ áp cho `/noi`).
   `/noi` và giọng Telegram/Zalo/Zoom không có Hoài My.
-- Khẩu hình tính ngay trong trình duyệt theo âm lượng giọng đang phát (mở nhanh, khép
-  chậm, có trần); máy chủ không xử lý thêm âm thanh hay ảnh.
+- Khẩu hình tính ngay trong trình duyệt theo âm lượng giọng đang phát (mở mềm, khép chậm
+  hơn, tối đa 3,5% chiều cao mặt); hai môi mở hình hạt chanh, khoé gần như đứng yên, trong
+  miệng tô tối chuyển màu và có răng trên mờ khi mở đủ rộng. Máy chủ không xử lý thêm âm
+  thanh hay ảnh.
 - Câu chào soạn sẵn theo khung giờ Việt Nam (sáng/trưa/chiều/tối/khuya), không gọi AI,
   không ghi lịch sử. Giọng đọc câu chào và câu nghe thử giữ trong RAM tối đa 10 clip
   (bản đọc tạm bằng Gemini khi Edge lỗi thì không giữ, lần sau thử lại Edge).
@@ -116,7 +118,8 @@ Dùng chung với bot: `LIVE_MODEL`, `LIVE_VOICE_MIN_MATCH`, `VOICE_REPLY_MAX_CH
   Session API), bản cũ hơn phải tắt chế độ im lặng. Không có WebGL thì vẽ bằng Canvas 2D
   (~20 khung/giây).
 - Đây là ảnh 2D được biến dạng, không phải video: ảnh mặt nghiêng nhiều hoặc tóc che mặt
-  thì chuyển động kém tự nhiên hơn; khoang miệng là lớp tô tối, không có răng.
+  thì chuyển động kém tự nhiên hơn; trong miệng là lớp tô vẽ (răng trên mờ), không có
+  lưỡi hay răng dưới.
 - `prefers-reduced-motion`: bỏ lắc đầu, thở; vẫn chớp mắt và mấp máy môi.
 
 ## Bảo mật
@@ -190,10 +193,12 @@ Sửa `version`, `tarball`, `integrity` trong `MANIFEST.json` cho khớp bản m
 - `test/test_avatar_service.py` - biểu cảm 7 loại (ranh giới từ tiếng Việt), câu chào
   theo giờ VN, cache có trần, chọn giọng (Hoài My mặc định), `web_clip` không raise và
   tính quota; Hoài My qua edge-tts giả (không gọi mạng): đúng giọng/tốc độ/cao độ, MP3,
-  không tính quota; Edge lỗi/hết giờ/rỗng/quá trần/thiếu gói -> đọc lại bằng Gemini;
+  không tính quota; Edge lỗi/hết giờ/rỗng/quá trần/thiếu gói -> đọc lại bằng Gemini, 10
+  phút sau đó đọc thẳng bằng Gemini; giọng Gemini chỉ đọc bằng Live; chia đoạn đọc;
   tham số sai định dạng -> mặc định; `/noi` không nhận Hoài My.
-- `test/test_web_avatar.py` - quyền (403, form đăng nhập), tham số lượt chat, lỗi, chép
-  lời, upload, file MediaPipe, quy tắc giao diện.
+- `test/test_web_avatar.py` - quyền (403, form đăng nhập), tham số lượt chat, luồng chữ
+  nháp (bỏ link/markdown/CJK, giữ kết nối, lỗi cuối luồng, ngắt luồng lượt vẫn chạy), đọc
+  từng đoạn qua `/speak`, chép lời, upload, file MediaPipe, quy tắc giao diện.
 - `test/test_avatar_sql.py` - SQL thật trên PGlite (CI job `sql-pglite`).
 
 Ngoài phạm vi giai đoạn 1: nói chuyện song công thời gian thực (Gemini Live).
