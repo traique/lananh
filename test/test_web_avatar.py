@@ -1,7 +1,9 @@
 """Trang /admin/avatar (web_avatar.py): chỉ chủ bot đã đăng nhập, lượt chat như
-Telegram trong khoá chủ bot với lời dặn "người iu", chữ trả ngay còn giọng đọc xin riêng
-từng đoạn qua /speak, câu chào/nghe thử có cache, chọn giọng, chép lời, upload ảnh."""
+Telegram trong khoá chủ bot với lời dặn "người iu", chữ nháp chạy dần rồi câu trả lời
+cuối (luồng sự kiện), giọng đọc xin riêng từng đoạn qua /speak, câu chào/nghe thử có
+cache, chọn giọng, chép lời, upload ảnh."""
 
+import asyncio
 import base64
 import dataclasses
 import hashlib
@@ -17,6 +19,7 @@ from PIL import Image
 
 import web_admin
 import web_avatar
+from ai import drafts
 from core import config
 from core import database as db
 from services import avatar_service, concurrency, reminder_delivery, voice_reply, voice_service
@@ -145,6 +148,17 @@ def chat(monkeypatch):
     return state
 
 
+def _events(r) -> list[dict]:
+    """Sự kiện của luồng /chat (bỏ dòng giữ kết nối)."""
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+    return [json.loads(line[6:]) for line in r.text.split("\n") if line.startswith("data: ")]
+
+
+async def _chat(client, text: str) -> dict:
+    """Sự kiện cuối (câu trả lời) của 1 lượt /chat."""
+    return _events(await client.post("/admin/api/avatar/chat", json={"text": text}))[-1]
+
+
 def _jpeg(size=(800, 600)) -> bytes:
     out = io.BytesIO()
     Image.new("RGB", size, "pink").save(out, "JPEG")
@@ -253,13 +267,15 @@ async def test_chat_nhu_telegram_trong_khoa_chu_bot_giong_doc_xin_rieng_tung_doa
 ):
     await _login(client)
     r = await client.post("/admin/api/avatar/chat", json={"text": "  nhớ em hông  "})
-    assert r.status_code == 200
+    assert r.headers["cache-control"] == "private, no-store"
     # Chữ trả ngay, chưa đọc giọng: trang xin giọng từng đoạn trong "speech" qua /speak.
-    assert r.json() == {
-        "text": "Em thương anh nhiều lắm 🥰",
-        "mood": "love",
-        "speech": ["Em thương anh nhiều lắm."],
-    }
+    assert _events(r) == [
+        {
+            "text": "Em thương anh nhiều lắm 🥰",
+            "mood": "love",
+            "speech": ["Em thương anh nhiều lắm."],
+        }
+    ]
     assert speech == []
     assert chat["calls"] == [
         {
@@ -317,10 +333,10 @@ async def test_chat_chu_rong_qua_dai_hoac_khong_phai_json(client, chat, speech):
 async def test_chat_luot_hong_buon_khong_doc(client, chat, speech):
     await _login(client)
     chat["turn"] = ChatTurn(failed=True, error_detail="RuntimeError: x")
-    r = (await client.post("/admin/api/avatar/chat", json={"text": "hi"})).json()
+    r = await _chat(client, "hi")
     assert r["mood"] == "sad" and r["text"] and "speech" not in r
     chat["turn"] = ChatTurn(text="")
-    r = (await client.post("/admin/api/avatar/chat", json={"text": "hi"})).json()
+    r = await _chat(client, "hi")
     assert r["mood"] == "sad" and "speech" not in r
 
 
@@ -329,7 +345,7 @@ async def test_chat_lenh_nguyen_van_bo_markdown_kem_anh(client, chat, speech):
     chat["turn"] = ChatTurn(
         verbatim=True, messages=("**Lịch** hôm nay", "- Ngày tốt 😊"), image_b64="/9j/AAAA"
     )
-    r = (await client.post("/admin/api/avatar/chat", json={"text": "xem lịch"})).json()
+    r = await _chat(client, "xem lịch")
     assert r["text"] == "Lịch hôm nay\n\nNgày tốt 😊" and r["mood"] == "happy"
     assert r["image"] == "data:image/jpeg;base64,/9j/AAAA"
     assert r["speech"] == ["Lịch hôm nay. Ngày tốt."]
@@ -350,8 +366,61 @@ async def test_chat_bi_huy_bang_lenh_huy(client, chat, speech, monkeypatch):
         raise concurrency.TurnCancelled()
 
     monkeypatch.setattr(concurrency, "run_cancellable", cancelled)
-    r = (await client.post("/admin/api/avatar/chat", json={"text": "hi"})).json()
+    r = await _chat(client, "hi")
     assert "dừng" in r["text"] and "speech" not in r
+
+
+async def test_chat_chay_chu_nhap_roi_moi_toi_cau_tra_loi_da_loc(client, monkeypatch):
+    await _login(client)
+    monkeypatch.setattr(web_avatar, "DRAFT_INTERVAL_SEC", 0)
+    monkeypatch.setattr(web_avatar, "HEARTBEAT_SEC", 0.01)
+
+    async def run_chat_turn(user_id, text, **kwargs):
+        await asyncio.sleep(0.05)  # chưa có chữ nào: luồng gửi dòng giữ kết nối
+        with drafts.drafting(True):
+            for part in (
+                "Dạ **an",  # dấu nhấn chưa đóng
+                "Dạ **anh**",
+                "Dạ **anh** xem https://la.vn/x nha",
+                "Dạ **anh** xem https://la.vn/x nha",  # không đổi: không gửi lại
+                "Dạ anh 你好",  # provider lỗi lẫn chữ Trung: không hiện
+            ):
+                drafts.push(part)
+                await asyncio.sleep(0.01)
+        return ChatTurn(text="Dạ anh xem nha 🥰")
+
+    monkeypatch.setattr(web_avatar, "run_chat_turn", run_chat_turn)
+    r = await client.post("/admin/api/avatar/chat", json={"text": "hi"})
+    assert r.text.startswith(": ok\n\n") and "\n:\n\n" in r.text
+    events = _events(r)
+    assert events[:-1] == [{"draft": "Dạ an"}, {"draft": "Dạ anh"}, {"draft": "Dạ anh xem … nha"}]
+    assert events[-1]["text"] == "Dạ anh xem nha 🥰" and events[-1]["speech"]
+
+
+async def test_chat_loi_bat_ngo_bao_loi_cuoi_luong(client, monkeypatch):
+    await _login(client)
+
+    async def broken(user_id, text, **kwargs):
+        raise RuntimeError("hỏng")
+
+    monkeypatch.setattr(web_avatar, "run_chat_turn", broken)
+    assert await _chat(client, "hi") == {"error": web_avatar.messages.CHAT_GENERIC_ERROR}
+
+
+async def test_trinh_duyet_ngat_luong_thi_luot_van_chay_xong():
+    finished = asyncio.Event()
+
+    async def answer():
+        await asyncio.sleep(0.05)
+        finished.set()
+        return {"text": "Dạ."}
+
+    task = asyncio.create_task(answer())
+    stream = web_avatar._events(task, web_avatar._DraftFeed())
+    assert await anext(stream) == ": ok\n\n"
+    await stream.aclose()
+    await asyncio.wait_for(finished.wait(), 1)
+    assert task.result() == {"text": "Dạ."}
 
 
 # ─── Câu chào, giọng ─────────────────────────────────────────────────────────

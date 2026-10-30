@@ -306,7 +306,9 @@ function store(key, value) {
   try { localStorage.setItem(key, value); } catch { /* chế độ riêng tư: chỉ nhớ trong phiên */ }
 }
 
-async function api(path, {method = 'GET', json, body, headers} = {}) {
+const NETWORK_ERROR = 'Mạng chập chờn rồi, anh thử lại nha.';
+
+async function request(path, {method = 'GET', json, body, headers} = {}) {
   const init = {method, headers, body};
   if (json !== undefined) {
     init.body = JSON.stringify(json);
@@ -316,17 +318,51 @@ async function api(path, {method = 'GET', json, body, headers} = {}) {
   try {
     res = await fetch('/admin/api/avatar' + path, init);
   } catch {
-    throw new Error('Mạng chập chờn rồi, anh thử lại nha.');
+    throw new Error(NETWORK_ERROR);
   }
   if (res.status === 403) {
     location.href = LOGIN_URL;
     throw new Error('Phiên đăng nhập hết hạn, anh đăng nhập lại nha.');
   }
-  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
     throw Object.assign(new Error(data.error || `Có lỗi (${res.status}), anh thử lại sau nha.`), {kind: data.kind});
   }
-  return data;
+  return res;
+}
+
+async function api(path, options) {
+  const res = await request(path, options);
+  return res.json().catch(() => ({}));
+}
+
+// /chat trả luồng sự kiện: {draft} là chữ đang soạn (hiện tạm), sự kiện cuối là câu trả lời đã lọc.
+async function chatStream(text, onDraft) {
+  const res = await request('/chat', {method: 'POST', json: {text}});
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    let chunk;
+    try {
+      chunk = await reader.read();
+    } catch {
+      break;
+    }
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, {stream: true});
+    let end;
+    while ((end = buffer.indexOf('\n\n')) >= 0) {
+      const data = buffer.slice(0, end).split('\n').filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).join('');
+      buffer = buffer.slice(end + 2);
+      if (!data) continue; // dòng giữ kết nối
+      const event = JSON.parse(data);
+      if ('draft' in event) onDraft(event.draft);
+      else if (event.error) throw new Error(event.error);
+      else return event;
+    }
+  }
+  throw new Error(NETWORK_ERROR);
 }
 
 // ─── Khung chat ──────────────────────────────────────────────────────────────
@@ -517,13 +553,20 @@ async function send(raw) {
   autosize();
   setState('thinking');
   const typing = addTyping();
+  let draft = null;
   let reply;
   try {
-    reply = await api('/chat', {method: 'POST', json: {text}});
+    reply = await chatStream(text, (part) => {
+      typing.remove();
+      draft ??= addMessage('her', ' ');
+      draft.firstElementChild.textContent = part;
+      scrollToEnd(draft);
+    });
   } catch (err) {
     reply = {text: err.message, mood: 'sad', error: true};
   }
   typing.remove();
+  draft?.remove();
   chatting = false;
   $('send').disabled = false;
   setState('idle');

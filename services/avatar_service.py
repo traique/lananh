@@ -262,6 +262,11 @@ _BULLET_RE = re.compile(r"^\s*(?:[-*+•▪◦‣]|\d{1,2}[.)])\s+")
 _EMPHASIS_RE = re.compile(r"(?<![\w*~])(\*\*|__|\*|~~)(?=\S)(.+?)(?<=\S)\1(?![\w*~])")
 _INLINE_CODE_RE = re.compile(r"`([^`\n]*)`")
 _BLANKS_RE = re.compile(r"\n{3,}")
+_DRAFT_URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+# Dấu nhấn chưa kịp đóng trong chữ đang sinh ("**Dạ anh"): bản nháp bỏ luôn.
+_OPEN_MARK_RE = re.compile(r"\*\*|__|~~")
+DRAFT_MAX_CHARS = 4000
 
 
 def display_text(text: str) -> str:
@@ -276,3 +281,13 @@ def display_text(text: str) -> str:
             line = _EMPHASIS_RE.sub(r"\2", line)
         lines.append(line.rstrip())
     return _BLANKS_RE.sub("\n\n", "\n".join(lines)).strip()
+
+
+def draft_text(text: str) -> str:
+    """Chữ đang sinh để hiện tạm trong bong bóng chat (như bản nháp Telegram): bỏ link
+    (bản nháp chưa qua bộ lọc link), bỏ markdown kể cả dấu nhấn chưa đóng; lẫn chữ
+    Trung/Nhật/Hàn (provider lỗi, câu này sẽ bị loại) -> "" để trang không hiện."""
+    if _CJK_RE.search(text or ""):
+        return ""
+    cleaned = display_text(_DRAFT_URL_RE.sub("…", text or ""))
+    return _OPEN_MARK_RE.sub("", cleaned)[:DRAFT_MAX_CHARS]

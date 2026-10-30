@@ -50,6 +50,13 @@ chào, giọng), `services/avatar_photo.py` (ảnh), `templates/avatar.html` (gi
 - Kiểu "người iu" chỉ áp cho lượt từ trang này (`style_hint`), không đổi persona, giọng
   hay `/noi` của Telegram/Zalo/Zoom. Lượt hỏng: câu báo lỗi như Telegram, mặt buồn,
   không đọc giọng.
+- `/chat` trả luồng sự kiện (`text/event-stream`): trong lúc AI soạn, bong bóng chat chạy
+  chữ dần từ bản nháp (`ai/drafts`, như bản nháp Telegram - chỉ provider trả chữ theo luồng
+  như 9Router/Groq/OpenRouter; Gemini API chính thức thì hiện cả câu một lần), đã bỏ link
+  và markdown, nháp lẫn chữ Trung/Nhật/Hàn thì không hiện. Sự kiện cuối là câu trả lời đã
+  qua đủ bước lọc, thay cho bản nháp. Không có chữ mới quá 15 giây thì gửi dòng giữ kết
+  nối để proxy không cắt lượt dài. Trình duyệt ngắt giữa chừng thì lượt vẫn chạy xong và
+  lưu lịch sử như Telegram.
 - Giọng: `/chat` trả chữ ngay khi AI soạn xong, kèm `speech` là câu đọc đã chia đoạn
   (`voice_reply.web_chunks`: đoạn đầu ~40 ký tự cho giọng bắt đầu sớm, các đoạn sau gom
   câu tới 220 ký tự). Trang xin giọng từng đoạn qua `/speak` (`voice_reply.web_clip`,
@@ -124,7 +131,8 @@ Dùng chung với bot: `LIVE_MODEL`, `LIVE_VOICE_MIN_MATCH`, `VOICE_REPLY_MAX_CH
 
 ```
 GET    /admin/avatar                                   trang (chưa đăng nhập: form đăng nhập)
-POST   /admin/api/avatar/chat           {text}               -> {text, mood, speech?, image?}
+POST   /admin/api/avatar/chat           {text}               -> luồng: {draft}... rồi
+                                                                  {text, mood, speech?, image?} | {error}
 POST   /admin/api/avatar/speak          {text}               -> {audio?, mime?}
 POST   /admin/api/avatar/stt            body audio/*         -> {text} | {error, kind}
 GET    /admin/api/avatar/greeting       [?id=&audio=1]       -> {id, text, mood, audio?, mime?}
