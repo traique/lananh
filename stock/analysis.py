@@ -389,6 +389,47 @@ def wants_external_market_data(text: str) -> bool:
     return bool(_EXTERNAL_MARKET_RE.search(text))
 
 
+# Bộ nhận diện cho persona (chat_needs_stock_rules). Khác _EXTERNAL_MARKET_RE (ép
+# tra web thật): "dầu gội", "hoa vàng" không được kéo phần phân tích cổ phiếu vào
+# câu chuyện đời thường, nên tài sản đầu tư chỉ tính khi đi kèm ý mua/bán/giá.
+# Từ không dấu chỉ giữ dạng ít trùng nghĩa ("du dinh" = dự định, "ban" = bạn).
+_INVESTMENT_TALK_RE = _build_keyword_re([
+    "đầu tư", "dau tu", "danh mục", "danh muc", "cắt lỗ", "chốt lời", "chot loi",
+    "bắt đáy", "đu đỉnh", "lướt sóng", "luot song", "margin", "cổ tức", "co tuc",
+    "khối ngoại", "khoi ngoai", "về bờ", "trái phiếu", "trai phieu", "chứng chỉ quỹ",
+    "etf", "vn-index", "vn30", "hnx-index", "gia vang",
+])
+_INVESTMENT_ASSET_RE = _build_keyword_re([
+    "vàng", "sjc", "bitcoin", "btc", "eth", "ethereum", "crypto",
+    "tiền số", "tien so", "tiền ảo", "tien ao", "usd", "đô la", "ngoại tệ", "ngoai te",
+    "tỷ giá", "ty gia", "chứng khoán mỹ", "nasdaq", "dow jones", "s&p", "sp500",
+    "dầu thô", "dau tho", "brent", "wti", "lãi suất", "lai suat",
+    "bất động sản", "bat dong san", "ngân hàng", "ngan hang", "thép",
+])
+_INVESTMENT_INTENT_RE = _build_keyword_re([
+    "mua", "bán", "giữ", "nắm giữ", "giá", "tăng", "giảm", "lên không", "còn lên",
+    "xuống", "tích trữ", "tích luỹ", "tích lũy", "lãi", "lỗ", "lời", "nên", "đáng",
+    "hold", "all in",
+])
+
+
+def chat_needs_stock_rules(text: str) -> bool:
+    """Lượt chat có cần phần phân tích cổ phiếu của persona (core/config.
+    load_chat_skill(stock=True)) không: có từ chứng khoán rõ ràng, mã/chỉ số đã
+    biết, từ ngữ đầu tư, hoặc hỏi mua/bán/giá một tài sản đầu tư (vàng, ngoại tệ,
+    crypto, nhóm ngành...). Hàm thuần, không gọi mạng (chỉ xét mã có sẵn trong
+    danh sách, không verify qua DNSE). Bắt nhầm chỉ là gửi persona đầy đủ như
+    trước khi tách, nên khi lưỡng lự thì nghiêng về bật."""
+    text = _strip_urls(text)
+    if not text.strip():
+        return False
+    if _has_explicit_stock_word(text) or _INVESTMENT_TALK_RE.search(text):
+        return True
+    if detect_symbol_candidates(text)[0]:
+        return True
+    return bool(_INVESTMENT_ASSET_RE.search(text) and _INVESTMENT_INTENT_RE.search(text))
+
+
 # Giờ giao dịch HOSE/HNX/UPCOM (T2-T6 không phải ngày lễ, 9h00-15h00) - xem
 # stock/calendar.py. Giữ tên hàm ở đây vì nhiều nơi (và test) monkeypatch
 # stock.analysis.is_market_hours.
