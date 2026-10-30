@@ -921,6 +921,7 @@ async def chat(
     address_form: Optional[str] = None,
     style_rules: str = "",
     allow_live: bool = True,
+    stock_rules: bool = True,
 ):
     """Chat with shared history/memory through the provider chain.
 
@@ -949,10 +950,16 @@ async def chat(
     ``allow_live``: cho Gemini Live (ai/live_client.py) làm dự phòng cuối ở chuỗi
     thường - caller tắt khi lượt có số liệu cổ phiếu chuẩn (câu trả lời còn qua
     bước chặn câu nói ngược policy). Lượt tra web (native/forced) không dùng Live.
+    ``stock_rules``: kèm phần phân tích cổ phiếu của persona (config.load_chat_skill
+    (stock=...)) - run_chat_turn tắt ở lượt không liên quan cổ phiếu/đầu tư; caller
+    khác giữ mặc định (persona đầy đủ).
     """
     mode = _resolve_search_mode(search_mode, require_real_search, web_grounded)
     persona = config.load_chat_skill(
-        variant=_persona_variant(user_id, is_admin), channel=channel, address_form=address_form
+        variant=_persona_variant(user_id, is_admin),
+        channel=channel,
+        address_form=address_form,
+        stock=stock_rules,
     )
     if style_rules:
         persona = f"{persona}\n\n{style_rules}"

@@ -345,3 +345,31 @@ async def test_chat_chon_bien_the_persona_va_goi_y_kenh(monkeypatch):
         (config.PERSONA_OWNER, "zoom"),
         (config.PERSONA_OWNER, "telegram"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_chat_truyen_co_phan_co_phieu_xuong_persona(monkeypatch):
+    """Mặc định persona đầy đủ (rag_service và caller cũ không đổi); run_chat_turn
+    tắt phần cổ phiếu ở lượt đời thường qua stock_rules=False."""
+    seen = []
+
+    async def fake_router9(prompt, **kwargs):
+        return openai_compatible.Response("Dạ.")
+
+    async def no_history(*args):
+        return []
+
+    async def preferred():
+        return None
+
+    def fake_skill(force_reload=False, *, stock=True, **kwargs):
+        seen.append(stock)
+        return "PERSONA"
+
+    monkeypatch.setattr(config, "load_chat_skill", fake_skill)
+    monkeypatch.setattr(orchestrator.router9_client, "generate", fake_router9)
+    monkeypatch.setattr(orchestrator.router9_client, "get_preferred_model_name", preferred)
+    monkeypatch.setattr(db, "get_session_messages", no_history)
+    await orchestrator.chat(777, "chào em")
+    await orchestrator.chat(777, "chào em", stock_rules=False)
+    assert seen == [True, False]

@@ -374,6 +374,15 @@ async def run_chat_turn(
             # chặn câu nói ngược policy - conversation_log.guard_stock_reply), không
             # phát nháp. Link trong nháp đã bị turn_feedback.draft_text thay "…".
             stock_followup = (last_row or {}).get("kind") == conversation_log.KIND_STOCK
+            # Phần phân tích cổ phiếu của persona (core/config.load_chat_skill) chỉ
+            # kèm lượt liên quan cổ phiếu/đầu tư: chuyện đời thường không bị kéo sang
+            # cổ phiếu, và bớt ~1/3 token persona.
+            stock_rules = bool(
+                grounding
+                or stock_followup
+                or outcome.name == "get_portfolio"
+                or stock_analysis.chat_needs_stock_rules(text)
+            )
             with drafts.drafting(not grounding and not stock_followup), trace.stage("llm"):
                 response = await orchestrator.chat(
                     user_id,
@@ -389,6 +398,7 @@ async def run_chat_turn(
                     # Gemini Live (dự phòng cuối, trả lời bằng văn nói) không dùng cho
                     # lượt có số liệu cổ phiếu chuẩn hay ngay sau báo cáo cổ phiếu.
                     allow_live=not (grounding or stock_followup),
+                    stock_rules=stock_rules,
                 )
         form = address_form or reply_audience.current().address_form
         reply = conversation_log.guard_stock_reply(
