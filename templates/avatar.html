@@ -408,9 +408,10 @@ function unlockAudio() {
 }
 for (const type of ['click', 'keydown']) document.addEventListener(type, unlockAudio, {capture: true});
 
-async function speak(base64) {
-  if (!audioCtx) return;
-  stopSpeaking();
+// Mỗi lượt đọc mang 1 số; ngắt giọng thì tăng số để lượt cũ bỏ các đoạn còn lại.
+let speechRun = 0;
+
+async function playClip(base64, run) {
   const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0));
   let buffer;
   try {
@@ -418,11 +419,11 @@ async function speak(base64) {
   } catch {
     return; // không giải mã được thì chỉ còn chữ, câu trả lời đã hiện sẵn
   }
+  if (run !== speechRun) return;
   const source = audioCtx.createBufferSource();
   source.buffer = buffer;
   source.connect(analyser);
   playing = source;
-  setState('speaking');
   await new Promise((resolve) => {
     source.addEventListener('ended', resolve);
     // iOS tạm ngưng âm thanh (cuộc gọi chen vào) thì có thể không bao giờ báo 'ended'.
@@ -430,15 +431,38 @@ async function speak(base64) {
     source.start();
   });
   if (playing === source) playing = null;
-  if (state === 'speaking') setState('idle');
+}
+
+// Đọc lần lượt các đoạn; mỗi phần tử của loaders trả base64 (hoặc Promise của nó, null =
+// bỏ qua đoạn đó). Đoạn kế được tải sẵn trong lúc đọc đoạn trước.
+async function speak(loaders) {
+  if (!audioCtx || !loaders.length) return;
+  stopSpeaking();
+  const run = speechRun;
+  setState('speaking');
+  let next = loaders[0]();
+  for (let i = 0; i < loaders.length; i++) {
+    const base64 = await next;
+    if (run !== speechRun) return;
+    next = loaders[i + 1]?.();
+    if (base64) await playClip(base64, run);
+    if (run !== speechRun) return;
+  }
+  setState('idle');
   moodUntil = Math.max(moodUntil, performance.now() / 1000 + 1.5);
 }
 
 function stopSpeaking() {
+  speechRun += 1;
+  if (state === 'speaking') setState('idle');
   if (!playing) return;
   const source = playing;
   playing = null;
   source.stop();
+}
+
+function clipFor(text) {
+  return api('/speak', {method: 'POST', json: {text}}).then((clip) => clip.audio, () => null);
 }
 
 // Âm lượng giọng đang phát (0..1) cho khẩu hình.
@@ -495,7 +519,7 @@ async function send(raw) {
   const typing = addTyping();
   let reply;
   try {
-    reply = await api('/chat', {method: 'POST', json: {text, voice: !muted && Boolean(audioCtx)}});
+    reply = await api('/chat', {method: 'POST', json: {text}});
   } catch (err) {
     reply = {text: err.message, mood: 'sad', error: true};
   }
@@ -506,7 +530,7 @@ async function send(raw) {
   addMessage('her', reply.text, {image: reply.image, error: reply.error});
   setMood(reply.mood);
   // Gửi tin mới trong lúc em đang đọc thì ngắt giọng cũ (stopSpeaking trong send).
-  if (reply.audio && !muted) await speak(reply.audio);
+  if (reply.speech && !muted) await speak(reply.speech.map((part) => () => clipFor(part)));
   listen();
 }
 
@@ -731,7 +755,7 @@ async function playGreeting() {
   try {
     const greeting = await api(`/greeting?id=${encodeURIComponent(cfg.greeting.id)}&audio=1`);
     setMood(greeting.mood);
-    if (greeting.audio && state === 'idle' && !chatting && !muted) await speak(greeting.audio);
+    if (greeting.audio && state === 'idle' && !chatting && !muted) await speak([() => greeting.audio]);
   } catch {
     // Câu chào bằng chữ đã hiện sẵn, thiếu giọng cũng không sao.
   }
@@ -794,7 +818,7 @@ $('preview').addEventListener('click', async () => {
     const {audio, voice} = await api('/voice/preview', {method: 'POST', json: {voice: chosen}});
     // Giọng Edge (Hoài My) lỗi thì máy chủ đọc tạm bằng giọng Gemini.
     settingsNote(voice === chosen ? '' : `Giọng ${voiceTitle(chosen)} đang lỗi, em đọc tạm bằng giọng ${voiceTitle(voice)} nha.`);
-    await speak(audio);
+    await speak([() => audio]);
   } catch (err) {
     settingsNote(err.message, true);
   } finally {

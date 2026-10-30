@@ -164,6 +164,11 @@ EDGE_MP3_BYTES_PER_MS = 6
 MAX_EDGE_BYTES = 2 * _MB
 # Edge lỗi 1 lần thì các câu sau đọc thẳng bằng giọng Gemini chừng này giây, không chờ lại.
 EDGE_COOLDOWN_SEC = 600.0
+# Trang avatar đọc từng đoạn: đoạn đầu chỉ cần chừng này ký tự để giọng bắt đầu sớm, các
+# đoạn sau gom câu tới trần (VOICE_REPLY_MAX_CHARS 600 -> 3-4 đoạn).
+WEB_FIRST_CHUNK_CHARS = 40
+WEB_CHUNK_CHARS = 220
+_SENTENCE_GAP_RE = re.compile(r"(?<=[.!?…])\s+")
 _PERCENT = re.compile(r"[+-]\d{1,3}%")
 _HERTZ = re.compile(r"[+-]\d{1,3}Hz")
 # Kho clip Zalo/Zoom: tin thoại M4A 48 kbps ~0,35 MB/phút -> 12 file / 4 MB đủ cho
@@ -649,6 +654,29 @@ async def make_clip(
     except Exception:
         logger.warning("Không tạo được tin thoại trả lời - chỉ gửi chữ.", exc_info=True)
         return None
+
+
+def web_chunks(text: str) -> list[str]:
+    """Câu đọc của 1 câu trả lời trên trang avatar, chia theo câu để đọc từng đoạn bằng
+    ``web_clip`` (đọc đoạn này trong lúc tải đoạn sau). Che bí mật, bỏ phần không đọc được
+    và cắt theo VOICE_REPLY_MAX_CHARS như ``web_clip``. Chỉ cắt ở dấu câu có khoảng trắng
+    theo sau (số "1.000.000" giữ nguyên); [] = không có gì để đọc."""
+    you, _ = reply_audience.forms()
+    hidden = prompt_redaction.Redactor().text(text)
+    speech, _ = fit(speakable_text(hidden), max_chars(), you)
+    chunks: list[str] = []
+    for sentence in _SENTENCE_GAP_RE.split(speech):
+        if not sentence:
+            continue
+        if chunks:
+            joined = f"{chunks[-1]} {sentence}"
+            # Đoạn đầu gom tới khi đủ dài (không đọc lẻ "Dạ."), đoạn sau gom tới trần.
+            short = len(chunks) > 1 or len(chunks[0]) < WEB_FIRST_CHUNK_CHARS
+            if short and len(joined) <= WEB_CHUNK_CHARS:
+                chunks[-1] = joined
+                continue
+        chunks.append(sentence)
+    return chunks
 
 
 async def web_clip(

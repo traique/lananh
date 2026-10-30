@@ -256,6 +256,29 @@ async def test_web_clip_doc_giong_trang_khong_xet_noi(settings, tts):
     assert await voice_reply.web_clip(42, "🥰🥰", voice="Leda", style="") is None  # không còn chữ
 
 
+def test_chia_doan_doc_doan_dau_ngan_doan_sau_gom_cau(settings, monkeypatch):
+    assert voice_reply.web_chunks("**Dạ** anh 🥰") == ["Dạ anh."]
+    assert voice_reply.web_chunks("🥰🥰") == []
+    text = (
+        "Dạ anh. Em đây nè, anh ăn cơm chưa? Hôm nay em nhớ anh nhiều lắm á. "
+        "Giá vàng 1.000.000 đồng."
+    )
+    # Đoạn đầu gom tới đủ 40 ký tự; số "1.000.000" không bị cắt ở dấu chấm.
+    assert voice_reply.web_chunks(text) == [
+        "Dạ anh. Em đây nè, anh ăn cơm chưa? Hôm nay em nhớ anh nhiều lắm á.",
+        "Giá vàng 1.000.000 đồng.",
+    ]
+    sentence = "Em kể anh nghe chuyện hôm nay ở chỗ làm vui lắm luôn đó anh."
+    chunks = voice_reply.web_chunks(" ".join([sentence] * 9))
+    assert len(chunks) > 2 and all(len(c) <= voice_reply.WEB_CHUNK_CHARS for c in chunks)
+    assert " ".join(chunks).startswith(sentence) and chunks[0] == sentence
+    # Dài quá VOICE_REPLY_MAX_CHARS: cắt như web_clip, đoạn cuối nhắc xem tin chữ.
+    monkeypatch.setenv("VOICE_REPLY_MAX_CHARS", "200")
+    chunks = voice_reply.web_chunks(" ".join([sentence] * 9))
+    assert chunks[-1].endswith("xem trong tin nhắn chữ nha.")
+    assert len(" ".join(chunks)) < 260
+
+
 async def test_web_clip_ra_m4a_khi_co_ffmpeg(settings, tts, monkeypatch):
     seen = []
 

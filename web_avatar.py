@@ -8,11 +8,13 @@
   với Telegram/Zoom; nhắc việc tạo từ avatar gửi về Telegram. Kiểu "người iu" chỉ ở
   trang này qua style_hint của lượt (AVATAR_STYLE_HINT) - không đổi persona, giọng
   hay /noi của Telegram/Zalo/Zoom.
-- Giọng: ``voice_reply.web_clip`` trả base64 trong JSON, đọc SAU khi nhả khoá lượt;
-  khẩu hình tính ở trình duyệt theo âm lượng. Hoài My (mặc định) qua Microsoft Edge TTS
-  ra MP3, lỗi thì đọc lại bằng giọng Gemini ``avatar_service.gemini_voice()``; giọng
-  Gemini ra M4A (không có ffmpeg thì WAV). Câu chào và câu nghe thử giữ trong ClipCache
-  (trần 10 clip) - bản đọc lại thay giọng Edge lỗi thì không giữ.
+- Giọng: /chat trả chữ ngay kèm ``speech`` (câu đọc chia đoạn, ``voice_reply.web_chunks``);
+  trang xin giọng từng đoạn qua /speak (``voice_reply.web_clip``, base64 trong JSON), đọc
+  đoạn này trong lúc tải đoạn sau - giọng không bao giờ nằm trong khoá lượt hay số đo
+  lượt chat. Khẩu hình tính ở trình duyệt theo âm lượng. Hoài My (mặc định) qua Microsoft
+  Edge TTS ra MP3, lỗi thì đọc lại bằng giọng Gemini ``avatar_service.gemini_voice()``;
+  giọng Gemini chỉ đọc bằng Gemini Live, ra M4A (không có ffmpeg thì WAV). Câu chào và câu
+  nghe thử giữ trong ClipCache (trần 10 clip) - bản đọc lại thay giọng Edge lỗi thì không giữ.
 - Nghe: trình duyệt dùng Web Speech API; không có thì ghi âm gửi /stt (Groq Whisper
   như tin thoại, trần VOICE_MAX_BYTES).
 - Ảnh: services/avatar_photo.py; chỉ phục vụ qua route kiểm phiên, ``no-store``.
@@ -25,7 +27,8 @@
 
 API (lỗi hiện cho người dùng: {"error": "..."}; request sai dạng - không phải JSON,
 kind lạ - nhận 400/415 mặc định của FastAPI):
-  POST   /admin/api/avatar/chat           {text, voice?: bool} -> {text, mood, audio?, mime?, image?}
+  POST   /admin/api/avatar/chat           {text}              -> {text, mood, speech?, image?}
+  POST   /admin/api/avatar/speak          {text}              -> {audio?, mime?}
   POST   /admin/api/avatar/stt            body audio/*         -> {text} (lỗi kèm kind)
   GET    /admin/api/avatar/greeting       [?id=&audio=1]       -> {id, text, mood, audio?, mime?}
   GET    /admin/api/avatar/voices                              -> {voices, current}
@@ -290,14 +293,28 @@ async def avatar_chat(request: Request) -> Response:
         ),
     ):
         turn = await _chat_turn(text)
-        reply, mood, speakable = _reply(turn)
-        # Đọc sau khi nhả khoá lượt: Telegram/Zoom không phải chờ phần giọng nói.
-        clip = await _speak(reply) if speakable and body.get("voice") is not False else None
-    payload = {"text": reply, "mood": mood, **_audio(clip)}
+    reply, mood, speakable = _reply(turn)
+    payload: dict = {"text": reply, "mood": mood}
+    # Giọng đọc xin riêng từng đoạn qua /speak: chữ hiện ngay, không chờ đọc cả câu trả lời.
+    speech = voice_reply.web_chunks(reply) if speakable else []
+    if speech:
+        payload["speech"] = speech
     image = _image(turn) if turn is not None and turn.verbatim else None
     if image:
         payload["image"] = image
     return JSONResponse(payload, headers=_NO_STORE)
+
+
+@api_router.post("/speak")
+async def avatar_speak(request: Request) -> Response:
+    """Giọng đọc 1 đoạn trong ``speech`` của /chat bằng giọng đang chọn; {} = không đọc
+    được (Edge và Gemini Live đều lỗi, cổng đọc bận...) - trang bỏ qua đoạn đó."""
+    body = await _json_body(request)
+    text = body.get("text")
+    text = text.strip() if isinstance(text, str) else ""
+    if not text or len(text) > MAX_TEXT_CHARS:
+        return _error("Đoạn đọc không hợp lệ.", 400)
+    return JSONResponse(_audio(await _speak(text)), headers=_NO_STORE)
 
 
 @api_router.post("/stt")

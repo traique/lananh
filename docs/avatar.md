@@ -50,10 +50,13 @@ chào, giọng), `services/avatar_photo.py` (ảnh), `templates/avatar.html` (gi
 - Kiểu "người iu" chỉ áp cho lượt từ trang này (`style_hint`), không đổi persona, giọng
   hay `/noi` của Telegram/Zalo/Zoom. Lượt hỏng: câu báo lỗi như Telegram, mặt buồn,
   không đọc giọng.
-- Giọng: `voice_reply.web_clip` - giọng và phong cách riêng của trang, trả base64 trong
-  JSON. Đọc cả khi `VOICE_REPLY_ENABLED=0`; vẫn che bí mật, bỏ emoji/markdown khi đọc,
-  chuẩn hoá số/viết tắt, cắt theo `VOICE_REPLY_MAX_CHARS`. Giọng đọc chạy SAU khi nhả
-  khoá lượt.
+- Giọng: `/chat` trả chữ ngay khi AI soạn xong, kèm `speech` là câu đọc đã chia đoạn
+  (`voice_reply.web_chunks`: đoạn đầu ~40 ký tự cho giọng bắt đầu sớm, các đoạn sau gom
+  câu tới 220 ký tự). Trang xin giọng từng đoạn qua `/speak` (`voice_reply.web_clip`,
+  base64 trong JSON), đọc đoạn này trong lúc tải đoạn sau; gửi tin mới, chạm ảnh hay tắt
+  loa thì bỏ các đoạn còn lại. Giọng không nằm trong khoá lượt chủ bot, cũng không tính
+  vào số đo lượt chat (`turn_metrics`). Đọc cả khi `VOICE_REPLY_ENABLED=0`; vẫn che bí
+  mật, bỏ emoji/markdown khi đọc, chuẩn hoá số/viết tắt, cắt theo `VOICE_REPLY_MAX_CHARS`.
 - **Hoài My** (mặc định): giọng `vi-VN-HoaiMyNeural` của Microsoft Edge TTS qua gói
   [edge-tts](https://github.com/rany2/edge-tts) (LGPLv3), miễn phí, không tính quota TTS.
   MP3 phát thẳng trên trình duyệt (không qua ffmpeg, không ghi file tạm), chung cổng 1
@@ -121,7 +124,8 @@ Dùng chung với bot: `LIVE_MODEL`, `LIVE_VOICE_MIN_MATCH`, `VOICE_REPLY_MAX_CH
 
 ```
 GET    /admin/avatar                                   trang (chưa đăng nhập: form đăng nhập)
-POST   /admin/api/avatar/chat           {text, voice?: bool} -> {text, mood, audio?, mime?, image?}
+POST   /admin/api/avatar/chat           {text}               -> {text, mood, speech?, image?}
+POST   /admin/api/avatar/speak          {text}               -> {audio?, mime?}
 POST   /admin/api/avatar/stt            body audio/*         -> {text} | {error, kind}
 GET    /admin/api/avatar/greeting       [?id=&audio=1]       -> {id, text, mood, audio?, mime?}
 GET    /admin/api/avatar/voices                              -> {voices, current}
