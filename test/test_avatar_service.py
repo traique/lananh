@@ -5,6 +5,7 @@ raise, giọng Hoài My qua Edge TTS (giả, không gọi mạng) và đọc l�
 
 import asyncio
 import sys
+import time
 import types
 from datetime import datetime, timezone
 
@@ -76,7 +77,13 @@ def edge(monkeypatch):
                 yield {"type": "audio", "data": data}
 
     monkeypatch.setitem(sys.modules, "edge_tts", types.SimpleNamespace(Communicate=Communicate))
-    for name in ("AVATAR_EDGE_RATE", "AVATAR_EDGE_PITCH", "AVATAR_EDGE_VOLUME"):
+    monkeypatch.setattr(voice_reply, "_edge_down_until", 0.0)
+    for name in (
+        "AVATAR_EDGE_RATE",
+        "AVATAR_EDGE_PITCH",
+        "AVATAR_EDGE_VOLUME",
+        "AVATAR_EDGE_TIMEOUT_SEC",
+    ):
         monkeypatch.delenv(name, raising=False)
     return state
 
@@ -354,6 +361,7 @@ async def test_edge_loi_het_gio_rong_thi_doc_lai_bang_gemini(settings, tts, edge
 
     for make_fail in (broken, slow, silent, too_big, missing_package):
         edge.update(error=None, delay=0.0, chunks=[bytes(600)])
+        voice_reply._edge_down_until = 0.0  # mỗi kiểu lỗi thử Edge lại từ đầu
         make_fail()
         clip = await voice_reply.web_clip(
             42, "Dạ anh.", voice="HoaiMy", style="thủ thỉ", fallback_voice="Achernar"
@@ -362,6 +370,7 @@ async def test_edge_loi_het_gio_rong_thi_doc_lai_bang_gemini(settings, tts, edge
         assert tts[-1]["voice"] == "Achernar" and tts[-1]["style"] == "thủ thỉ", make_fail
     assert len(tts) == 5
     # Không truyền giọng dự phòng: VOICE_TTS_VOICE.
+    voice_reply._edge_down_until = 0.0
     monkeypatch.setitem(sys.modules, "edge_tts", None)
     clip = await voice_reply.web_clip(42, "Dạ anh.", voice="HoaiMy", style="")
     assert clip.voice == "Sulafat"
@@ -381,6 +390,44 @@ async def test_edge_ban_hoac_het_han_chot_thi_khong_doc_lai(settings, tts, edge,
     with turn_deadline(0.1):
         assert await voice_reply.web_clip(42, "Dạ anh.", voice="HoaiMy", style="") is None
     assert tts == []
+
+
+async def test_edge_loi_thi_10_phut_doc_thang_bang_gemini(settings, tts, edge):
+    assert voice_reply.edge_timeout_sec() == 8
+    edge["error"] = RuntimeError("403 Forbidden")
+    clip = await voice_reply.web_clip(
+        42, "Dạ anh.", voice="HoaiMy", style="", fallback_voice="Leda"
+    )
+    assert clip.voice == "Leda" and len(edge["calls"]) == 1
+    left = voice_reply._edge_down_until - time.monotonic()
+    assert voice_reply.EDGE_COOLDOWN_SEC - 5 < left <= voice_reply.EDGE_COOLDOWN_SEC
+    # Câu sau: không chờ Edge lại, đọc thẳng bằng giọng Gemini.
+    edge["error"] = None
+    clip = await voice_reply.web_clip(42, "Dạ em.", voice="HoaiMy", style="", fallback_voice="Leda")
+    assert clip.voice == "Leda" and len(edge["calls"]) == 1 and len(tts) == 2
+    voice_reply._edge_down_until = 0.0  # hết 10 phút
+    clip = await voice_reply.web_clip(42, "Dạ em.", voice="HoaiMy", style="", fallback_voice="Leda")
+    assert clip.voice == "HoaiMy" and len(edge["calls"]) == 2 and len(tts) == 2
+
+
+async def test_giong_gemini_tren_avatar_chi_doc_bang_live(settings, monkeypatch):
+    calls = []
+    failing = False
+
+    async def synthesize(text, *, model, voice, timeout_sec, engine="tts", style=""):
+        calls.append((engine, timeout_sec))
+        if failing:
+            raise RuntimeError("Gemini Live đọc lệch chữ")
+        return orchestrator.Speech(PCM, "audio/L16;codec=pcm;rate=24000", "live_api1")
+
+    monkeypatch.setattr(orchestrator, "synthesize_speech", synthesize)
+    monkeypatch.setattr(voice_reply, "ffmpeg_path", lambda: None)
+    monkeypatch.setenv("VOICE_ENGINE", "auto")  # /noi giữ auto, trang avatar vẫn chỉ Live
+    assert await voice_reply.web_clip(42, "Dạ anh.", voice="Leda", style="") is not None
+    assert calls == [("live", voice_reply.WEB_TTS_TIMEOUT_SEC)]
+    failing = True
+    assert await voice_reply.web_clip(42, "Dạ anh.", voice="Leda", style="") is None
+    assert len(calls) == 2  # Live lỗi: chỉ hiện chữ, không đọc lại bằng Gemini TTS
 
 
 def test_tham_so_edge_sai_dinh_dang_thi_dung_mac_dinh(monkeypatch):

@@ -149,6 +149,8 @@ SUGGESTED_VOICES = ("Sulafat", "Leda", "Aoede", "Vindemiatrix", "Achernar", "Des
 _MB = 1024 * 1024
 # Một lượt TTS ~600 ký tự mất 5-20 giây; trần riêng để provider treo không ăn hết lượt.
 TTS_TIMEOUT_SEC = 45.0
+# Trang avatar đọc từng câu: 1 câu Gemini Live quá chừng này thì thôi, chỉ hiện chữ.
+WEB_TTS_TIMEOUT_SEC = 25.0
 # Còn ít hơn chừng này giây của hạn chót lượt thì thôi đọc (câu chữ đã/ sắp gửi).
 MIN_REMAINING_SEC = 8.0
 FFMPEG_TIMEOUT_SEC = 20.0
@@ -160,6 +162,8 @@ EDGE_VOICES = {"HoaiMy": "vi-VN-HoaiMyNeural"}
 # edge-tts trả MP3 24 kHz 48 kbps CBR = 6 byte mỗi ms; 600 ký tự ~60 giây ~360 KB.
 EDGE_MP3_BYTES_PER_MS = 6
 MAX_EDGE_BYTES = 2 * _MB
+# Edge lỗi 1 lần thì các câu sau đọc thẳng bằng giọng Gemini chừng này giây, không chờ lại.
+EDGE_COOLDOWN_SEC = 600.0
 _PERCENT = re.compile(r"[+-]\d{1,3}%")
 _HERTZ = re.compile(r"[+-]\d{1,3}Hz")
 # Kho clip Zalo/Zoom: tin thoại M4A 48 kbps ~0,35 MB/phút -> 12 file / 4 MB đủ cho
@@ -170,6 +174,7 @@ TELEGRAM_WAV_NAME = "lan-anh-tra-loi.wav"
 
 _gate = asyncio.Semaphore(1)
 _ffmpeg_warned = False
+_edge_down_until = 0.0
 
 
 def enabled() -> bool:
@@ -654,8 +659,11 @@ async def web_clip(
     lọc chữ đọc được, cắt theo VOICE_REPLY_MAX_CHARS, chuẩn hoá số/viết tắt.
 
     ``voice`` trong EDGE_VOICES: đọc bằng Edge TTS (miễn phí, không tính quota TTS);
-    Edge lỗi/hết giờ/rỗng thì đọc lại bằng giọng Gemini ``fallback_voice``. Giọng Gemini
-    (tên lạ -> VOICE_TTS_VOICE) tính quota TTS như chủ bot Telegram. KHÔNG raise."""
+    Edge lỗi/hết giờ/rỗng thì đọc lại bằng giọng Gemini ``fallback_voice`` và EDGE_COOLDOWN_SEC
+    tiếp theo đọc thẳng bằng giọng đó. Giọng Gemini (tên lạ -> VOICE_TTS_VOICE) chỉ đọc bằng
+    Gemini Live, tính quota TTS như chủ bot Telegram; Live lỗi/đọc lệch/bận thì không có
+    giọng (không chờ thêm Gemini TTS như VOICE_ENGINE=auto của /noi). KHÔNG raise."""
+    global _edge_down_until
     try:
         you, _ = reply_audience.forms()
         hidden = prompt_redaction.Redactor().text(text)
@@ -667,25 +675,45 @@ async def web_clip(
         if remaining is not None and remaining < MIN_REMAINING_SEC:
             logger.info("Còn %.1fs của lượt - bỏ giọng đọc avatar.", remaining)
             return None
-        if voice in EDGE_VOICES:
+        if voice in EDGE_VOICES and time.monotonic() < _edge_down_until:
+            voice = fallback_voice or tts_voice()
+        elif voice in EDGE_VOICES:
             try:
                 return await _synthesize_edge(speech, truncated, voice)
             except TurnTimeoutError:
                 raise
             except Exception as exc:
+                _edge_down_until = time.monotonic() + EDGE_COOLDOWN_SEC
                 logger.info(
-                    "Giọng Edge %s lỗi (%s: %s) - đọc lại bằng giọng %s.",
+                    "Giọng Edge %s lỗi (%s: %s) - đọc bằng giọng %s trong %d phút tới.",
                     voice,
                     type(exc).__name__,
                     str(exc)[:200],
                     fallback_voice or tts_voice(),
+                    EDGE_COOLDOWN_SEC // 60,
                 )
                 voice = fallback_voice or tts_voice()
         if not await usage_quota.heavy_available(user_id, channel="telegram", is_admin=True):
             return None
-        clip = await _synthesize(
-            speech, "web", truncated, voice=canonical_voice(voice) or tts_voice(), style=style
-        )
+        try:
+            clip = await _synthesize(
+                speech,
+                "web",
+                truncated,
+                voice=canonical_voice(voice) or tts_voice(),
+                style=style,
+                engine="live",
+                timeout_sec=WEB_TTS_TIMEOUT_SEC,
+            )
+        except TurnTimeoutError:
+            raise
+        except Exception as exc:
+            logger.info(
+                "Gemini Live không đọc được giọng avatar (%s: %s) - chỉ hiện chữ.",
+                type(exc).__name__,
+                str(exc)[:200],
+            )
+            return None
         if clip is not None:
             await usage_quota.record_heavy(
                 user_id, usage_quota.KIND_TTS, channel="telegram", is_admin=True
@@ -706,6 +734,8 @@ async def _synthesize(
     *,
     voice: str | None = None,
     style: str | None = None,
+    engine: str | None = None,
+    timeout_sec: float = TTS_TIMEOUT_SEC,
 ) -> Clip | None:
     from ai import orchestrator
 
@@ -721,8 +751,8 @@ async def _synthesize(
             speech,
             model=tts_model(),
             voice=voice or tts_voice(),
-            timeout_sec=TTS_TIMEOUT_SEC,
-            engine=voice_engine(),
+            timeout_sec=timeout_sec,
+            engine=engine or voice_engine(),
             style=style_prompt() if style is None else style,
         )
         pcm, rate, channels = to_pcm(result.audio, result.mime)
@@ -743,7 +773,7 @@ async def _synthesize(
 
 
 def edge_timeout_sec() -> int:
-    return env_int("AVATAR_EDGE_TIMEOUT_SEC", 15, 3, 60)
+    return env_int("AVATAR_EDGE_TIMEOUT_SEC", 8, 3, 60)
 
 
 @functools.lru_cache(maxsize=16)
@@ -801,7 +831,7 @@ async def _synthesize_edge(speech: str, truncated: bool, voice: str) -> Clip | N
                 rate=prosody["rate"],
                 volume=prosody["volume"],
                 pitch=prosody["pitch"],
-                connect_timeout=min(10, timeout),
+                connect_timeout=min(5, timeout),
                 receive_timeout=timeout,
             )
             audio = bytearray()

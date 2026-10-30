@@ -61,12 +61,15 @@ chào, giọng), `services/avatar_photo.py` (ảnh), `templates/avatar.html` (gi
   chỉ dẫn phong cách bằng lời, nên giọng nhẹ nhàng hơn nhờ chỉnh tốc độ/cao độ
   (`AVATAR_EDGE_*`). Edge lỗi, hết giờ hoặc trả rỗng thì tự đọc lại bằng giọng Gemini
   (`AVATAR_TTS_VOICE` nếu là giọng Gemini, không thì Achernar) với `AVATAR_VOICE_STYLE`,
-  lượt chat vẫn chạy; nghe thử khi đó báo "đang đọc tạm bằng giọng ...".
+  lượt chat vẫn chạy; nghe thử khi đó báo "đang đọc tạm bằng giọng ...". Sau 1 lần lỗi,
+  10 phút tiếp theo đọc thẳng bằng giọng Gemini đó, không chờ Edge lại ở từng câu.
   Edge TTS là dịch vụ không chính thức của Microsoft, có thể đổi/chặn bất cứ lúc nào;
   khi lỗi trang tự chuyển sang giọng Gemini.
 - Giọng Gemini (Achernar, Vindemiatrix, Leda, Sulafat... - 30 giọng): M4A (không có
-  ffmpeg thì WAV), theo `VOICE_ENGINE`, tính quota TTS như chủ bot Telegram. `/noi` và
-  giọng Telegram/Zalo/Zoom không có Hoài My.
+  ffmpeg thì WAV), chỉ đọc bằng Gemini Live (`LIVE_MODEL`), tính quota TTS như chủ bot
+  Telegram. Live lỗi, đang bận, hết quota hoặc đọc lệch chữ (`LIVE_VOICE_MIN_MATCH`) thì
+  câu đó chỉ hiện chữ, không chờ thêm Gemini TTS (`VOICE_ENGINE` chỉ áp cho `/noi`).
+  `/noi` và giọng Telegram/Zalo/Zoom không có Hoài My.
 - Khẩu hình tính ngay trong trình duyệt theo âm lượng giọng đang phát (mở nhanh, khép
   chậm, có trần); máy chủ không xử lý thêm âm thanh hay ảnh.
 - Câu chào soạn sẵn theo khung giờ Việt Nam (sáng/trưa/chiều/tối/khuya), không gọi AI,
@@ -86,9 +89,9 @@ chào, giọng), `services/avatar_photo.py` (ảnh), `templates/avatar.html` (gi
 | `AVATAR_EDGE_RATE` | `-6%` | Tốc độ Hoài My (dấu +/- và %). Sai định dạng → mặc định. |
 | `AVATAR_EDGE_PITCH` | `+12Hz` | Cao độ Hoài My (dấu +/- và Hz). Sai định dạng → mặc định. |
 | `AVATAR_EDGE_VOLUME` | `+0%` | Âm lượng Hoài My (dấu +/- và %). Sai định dạng → mặc định. |
-| `AVATAR_EDGE_TIMEOUT_SEC` | `15` | Chờ Edge TTS tối đa (3-60 giây), quá thì đọc lại bằng giọng Gemini. |
+| `AVATAR_EDGE_TIMEOUT_SEC` | `8` | Chờ Edge TTS tối đa (3-60 giây), quá thì đọc lại bằng giọng Gemini. |
 
-Dùng chung với bot: `VOICE_TTS_MODEL`, `VOICE_ENGINE`, `VOICE_REPLY_MAX_CHARS`,
+Dùng chung với bot: `LIVE_MODEL`, `LIVE_VOICE_MIN_MATCH`, `VOICE_REPLY_MAX_CHARS`,
 `VOICE_STT_ENABLED`, `VOICE_MAX_BYTES`, `VOICE_MAX_SECONDS`, `CHAT_TURN_TIMEOUT_SEC`.
 
 ## Giới hạn
