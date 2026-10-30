@@ -106,3 +106,23 @@
   examples:
     good: ["Dạ không có gì đâu anh 😊"]
     bad: ["Không có gì đâu anh! Ngoài ra em còn có thể giúp anh tra thời tiết, đặt nhắc việc, ghi chú, tra giá vàng, phân tích cổ phiếu và rất nhiều việc khác nữa, anh cứ thoải mái nhờ em bất cứ lúc nào nha!"]
+
+# Persona tách 2 phần (core/config.load_chat_skill): câu đời thường chỉ nhận phần lõi,
+# trí nhớ có danh mục cổ phiếu cũng không được kéo câu trả lời sang cổ phiếu.
+- id: persona-doi-thuong-khong-keo-co-phieu
+  category: persona
+  user: owner
+  memory:
+    - "Anh đang giữ 2.000 cổ phiếu FPT và 5.000 cổ phiếu HPG"
+    - "Anh thích ăn bún bò"
+  prompt: "tối nay ăn gì giờ em"
+  checks:
+    max_chars: 500
+    address: anh
+    self_word: em
+    no_cjk: true
+    must_not_include: ["cổ phiếu", "chứng khoán", "FPT", "HPG", "danh mục", "VN-Index"]
+  judge: "Gợi ý món ăn tự nhiên, ngắn, không lái sang cổ phiếu hay danh mục đầu tư."
+  examples:
+    good: ["Hay tối nay anh làm tô bún bò nóng đi, em thấy trời này ăn là hết ý luôn á."]
+    bad: ["Ăn gì cũng được anh ơi, mà hôm nay FPT xanh đó, em mời anh tô bún bò ăn mừng nha!"]

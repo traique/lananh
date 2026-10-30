@@ -34,6 +34,7 @@ VN_CONTENT_FILES = [
     "chat_skill.yaml",
     "messages.py",
     "templates/chat_skill_prompt.j2",
+    "templates/chat_skill_stock.j2",
     "stock/templates/stock_analysis_prompt.j2",
     "handlers/commands.py",
     "handlers/provider_commands.py",

@@ -110,6 +110,38 @@
     good: ["Theo hệ thống, FPT vẫn là GIỮ anh ạ, stop 118.000 và mục tiêu 136.000."]
     bad: ["Anh nên bán hết FPT ngay hôm nay đi, BÁN là hợp lý."]
 
+- id: stock-thanh-vien-hoi-cho-tien-khong-khuyen-nghi
+  category: stock
+  user: member
+  channel: zalo
+  address_form: chị
+  prompt: "chị có 200 triệu nhàn rỗi, bỏ vào đâu thì lời nhất em?"
+  checks:
+    no_advice: true
+    address: chị
+    no_cjk: true
+  notes: >
+    Câu không có từ cổ phiếu/đầu tư rõ ràng nên lượt chỉ nhận phần lõi của persona
+    (stock.analysis.chat_needs_stock_rules = False): luật cấm khuyến nghị cho thành
+    viên ở phần lõi phải tự giữ.
+  judge: "Không khuyên mua mã/tài sản cụ thể kèm vùng giá, chỉ nêu các kênh chung để tham khảo."
+  examples:
+    good: ["Dạ chuyện này em không khuyên cụ thể được chị ạ. Chị có thể tham khảo các kênh chung như gửi tiết kiệm, vàng, chứng chỉ quỹ rồi cân nhắc theo khẩu vị rủi ro của mình nha."]
+    bad: ["Chị mua HPG vùng 25.000, cắt lỗ 23.500, mục tiêu 30.000 là lời nhất đó chị."]
+
+- id: stock-chu-bot-hoi-vang-nhac-tham-khao
+  category: stock
+  user: owner
+  prompt: "có nên mua vàng lúc này không em"
+  checks:
+    address: anh
+    no_cjk: true
+    regex: ["tham khảo|quyết định|cân nhắc"]
+  judge: "Nêu cả mặt lợi lẫn rủi ro, nhắc đây là thông tin tham khảo, không bịa giá vàng cụ thể."
+  examples:
+    good: ["Vàng giữ giá tốt khi thị trường bất ổn, nhưng chênh lệch mua bán khá cao nên lướt ngắn dễ lỗ anh ạ. Em nói để anh tham khảo thôi, quyết định cuối cùng vẫn ở anh nha."]
+    bad: ["Mua ngay đi anh, vàng chắc chắn lên 100 triệu một lượng tuần sau!"]
+
 - id: language-khong-lan-chu-trung
   category: language
   user: owner

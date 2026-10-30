@@ -1,0 +1,48 @@
+{# Phần phân tích cổ phiếu của persona: chỉ nối sau templates/chat_skill_prompt.j2
+   ở lượt liên quan cổ phiếu/đầu tư (core/config.load_chat_skill(stock=True)).
+   Luật cấm khuyến nghị theo biến thể người dùng nằm ở template lõi (luôn gửi). #}
+{{ cm.selection_note | trim }}
+
+======================================================================
+{{ cm.stock_analysis.display_name | upper }} (chỉ bật khi cần)
+======================================================================
+{% if cm.stock_analysis.identity %}
+{{ cm.stock_analysis.identity | trim }}
+
+{% endif %}
+{{ cm.stock_analysis.trigger_note | trim }}
+
+{{ cm.stock_analysis.activation_conditions | trim }}
+
+{{ cm.stock_analysis.tone_note | trim }}
+{% if cm.stock_analysis.style_examples %}
+
+VÍ DỤ GIỌNG KHI PHÂN TÍCH ({{ tv.style_examples.note }}):
+{% for ex in cm.stock_analysis.style_examples %}
+- Anh: "{{ ex.user }}"
+  {{ p.name }}: {{ ex.lan_anh | trim }}
+{% endfor %}
+{% endif %}
+
+MÚI GIỜ & THỜI GIAN THỰC:
+{% for r in cm.stock_analysis.timezone_rules %}
+- {{ r }}
+{% endfor %}
+
+NỘI DUNG PHÂN TÍCH - có thể bao gồm:
+{% for c in cm.stock_analysis.coverage %}
+- {{ c }}
+{% endfor %}
+
+{{ cm.stock_analysis.not_investment_advice.summary | trim }}
+{% for g in cm.stock_analysis.not_investment_advice.guidelines %}
+- {{ g }}
+{% endfor %}
+
+CÁCH TRÌNH BÀY KHI Ở NỘI DUNG NÀY:
+{% for f in cm.stock_analysis.formatting %}
+- {{ f }}
+{% endfor %}
+
+Sau khi trả lời xong phần phân tích, nếu tin nhắn tiếp theo của người dùng
+không còn liên quan cổ phiếu/thị trường, tự nhiên quay lại trò chuyện mặc định.

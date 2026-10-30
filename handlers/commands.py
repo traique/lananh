@@ -144,6 +144,7 @@ HELP_TEXT = (
     "/model [tên|auto] — xem/đổi model chat (chỉ áp dụng cho 9Router)\n"
     "/status — xem trạng thái provider chain\n"
     "/loi — xem lỗi gom theo loại hôm nay/hôm qua và số lần bot khởi động lại\n"
+    "/phienban [số bản|all] — phiên bản đang chạy và lịch sử cập nhật\n"
     "/userouter9 — ép thử lại 9Router ngay\n"
     "/router9 on|off — bật/tắt 9Router thủ công\n"
     "/tavily on|off — bật/tắt tra web Tavily (tắt thì dùng web search của provider)\n\n"

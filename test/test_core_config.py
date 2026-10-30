@@ -96,6 +96,90 @@ def test_khong_con_dong_gia_tri_giu_cho():
             assert ": vd:" not in line, f"{variant}: {line}"
 
 
+# ─── Persona tách 2 phần: lõi (luôn gửi) + phân tích cổ phiếu ──────────────
+
+
+def _render_core_variants() -> dict[str, str]:
+    config._chat_skill_cache.clear()
+    try:
+        return {
+            variant: config.load_chat_skill(variant=variant, stock=False)
+            for variant in config.PERSONA_VARIANTS
+        }
+    finally:
+        config._chat_skill_cache.clear()
+
+
+def test_tach_persona_khong_mat_noi_dung_yaml():
+    """Bản đầy đủ (lõi + phần cổ phiếu) chứa MỌI câu của chat_skill.yaml - trừ hồ sơ
+    chủ bot còn để trống và tên hiển thị (in hoa trong tiêu đề)."""
+    import yaml
+
+    data = yaml.safe_load(config.CHAT_SKILL_PATH.read_text(encoding="utf-8"))
+    data["persona"].pop("user_profile")
+    data["content_modes"]["stock_analysis"].pop("display_name")
+    flat = " ".join(_render_all_variants()[config.PERSONA_OWNER].split())
+    missing = [text for text in _leaf_strings(data) if len(text) > 20 and text not in flat]
+    assert missing == []
+
+
+def test_persona_loi_khong_keo_sang_co_phieu():
+    import yaml
+
+    data = yaml.safe_load(config.CHAT_SKILL_PATH.read_text(encoding="utf-8"))
+    stock_only = _leaf_strings(data["content_modes"]["stock_analysis"]) + _leaf_strings(
+        data["content_modes"]["selection_note"]
+    )
+    full = _render_all_variants()
+    for variant, core in _render_core_variants().items():
+        flat = " ".join(core.split())
+        assert full[variant].startswith(core), variant  # đầu prompt ổn định
+        assert len(core) < 0.75 * len(full[variant]), variant
+        assert not [text for text in stock_only if len(text) > 20 and text in flat], variant
+        for word in ("broker", "HOSE", "FPT", "content_mode", "stock_analysis", "bên dưới"):
+            assert word not in core, f"{variant}: {word}"
+        # Luật chung rút từ phần cổ phiếu lên lõi.
+        assert "Asia/Ho_Chi_Minh" in core
+        assert "Không tự lái câu chuyện sang cổ phiếu" in flat
+        assert 'gợi ý nhắn "phân tích <mã>"' in flat
+    for text in ("broker lâu năm", "HOSE/HNX", "FPT giảm sàn"):
+        assert text in full[config.PERSONA_OWNER]
+
+
+def test_luat_cam_khuyen_nghi_luon_trong_phan_loi():
+    """Bộ nhận diện lượt cổ phiếu có thể bỏ sót: luật cấm khuyến nghị cho người không
+    phải chủ bot phải nằm ở phần lõi, không phụ thuộc phần cổ phiếu."""
+    core = _render_core_variants()
+    assert "không đưa khuyến nghị mua/bán/giữ" in core[config.PERSONA_MEMBER]
+    assert "không tự đặt ra nhãn hành động" in core[config.PERSONA_ZALO_ADMIN]
+    owner = core[config.PERSONA_OWNER]
+    assert "không đưa khuyến nghị mua/bán/giữ" not in owner
+    assert "không tự đặt ra nhãn hành động" not in owner
+
+
+def test_cong_tac_persona_stock_split_tat_thi_luon_day_du(monkeypatch):
+    monkeypatch.setattr(config, "PERSONA_STOCK_SPLIT", False)
+    config._chat_skill_cache.clear()
+    try:
+        for variant in config.PERSONA_VARIANTS:
+            full = config.load_chat_skill(variant=variant, channel="zalo")
+            assert config.load_chat_skill(variant=variant, channel="zalo", stock=False) == full
+    finally:
+        config._chat_skill_cache.clear()
+
+
+def test_persona_txt_cu_khong_lap_lai_khi_them_phan_co_phieu(tmp_path, monkeypatch):
+    legacy = tmp_path / "persona.txt"
+    legacy.write_text("Bạn là Lan Anh.\n", encoding="utf-8")
+    monkeypatch.setattr(config, "CHAT_SKILL_PATH", legacy)
+    config._chat_skill_cache.clear()
+    try:
+        assert config.load_chat_skill(stock=True) == "Bạn là Lan Anh."
+        assert config.load_chat_skill(stock=False) == "Bạn là Lan Anh."
+    finally:
+        config._chat_skill_cache.clear()
+
+
 def test_ho_so_chu_bot_chi_render_muc_da_dien(tmp_path, monkeypatch):
     import yaml
 
@@ -163,6 +247,8 @@ def test_goi_y_kenh_noi_sau_persona_va_cache_co_tran():
         for variant in config.PERSONA_VARIANTS:
             for channel in ("zalo", "telegram", "zoom", None):
                 config.load_chat_skill(variant=variant, channel=channel)
-        assert len(config._chat_skill_cache) <= len(config.PERSONA_VARIANTS)
+                config.load_chat_skill(variant=variant, channel=channel, stock=False)
+        # Mỗi biến thể 1 phần lõi + 1 phần cổ phiếu chung; gợi ý kênh không vào cache.
+        assert len(config._chat_skill_cache) <= len(config.PERSONA_VARIANTS) + 1
     finally:
         config._chat_skill_cache.clear()

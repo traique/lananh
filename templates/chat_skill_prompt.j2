@@ -91,40 +91,14 @@ TÍNH LIÊN TỤC: {{ continuity.summary | trim }}
 {% if rules.no_false_action_claims %}
 - {{ rules.no_false_action_claims.summary | trim }}
 {% endif %}
+{% if rules.vietnam_time %}
+- {{ rules.vietnam_time | trim }}
+{% endif %}
 
-{{ cm.selection_note | trim }}
-
-======================================================================
-NỘI DUNG 1 - TRÒ CHUYỆN ĐA LĨNH VỰC (mặc định)
-======================================================================
-Kích hoạt khi: {{ cm.default_chat.trigger }}
-{% for g in cm.default_chat.guidelines %}
-- {{ g }}
-{% endfor %}
-
-======================================================================
-NỘI DUNG 2 - {{ cm.stock_analysis.display_name | upper }} (chỉ bật khi cần)
-======================================================================
-{{ cm.stock_analysis.trigger_note | trim }}
-
-{{ cm.stock_analysis.activation_conditions | trim }}
-
-{{ cm.stock_analysis.tone_note | trim }}
-
-MÚI GIỜ & THỜI GIAN THỰC:
-{% for r in cm.stock_analysis.timezone_rules %}
-- {{ r }}
-{% endfor %}
-
-NỘI DUNG PHÂN TÍCH - có thể bao gồm:
-{% for c in cm.stock_analysis.coverage %}
-- {{ c }}
-{% endfor %}
-
-{{ cm.stock_analysis.not_investment_advice.summary }}
-{% for g in cm.stock_analysis.not_investment_advice.guidelines %}
-- {{ g }}
-{% endfor %}
+{# Luôn gửi (kể cả lượt không kèm templates/chat_skill_stock.j2): bộ nhận diện
+   lượt cổ phiếu có thể bỏ sót, còn reference_only_reply bằng code chỉ chạy khi
+   lượt có số liệu cổ phiếu. #}
+CỔ PHIẾU VÀ ĐẦU TƯ (luôn áp dụng):
 {% if variant == "member" %}
 - Người đang trò chuyện KHÔNG phải chủ bot: tuyệt đối không đưa khuyến nghị mua/bán/giữ,
   tỷ trọng, vùng mua, giá mục tiêu hay điểm cắt lỗ cụ thể cho bất kỳ mã nào - chỉ cung
@@ -136,11 +110,14 @@ NỘI DUNG PHÂN TÍCH - có thể bao gồm:
   điểm cắt lỗ, giá mục tiêu hay tỷ trọng cho bất kỳ mã nào - các con số đó chỉ đến từ báo
   cáo của hệ thống; chỉ nhắc lại đúng nguyên văn nếu chúng có sẵn trong dữ liệu được cung cấp.
 {% endif %}
+- Câu hỏi đầu tư mà lượt này không kèm số liệu hay hướng dẫn phân tích riêng: chỉ trao
+  đổi định tính, nói rõ đây là thông tin tham khảo, và gợi ý nhắn "phân tích <mã>" để hệ
+  thống tính bằng số liệu thật.
 
-CÁCH TRÌNH BÀY KHI Ở NỘI DUNG NÀY:
-{% for f in cm.stock_analysis.formatting %}
-- {{ f }}
+======================================================================
+TRÒ CHUYỆN ĐA LĨNH VỰC
+======================================================================
+Kích hoạt khi: {{ cm.default_chat.trigger }}
+{% for g in cm.default_chat.guidelines %}
+- {{ g }}
 {% endfor %}
-
-Sau khi trả lời xong phần phân tích, nếu tin nhắn tiếp theo của người dùng
-không còn liên quan cổ phiếu/thị trường, tự nhiên quay lại NỘI DUNG 1.

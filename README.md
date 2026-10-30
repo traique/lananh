@@ -256,6 +256,16 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   thì Telegram được dùng tiêu đề và bảng).
 - Quy tắc `rules.no_false_action_claims`: không nói đã đặt nhắc/ghi chú/ghi chi
   tiêu khi hệ thống chưa lưu.
+- Persona tách 2 phần: phần lõi (`templates/chat_skill_prompt.j2` - giọng, xưng hô,
+  luật chống bịa số, giờ VN, luật cấm khuyến nghị cho thành viên/admin Zalo) luôn gửi;
+  phần phân tích cổ phiếu (`templates/chat_skill_stock.j2` - danh tính "broker", giờ
+  sàn, miễn trừ đầu tư, ví dụ FPT) chỉ kèm lượt có số liệu cổ phiếu, ngay sau báo cáo
+  cổ phiếu, router đọc danh mục, hoặc câu cổ phiếu/đầu tư
+  (`stock.analysis.chat_needs_stock_rules`: từ chứng khoán, mã/chỉ số, "danh mục",
+  "cắt lỗ", vàng/ngoại tệ/crypto kèm ý mua bán). Câu đời thường không bị kéo sang
+  cổ phiếu và bớt khoảng 1/3 persona (~14,7k còn ~9,2k ký tự). Phần lõi còn dặn
+  không tự lái câu chuyện sang cổ phiếu dù trí nhớ có danh mục.
+  `PERSONA_STOCK_SPLIT=0` quay lại gửi đủ mọi lượt (không cần deploy code).
 - Câu báo lỗi giọng Lan Anh (`messages.friendly_error`): lý do ngắn + việc nên làm,
   không tên provider, loại lỗi hay chú thích "API dự phòng". Chủ bot (Telegram,
   Zoom, tài khoản Zalo controller - khác role admin) vẫn thấy chi tiết kỹ thuật,
@@ -851,6 +861,7 @@ bền/bảo mật (đều có mặc định an toàn, chỉ đặt khi cần đ�
 | `CHAT_TURN_TIMEOUT_SEC` | 200 | Hạn chót tổng cho 1 lượt trả lời (30-230) |
 | `MEMORY_UPDATE_TIMEOUT_SEC` / `RAG_CLEAN_TOTAL_TIMEOUT_SEC` | 90 / 900 | Trần 1 lượt trích trí nhớ nền (theo lô); trần TỔNG 1 lượt `/ragxuly` (chạy nền ngoài khoá chat) |
 | `PROMPT_BUDGET_CHARS` / `HISTORY_MESSAGE_MAX_CHARS` / `GROUNDING_MAX_CHARS` / `MEMORY_MAX_CHARS` | 40000 / 1500 / 9000 / 3000 | Ngân sách ký tự prompt gửi provider và trần từng khối |
+| `PERSONA_STOCK_SPLIT` | 1 | Lượt chat không liên quan cổ phiếu/đầu tư chỉ gửi phần lõi của persona; 0 = luôn gửi cả phần phân tích cổ phiếu |
 | `DATABASE_SSL_MODE` / `DATABASE_SSL_CA` | `require` / (trống) | `verify-full` xác thực chứng chỉ + hostname Postgres (cần CA Supabase); `disable` chỉ cho DB local |
 | `SETTINGS_ENC_KEY_OLD` / `SETTINGS_REJECT_PLAINTEXT` | (trống) / 0 | Khoá Fernet cũ khi xoay khoá (MultiFernet); từ chối giá trị settings chưa mã hoá |
 | `ENABLE_PORTFOLIO_ALERTS` | true | Cảnh báo danh mục cuối phiên (chạm stop/target, breakout) |
@@ -997,6 +1008,7 @@ Giám sát, gom lỗi, sao lưu, dọn dữ liệu:
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
 | `ALERT_ZOOM_MIRROR` | `critical` | Zoom làm kênh phụ cho cảnh báo: `critical` (Telegram lỗi + luôn nhận 🚨), `fallback`, `all`, `off` |
+| `RELEASE_NOTIFY` | 1 | Báo chủ bot qua Telegram + Zoom khi đã lên bản mới sau deploy (theo `CHANGELOG.md`); 0 = tắt |
 | `WATCHDOG_ENABLED` / `WATCHDOG_MEMORY_PCT` | 1 / 85 | Watchdog luật cố định; ngưỡng % RAM working set (không tính page cache), 2 lần đo liên tiếp |
 | `MEMORY_TRIM_INTERVAL_SEC` / `MEMORY_TRIM_AFTER_WORK` / `MEMORY_TRIM_MIN_GAP_SEC` | 600 / 1 / 30 | Trả heap rảnh của Python về hệ điều hành (gc + `malloc_trim`, `core/memtrim.py`) mỗi N giây và sau lượt trả lời/việc nặng (tối đa 1 lần mỗi MIN_GAP giây); 0 = tắt |
 | `ZALO_NODE_HEAP_MB` / `ZALO_NODE_OPTIMIZE_SIZE` / `ZALO_NODE_EXTRA_FLAGS` | 96 / 1 / (trống) | Heap V8 của gateway Zalo, `--optimize-for-size` (0 = tắt), cờ node thêm |
@@ -1780,6 +1792,14 @@ khoảng chọn. Không script/CDN ngoài; mọi giá trị server vẫn escape.
   quá hạn mà chưa chạy (bản tin sáng cá nhân `/bantin` chưa được kiểm); bot khởi động lại vì crash, OOM, gián đoạn hơn 20 phút, hoặc restart
   bất thường dồn dập (deploy và restart do sửa env/Restart service không tính).
   Phần nhịp tim/khởi động lại chỉ chạy khi `RENDER=true`.
+- **Phiên bản và báo bản mới.** Số phiên bản và lịch sử cập nhật nằm ở `CHANGELOG.md`
+  (mục đầu tiên là bản đang chạy, `core/version.py` đọc). `/phienban [số bản|all]` (chủ
+  bot, admin Zalo) xem lịch sử; `/status` có dòng phiên bản kèm mã commit. Khoảng 5 phút
+  sau khi bản mới chạy trên Render (vòng giám sát đầu tiên), bot nhắn chủ bot qua
+  Telegram và Zoom (nếu đã pair) "🆕 Em đã lên bản mới X.Y.Z" kèm các dòng "Có gì mới";
+  restart, ngủ dậy hay sửa env (cùng commit) không báo lại; deploy commit mới mà chưa
+  thêm mục CHANGELOG thì báo "deploy lại bản X.Y.Z". Trong giờ yên lặng tin được giữ tới
+  sáng. Tắt bằng `RELEASE_NOTIFY=0`.
 - **Kênh cảnh báo.** Cảnh báo cùng loại có cooldown (`core.alerts`, trần 128 khoá).
   Telegram là kênh chính; Zoom là kênh phụ khi Telegram lỗi và luôn nhận các cảnh
   báo 🚨 (`ALERT_ZOOM_MIRROR`). Cảnh báo 🚨 và cảnh báo cần xử lý ngay (`urgent=True`:

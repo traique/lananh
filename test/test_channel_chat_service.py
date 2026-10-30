@@ -1124,3 +1124,54 @@ async def test_telegram_hoi_gia_san_pham_khong_bao_loi_ma(monkeypatch):
     assert route.handled is False and sent == []
     route = await stock_handler.maybe_handle(update, 1, "giá cổ phiếu ABCXYZ")
     assert route.handled is True and "chưa tra ra mã" in sent[0]
+
+
+# ─── Persona: phần phân tích cổ phiếu chỉ kèm lượt cổ phiếu/đầu tư ──────────
+
+
+@pytest.mark.asyncio
+async def test_phan_co_phieu_cua_persona_chi_kem_luot_co_phieu(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+    from services import conversation_log
+
+    seen = []
+
+    async def fake_chat(user_id, text, **kw):
+        seen.append(kw["stock_rules"])
+        return _FakeResponse("Dạ anh.")
+
+    async def no_tool(user_id, text, **kwargs):
+        return _outcome()
+
+    monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", no_tool)
+    await ccs.run_chat_turn(1, "tối nay ăn gì giờ")
+    await ccs.run_chat_turn(1, "có nên mua vàng lúc này không")
+    # Nhánh cổ phiếu đã gắn số liệu giá: luôn kèm, dù câu không có chữ cổ phiếu.
+    await ccs.run_chat_turn(1, "vậy sao", grounding="[DỮ LIỆU GIÁ THỰC TẾ FPT]")
+    # Ngay sau báo cáo cổ phiếu: câu nối tiếp không nhắc mã vẫn kèm.
+    chat_fakes["last_row"] = {"kind": conversation_log.KIND_STOCK, "content": "📊 **HPG**"}
+    await ccs.run_chat_turn(1, "sao em bảo giữ?")
+    await ccs.stop_background_tasks()
+    assert seen == [False, True, True, True]
+
+
+@pytest.mark.asyncio
+async def test_router_doc_danh_muc_thi_kem_phan_co_phieu(chat_fakes, monkeypatch):
+    from services import channel_chat_service as ccs
+    from services import tool_registry as reg
+
+    seen = []
+
+    async def fake_chat(user_id, text, **kw):
+        seen.append(kw["stock_rules"])
+        return _FakeResponse("Dạ anh.")
+
+    async def portfolio(user_id, text, **kwargs):
+        return _outcome(status=reg.STATUS_OK, name="get_portfolio", text="FPT 100 cp")
+
+    monkeypatch.setattr(ccs.orchestrator, "chat", fake_chat)
+    monkeypatch.setattr(ccs.tools, "maybe_run_tool", portfolio)
+    await ccs.run_chat_turn(1, "anh đang cầm những gì")
+    await ccs.stop_background_tasks()
+    assert seen == [True]

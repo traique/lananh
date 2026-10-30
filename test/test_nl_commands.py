@@ -731,3 +731,23 @@ async def test_telegram_help_ngan_chu_de_va_all(monkeypatch):
     await commands.help_cmd(_tg_update(message), SimpleNamespace(args=["all"]))
     assert [t for t, _ in message.texts] == commands.help_chunks()
     assert all(kw.get("parse_mode") == "Markdown" for _, kw in message.texts)
+
+
+@pytest.mark.parametrize(
+    ("text", "hit"),
+    [
+        ("xem phiên bản", True),
+        ("bot có gì mới không", True),
+        ("em mới cập nhật gì thế", True),
+        ("phiên bản mới có gì", True),
+        ("lịch sử cập nhật", True),
+        ("bạn mới có gì", False),  # trùng chữ không dấu "ban moi co gi"
+        ("có gì mới không", False),  # có thể là hỏi tin tức
+    ],
+)
+def test_cau_tu_nhien_hoi_phien_ban(text, hit):
+    core = nl._core(text)
+    matched = [
+        c.spec.name for c in nl.COMMANDS.values() if any(p.fullmatch(core) for p in c.patterns)
+    ]
+    assert (matched == ["cmd_phienban"]) is hit, (core, matched)

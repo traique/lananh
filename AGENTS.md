@@ -35,5 +35,8 @@ các file thay đổi). `stock/analysis.py` và `stock/sector.py` được miễ
 - Phân tích cổ phiếu: action và mọi con số entry/stop/target/tỷ trọng do
   `stock/policy.py` quyết định; LLM chỉ diễn giải, không được đổi action.
 - Secret lưu DB phải qua `core.crypto` (fail closed).
+- Phiên bản: PR làm đổi hành vi bot thêm 1 mục ở ĐẦU `CHANGELOG.md`
+  (`## X.Y.Z - YYYY-MM-DD` + các dòng `- ...` viết cho người dùng đọc). Bot đọc mục
+  này cho `/phienban` và tin báo bản mới gửi chủ bot sau deploy.
 - Không cài package hay chạy lệnh mạng ngoài các lệnh kiểm tra ở trên khi
   chưa hỏi chủ repo.

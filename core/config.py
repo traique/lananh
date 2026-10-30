@@ -392,6 +392,12 @@ TRANSLATE_MAX_CHARS = _env_int("TRANSLATE_MAX_CHARS", 4000)
 _CHAT_SKILL_TEMPLATE_PATH = (
     Path(__file__).resolve().parent.parent / "templates" / "chat_skill_prompt.j2"
 )
+# Phần phân tích cổ phiếu của persona: chỉ nối sau phần lõi ở lượt liên quan cổ
+# phiếu/đầu tư (load_chat_skill(stock=True)) - xem templates/chat_skill_stock.j2.
+_CHAT_SKILL_STOCK_TEMPLATE_PATH = _CHAT_SKILL_TEMPLATE_PATH.with_name("chat_skill_stock.j2")
+# PERSONA_STOCK_SPLIT=0: lượt nào cũng gửi persona đầy đủ (lõi + phần cổ phiếu) như
+# trước khi tách - công tắc quay lại nhanh mà không cần deploy code.
+PERSONA_STOCK_SPLIT = _env_bool("PERSONA_STOCK_SPLIT", True)
 
 # Jinja Environment dựng 1 lần ở module level (thay vì mỗi lần render), giống
 # cách stock_analysis.py compile template của nó. Environment tự cache template
@@ -436,10 +442,17 @@ _CHANNEL_STYLE_HINTS = {
 # render nguyên văn sẽ khiến model tưởng tên anh là "...".
 _PROFILE_PLACEHOLDERS = {"", "...", "…"}
 
-# Cache theo (biến thể persona, cách xưng hô riêng): cách xưng hô chỉ áp cho
-# biến thể Zalo và nằm trong danh sách đóng core/address.ADDRESS_FORMS, nên tối
-# đa 1 + 2 * (len(ADDRESS_FORMS) + 1) chuỗi (~15 chuỗi x ~15 KB).
-_chat_skill_cache: dict[tuple[str, str | None], str] = {}
+# Cache theo (phần, biến thể persona, cách xưng hô riêng): cách xưng hô chỉ áp cho
+# biến thể Zalo và nằm trong danh sách đóng core/address.ADDRESS_FORMS, nên phần lõi
+# tối đa 1 + 2 * (len(ADDRESS_FORMS) + 1) chuỗi (~15 chuỗi x ~10 KB); phần cổ phiếu
+# không phụ thuộc biến thể hay cách xưng hô (1 chuỗi ~5 KB).
+_PART_CORE = "core"
+_PART_STOCK = "stock"
+_PART_TEMPLATES = {
+    _PART_CORE: _CHAT_SKILL_TEMPLATE_PATH.name,
+    _PART_STOCK: _CHAT_SKILL_STOCK_TEMPLATE_PATH.name,
+}
+_chat_skill_cache: dict[tuple[str, str, str | None], str] = {}
 
 
 def _profile_value_filled(value) -> bool:
@@ -458,21 +471,24 @@ def _filled_profile(user_profile: dict | None) -> dict:
     }
 
 
-def _render_chat_skill(variant: str = PERSONA_OWNER, address_form: str | None = None) -> str:
-    """Đọc + render persona từ đĩa. Không cache — xem load_chat_skill()."""
+def _render_chat_skill(
+    variant: str = PERSONA_OWNER, address_form: str | None = None, part: str = _PART_CORE
+) -> str:
+    """Đọc + render 1 phần persona (_PART_*) từ đĩa. Không cache — xem load_chat_skill()."""
     try:
         raw = CHAT_SKILL_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
 
     if CHAT_SKILL_PATH.suffix.lower() not in (".yaml", ".yml"):
-        return raw.strip()
+        # File .txt cũ: cả persona nằm ở phần lõi.
+        return raw.strip() if part == _PART_CORE else ""
 
     try:
         data = yaml.safe_load(raw)
-        template = _CHAT_SKILL_ENV.get_template(_CHAT_SKILL_TEMPLATE_PATH.name)
+        template = _CHAT_SKILL_ENV.get_template(_PART_TEMPLATES[part])
         profile = _filled_profile(data["persona"].get("user_profile"))
-        if variant == PERSONA_OWNER and not profile:
+        if part == _PART_CORE and variant == PERSONA_OWNER and not profile:
             logger.info(
                 "chat_skill.yaml: persona.user_profile vẫn để trống ('...') - điền tên, công "
                 "việc, phong cách để Lan Anh trò chuyện đúng với anh hơn."
@@ -495,7 +511,17 @@ def _render_chat_skill(variant: str = PERSONA_OWNER, address_form: str | None = 
         ).strip()
     except Exception:
         logger.exception("Lỗi parse/render chat_skill.yaml, dùng nội dung thô làm dự phòng.")
-        return raw.strip()
+        # Nội dung thô đã gồm mọi phần: phần cổ phiếu không lặp lại lần nữa.
+        return raw.strip() if part == _PART_CORE else ""
+
+
+def _cached_part(part: str, variant: str, form: str | None) -> str:
+    key = (part, variant, form)
+    cached = _chat_skill_cache.get(key)
+    if cached is None:
+        cached = _render_chat_skill(variant, form, part)
+        _chat_skill_cache[key] = cached
+    return cached
 
 
 # TELEGRAM_RICH_MESSAGES bật: Telegram tự dựng tiêu đề/bảng từ markdown (tg_format.py).
@@ -520,11 +546,13 @@ def load_chat_skill(
     include_owner_profile: bool = True,
     channel: str | None = None,
     address_form: str | None = None,
+    stock: bool = True,
 ) -> str:
     """Nạp persona/rules cho chat tự nhiên. Định dạng mặc định là YAML có
-    cấu trúc (chat_skill.yaml), render qua templates/chat_skill_prompt.j2
-    thành system_instruction gửi cho provider. Nếu CHAT_SKILL_PATH trỏ tới
-    file .txt (cấu hình cũ), đọc thẳng làm văn bản để tương thích ngược.
+    cấu trúc (chat_skill.yaml), render qua templates/chat_skill_prompt.j2 (phần
+    lõi) + templates/chat_skill_stock.j2 (phần phân tích cổ phiếu) thành
+    system_instruction gửi cho provider. Nếu CHAT_SKILL_PATH trỏ tới file .txt
+    (cấu hình cũ), đọc thẳng làm văn bản để tương thích ngược.
 
     Kết quả được cache sau lần gọi đầu tiên. Hàm này nằm trên đường đi của
     MọI tin nhắn chat (orchestrator.chat()), nên nếu không cache thì mỗi tin
@@ -545,6 +573,12 @@ def load_chat_skill(
     ``address_form`` (core/address.py, vd "chị", "cô"): cách gọi riêng do chủ
     bot đặt cho 1 thành viên Zalo - chỉ áp cho biến thể Zalo, giá trị ngoài
     danh sách bị bỏ qua. Biến thể chủ bot luôn giữ address_form của YAML.
+
+    ``stock`` (mặc định True = persona đầy đủ): False bỏ phần phân tích cổ phiếu -
+    lượt chat không liên quan cổ phiếu/đầu tư (services/channel_chat_service.
+    run_chat_turn), để câu chuyện đời thường không bị kéo sang cổ phiếu và bớt
+    ~1/3 token persona. PERSONA_STOCK_SPLIT=0 thì luôn trả bản đầy đủ. Phần lõi
+    đứng trước và không đổi giữa hai dạng (giữ đầu prompt ổn định cho cache).
     """
     if variant is None:
         variant = PERSONA_OWNER if include_owner_profile else PERSONA_MEMBER
@@ -555,13 +589,15 @@ def load_chat_skill(
     form = None if variant == PERSONA_OWNER else address.normalize(address_form)
     if force_reload:
         _chat_skill_cache.clear()
-    key = (variant, form)
-    cached = _chat_skill_cache.get(key)
-    if cached is None:
-        cached = _render_chat_skill(variant, form)
-        _chat_skill_cache[key] = cached
+    persona = _cached_part(_PART_CORE, variant, form)
+    if persona and (stock or not PERSONA_STOCK_SPLIT):
+        # Phần cổ phiếu không đổi theo biến thể (luật theo biến thể nằm ở lõi): 1 bản
+        # cache chung. Template này mà đọc ``variant`` thì phải đổi lại khoá.
+        section = _cached_part(_PART_STOCK, PERSONA_OWNER, None)
+        if section:
+            persona = f"{persona}\n\n{section}"
     hint = channel_style_hint(channel)
-    return f"{cached}\n\n{hint}" if cached and hint else cached
+    return f"{persona}\n\n{hint}" if persona and hint else persona
 
 
 def is_owner_user_id(user_id: int) -> bool:

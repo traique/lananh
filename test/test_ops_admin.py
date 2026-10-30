@@ -67,6 +67,25 @@ async def test_lenh_loi_tra_plain_text_va_chi_chu_bot(monkeypatch):
     assert stranger.message.replies == []
 
 
+@pytest.mark.asyncio
+async def test_lenh_phienban_telegram_plain_text_chi_chu_bot(monkeypatch):
+    from core import version
+
+    monkeypatch.setattr(provider_commands.common.config, "ALLOWED_USER_ID", 42)
+    owner = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42, username="owner"), message=_Message()
+    )
+    await provider_commands.phienban_cmd(owner, SimpleNamespace(args=["1"]))
+    text, kwargs = owner.message.replies[0]
+    assert text.startswith(f"🏷️ Lan Anh đang chạy bản {version.label()}")
+    assert "parse_mode" not in kwargs
+    stranger = SimpleNamespace(
+        effective_user=SimpleNamespace(id=7, username="x"), message=_Message()
+    )
+    await provider_commands.phienban_cmd(stranger, SimpleNamespace(args=[]))
+    assert stranger.message.replies == []
+
+
 async def test_nut_xoay_khoa_can_dang_nhap_va_khong_tra_gia_tri(client, monkeypatch):
     async def rotate_all():
         return web_admin.key_rotation.RotationReport(2, 2, 0, 0, 0, 0, (), ())

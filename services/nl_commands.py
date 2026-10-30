@@ -819,6 +819,26 @@ _cmd(
     patterns=(r"(?:xem )?loi (?:hom nay|cua bot)", r"hom nay bot co loi gi(?: khong)?"),
 )
 _cmd(
+    "cmd_phienban",
+    "phienban",
+    "phiên bản",
+    "he_thong",
+    "Phiên bản bot đang chạy và lịch sử cập nhật.",
+    "args {}.",
+    None,
+    _fixed("/phienban"),
+    roles=reg.STAFF_ROLES,
+    # _core() đã bỏ "em"/"anh" đầu câu; "bản mới có gì" trùng "bạn mới có gì" nên phải
+    # có chữ "phiên bản"/"cập nhật"/"bot".
+    patterns=(
+        r"(?:xem )?phien ban(?: (?:bot|moi nhat|hien tai|dang chay))?",
+        r"(?:xem )?lich su cap nhat(?: bot)?",
+        r"phien ban moi co gi(?: moi)?",
+        r"bot (?:co gi moi|moi cap nhat (?:gi|nhung gi))(?: khong)?",
+        r"moi cap nhat (?:gi|nhung gi)(?: the| vay)?",
+    ),
+)
+_cmd(
     "cmd_danhgia",
     "danhgia",
     "đánh giá câu trả lời",
