@@ -890,6 +890,7 @@ Bảng đầy đủ (sinh từ `services/command_catalog.py`; "code" = đường
 | `/noi` | ghi dữ liệu | mọi người | Telegram, Zalo, Zoom | — | set `set_noi` |
 | `/status` | tra cứu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | cmd `cmd_status` |
 | `/loi` | tra cứu | chủ bot | Telegram, Zalo, Zoom | — | cmd `cmd_loi` |
+| `/phienban` | tra cứu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | cmd `cmd_phienban` |
 | `/thongke` | tra cứu | chủ bot, admin Zalo | Telegram, Zalo, Zoom | — | cmd `cmd_thongke` |
 | `/danhgia` | tra cứu | chủ bot | Telegram, Zalo, Zoom | — | cmd `cmd_danhgia` |
 | `/xuateval` | quản trị | chủ bot | Telegram | — | 🔐 chỉ chỉ ra lệnh |

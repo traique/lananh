@@ -18,7 +18,8 @@ Cùng vòng lặp chạy watchdog vận hành (services/watchdog.py: RAM, dung l
 DB, inbox ứ đọng, job quá hạn, nhịp tim), lưu bộ đếm lỗi và gửi bản tổng hợp
 lỗi hằng ngày (services/error_digest.py); lúc khởi động còn phân loại lần
 restart vừa rồi và hoàn tất xoay khoá settings nếu có SETTINGS_ENC_KEY_OLD
-(services/key_rotation.py). Tất cả vẫn là luật cố định, không gọi AI.
+(services/key_rotation.py); vòng đầu tiên sau khởi động báo chủ bot bản mới vừa
+deploy (services/release_notes.py). Tất cả vẫn là luật cố định, không gọi AI.
 """
 
 import asyncio
@@ -28,7 +29,7 @@ import time
 import messages
 from ai.provider_state import provider_state, send_alert
 from core import config, memtrim
-from services import error_digest, key_rotation, quota_burn, watchdog
+from services import error_digest, key_rotation, quota_burn, release_notes, watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,9 @@ async def _monitor_loop() -> None:
         except Exception:
             logger.warning("Lỗi trong vòng giám sát provider-chain.", exc_info=True)
         await _run_step("watchdog", watchdog.run_checks)
+        # Vòng đầu sau khởi động (Render đã chuyển hẳn sang bản này): báo chủ bot bản
+        # mới qua Telegram + Zoom nếu phiên bản/commit khác lần đã báo.
+        await _run_step("báo bản mới", release_notes.announce_if_new)
         # Quota miễn phí từng provider >= QUOTA_BURN_ALERT_PCT (tối đa 15 phút/lần).
         await _run_step("quota miễn phí", quota_burn.check_and_alert)
         await _run_step("lưu bộ đếm lỗi", error_digest.persist)

@@ -24,4 +24,6 @@ scripts/backup_drill.py
 .claude
 *.md
 !README.md
+# core/version.py đọc số phiên bản + lịch sử từ đây.
+!CHANGELOG.md
 !rag/**/*.md

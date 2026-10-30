@@ -1,5 +1,6 @@
 """Lệnh Telegram đổi cấu hình AI toàn cục: /model, /status, /userouter9,
-/router9, /tavily và /anh (tạo ảnh Agnes AI + bật/tắt); /loi xem lỗi gom nhóm."""
+/router9, /tavily và /anh (tạo ảnh Agnes AI + bật/tắt); /loi xem lỗi gom nhóm;
+/phienban xem phiên bản và lịch sử cập nhật."""
 
 import asyncio
 import html
@@ -11,10 +12,10 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from ai import agnes_client, orchestrator, router9_client, tavily_client
-from core import config
+from core import config, version
 from core.text_utils import parse_on_off
 from handlers import common
-from services import error_digest, provider_health, search_status
+from services import error_digest, provider_health, release_notes, search_status
 
 
 @common.restricted
@@ -279,6 +280,7 @@ async def _build_status_text() -> str:
 
     lines = [
         "📡 <b>Trạng thái bot</b>",
+        f"🏷️ Phiên bản: {html.escape(version.label())} (/phienban)",
         "",
         active_line,
         order_line,
@@ -328,4 +330,12 @@ async def loi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/loi - lỗi gom theo loại hôm nay/hôm qua + số lần khởi động lại 7 ngày.
     Gửi plain text: đường dẫn code có dấu "_" sẽ bị Markdown hiểu nhầm."""
     text = await error_digest.build_report()
+    await update.message.reply_text(text[: common.TELEGRAM_TEXT_MAX])
+
+
+@common.restricted
+async def phienban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/phienban [số bản|all] - phiên bản đang chạy + lịch sử cập nhật (CHANGELOG.md).
+    Gửi plain text như /loi."""
+    text = release_notes.history_text(" ".join(context.args or []))
     await update.message.reply_text(text[: common.TELEGRAM_TEXT_MAX])

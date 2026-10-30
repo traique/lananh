@@ -6,7 +6,7 @@ import contextvars
 import messages
 from ai import agnes_client, orchestrator, router9_client, tavily_client
 from ai.timeouts import TurnTimeoutError
-from core import config, database as db
+from core import config, database as db, version
 from core.text_utils import parse_on_off
 from services import (
     conversation_log,
@@ -29,6 +29,7 @@ from services import (
     background_jobs,
     notify_hub,
     nutrition_service,
+    release_notes,
     routines,
     voice_reply,
 )
@@ -124,6 +125,7 @@ _HELP_ADMIN_ONLY = """Chỉ admin
   rồi gửi kết quả (khác /nhac chỉ nhắc câu cố định); /lichtacvu — xem; huy|tam dung|tiep <số>
 /model [tên|auto] — xem hoặc đổi model
 /status — xem trạng thái provider
+/phienban [số bản|all] — phiên bản đang chạy và lịch sử cập nhật
 /thongke [Nd|Ngiờ] — thống kê lượt gọi theo user/model, mặc định 7 ngày
 /danhgia [Nd] — số 👍/👎 câu trả lời theo provider/model (chỉ chủ bot), mặc định 30 ngày
 /userouter9 — thử lại 9Router
@@ -602,6 +604,7 @@ async def maybe_handle_command(
         command
         in {
             "/status",
+            "/phienban",
             "/userouter9",
             "/router9",
             "/tavily",
@@ -627,11 +630,14 @@ async def maybe_handle_command(
         return await _morning_news_now(), None
     if command == "/tintuc":
         return await _news_now(), None
+    if command == "/phienban":
+        return [release_notes.history_text(argument)], None
     if command == "/status":
         state = orchestrator.get_provider_state_snapshot()
         latency = "\n".join(await provider_health.latency_lines())
         live = "\n".join(await provider_health.live_lines())
         return [
+            f"🏷️ Phiên bản: {version.label()} (/phienban)\n"
             f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}\n"
             f"{await search_status.search_mode_line()}"
             + (f"\n{live}" if live else "")

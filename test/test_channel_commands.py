@@ -110,9 +110,23 @@ async def test_thongke_hours_parsing():
 
 @pytest.mark.asyncio
 async def test_status_allowed_for_admin_by_default():
+    from core import version
+
     result, provider = await service.maybe_handle_command(1, "/status")
     assert result != ["Lệnh này chỉ dành cho admin."]
     assert "Provider" in result[0]
+    assert f"Phiên bản: {version.label()}" in result[0]
+
+
+@pytest.mark.asyncio
+async def test_phienban_cho_admin_thanh_vien_bi_chan():
+    from core import version
+
+    result, _ = await service.maybe_handle_command(1, "/phienban all", is_admin=False)
+    assert result == ["Lệnh này chỉ dành cho admin."]
+    result, provider = await service.maybe_handle_command(1, "/phienban 1")
+    assert result[0].startswith(f"🏷️ Lan Anh đang chạy bản {version.label()}")
+    assert provider is None
 
 
 @pytest.mark.asyncio

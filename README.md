@@ -1008,6 +1008,7 @@ Giám sát, gom lỗi, sao lưu, dọn dữ liệu:
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
 | `ALERT_ZOOM_MIRROR` | `critical` | Zoom làm kênh phụ cho cảnh báo: `critical` (Telegram lỗi + luôn nhận 🚨), `fallback`, `all`, `off` |
+| `RELEASE_NOTIFY` | 1 | Báo chủ bot qua Telegram + Zoom khi đã lên bản mới sau deploy (theo `CHANGELOG.md`); 0 = tắt |
 | `WATCHDOG_ENABLED` / `WATCHDOG_MEMORY_PCT` | 1 / 85 | Watchdog luật cố định; ngưỡng % RAM working set (không tính page cache), 2 lần đo liên tiếp |
 | `MEMORY_TRIM_INTERVAL_SEC` / `MEMORY_TRIM_AFTER_WORK` / `MEMORY_TRIM_MIN_GAP_SEC` | 600 / 1 / 30 | Trả heap rảnh của Python về hệ điều hành (gc + `malloc_trim`, `core/memtrim.py`) mỗi N giây và sau lượt trả lời/việc nặng (tối đa 1 lần mỗi MIN_GAP giây); 0 = tắt |
 | `ZALO_NODE_HEAP_MB` / `ZALO_NODE_OPTIMIZE_SIZE` / `ZALO_NODE_EXTRA_FLAGS` | 96 / 1 / (trống) | Heap V8 của gateway Zalo, `--optimize-for-size` (0 = tắt), cờ node thêm |
@@ -1791,6 +1792,14 @@ khoảng chọn. Không script/CDN ngoài; mọi giá trị server vẫn escape.
   quá hạn mà chưa chạy (bản tin sáng cá nhân `/bantin` chưa được kiểm); bot khởi động lại vì crash, OOM, gián đoạn hơn 20 phút, hoặc restart
   bất thường dồn dập (deploy và restart do sửa env/Restart service không tính).
   Phần nhịp tim/khởi động lại chỉ chạy khi `RENDER=true`.
+- **Phiên bản và báo bản mới.** Số phiên bản và lịch sử cập nhật nằm ở `CHANGELOG.md`
+  (mục đầu tiên là bản đang chạy, `core/version.py` đọc). `/phienban [số bản|all]` (chủ
+  bot, admin Zalo) xem lịch sử; `/status` có dòng phiên bản kèm mã commit. Khoảng 5 phút
+  sau khi bản mới chạy trên Render (vòng giám sát đầu tiên), bot nhắn chủ bot qua
+  Telegram và Zoom (nếu đã pair) "🆕 Em đã lên bản mới X.Y.Z" kèm các dòng "Có gì mới";
+  restart, ngủ dậy hay sửa env (cùng commit) không báo lại; deploy commit mới mà chưa
+  thêm mục CHANGELOG thì báo "deploy lại bản X.Y.Z". Trong giờ yên lặng tin được giữ tới
+  sáng. Tắt bằng `RELEASE_NOTIFY=0`.
 - **Kênh cảnh báo.** Cảnh báo cùng loại có cooldown (`core.alerts`, trần 128 khoá).
   Telegram là kênh chính; Zoom là kênh phụ khi Telegram lỗi và luôn nhận các cảnh
   báo 🚨 (`ALERT_ZOOM_MIRROR`). Cảnh báo 🚨 và cảnh báo cần xử lý ngay (`urgent=True`:
