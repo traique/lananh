@@ -201,6 +201,18 @@ async def test_doc_cai_dat_loi_thi_dung_mac_dinh(settings, monkeypatch):
 
     monkeypatch.setattr(db, "get_setting", broken)
     assert await avatar_service.current_voice() == "HoaiMy"
+    assert await avatar_service.current_style() == "photo"
+
+
+async def test_kieu_anh_chup_mac_dinh_ve_chibi_doi_duoc(settings):
+    assert await avatar_service.current_style() == "photo"
+    assert await avatar_service.set_style("drawn") == "drawn"
+    assert settings[avatar_service.STYLE_SETTING_KEY] == "drawn"
+    assert await avatar_service.current_style() == "drawn"
+    with pytest.raises(ValueError):
+        await avatar_service.set_style("anime")
+    settings[avatar_service.STYLE_SETTING_KEY] = "hỏng"  # giá trị lạ trong DB -> ảnh chụp
+    assert await avatar_service.current_style() == "photo"
 
 
 def test_danh_sach_giong_hoai_my_dung_dau_va_phong_cach(settings, monkeypatch):

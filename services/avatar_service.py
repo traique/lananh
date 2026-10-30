@@ -37,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 VOICE_SETTING_KEY = "avatar:voice"
+STYLE_SETTING_KEY = "avatar:style"
+# Kiểu ảnh chân dung: "photo" (ảnh chụp, cử động nhẹ) | "drawn" (ảnh vẽ, chibi: nghiêng đầu,
+# mở miệng rõ hơn). Trang tự chọn lúc tải ảnh chính, anh đổi lại được trong menu.
+STYLES = ("photo", "drawn")
 # Thứ tự gợi ý đầu menu "Giọng": Hoài My, rồi giọng Gemini mềm, dịu dàng, trẻ trung, ấm.
 # Mặc định là giọng đầu.
 SUGGESTED_VOICES = ("HoaiMy", "Achernar", "Vindemiatrix", "Leda", "Sulafat")
@@ -93,6 +97,24 @@ async def set_voice(name: str) -> str:
         raise ValueError(f"Không có giọng {name!r}.")
     await db.set_setting(VOICE_SETTING_KEY, voice)
     return voice
+
+
+async def current_style() -> str:
+    """Kiểu ảnh đang dùng (STYLES); chưa chọn hoặc DB lỗi -> "photo"."""
+    try:
+        raw = await db.get_setting(STYLE_SETTING_KEY)
+    except Exception:
+        logger.warning("Không đọc được kiểu ảnh avatar, dùng ảnh chụp.", exc_info=True)
+        raw = None
+    return raw if raw in STYLES else STYLES[0]
+
+
+async def set_style(style: str) -> str:
+    """Lưu kiểu ảnh; giá trị ngoài STYLES -> ValueError."""
+    if style not in STYLES:
+        raise ValueError(f"Không có kiểu ảnh {style!r}.")
+    await db.set_setting(STYLE_SETTING_KEY, style)
+    return style
 
 
 def voice_style() -> str:

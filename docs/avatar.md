@@ -22,7 +22,7 @@ chào, giọng), `services/avatar_photo.py` (ảnh), `templates/avatar.html` (gi
    không nghe thấy gì thì em tự tắt rảnh tay.
 6. Nút **loa**: tắt/bật giọng đọc (tắt thì máy chủ không tạo giọng, không tốn lượt TTS).
 7. Nút **⋯**: chọn giọng + **Nghe thử** - đầu danh sách là **Hoài My** (mặc định), rồi 4
-   giọng Gemini gợi ý; đổi ảnh, thêm ảnh mắt nhắm, xoá ảnh.
+   giọng Gemini gợi ý; đổi ảnh, thêm ảnh mắt nhắm, xoá ảnh, chọn **Kiểu ảnh**.
 
 ## Yêu cầu ảnh
 
@@ -31,9 +31,21 @@ chào, giọng), `services/avatar_photo.py` (ảnh), `templates/avatar.html` (gi
 - Nhìn thẳng vào máy, mặt chiếm khoảng 1/3 khung hình (mặt quá nhỏ bị từ chối), miệng
   ngậm tự nhiên, cằm không bị che (tóc, tay, khẩu trang), đủ sáng, không kính râm.
 - Ảnh mắt nhắm (tuỳ chọn): chụp cùng khung với ảnh chính (dùng chân máy hoặc tựa máy),
-  chỉ nhắm mắt; phải cùng kích thước ảnh chính sau thu nhỏ. Có ảnh này thì lúc chớp mắt
-  trang hoà dần sang ảnh mắt nhắm thay vì kéo mí. Đổi ảnh chính khác kích thước thì ảnh
-  mắt nhắm cũ bị xoá; xoá ảnh chính thì xoá luôn ảnh mắt nhắm.
+  chỉ nhắm mắt - ảnh vẽ thì vẽ thêm bản nhắm mắt; phải cùng kích thước ảnh chính sau thu
+  nhỏ. Có ảnh này thì lúc chớp mắt trang hoà dần sang ảnh mắt nhắm thay vì kéo mí, và chỉ
+  ở vùng quanh mắt (cả mi, chân mày): hai ảnh chụp/vẽ khác lần thường lệch nhau chút ở
+  tóc, viền áo, hoà cả ảnh thì mỗi lần chớp tóc nháy theo. Đổi ảnh chính khác kích thước
+  thì ảnh mắt nhắm cũ bị xoá; xoá ảnh chính thì xoá luôn ảnh mắt nhắm.
+- **Kiểu ảnh** (menu ⋯, settings `avatar:style`):
+  - **Ảnh chụp** (`photo`, mặc định): cử động nhẹ - nghiêng đầu ~1°, miệng mở tối đa
+    3,5% chiều cao mặt, chỉ phần đầu chuyển động.
+  - **Ảnh vẽ, chibi** (`drawn`): nghiêng đầu qua trái qua phải rõ (~±4°, kéo theo cả tóc
+    búi/tóc xoã, mép ảnh trượt theo nên không hở), gật nhẹ khi nói, miệng mở tối đa 5%.
+    Nền ảnh vẽ thường trơn nên phần nền bị kéo giãn không lộ; ảnh chụp có nền rối thì nên
+    để kiểu ảnh chụp.
+  - Tải ảnh chính mới thì trang tự chọn theo cỡ tròng mắt so với bề rộng mặt (người thật
+    ~0,08; chibi, anime từ ~0,12; ngưỡng 0,1); đổi tay được bất cứ lúc nào. Bật "giảm
+    chuyển động" của máy thì kiểu nào cũng chỉ còn chớp mắt và mấp máy môi.
 - Máy chủ không tin Content-Type: mở lại ảnh bằng Pillow, xoay theo EXIF rồi bỏ
   EXIF/ICC, nền trắng cho ảnh trong suốt, cạnh dài tối đa 1280 px, lưu WebP (~200-350 KB)
   trong bảng `avatar_photo` (migration 029). Điểm mặt phải đúng 478 điểm, toạ độ 0..1.
@@ -142,6 +154,7 @@ GET    /admin/api/avatar/greeting       [?id=&audio=1]       -> {id, text, mood,
 GET    /admin/api/avatar/voices                              -> {voices, current}
 PUT    /admin/api/avatar/voice          {voice}              -> {current}
 POST   /admin/api/avatar/voice/preview  {voice}              -> {audio, mime, voice}
+PUT    /admin/api/avatar/style          {style: photo|drawn} -> {style}
 GET    /admin/api/avatar/photo?kind=main|blink               -> ảnh WebP
 PUT    /admin/api/avatar/photo?kind=    multipart image (+ landmarks cho main)
 DELETE /admin/api/avatar/photo?kind=                         -> {removed, photo}
@@ -195,10 +208,12 @@ Sửa `version`, `tarball`, `integrity` trong `MANIFEST.json` cho khớp bản m
   tính quota; Hoài My qua edge-tts giả (không gọi mạng): đúng giọng/tốc độ/cao độ, MP3,
   không tính quota; Edge lỗi/hết giờ/rỗng/quá trần/thiếu gói -> đọc lại bằng Gemini, 10
   phút sau đó đọc thẳng bằng Gemini; giọng Gemini chỉ đọc bằng Live; chia đoạn đọc;
-  tham số sai định dạng -> mặc định; `/noi` không nhận Hoài My.
+  tham số sai định dạng -> mặc định; `/noi` không nhận Hoài My; kiểu ảnh mặc định ảnh
+  chụp, đổi được, giá trị lạ -> ảnh chụp.
 - `test/test_web_avatar.py` - quyền (403, form đăng nhập), tham số lượt chat, luồng chữ
   nháp (bỏ link/markdown/CJK, giữ kết nối, lỗi cuối luồng, ngắt luồng lượt vẫn chạy), đọc
-  từng đoạn qua `/speak`, chép lời, upload, file MediaPipe, quy tắc giao diện.
+  từng đoạn qua `/speak`, đổi kiểu ảnh, chép lời, upload, file MediaPipe, quy tắc giao
+  diện.
 - `test/test_avatar_sql.py` - SQL thật trên PGlite (CI job `sql-pglite`).
 
 Ngoài phạm vi giai đoạn 1: nói chuyện song công thời gian thực (Gemini Live).

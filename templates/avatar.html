@@ -232,6 +232,7 @@
         <li>Nhìn thẳng vào máy, mặt chiếm khoảng 1/3 khung hình.</li>
         <li>Miệng ngậm tự nhiên, cằm không bị che (tóc, tay, khẩu trang).</li>
         <li>Đủ sáng, không đeo kính râm.</li>
+        <li>Ảnh vẽ, chibi cũng được: em tự nhận ra và cử động rõ hơn.</li>
       </ul>
       <div class="row"><button class="btn primary" type="button" data-pick="main">Chọn ảnh</button></div>
       <p class="help">Ảnh chỉ lưu trên máy chủ của bot và chỉ anh xem được.</p>
@@ -272,7 +273,12 @@
       <button class="btn" type="button" data-pick="blink" id="blink-btn">Ảnh mắt nhắm</button>
       <button class="btn danger" type="button" id="delete-photo">Xoá ảnh</button>
     </div>
-    <p class="help">Ảnh mắt nhắm (tuỳ chọn): chụp cùng khung với ảnh chính, chỉ nhắm mắt, để em chớp mắt tự nhiên hơn.</p>
+    <p class="help">Ảnh mắt nhắm (tuỳ chọn): cùng khung với ảnh chính, chỉ khác là nhắm mắt; em chỉ thay vùng quanh mắt khi chớp.</p>
+    <label for="style">Kiểu ảnh</label>
+    <select id="style">
+      <option value="photo">Ảnh chụp: cử động nhẹ nhàng</option>
+      <option value="drawn">Ảnh vẽ, chibi: nghiêng đầu, nói rõ hơn</option>
+    </select>
     <div class="row"><button class="btn primary" value="close">Xong</button></div>
   </form>
 </dialog>
@@ -851,6 +857,24 @@ $('voice').addEventListener('change', async () => {
   }
 });
 
+async function saveStyle(style) {
+  const saved = await api('/style', {method: 'PUT', json: {style}});
+  cfg.style = saved.style;
+  $('style').value = saved.style;
+}
+
+$('style').value = cfg.style;
+$('style').addEventListener('change', async () => {
+  try {
+    await saveStyle($('style').value);
+    settingsNote(cfg.style === 'drawn' ? 'Em sẽ nghiêng đầu, nói rõ hơn cho hợp ảnh vẽ nha.' : 'Em sẽ cử động nhẹ nhàng như ảnh chụp nha.');
+    await setupStage();
+  } catch (err) {
+    $('style').value = cfg.style;
+    settingsNote(err.message, true);
+  }
+});
+
 $('preview').addEventListener('click', async () => {
   const button = $('preview');
   button.disabled = true;
@@ -976,14 +1000,24 @@ async function detectFace(canvas) {
   return points;
 }
 
+// Ảnh vẽ (chibi, anime) có tròng mắt to so với mặt: người thật ~0,08 bề rộng mặt, chibi từ ~0,12.
+function guessStyle(points, width, height) {
+  const dist = (a, b) => Math.hypot((points[a][0] - points[b][0]) * width, (points[a][1] - points[b][1]) * height);
+  const iris = (dist(469, 471) + dist(474, 476)) / 2;
+  return iris > 0.1 * dist(234, 454) ? 'drawn' : 'photo';
+}
+
 async function uploadPhoto(file, kind) {
   try {
     photoStatus('Em đang xem ảnh…', true);
     const canvas = await scaledCanvas(file);
     const form = new FormData();
+    let style = null;
     if (kind === 'main') {
       photoStatus('Em đang nhận diện khuôn mặt… Lần đầu cần tải bộ nhận diện khoảng 15 MB.', true);
-      form.append('landmarks', JSON.stringify(await detectFace(canvas)));
+      const points = await detectFace(canvas);
+      style = guessStyle(points, canvas.width, canvas.height);
+      form.append('landmarks', JSON.stringify(points));
     }
     const jpeg = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
     if (!jpeg) throw new Error('Em không đọc được ảnh này, anh chọn ảnh khác nha.');
@@ -991,9 +1025,14 @@ async function uploadPhoto(file, kind) {
     photoStatus('Em đang lưu ảnh…', true);
     const saved = await api(`/photo?kind=${kind}`, {method: 'PUT', body: form});
     cfg.photo = saved.photo;
+    const restyled = style && style !== cfg.style;
+    if (restyled) await saveStyle(style).catch(() => {});
     await setupStage();
     $('photo-dialog').close();
     if (saved.blinkRemoved) addMessage('her', 'Ảnh mắt nhắm cũ không khớp khung ảnh mới nên em bỏ rồi nha.');
+    if (restyled && cfg.style === 'drawn') {
+      addMessage('her', 'Ảnh vẽ nè, em sẽ nghiêng đầu, nói rõ hơn nha. Anh có bản nhắm mắt thì thêm ở menu ⋯ → Ảnh mắt nhắm để em chớp mắt nha.');
+    }
   } catch (err) {
     photoStatus(err.message, false);
   }
@@ -1081,7 +1120,8 @@ function triangulate(points) {
   return triangles.filter((t) => t.a < n && t.b < n && t.c < n).flatMap((t) => [t.a, t.b, t.c]);
 }
 
-function buildRig(landmarks, W, H) {
+// lively: ảnh vẽ/chibi - đầu nghiêng kéo theo cả tóc to, miệng mở rộng hơn.
+function buildRig(landmarks, W, H, lively = false) {
   const points = landmarks.map(([x, y]) => [x * W, y * H]);
   const [top, chin, left, right] = [points[10], points[152], points[234], points[454]];
   const faceW = Math.hypot(right[0] - left[0], right[1] - left[1]);
@@ -1139,15 +1179,23 @@ function buildRig(landmarks, W, H) {
     uv.set([x / W, y / H], 2 * i);
   });
 
-  // Trọng số theo đầu (xoay, cúi) và theo nhịp thở cho từng điểm.
+  // Trọng số theo đầu (xoay, cúi) và theo nhịp thở cho từng điểm. Ảnh vẽ: vùng theo đầu rộng
+  // hơn (tóc búi, tóc xoã) và điểm viền ảnh trượt dọc mép theo đầu - nền ảnh vẽ thường trơn
+  // nên kéo giãn không lộ, còn mép ảnh không bao giờ bị hở.
   const headWeight = new Float32Array(n);
   const breathWeight = new Float32Array(n);
   const shoulderY = chin[1] + 0.6 * faceH;
-  for (let i = 0; i < firstFixed; i++) {
+  const [headInner, headOuter] = lively ? [2, 3.4] : [1, 1.85];
+  // Điểm viền: 4 điểm mỗi bước (trên, phải, dưới, trái); bước đầu là 4 góc, luôn đứng yên.
+  const slide = new Uint8Array(n); // 1: chỉ trượt ngang (mép trên/dưới), 2: chỉ trượt dọc
+  for (let i = firstFixed + 4; i < n; i++) slide[i] = (i - firstFixed) % 2 === 0 ? 1 : 2;
+  for (let i = 0; i < n; i++) {
+    if (i >= firstFixed && !slide[i]) continue;
+    if (i >= firstFixed && !lively) break;
     const [s, v] = toLocal(all[i]);
     const ring = Math.hypot(s / 0.62, (v - 0.12) / 0.74);
-    headWeight[i] = i < LANDMARKS ? 1 : (1 - smoothstep(1, 1.85, ring)) * smoothstep(-0.95, -0.55, v);
-    breathWeight[i] = all[i][1] <= shoulderY ? 1 : clamp01((H - all[i][1]) / (H - shoulderY));
+    headWeight[i] = i < LANDMARKS ? 1 : (1 - smoothstep(headInner, headOuter, ring)) * smoothstep(-0.95, -0.55, v);
+    if (i < firstFixed) breathWeight[i] = all[i][1] <= shoulderY ? 1 : clamp01((H - all[i][1]) / (H - shoulderY));
   }
 
   // Toạ độ mặt (đơn vị bề rộng/chiều cao mặt) và các vùng biểu cảm.
@@ -1199,6 +1247,21 @@ function buildRig(landmarks, W, H) {
     brow[i] = Math.max(...BROWS.map((pair) => near(i, mid(pair), 0.14)));
   }
 
+  // Vùng mắt (cả mi và chân mày): ảnh mắt nhắm chỉ thay ở đây. Hai ảnh chụp/vẽ khác lần lệch
+  // nhau chút ở tóc, viền áo - thay cả ảnh thì mỗi lần chớp tóc nháy theo.
+  const eyeMask = new Float32Array(n);
+  const aspect = faceH / faceW;
+  for (const eye of EYES) {
+    const ids = [...eye.upper, ...eye.lower];
+    const cs = ids.reduce((sum, i) => sum + S[i], 0) / ids.length;
+    const cv = ids.reduce((sum, i) => sum + V[i], 0) / ids.length;
+    const width = Math.abs(S[eye.upper[0]] - S[eye.upper.at(-1)]);
+    for (let i = 0; i < LANDMARKS; i++) {
+      const d = Math.hypot((S[i] - cs) / (0.95 * width), ((V[i] - cv) * aspect) / (1.3 * width));
+      eyeMask[i] = Math.max(eyeMask[i], 1 - smoothstep(0.7, 1, d));
+    }
+  }
+
   // Mắt: điểm giữa 2 mí co giãn theo tỉ lệ khi chớp (không lật tam giác), vùng trên mí
   // trượt theo và nhạt dần tới chân mày.
   const eyeTravel = new Float32Array(LANDMARKS), upperWeight = new Float32Array(LANDMARKS);
@@ -1238,7 +1301,7 @@ function buildRig(landmarks, W, H) {
   // params: open/smile/frown/angry/surprise 0..1, eye (-0,4 mở to .. 1 nhắm), roll (rad),
   // nod (cúi 0..1), tx/ty/breathe (px ảnh). Ghi toạ độ đã biến dạng vào out.
   function deform(p, out) {
-    const drop = 0.035 * p.open; // miệng mở tối đa 3,5% chiều cao mặt
+    const drop = (lively ? 0.05 : 0.035) * p.open; // miệng mở tối đa 3,5% (ảnh vẽ 5%) chiều cao mặt
     // Mí khép tối đa 90%: khe 10% còn lại giữ thứ tự điểm quanh khoé mắt.
     const closing = 0.9 * p.eye;
     const raise = Math.min(0.25 * p.smile, Math.max(0, 0.9 - closing));
@@ -1265,8 +1328,8 @@ function buildRig(landmarks, W, H) {
         const squash = -0.04 * p.nod * (dx * up[0] + dy * up[1]);
         dx += up[0] * squash;
         dy += up[1] * squash;
-        x += weight * (pivot[0] + dx * cos - dy * sin + p.tx - x);
-        y += weight * (pivot[1] + dx * sin + dy * cos + p.ty - y);
+        if (slide[i] !== 2) x += weight * (pivot[0] + dx * cos - dy * sin + p.tx - x);
+        if (slide[i] !== 1) y += weight * (pivot[1] + dx * sin + dy * cos + p.ty - y);
       }
       out[2 * i] = x;
       out[2 * i + 1] = y - p.breathe * breathWeight[i];
@@ -1280,16 +1343,19 @@ function buildRig(landmarks, W, H) {
   deform({open: 1, smile: 0, frown: 0, angry: 0, surprise: 0, eye: 0, roll: 0, nod: 0, tx: 0, ty: 0, breathe: 0}, open);
   const triangles = Uint16Array.from(triangulate(Array.from({length: n}, (_, i) => [open[2 * i], open[2 * i + 1]])));
 
-  return {W, H, faceW, faceH, up, base, uv, triangles, deform};
+  return {W, H, faceW, faceH, up, lively, base, uv, eyeMask, triangles, deform};
 }
 
 const VERTEX_SHADER = `
 attribute vec2 a_pos;
 attribute vec2 a_uv;
+attribute float a_eye;
 uniform vec2 u_size;
 varying vec2 v_uv;
+varying float v_eye;
 void main() {
   v_uv = a_uv;
+  v_eye = a_eye;
   vec2 clip = a_pos / u_size * 2.0 - 1.0;
   gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
 }`;
@@ -1300,11 +1366,12 @@ precision highp float;
 precision mediump float;
 #endif
 varying vec2 v_uv;
+varying float v_eye;
 uniform sampler2D u_main;
 uniform sampler2D u_blink;
 uniform float u_mix;
 void main() {
-  gl_FragColor = mix(texture2D(u_main, v_uv), texture2D(u_blink, v_uv), u_mix);
+  gl_FragColor = mix(texture2D(u_main, v_uv), texture2D(u_blink, v_uv), u_mix * v_eye);
 }`;
 
 function glRenderer(canvas, main, blink, rig) {
@@ -1320,16 +1387,17 @@ function glRenderer(canvas, main, blink, rig) {
   gl.linkProgram(program);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return null;
   gl.useProgram(program);
-  const bind = (name, data, usage) => {
+  const bind = (name, data, usage, size = 2) => {
     const buffer = gl.createBuffer();
     const location = gl.getAttribLocation(program, name);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, data, usage);
     gl.enableVertexAttribArray(location);
-    gl.vertexAttribPointer(location, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(location, size, gl.FLOAT, false, 0, 0);
     return buffer;
   };
   bind('a_uv', rig.uv, gl.STATIC_DRAW);
+  bind('a_eye', rig.eyeMask, gl.STATIC_DRAW, 1);
   const positions = bind('a_pos', rig.base, gl.DYNAMIC_DRAW);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, rig.triangles, gl.STATIC_DRAW);
@@ -1367,10 +1435,16 @@ function glRenderer(canvas, main, blink, rig) {
 // Không có WebGL: vẽ từng tam giác bằng biến đổi affine của Canvas 2D (chậm hơn, ~20 khung/giây).
 function canvasRenderer(canvas, main, blink, rig) {
   const ctx = canvas.getContext('2d');
-  const {triangles, base} = rig;
-  function drawMesh(image, points) {
+  const {triangles, base, eyeMask} = rig;
+  // alpha(a, b, c): độ phủ từng tam giác (lượt vẽ ảnh mắt nhắm chỉ phủ vùng mắt).
+  function drawMesh(image, points, alpha = null) {
     const k = canvas.width / rig.W;
     for (let t = 0; t < triangles.length; t += 3) {
+      if (alpha) {
+        const value = alpha(triangles[t], triangles[t + 1], triangles[t + 2]);
+        if (value < 0.01) continue;
+        ctx.globalAlpha = value;
+      }
       const [a, b, c] = [2 * triangles[t], 2 * triangles[t + 1], 2 * triangles[t + 2]];
       const sx0 = base[a], sy0 = base[a + 1], sx1 = base[b], sy1 = base[b + 1], sx2 = base[c], sy2 = base[c + 1];
       const dst = [points[a], points[a + 1], points[b], points[b + 1], points[c], points[c + 1]].map((v) => v * k);
@@ -1395,6 +1469,7 @@ function canvasRenderer(canvas, main, blink, rig) {
       ctx.drawImage(image, 0, 0);
       ctx.restore();
     }
+    ctx.globalAlpha = 1;
   }
   return {
     idleFrameMs: 50,
@@ -1402,9 +1477,7 @@ function canvasRenderer(canvas, main, blink, rig) {
     draw(points, blinkMix) {
       drawMesh(main, points);
       if (blink && blinkMix > 0) {
-        ctx.globalAlpha = blinkMix;
-        drawMesh(blink, points);
-        ctx.globalAlpha = 1;
+        drawMesh(blink, points, (a, b, c) => (blinkMix * (eyeMask[a] + eyeMask[b] + eyeMask[c])) / 3);
       }
     },
     destroy() {},
@@ -1508,7 +1581,15 @@ function frame(now) {
     eye: (blinkPhoto ? 0 : blink) + 0.12 * motion.frown + 0.15 * motion.angry - 0.25 * motion.surprise,
     roll: 0, nod: 0, tx: 0, ty: 0, breathe: 0,
   };
-  if (!calm) {
+  if (!calm && rig.lively) {
+    // Ảnh vẽ: nghiêng đầu qua trái qua phải rõ (~±4°), lúc nói gật nhẹ theo tiếng.
+    params.roll = 0.07 * Math.sin(t * 1.25) + 0.01 * Math.sin(t * 2.9 + 1) + 0.05 * motion.shy
+      + (playing ? 0.015 * Math.sin(t * 4.3) : 0);
+    params.nod = motion.shy + 0.35 * motion.mouth;
+    params.tx = rig.faceW * 0.025 * Math.sin(t * 1.25);
+    params.ty = rig.faceH * (0.01 * Math.sin(t * 2.5) + 0.025 * motion.shy - 0.006 * motion.mouth);
+    params.breathe = rig.H * 0.006 * (0.5 - 0.5 * Math.cos(t * 1.5));
+  } else if (!calm) {
     params.roll = 0.018 * Math.sin(t * 0.95) + 0.007 * Math.sin(t * 2.3 + 1) + 0.05 * motion.shy
       + (playing ? 0.008 * Math.sin(t * 2.7) : 0);
     params.nod = motion.shy;
@@ -1637,7 +1718,7 @@ async function setupStage() {
     loadImage(photo.main),
     photo.blink ? loadImage(photo.blink).catch(() => null) : null,
   ]);
-  rig = buildRig(photo.landmarks, photo.width, photo.height);
+  rig = buildRig(photo.landmarks, photo.width, photo.height, cfg.style === 'drawn');
   positions = new Float32Array(rig.base);
   blinkPhoto = blink;
   freshCanvas('gl');
