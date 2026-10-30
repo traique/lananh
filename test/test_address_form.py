@@ -69,8 +69,12 @@ def test_cache_persona_co_tran_theo_danh_sach_xung_ho():
     try:
         for variant in config.PERSONA_VARIANTS:
             for form in (*address.ADDRESS_FORMS, None, "lạ", "sếp"):
-                config.load_chat_skill(variant=variant, address_form=form)
-        assert len(config._chat_skill_cache) <= 1 + 2 * (len(address.ADDRESS_FORMS) + 1)
+                for stock in (True, False):
+                    config.load_chat_skill(variant=variant, address_form=form, stock=stock)
+        parts = [key[0] for key in config._chat_skill_cache]
+        assert parts.count(config._PART_CORE) <= 1 + 2 * (len(address.ADDRESS_FORMS) + 1)
+        # Phần cổ phiếu không nhân theo cách xưng hô.
+        assert parts.count(config._PART_STOCK) <= len(config.PERSONA_VARIANTS)
     finally:
         config._chat_skill_cache.clear()
 
