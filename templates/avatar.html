@@ -1542,6 +1542,7 @@ let mouthFx = null;
 let rafId = 0;
 let lastTime = 0;
 let lastDraw = 0;
+let lastBlink = 0;
 
 const approach = (value, target, tau, dt) => value + (target - value) * (1 - Math.exp(-dt / tau));
 
@@ -1569,8 +1570,11 @@ function frame(now) {
   const blink = blinker.amount(t);
   const calm = reduceMotion.matches;
   if (now - lastDraw < (playing ? renderer.speakingFrameMs : renderer.idleFrameMs)) return;
-  if (calm && lastDraw && !changing && !blink && !playing) return;
+  // Giảm chuyển động: ảnh đứng yên thì thôi vẽ, nhưng vẽ thêm 1 khung khi vừa chớp xong -
+  // không thì mắt kẹt ở khung đang khép dở (ảnh mắt nhắm hoà dở) tới lần chớp sau.
+  if (calm && lastDraw && !changing && !blink && !lastBlink && !playing) return;
   lastDraw = now;
+  lastBlink = blink;
 
   const params = {
     open: Math.min(1, Math.max(motion.mouth * 1.2, 0.3 * motion.surprise)),
