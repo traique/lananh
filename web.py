@@ -16,6 +16,7 @@ from telegram.ext import Application
 
 import bot_app
 import web_admin
+import web_app_api
 import web_avatar
 from handlers import callbacks, turn_feedback
 import web_site
@@ -244,6 +245,8 @@ api.include_router(web_avatar.api_router)
 api.include_router(web_site.static_router)
 api.include_router(web_site.router)
 api.include_router(web_site.api_router)
+# App Android màn hình thông tin (android/): ghép thiết bị + dashboard.
+api.include_router(web_app_api.router)
 
 
 @api.api_route("/", methods=["GET", "HEAD"])

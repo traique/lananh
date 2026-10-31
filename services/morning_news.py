@@ -509,8 +509,8 @@ async def shared_digest(now: datetime | None = None) -> str | None:
         return content
 
 
-async def _read_headlines() -> list[_NewsItem]:
-    """Chọn tin tất định từ RSS (không AI): ưu tiên mỗi nguồn 1 tin."""
+async def _read_feed_items() -> list[_NewsItem]:
+    """Mọi tin trong các feed RSS cấu hình (theo thứ tự feed), có trần thời gian."""
     deadline = time.monotonic() + _HEADLINE_BUDGET_SEC
     all_items: list[_NewsItem] = []
     for index, url in enumerate(config.MORNING_NEWS_RSS_FEEDS, start=1):
@@ -522,7 +522,36 @@ async def _read_headlines() -> list[_NewsItem]:
             logger.warning("morning_news: tin cho bản tin cá nhân - lỗi feed '%s': %s", url, exc)
             continue
         all_items.extend(_parse_feed_items(text, index, _feed_source(text, url)))
-    return _select_important_items(all_items, [])[:HEADLINE_COUNT]
+    return all_items
+
+
+async def _read_headlines() -> list[_NewsItem]:
+    """Chọn tin tất định từ RSS (không AI): ưu tiên mỗi nguồn 1 tin."""
+    return _select_important_items(await _read_feed_items(), [])[:HEADLINE_COUNT]
+
+
+async def rss_headlines(limit: int = 10) -> list[_NewsItem]:
+    """Tin mới nhất từ RSS lúc này cho màn hình thông tin của app
+    (services/app_dashboard.py tự cache có hạn): lần lượt mỗi nguồn 1 tin theo
+    thứ tự trong feed, bỏ link trùng. Không AI, không giữ trong RAM ở đây."""
+    by_source: dict[str, list[_NewsItem]] = {}
+    for item in await _read_feed_items():
+        by_source.setdefault(item.source, []).append(item)
+    picked: list[_NewsItem] = []
+    seen: set[str] = set()
+    queues = list(by_source.values())
+    while queues and len(picked) < limit:
+        for queue in list(queues):
+            if not queue:
+                queues.remove(queue)
+                continue
+            item = queue.pop(0)
+            if item.url not in seen:
+                seen.add(item.url)
+                picked.append(item)
+            if len(picked) >= limit:
+                break
+    return picked
 
 
 async def today_headlines(now: datetime | None = None) -> tuple[list[_NewsItem], bool]:

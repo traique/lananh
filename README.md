@@ -1490,6 +1490,7 @@ Telegram chỉ còn 18 lệnh hay dùng; mọi lệnh khác vẫn gõ được.
 | `/thongke [Nd\|Ngiờ]` | Thống kê lượt gọi theo user/kênh và theo model (mặc định 7 ngày, chỉ admin) |
 | `/danhgia [Nd]` | Số 👍/👎 theo provider/model, mặc định 30 ngày (chủ bot: Telegram, Zoom, Zalo controller) |
 | `/xuateval [Nd]` | Xuất các câu chủ bot bấm 👎 trên Telegram thành file YAML case ứng viên cho golden set |
+| `/app [moi <tên>\|xoa <số>]` | Ghép/thu hồi app Android màn hình thông tin (chỉ Telegram, chủ bot) - xem `android/README.md` |
 | `/agent <câu hỏi>` | Agent tự tra cứu nhiều bước để trả lời (thử nghiệm, chỉ admin) |
 | `/rag <câu hỏi>` | Tra cứu kiến thức trong các file `.md` của thư mục `rag/` (tìm theo từ khóa, AI diễn giải kèm nguồn; chỉ admin trên Zalo/Zoom) |
 | `/ragxuly <file>` | Dọn file md OCR trong `rag/` (gộp dòng ngắt, bỏ số trang, AI thêm heading; backup bản gốc vào `rag/_goc/`; chỉ admin trên Zalo/Zoom) |
@@ -1714,6 +1715,33 @@ của các API POST tối đa 4 KB); 404/405 dưới `/api/v1` cũng cùng dạn
 Không mở `/docs`, `/openapi.json`. Khoá JSON camelCase; chỉ thêm trường mới, không
 đổi/bỏ trường cũ (`/days` trả `weekday` là tên + `weekdayIndex` số; `/months` trả
 `weekday` số + `weekdayName`).
+
+## App Android màn hình thông tin (`android/`)
+
+Điện thoại cũ (nhắm tới Samsung J2 Prime, Android 6) thành màn hình để bàn: giờ, lịch
+âm dương, thời tiết, watchlist chứng khoán, vàng, xăng, tỷ giá, tin RSS; cập nhật 5 phút
+khi màn hình sáng, giờ đêm tự tắt và đánh thức bằng cảm biến tiệm cận. Cài đặt, ghép
+máy, ký APK: [android/README.md](android/README.md).
+
+- Ghép (chỉ chủ bot, Telegram): `/app moi <tên>` → mã 8 ký tự hết hạn 10 phút, dùng 1
+  lần; `/app` liệt kê, `/app xoa <số>` thu hồi (tối đa 5 thiết bị). DB (bảng
+  `app_devices`, migration 030) chỉ lưu SHA-256 của mã ghép và token. Ghép sai quá 20
+  lần/10 phút thì khoá mọi lượt ghép tới hết cửa sổ (`services/app_devices.py`).
+  `/app` không có trong menu lệnh Telegram (menu đã đủ 100 lệnh) nhưng vẫn gõ được.
+- `POST /api/v1/app/pair` `{"code": "K7QF-3MXA"}` → `{"token": "la_...", "device"}`.
+- `GET /api/v1/app/dashboard[?place=Hà Nội]` với `Authorization: Bearer la_...` → MỘT
+  JSON: `calendar` (`today` + `month`), `weather`, `gold`, `fuel` (Petrolimex), `news`,
+  `watchlist` (danh sách `/theodoi` của người sở hữu thiết bị), `refreshSec` (300).
+  Phần nào lỗi trả `{"error": ...}`, phần khác vẫn có; gzip; `Cache-Control: no-store`.
+  401 khi token sai/đã thu hồi, 503 khi DB sập mà thiết bị chưa xác thực trong 6 giờ qua.
+- Tải máy chủ (`services/app_dashboard.py`): không gọi AI, không chiếm khoá lượt chat;
+  cả bản trả về cache 60 giây cho mỗi (người, địa điểm), tối đa 8 bản; tin RSS cache 15
+  phút; giá cổ phiếu cache 2 phút trong phiên, 30 phút ngoài phiên (tối đa 64 mã,
+  `APP_WATCHLIST_MAX` mã mỗi lần, mặc định 20); vàng/tỷ giá/xăng/thời tiết dùng cache sẵn
+  có. Xác thực token cache 5 phút trong RAM (thu hồi xoá cache ngay).
+- APK build bằng GitHub Actions (`.github/workflows/android.yml`): chạy ở PR/nhánh khi
+  `android/` đổi hoặc bấm tay; KHÔNG chạy trên push main để không chặn Render
+  `checksPass`.
 
 ## Trang quản trị (Admin dashboard)
 
@@ -1984,13 +2012,15 @@ services/           Logic dùng chung cho mọi kênh: channel_chat_service.run_
 stock/              Market data, validation, policy, lịch giao dịch, danh mục và backtest
 assets/             Ý nghĩa soạn sẵn: tu_vi.yaml, than_so_hoc.yaml, ky_mon.yaml; tts_viet_tat.yaml (đọc giọng /noi)
 rag/                Kho kiến thức .md cho lệnh /rag (mỗi heading 1 mẩu kiến thức)
-migrations/         NNN_*.sql (001-026), checksum ghim trong migrations.lock
+migrations/         NNN_*.sql (001-030), checksum ghim trong migrations.lock
 scripts/            backup_drill.py, run_evals.py, train_trend_model.py, run-zalo-gateway.sh,
                     benchmark_memory.py (đo RSS theo kịch bản tải, offline)
 test/evals/         Golden set đánh giá (YAML + harness.py)
 zalo-gateway/        Node.js Zalo listener
 web.py               FastAPI webhook entrypoint (Telegram + Zoom), /healthz
 web_site.py          Web LCTA (lịch, thời tiết, tử vi, thần số học, Kỳ Môn) + /api/v1
+web_app_api.py       API app Android: /api/v1/app/pair, /api/v1/app/dashboard
+android/             App Android màn hình thông tin (Kotlin, không thư viện ngoài)
 web_admin.py         Trang /admin và admin API (đăng nhập có giới hạn số lần sai);
                      /admin/api/memory-usage: RAM container + từng tiến trình;
                      /admin/api/db-usage: dung lượng bảng ảnh và job VACUUM FULL;
