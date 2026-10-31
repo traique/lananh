@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Theme có sẵn của Android (không AppCompat): nhẹ, chạy từ Android 5. -->
+    <style name="DashboardTheme" parent="android:Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorAccent">#FFC857</item>
+    </style>
+
+    <style name="SettingsTheme" parent="android:Theme.Material">
+        <item name="android:colorAccent">#FFC857</item>
+        <item name="android:colorPrimary">#202124</item>
+        <item name="android:colorPrimaryDark">#000000</item>
+    </style>
+</resources>

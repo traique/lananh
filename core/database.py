@@ -2143,3 +2143,48 @@ async def zoom_set_pairing(jid: str, display_name: str = "") -> None:
 async def zoom_clear_pairing() -> None:
     await set_setting(_SETTING_ZOOM_JID, "")
     await set_setting(_SETTING_ZOOM_NAME, "")
+
+
+# ─── Thiết bị app màn hình thông tin (/app, services/app_devices.py) ─────────
+# SQL ở core/repositories/app_devices.py; chỉ nhận HASH của mã ghép/token.
+
+
+# Không idempotent: chạy lại sau khi đã commit sẽ thêm 1 dòng chờ ghép thứ hai.
+@_with_reconnect(idempotent=False)
+async def app_device_create_pending(
+    user_id: int, name: str, code_hash: str, ttl_sec: int, max_devices: int
+) -> int | None:
+    from core.repositories import app_devices
+
+    return await app_devices.create_pending(
+        await get_pool(), user_id, name, code_hash, ttl_sec, max_devices
+    )
+
+
+# Không idempotent: chạy lại sau khi đã commit thì mã ghép đã bị xoá -> báo sai "mã hết hạn".
+@_with_reconnect(idempotent=False)
+async def app_device_pair(code_hash: str, token_hash: str) -> dict | None:
+    from core.repositories import app_devices
+
+    return await app_devices.pair(await get_pool(), code_hash, token_hash)
+
+
+@_with_reconnect
+async def app_device_by_token(token_hash: str) -> dict | None:
+    from core.repositories import app_devices
+
+    return await app_devices.by_token(await get_pool(), token_hash)
+
+
+@_with_reconnect
+async def app_device_list(user_id: int) -> list[dict]:
+    from core.repositories import app_devices
+
+    return await app_devices.list_for_user(await get_pool(), user_id)
+
+
+@_with_reconnect
+async def app_device_revoke(user_id: int, device_id: int) -> bool:
+    from core.repositories import app_devices
+
+    return await app_devices.revoke(await get_pool(), user_id, device_id)

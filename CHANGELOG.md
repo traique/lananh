@@ -11,6 +11,14 @@ Quy ước:
 - Tăng Y khi có tính năng mới, Z khi chỉ sửa lỗi, X khi thay đổi lớn làm đổi cách dùng cũ.
 - Các bản 0.x được đánh số lại sau, gom theo các PR đã merge (#1 - #46).
 
+## 1.1.0 - 2026-10-31
+
+- App Android "Lan Anh Màn hình" cho điện thoại cũ: giờ, lịch âm dương, thời tiết,
+  danh sách cổ phiếu theo dõi, giá vàng, giá xăng, tỷ giá và tin tức, tự cập nhật 5 phút.
+  Giờ đêm màn hình tự tắt, đưa tay lại gần là sáng lại.
+- Lệnh `/app moi <tên>` lấy mã ghép app (hết hạn sau 10 phút), `/app` xem các máy đã
+  ghép, `/app xoa <số>` thu hồi máy.
+
 ## 1.0.0 - 2026-10-30
 
 - Câu chuyện đời thường không còn bị kéo sang cổ phiếu: phần "broker chứng khoán" của
