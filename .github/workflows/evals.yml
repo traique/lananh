@@ -81,7 +81,7 @@ jobs:
 
       - name: Khôi phục cache kết quả
         if: steps.keys.outputs.skip != '1'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .eval-cache
           key: evals-${{ github.run_id }}
