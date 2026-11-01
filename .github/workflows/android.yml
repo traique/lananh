@@ -58,7 +58,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           APP_VERSION_CODE: ${{ github.run_number }}
         run: gradle --no-daemon --stacktrace assembleRelease
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: lananh-manhinh-apk
           path: android/app/build/outputs/apk/release/*.apk
