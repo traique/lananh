@@ -16,11 +16,11 @@
     "login:qr": "npm run build && node dist/qr-login.js"
   },
   "dependencies": {
-    "zca-js": "2.1.2"
+    "zca-js": "2.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
-    "prettier": "3.3.3",
+    "prettier": "3.9.10",
     "typescript": "^5.7.2"
   }
 }
