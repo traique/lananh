@@ -21,20 +21,34 @@ Bản tin sáng cá nhân (services/morning_brief.py) dùng chung, KHÔNG gọi 
   "đọc bài N" của bản tin AI nếu đã có, không thì chọn tất định từ RSS.
 - Zalo controller / Zoom đã bật bản tin cá nhân (gộp tin) thì lượt 8h bỏ qua
   kênh đó: bản tin cá nhân mang luôn phần tin, người nhận chỉ nhận 1 tin.
+
+Lọc tin trước khi đưa AI chọn (thuần code, không tốn lượt AI):
+- Bỏ tin đăng quá ``_MAX_AGE_HOURS`` giờ (``read_rss(max_age_hours=...)``; tin không
+  ghi ngày vẫn giữ) - feed ít cập nhật không còn đưa tin hôm kia vào bản tin.
+- Bỏ link trùng giữa các feed và tin đã lên bản tin những ngày trước (setting
+  ``morning_news:recent_urls``, giữ 3 ngày); so link bằng ``_url_key`` (bỏ utm_*,
+  fbclid, zarsrc..., "www.", "/" cuối).
+- Lời dặn chọn tin có thang giá trị (bỏ tin đồn, PR, khuyến nghị mua bán...); sau đó
+  code giữ mỗi nhóm (kinh tế / thời sự / công nghệ, suy từ link feed) tối đa
+  ``_MAX_PER_GROUP`` tin, còn chỗ thì nhóm chưa có tin nào được thêm 1 tin.
+- Feed lỗi (hoặc không còn tin mới) ``_FEED_DEAD_DAYS`` ngày liền thì báo chủ bot 1
+  lần (setting ``morning_news:feed_health``): báo hay đổi link RSS.
 """
 
 import asyncio
+import json
 import logging
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import NamedTuple
-from urllib.parse import urlsplit
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 from ai import orchestrator
-from core import config, memtrim, untrusted
+from core import alerts, config, memtrim, untrusted, urls
 from core import database as db
 from services import article_reader, web_reader
 
@@ -63,6 +77,8 @@ class _NewsItem:
     url: str
     source: str
     summary: str = ""  # mô tả ngắn trong RSS (dự phòng khi không đọc được bài)
+    published: str = ""  # ngày đăng như feed ghi (chỉ để AI biết tin mới hay cũ)
+    group: str = ""  # nhóm tin suy từ link feed (_feed_group)
 
 
 _GROUNDING = (
@@ -96,7 +112,17 @@ _SELECT_TASK = (
     "Chọn 6-8 tin đáng chú ý nhất cho bản tin sáng từ danh sách tin RSS dưới đây: ưu tiên "
     "tin mới, ảnh hưởng rộng; giữ tin kinh tế/chứng khoán nếu có, kèm thời sự trong nước, "
     "quốc tế, công nghệ; mỗi tin một sự kiện khác nhau (không chọn 2 bài cùng một chuyện, vd "
-    "2 bài giá vàng cùng ngày). Chỉ dùng ID thật sự có trong dữ liệu. CHỈ trả đúng 1 dòng, "
+    "2 bài giá vàng cùng ngày).\n"
+    "Cách cân nhắc giá trị một tin:\n"
+    "- Cao nhất: chính sách lớn (lãi suất, thuế, luật mới), thị trường biến động mạnh, sự "
+    "kiện ảnh hưởng tới nhiều người hoặc cả nền kinh tế.\n"
+    "- Khá: kết quả kinh doanh bất ngờ hay thương vụ lớn của doanh nghiệp lớn, số liệu kinh tế "
+    "đáng kể, thời sự trong nước/quốc tế có tác động rõ, công nghệ mới có ích thực tế.\n"
+    "- Bỏ qua: tin đồn, bài PR/quảng cáo, khuyến nghị mua bán cổ phiếu, nhận định chung chung "
+    "không có số liệu, giá 1 mã lên xuống thường ngày, con số % gây sốc mà không có mốc so "
+    "sánh, tin giật gân.\n"
+    "- Việc đã xảy ra ưu tiên hơn dự báo hay ý kiến.\n"
+    "Chỉ dùng ID thật sự có trong dữ liệu. CHỈ trả đúng 1 dòng, "
     "không giải thích: IMPORTANT_IDS: F1I1,F2I3,F4I1"
 )
 _SUMMARY_TASK = (
@@ -131,6 +157,80 @@ _SOURCE_LABELS = {
     "tuoitre.vn": "Tuổi Trẻ",
     "genk.vn": "GenK",
 }
+# Tin đăng quá 36 giờ bị bỏ: đủ rộng cho sáng thứ Hai (feed chứng khoán ít tin cuối tuần).
+_MAX_AGE_HOURS = 36
+_MAX_ITEMS = 8  # tối đa 8 tin trong mục "đọc bài N"
+_MIN_ITEMS = 5  # model chọn ít hơn thì code bù cho đủ
+_MAX_PER_GROUP = 4  # 1 nhóm tối đa 4/8 tin: kinh tế không chiếm hết bản tin
+# Nhóm tin theo link FEED (link bài VnExpress không ghi chuyên mục); không khớp thì
+# là "thời sự".
+_GROUP_MARKERS = (
+    (
+        "kinh tế",
+        (
+            "kinh-doanh",
+            "kinh-te",
+            "chung-khoan",
+            "tai-chinh",
+            "bat-dong-san",
+            "cafef.vn",
+            "cafebiz.vn",
+            "vietstock.vn",
+        ),
+    ),
+    ("công nghệ", ("genk.vn", "so-hoa", "cong-nghe", "khoa-hoc", "ictnews", "tinhte.vn")),
+)
+_DEFAULT_GROUP = "thời sự"
+_TRACKING_PARAMS = frozenset(
+    {
+        "fbclid",
+        "gclid",
+        "dclid",
+        "msclkid",
+        "igshid",
+        "mc_cid",
+        "mc_eid",
+        "ttclid",
+        "twclid",
+        "zarsrc",
+        "_ga",
+    }
+)
+# {ngày ISO: [khoá link]} của bản tin 3 ngày gần nhất - tin đã gửi hôm trước không lặp lại.
+_RECENT_KEY = "morning_news:recent_urls"
+_RECENT_DAYS = 3
+_RECENT_PER_DAY = 40  # /tintuc gọi nhiều lần trong ngày: vẫn có trần
+# {link feed: {"since": ngày ISO lỗi đầu, "alerted": bool}} - chỉ feed đang lỗi.
+_FEED_HEALTH_KEY = "morning_news:feed_health"
+_FEED_DEAD_DAYS = 3
+
+
+def _feed_group(feed_url: str) -> str:
+    low = feed_url.lower()
+    for group, markers in _GROUP_MARKERS:
+        if any(marker in low for marker in markers):
+            return group
+    return _DEFAULT_GROUP
+
+
+def _is_tracking_param(name: str) -> bool:
+    name = unquote_plus(name).lower()
+    return name.startswith("utm_") or name in _TRACKING_PARAMS
+
+
+def _url_key(url: str) -> str:
+    """Khoá so trùng link: cùng 1 bài ở 2 feed (hoặc 2 ngày) có thể khác nhau ở tham
+    số theo dõi (utm_*, fbclid, zarsrc...), "www.", "/" cuối, #fragment, http/https."""
+    normalized = urls.normalize_url(url)
+    if not normalized:
+        return url.strip()
+    parts = urlsplit(normalized)
+    query = "&".join(
+        part
+        for part in parts.query.split("&")
+        if part and not _is_tracking_param(part.partition("=")[0])
+    )
+    return urlunsplit(("https", parts.netloc.removeprefix("www."), parts.path, query, ""))
 
 
 def _feed_source(feed_text: str, url: str) -> str:
@@ -144,7 +244,9 @@ def _feed_source(feed_text: str, url: str) -> str:
     return (match.group(1).strip() if match else host or url)[:80]
 
 
-def _parse_feed_items(feed_text: str, feed_index: int, source: str) -> list[_NewsItem]:
+def _parse_feed_items(
+    feed_text: str, feed_index: int, source: str, group: str = _DEFAULT_GROUP
+) -> list[_NewsItem]:
     """Parse đúng format do ``web_reader.read_rss`` tạo ra.
 
     Parser này chỉ phục vụ việc nối lại URL gốc ở cuối bản tin. Nếu một feed có
@@ -168,7 +270,9 @@ def _parse_feed_items(feed_text: str, feed_index: int, source: str) -> list[_New
         if not header:
             continue
         ordinal = int(header.group(1))
-        title = _PUBLISHED_SUFFIX_RE.sub("", header.group(2).strip()).strip()
+        raw_title = header.group(2).strip()
+        published = _PUBLISHED_SUFFIX_RE.search(raw_title)
+        title = raw_title[: published.start()].strip() if published else raw_title
         url = next(
             (
                 line
@@ -189,6 +293,8 @@ def _parse_feed_items(feed_text: str, feed_index: int, source: str) -> list[_New
                 url=url,
                 source=source,
                 summary=summary[:400],
+                published=published.group(0).strip()[1:-1] if published else "",
+                group=group,
             )
         )
     return items
@@ -219,17 +325,27 @@ def _today_line(now: datetime | None) -> str:
     return f"Hôm nay là {(now or datetime.now(_VN_TZ)).strftime('%d/%m/%Y')} (giờ Việt Nam)."
 
 
-async def _choose_items(feed_texts: list[str], all_items: list[_NewsItem]) -> list[_NewsItem]:
+def _selection_list(items: list[_NewsItem]) -> str:
+    """Danh sách tin cho lượt chọn: dựng từ tin đã lọc (không dùng nguyên chữ feed)
+    để tin trùng/tin đã gửi hôm trước không còn trong prompt."""
+    blocks = []
+    for item in items:
+        meta = f"{item.source}, {item.published}" if item.published else item.source
+        block = f"[ID:{item.item_id}] {item.title} ({meta})"
+        blocks.append(f"{block}\n{item.summary}" if item.summary else block)
+    return "\n\n".join(blocks)
+
+
+async def _choose_items(items: list[_NewsItem]) -> list[_NewsItem]:
     """Lượt AI 1: chọn tin. Lỗi hoặc không ra ID hợp lệ thì chọn tất định."""
-    annotated = [_annotate_feed(text, i) for i, text in enumerate(feed_texts, start=1)]
-    fenced = untrusted.wrap_untrusted("\n\n--- NGUỒN KHÁC ---\n\n".join(annotated), "tin RSS")
+    fenced = untrusted.wrap_untrusted(_selection_list(items), "tin RSS")
     ids: list[str] = []
     try:
         response = await orchestrator.ask(f"{_today_line(None)} {_SELECT_TASK}\n\n{fenced}")
         _, ids = _extract_important_ids(getattr(response, "text", None) or "")
     except Exception:
         logger.warning("morning_news: lượt chọn tin lỗi, chọn tất định.", exc_info=True)
-    return _select_important_items(all_items, ids)
+    return _select_important_items(items, ids)
 
 
 async def _excerpt(item: _NewsItem) -> str:
@@ -327,36 +443,140 @@ def _extract_important_ids(body: str) -> tuple[str, list[str]]:
 def _select_important_items(
     all_items: list[_NewsItem], requested_ids: list[str]
 ) -> list[_NewsItem]:
+    """Tin model chọn (đúng thứ tự model ghi), mỗi nhóm tối đa ``_MAX_PER_GROUP`` tin
+    khi có từ 2 nhóm trở lên; còn chỗ thì nhóm chưa có tin nào được 1 tin (không đẩy
+    tin model đã chọn ra); chưa đủ ``_MIN_ITEMS`` thì bù tất định, bỏ qua trần nhóm."""
     by_id = {item.item_id.upper(): item for item in all_items}
     selected: list[_NewsItem] = []
     seen_urls: set[str] = set()
+    per_group: Counter[str] = Counter()
+    group_cap = _MAX_PER_GROUP if len({item.group for item in all_items}) > 1 else _MAX_ITEMS
 
-    def add(item: _NewsItem | None) -> None:
-        if item is None or item.url in seen_urls or len(selected) >= 8:
+    def add(item: _NewsItem | None, capped: bool = True) -> None:
+        if item is None or len(selected) >= _MAX_ITEMS:
             return
-        seen_urls.add(item.url)
+        key = _url_key(item.url)
+        if key in seen_urls or (capped and per_group[item.group] >= group_cap):
+            return
+        seen_urls.add(key)
+        per_group[item.group] += 1
         selected.append(item)
 
     for item_id in requested_ids:
         add(by_id.get(item_id.upper()))
+    for item in all_items:
+        if per_group[item.group] == 0:
+            add(item)
 
     # Nếu model quên/ghi sai ID, vẫn bảo đảm cuối bài có link thật. Ưu tiên lấy
     # ít nhất một tin từ mỗi nguồn trước, sau đó mới bù theo thứ tự RSS.
-    if len(selected) < 5:
+    if len(selected) < _MIN_ITEMS:
         seen_sources: set[str] = set()
         for item in all_items:
             if item.source in seen_sources:
                 continue
-            add(item)
+            add(item, capped=False)
             seen_sources.add(item.source)
-            if len(selected) >= 5:
+            if len(selected) >= _MIN_ITEMS:
                 break
-    if len(selected) < 5:
+    if len(selected) < _MIN_ITEMS:
         for item in all_items:
-            add(item)
-            if len(selected) >= 5:
+            add(item, capped=False)
+            if len(selected) >= _MIN_ITEMS:
                 break
     return selected
+
+
+def _fresh_items(items: list[_NewsItem], sent_before: set[str]) -> list[_NewsItem]:
+    """Bỏ link trùng giữa các feed (giữ bản ở feed đứng trước) và tin đã lên bản tin
+    những ngày trước. Toàn tin đã gửi thì giữ cả (thà lặp còn hơn không có bản tin)."""
+    unique: list[_NewsItem] = []
+    seen: set[str] = set()
+    for item in items:
+        key = _url_key(item.url)
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    fresh = [item for item in unique if _url_key(item.url) not in sent_before]
+    if len(fresh) < len(unique):
+        logger.info(
+            "morning_news: bỏ %d tin đã lên bản tin những ngày trước.", len(unique) - len(fresh)
+        )
+    return fresh or unique
+
+
+async def _load_recent() -> dict[str, list[str]]:
+    try:
+        data = json.loads(await db.get_setting(_RECENT_KEY) or "{}")
+    except Exception:
+        logger.warning("morning_news: không đọc được danh sách tin đã gửi.", exc_info=True)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        day: [key for key in keys if isinstance(key, str)]
+        for day, keys in data.items()
+        if isinstance(day, str) and isinstance(keys, list)
+    }
+
+
+def _sent_before(recent: dict[str, list[str]], today: str) -> set[str]:
+    return {key for day, keys in recent.items() if day < today for key in keys}
+
+
+async def _save_recent(recent: dict[str, list[str]], today: str, items: list[_NewsItem]) -> None:
+    today_keys = [*recent.get(today, []), *(_url_key(item.url) for item in items)]
+    data = {today: list(dict.fromkeys(today_keys))[-_RECENT_PER_DAY:]}
+    oldest = (date.fromisoformat(today) - timedelta(days=_RECENT_DAYS - 1)).isoformat()
+    data.update({day: keys for day, keys in recent.items() if oldest <= day < today})
+    try:
+        await db.set_setting(_RECENT_KEY, json.dumps(data, ensure_ascii=False))
+    except Exception:
+        logger.warning("morning_news: không lưu được danh sách tin đã gửi.", exc_info=True)
+
+
+async def _track_feed_health(results: dict[str, str | None], now: datetime) -> None:
+    """``results``: link feed -> None (đọc được) hoặc lỗi. Feed lỗi (hay không còn tin
+    mới) ``_FEED_DEAD_DAYS`` ngày liền thì báo chủ bot 1 lần; đọc được 1 lần là xoá
+    trạng thái. Chỉ lưu feed đang lỗi có trong cấu hình hiện tại. Không bao giờ raise."""
+    today = now.date()
+    try:
+        raw = await db.get_setting(_FEED_HEALTH_KEY)
+        state = json.loads(raw) if raw else {}
+    except Exception:
+        logger.warning("morning_news: không đọc được trạng thái feed.", exc_info=True)
+        return
+    if not isinstance(state, dict):
+        state = {}
+    new_state: dict[str, dict] = {}
+    for url, error in results.items():
+        if error is None:
+            continue
+        old = state.get(url) if isinstance(state.get(url), dict) else {}
+        try:
+            since = date.fromisoformat(str(old.get("since")))
+        except ValueError:
+            since = today
+        alerted = bool(old.get("alerted"))
+        days = (today - since).days + 1
+        if days >= _FEED_DEAD_DAYS and not alerted:
+            alerted = alerts.send(
+                f"⚠️ Bản tin sáng: feed RSS lỗi {days} ngày liền (từ {since:%d/%m}).\n{url}\n"
+                f"Lỗi gần nhất: {error}\n"
+                "Kiểm tra lại link hoặc bỏ feed này khỏi MORNING_NEWS_RSS_FEEDS.",
+                key=f"morning_news_feed:{url}",
+            )
+        new_state[url] = {"since": since.isoformat(), "alerted": alerted}
+    if new_state == state:
+        return
+    try:
+        await db.set_setting(_FEED_HEALTH_KEY, json.dumps(new_state, ensure_ascii=False))
+    except Exception:
+        logger.warning("morning_news: không lưu được trạng thái feed.", exc_info=True)
+
+
+async def _read_feed(url: str) -> str:
+    return await web_reader.read_rss(url, max_age_hours=_MAX_AGE_HOURS)
 
 
 def _format_sources(successful_sources: list[str]) -> str:
@@ -404,28 +624,35 @@ async def build_digest(mode: str = "morning") -> str | None:
     if not feeds:
         return None
 
+    now = datetime.now(_VN_TZ)
+    today = now.date().isoformat()
     feed_texts: list[str] = []
     all_items: list[_NewsItem] = []
     successful_sources: list[str] = []
+    feed_errors: dict[str, str | None] = {}
     for url in feeds:
         try:
-            text = await web_reader.read_rss(url)
+            text = await _read_feed(url)
             feed_texts.append(text)
             feed_index = len(feed_texts)
             source = _feed_source(text, url)
             successful_sources.append(source)
-            all_items.extend(_parse_feed_items(text, feed_index, source))
+            all_items.extend(_parse_feed_items(text, feed_index, source, _feed_group(url)))
+            feed_errors[url] = None
             logger.info("morning_news: đọc feed '%s' OK (%d ký tự).", url, len(text))
         except web_reader.WebReaderError as exc:
+            feed_errors[url] = str(exc)
             logger.warning("morning_news: lỗi đọc feed '%s': %s", url, exc)
+    await _track_feed_health(feed_errors, now)
 
     if not feed_texts:
         logger.warning("morning_news: tất cả %d feed đều lỗi, không có gì để tổng hợp.", len(feeds))
         return None
 
     known_texts = list(feed_texts)  # chữ nguồn để soát số và chức danh trong bản AI viết
+    recent = await _load_recent() if all_items else {}
     if all_items:
-        important_items = await _choose_items(feed_texts, all_items)
+        important_items = await _choose_items(_fresh_items(all_items, _sent_before(recent, today)))
         excerpts = await _read_excerpts(important_items)
         # Tải RSS + bóc HTML các bài (cả /tintuc): dọn heap khi xong (core/memtrim.py).
         memtrim.request("tin sáng")
@@ -456,9 +683,9 @@ async def build_digest(mode: str = "morning") -> str | None:
         )
         return None
 
-    now = datetime.now(_VN_TZ)
     if important_items:
         await article_reader.save_digest_links([(i.title, i.url) for i in important_items])
+        await _save_recent(recent, today, important_items)
         _remember_digest_items(now, important_items)
     parts = [_header(mode, now), body]
     sources = _format_sources(successful_sources)
@@ -517,11 +744,11 @@ async def _read_feed_items() -> list[_NewsItem]:
         if time.monotonic() > deadline:
             break
         try:
-            text = await web_reader.read_rss(url)
+            text = await _read_feed(url)
         except web_reader.WebReaderError as exc:
             logger.warning("morning_news: tin cho bản tin cá nhân - lỗi feed '%s': %s", url, exc)
             continue
-        all_items.extend(_parse_feed_items(text, index, _feed_source(text, url)))
+        all_items.extend(_parse_feed_items(text, index, _feed_source(text, url), _feed_group(url)))
     return all_items
 
 
@@ -546,8 +773,8 @@ async def rss_headlines(limit: int = 10) -> list[_NewsItem]:
                 queues.remove(queue)
                 continue
             item = queue.pop(0)
-            if item.url not in seen:
-                seen.add(item.url)
+            if _url_key(item.url) not in seen:
+                seen.add(_url_key(item.url))
                 picked.append(item)
             if len(picked) >= limit:
                 break

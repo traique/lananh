@@ -1584,6 +1584,23 @@ tối đa ~1.500 ký tự/bài, 2 bài cùng lúc, 15 giây/bài; bài lỗi th�
 AI 2 viết tóm tắt (ai, làm gì, con số, vì sao đáng chú ý) và ghi "(bài N)" khớp mục
 "đọc bài N". Feed lạ không tách được tin có link thì tổng hợp thẳng từ chữ RSS như cũ.
 
+Lọc tin bằng code trước lượt AI chọn (không tốn thêm lượt AI):
+
+- Bỏ tin đăng quá 36 giờ (`web_reader.read_rss(max_age_hours=...)`, tin không ghi
+  ngày vẫn giữ) - áp cho cả bản tin cá nhân và màn hình app.
+- Bỏ link trùng giữa các feed (bỏ `utm_*`, `fbclid`, `zarsrc`, `www.`, `/` cuối khi so)
+  và tin đã lên bản tin 2 ngày trước (setting `morning_news:recent_urls`, tối đa 3
+  ngày x 40 link). Toàn tin đã gửi thì vẫn dùng, không để trống bản tin.
+- Lời dặn chọn tin có thang giá trị: ưu tiên chính sách lớn, biến động thị trường, sự
+  kiện ảnh hưởng rộng; bỏ tin đồn, PR, khuyến nghị mua bán, % gây sốc không mốc so
+  sánh; sự việc đã xảy ra hơn dự báo.
+- Mỗi nhóm tin (kinh tế / thời sự / công nghệ, suy từ link feed: `kinh-doanh`,
+  `chung-khoan`, `cafef.vn`, `vietstock.vn`... là kinh tế; `genk.vn`, `so-hoa`... là
+  công nghệ; còn lại thời sự) tối đa 4/8 tin khi có từ 2 nhóm; còn chỗ thì nhóm chưa
+  có tin được thêm 1 tin (không đẩy tin AI đã chọn ra).
+- Feed lỗi hoặc không còn tin mới 3 ngày liền: báo chủ bot 1 lần (setting
+  `morning_news:feed_health`), đọc được lại thì tự xoá trạng thái.
+
 - Zalo controller hoặc Zoom chủ bot đã bật bản tin sáng cá nhân (`/bantin`) thì
   lần chạy 8h tự động bỏ qua kênh đó: tin RSS được gộp vào bản tin sáng
   (`MORNING_BRIEF_ABSORB_NEWS`), bản AI tổng hợp dựng tối đa 1 lần/ngày và dùng

@@ -17,9 +17,11 @@ là nội dung thật.
 """
 
 import asyncio
+import calendar
 import ipaddress
 import logging
 import socket
+import time
 from typing import Optional
 from urllib.parse import urljoin, urlsplit
 
@@ -298,10 +300,25 @@ async def read_url(raw_url: str) -> str:
     return text
 
 
-async def read_rss(raw_url: str, limit: int = 0) -> str:
+def _entry_timestamp(entry) -> float | None:
+    """Giờ đăng (epoch UTC) của 1 mục feed; None nếu feed không ghi hoặc ghi sai."""
+    parsed = entry.get("published_parsed") or entry.get("updated_parsed")
+    if not parsed:
+        return None
+    try:
+        return float(calendar.timegm(parsed))
+    except (OverflowError, TypeError, ValueError):
+        return None
+
+
+async def read_rss(raw_url: str, limit: int = 0, *, max_age_hours: float = 0) -> str:
     """Đọc feed RSS/Atom, trả về text liệt kê tối đa `limit` (mặc định
     RSS_READER_MAX_ITEMS) mục mới nhất: tiêu đề, ngày đăng, tóm tắt ngắn,
-    link. Raise WebReaderError nếu URL không hợp lệ/bị chặn hoặc feed lỗi."""
+    link. Raise WebReaderError nếu URL không hợp lệ/bị chặn hoặc feed lỗi.
+
+    ``max_age_hours`` > 0: bỏ mục đăng cũ hơn ngần ấy giờ TRƯỚC khi lấy `limit`
+    mục (bản tin sáng không lẫn tin cũ của feed ít cập nhật); mục không ghi ngày
+    vẫn giữ. Không còn mục nào thì raise WebReaderError."""
     import feedparser
 
     url = await normalize_public_http_url_async(raw_url)
@@ -321,9 +338,16 @@ async def read_rss(raw_url: str, limit: int = 0) -> str:
     if not parsed.entries:
         raise WebReaderError("Feed không có mục nào.")
 
+    entries = parsed.entries
+    if max_age_hours > 0:
+        cutoff = time.time() - max_age_hours * 3600
+        entries = [e for e in entries if (ts := _entry_timestamp(e)) is None or ts >= cutoff]
+        if not entries:
+            raise WebReaderError(f"Feed không có tin nào trong {max_age_hours:g} giờ qua.")
+
     feed_title = parsed.feed.get("title") or url
     lines = [f"[Feed: {feed_title}]"]
-    for i, entry in enumerate(parsed.entries[:limit], start=1):
+    for i, entry in enumerate(entries[:limit], start=1):
         title = entry.get("title") or "(không có tiêu đề)"
         published = entry.get("published") or entry.get("updated") or ""
         summary = (entry.get("summary") or "").strip()
