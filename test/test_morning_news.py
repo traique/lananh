@@ -647,3 +647,32 @@ async def test_build_digest_ghi_nhan_feed_loi(monkeypatch):
     state = json.loads(await db.get_setting(morning_news._FEED_HEALTH_KEY))
     assert list(state) == ["https://a.example/rss", "https://abandoned.example/rss"]
     assert state["https://a.example/rss"]["alerted"] is False
+
+
+@pytest.mark.asyncio
+async def test_hai_luot_tintuc_cung_luc_khong_mat_link_cua_nhau(monkeypatch):
+    """2 lượt /tintuc (khoá lượt theo người dùng không chặn nhau) cùng ghi danh sách
+    tin đã gửi: đọc-gộp-ghi phải nguyên tử, không lượt nào xoá link của lượt kia."""
+    import asyncio
+    import json
+
+    store: dict[str, str] = {}
+
+    async def slow_get(key):
+        value = store.get(key)
+        await asyncio.sleep(0.01)  # DB trả chậm: 2 lượt cùng đọc trước khi ai kịp ghi
+        return value
+
+    async def set_(key, value):
+        store[key] = value
+
+    monkeypatch.setattr(db, "get_setting", slow_get)
+    monkeypatch.setattr(db, "set_setting", set_)
+    first = morning_news._NewsItem("F1I1", "A", "https://a.vn/1", "S")
+    second = morning_news._NewsItem("F1I2", "B", "https://a.vn/2", "S")
+    await asyncio.gather(
+        morning_news._save_recent("2026-11-16", [first]),
+        morning_news._save_recent("2026-11-16", [second]),
+    )
+    saved = json.loads(store[morning_news._RECENT_KEY])["2026-11-16"]
+    assert sorted(saved) == ["https://a.vn/1", "https://a.vn/2"]

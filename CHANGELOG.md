@@ -21,9 +21,10 @@ Quy ước:
 - Một nguồn RSS lỗi 3 ngày liền (hoặc cả tuần không có tin mới) thì em nhắn báo anh 1
   lần để đổi link. Nguồn chỉ tạm im dịp cuối tuần, Tết thì không báo.
 - Phân tích cổ phiếu thôi dùng thư viện vnstock: bản cũ bị nhà phát triển khoá từ 10/11,
-  làm mất một phần dữ liệu và chặn cập nhật bot. Sàn niêm yết (để làm tròn giá đúng bước
-  giá), khối ngoại phiên gần nhất và lịch cổ tức/đại hội cổ đông giờ lấy thẳng từ VCI.
-  Bỏ mục tin công ty của VCI; tin tức về mã vẫn lấy từ báo.
+  làm mất một phần dữ liệu và chặn cập nhật bot.
+- Sàn niêm yết (để làm tròn đúng bước giá), khối ngoại phiên gần nhất và lịch cổ tức,
+  đại hội cổ đông giờ lấy thẳng từ VCI. Bỏ mục tin công ty của VCI; tin về mã vẫn lấy
+  từ báo.
 
 ## 1.1.0 - 2026-10-31
 

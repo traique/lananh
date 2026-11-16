@@ -202,6 +202,7 @@ _TRACKING_PARAMS = frozenset(
 _RECENT_KEY = "morning_news:recent_urls"
 _RECENT_DAYS = 3
 _RECENT_PER_DAY = 40  # /tintuc gọi nhiều lần trong ngày: vẫn có trần
+_recent_lock = asyncio.Lock()
 # {link feed: {"since": ngày ISO lỗi đầu, "alerted": bool}} - chỉ feed đang lỗi.
 _FEED_HEALTH_KEY = "morning_news:feed_health"
 _FEED_DEAD_DAYS = 3
@@ -525,16 +526,18 @@ def _sent_before(recent: dict[str, list[str]], today: str) -> set[str]:
 
 
 async def _save_recent(today: str, items: list[_NewsItem]) -> None:
-    # Đọc lại ngay trước khi ghi: 2 lượt /tintuc chạy cùng lúc không xoá link của nhau.
-    recent = await _load_recent()
-    today_keys = [*recent.get(today, []), *(_url_key(item.url) for item in items)]
-    data = {today: list(dict.fromkeys(today_keys))[-_RECENT_PER_DAY:]}
-    oldest = (date.fromisoformat(today) - timedelta(days=_RECENT_DAYS - 1)).isoformat()
-    data.update({day: keys for day, keys in recent.items() if oldest <= day < today})
-    try:
-        await db.set_setting(_RECENT_KEY, json.dumps(data, ensure_ascii=False))
-    except Exception:
-        logger.warning("morning_news: không lưu được danh sách tin đã gửi.", exc_info=True)
+    # Đọc-gộp-ghi dưới khoá: 2 lượt /tintuc cùng lúc (khoá lượt theo người dùng không
+    # chặn nhau) không xoá link của nhau. App chạy 1 worker nên khoá trong tiến trình đủ.
+    async with _recent_lock:
+        recent = await _load_recent()
+        today_keys = [*recent.get(today, []), *(_url_key(item.url) for item in items)]
+        data = {today: list(dict.fromkeys(today_keys))[-_RECENT_PER_DAY:]}
+        oldest = (date.fromisoformat(today) - timedelta(days=_RECENT_DAYS - 1)).isoformat()
+        data.update({day: keys for day, keys in recent.items() if oldest <= day < today})
+        try:
+            await db.set_setting(_RECENT_KEY, json.dumps(data, ensure_ascii=False))
+        except Exception:
+            logger.warning("morning_news: không lưu được danh sách tin đã gửi.", exc_info=True)
 
 
 async def _track_feed_health(results: dict[str, str | None], now: datetime) -> None:
