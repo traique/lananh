@@ -35,9 +35,7 @@ jobs:
         with:
           node-version: "22"
 
-      # requirements.txt chỉ chứa package PyPI (kể cả dependency thật của vnstock).
-      # vnstock/vnai/vnstock_ezchart ở requirements-vnstock.txt (kho riêng, không có
-      # trong PyPI advisory DB) nên không quét.
+      # requirements.txt chứa mọi package Python của app (chỉ PyPI).
       - name: pip-audit (requirements.txt)
         run: |
           python -m pip install --upgrade pip pip-audit

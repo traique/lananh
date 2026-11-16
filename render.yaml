@@ -371,8 +371,6 @@ services:
       # (core/memtrim.py: gc.collect + malloc_trim); 0 = tắt phần định kỳ.
       - key: MEMORY_TRIM_INTERVAL_SEC
         value: "600"
-      - key: VNSTOCK_API_KEY
-        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: OPENROUTER_API_KEY

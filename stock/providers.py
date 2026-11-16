@@ -4,11 +4,12 @@ Nguồn dùng ở đây đều CÔNG KHAI, KHÔNG CẦN API KEY:
 - DNSE chart-api: OHLCV theo ngày, dùng cho phân tích kỹ thuật.
 - DNSE price-api (GraphQL): giá khớp lệnh gần nhất, realtime, chỉ áp dụng cho cổ phiếu.
 - VCI gap-chart (REST, httpx): OHLCV dự phòng khi DNSE lỗi.
+- VCI danh sách mã (REST qua stock/vci_direct.py): mã đang niêm yết + sàn.
 - Google News RSS: tin tức theo mã.
 
 RAM: đường giá/OHLCV (cảnh báo giá, danh mục, trang thị trường, bản tin sáng) chỉ
-dùng httpx - KHÔNG nạp vnstock/pandas. vnstock chỉ còn cho danh sách mã/sàn
-(phân tích, backtest) và stock/fundamentals.py (phân tích đầy đủ).
+dùng httpx - KHÔNG nạp pandas. Không còn dùng thư viện vnstock (bản 4.x bị khoá từ
+10/11/2026); get_vnstock_semaphore giữ tên cũ, giới hạn request VCI đồng thời.
 """
 
 import asyncio
@@ -22,6 +23,8 @@ from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
 import httpx
+
+from stock import vci_direct
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +57,6 @@ async def close_http_client() -> None:
         _client = None
 
 
-_vnstock_auth_attempted = False
 _vnstock_semaphore: asyncio.Semaphore | None = None
 
 
@@ -75,31 +77,6 @@ def get_vnstock_semaphore() -> asyncio.Semaphore:
 
         _vnstock_semaphore = asyncio.Semaphore(max(1, config.VNSTOCK_MAX_CONCURRENCY))
     return _vnstock_semaphore
-
-
-def ensure_vnstock_api_key() -> None:
-    """Đăng ký VNSTOCK_API_KEY (nếu có set) cho gói Community (60 req/phút,
-    8 kỳ BCTC) thay vì mặc định Guest (20 req/phút, 4 kỳ). Gọi 1 lần duy
-    nhất (guard bằng flag, không cần lock - gọi trùng ở 2 luồng cùng lúc lúc
-    khởi động chỉ tốn 1 lần đăng ký thừa, vô hại) trước bất kỳ lệnh gọi
-    `vnstock` nào trong process. Không set biến môi trường -> no-op, vnstock
-    chạy Guest như cũ. Yêu cầu vnstock>=3.5.1 (bản đang pin trước đó,
-    3.2.0, chưa có module xác thực này)."""
-    global _vnstock_auth_attempted
-    if _vnstock_auth_attempted:
-        return
-    _vnstock_auth_attempted = True
-    import os
-
-    api_key = os.getenv("VNSTOCK_API_KEY", "").strip()
-    if not api_key:
-        return
-    try:
-        from vnstock.core.utils.auth import register_user
-
-        register_user(api_key=api_key)
-    except Exception:
-        logger.warning("vnstock: đăng ký API key thất bại, tiếp tục ở mức Guest.", exc_info=True)
 
 
 def is_index_symbol(symbol: str) -> bool:
@@ -371,22 +348,32 @@ async def _fetch_ohlcv_vci(symbol: str, days: int) -> OhlcvSeries:
         return OhlcvSeries(symbol=sym, source="vci")
 
 
+# board của danh sách mã VCI -> tên sàn policy dùng; DELISTED/BOND bị bỏ.
+_LISTING_BOARDS = {"HSX": "HOSE", "HOSE": "HOSE", "HNX": "HNX", "UPCOM": "UPCOM"}
+
+
+def exchange_map_from_listing(rows: list[dict]) -> dict[str, str]:
+    """Hàm thuần: dòng ``vci_direct.fetch_listing()`` -> {mã: HOSE|HNX|UPCOM}."""
+    result: dict[str, str] = {}
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        exchange = _LISTING_BOARDS.get(str(row.get("board") or "").strip().upper())
+        if exchange and _SYMBOL_RE.fullmatch(symbol):
+            result[symbol] = exchange
+    return result
+
+
+def stock_symbols_from_listing(rows: list[dict]) -> list[str]:
+    """Hàm thuần: mã CỔ PHIẾU đang niêm yết (bỏ chứng quyền, ETF, trái phiếu, mã đã huỷ)."""
+    stocks = [row for row in rows if str(row.get("type") or "").strip().upper() == "STOCK"]
+    return sorted(exchange_map_from_listing(stocks))
+
+
 def _fetch_symbol_universe_sync():
     try:
-        ensure_vnstock_api_key()
-        from vnstock import Listing
-
-        df = Listing(source="VCI").all_symbols()
-        cols = {str(c).lower(): c for c in df.columns}
-        c = next((cols[k] for k in ("symbol", "ticker", "code") if k in cols), None)
-        return sorted(
-            {
-                str(v).strip().upper()
-                for v in df[c]
-                if c is not None and _SYMBOL_RE.fullmatch(str(v).strip().upper())
-            }
-        )
+        return stock_symbols_from_listing(vci_direct.fetch_listing())
     except Exception:
+        logger.debug("Không lấy được danh sách mã từ VCI", exc_info=True)
         return []
 
 
@@ -414,32 +401,9 @@ _exchange_map_cache: tuple[float, dict[str, str]] | None = None
 
 def _fetch_exchange_map_sync() -> dict[str, str]:
     try:
-        ensure_vnstock_api_key()
-        from vnstock import Listing
-
-        df = Listing(source="VCI").symbols_by_exchange()
-        cols = {str(c).lower().replace("_", ""): c for c in df.columns}
-        symbol_col = next((cols[k] for k in ("symbol", "ticker", "code") if k in cols), None)
-        exchange_col = next(
-            (cols[k] for k in ("exchange", "exchangename", "market", "floor") if k in cols), None
-        )
-        if symbol_col is None or exchange_col is None:
-            return {}
-        result = {}
-        for sym, ex in zip(df[symbol_col], df[exchange_col], strict=False):
-            symbol = str(sym).strip().upper()
-            exchange = str(ex).strip().upper()
-            if not _SYMBOL_RE.fullmatch(symbol):
-                continue
-            if exchange in {"HOSE", "HSX"}:
-                result[symbol] = "HOSE"
-            elif exchange in {"HNX"}:
-                result[symbol] = "HNX"
-            elif exchange == "UPCOM":
-                result[symbol] = "UPCOM"
-        return result
+        return exchange_map_from_listing(vci_direct.fetch_listing())
     except Exception:
-        logger.debug("Không lấy được exchange map từ vnstock", exc_info=True)
+        logger.debug("Không lấy được danh sách sàn từ VCI", exc_info=True)
         return {}
 
 

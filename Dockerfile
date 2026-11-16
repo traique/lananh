@@ -31,12 +31,10 @@ COPY --from=gateway /usr/local/bin/node /usr/local/bin/node
 
 WORKDIR /app
 
-# PyPI cho mọi package; kho riêng vnstocks.com CHỈ cho vnstock/vnai/vnstock_ezchart
-# (ghim ==, --no-deps - xem requirements-vnstock.txt). pip check bắt dependency
-# thiếu/lệch ngay lúc build thay vì lúc import trên Render.
-COPY requirements.txt requirements-vnstock.txt ./
+# Chỉ PyPI. pip check bắt dependency thiếu/lệch ngay lúc build thay vì lúc import
+# trên Render.
+COPY requirements.txt ./
 RUN python -m pip install -r requirements.txt \
-    && python -m pip install --no-deps -r requirements-vnstock.txt \
     && python -m pip check
 
 COPY . .

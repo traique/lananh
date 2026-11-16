@@ -771,7 +771,7 @@ VCI ───┘                         │
 
 Năng lực hiện tại:
 
-- DNSE OHLCV với failover tự động sang VCI gap-chart gọi THẲNG bằng httpx (`stock/providers.py`); lịch sự kiện quyền lấy thẳng REST `/v1/events` của VCI (`stock/vci_direct.py`). Việc nền về giá (cảnh báo giá trong phiên, cảnh báo/sự kiện danh mục, bản tin sáng, trang thị trường, watchlist) KHÔNG nạp `vnstock`/pandas (~50 MB RSS); `vnstock` chỉ còn cho dữ liệu cơ bản/danh sách sàn khi phân tích đầy đủ và backtest (đăng ký `VNSTOCK_API_KEY` free tại vnstocks.com/login để tăng rate limit 20→60 req/phút và số kỳ BCTC 4→8, không bắt buộc).
+- DNSE OHLCV với failover tự động sang VCI gap-chart gọi THẲNG bằng httpx (`stock/providers.py`); lịch sự kiện quyền lấy thẳng REST `/v1/events` của VCI (`stock/vci_direct.py`). Việc nền về giá (cảnh báo giá trong phiên, cảnh báo/sự kiện danh mục, bản tin sáng, trang thị trường, watchlist) KHÔNG nạp pandas. Không còn dùng thư viện `vnstock` (bản 4.x bị khoá từ 10/11/2026, kho vnstocks.com trả 410): danh sách mã + sàn (bước giá) và khối ngoại phiên gần nhất lấy thẳng REST `trading.vietcap.com.vn` (`vci_direct.fetch_listing`/`fetch_match_price`), lịch cổ tức/ĐHCĐ của phân tích đầy đủ qua `/v1/events`; tin công ty VCI bỏ, tin của mã lấy từ Google News.
 - Hỏi giá mà không ra mã: chỉ báo "chưa tra ra mã cổ phiếu" khi câu RÕ RÀNG hỏi cổ phiếu (có "cổ phiếu/mã/CK", hoặc chỉ gồm token dạng mã như "giá xyz bao nhiêu"); hỏi giá sản phẩm/hàng hoá ("giá samsung s24 plus cũ", "giá iphone 15 pro max") đi xuống chat và BẮT tra web thật (`stock.analysis.wants_product_price`).
 - Strict contract cho độ dài mảng, số hữu hạn, quan hệ OHLC và ngày giao dịch.
 - RSI, MACD, MA/EMA, Bollinger, ADX, ATR, Donchian, thanh khoản, distribution days và key levels.
@@ -1038,15 +1038,14 @@ cd lananh
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt                  # chỉ PyPI
-pip install --no-deps -r requirements-vnstock.txt    # vnstock, vnai, vnstock_ezchart (kho vnstocks.com)
 pip check
 cp .env.example .env
 python main.py
 ```
 
-Kho vnstocks.com chỉ phục vụ đúng 3 package ghim `==` trong `requirements-vnstock.txt`
-(cài `--no-deps`); dependency thật của chúng nằm trong `requirements.txt`. Khi nâng
-vnstock, đối chiếu `Requires-Dist` rồi cập nhật dependency tương ứng.
+Không còn dùng thư viện vnstock: bản 4.x bị nhà phát triển khoá từ 10/11/2026 (kho
+vnstocks.com trả 410). Dữ liệu cổ phiếu lấy thẳng REST VCI (`stock/vci_direct.py`) và
+DNSE (`stock/providers.py`).
 
 Staging: không tạo service Render thứ hai (750 giờ free tính chung workspace, và
 không chạy được gateway Zalo thứ hai). Muốn thử thì tạo 1 bot Telegram test
@@ -1943,12 +1942,11 @@ khi chính bot chết):
 ## Kiểm tra chất lượng
 
 ```bash
-pip install -r requirements-dev.txt
-pip install --no-deps -r requirements-vnstock.txt && pip check
+pip install -r requirements-dev.txt && pip check
 ruff check .                         # gồm bugbear (B) và ASYNC
 ruff format --check <file đã sửa>   # repo cũ chưa format toàn bộ
 pyright                              # pyrightconfig.json, mức basic (CI fail khi có error)
-pip-audit -r requirements.txt --strict   # chỉ PyPI; 3 package kho vnstocks.com không quét
+pip-audit -r requirements.txt --strict
 python -m compileall -q .
 pytest -q                            # test/conftest.py chặn mạng thật; @pytest.mark.network để mở
 python -m core.migrations            # migrations.lock khớp file migration

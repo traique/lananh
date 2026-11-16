@@ -400,3 +400,42 @@ def fetch_event_history(symbol: str) -> list[dict]:
     payload = data.get("data") if isinstance(data, dict) else None
     rows = payload.get("content") if isinstance(payload, dict) else payload
     return normalize_event_rows(rows if isinstance(rows, list) else [])
+
+
+# ─── Danh sách mã + bảng giá trading.vietcap.com.vn (thay vnstock) ──────────────
+# vnstock 4.x bị khoá từ 10/11/2026 (kho vnstocks.com trả 410). Hai endpoint công
+# khai dưới đây là nơi Listing/Trading(source="VCI") của vnstock gọi; không cần
+# cookie/khoá (đã thử 16/11/2026, trả JSON nén gzip - requests tự giải nén):
+#   GET  {_PRICE_API}/getAll  -> list {symbol, type: STOCK|CW|ETF|BOND|FU|...,
+#        board: HSX|HNX|UPCOM|DELISTED|BOND, organName...} (~3.800 dòng)
+#   POST {_PRICE_API}/getList {"symbols": [...]} -> list {listingInfo, bidAsk, matchPrice}
+#        matchPrice: foreignBuyVolume/foreignSellVolume (phiên gần nhất, về 0 trước
+#        giờ mở cửa), currentRoom/totalRoom (số cổ phiếu NĐTNN còn được mua / tối đa).
+_PRICE_API = "https://trading.vietcap.com.vn/api/price/symbols"
+_PRICE_HEADERS = {**_HEADERS, "Origin": "https://trading.vietcap.com.vn"}
+
+
+def fetch_listing() -> list[dict]:
+    """Mọi mã trên VCI (kể cả mã đã huỷ niêm yết, chứng quyền, trái phiếu). Có thể
+    raise (mạng/HTTP/JSON) - caller tự xử lý và nên cache kết quả đã rút gọn."""
+    response = requests.get(
+        f"{_PRICE_API}/getAll", headers=_PRICE_HEADERS, timeout=_REQUEST_TIMEOUT_SEC
+    )
+    response.raise_for_status()
+    rows = response.json()
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def fetch_match_price(symbol: str) -> dict:
+    """Khối ``matchPrice`` trên bảng giá VCI của 1 mã ({} nếu không có). Có thể raise."""
+    response = requests.post(
+        f"{_PRICE_API}/getList",
+        json={"symbols": [symbol.strip().upper()]},
+        headers=_PRICE_HEADERS,
+        timeout=_REQUEST_TIMEOUT_SEC,
+    )
+    response.raise_for_status()
+    rows = response.json()
+    first = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+    match = first.get("matchPrice")
+    return match if isinstance(match, dict) else {}

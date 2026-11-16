@@ -205,14 +205,9 @@ TAVILY_CALL_TIMEOUT_SEC = _env_int("TAVILY_CALL_TIMEOUT_SEC", 20)
 # trong prompt thì lọc lỏng - giữ link không query, chỉ vô hiệu link mang dữ liệu.
 REPLY_URL_FILTER = os.getenv("REPLY_URL_FILTER", "untrusted").strip().lower() or "untrusted"
 
-# vnstock — API key MIỄN PHÍ (gói Community, đăng ký tại vnstocks.com/login)
-# nâng rate limit 20 -> 60 request/phút và số kỳ BCTC 4 -> 8 kỳ so với chế độ
-# khách. Không set thì vnstock vẫn chạy ở mức Guest như trước (xem
-# stock/providers.py::ensure_vnstock_api_key()).
-VNSTOCK_API_KEY = os.getenv("VNSTOCK_API_KEY", "").strip()
-
-# Giới hạn số request đồng thời tới VCI/vnstock trên toàn app (xem
-# stock/providers.py::get_vnstock_semaphore()) - tránh bắn hơn chục request
+# Giới hạn số request đồng thời tới VCI trên toàn app (xem
+# stock/providers.py::get_vnstock_semaphore(), tên cũ từ thời còn dùng vnstock -
+# thư viện đã bỏ 16/11/2026) - tránh bắn hơn chục request
 # song song cho 1 lượt phân tích khiến VCI rate-limit/chặn tạm thời, làm cả
 # valuation lẫn khối ngoại đều rỗng cùng lúc.
 VNSTOCK_MAX_CONCURRENCY = _env_int("VNSTOCK_MAX_CONCURRENCY", 3)

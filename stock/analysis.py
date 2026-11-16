@@ -610,11 +610,11 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
         providers.fetch_ohlcv(symbol, days=260), providers.fetch_ohlcv("VNINDEX", days=260),
         providers.fetch_quote(symbol), providers.fetch_news(symbol),
         _safe_sector_prompt(symbol), _safe_fundamentals_prompt(symbol),
-        fundamentals.fetch_company_news(symbol), providers.fetch_symbol_exchange(symbol),
+        providers.fetch_symbol_exchange(symbol),
         return_exceptions=True
     )
     # Chỉ exception của OHLCV mã chính (task 0) mới làm chết pipeline - đây
-    # là dữ liệu bắt buộc duy nhất. VNINDEX/quote/news/company_news là dữ liệu
+    # là dữ liệu bắt buộc duy nhất. VNINDEX/quote/news/sàn là dữ liệu
     # TÙY CHỌN (downstream có guard cho thiếu): trước đây 1 timeout của Google
     # News là toàn bộ /phantich trả lỗi dù mọi chỉ báo chính vẫn tính được.
     _OPTIONAL_FALLBACKS = {
@@ -622,21 +622,16 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
         2: None,          # quote -> realtime_quote_line = None
         3: [],            # news -> không có tin
         5: "",            # fundamentals prompt -> rỗng
-        6: [],            # company news -> rỗng
-        7: None,          # exchange -> policy dùng bước giá 100đ an toàn
+        6: None,          # exchange -> policy dùng bước giá 100đ an toàn
     }
     for idx, r in enumerate(results):
         if isinstance(r, BaseException):
             if idx == 0:
                 raise r
             logger.warning("Task dữ liệu phụ #%s lỗi cho %s - bỏ qua: %s", idx, symbol, r)
-            results[idx] = _OPTIONAL_FALLBACKS.get(idx, [] if idx in (3, 6) else "")
-    symbol_series, vnindex_series, quote, news, sector_prompt, fundamentals_prompt, company_news, exchange = results
-    # Tin công ty CHÍNH CHỦ từ VCI (đã confirmed=True) + tin cào Google News,
-    # loại trùng theo tiêu đề (không phân biệt hoa/thường).
+            results[idx] = _OPTIONAL_FALLBACKS.get(idx, [] if idx == 3 else "")
+    symbol_series, vnindex_series, quote, news, sector_prompt, fundamentals_prompt, exchange = results
     news = list(news or [])
-    seen_titles = {n.title.strip().lower() for n in news}
-    news = news + [n for n in (company_news or []) if n.title.strip().lower() not in seen_titles]
     if not symbol_series.closes: return None
 
     # Nến hôm nay chưa đóng cửa -> loại khỏi CẢ chuỗi mã lẫn VNINDEX (cùng mốc

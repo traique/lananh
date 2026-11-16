@@ -45,7 +45,6 @@ def _collect_secrets() -> list[str]:
         config.OPENROUTER_API_KEY,
         config.TAVILY_API_KEY,
         config.AGNES_API_KEY,
-        config.VNSTOCK_API_KEY,
         config.ADMIN_PASS,
         config.SETTINGS_ENC_KEY,
         config.SETTINGS_ENC_KEY_OLD,

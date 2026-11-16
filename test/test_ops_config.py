@@ -1,6 +1,6 @@
 """Ghim các bất biến vận hành/CI (đọc file cấu hình, không chạy Docker/mạng):
-deploy chỉ khi CI xanh, health check nhẹ, smoke test image, kho vnstocks.com chỉ
-dùng cho đúng 3 package --no-deps, base image ghim distro."""
+deploy chỉ khi CI xanh, health check nhẹ, smoke test image, không còn kho riêng
+vnstocks.com/thư viện vnstock, base image ghim distro."""
 
 import re
 from pathlib import Path
@@ -66,46 +66,31 @@ def test_docker_build_chay_smoke_test_trong_image():
         assert needle in smoke
 
 
-def test_kho_vnstocks_chi_dung_cho_3_package_no_deps():
-    vendor = "vnstocks.com/api/simple"
-    for path in (".github/workflows/ci.yml", ".github/workflows/audit.yml", "Dockerfile"):
-        text = (ROOT / path).read_text("utf-8")
+def test_khong_con_kho_vnstocks_va_thu_vien_vnstock():
+    """vnstock 4.x bị khoá từ 10/11/2026 (kho vnstocks.com trả 410, CI/Docker đỏ ở
+    bước cài): dữ liệu cổ phiếu lấy thẳng REST VCI (stock/vci_direct.py). Không cài
+    lại từ kho riêng, không import lại vnstock."""
+    assert not (ROOT / "requirements-vnstock.txt").exists()
+    for path in (
+        ".github/workflows/ci.yml",
+        ".github/workflows/audit.yml",
+        ".github/workflows/evals.yml",
+        "Dockerfile",
+        "requirements.txt",
+        "requirements-dev.txt",
+        ".claude/hooks/session-start.sh",
+    ):
+        lines = (ROOT / path).read_text("utf-8").splitlines()
+        text = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
         assert "--extra-index-url" not in text, path
-        assert vendor not in text, path
-    main = _req_names("requirements.txt")
-    pinned = _req_names("requirements-vnstock.txt")
-    assert set(pinned) == {"vnstock", "vnai", "vnstock-ezchart"}
-    assert all(pinned.values()), "phải ghim == từng package của kho riêng"
-    assert not set(pinned) & set(main)
-    vendor_lines = (ROOT / "requirements-vnstock.txt").read_text("utf-8")
-    assert f"--index-url https://{vendor}" in vendor_lines
-    assert vendor not in (ROOT / "requirements.txt").read_text("utf-8")
-    # Docker + mọi job CI cài file kho riêng với --no-deps rồi pip check.
-    dockerfile = (ROOT / "Dockerfile").read_text("utf-8")
-    assert "pip install --no-deps -r requirements-vnstock.txt" in dockerfile
-    assert "pip check" in dockerfile
-    ci = (ROOT / ".github/workflows/ci.yml").read_text("utf-8")
-    assert ci.count("pip install --no-deps -r requirements-vnstock.txt") == ci.count(
-        "pip install -r requirements-dev.txt"
-    )
-
-
-def test_dependency_that_cua_vnstock_duoc_liet_ke_tren_pypi():
-    """vnstock/vnai/vnstock_ezchart cài --no-deps: thiếu dependency nào trong
-    requirements.txt thì image hỏng lúc import (pip check bắt ở build)."""
-    main = _req_names("requirements.txt")
-    needed = {
-        # vnstock 4.0.9
-        "requests", "beautifulsoup4", "pandas", "seaborn", "openpyxl", "pydantic",
-        "psutil", "packaging", "importlib-metadata", "tenacity", "pytz",
-        # vnai 2.6.2
-        "cffi",
-        # vnstock_ezchart 1.0.2
-        "numpy", "matplotlib", "cycler", "mplfinance",
-    }  # fmt: skip
-    assert needed <= set(main), needed - set(main)
-    major, minor = (int(x) for x in main["numpy"].split(".")[:2])
-    assert (major, minor) < (2, 3)  # vnstock_ezchart: numpy<2.3
+        assert "vnstocks.com" not in text, path
+        assert "requirements-vnstock" not in text, path
+    assert not {"vnstock", "vnai", "vnstock-ezchart"} & set(_req_names("requirements.txt"))
+    assert "pip check" in (ROOT / "Dockerfile").read_text("utf-8")
+    imports = re.compile(r"^\s*(?:from|import)\s+(?:vnstock|vnai)\b", re.M)
+    for package in ("ai", "channels", "core", "handlers", "services", "stock", "scripts"):
+        for path in (ROOT / package).rglob("*.py"):
+            assert not imports.search(path.read_text("utf-8")), path
 
 
 def test_base_image_ghim_distro():
@@ -121,8 +106,6 @@ def test_dependabot_co_cooldown_va_theo_doi_docker():
     assert {"pip", "npm", "github-actions", "docker"} <= set(ecosystems)
     for update in updates:
         assert update["cooldown"]["default-days"] >= 7, update["package-ecosystem"]
-    ignored = {i["dependency-name"] for i in ecosystems["pip"]["ignore"]}
-    assert {"vnstock", "vnai", "vnstock_ezchart"} <= ignored
 
 
 def test_workflow_khong_xin_quyen_ghi():
