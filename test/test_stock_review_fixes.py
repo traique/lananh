@@ -717,7 +717,6 @@ async def test_build_context_gap_thuong_chua_dieu_chinh(monkeypatch):
     """Gap -20% (thưởng 1:4) 3 phiên trước, nguồn quyền không có dữ liệu:
     quality phải degraded, policy không ra breakdown/SELL, hỗ trợ/kháng cự
     chỉ lấy từ các phiên SAU gap (không lấy đỉnh cũ chưa chia thưởng)."""
-    from stock import fundamentals
 
     n = 120
     closes = [30_000.0 + i * 20 for i in range(n)]
@@ -763,7 +762,6 @@ async def test_build_context_gap_thuong_chua_dieu_chinh(monkeypatch):
     monkeypatch.setattr(providers, "fetch_quote", none)
     monkeypatch.setattr(providers, "fetch_news", empty)
     monkeypatch.setattr(providers, "fetch_symbol_exchange", none)
-    monkeypatch.setattr(fundamentals, "fetch_company_news", empty)
     monkeypatch.setattr(sa, "_safe_sector_prompt", blank)
     monkeypatch.setattr(sa, "_safe_fundamentals_prompt", blank)
     monkeypatch.setattr(ca, "fetch_corporate_events", no_events)

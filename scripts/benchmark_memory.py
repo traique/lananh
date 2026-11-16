@@ -5,9 +5,8 @@ Mỗi kịch bản chạy trong 1 tiến trình Python MỚI (RSS không lẫn n
 - ``web``: chỉ ``import web`` (mức nền sau khởi động).
 - ``nen_moi``: import web rồi chạy đường việc nền nhẹ như cảnh báo giá/danh mục
   (fetch_quote + fetch_ohlcv 90 phiên khi DNSE lỗi -> dự phòng VCI qua httpx, lịch
-  sự kiện quyền qua REST VCI) với HTTP giả lập - đường sau bản sửa 27/10.
-- ``nen_cu``: như trên nhưng nạp thêm đúng các module vnstock mà đường cũ nạp
-  (Quote cho dự phòng OHLCV, Company cho lịch quyền) - kéo theo pandas.
+  sự kiện quyền qua REST VCI) với HTTP giả lập - đường sau bản sửa 27/10. (Kịch
+  bản ``nen_cu`` nạp vnstock để so sánh đã bỏ cùng thư viện vnstock, 16/11/2026.)
 - ``trim``: import web, mô phỏng 1 việc nặng (JSON vài chục MB + nhiều buffer cỡ
   vừa như PCM/ảnh/bài báo, xen object sống sót gây phân mảnh heap), giải phóng rồi đo
   RSS trước/sau ``core.memtrim.trim_now()`` (gc.collect + malloc_trim(0)).
@@ -25,7 +24,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCENARIOS = ("web", "nen_moi", "nen_cu", "trim")
+SCENARIOS = ("web", "nen_moi", "trim")
 
 
 def _status(field: str) -> float | None:
@@ -120,9 +119,7 @@ def run_scenario(name: str) -> dict:
     import web  # noqa: F401 - đo mức nền sau import app
 
     result: dict = {"scenario": name, "after_import_mib": _status("VmRSS")}
-    if name in ("nen_moi", "nen_cu"):
-        if name == "nen_cu":
-            from vnstock.explorer.vci import Company, Quote  # noqa: F401
+    if name == "nen_moi":
         asyncio.run(_background_path())
         result["rss_mib"] = _status("VmRSS")
     elif name == "trim":

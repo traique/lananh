@@ -264,6 +264,61 @@ async def test_read_rss_bao_loi_khi_khong_phai_feed(monkeypatch):
         await web_reader.read_rss("https://example.com/khong-phai-rss")
 
 
+def _rss_with_dates(hours_ago: dict[str, float | None]) -> bytes:
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+
+    now = datetime.now(timezone.utc)
+    items = []
+    for title, hours in hours_ago.items():
+        pub = (
+            f"<pubDate>{format_datetime(now - timedelta(hours=hours))}</pubDate>"
+            if hours is not None
+            else ""
+        )
+        items.append(
+            f"<item><title>{title}</title><link>https://example.com/{title}</link>{pub}</item>"
+        )
+    return (
+        '<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>'
+        + "".join(items)
+        + "</channel></rss>"
+    ).encode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_read_rss_bo_tin_qua_cu_truoc_khi_lay_so_muc(monkeypatch):
+    body = _rss_with_dates({"TinCu": 50, "TinMoi": 2, "TinKhongNgay": None})
+    monkeypatch.setattr(
+        web_reader,
+        "_get_client",
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, content=body))
+        ),
+    )
+    text = await web_reader.read_rss("https://example.com/rss.xml", limit=2, max_age_hours=36)
+    # Tin cũ bị bỏ TRƯỚC khi lấy 2 mục; tin không ghi ngày vẫn giữ.
+    assert "TinCu" not in text
+    assert "1. TinMoi" in text and "2. TinKhongNgay" in text
+    # Mặc định (agent đọc RSS) không lọc theo ngày.
+    assert "TinCu" in await web_reader.read_rss("https://example.com/rss.xml")
+
+
+@pytest.mark.asyncio
+async def test_read_rss_bao_loi_khi_khong_con_tin_moi(monkeypatch):
+    body = _rss_with_dates({"TinCu": 50, "TinCuHon": 80})
+    monkeypatch.setattr(
+        web_reader,
+        "_get_client",
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, content=body))
+        ),
+    )
+    with pytest.raises(web_reader.FeedStaleError, match="trong 36 giờ qua") as caught:
+        await web_reader.read_rss("https://example.com/rss.xml", max_age_hours=36)
+    assert 49 < caught.value.newest_age_hours < 51  # tin mới nhất: 50 giờ trước
+
+
 @pytest.mark.asyncio
 async def test_read_rss_tu_choi_url_noi_bo_truoc_khi_fetch(monkeypatch):
     called = False

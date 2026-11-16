@@ -14,8 +14,8 @@
 # advisory mới, không phụ thuộc commit) nằm riêng ở audit.yml (PR + lịch tuần),
 # không chặn deploy hotfix.
 #
-# Cài Python: PyPI cho mọi package; kho riêng vnstocks.com chỉ cho 3 package ghim
-# trong requirements-vnstock.txt (--no-deps), rồi pip check.
+# Cài Python: chỉ PyPI (requirements-dev.txt kéo theo requirements.txt), rồi pip check.
+# vnstock (kho riêng) đã bỏ: bản 4.x bị khoá từ 10/11/2026.
 name: CI
 
 on:
@@ -48,13 +48,11 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-            requirements-vnstock.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          pip install --no-deps -r requirements-vnstock.txt
           pip check
 
       - name: Ruff lint
@@ -103,13 +101,11 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-            requirements-vnstock.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          pip install --no-deps -r requirements-vnstock.txt
           pip check
 
       - name: Pytest
@@ -127,7 +123,6 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-            requirements-vnstock.txt
 
       - uses: actions/setup-node@v4
         with:
@@ -137,7 +132,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          pip install --no-deps -r requirements-vnstock.txt
           pip check
 
       # pyrightconfig.json: mức basic, phần lớn rule ở mức warning - job này chỉ
@@ -191,7 +185,6 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-            requirements-vnstock.txt
 
       - uses: actions/setup-node@v4
         with:
@@ -203,7 +196,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          pip install --no-deps -r requirements-vnstock.txt
           pip check
 
       - name: Install PGlite
