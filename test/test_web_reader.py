@@ -314,8 +314,9 @@ async def test_read_rss_bao_loi_khi_khong_con_tin_moi(monkeypatch):
             transport=httpx.MockTransport(lambda r: httpx.Response(200, content=body))
         ),
     )
-    with pytest.raises(web_reader.WebReaderError, match="trong 36 giờ qua"):
+    with pytest.raises(web_reader.FeedStaleError, match="trong 36 giờ qua") as caught:
         await web_reader.read_rss("https://example.com/rss.xml", max_age_hours=36)
+    assert 49 < caught.value.newest_age_hours < 51  # tin mới nhất: 50 giờ trước
 
 
 @pytest.mark.asyncio

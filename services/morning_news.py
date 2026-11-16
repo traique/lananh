@@ -31,8 +31,9 @@ Lọc tin trước khi đưa AI chọn (thuần code, không tốn lượt AI):
 - Lời dặn chọn tin có thang giá trị (bỏ tin đồn, PR, khuyến nghị mua bán...); sau đó
   code giữ mỗi nhóm (kinh tế / thời sự / công nghệ, suy từ link feed) tối đa
   ``_MAX_PER_GROUP`` tin, còn chỗ thì nhóm chưa có tin nào được thêm 1 tin.
-- Feed lỗi (hoặc không còn tin mới) ``_FEED_DEAD_DAYS`` ngày liền thì báo chủ bot 1
-  lần (setting ``morning_news:feed_health``): báo hay đổi link RSS.
+- Feed lỗi ``_FEED_DEAD_DAYS`` ngày liền thì báo chủ bot 1 lần (setting
+  ``morning_news:feed_health``): báo hay đổi link RSS. Feed chỉ tạm im (cuối tuần,
+  Tết) không tính là lỗi; tin mới nhất quá ``_STALE_FEED_HOURS`` giờ mới tính.
 """
 
 import asyncio
@@ -157,7 +158,8 @@ _SOURCE_LABELS = {
     "tuoitre.vn": "Tuổi Trẻ",
     "genk.vn": "GenK",
 }
-# Tin đăng quá 36 giờ bị bỏ: đủ rộng cho sáng thứ Hai (feed chứng khoán ít tin cuối tuần).
+# Tin đăng quá 36 giờ bị bỏ. Feed im cả 36 giờ (chứng khoán sáng Chủ nhật/thứ Hai, Tết)
+# chỉ vắng mặt trong bản tin hôm đó, không tính là feed lỗi (_STALE_FEED_HOURS).
 _MAX_AGE_HOURS = 36
 _MAX_ITEMS = 8  # tối đa 8 tin trong mục "đọc bài N"
 _MIN_ITEMS = 5  # model chọn ít hơn thì code bù cho đủ
@@ -203,6 +205,8 @@ _RECENT_PER_DAY = 40  # /tintuc gọi nhiều lần trong ngày: vẫn có trầ
 # {link feed: {"since": ngày ISO lỗi đầu, "alerted": bool}} - chỉ feed đang lỗi.
 _FEED_HEALTH_KEY = "morning_news:feed_health"
 _FEED_DEAD_DAYS = 3
+# Feed còn trả lời nhưng tin mới nhất đã quá 7 ngày: coi như bị bỏ, tính là lỗi.
+_STALE_FEED_HOURS = 7 * 24
 
 
 def _feed_group(feed_url: str) -> str:
@@ -490,19 +494,15 @@ def _select_important_items(
 def _fresh_items(items: list[_NewsItem], sent_before: set[str]) -> list[_NewsItem]:
     """Bỏ link trùng giữa các feed (giữ bản ở feed đứng trước) và tin đã lên bản tin
     những ngày trước. Toàn tin đã gửi thì giữ cả (thà lặp còn hơn không có bản tin)."""
-    unique: list[_NewsItem] = []
-    seen: set[str] = set()
+    unique: dict[str, _NewsItem] = {}
     for item in items:
-        key = _url_key(item.url)
-        if key not in seen:
-            seen.add(key)
-            unique.append(item)
-    fresh = [item for item in unique if _url_key(item.url) not in sent_before]
+        unique.setdefault(_url_key(item.url), item)
+    fresh = [item for key, item in unique.items() if key not in sent_before]
     if len(fresh) < len(unique):
         logger.info(
             "morning_news: bỏ %d tin đã lên bản tin những ngày trước.", len(unique) - len(fresh)
         )
-    return fresh or unique
+    return fresh or list(unique.values())
 
 
 async def _load_recent() -> dict[str, list[str]]:
@@ -524,7 +524,9 @@ def _sent_before(recent: dict[str, list[str]], today: str) -> set[str]:
     return {key for day, keys in recent.items() if day < today for key in keys}
 
 
-async def _save_recent(recent: dict[str, list[str]], today: str, items: list[_NewsItem]) -> None:
+async def _save_recent(today: str, items: list[_NewsItem]) -> None:
+    # Đọc lại ngay trước khi ghi: 2 lượt /tintuc chạy cùng lúc không xoá link của nhau.
+    recent = await _load_recent()
     today_keys = [*recent.get(today, []), *(_url_key(item.url) for item in items)]
     data = {today: list(dict.fromkeys(today_keys))[-_RECENT_PER_DAY:]}
     oldest = (date.fromisoformat(today) - timedelta(days=_RECENT_DAYS - 1)).isoformat()
@@ -640,6 +642,10 @@ async def build_digest(mode: str = "morning") -> str | None:
             all_items.extend(_parse_feed_items(text, feed_index, source, _feed_group(url)))
             feed_errors[url] = None
             logger.info("morning_news: đọc feed '%s' OK (%d ký tự).", url, len(text))
+        except web_reader.FeedStaleError as exc:
+            # Feed im (cuối tuần, Tết) chưa phải feed chết; im quá 7 ngày mới tính là lỗi.
+            feed_errors[url] = str(exc) if exc.newest_age_hours > _STALE_FEED_HOURS else None
+            logger.info("morning_news: feed '%s' không có tin mới: %s", url, exc)
         except web_reader.WebReaderError as exc:
             feed_errors[url] = str(exc)
             logger.warning("morning_news: lỗi đọc feed '%s': %s", url, exc)
@@ -650,9 +656,9 @@ async def build_digest(mode: str = "morning") -> str | None:
         return None
 
     known_texts = list(feed_texts)  # chữ nguồn để soát số và chức danh trong bản AI viết
-    recent = await _load_recent() if all_items else {}
     if all_items:
-        important_items = await _choose_items(_fresh_items(all_items, _sent_before(recent, today)))
+        sent_before = _sent_before(await _load_recent(), today)
+        important_items = await _choose_items(_fresh_items(all_items, sent_before))
         excerpts = await _read_excerpts(important_items)
         # Tải RSS + bóc HTML các bài (cả /tintuc): dọn heap khi xong (core/memtrim.py).
         memtrim.request("tin sáng")
@@ -685,7 +691,7 @@ async def build_digest(mode: str = "morning") -> str | None:
 
     if important_items:
         await article_reader.save_digest_links([(i.title, i.url) for i in important_items])
-        await _save_recent(recent, today, important_items)
+        await _save_recent(today, important_items)
         _remember_digest_items(now, important_items)
     parts = [_header(mode, now), body]
     sources = _format_sources(successful_sources)
@@ -773,8 +779,9 @@ async def rss_headlines(limit: int = 10) -> list[_NewsItem]:
                 queues.remove(queue)
                 continue
             item = queue.pop(0)
-            if _url_key(item.url) not in seen:
-                seen.add(_url_key(item.url))
+            key = _url_key(item.url)
+            if key not in seen:
+                seen.add(key)
                 picked.append(item)
             if len(picked) >= limit:
                 break

@@ -43,6 +43,15 @@ class WebReaderError(RuntimeError):
     """Lỗi khi đọc URL/RSS (URL không hợp lệ/bị chặn, HTTP lỗi, feed rỗng)."""
 
 
+class FeedStaleError(WebReaderError):
+    """Feed đọc được nhưng không có tin trong ``max_age_hours`` giờ (feed im vì cuối
+    tuần/Tết, hoặc bị bỏ). ``newest_age_hours``: tin mới nhất cách đây bao nhiêu giờ."""
+
+    def __init__(self, message: str, newest_age_hours: float):
+        super().__init__(message)
+        self.newest_age_hours = newest_age_hours
+
+
 def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
@@ -340,10 +349,19 @@ async def read_rss(raw_url: str, limit: int = 0, *, max_age_hours: float = 0) ->
 
     entries = parsed.entries
     if max_age_hours > 0:
-        cutoff = time.time() - max_age_hours * 3600
-        entries = [e for e in entries if (ts := _entry_timestamp(e)) is None or ts >= cutoff]
-        if not entries:
-            raise WebReaderError(f"Feed không có tin nào trong {max_age_hours:g} giờ qua.")
+        now = time.time()
+        cutoff = now - max_age_hours * 3600
+        fresh = [e for e in entries if (ts := _entry_timestamp(e)) is None or ts >= cutoff]
+        if not fresh:
+            # Mọi mục đều có ngày (mục không ngày luôn được giữ) và đều cũ.
+            newest = max(_entry_timestamp(e) or 0.0 for e in entries)
+            age = (now - newest) / 3600
+            raise FeedStaleError(
+                f"Feed không có tin nào trong {max_age_hours:g} giờ qua "
+                f"(tin mới nhất cách đây {age / 24:.0f} ngày).",
+                age,
+            )
+        entries = fresh
 
     feed_title = parsed.feed.get("title") or url
     lines = [f"[Feed: {feed_title}]"]

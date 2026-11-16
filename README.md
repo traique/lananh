@@ -1598,8 +1598,11 @@ Lọc tin bằng code trước lượt AI chọn (không tốn thêm lượt AI)
   `chung-khoan`, `cafef.vn`, `vietstock.vn`... là kinh tế; `genk.vn`, `so-hoa`... là
   công nghệ; còn lại thời sự) tối đa 4/8 tin khi có từ 2 nhóm; còn chỗ thì nhóm chưa
   có tin được thêm 1 tin (không đẩy tin AI đã chọn ra).
-- Feed lỗi hoặc không còn tin mới 3 ngày liền: báo chủ bot 1 lần (setting
-  `morning_news:feed_health`), đọc được lại thì tự xoá trạng thái.
+- Feed lỗi 3 ngày liền: báo chủ bot 1 lần (setting `morning_news:feed_health`), đọc
+  được lại thì tự xoá trạng thái. Feed chỉ tạm im (không có tin trong 36 giờ: chứng
+  khoán sáng Chủ nhật/thứ Hai, Tết) thì vắng mặt trong bản tin hôm đó, không tính là
+  lỗi; tin mới nhất đã quá 7 ngày (feed bị bỏ) mới tính. Ngày đăng kiểu Tuổi Trẻ
+  (`10/28/2026 8:33:00 AM`) feedparser không đọc được nên coi như tin không ghi ngày.
 
 - Zalo controller hoặc Zoom chủ bot đã bật bản tin sáng cá nhân (`/bantin`) thì
   lần chạy 8h tự động bỏ qua kênh đó: tin RSS được gộp vào bản tin sáng

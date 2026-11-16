@@ -620,15 +620,20 @@ async def test_feed_loi_3_ngay_lien_bao_chu_bot_mot_lan(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_build_digest_ghi_nhan_feed_loi(monkeypatch):
+    """Feed lỗi HTTP và feed im quá 7 ngày bị tính là lỗi; feed chỉ im cuối tuần/Tết
+    (không có tin trong 36 giờ nhưng tin mới nhất mới vài ngày) thì không."""
     import json
 
-    monkeypatch.setattr(
-        config, "MORNING_NEWS_RSS_FEEDS", ["https://a.example/rss", "https://b.example/rss"]
-    )
+    feeds = {
+        "https://a.example/rss": web_reader.WebReaderError("Không đọc được feed (HTTP 404)."),
+        "https://quiet.example/rss": web_reader.FeedStaleError("im cuối tuần", 60),
+        "https://abandoned.example/rss": web_reader.FeedStaleError("bị bỏ", 24 * 30),
+    }
+    monkeypatch.setattr(config, "MORNING_NEWS_RSS_FEEDS", [*feeds, "https://b.example/rss"])
 
     async def fake_read_rss(url, **_):
-        if url == "https://a.example/rss":
-            raise web_reader.WebReaderError("Feed không có tin nào trong 36 giờ qua.")
+        if url in feeds:
+            raise feeds[url]
         return "[Feed: B]\n1. Tin B"
 
     async def fake_ask(prompt):
@@ -640,7 +645,5 @@ async def test_build_digest_ghi_nhan_feed_loi(monkeypatch):
     monkeypatch.setattr(orchestrator, "ask", fake_ask)
     assert await morning_news.build_digest()
     state = json.loads(await db.get_setting(morning_news._FEED_HEALTH_KEY))
-    assert (
-        list(state) == ["https://a.example/rss"]
-        and state["https://a.example/rss"]["alerted"] is False
-    )
+    assert list(state) == ["https://a.example/rss", "https://abandoned.example/rss"]
+    assert state["https://a.example/rss"]["alerted"] is False

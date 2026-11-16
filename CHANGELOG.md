@@ -11,15 +11,15 @@ Quy ước:
 - Tăng Y khi có tính năng mới, Z khi chỉ sửa lỗi, X khi thay đổi lớn làm đổi cách dùng cũ.
 - Các bản 0.x được đánh số lại sau, gom theo các PR đã merge (#1 - #46).
 
-## 1.2.0 - 2026-11-15
+## 1.2.0 - 2026-11-16
 
 - Bản tin sáng không còn lẫn tin cũ: bỏ tin đăng quá 36 giờ, và không lặp lại tin đã
   có trong bản tin 2 ngày trước.
 - Cùng một bài xuất hiện ở hai nguồn chỉ còn 1 lần trong danh sách "đọc bài N".
 - Em chọn tin kỹ hơn: bỏ tin đồn, bài PR, khuyến nghị mua bán cổ phiếu, nhận định không
   có số liệu; tin kinh tế tối đa 4/8 tin để còn chỗ cho thời sự và công nghệ.
-- Một nguồn RSS lỗi hoặc không có tin mới 3 ngày liền thì em nhắn báo anh 1 lần để đổi
-  link.
+- Một nguồn RSS lỗi 3 ngày liền (hoặc cả tuần không có tin mới) thì em nhắn báo anh 1
+  lần để đổi link. Nguồn chỉ tạm im dịp cuối tuần, Tết thì không báo.
 
 ## 1.1.0 - 2026-10-31
 
