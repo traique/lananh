@@ -3,7 +3,7 @@
 # vnstock/vnai/vnstock_ezchart (kho riêng) đã bỏ: bản 4.x bị khoá từ
 # 10/11/2026; dữ liệu cổ phiếu lấy thẳng REST VCI (stock/vci_direct.py).
 python-telegram-bot==22.4
-google-genai==2.11.0
+google-genai==3.0.0
 httpx==0.28.1
 python-dotenv==1.2.4
 fastapi==0.143.2
