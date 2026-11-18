@@ -1204,10 +1204,12 @@ nhân ở trên, nên không bị ảnh hưởng bởi việc cách ly bộ nh�
 `/nhomzalo` gõ được từ Telegram, Zoom và Zalo (admin; thành viên thường nhận "Lệnh
 này chỉ dành cho admin."). Python lấy danh sách từ control server của gateway
 (`GET /groups`: `getAllGroups` rồi `getGroupInfo` theo lô 20 nhóm, tối đa 200 nhóm;
-409 khi Zalo chưa đăng nhập) - `channels/zalo_group_list.py`. Lọc theo tên không
-phân biệt dấu: `/nhomzalo gia dinh`. Danh sách vừa hiện được giữ 60 phút (setting
-`zalo:group_pick:<account_id>`) để chọn bằng số: `/themnhom 3` hoặc `/themnhom 3 giadinh`,
-`/fb_themnhom 3`. Số 1-3 chữ số luôn là số thứ tự (group ID thật dài 16-19 chữ số);
+1 lượt quét tại 1 thời điểm, gõ lại/nhiều admin cùng gõ dùng chung lượt đang chạy,
+mỗi người chờ tối đa 25s; 409 khi Zalo chưa đăng nhập) - `channels/zalo_group_list.py`.
+Lọc theo tên không phân biệt dấu: `/nhomzalo gia dinh`. Số thứ tự đánh theo TOÀN BỘ
+danh sách sắp theo tên (lọc vẫn giữ số gốc, các admin thấy cùng 1 số cho cùng 1 nhóm);
+danh sách được giữ 60 phút (setting `zalo:group_pick:<account_id>`) để chọn bằng số:
+`/themnhom 3` hoặc `/themnhom 3 giadinh`, `/fb_themnhom 3`. Số 1-3 chữ số luôn là số thứ tự (group ID thật dài 16-19 chữ số);
 bỏ trống alias thì bot đặt theo tên nhóm bỏ dấu (`Gia Đình Nhỏ` → `gia-dinh-nho`),
 nhóm đã theo dõi thì giữ alias cũ.
 

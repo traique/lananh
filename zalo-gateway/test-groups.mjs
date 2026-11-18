@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { INFO_BATCH, MAX_GROUPS, collectGroups } from "./dist/groups.js";
+import {
+  INFO_BATCH,
+  MAX_GROUPS,
+  SCAN_TIMEOUT_MS,
+  collectGroups,
+  sharedScan,
+} from "./dist/groups.js";
 import { startControlServer } from "./dist/control-server.js";
 
 // Group ID Zalo thật dài 19 chữ số (vượt Number.MAX_SAFE_INTEGER) nên dựng bằng chuỗi.
@@ -53,6 +59,44 @@ test("collectGroups có trần số nhóm, total vẫn là số nhóm thật", a
     getGroupInfo: api.getGroupInfo,
   });
   assert.deepEqual(empty, { total: 0, groups: [] });
+});
+
+test("sharedScan: 1 lượt quét tại 1 thời điểm; người gọi tự hết giờ chờ, lượt quét vẫn chạy tiếp", async () => {
+  assert.equal(SCAN_TIMEOUT_MS, 25000);
+  // withTimeout dùng timer.unref() (không giữ tiến trình gateway sống); trong test không
+  // còn gì khác chạy nên phải tự giữ event loop, kẻo Node thoát giữa chừng.
+  const keepAlive = setInterval(() => {}, 10);
+  try {
+    let calls = 0;
+    let settle;
+    const scan = sharedScan(() => {
+      calls += 1;
+      return new Promise((resolve, reject) => {
+        settle = { resolve, reject };
+      });
+    }, 30);
+    const first = scan();
+    const second = scan();
+    assert.equal(calls, 1); // gõ cùng lúc / nhiều admin: dùng chung lượt đang chạy
+    await assert.rejects(first, /quá 30ms/);
+    await assert.rejects(second, /quá 30ms/);
+    // Hết giờ chờ nhưng lượt cũ chưa xong: gõ lại KHÔNG mở thêm lượt gọi Zalo.
+    const retry = scan();
+    assert.equal(calls, 1);
+    settle.resolve({ total: 1, groups: [] });
+    assert.deepEqual(await retry, { total: 1, groups: [] });
+    // Lượt cũ xong rồi: lần sau quét mới; lượt lỗi cũng được nhả.
+    const failing = scan();
+    assert.equal(calls, 2);
+    settle.reject(new Error("zalo lỗi"));
+    await assert.rejects(failing, /zalo lỗi/);
+    const fresh = scan();
+    assert.equal(calls, 3);
+    settle.resolve({ total: 0, groups: [] });
+    assert.deepEqual(await fresh, { total: 0, groups: [] });
+  } finally {
+    clearInterval(keepAlive);
+  }
 });
 
 test("control server GET /groups: 200 kèm danh sách, 409 khi Zalo chưa kết nối", async () => {

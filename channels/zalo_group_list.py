@@ -6,17 +6,22 @@ nhóm mà không phải tự đi tìm group ID.
   /nhomzalo và chỉ cho chủ bot gõ trên Zalo.
 - Đánh dấu nhóm đang theo dõi /tongket (✅) và nhóm nguồn Facebook (📣); lọc theo
   tên không phân biệt dấu (/nhomzalo gia dinh).
-- Danh sách vừa hiện được lưu (setting, ``_PICK_TTL_SEC``) để /themnhom và
-  /fb_themnhom chọn nhóm theo SỐ THỨ TỰ thay vì chép group ID. Số 1-3 chữ số luôn
-  là số thứ tự: group ID Zalo thật dài 16-19 chữ số.
+- /themnhom và /fb_themnhom chọn nhóm theo SỐ THỨ TỰ thay vì chép group ID (số 1-3
+  chữ số luôn là số thứ tự: group ID Zalo thật dài 16-19 chữ số). Số đánh theo TOÀN BỘ
+  danh sách sắp theo tên, lọc theo tên vẫn giữ số gốc - nên các admin xem lúc khác
+  nhau, có lọc hay không, đều thấy cùng 1 số cho cùng 1 nhóm (trừ khi bot vừa vào/rời/
+  đổi tên nhóm; câu xác nhận luôn ghi tên nhóm). Danh sách đầy đủ lưu ở setting
+  ``_PICK_TTL_SEC`` giây.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable, Mapping
 
 from channels import facebook_repository, zalo_gateway_status, zalo_repository
 from core import database as db
@@ -92,6 +97,30 @@ async def resolve_group_arg(account_id: str, token: str) -> tuple[str, str]:
     return picked[index - 1]
 
 
+async def resolve_add(
+    account_id: str,
+    args: list[str],
+    current: Callable[[], Awaitable[Mapping[str, str]]],
+    already: str,
+) -> tuple[str, str, str]:
+    """(group_id, tên nhóm, tên gợi nhớ) cho /themnhom và /fb_themnhom; ``args`` =
+    [<số|group_id>, (tên-gợi-nhớ)]. Không kèm tên: nhóm đã có trong ``current()``
+    (group_id -> tên gợi nhớ) thì raise PickError(``already`` điền {alias}) thay vì ghi
+    đè tên cũ; chưa có thì đặt theo tên nhóm. Raise PickError khi số không dùng được."""
+    group_id, name = await resolve_group_arg(account_id, args[0].strip())
+    if len(args) > 1 and args[1].strip():
+        return group_id, name, args[1].strip().lower()
+    existing = (await current()).get(group_id)
+    if existing is not None:
+        raise PickError(already.format(alias=existing))
+    return group_id, name, default_alias(name, group_id)
+
+
+def describe(group_id: str, name: str) -> str:
+    """ "Tên nhóm (group_id)" cho câu xác nhận; nhập thẳng group ID thì chỉ có ID."""
+    return f"{name} ({group_id})" if name else group_id
+
+
 async def render(account_id: str, keyword: str = "") -> ChannelResult:
     try:
         groups, total = await zalo_gateway_status.list_groups()
@@ -99,25 +128,29 @@ async def render(account_id: str, keyword: str = "") -> ChannelResult:
         return ChannelResult([str(exc)])
     if not groups:
         return ChannelResult(["Tài khoản Zalo của bot chưa tham gia nhóm nào."])
-    followed = {
-        gid: alias for gid, alias, _ in await zalo_repository.list_groups_with_daily(account_id)
-    }
-    sources = dict(await facebook_repository.list_groups(account_id))
+    followed_rows, source_rows = await asyncio.gather(
+        zalo_repository.list_groups_with_daily(account_id),
+        facebook_repository.list_groups(account_id),
+    )
+    followed = {gid: alias for gid, alias, _ in followed_rows}
+    sources = dict(source_rows)
     groups = sorted(groups, key=lambda g: (not g.name, fold(g.name), g.group_id))
+    numbered = list(enumerate(groups, 1))
     needle = fold(keyword)
-    shown = [g for g in groups if needle in fold(g.name)] if needle else groups
+    shown = [(n, g) for n, g in numbered if needle in fold(g.name)] if needle else numbered
     if not shown:
         return ChannelResult(
             [f"Không có nhóm nào có tên chứa “{keyword.strip()}”. Gõ /nhomzalo để xem tất cả."]
         )
-    await _save_pick(account_id, shown)
+    # Lưu TOÀN BỘ danh sách (số gốc), kể cả khi đang lọc: số không đổi theo bộ lọc.
+    await _save_pick(account_id, groups)
 
     if needle:
         header = f"👥 Nhóm Zalo có tên chứa “{keyword.strip()}” ({len(shown)}/{len(groups)}):"
     else:
         header = f"👥 Nhóm Zalo bot đang tham gia ({len(groups)}):"
     lines = [header]
-    for number, group in enumerate(shown, 1):
+    for number, group in shown:
         members = f" · {group.members} người" if group.members is not None else ""
         marks = "".join(
             f" {icon} {aliases[group.group_id]}"

@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import type { GroupSummary } from "./groups.js";
+import type { GroupList } from "./groups.js";
 
 export type ControlHandlers = {
   status(): Record<string, unknown>;
@@ -9,7 +9,7 @@ export type ControlHandlers = {
   /** Quên 1 người gửi (Python gỡ pairing: /zaloxoa); true nếu gateway đang nhớ người đó. */
   forgetSender(id: string): boolean;
   /** Mọi nhóm bot đang tham gia (Python /nhomzalo); null khi Zalo chưa kết nối. */
-  groups(): Promise<{ total: number; groups: GroupSummary[] } | null>;
+  groups(): Promise<GroupList | null>;
 };
 
 /** Body JSON tối đa của control server (chỉ chứa 1 id Zalo). */

@@ -30,8 +30,10 @@ _FIELDS = ("state", "connected", "controllerPaired", "stats", "queue")
 # Route control server của gateway (zalo-gateway/src/control-server.ts).
 FORGET_PATH = "/known/forget"
 GROUPS_PATH = "/groups"
-# Gateway gọi Zalo getAllGroups + getGroupInfo theo lô 20 nhóm (tối đa 200 nhóm).
-_GROUPS_TIMEOUT = httpx.Timeout(45.0, connect=1.0)
+# Gateway gọi Zalo getAllGroups + getGroupInfo theo lô 20 nhóm (tối đa 200 nhóm, thường
+# vài giây) và tự bỏ chờ sau 25s. Trần ngắn vì lệnh chạy trong khoá lượt, và Telegram xử
+# lý tin tuần tự: chờ lâu chặn mọi lệnh khác của chủ bot.
+_GROUPS_TIMEOUT = httpx.Timeout(30.0, connect=1.0)
 
 
 @dataclass(frozen=True)

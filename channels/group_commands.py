@@ -35,6 +35,12 @@ async def _toggle_daily(account_id: str, enabled: bool, args: list[str]) -> Chan
     return ChannelResult([f"✅ Đã {state} tổng kết hằng ngày cho nhóm {target}.{note}"])
 
 
+async def _followed(account_id: str) -> dict[str, str]:
+    """group_id -> tên gợi nhớ của các nhóm đang theo dõi /tongket."""
+    rows = await zalo_repository.list_groups_with_daily(account_id)
+    return {group_id: alias for group_id, alias, _ in rows}
+
+
 async def maybe_handle_group_command(account_id: str, text: str) -> ChannelResult | None:
     raw = text.strip()
     command = raw.split(maxsplit=1)[0].lower() if raw else ""
@@ -70,29 +76,23 @@ async def maybe_handle_group_command(account_id: str, text: str) -> ChannelResul
                 ]
             )
         try:
-            group_id, name = await zalo_group_list.resolve_group_arg(account_id, parts[1].strip())
+            group_id, name, alias = await zalo_group_list.resolve_add(
+                account_id,
+                parts[1:],
+                lambda: _followed(account_id),
+                "Nhóm này đã được theo dõi với tên gợi nhớ “{alias}”.",
+            )
         except zalo_group_list.PickError as exc:
             return ChannelResult([str(exc)])
-        if len(parts) == 3:
-            alias = parts[2].strip().lower()
-        else:
-            current = {
-                gid: old for gid, old, _ in await zalo_repository.list_groups_with_daily(account_id)
-            }
-            if group_id in current:
-                return ChannelResult(
-                    [f"Nhóm này đã được theo dõi với tên gợi nhớ “{current[group_id]}”."]
-                )
-            alias = zalo_group_list.default_alias(name, group_id)
         if not group_id or not alias or len(alias) > 100 or alias in _TOGGLE_WORDS:
             return ChannelResult(["Group ID hoặc tên gợi nhớ không hợp lệ."])
         try:
             await zalo_repository.add_group(account_id, group_id, alias)
         except asyncpg.UniqueViolationError:
             return ChannelResult([f"Tên gợi nhớ “{alias}” đang được dùng cho nhóm khác."])
-        label = f"{name} ({group_id})" if name else group_id
         # /tongket <nhóm> chỉ đọc 1 từ: chỉ gợi ý khi tên gợi nhớ là 1 từ.
         hint = "" if " " in alias else f" Tổng kết: /tongket {alias}"
+        label = zalo_group_list.describe(group_id, name)
         return ChannelResult([f"✅ Đã thêm nhóm {alias} — {label}.{hint}"])
 
     if command == "/xoanhom":

@@ -3,7 +3,10 @@
  * (Python dựng lệnh /nhomzalo cho Telegram, Zoom và Zalo từ đây).
  */
 
+import { withTimeout } from "./feedback.js";
+
 export type GroupSummary = { id: string; name: string; members: number | null };
+export type GroupList = { total: number; groups: GroupSummary[] };
 
 type GroupDetail = { name?: string; totalMember?: number };
 
@@ -20,6 +23,8 @@ export type GroupApi = {
 export const MAX_GROUPS = 200;
 /** Số id mỗi lần getGroupInfo: phản hồi kèm memVerList (mọi thành viên) nên lô nhỏ giữ heap thấp. */
 export const INFO_BATCH = 20;
+/** Mỗi người gọi GET /groups chờ tối đa chừng này (Python chờ 30s). */
+export const SCAN_TIMEOUT_MS = 25_000;
 
 /**
  * getAllGroups rồi getGroupInfo theo lô (thay vì 1 lệnh gọi/nhóm). Lô lỗi vẫn trả id,
@@ -30,7 +35,7 @@ export async function collectGroups(
   api: GroupApi,
   maxGroups = MAX_GROUPS,
   batchSize = INFO_BATCH,
-): Promise<{ total: number; groups: GroupSummary[] }> {
+): Promise<GroupList> {
   const all = await api.getAllGroups();
   const ids = Object.keys(all?.gridVerMap || {});
   const wanted = ids.slice(0, maxGroups);
@@ -54,4 +59,24 @@ export async function collectGroups(
     }
   }
   return { total: ids.length, groups };
+}
+
+/**
+ * Chỉ 1 lượt quét tại 1 thời điểm: gõ lại sau khi hết giờ chờ hay nhiều admin cùng gõ
+ * đều dùng chung lượt đang chạy, không chồng nhiều loạt gọi Zalo (rate limit, heap).
+ * Mỗi người gọi chờ tối đa ``timeoutMs``; lượt quét chỉ được nhả khi CHÍNH nó xong.
+ */
+export function sharedScan(
+  scan: () => Promise<GroupList>,
+  timeoutMs = SCAN_TIMEOUT_MS,
+): () => Promise<GroupList> {
+  let inflight: Promise<GroupList> | null = null;
+  return () => {
+    if (!inflight) {
+      inflight = scan().finally(() => {
+        inflight = null;
+      });
+    }
+    return withTimeout(inflight, timeoutMs, "zalo groups");
+  };
 }

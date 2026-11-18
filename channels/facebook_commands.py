@@ -207,6 +207,11 @@ async def _fb_reset_warning(account_id: str) -> str:
     )
 
 
+async def _facebook_sources(account_id: str) -> dict[str, str]:
+    """group_id -> tên gợi nhớ của các nhóm nguồn Facebook."""
+    return dict(await facebook_repository.list_groups(account_id))
+
+
 async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelResult | None:
     raw = text.strip()
     command = raw.split(maxsplit=1)[0].lower() if raw else ""
@@ -334,25 +339,21 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
                 ]
             )
         try:
-            group_id, name = await zalo_group_list.resolve_group_arg(account_id, parts[1].strip())
+            group_id, name, alias = await zalo_group_list.resolve_add(
+                account_id,
+                parts[1:],
+                lambda: _facebook_sources(account_id),
+                "Nhóm này đã là nguồn Facebook với tên gợi nhớ “{alias}”.",
+            )
         except zalo_group_list.PickError as exc:
             return ChannelResult([str(exc)])
-        if len(parts) == 3:
-            alias = parts[2].strip().lower()
-        else:
-            current = dict(await facebook_repository.list_groups(account_id))
-            if group_id in current:
-                return ChannelResult(
-                    [f"Nhóm này đã là nguồn Facebook với tên gợi nhớ “{current[group_id]}”."]
-                )
-            alias = zalo_group_list.default_alias(name, group_id)
         if not group_id or not alias or len(alias) > 100:
             return ChannelResult(["Group ID hoặc tên gợi nhớ không hợp lệ."])
         try:
             await facebook_repository.add_group(account_id, group_id, alias)
         except asyncpg.UniqueViolationError:
             return ChannelResult([f"Tên gợi nhớ “{alias}” đang được dùng cho nhóm Facebook khác."])
-        label = f"{name} ({group_id})" if name else group_id
+        label = zalo_group_list.describe(group_id, name)
         return ChannelResult(
             [f"✅ Đã thêm nhóm Facebook {alias} — {label}. Không ảnh hưởng /tongket."]
         )

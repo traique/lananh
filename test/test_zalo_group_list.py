@@ -77,8 +77,28 @@ async def test_nhomzalo_loc_theo_ten_khong_dau(gateway):
     lines = result.messages[0].splitlines()
     assert lines[0] == "👥 Nhóm Zalo có tên chứa “gia dinh” (1/4):"
     assert lines[1].startswith(f"1. Gia Đình Nhỏ 🏠 · 8 người — {G2}")
+    # Lọc vẫn giữ SỐ GỐC trong toàn bộ danh sách (Hội Chạy Bộ là số 2).
+    chay = await group_commands.maybe_handle_group_command("B", "/nhomzalo chay bo")
+    lines = chay.messages[0].splitlines()
+    assert lines[0] == "👥 Nhóm Zalo có tên chứa “chay bo” (1/4):"
+    assert lines[1] == f"2. Hội Chạy Bộ · 150 người — {G4}"
     missing = await group_commands.maybe_handle_group_command("B", "/nhomzalo xyz")
     assert "Không có nhóm nào có tên chứa “xyz”" in missing.messages[0]
+
+
+@pytest.mark.asyncio
+async def test_so_thu_tu_khong_doi_theo_bo_loc(gateway, monkeypatch):
+    """Admin A xem /nhomzalo, admin B lọc /nhomzalo chay: số của A vẫn đúng nhóm."""
+    saved = []
+
+    async def add_group(account_id, group_id, alias):
+        saved.append((group_id, alias))
+
+    monkeypatch.setattr(group_commands.zalo_repository, "add_group", add_group)
+    await group_commands.maybe_handle_group_command("B", "/nhomzalo")
+    await group_commands.maybe_handle_group_command("B", "/nhomzalo chay")
+    await group_commands.maybe_handle_group_command("B", "/themnhom 3 sale")
+    assert saved == [(G1, "sale")]  # số 3 = Sale Team trong danh sách đầy đủ
 
 
 @pytest.mark.asyncio

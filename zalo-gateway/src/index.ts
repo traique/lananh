@@ -31,7 +31,7 @@ import { loadConfig } from "./config.js";
 import { startControlServer } from "./control-server.js";
 import { FacebookPostBuffer } from "./facebook-buffer.js";
 import { FastLane } from "./fast-lane.js";
-import { collectGroups } from "./groups.js";
+import { collectGroups, sharedScan } from "./groups.js";
 import { TypingKeepalive, fireAndForget, withTimeout } from "./feedback.js";
 import {
   BoundedSerialQueue,
@@ -1046,6 +1046,13 @@ async function bootstrap(attempt = 0): Promise<void> {
   }
 }
 
+// GET /groups (Python /nhomzalo): 1 lượt quét tại 1 thời điểm, mỗi người chờ tối đa 25s.
+const scanGroups = sharedScan(() => {
+  const client = api;
+  if (!client) return Promise.reject(new Error("Zalo is not connected"));
+  return collectGroups(client);
+});
+
 // ─── Khởi động ──────────────────────────────────────────────────────────────
 
 startControlServer(config.controlPort, {
@@ -1075,7 +1082,7 @@ startControlServer(config.controlPort, {
     return forgotten;
   },
   // Python /nhomzalo (Telegram, Zoom, Zalo): mọi nhóm tài khoản bot đang tham gia.
-  groups: async () => (api ? collectGroups(api) : null),
+  groups: async () => (api ? scanGroups() : null),
   startPairing: () => {
     if (!api) return null;
     pairing = { code: String(randomInt(100000, 1000000)), expires: Date.now() + 300000 };
