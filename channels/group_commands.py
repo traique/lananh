@@ -9,7 +9,7 @@ handlers/zalo_bridge_commands.py)."""
 
 import asyncpg
 
-from channels import zalo_repository
+from channels import zalo_group_list, zalo_repository
 from channels.zalo_summary import resolve_window, summarize_group, today_discussion
 from services.channel_result import ChannelResult
 
@@ -39,12 +39,17 @@ async def maybe_handle_group_command(account_id: str, text: str) -> ChannelResul
     raw = text.strip()
     command = raw.split(maxsplit=1)[0].lower() if raw else ""
 
+    if command == "/nhomzalo":
+        parts = raw.split(maxsplit=1)
+        return await zalo_group_list.render(account_id, parts[1] if len(parts) == 2 else "")
+
     if command == "/nhom":
         groups = await zalo_repository.list_groups_with_daily(account_id)
         if not groups:
             return ChannelResult(
                 [
-                    "Chưa theo dõi nhóm nào. Dùng /nhomzalo để xem ID, sau đó /themnhom <group_id> <tên-gợi-nhớ>."
+                    "Chưa theo dõi nhóm nào. Gõ /nhomzalo để xem các nhóm bot đang ở, "
+                    "rồi /themnhom <số> [tên-gợi-nhớ]."
                 ]
             )
         lines = ["📚 Các nhóm đang theo dõi (🔔 có / 🔕 tắt tổng kết hằng ngày):"]
@@ -52,22 +57,43 @@ async def maybe_handle_group_command(account_id: str, text: str) -> ChannelResul
             f"{index}. {'🔔' if daily else '🔕'} {alias} — {group_id}"
             for index, (group_id, alias, daily) in enumerate(groups, 1)
         )
-        lines.append("Bật/tắt: /tongket on|off [nhóm]")
+        lines.append("Bật/tắt: /tongket on|off [nhóm] · Thêm nhóm: /nhomzalo rồi /themnhom <số>")
         return ChannelResult(["\n".join(lines)])
 
     if command == "/themnhom":
         parts = raw.split(maxsplit=2)
         if len(parts) < 2:
-            return ChannelResult(["Cú pháp: /themnhom <group_id> <tên-gợi-nhớ>"])
-        group_id = parts[1].strip()
-        alias = (parts[2].strip() if len(parts) == 3 else group_id).lower()
+            return ChannelResult(
+                [
+                    "Cú pháp: /themnhom <số|group_id> [tên-gợi-nhớ] — số thứ tự lấy từ "
+                    "/nhomzalo (danh sách nhóm bot đang ở)."
+                ]
+            )
+        try:
+            group_id, name = await zalo_group_list.resolve_group_arg(account_id, parts[1].strip())
+        except zalo_group_list.PickError as exc:
+            return ChannelResult([str(exc)])
+        if len(parts) == 3:
+            alias = parts[2].strip().lower()
+        else:
+            current = {
+                gid: old for gid, old, _ in await zalo_repository.list_groups_with_daily(account_id)
+            }
+            if group_id in current:
+                return ChannelResult(
+                    [f"Nhóm này đã được theo dõi với tên gợi nhớ “{current[group_id]}”."]
+                )
+            alias = zalo_group_list.default_alias(name, group_id)
         if not group_id or not alias or len(alias) > 100 or alias in _TOGGLE_WORDS:
             return ChannelResult(["Group ID hoặc tên gợi nhớ không hợp lệ."])
         try:
             await zalo_repository.add_group(account_id, group_id, alias)
         except asyncpg.UniqueViolationError:
             return ChannelResult([f"Tên gợi nhớ “{alias}” đang được dùng cho nhóm khác."])
-        return ChannelResult([f"✅ Đã thêm nhóm {alias} ({group_id})."])
+        label = f"{name} ({group_id})" if name else group_id
+        # /tongket <nhóm> chỉ đọc 1 từ: chỉ gợi ý khi tên gợi nhớ là 1 từ.
+        hint = "" if " " in alias else f" Tổng kết: /tongket {alias}"
+        return ChannelResult([f"✅ Đã thêm nhóm {alias} — {label}.{hint}"])
 
     if command == "/xoanhom":
         parts = raw.split(maxsplit=1)

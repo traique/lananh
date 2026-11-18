@@ -374,6 +374,7 @@ def build_application():
         ("zoompair", pairing_commands.zoompair_cmd),
         ("zoomxoa", pairing_commands.zoomxoa_cmd),
         ("zoomstatus", pairing_commands.zoomstatus_cmd),
+        ("nhomzalo", zalo_bridge_commands.nhomzalo_cmd),
         ("nhom", zalo_bridge_commands.nhom_cmd),
         ("themnhom", zalo_bridge_commands.themnhom_cmd),
         ("xoanhom", zalo_bridge_commands.xoanhom_cmd),

@@ -26,11 +26,12 @@ import {
   type NoticeKind,
 } from "./bridge.js";
 import { DirectTextBatcher } from "./burst.js";
-import { controllerCommandAction, isCancelCommand } from "./commands.js";
+import { isCancelCommand } from "./commands.js";
 import { loadConfig } from "./config.js";
 import { startControlServer } from "./control-server.js";
 import { FacebookPostBuffer } from "./facebook-buffer.js";
 import { FastLane } from "./fast-lane.js";
+import { collectGroups } from "./groups.js";
 import { TypingKeepalive, fireAndForget, withTimeout } from "./feedback.js";
 import {
   BoundedSerialQueue,
@@ -62,7 +63,6 @@ import {
   isConnectionRefused,
   isTransientNetworkError,
   sleep,
-  splitForZalo,
   userErrorReply,
 } from "./text.js";
 import {
@@ -434,24 +434,6 @@ async function deliverOutbox(): Promise<void> {
   }
 }
 
-async function listGroups(threadId: string): Promise<void> {
-  const client = api;
-  if (!client) return;
-  const all = await client.getAllGroups();
-  const ids = Object.keys(all?.gridVerMap || {});
-  const lines = [ids.length ? "Các nhóm B đang tham gia:" : "Chưa có nhóm."];
-  for (const gid of ids.slice(0, 100)) {
-    try {
-      const info = await client.getGroupInfo(gid);
-      const detail = info?.changed_groups?.[gid] || info?.gridInfoMap?.[gid];
-      lines.push(`• ${detail?.name || "Không rõ tên"} — ${gid}`);
-    } catch {
-      lines.push(`• ${gid}`);
-    }
-  }
-  await send(threadId, splitForZalo(lines.join("\n")));
-}
-
 /** Tải media bằng cookie + user agent của phiên Zalo hiện tại, thử `attempts` lần. */
 async function fetchMedia(
   download: (options: DownloadOptions) => Promise<MediaItem>,
@@ -738,13 +720,7 @@ async function handleDirectMessage(msg: ParsedMessage): Promise<void> {
     return;
   }
   if (!msg.text) return;
-  const controllerAction = controllerCommandAction(msg.text, msg.sender, config.controllerId);
-  // Người khác chủ bot gửi /nhomzalo: im lặng (commands.controllerCommandAction).
-  if (controllerAction === "ignore") return;
-  if (controllerAction === "run") {
-    await listGroups(msg.threadId);
-    return;
-  }
+  // /nhomzalo do Python xử lý (mọi kênh, kiểm quyền admin) qua GET /groups bên dưới.
   await handleTextTurn([msg]);
 }
 
@@ -1098,6 +1074,8 @@ startControlServer(config.controlPort, {
     console.log(`[zalo] quên người gửi ${id} (Python gỡ pairing)${forgotten ? "" : " - chưa nhớ"}`);
     return forgotten;
   },
+  // Python /nhomzalo (Telegram, Zoom, Zalo): mọi nhóm tài khoản bot đang tham gia.
+  groups: async () => (api ? collectGroups(api) : null),
   startPairing: () => {
     if (!api) return null;
     pairing = { code: String(randomInt(100000, 1000000)), expires: Date.now() + 300000 };

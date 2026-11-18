@@ -16,10 +16,11 @@ async def test_facebook_group_commands_use_separate_repository(monkeypatch):
 
     monkeypatch.setattr(facebook_commands.facebook_repository, "add_group", fake_add)
     result = await facebook_commands.maybe_handle_facebook_command(
-        "B", "/fb_themnhom 123 Deal Team"
+        "B", "/fb_themnhom 7212345678901234567 Deal Team"
     )
 
-    assert saved == {"account_id": "B", "group_id": "123", "alias": "deal team"}
+    # Group ID Zalo thật dài 16-19 chữ số; số 1-3 chữ số là số thứ tự /nhomzalo.
+    assert saved == {"account_id": "B", "group_id": "7212345678901234567", "alias": "deal team"}
     assert "Không ảnh hưởng /tongket" in result.messages[0]
 
 

@@ -11,6 +11,14 @@ Quy ước:
 - Tăng Y khi có tính năng mới, Z khi chỉ sửa lỗi, X khi thay đổi lớn làm đổi cách dùng cũ.
 - Các bản 0.x được đánh số lại sau, gom theo các PR đã merge (#1 - #46).
 
+## 1.3.0 - 2026-11-18
+
+- Lệnh `/nhomzalo` gõ được từ Telegram, Zoom và Zalo: liệt kê mọi nhóm Zalo bot đang ở
+  kèm tên, số thành viên và group ID; nhóm đang theo dõi có ✅, nguồn Facebook có 📣.
+- Lọc nhóm theo tên, không cần gõ dấu: `/nhomzalo gia dinh`.
+- Thêm nhóm không cần chép group ID: xem `/nhomzalo` rồi gõ `/themnhom 3` (hoặc
+  `/fb_themnhom 3`); bỏ trống tên gợi nhớ thì em tự đặt theo tên nhóm.
+
 ## 1.2.0 - 2026-11-16
 
 - Bản tin sáng không còn lẫn tin cũ: bỏ tin đăng quá 36 giờ, và không lặp lại tin đã

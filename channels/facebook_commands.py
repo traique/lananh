@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import asyncpg
 
-from channels import facebook_repository, zalo_repository
+from channels import facebook_repository, zalo_group_list, zalo_repository
 from core.envutil import env_on
 from services import facebook_caption, market_page
 from services.channel_result import ChannelResult
@@ -327,17 +327,34 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
     if command == "/fb_themnhom":
         parts = raw.split(maxsplit=2)
         if len(parts) < 2:
-            return ChannelResult(["Cú pháp: /fb_themnhom <group_id> <tên-gợi-nhớ>"])
-        group_id = parts[1].strip()
-        alias = (parts[2].strip() if len(parts) == 3 else group_id).lower()
+            return ChannelResult(
+                [
+                    "Cú pháp: /fb_themnhom <số|group_id> [tên-gợi-nhớ] — số thứ tự lấy từ "
+                    "/nhomzalo (danh sách nhóm bot đang ở)."
+                ]
+            )
+        try:
+            group_id, name = await zalo_group_list.resolve_group_arg(account_id, parts[1].strip())
+        except zalo_group_list.PickError as exc:
+            return ChannelResult([str(exc)])
+        if len(parts) == 3:
+            alias = parts[2].strip().lower()
+        else:
+            current = dict(await facebook_repository.list_groups(account_id))
+            if group_id in current:
+                return ChannelResult(
+                    [f"Nhóm này đã là nguồn Facebook với tên gợi nhớ “{current[group_id]}”."]
+                )
+            alias = zalo_group_list.default_alias(name, group_id)
         if not group_id or not alias or len(alias) > 100:
             return ChannelResult(["Group ID hoặc tên gợi nhớ không hợp lệ."])
         try:
             await facebook_repository.add_group(account_id, group_id, alias)
         except asyncpg.UniqueViolationError:
             return ChannelResult([f"Tên gợi nhớ “{alias}” đang được dùng cho nhóm Facebook khác."])
+        label = f"{name} ({group_id})" if name else group_id
         return ChannelResult(
-            [f"✅ Đã thêm nhóm Facebook {alias} ({group_id}). Không ảnh hưởng /tongket."]
+            [f"✅ Đã thêm nhóm Facebook {alias} — {label}. Không ảnh hưởng /tongket."]
         )
 
     if command == "/fb_xoanhom":
