@@ -18,6 +18,10 @@ updates:
     groups:
       python-minor:
         update-types: [minor, patch]
+    ignore:
+      # google-genai 2.11 yêu cầu tenacity<9.2: nâng tenacity khi nâng google-genai.
+      - dependency-name: tenacity
+        versions: [">=9.2"]
   - package-ecosystem: npm
     directory: /zalo-gateway
     schedule:

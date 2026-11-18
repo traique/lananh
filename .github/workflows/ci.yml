@@ -173,6 +173,29 @@ jobs:
             node --input-type=module -e "await import(\"zca-js\")"
           '
 
+      # Chạy server thật bằng ĐÚNG lệnh uvicorn trong supervisord.conf (nâng uvicorn/
+      # fastapi không vỡ lúc chạy - bước trên chỉ import): --lifespan off bỏ qua
+      # Telegram/DB, GET / là health check của Render (không chạm DB).
+      - name: Boot test uvicorn
+        run: |
+          docker run -d --name boot -p 18080:8080 -e TELEGRAM_TOKEN=ci-dummy -e ALLOWED_USER_ID=1 \
+            lananh:ci sh -euc '
+              cmd=$(sed -n "s/^command=\(\/usr\/local\/bin\/uvicorn .*\)$/\1/p" supervisord.conf)
+              test -n "$cmd"
+              exec $(echo "$cmd" | sed "s/%(ENV_PORT)s/8080/") --lifespan off
+            '
+          for _ in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:18080/; then
+              echo "GET / OK"
+              docker rm -f boot >/dev/null
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs boot
+          docker rm -f boot >/dev/null
+          exit 1
+
   sql-pglite:
     runs-on: ubuntu-latest
     steps:

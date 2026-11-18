@@ -64,6 +64,10 @@ def test_docker_build_chay_smoke_test_trong_image():
     assert tag in smoke
     for needle in ("import web, bot_app, scheduler", "pip check", "node --version", "zca-js"):
         assert needle in smoke
+    # Server thật chạy đúng lệnh uvicorn của supervisord (bắt lỗi khi nâng uvicorn/fastapi).
+    boot = next(s for s in job["steps"] if s.get("name") == "Boot test uvicorn")["run"]
+    assert tag in boot and "supervisord.conf" in boot and "--lifespan off" in boot
+    assert "curl -fsS" in boot and "http://127.0.0.1:18080/" in boot
 
 
 def test_khong_con_kho_vnstocks_va_thu_vien_vnstock():
