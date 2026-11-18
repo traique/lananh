@@ -1191,15 +1191,27 @@ khoá theo `account_id`+`group_id`) — KHÔNG liên quan tới `internal_user_i
 nhân ở trên, nên không bị ảnh hưởng bởi việc cách ly bộ nhớ theo người dùng:
 
 ```text
-/nhomzalo            (chỉ admin ĐẦU TIÊN/controller dùng được - liệt kê MỌI
-                       nhóm bot đang tham gia, kể cả chưa thêm vào allowlist)
-/themnhom <group_id> <alias>
+/nhomzalo [từ khoá]  MỌI nhóm bot đang tham gia (kể cả chưa theo dõi): số thứ tự,
+                       tên, số thành viên, group ID; ✅ đang theo dõi, 📣 nguồn Facebook
+/themnhom <số|group_id> [alias]
 /nhom
 /xoanhom <group_id-or-alias>
 /tongket <alias> <24h|7d|homnay|homqua>
 /tongket on|off [alias] — bật/tắt tổng kết tự động hằng ngày (bỏ trống = mọi nhóm)
 /dangnoi <alias> — xem nguyên văn thảo luận trong ngày hôm nay (không qua AI)
 ```
+
+`/nhomzalo` gõ được từ Telegram, Zoom và Zalo (admin; thành viên thường nhận "Lệnh
+này chỉ dành cho admin."). Python lấy danh sách từ control server của gateway
+(`GET /groups`: `getAllGroups` rồi `getGroupInfo` theo lô 20 nhóm, tối đa 200 nhóm;
+1 lượt quét tại 1 thời điểm, gõ lại/nhiều admin cùng gõ dùng chung lượt đang chạy,
+mỗi người chờ tối đa 25s; 409 khi Zalo chưa đăng nhập) - `channels/zalo_group_list.py`.
+Lọc theo tên không phân biệt dấu: `/nhomzalo gia dinh`. Số thứ tự đánh theo TOÀN BỘ
+danh sách sắp theo tên (lọc vẫn giữ số gốc, các admin thấy cùng 1 số cho cùng 1 nhóm);
+danh sách được giữ 60 phút (setting `zalo:group_pick:<account_id>`) để chọn bằng số:
+`/themnhom 3` hoặc `/themnhom 3 giadinh`, `/fb_themnhom 3`. Số 1-3 chữ số luôn là số thứ tự (group ID thật dài 16-19 chữ số);
+bỏ trống alias thì bot đặt theo tên nhóm bỏ dấu (`Gia Đình Nhỏ` → `gia-dinh-nho`),
+nhóm đã theo dõi thì giữ alias cũ.
 
 Đối với allowlist `/tongket`, gateway chỉ lưu text mới, không backfill, không
 lưu media nhóm và không trả lời trong nhóm. Luồng Facebook bên dưới có allowlist
@@ -1324,7 +1336,7 @@ Các lệnh `/fb_*` dùng được từ **Zalo admin, Telegram owner và Zoom ji
 ```text
 /fb_nhom
 /fb_pages
-/fb_themnhom <group_id> <alias>
+/fb_themnhom <số|group_id> [alias]   # số thứ tự lấy từ /nhomzalo
 /fb_xoanhom <group_id-or-alias>
 /fb_xem <post_id>
 /fb_sua <post_id> <nội dung mới>
@@ -1338,9 +1350,9 @@ Các lệnh `/fb_*` dùng được từ **Zalo admin, Telegram owner và Zoom ji
 
 Quy trình vận hành:
 
-1. Trên Zalo admin gõ `/nhomzalo` để lấy `group_id` của nhóm nguồn.
-2. Từ Zalo admin, Telegram hoặc Zoom gõ
-   `/fb_themnhom <group_id> <alias>`.
+1. Từ Zalo admin, Telegram hoặc Zoom gõ `/nhomzalo` để xem nhóm bot đang ở.
+2. Gõ `/fb_themnhom <số> [alias]` (số thứ tự trong danh sách vừa xem, hoặc
+   `/fb_themnhom <group_id> <alias>`).
 3. Gateway tự thu text + ảnh mới của nhóm đó và gom các message liên tiếp của
    cùng người gửi thành một bài chờ duyệt. Luồng này không ghi vào dữ liệu
    `/tongket` trừ khi nhóm đó cũng được thêm riêng bằng `/themnhom`.
@@ -1498,15 +1510,16 @@ Telegram chỉ còn 18 lệnh hay dùng; mọi lệnh khác vẫn gõ được.
 | `/zoompair <jid> [tên]` | Cấp quyền 1 jid Zoom nói chuyện với bot |
 | `/zoomxoa` | Gỡ pairing Zoom hiện tại |
 | `/zoomstatus` | Xem jid Zoom đang được pair |
+| `/nhomzalo [từ khoá]` | Mọi nhóm Zalo bot đang ở: tên, số thành viên, group ID (lọc theo tên) |
 | `/nhom` | Xem danh sách nhóm Zalo đang theo dõi |
-| `/themnhom <group_id> <alias>` | Thêm nhóm Zalo vào allowlist |
+| `/themnhom <số\|group_id> [alias]` | Thêm nhóm Zalo vào allowlist (số thứ tự lấy từ `/nhomzalo`) |
 | `/xoanhom <group_id\|alias>` | Ngừng theo dõi 1 nhóm Zalo |
 | `/tongket <alias> [24h\|7d\|homnay\|homqua]` | Tổng kết nhóm Zalo (AI) |
 | `/tongket on\|off [alias]` | Bật/tắt tổng kết tự động hằng ngày (bỏ trống = mọi nhóm; `/nhom` hiện 🔔/🔕) |
 | `/dangnoi <alias>` | Xem nguyên văn thảo luận nhóm Zalo hôm nay |
 | `/fb_nhom` | Xem danh sách nhóm Zalo làm nguồn đăng Facebook |
 | `/fb_pages` | Xem các Facebook Page đã cấu hình (`/fb_ok` đăng lên tất cả) |
-| `/fb_themnhom <group_id> <alias>` | Thêm nhóm vào luồng Zalo → Facebook, độc lập `/tongket` |
+| `/fb_themnhom <số\|group_id> [alias]` | Thêm nhóm vào luồng Zalo → Facebook, độc lập `/tongket` |
 | `/fb_xoanhom <group_id\|alias>` | Bỏ nhóm khỏi luồng Facebook |
 | `/fb_xem <post_id>` | Xem bài Facebook đang chờ duyệt |
 | `/fb_sua <post_id> <nội dung>` | Sửa nội dung bài Facebook đang chờ |

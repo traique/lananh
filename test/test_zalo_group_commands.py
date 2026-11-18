@@ -16,8 +16,11 @@ async def test_add_group_command(monkeypatch):
         saved.update(account_id=account_id, group_id=group_id, alias=alias)
 
     monkeypatch.setattr(group_commands.zalo_repository, "add_group", fake_add)
-    result = await group_commands.maybe_handle_group_command("B", "/themnhom 123 Sale Team")
-    assert saved == {"account_id": "B", "group_id": "123", "alias": "sale team"}
+    # Group ID Zalo thật dài 16-19 chữ số; số 1-3 chữ số là số thứ tự /nhomzalo.
+    result = await group_commands.maybe_handle_group_command(
+        "B", "/themnhom 7212345678901234567 Sale Team"
+    )
+    assert saved == {"account_id": "B", "group_id": "7212345678901234567", "alias": "sale team"}
     assert "Đã thêm" in result.messages[0]
 
 
@@ -113,5 +116,7 @@ async def test_nhom_shows_daily_status(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_themnhom_rejects_toggle_alias():
-    result = await group_commands.maybe_handle_group_command("B", "/themnhom 123 off")
+    result = await group_commands.maybe_handle_group_command(
+        "B", "/themnhom 7212345678901234567 off"
+    )
     assert "không hợp lệ" in result.messages[0]

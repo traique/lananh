@@ -137,13 +137,15 @@ _HELP_ADMIN_ONLY = """Chỉ admin
 /ragxuly <file> — dọn file md OCR trong rag/ ở nền, kết quả báo về Telegram chủ bot
 /bangtinsang (hoặc /bantinsang) — gửi ngay Bản tin sáng tới cả Zalo + Zoom (bình thường tự gửi lúc 8h)
 /tintuc — đọc Điểm tin mới ngay tại đúng kênh đang gọi lệnh
-/nhom, /themnhom <group_id> <tên>, /xoanhom <group_id|tên> — nhóm Zalo đang theo dõi
+/nhomzalo [từ khoá] — mọi nhóm Zalo bot đang ở: tên, số thành viên, group ID
+/nhom, /themnhom <số|group_id> [tên], /xoanhom <group_id|tên> — nhóm Zalo đang theo dõi
+  (số thứ tự lấy từ /nhomzalo; bỏ trống tên thì em đặt theo tên nhóm)
 /tongket <tên> [24h|7d|homnay|homqua] — tổng kết nhóm bằng AI; /dangnoi <tên> — xem nguyên văn hôm nay
 /tongket on|off [tên] — bật/tắt tổng kết tự động hằng ngày (bỏ trống tên = mọi nhóm)
   (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom)"""
 _HELP_FACEBOOK = """📣 Zalo → Facebook Page (tách riêng khỏi /tongket, chỉ admin):
 /fb_nhom — xem nhóm nguồn Facebook
-/fb_themnhom <group_id> <tên> — thêm nhóm Zalo làm nguồn đăng Facebook
+/fb_themnhom <số|group_id> [tên] — thêm nhóm Zalo làm nguồn đăng Facebook (số lấy từ /nhomzalo)
 /fb_xoanhom <group_id|tên> — bỏ nhóm khỏi luồng Facebook
 /fb_pages — xem các Facebook Page đã cấu hình (fb_ok sẽ đăng lên tất cả)
 /fb_market <stock|news> [dang] — xem thử bài Page chứng khoán/tin CafeF; thêm 'dang' để đăng thật
@@ -616,6 +618,7 @@ async def maybe_handle_command(
             "/bangtinsang",
             "/bantinsang",
             "/tintuc",
+            "/nhomzalo",
         }
         and not is_admin
     ):

@@ -131,9 +131,10 @@ export type ZaloApi = {
     dest: ZaloReactionTarget,
   ): Promise<unknown>;
   getAllGroups(): Promise<{ gridVerMap?: Record<string, unknown> }>;
-  getGroupInfo(groupId: string): Promise<{
-    changed_groups?: Record<string, { name?: string }>;
-    gridInfoMap?: Record<string, { name?: string }>;
+  /** Nhận 1 id hoặc mảng id (zca-js 2.1.2 gửi cả lô trong 1 request). */
+  getGroupInfo(groupId: string | string[]): Promise<{
+    changed_groups?: Record<string, { name?: string; totalMember?: number }>;
+    gridInfoMap?: Record<string, { name?: string; totalMember?: number }>;
   }>;
 };
 

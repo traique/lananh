@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import asyncpg
 
-from channels import facebook_repository, zalo_repository
+from channels import facebook_repository, zalo_group_list, zalo_repository
 from core.envutil import env_on
 from services import facebook_caption, market_page
 from services.channel_result import ChannelResult
@@ -207,6 +207,11 @@ async def _fb_reset_warning(account_id: str) -> str:
     )
 
 
+async def _facebook_sources(account_id: str) -> dict[str, str]:
+    """group_id -> tên gợi nhớ của các nhóm nguồn Facebook."""
+    return dict(await facebook_repository.list_groups(account_id))
+
+
 async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelResult | None:
     raw = text.strip()
     command = raw.split(maxsplit=1)[0].lower() if raw else ""
@@ -327,17 +332,30 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
     if command == "/fb_themnhom":
         parts = raw.split(maxsplit=2)
         if len(parts) < 2:
-            return ChannelResult(["Cú pháp: /fb_themnhom <group_id> <tên-gợi-nhớ>"])
-        group_id = parts[1].strip()
-        alias = (parts[2].strip() if len(parts) == 3 else group_id).lower()
+            return ChannelResult(
+                [
+                    "Cú pháp: /fb_themnhom <số|group_id> [tên-gợi-nhớ] — số thứ tự lấy từ "
+                    "/nhomzalo (danh sách nhóm bot đang ở)."
+                ]
+            )
+        try:
+            group_id, name, alias = await zalo_group_list.resolve_add(
+                account_id,
+                parts[1:],
+                lambda: _facebook_sources(account_id),
+                "Nhóm này đã là nguồn Facebook với tên gợi nhớ “{alias}”.",
+            )
+        except zalo_group_list.PickError as exc:
+            return ChannelResult([str(exc)])
         if not group_id or not alias or len(alias) > 100:
             return ChannelResult(["Group ID hoặc tên gợi nhớ không hợp lệ."])
         try:
             await facebook_repository.add_group(account_id, group_id, alias)
         except asyncpg.UniqueViolationError:
             return ChannelResult([f"Tên gợi nhớ “{alias}” đang được dùng cho nhóm Facebook khác."])
+        label = zalo_group_list.describe(group_id, name)
         return ChannelResult(
-            [f"✅ Đã thêm nhóm Facebook {alias} ({group_id}). Không ảnh hưởng /tongket."]
+            [f"✅ Đã thêm nhóm Facebook {alias} — {label}. Không ảnh hưởng /tongket."]
         )
 
     if command == "/fb_xoanhom":

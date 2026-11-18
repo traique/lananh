@@ -8,12 +8,16 @@ không cần và không nên giữ nó.
 
 forget_sender(): báo gateway quên 1 người gửi khi pairing bị gỡ (/zaloxoa,
 channels/zalo_users.remove) qua POST /known/forget.
+
+list_groups(): mọi nhóm tài khoản bot đang tham gia (GET /groups) cho lệnh
+/nhomzalo (channels/zalo_group_list.py).
 """
 
 from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -25,6 +29,22 @@ _TIMEOUT = httpx.Timeout(3.0, connect=1.0)
 _FIELDS = ("state", "connected", "controllerPaired", "stats", "queue")
 # Route control server của gateway (zalo-gateway/src/control-server.ts).
 FORGET_PATH = "/known/forget"
+GROUPS_PATH = "/groups"
+# Gateway gọi Zalo getAllGroups + getGroupInfo theo lô 20 nhóm (tối đa 200 nhóm, thường
+# vài giây) và tự bỏ chờ sau 25s. Trần ngắn vì lệnh chạy trong khoá lượt, và Telegram xử
+# lý tin tuần tự: chờ lâu chặn mọi lệnh khác của chủ bot.
+_GROUPS_TIMEOUT = httpx.Timeout(30.0, connect=1.0)
+
+
+@dataclass(frozen=True)
+class ZaloGroup:
+    group_id: str
+    name: str
+    members: int | None = None
+
+
+class GatewayGroupsError(RuntimeError):
+    """Không lấy được danh sách nhóm; ``str(exc)`` là câu báo cho người dùng."""
 
 
 def _enabled() -> bool:
@@ -80,3 +100,51 @@ async def forget_sender(external_id: str) -> bool:
         logger.warning("Không báo được gateway Zalo quên người gửi đã gỡ pairing: %s", exc)
         return False
     return True
+
+
+def _parse_groups(data: Any) -> tuple[list[ZaloGroup], int]:
+    rows = data.get("groups") if isinstance(data, dict) else None
+    groups: list[ZaloGroup] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        group_id = str(row.get("id") or "").strip()
+        if not group_id:
+            continue
+        members = row.get("members")
+        groups.append(
+            ZaloGroup(
+                group_id=group_id,
+                name=str(row.get("name") or "").strip()[:120],
+                members=members if type(members) is int and members >= 0 else None,
+            )
+        )
+    total = data.get("total") if isinstance(data, dict) else None
+    return groups, total if type(total) is int and total >= len(groups) else len(groups)
+
+
+async def list_groups() -> tuple[list[ZaloGroup], int]:
+    """(nhóm, tổng số nhóm thật) - gateway trả tối đa 200 nhóm, tổng có thể lớn hơn.
+    Raise GatewayGroupsError kèm câu báo khi gateway tắt, không trả lời hoặc Zalo
+    chưa đăng nhập."""
+    if not _enabled():
+        raise GatewayGroupsError("Gateway Zalo đang tắt (ZALO_ENABLED) nên chưa xem được nhóm.")
+    try:
+        async with httpx.AsyncClient(timeout=_GROUPS_TIMEOUT) as client:
+            response = await client.get(f"{_control_base()}{GROUPS_PATH}")
+    except httpx.HTTPError as exc:
+        logger.warning("Không lấy được danh sách nhóm từ gateway Zalo: %r", exc)
+        raise GatewayGroupsError("Không kết nối được gateway Zalo, thử lại sau ít phút.") from exc
+    if response.status_code == 409:
+        raise GatewayGroupsError(
+            "Zalo bot chưa đăng nhập hoặc đang mất kết nối nên chưa xem được nhóm."
+        )
+    if response.status_code != 200:
+        logger.warning("Gateway Zalo trả HTTP %s cho %s", response.status_code, GROUPS_PATH)
+        raise GatewayGroupsError(
+            f"Zalo trả lỗi khi lấy danh sách nhóm (HTTP {response.status_code}), thử lại sau."
+        )
+    try:
+        return _parse_groups(response.json())
+    except ValueError as exc:
+        raise GatewayGroupsError("Gateway Zalo trả dữ liệu nhóm không hợp lệ.") from exc

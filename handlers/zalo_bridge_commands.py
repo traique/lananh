@@ -1,5 +1,5 @@
 """Lệnh Telegram chạy trên tài khoản Zalo đang đăng nhập: quản lý/xem lại
-nhóm Zalo (/nhom, /themnhom, /xoanhom, /tongket, /dangnoi) và luồng
+nhóm Zalo (/nhomzalo, /nhom, /themnhom, /xoanhom, /tongket, /dangnoi) và luồng
 Zalo → Facebook Page (/fb_*). Cùng dispatcher với Zalo/Zoom
 (channels.group_commands, channels.facebook_commands); handler ở đây chỉ suy ra
 account_id rồi chuyển tiếp."""
@@ -28,8 +28,8 @@ async def _group_command(update: Update, context: ContextTypes.DEFAULT_TYPE, com
     account_id = await _zalo_account_id()
     if account_id is None:
         await update.message.reply_text(
-            "Chưa theo dõi nhóm Zalo nào. Dùng /nhom để xem hướng dẫn lấy group ID, "
-            "sau đó /themnhom <group_id> <tên-gợi-nhớ>."
+            "Chưa xác định được tài khoản Zalo đang đăng nhập. Đăng nhập Zalo bot rồi gõ "
+            "/nhomzalo để xem các nhóm, sau đó /themnhom <số> [tên-gợi-nhớ]."
         )
         return
     argument = common.extract_arg(context)
@@ -65,7 +65,7 @@ async def _facebook_command(
 
 # Bảng lệnh -> handler dùng chung; tạo module attribute ``<tên>_cmd`` để
 # bot_app đăng ký như trước (thay cho 20 wrapper giống hệt nhau).
-_GROUP_COMMANDS = ("nhom", "themnhom", "xoanhom", "tongket", "dangnoi")
+_GROUP_COMMANDS = ("nhomzalo", "nhom", "themnhom", "xoanhom", "tongket", "dangnoi")
 _FACEBOOK_COMMANDS = (
     "fb_nhom",
     "fb_pages",

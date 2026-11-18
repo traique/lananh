@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
+import type { GroupList } from "./groups.js";
 
 export type ControlHandlers = {
   status(): Record<string, unknown>;
@@ -7,6 +8,8 @@ export type ControlHandlers = {
   logout(): Promise<void>;
   /** Quên 1 người gửi (Python gỡ pairing: /zaloxoa); true nếu gateway đang nhớ người đó. */
   forgetSender(id: string): boolean;
+  /** Mọi nhóm bot đang tham gia (Python /nhomzalo); null khi Zalo chưa kết nối. */
+  groups(): Promise<GroupList | null>;
 };
 
 /** Body JSON tối đa của control server (chỉ chứa 1 id Zalo). */
@@ -45,6 +48,11 @@ export function startControlServer(port: number, handlers: ControlHandlers): Ser
     };
     try {
       if (req.method === "GET" && req.url === "/status") return reply(200, handlers.status());
+      if (req.method === "GET" && req.url === "/groups") {
+        const result = await handlers.groups();
+        if (!result) return reply(409, { error: "Zalo is not connected" });
+        return reply(200, result);
+      }
       if (req.method === "POST" && req.url === "/login/qr") {
         return reply(200, { ok: true, state: await handlers.startQr() });
       }

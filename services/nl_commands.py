@@ -178,7 +178,7 @@ class CommandRun:
 
 
 _PORTFOLIO_COMMANDS = frozenset({"/danhmuc", "/lichsucp", "/laicp", "/theodoi"})
-_GROUP_COMMANDS = frozenset({"/nhom", "/tongket", "/dangnoi"})
+_GROUP_COMMANDS = frozenset({"/nhomzalo", "/nhom", "/tongket", "/dangnoi"})
 
 
 async def _zalo_account_id() -> str | None:
