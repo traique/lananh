@@ -140,3 +140,23 @@ thu_thach:
   6: học cách chấp nhận không hoàn hảo, bớt cầu toàn với người thân.
   7: học cách mở lòng, tin tưởng và chia sẻ thay vì khép kín.
   8: học cách cân bằng tiền bạc và quyền lực với tình cảm, tránh lạm dụng.
+
+# ngay_ca_nhan: gợi ý cho ngày cá nhân 1-9 (ngày xem theo giờ Việt Nam).
+ngay_ca_nhan:
+  1: ngày mở đầu - hợp khởi động việc mới và tự đưa ra quyết định.
+  2: ngày mềm mỏng - lắng nghe, phối hợp, kiên nhẫn chờ phản hồi.
+  3: ngày giao lưu - trò chuyện, viết, trình bày ý tưởng.
+  4: ngày tỉ mỉ - xử lý việc tồn, sắp xếp giấy tờ, làm theo kế hoạch.
+  5: ngày linh hoạt - đón thay đổi nhỏ, đổi không khí, chưa vội chốt việc lớn.
+  6: ngày vun vén - dành thời gian cho gia đình, nhà cửa, người thân.
+  7: ngày lắng lại - đọc, học, nghỉ ngơi, suy nghĩ một mình.
+  8: ngày quyết đoán - lo tiền bạc, công việc, đàm phán.
+  9: ngày hoàn tất - kết thúc việc dở, dọn dẹp, cho đi.
+
+# no_nghiep: số nợ nghiệp theo ngày sinh (sinh ngày 13, 14, 16, 19). Viết như
+# bài học cần rèn, không phải điềm xấu.
+no_nghiep:
+  13: bài học siêng năng - kiên trì làm đến nơi đến chốn, tránh đường tắt hay bỏ dở giữa chừng.
+  14: bài học tiết chế - dùng tự do có trách nhiệm, tránh sa đà và đổi ý thất thường.
+  16: bài học khiêm tốn - bớt cái tôi, coi những lần đổ vỡ là dịp xây lại vững hơn.
+  19: bài học cho và nhận - tự lập nhưng không khép kín, biết nhờ giúp đỡ và quan tâm người khác.

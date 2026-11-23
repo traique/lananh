@@ -17,7 +17,10 @@ export const READONLY_ANY_COMMANDS = [
   "/lich",
   "/tsh",
   "/tuvi",
+  "/battu",
   "/kymon",
+  "/loban",
+  "/cungphi",
   "/danhgia",
   "/chuy",
 ];

@@ -45,16 +45,22 @@ _HELP_INTRO_MEMBER = """📖 Lệnh dùng được
 💬 Nhắn bình thường để trò chuyện. Nhắc tới 1 mã cổ phiếu là có giá realtime; nói "phân tích FPT" để xem
 báo cáo tham khảo. Nói "đã mua FPT 100 giá 120" để ghi danh mục.
 ⏳ Mỗi ngày có giới hạn số lượt trò chuyện và lượt tạo ảnh, luận giải chi tiết, tra web; mở lại lúc 0h."""
-_HELP_COMMON = """Lịch, thần số học, tử vi, kỳ môn
+_HELP_COMMON = """Lịch, thần số học, tử vi, bát tự, kỳ môn, phong thủy
 /lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8,
   /lich tháng này, /lich trung thu, /lich ngày tốt tháng này, /lich tuổi 15/3/1990,
-  /lich sao hạn 1990 nam năm 2027 (gõ /lich help để xem thêm ví dụ)
+  /lich sao hạn 1990 nam năm 2027, /lich hội Lim, /lich lễ hội tháng Giêng ở Bắc Ninh
+  (gõ /lich help để xem thêm ví dụ)
 /tsh <ngày sinh> [họ tên] — thần số học: con số chủ đạo, biểu đồ ngày sinh (không tốn AI)
 /tsh_chitiet <như trên> — AI diễn giải chi tiết
-/tuvi <ngày sinh> <giờ> <nam|nữ> — an lá số tử vi (không tốn AI), vd /tuvi 15/3/1990 9h30 nam
+/tuvi <ngày sinh> <giờ> <nam|nữ> [năm xem] — an lá số tử vi kèm vận năm (không tốn AI),
+  vd /tuvi 15/3/1990 9h30 nam năm 2027
 /tuvi_chitiet <như trên> — AI luận giải lá số
+/battu <ngày sinh> [giờ] <nam|nữ> — Bát Tự tứ trụ: tàng can, thập thần, đại vận (không tốn AI)
+/battu_chitiet <như trên> — AI luận giải Bát Tự
 /kymon [ngày] [giờ] — lập bàn Kỳ Môn Độn Giáp (không tốn AI), mặc định lúc này, vd /kymon 25/10/2026 9:00
 /kymon_chitiet [thời điểm] <việc cần xem> — AI luận giải bàn Kỳ Môn cho việc đó
+/loban <số đo> [cửa|giường|bàn thờ...] — thước Lỗ Ban: cung tốt xấu, số đo tốt gần nhất
+/cungphi <năm sinh> <nam|nữ> — cung phi Bát Trạch, hướng nhà tốt xấu (không tốn AI)
 
 Đời sống (số liệu thật, không tốn AI)
 /vang [sjc|nhẫn|doji|pnj|bảo tín|thế giới] — giá vàng SJC, DOJI, PNJ, Bảo Tín, thế giới
@@ -165,7 +171,7 @@ _HELP_FACEBOOK = """📣 Zalo → Facebook Page (tách riêng khỏi /tongket, c
 (hàng chờ giữ tối đa 150 bài, bài trùng trong 7 ngày không được đưa vào)"""
 _HELP_FOOTER = (
     "/huy — dừng câu trả lời đang chạy dở (trong lúc chờ vẫn dùng được /help, /notes, "
-    "/lich, /tsh, /tuvi, /kymon, /history)\n"
+    "/lich, /tsh, /tuvi, /battu, /kymon, /loban, /cungphi, /history)\n"
     "/sai [lý do] — báo câu trả lời vừa rồi chưa ổn để Lan Anh rút kinh nghiệm\n"
     "/help — hướng dẫn ngắn; /help <chủ đề> (vd /help vàng); /help all — bản đầy đủ này"
 )

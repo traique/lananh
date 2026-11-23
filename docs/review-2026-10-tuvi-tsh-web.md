@@ -49,7 +49,7 @@ giữ logo vàng kim cũ thì đổi lại hai dải màu trong script và chạ
 
 - Thêm **số trưởng thành** (giữ số bậc thầy 11/22/33 như Pythagoras chuẩn),
   **4 đỉnh cao** và **4 thử thách** theo mốc tuổi (đỉnh 1 kết thúc ở 36 trừ số
-  chủ đạo rút gọn, mỗi giai đoạn sau 9 năm), **biểu đồ tên** và **biểu đồ tổng
+  chủ đạo, 10/11 giữ nguyên, 22/33 rút gọn; mỗi giai đoạn sau 9 năm), **biểu đồ tên** và **biểu đồ tổng
   hợp** (ngày sinh + tên), ý nghĩa tháng cá nhân.
 - Đối chiếu với tracuuthansohoc.com và Hans Decoz (worldnumerology.com) rồi
   chỉnh theo cách phổ biến ở VN: các số theo tên **rút gọn từng từ** rồi cộng

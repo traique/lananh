@@ -1598,3 +1598,95 @@ async def test_ten_noi_trong_cookie_sua_tay_van_an_toan(client, monkeypatch):
     ]
     value = "21.03_105.85_" + web_site.quote(longest, safe="")
     assert web_site._parse_my_place(value) == (21.03, 105.85, longest)
+
+
+async def test_tsh_so_chu_dao_22_ghi_dung_so_tru_tuoi_dinh_1(client):
+    # Số chủ đạo 22 tính tuổi đỉnh 1 là 36 - 4 = 32: trước đây trang ghi "36 trừ số
+    # chủ đạo (22)" ngay cạnh "0-32 tuổi".
+    html = (await client.post("/than-so-hoc", data={"ngay": "1990-01-02"})).text
+    assert "36 trừ số chủ đạo (22 tính là 4)" in html
+    assert "0-32 tuổi" in html
+    html = (await client.post("/than-so-hoc", data={"ngay": "1990-03-15"})).text
+    assert "36 trừ số chủ đạo (1" in html and "tính là" not in html.split("36 trừ")[1][:30]
+
+
+async def test_tsh_ngay_ca_nhan_va_no_nghiep_ngay_sinh(client):
+    # Sinh ngày 13 thì có dòng nợ nghiệp; ngày cá nhân luôn có (ngày xem theo giờ VN).
+    html = (await client.post("/than-so-hoc", data={"ngay": "1990-03-13"})).text
+    assert "Nợ nghiệp ngày sinh" in html and "Ngày cá nhân (" in html
+    html = (await client.post("/than-so-hoc", data={"ngay": "1990-03-15"})).text
+    assert "Nợ nghiệp" not in html and "Ngày cá nhân (" in html
+    r = await client.post("/api/v1/numerology/readings", json={"birthDate": "1990-03-13"})
+    data = r.json()
+    assert data["karmicDebt"]["value"] == 13 and data["karmicDebt"]["meaning"]
+    as_of = dt.date.fromisoformat(data["asOf"])
+    expected = web_site.numerology.compute(dt.date(1990, 3, 13), "", as_of).personal_day
+    assert data["personalDay"]["date"] == data["asOf"] and data["personalDay"]["value"] == expected
+    assert data["personalMonth"] == data["personalMonthDetail"]["value"]  # trường cũ giữ nguyên
+    r = await client.post("/api/v1/numerology/readings", json={"birthDate": "1990-03-15"})
+    assert r.json()["karmicDebt"] is None
+
+
+async def test_trang_le_hoi_loc_nam_tinh_va_ghi_nguon(client):
+    html = (await client.get("/lich/le-hoi", params={"nam": "2027", "tinh": "bac-ninh"})).text
+    assert "<h1>Lễ hội năm 2027 ở Bắc Ninh</h1>" in html
+    assert "Hội Lim" in html and "13/1 âm lịch" in html and 'href="/lich?ngay=2027-02-18"' in html
+    assert "Chùa Hương" not in html  # lọc đúng tỉnh
+    assert "Dữ liệu lễ hội: Nhật Nguyệt (nhatnguyet.org), CC BY 4.0" in html
+    assert 'href="/lich/le-hoi?nam=2028&amp;tinh=bac-ninh"' in html
+    # Tham số sai: về năm nay, cả nước (không lỗi 500).
+    html = (await client.get("/lich/le-hoi", params={"nam": "abc", "tinh": "khong-co"})).text
+    assert "Lễ hội năm" in html and "Ngày Văn hóa Việt Nam" in html
+    # Lễ ban tổ chức công bố từng năm có bảng riêng, ngày ISO đổi sang dd/mm/yyyy.
+    assert "30/04/2026" in (await client.get("/lich/le-hoi")).text
+
+
+async def test_ngay_co_le_hoi_hien_tren_trang_ngay_va_api(client):
+    html = (await client.get("/lich", params={"ngay": "2027-02-18"})).text
+    assert "<dt>Lễ hội</dt>" in html and "Hội Lim (Bắc Ninh)" in html
+    day = (await client.get("/api/v1/calendar/days/2026-11-24")).json()
+    assert "Ngày Văn hóa Việt Nam (cả nước)" in day["festivals"]
+
+
+async def test_tuvi_van_nam_va_ghi_chu_quy_uoc_tren_web_va_api(client, monkeypatch):
+    # Năm xem mặc định là năm âm lịch hiện tại; cố định 2026 để kiểm số liệu.
+    monkeypatch.setattr(web_site.tuvi, "current_view_year", lambda today=None: 2026)
+    html = (await client.post("/tu-vi", data=_TUVI_FORM)).text  # 15/3/1990 giờ Tỵ, Canh Ngọ
+    block = html.split('id="van-nam-title"')[1].split("</section>")[0]
+    assert "Vận năm 2026 (Bính Ngọ)" in block and "37 tuổi âm" in block
+    assert '<a href="#cung-1">Điền Trạch</a> (Sửu), 35-44 tuổi' in block
+    assert "Lưu Thái Tuế ở Tài Bạch (Ngọ), đồng cung lưu niên" in block
+    notes = html.split('id="notes-title"')[1].split("</section>")[0]
+    assert "Năm sinh can Canh: Tứ Hóa theo Tân Biên" in notes
+    r = await client.post(
+        "/api/v1/tuvi/charts", json={"birthDate": "1990-03-15", "hourBranch": 5, "gender": "male"}
+    )
+    data = r.json()
+    assert data["palaces"][0]["mainStars"] == ["Phá Quân"] and data["note"]  # trường cũ
+    assert data["viewYear"] == 2026 and data["vanNam"]["tieuHan"]["palace"] == "Thiên Di"
+    assert [s["id"] for s in data["vanNam"]["saoLuu"]][:2] == ["luu-thai-tue", "luu-loc-ton"]
+    assert data["notes"][0].startswith("Năm sinh can Canh")
+    # viewYear cho API (site_data): số nguyên 1900-2100, sai kiểu báo INVALID_VIEW_YEAR.
+    chart = web_site.site_data.tuvi_chart(1990, 3, 15, 5, "male", view_year=2030)
+    assert chart["viewYear"] == 2030 and chart["vanNam"]["canChi"] == "Canh Tuất"
+    for bad in ("2030", True, 1800, 20.5):
+        with pytest.raises(web_site.site_data.InputError) as err:
+            web_site.site_data.tuvi_chart(1990, 3, 15, 5, "male", view_year=bad)
+        assert err.value.code == "INVALID_VIEW_YEAR"
+
+
+async def test_api_tuvi_nhan_nam_xem(client):
+    body = {"birthDate": "1990-03-15", "hourBranch": 5, "gender": "male", "viewYear": 2030}
+    chart = (await client.post("/api/v1/tuvi/charts", json=body)).json()
+    assert chart["viewYear"] == 2030 and chart["vanNam"]["year"] == 2030
+    bad = await client.post("/api/v1/tuvi/charts", json={**body, "viewYear": "2030"})
+    assert bad.status_code == 422 and bad.json()["error"]["code"] == "INVALID_VIEW_YEAR"
+
+
+async def test_form_tu_vi_chon_nam_xem(client):
+    form = {"ngay": "15", "thang": "3", "nam": "1990", "gio": "4", "gioi": "male", "lich": "duong"}
+    html = (await client.post("/tu-vi", data={**form, "namxem": "2030"})).text
+    assert "2030" in html and "Canh Tuất" in html  # vận năm 2030 (Canh Tuất)
+    html = (await client.post("/tu-vi", data={**form, "namxem": "abc"})).text
+    assert "Năm xem là số từ 1900 đến 2100." in html
+    assert 'name="namxem"' in (await client.get("/tu-vi")).text

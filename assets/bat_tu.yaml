@@ -1,0 +1,26 @@
+# Chữ soạn sẵn cho /battu (services/bat_tu.py). Sửa thoải mái, không cần đổi code.
+# Lời tự viết, tóm tắt cách hiểu phổ biến, chỉ để tham khảo; /battu_chitiet mới dùng
+# AI luận giải.
+#
+# nhat_chu: hình tượng và nét tính cách thường gắn với can ngày (nhật chủ).
+# thap_than: ý nghĩa ngắn của 5 nhóm thập thần (mỗi nhóm 2 thần: cùng / khác âm dương
+#   với nhật chủ).
+
+nhat_chu:
+  Giáp: như cây đại thụ - thẳng thắn, có chí tiến thủ, thích dẫn dắt; nên bớt cứng nhắc.
+  Ất: như cỏ hoa, dây leo - mềm dẻo, khéo thích nghi, giỏi dựa vào các mối quan hệ.
+  Bính: như mặt trời - nhiệt tình, cởi mở, hào phóng; dễ nóng vội, cả thèm chóng chán.
+  Đinh: như ngọn đèn - tinh tế, chu đáo, sâu sắc; bền bỉ hơn vẻ ngoài.
+  Mậu: như núi, đất dày - vững vàng, đáng tin, trọng chữ tín; đôi khi bảo thủ.
+  Kỷ: như đất ruộng vườn - bao dung, chịu khó, giỏi vun đắp; hay lo nghĩ.
+  Canh: như sắt thép - quyết đoán, thẳng tính, trọng nghĩa khí; dễ cứng rắn.
+  Tân: như châu ngọc - tinh tế, coi trọng thể diện và cái đẹp, nhạy cảm.
+  Nhâm: như sông lớn - thông minh, linh hoạt, thích tự do, nhiều ý tưởng.
+  Quý: như mưa sương - kín đáo, trực giác tốt, kiên nhẫn, giàu tưởng tượng.
+
+thap_than:
+  Tỷ Kiếp: bản thân, anh em, bạn bè, cạnh tranh
+  Thực Thương: tài năng, cách thể hiện, sáng tạo
+  Tài: tiền bạc, của cải (với nam còn chỉ vợ)
+  Quan Sát: công việc, kỷ luật, áp lực (với nữ còn chỉ chồng)
+  Ấn: học vấn, sự che chở, nâng đỡ (thường ứng với mẹ)

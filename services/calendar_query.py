@@ -8,7 +8,9 @@ Thứ tự thử (chữ đã bỏ dấu, xem ``answer``):
    Ngày tốt xấu chung: hoàng đạo/hắc đạo, Tam nương, Nguyệt kỵ (1 ngày, cuối tuần, cả
    tháng - tháng này thì chỉ từ hôm nay).
 5. Đếm ngày: "còn mấy ngày tới 30/4", "từ 1/1 đến 20/11 bao nhiêu ngày".
-6. Ngày lễ theo tên ("trung thu", "vu lan năm sau") và danh sách lễ sắp tới.
+6. Ngày lễ theo tên ("trung thu", "vu lan năm sau") và danh sách lễ sắp tới; 206 lễ
+   hội của bộ dữ liệu le-hoi-viet-nam (services/le_hoi.py): "hội Lim", "lễ hội tháng
+   Giêng ở Bắc Ninh", "tháng này có lễ hội gì".
 7. Bảng lịch tháng (dương, hoặc tháng âm khi có chữ "âm").
 8. Rằm / mùng 1 sắp tới; thứ trong tuần ("thứ 7 tuần sau", "cuối tuần").
 9. Câu âm lịch chung (services/lunar_chat.py) và 1 ngày dương bất kỳ.
@@ -24,7 +26,7 @@ import datetime as dt
 import re
 from zoneinfo import ZoneInfo
 
-from services import can_chi, lunar, lunar_chat
+from services import can_chi, le_hoi, lunar, lunar_chat
 from core.text_normalize import fold
 
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -36,6 +38,7 @@ HELP = """📅 /lich <câu hỏi> - tra lịch, không tốn lượt AI. Ví d�
 • /lich rằm tháng 8, /lich âm 15/6n/2025 (n = tháng nhuận), /lich rằm tới
 • /lich tháng này, /lich tháng 12/2026, /lich tháng 8 âm
 • /lich trung thu, /lich vu lan năm sau, /lich các ngày lễ
+• /lich hội Lim, /lich lễ hội tháng Giêng ở Bắc Ninh, /lich tháng này có lễ hội gì
 • /lich còn mấy ngày tới 30/4, /lich từ 1/1 đến 20/11
 • /lich ngày tốt tháng này, /lich hôm nay hoàng đạo không
 • /lich xem ngày cưới tháng 12, /lich ngày khai trương, /lich xem ngày động thổ
@@ -192,10 +195,28 @@ def holidays_on(day: dt.date) -> list[str]:
     ]
 
 
+def festivals_on(day: dt.date) -> list[str]:
+    """Lễ hội (bộ dữ liệu le-hoi-viet-nam) có chính lễ ngày ``day``, trừ lễ đã có trong
+    HOLIDAYS (Tết, Trung thu... đã in ở dòng 🎉). Lễ lớn trước."""
+    main = {fold(name.split(" (")[0]) for name in holidays_on(day)}
+    out = []
+    for f in le_hoi.on_day(day):
+        if not any(key in main or any(key in m or m in key for m in main) for key in f.keys):
+            out.append(f"{f.name} ({f.place})" if f.place else f.name)
+    return out
+
+
 def describe_full(day: dt.date, label: str = "") -> str:
     head = f"📅 {_cap(label)}\n" if label else "📅 "
     holidays = holidays_on(day)
     tail = f"\n🎉 {', '.join(holidays)}" if holidays else ""
+    festivals = festivals_on(day)
+    if festivals:
+        more = f" và {len(festivals) - 5} lễ khác" if len(festivals) > 5 else ""
+        tail += f"\n🎎 Lễ hội: {', '.join(festivals[:5])}{more}."
+    old = lunar.old_calendar_note(day.day, day.month, day.year)
+    if old:
+        tail += f"\nℹ️ {old}"
     return (
         f"{head}{lunar.describe_date(lunar.date_info(day))}\n"
         f"{_cap(can_chi.day_quality(day))}.{tail}"
@@ -677,6 +698,10 @@ def _target_date(
     if holiday:
         day = holiday_entry_date(holiday, today, _holiday_year(fragment, today))
         return (day, holiday[0]) if day else None
+    festival = le_hoi.find(fragment)
+    if festival and festival.kind != "theo-nam":
+        day = le_hoi.next_date(festival, today, _holiday_year(fragment, today))
+        return (day, festival.name) if day else None
     if re.search(r"\btet\b", fragment):
         tet = lunar.next_tet(today)
         return tet, "Tết Nguyên đán"
@@ -729,6 +754,71 @@ def _count_answer(t: str, today: dt.date) -> str | None:
     return f"{label} ({when}) đã qua {-days} ngày."
 
 
+_FESTIVAL_LIST_RE = re.compile(r"\ble hoi\b|\b(?:co )?(?:hoi|le hoi) gi\b")
+_LUNAR_MONTH_ASK_RE = re.compile(r"\bthang (gieng|chap|\d{1,2})(?: (?:am|al)(?: lich)?)?\b")
+
+
+def _lunar_month_range(lm: int, ly: int) -> tuple[dt.date, dt.date] | None:
+    """(ngày đầu, ngày cuối) dương của tháng ``lm`` âm (tháng chính) năm âm ``ly``."""
+    start = lunar_to_solar_exact(1, lm, ly)
+    if start is None:
+        return None
+    day = start + dt.timedelta(days=28)
+    while lunar.solar_to_lunar(day.day, day.month, day.year)[1:] == (lm, ly, False):
+        day += dt.timedelta(days=1)
+    return start, day - dt.timedelta(days=1)
+
+
+def _festival_list_answer(t: str, today: dt.date) -> str | None:
+    """ "lễ hội tháng Giêng", "lễ hội ở Bắc Ninh", "tháng này có lễ hội gì", "lễ hội 2027"."""
+    if not _FESTIVAL_LIST_RE.search(t) or le_hoi.find(t):
+        return None
+    code = le_hoi.find_province(t)
+    where = f" ở {le_hoi.provinces()[code]}" if code else ""
+    year = _year_modifier(t, today) or _holiday_year(t, today)
+    lunar_ask = _LUNAR_MONTH_ASK_RE.search(t)
+    solar_ask = _MONTH_RE.search(t)
+    is_lunar = lunar_ask and (
+        lunar_ask.group(1) in ("gieng", "chap") or re.search(r"\bthang \d{1,2} (?:am|al)\b", t)
+    )
+    if is_lunar:
+        lm = {"gieng": 1, "chap": 12}.get(lunar_ask.group(1)) or int(lunar_ask.group(1))
+        if not 1 <= lm <= 12:
+            return None
+        ly = year or can_chi.lunar_year_of(today)
+        span = _lunar_month_range(lm, ly)
+        if span and year is None and span[1] < today:  # tháng ấy năm nay đã qua
+            ly += 1
+            span = _lunar_month_range(lm, ly)
+        if span is None:
+            return None
+        start, end = span
+        month_name = le_hoi.lunar_day_text(1, lm).split(" ", 2)[-1]
+        title = (
+            f"Lễ hội {month_name} âm lịch năm {lunar.year_can_chi(ly)}{where} "
+            f"({start:%d/%m} - {end:%d/%m/%Y})"
+        )
+    elif solar_ask:
+        y, mon = _resolve_month(solar_ask, today)
+        if y is None:
+            return None
+        if year is None and solar_ask.group("m") and dt.date(y, mon, 1) < today.replace(day=1):
+            y += 1  # "lễ hội tháng 3" khi đã qua tháng 3: lần tới
+        start = dt.date(y, mon, 1)
+        end = dt.date(y, mon, calendar.monthrange(y, mon)[1])
+        title = f"Lễ hội tháng {mon}/{y}{where}"
+    elif year is not None:
+        if not _MIN_YEAR <= year <= _MAX_YEAR:
+            return None
+        start, end = dt.date(year, 1, 1), dt.date(year, 12, 31)
+        title = f"Lễ hội năm {year}{where}"
+    else:
+        days = 365 if code else 30
+        start, end = today, today + dt.timedelta(days=days - 1)
+        title = f"Lễ hội {'12 tháng' if code else '30 ngày'} tới{where}"
+    return le_hoi.list_text(le_hoi.between(start, end, code), title)
+
+
 def _holiday_answer(t: str, today: dt.date) -> str | None:
     if re.search(r"\b(cac ngay le|ngay le|le sap toi|le tet|cac le)\b", t):
         upcoming = []
@@ -745,7 +835,8 @@ def _holiday_answer(t: str, today: dt.date) -> str | None:
         return "🎉 Các ngày lễ sắp tới:\n" + "\n".join(lines)
     holiday = _find_holiday(t)
     if not holiday:
-        return None
+        festival = le_hoi.find(t)
+        return le_hoi.describe(festival, today, _holiday_year(t, today)) if festival else None
     day = holiday_entry_date(holiday, today, _holiday_year(t, today))
     if day is None:
         return None
@@ -874,6 +965,7 @@ def understand(query: str, today: dt.date | None = None) -> str | None:
         lambda: _purpose_answer(text, t, today),
         lambda: _good_days_answer(t, today),
         lambda: _count_answer(t, today),
+        lambda: _festival_list_answer(t, today),
         lambda: _holiday_answer(t, today),
         lambda: _ram_mung1_answer(t, today),
         lambda: _month_table_answer(t, today),
@@ -918,7 +1010,7 @@ _CHI_RE = re.compile(r"\btuoi (?:ty|suu|dan|mao|thin|ngo|mui|than|dau|tuat|hoi)\
 
 
 def _chat_asks_calendar(text: str, t: str, today: dt.date) -> bool:
-    holiday = bool(_find_holiday(t) or re.search(r"\btet\b", t))
+    holiday = bool(_find_holiday(t) or re.search(r"\btet\b", t) or le_hoi.find(t))
     day = holiday or bool(_asked_day(t, today) or _ANY_DATE_RE.search(t))
     year = bool(_YEAR_RE.search(t) or re.search(r"\bnam (?:nay|sau|toi|truoc)\b", t))
     hop = _keyword(text, t, r"\b(?:hợp|xung)\b", r"\b(?:hop|xung)\b")

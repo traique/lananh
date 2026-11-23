@@ -253,10 +253,14 @@ COMMANDS: dict[str, Command] = {}
 # Viết thận trọng: tin chat phiếm ("vâng hôm nay em bận", "em nói về số liệu") không
 # được khớp - test_nl_commands có bộ câu chat thường phải ra rỗng.
 _GROUP_RE: dict[str, re.Pattern[str]] = {
-    "huyen_hoc": re.compile(r"\b(?:tu vi|la so|than so hoc|so chu dao|ky mon|kymon)\b"),
+    "huyen_hoc": re.compile(
+        r"\b(?:tu vi|la so|than so hoc|so chu dao|ky mon|kymon|bat tu|tu tru)\b"
+    ),
+    # Nhóm riêng để câu tử vi không kéo thêm 2 tool phong thủy vào prompt router.
+    "phong_thuy": re.compile(r"\b(?:lo ban|cung phi|bat trach|huong nha)\b"),
     "lich": re.compile(
         r"\b(?:ngay tot|ngay xau|ngay dep|(?:ngay|gio) hoang dao|xem ngay|sao han|han nam|"
-        r"tam tai|kim lau|hoang oc|ngay le|xuat hanh|dong tho|khai truong|nhap trach|"
+        r"tam tai|kim lau|hoang oc|ngay le|le hoi|xuat hanh|dong tho|khai truong|nhap trach|"
         r"xem tuoi|hop tuoi|tuoi (?:gi|con gi)|lich thang)\b"
     ),
     "tien_ich": re.compile(
@@ -482,6 +486,50 @@ def _ai_detail(args: dict[str, Any]) -> bool:
     return _wants_detail(args)
 
 
+def _gender_word(value: Any) -> str:
+    raw = fold(_clean(value, 10))
+    if raw in {"nam", "male", "trai"}:
+        return "nam"
+    return "nữ" if raw in {"nu", "female", "gai"} else ""
+
+
+_BATTU_ASK = (
+    "{You} cho {me} xin ngày sinh dương lịch, giờ sinh (nếu biết) và giới tính nha, vd "
+    "15/3/1990 9h30 nam."
+)
+
+
+def _build_battu(args: dict[str, Any]) -> str | Ask:
+    detail = _wants_detail(args)
+    date, time_ = _date_text(args.get("date")), _clean(args.get("time"), 30)
+    gender = _gender_word(args.get("gender"))
+    if not date or not gender:
+        return Ask(_BATTU_ASK, detail=detail)
+    command = "/battu_chitiet" if detail else "/battu"
+    return " ".join(part for part in (command, date, time_, gender) if part)
+
+
+_LOBAN_ASK = "{You} cho {me} xin số đo (vd 80cm) và món cần đo (cửa, giường, bàn thờ...) nha."
+
+
+def _build_loban(args: dict[str, Any]) -> str | Ask:
+    size, item = _clean(args.get("size"), 20), _clean(args.get("item"), 30)
+    if not re.search(r"\d", size):
+        return Ask(_LOBAN_ASK)
+    return f"/loban {size} {item}".strip()
+
+
+_CUNGPHI_ASK = "{You} cho {me} xin năm sinh (hoặc ngày sinh) và giới tính nha, vd 1990 nữ."
+
+
+def _build_cungphi(args: dict[str, Any]) -> str | Ask:
+    birth = _date_text(args.get("birth")) or _clean(args.get("birth"), 12)
+    gender = _gender_word(args.get("gender"))
+    if not re.search(r"\b(?:19|20)\d{2}\b", birth) or not gender:
+        return Ask(_CUNGPHI_ASK)
+    return f"/cungphi {birth} {gender}"
+
+
 _cmd(
     "cmd_tuvi",
     "tuvi",
@@ -515,6 +563,43 @@ _cmd(
     },
     _build_tsh,
     heavy=_ai_detail,
+)
+_cmd(
+    "cmd_battu",
+    "battu",
+    "bát tự",
+    "huyen_hoc",
+    "Lập lá số Bát Tự (tứ trụ, đại vận; code tính).",
+    '{"date": ngày sinh dương, "time": giờ sinh nếu biết, "gender": nam|nữ, "detail": muốn '
+    "AI luận giải}. Thiếu thì để rỗng (hệ thống hỏi lại), KHÔNG đoán.",
+    {
+        "date": reg.string("ngày sinh dd/mm/yyyy"),
+        "time": reg.string("giờ sinh"),
+        "gender": reg.string("nam|nữ"),
+        "detail": reg.boolean("AI luận giải"),
+    },
+    _build_battu,
+    heavy=_ai_detail,
+)
+_cmd(
+    "cmd_loban",
+    "loban",
+    "thước Lỗ Ban",
+    "phong_thuy",
+    "Tra thước Lỗ Ban cho 1 số đo (cửa, giường, tủ, bàn thờ...).",
+    '{"size": số đo kèm đơn vị, vd "80cm", "1m2", "item": món đồ nếu có, vd "cửa"}.',
+    {"size": reg.string("số đo"), "item": reg.string("món đồ")},
+    _build_loban,
+)
+_cmd(
+    "cmd_cungphi",
+    "cungphi",
+    "cung phi",
+    "phong_thuy",
+    "Cung phi Bát Trạch, hướng nhà tốt xấu theo năm sinh và giới tính.",
+    '{"birth": năm sinh hoặc ngày sinh, "gender": nam|nữ}. Thiếu thì để rỗng.',
+    {"birth": reg.string("năm/ngày sinh"), "gender": reg.string("nam|nữ")},
+    _build_cungphi,
 )
 _cmd(
     "cmd_kymon",
@@ -1402,6 +1487,37 @@ async def _tsh(user_id: int, text: str, low: str, waiting: _Pending | None) -> C
     return await _run_spec("cmd_tsh", user_id, args)
 
 
+_BATTU_TRIGGER = re.compile(r"\b(?:bat tu|tu tru)\b")
+_LOBAN_TRIGGER = re.compile(r"\blo ban\b")
+_CUNGPHI_TRIGGER = re.compile(r"\b(?:cung phi|bat trach|huong nha)\b")
+_BIRTH_YEAR_RE = re.compile(r"\b(?:19\d{2}|20\d{2}|2100)\b")
+# Giới tính trên chữ CÓ dấu: bỏ dấu thì "năm 1990" cũng thành "nam".
+_GENDER_WORD_RE = re.compile(r"(?<!\w)(?:nam|nữ|nu)(?!\w)")
+
+
+async def _battu_phong_thuy(user_id: int, text: str, low: str) -> CommandRun | None:
+    """ "bát tự 15/3/1990 9h30 nam", "cửa 80cm có hợp lỗ ban không", "cung phi 1990 nữ":
+    đủ tham số thì chạy thẳng lệnh (không tốn lượt router); thiếu thì để router hỏi lại."""
+    if _KNOWLEDGE_RE.search(low):
+        return None
+    heavy = False
+    if _LOBAN_TRIGGER.search(low) and re.search(r"\d", low):
+        line = f"/loban {_clean(text, 120)}"
+    elif (
+        _CUNGPHI_TRIGGER.search(low)
+        and _BIRTH_YEAR_RE.search(low)
+        and _GENDER_WORD_RE.search(nfc(text).lower())
+    ):
+        line = f"/cungphi {_clean(text, 120)}"
+    elif _BATTU_TRIGGER.search(low) and _DATE_RE.search(text):
+        heavy = bool(_DETAIL_RE.search(low))
+        line = f"{'/battu_chitiet' if heavy else '/battu'} {_clean(text, 160)}"
+    else:
+        return None
+    result = await _run_command(user_id, line, heavy=heavy)
+    return CommandRun(tuple(result.extra.get("messages") or [result.text]))
+
+
 async def _kymon_or_lich(user_id: int, text: str, low: str) -> CommandRun | None:
     from services import calendar_query
 
@@ -1466,6 +1582,7 @@ async def _structured(user_id: int, text: str, low: str) -> CommandRun | None:
     for step in (
         lambda: _tuvi(user_id, text, low, waiting),
         lambda: _tsh(user_id, text, low, waiting),
+        lambda: _battu_phong_thuy(user_id, text, low),
         lambda: _kymon_or_lich(user_id, text, low),
     ):
         result = await step()

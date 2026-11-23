@@ -91,6 +91,8 @@ def day_info(day: dt.date) -> dict:
         "isTamNuong": ld in can_chi.TAM_NUONG,
         "isNguyetKy": ld in can_chi.NGUYET_KY,
         "holidays": calendar_query.holidays_on(day),
+        # Lễ hội có chính lễ hôm đó (bộ le-hoi-viet-nam, trừ lễ đã có ở "holidays").
+        "festivals": calendar_query.festivals_on(day),
         "nextTet": info["next_tet"],
         "daysToTet": info["days_to_tet"],
     }
@@ -347,16 +349,26 @@ def build_tuvi(
     is_lunar: bool = False,
     is_leap: bool = False,
     early_ty: bool = False,
+    view_year: object = None,
 ) -> tuvi.Chart:
     """Lá số (đối tượng Chart) từ ngày sinh dương, hoặc (is_lunar) ngày/tháng/năm ÂM.
     early_ty: sinh 23h-24h (giờ Tý đầu) - an theo ngày hôm sau, chỉ hợp lệ với
-    hour_branch = 0. Raise InputError khi dữ liệu sai."""
+    hour_branch = 0. view_year (viewYear của API): năm xem vận năm, số nguyên
+    1900-2100, None = năm âm lịch hiện tại. Raise InputError khi dữ liệu sai."""
     if gender not in GENDERS:
         raise InputError("INVALID_GENDER", "Giới tính là male hoặc female.")
     if not 0 <= hour_branch <= 11:
         raise InputError("INVALID_HOUR", "hourBranch là số 0 (Tý) đến 11 (Hợi).")
     if early_ty and hour_branch != 0:
         raise InputError("INVALID_HOUR", "Giờ Tý đầu (23h-24h) chỉ đi với giờ Tý (0).")
+    if view_year is not None and (
+        not isinstance(view_year, int)
+        or isinstance(view_year, bool)
+        or not MIN_YEAR <= view_year <= MAX_YEAR
+    ):
+        raise InputError(
+            "INVALID_VIEW_YEAR", f"viewYear là số nguyên (năm xem {MIN_YEAR}-{MAX_YEAR})."
+        )
     _check_year(year)
     male = gender == "male"
     if is_lunar:
@@ -370,7 +382,7 @@ def build_tuvi(
             solar = dt.date(year, month, day)
         except ValueError:
             raise InputError("INVALID_DATE", "Ngày dương lịch không tồn tại.") from None
-    return tuvi.chart_for(solar, hour_branch, male, early_ty)
+    return tuvi.chart_for(solar, hour_branch, male, early_ty, view_year)
 
 
 def tuvi_chart(
@@ -382,8 +394,9 @@ def tuvi_chart(
     is_lunar: bool = False,
     is_leap: bool = False,
     early_ty: bool = False,
+    view_year: object = None,
 ) -> dict:
     """Lá số dạng dict (cho trang web/JSON API), xem build_tuvi."""
     return tuvi.chart_data(
-        build_tuvi(year, month, day, hour_branch, gender, is_lunar, is_leap, early_ty)
+        build_tuvi(year, month, day, hour_branch, gender, is_lunar, is_leap, early_ty, view_year)
     )

@@ -106,3 +106,49 @@ def test_tsh_ten_khong_co_chu_latin_bao_loi_nhu_web():
     assert "chữ Latin" in divination_commands.tsh("15/3/1990 李明")
     assert "chữ Latin" in divination_commands.tsh("15/3/1990 123")
     assert "Con số chủ đạo" in divination_commands.tsh("15/3/1990 Nguyễn Văn An")
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("/battu 15/3/1990 9h30 nam", "Tứ trụ (năm · tháng · ngày · giờ): Canh Ngọ · Kỷ Mão"),
+        ("/loban 80 cửa", "Thước thông thủy 52,2cm"),
+        ("/cungphi 1990 nữ", "Cung Cấn (số 8)"),
+    ],
+)
+async def test_lenh_bat_tu_phong_thuy_khong_ai(text, expected, monkeypatch):
+    async def boom(*args, **kwargs):
+        raise AssertionError("không được gọi AI")
+
+    monkeypatch.setattr(ccs.orchestrator, "ask", boom)
+    for channel in ("zalo", "zoom"):
+        messages, _ = await ccs.maybe_handle_command(1, text, is_admin=False, channel=channel)
+        assert expected in messages[0]
+
+
+async def test_battu_chitiet_tinh_san_roi_ai(monkeypatch, telemetry_log):
+    from services import bat_tu
+
+    async def fake_explain(chart):
+        return "AI luận giải"
+
+    monkeypatch.setattr(bat_tu, "explain_with_ai", fake_explain)
+    messages, _ = await ccs.maybe_handle_command(1, "/battu_chitiet 15/3/1990 9h30 nam")
+    assert "Canh Ngọ" in messages[0] and messages[1] == "AI luận giải"
+    assert telemetry_log[0] == ("start", "battu_chitiet", "/battu_chitiet")
+    # Sai cú pháp: trả hướng dẫn, không tốn lượt AI.
+    telemetry_log.clear()
+    assert await divination_commands.battu_chitiet(1, "abc", "zalo") == [bat_tu.USAGE]
+    assert telemetry_log == []
+
+
+def test_help_co_bat_tu_lo_ban_cung_phi():
+    import bot_app
+    from handlers import commands
+
+    for cmd in ("/battu", "/loban", "/cungphi"):
+        assert cmd in commands.HELP_TEXT and cmd in ccs.HELP
+    # Menu "/" đã đủ 100 lệnh: lệnh mới chỉ đăng ký handler.
+    source = open(bot_app.__file__, encoding="utf-8").read()
+    for name in ("battu", "battu_chitiet", "loban", "cungphi"):
+        assert f'("{name}", commands.{name}_cmd)' in source

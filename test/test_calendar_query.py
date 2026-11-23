@@ -233,3 +233,46 @@ def test_chat_hoi_lich_tra_bang_code(text, expected):
 )
 def test_chat_khong_ro_hoi_lich_thi_de_ai(text):
     assert calendar_query.chat_answer(text, TODAY) is None
+
+
+# ── Lễ hội (bộ dữ liệu le-hoi-viet-nam, services/le_hoi.py) ──
+FEST_TODAY = dt.date(2026, 11, 23)
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("hội Lim", "🎎 Hội Lim (Bắc Ninh): Thứ Năm 18/02/2027"),
+        ("lễ hội chùa Hương năm 2027", "Lễ hội Chùa Hương (Hà Nội): Thứ Năm 11/02/2027"),
+        ("lễ hội tháng Giêng ở Bắc Ninh", "• 18/02 (13/1 âm) Hội Lim - Bắc Ninh"),
+        ("lễ hội tháng 3 âm", "• 16/04 (10/3 âm) Giỗ Tổ Hùng Vương - cả nước"),
+        ("tháng này có lễ hội gì", "🎎 Lễ hội tháng 11/2026:"),
+        ("lễ hội ở Huế", "Hội vật làng Sình - Huế"),
+        ("còn mấy ngày tới hội Lim", "Còn 87 ngày nữa là tới Hội Lim (Thứ Năm 18/02/2027)."),
+        ("24/11/2026", "🎎 Lễ hội: Ngày Văn hóa Việt Nam (cả nước)"),
+        # Lễ chính vẫn trả lời theo HOLIDAYS như cũ (không lặp ở dòng lễ hội).
+        ("trung thu", "🎉 Tết Trung thu: Thứ Tư 15/09/2027"),
+    ],
+)
+def test_le_hoi_trong_lich(query, expected):
+    reply = calendar_query.understand(query, FEST_TODAY)
+    assert expected in reply
+
+
+def test_le_hoi_ghi_nguon_va_khong_lap_le_chinh():
+    assert calendar_query.understand("hội Lim", FEST_TODAY).endswith(
+        "Dữ liệu lễ hội: Nhật Nguyệt (nhatnguyet.org), CC BY 4.0"
+    )
+    tet = calendar_query.describe_full(dt.date(2027, 2, 6))
+    assert "🎉 Tết Nguyên đán" in tet and "🎎" not in tet  # Tết đã có ở dòng 🎉
+
+
+def test_ngay_truoc_1968_co_luu_y_lich_cu():
+    text = calendar_query.understand("1/2/1965", FEST_TODAY)
+    assert "ngày 30 tháng 12 năm Giáp Thìn" in text and "UTC+8" in text
+    assert "UTC+8" not in calendar_query.understand("1/2/1985", FEST_TODAY)
+
+
+def test_chat_hoi_ngay_le_hoi():
+    assert "Hội Lim" in calendar_query.chat_answer("hội Lim năm 2027 ngày nào", FEST_TODAY)
+    assert calendar_query.chat_answer("lễ hội hôm qua vui quá", FEST_TODAY) is None

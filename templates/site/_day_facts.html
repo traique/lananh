@@ -7,6 +7,7 @@
   {# brief: trang một ngày lễ đã nói tên lễ và số ngày còn lại tính từ hôm nay. #}
   {% if not brief %}
   {% if day.holidays %}<dt>Ngày lễ</dt><dd>{{ day.holidays | join(", ") }}</dd>{% endif %}
+  {% if day.festivals %}<dt>Lễ hội</dt><dd>{{ day.festivals | join(", ") }} (<a href="/lich/le-hoi?nam={{ day.date[:4] }}">lễ hội cả năm</a>)</dd>{% endif %}
   <dt>Tết</dt><dd>{% if day.daysToTet == 0 %}Hôm nay là Tết{% else %}Còn {{ day.daysToTet }} ngày{% endif %}</dd>
   {% endif %}
 </dl>

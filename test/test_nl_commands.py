@@ -751,3 +751,25 @@ def test_cau_tu_nhien_hoi_phien_ban(text, hit):
         c.spec.name for c in nl.COMMANDS.values() if any(p.fullmatch(core) for p in c.patterns)
     ]
     assert (matched == ["cmd_phienban"]) is hit, (core, matched)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("bát tự 15/3/1990 9h30 nam", "Tứ trụ (năm · tháng · ngày · giờ)"),
+        ("cửa rộng 80cm có hợp lỗ ban không", "Thước thông thủy 52,2cm"),
+        ("cung phi 1990 nữ hợp hướng nào", "Cung Cấn (số 8)"),
+    ],
+)
+async def test_bat_tu_lo_ban_cung_phi_bang_code(text, expected):
+    reply = await nl.maybe_handle(OWNER, text, channel="telegram", is_admin=True)
+    assert reply is not None and expected in reply.text
+
+
+@pytest.mark.asyncio
+async def test_hoi_kien_thuc_phong_thuy_de_chat_tra_loi():
+    # "là gì": hỏi kiến thức, không chạy lệnh.
+    assert await nl.maybe_handle(OWNER, "thước lỗ ban là gì", channel="telegram") is None
+    # Thiếu giới tính: để router hỏi lại, không đoán ("năm 1990" bỏ dấu cũng là "nam").
+    assert nl._GENDER_WORD_RE.search("cung phi năm 1990") is None

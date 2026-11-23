@@ -27,9 +27,20 @@ Thái Thứ Lang, cũng là cách của các chương trình an sao lyso.vn, tuv
 7. Độ sáng (miếu M / vượng V / đắc Đ / bình B / hãm H) của chính tinh và một số
    phụ tinh tra bảng ``do_sang`` trong ``assets/tu_vi.yaml`` (mỗi sao là chuỗi
    12 ký tự theo cung Tý..Hợi; "-" = không xét).
+8. Vận năm (``year_luck``) của năm xem (mặc định năm âm lịch hiện tại theo giờ VN):
+   tuổi mụ, lưu niên (cung có chi = chi năm xem), tiểu hạn (Thân Tý Thìn khởi Tuất,
+   Dần Ngọ Tuất khởi Thìn, Tỵ Dậu Sửu khởi Mùi, Hợi Mão Mùi khởi Sửu lúc 1 tuổi; nam
+   thuận, nữ nghịch), đại hạn chứa tuổi đó, lưu Tứ Hóa theo can năm xem (cùng bảng Tứ
+   Hóa của lá số gốc), 5 sao lưu (Thái Tuế, Lộc Tồn, Kình Dương, Đà La, Thiên Mã) và
+   quan hệ đồng cung / tam hợp / xung chiếu với cung đại hạn, tiểu hạn, lưu niên.
+   Chuyển ngữ từ python/nhatnguyet/tu_vi_han.py của Nhật Nguyệt (MIT License,
+   Copyright (c) 2026 Nhat Nguyet - nhatnguyet.org); test/test_tuvi_nhatnguyet.py so
+   với ca kiểm của họ.
 
-Chưa an tiểu hạn, lưu niên và vài sao hiếm (Thiên Khố...) - ghi rõ ở cuối lá
-số. AI chỉ luận giải lá số ĐÃ AN, không an lại.
+Lá số rơi vào chỗ các phái an khác nhau (giờ Tý đầu, tháng nhuận, can Canh, lịch âm
+cũ trước 1968) có ghi chú riêng (``Chart.notes``). Chưa an nguyệt hạn (Tân Biên khởi
+từ tiểu hạn, sách khác từ lưu Đẩu Quân), cách cục và vài sao hiếm (Thiên Khố...) - ghi
+rõ ở cuối lá số. AI chỉ luận giải lá số ĐÃ AN, không an lại.
 """
 
 from __future__ import annotations
@@ -76,6 +87,19 @@ _THIEN_PHUC = [9, 8, 0, 11, 3, 2, 6, 5, 6, 5]
 _LUU_HA = [9, 10, 7, 4, 5, 6, 8, 3, 11, 2]
 _THIEN_TRU = [5, 6, 0, 5, 6, 8, 2, 6, 9, 10]
 _TRIET = [(8, 9), (6, 7), (4, 5), (2, 3), (0, 1)]  # theo can năm % 5
+# Nhóm tam hợp của chi; Thiên Mã và cung tiểu hạn lúc 1 tuổi theo nhóm của chi năm.
+_TAM_HOP = ((2, 6, 10), (8, 0, 4), (5, 9, 1), (11, 3, 7))
+_THIEN_MA = {(2, 6, 10): 8, (8, 0, 4): 2, (5, 9, 1): 11, (11, 3, 7): 5}
+_TIEU_HAN_START = {(8, 0, 4): 10, (2, 6, 10): 4, (5, 9, 1): 7, (11, 3, 7): 1}
+# 5 sao lưu theo thứ tự của ca kiểm Nhật Nguyệt: (mã, tên, an theo can năm xem).
+_SAO_LUU = (
+    ("luu-thai-tue", "Lưu Thái Tuế", False),
+    ("luu-loc-ton", "Lưu Lộc Tồn", True),
+    ("luu-kinh-duong", "Lưu Kình Dương", True),
+    ("luu-da-la", "Lưu Đà La", True),
+    ("luu-thien-ma", "Lưu Thiên Mã", False),
+)
+_RELATIONS = {"dong-cung": "đồng cung", "tam-hop": "tam hợp", "xung-chieu": "xung chiếu"}
 _TU_HOA = {  # Lộc, Quyền, Khoa, Kỵ theo can năm
     0: ("Liêm Trinh", "Phá Quân", "Vũ Khúc", "Thái Dương"),
     1: ("Thiên Cơ", "Thiên Lương", "Tử Vi", "Thái Âm"),
@@ -83,6 +107,8 @@ _TU_HOA = {  # Lộc, Quyền, Khoa, Kỵ theo can năm
     3: ("Thái Âm", "Thiên Đồng", "Thiên Cơ", "Cự Môn"),
     4: ("Tham Lang", "Thái Âm", "Hữu Bật", "Thiên Cơ"),
     5: ("Vũ Khúc", "Tham Lang", "Thiên Lương", "Văn Khúc"),
+    # Canh: Tân Biên (bảng 8.23) + Toàn Thư "庚日武阴同为首". Huyền Vi, Thiên Lương,
+    # Việt Viêm Tử ghi Khoa Thiên Đồng, Kỵ Thái Âm (đối chiếu docs/quy-uoc-truong-phai.md).
     6: ("Thái Dương", "Vũ Khúc", "Thái Âm", "Thiên Đồng"),
     7: ("Cự Môn", "Thái Dương", "Văn Khúc", "Văn Xương"),
     8: ("Thiên Lương", "Tử Vi", "Tả Phù", "Vũ Khúc"),
@@ -110,16 +136,19 @@ _TEXTS_PATH = Path(__file__).resolve().parent.parent / "assets" / "tu_vi.yaml"
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 USAGE = (
-    "Cú pháp: /tuvi <ngày/tháng/năm sinh> <giờ sinh> <nam|nữ>\n"
-    "Ví dụ: /tuvi 15/3/1990 9h30 nam · /tuvi 15/3/1990 7h tối nữ\n"
+    "Cú pháp: /tuvi <ngày/tháng/năm sinh> <giờ sinh> <nam|nữ> [năm <năm xem>]\n"
+    "Ví dụ: /tuvi 15/3/1990 9h30 nam · /tuvi 15/3/1990 7h tối nữ năm 2027\n"
     "Ngày âm: /tuvi âm 20/2/1990 giờ Tỵ nữ (thêm 'n' sau tháng nhuận: âm 20/6n/2025)\n"
     "Sinh 23h-24h ghi '23h': an theo ngày hôm sau (giờ Tý đầu).\n"
+    "Vận năm: mặc định năm âm lịch hiện tại; thêm 'năm 2027' (hoặc 'xem 2027') ở cuối để "
+    "xem năm khác.\n"
     "/tuvi_chitiet <như trên> - AI luận giải lá số (tốn 1 lượt AI)."
 )
 DISCLAIMER = "ℹ️ Tử vi mang tính tham khảo, giải trí."
 _NOTE = (
-    "Chưa an tiểu hạn, lưu niên và vài sao hiếm (Thiên Khố, Thiên Trù khác phái...); "
-    "Lưu Hà, Thiên Khôi/Việt tuổi Canh theo phái Thái Thứ Lang."
+    "Chưa an nguyệt hạn, cách cục và vài sao hiếm (Thiên Khố, Thiên Trù khác phái...); "
+    "Lưu Hà, Thiên Khôi/Việt tuổi Canh theo phái Thái Thứ Lang; Tứ Hóa can Canh theo Tân "
+    "Biên (Khoa Thái Âm, Kỵ Thiên Đồng - vài sách VN ghi ngược)."
 )
 
 
@@ -166,6 +195,17 @@ class Chart:
     tuan: tuple[int, int] = (0, 0)
     triet: tuple[int, int] = (0, 0)
     tu_hoa: dict[str, str] = field(default_factory=dict)
+    view_year: int = 0  # năm xem vận năm (số năm âm lịch); build_chart điền năm hiện tại
+
+    @property
+    def has_year_luck(self) -> bool:
+        """Có vận năm khi năm xem không trước năm sinh (âm lịch)."""
+        return self.view_year >= self.lunar_year
+
+    @property
+    def notes(self) -> list[str]:
+        """Ghi chú quy ước riêng của lá số này (``chart_notes``)."""
+        return chart_notes(self)
 
     @property
     def can_y(self) -> int:
@@ -223,6 +263,17 @@ def tu_vi_position(day: int, cuc: int) -> int:
     return (base - r) % 12 if r % 2 else (base + r) % 12
 
 
+def _tam_hop(chi: int) -> tuple[int, int, int]:
+    """Nhóm tam hợp chứa chi (Dần Ngọ Tuất, Thân Tý Thìn, Tỵ Dậu Sửu, Hợi Mão Mùi)."""
+    return next(g for g in _TAM_HOP if chi % 12 in g)
+
+
+def current_view_year(today: dt.date | None = None) -> int:
+    """Năm xem mặc định: năm ÂM lịch hiện tại theo giờ Việt Nam (trước Tết vẫn là năm
+    cũ, cùng cách tính tuổi âm của ``reading``)."""
+    return can_chi.lunar_year_of(today or dt.datetime.now(_VN_TZ).date())
+
+
 def build_chart(
     lunar_day: int,
     lunar_month: int,
@@ -232,10 +283,13 @@ def build_chart(
     leap: bool = False,
     solar: dt.date | None = None,
     early_ty: bool = False,
+    view_year: int | None = None,
 ) -> Chart:
     """Lá số từ ngày ÂM đã quy đổi (với sinh 23h-24h, gọi với ngày âm của hôm
-    sau và early_ty=True; ``solar`` chỉ để hiển thị)."""
+    sau và early_ty=True; ``solar`` chỉ để hiển thị). ``view_year``: năm xem vận
+    năm, mặc định năm âm lịch hiện tại (``current_view_year``)."""
     c = Chart(solar, lunar_day, lunar_month, lunar_year, leap, hour_chi, male, early_ty)
+    c.view_year = view_year or current_view_year()
     h, m, d = hour_chi, c.an_month, lunar_day
     c.menh = (2 + (m - 1) - h) % 12
     c.than = (2 + (m - 1) + h) % 12
@@ -294,8 +348,8 @@ def build_chart(
     put(_LUU_HA[cy], "Lưu Hà")
     put(_THIEN_TRU[cy], "Thiên Trù")
     # Theo chi năm (nhóm tam hợp)
-    group = next(g for g in ((2, 6, 10), (8, 0, 4), (5, 9, 1), (11, 3, 7)) if zy in g)
-    put({(2, 6, 10): 8, (8, 0, 4): 2, (5, 9, 1): 11, (11, 3, 7): 5}[group], "Thiên Mã")
+    group = _tam_hop(zy)
+    put(_THIEN_MA[group], "Thiên Mã")
     put({(2, 6, 10): 3, (8, 0, 4): 9, (5, 9, 1): 6, (11, 3, 7): 0}[group], "Đào Hoa")
     put({(2, 6, 10): 10, (8, 0, 4): 4, (5, 9, 1): 1, (11, 3, 7): 7}[group], "Hoa Cái")
     put({(2, 6, 10): 11, (8, 0, 4): 5, (5, 9, 1): 2, (11, 3, 7): 8}[group], "Kiếp Sát")
@@ -372,6 +426,161 @@ def brightness(star: str, pos: int) -> str | None:
         return None
     level = row[pos % 12]
     return level if level in BRIGHTNESS_NAMES else None
+
+
+# ── Vận năm ─────────────────────────────────────────────────────────────────
+# Chuyển ngữ từ python/nhatnguyet/tu_vi_han.py của Nhật Nguyệt (MIT License, Copyright
+# (c) 2026 Nhat Nguyet - nhatnguyet.org): tinh_han_nam (bỏ nguyệt hạn), vi_tri_sao_luu,
+# tinh_sao_luu, quan_he_hai_cung. Khác bản gốc: lưu Tứ Hóa dùng bảng ``_TU_HOA`` của lá
+# số này (can Canh theo Tân Biên). Ca kiểm: test/test_tuvi_nhatnguyet.py.
+
+
+def star_position(c: Chart, name: str) -> int | None:
+    """Cung có sao ``name`` (bỏ phần Tứ hóa trong nhãn), None nếu lá số không có."""
+    for pos, labels in c.stars.items():
+        if any(label.partition(" (")[0] == name for label in labels):
+            return pos
+    return None
+
+
+def relation(a: int, b: int | None) -> str:
+    """Quan hệ tam phương tứ chính của hai cung: "dong-cung", "xung-chieu", "tam-hop"
+    hoặc "" (cả khi b là None)."""
+    if b is None:
+        return ""
+    d = (a - b) % 12
+    return {0: "dong-cung", 6: "xung-chieu", 4: "tam-hop", 8: "tam-hop"}.get(d, "")
+
+
+def _place(c: Chart, pos: int) -> dict:
+    return {"branch": CHI[pos], "branchIndex": pos, "palace": c.palace_at(pos)}
+
+
+def year_luck(c: Chart, year: int | None = None) -> dict:
+    """Vận năm của năm xem ``year`` (mặc định ``c.view_year``; số năm hiểu là năm âm
+    cùng số): tuổi mụ (ít nhất 1, như bản gốc), lưu niên, tiểu hạn, đại hạn chứa tuổi đó
+    (None khi chưa vào đại hạn đầu hoặc đã qua 12 đại hạn), lưu Tứ Hóa và 5 sao lưu kèm
+    quan hệ với ba cung hạn. Khoá camelCase như ``chart_data``."""
+    year = c.view_year if year is None else year
+    age = max(1, year - c.lunar_year + 1)
+    can, chi = can_chi.year_can(year), can_chi.year_chi(year)
+    tieu = (_TIEU_HAN_START[_tam_hop(c.chi_y)] + (1 if c.male else -1) * (age - 1)) % 12
+    dai = next((pos for pos, (a, b) in c.dai_han.items() if a <= age <= b), None)
+    hoa = []
+    for name, star in zip(_HOA_NAMES, _TU_HOA[can], strict=True):
+        pos = star_position(c, star)
+        missing = {"branch": "", "branchIndex": None, "palace": ""}
+        hoa.append({"hoa": name, "star": star, **(missing if pos is None else _place(c, pos))})
+    loc = _LOC_TON[can]
+    positions = {
+        "luu-thai-tue": chi,
+        "luu-loc-ton": loc,
+        "luu-kinh-duong": (loc + 1) % 12,
+        "luu-da-la": (loc - 1) % 12,
+        "luu-thien-ma": _THIEN_MA[_tam_hop(chi)],
+    }
+    stars = []
+    for key, name, by_stem in _SAO_LUU:
+        pos = positions[key]
+        item = {"id": key, "name": name, "byYearStem": by_stem, **_place(c, pos)}
+        texts = []
+        for field_name, target, label in (
+            ("withDaiHan", dai, "đại hạn"),
+            ("withTieuHan", tieu, "tiểu hạn"),
+            ("withLuuNien", chi, "lưu niên"),
+        ):
+            item[field_name] = relation(pos, target)
+            if item[field_name]:
+                texts.append(f"{_RELATIONS[item[field_name]]} {label}")
+        item["relationText"] = ", ".join(texts)
+        stars.append(item)
+    return {
+        "year": year,
+        "canChi": f"{CAN[can]} {CHI[chi]}",
+        "age": age,
+        "luuNien": _place(c, chi),
+        "tieuHan": _place(c, tieu),
+        "daiHan": (
+            {**_place(c, dai), "fromAge": c.dai_han[dai][0], "toAge": c.dai_han[dai][1]}
+            if dai is not None
+            else None
+        ),
+        "luuTuHoa": hoa,
+        "saoLuu": stars,
+    }
+
+
+def _year_luck_lines(c: Chart) -> list[str]:
+    """Mục "Vận năm" của bản chữ (bot, prompt AI)."""
+    if not c.has_year_luck:
+        return [f"📅 Vận năm {c.view_year}: năm xem trước năm sinh, chưa có vận năm."]
+    v = year_luck(c)
+
+    def where(p: dict) -> str:
+        return f"{p['palace']} ({p['branch']})" if p["palace"] else "không có trên lá số"
+
+    dai = v["daiHan"]
+    if dai:
+        dai_text = f"cung {where(dai)}, {dai['fromAge']}-{dai['toAge']} tuổi"
+    elif v["age"] < c.cuc:
+        dai_text = f"chưa vào đại hạn đầu (từ {c.cuc} tuổi)"
+    else:
+        dai_text = "đã qua 12 đại hạn"
+    hoa = "; ".join(f"{h['hoa']} {h['star']} → {where(h)}" for h in v["luuTuHoa"])
+    stars = "; ".join(
+        f"{s['name']} → {where(s)}" + (f", {s['relationText']}" if s["relationText"] else "")
+        for s in v["saoLuu"]
+    )
+    return [
+        f"📅 Vận năm {v['year']} ({v['canChi']}), {v['age']} tuổi âm:",
+        f"  · Đại hạn: {dai_text}",
+        f"  · Tiểu hạn: cung {where(v['tieuHan'])} · Lưu niên: cung {where(v['luuNien'])}",
+        f"  · Lưu Tứ hóa: {hoa}",
+        f"  · Sao lưu: {stars}",
+    ]
+
+
+def chart_notes(c: Chart) -> list[str]:
+    """Ghi chú quy ước riêng của lá số: chỉ khi lá rơi vào chỗ các phái an khác nhau
+    (giờ Tý đầu, tháng nhuận, lịch âm cũ trước 1968, can Canh của năm sinh/năm xem)."""
+    notes = []
+    if c.early_ty:
+        notes.append(
+            "Sinh 23h-24h (giờ Tý đầu): lá số an theo ngày hôm sau, tức "
+            f"{lunar.lunar_text(c.lunar_day, c.lunar_month, c.lunar_year, c.leap)} âm lịch; "
+            "có sách vẫn an theo ngày đã nhập."
+        )
+    if c.leap:
+        month, nxt = c.lunar_month, c.lunar_month % 12 + 1
+        head = f"Sinh ngày {c.lunar_day} tháng {month} nhuận: an sao như tháng {c.an_month}"
+        if c.lunar_day >= 16:
+            notes.append(
+                f"{head} (Thái Thứ Lang: ngày 1-15 như tháng trước, từ ngày 16 như tháng "
+                f"sau); nhiều sách an cả tháng nhuận như tháng {month}, khi đó lá số khác."
+            )
+        else:
+            notes.append(
+                f"{head} (ngày 1-15 tính như tháng trước, từ ngày 16 như tháng sau); có "
+                f"sách an cả tháng nhuận như tháng {nxt}."
+            )
+    if c.solar is not None:
+        # Ngày dương dùng để an: sinh giờ Tý đầu thì là ngày hôm sau.
+        day = c.solar + dt.timedelta(days=1) if c.early_ty else c.solar
+        old = lunar.old_calendar_note(day.day, day.month, day.year)
+        if old:
+            notes.append(old)
+    if c.can_y == 6:
+        notes.append(
+            "Năm sinh can Canh: Tứ Hóa theo Tân Biên (Hóa Khoa Thái Âm, Hóa Kỵ Thiên Đồng), "
+            "vài sách Việt (Huyền Vi, Thiên Lương, Việt Viêm Tử) ghi ngược Khoa và Kỵ; Thiên "
+            "Khôi, Thiên Việt ở Ngọ, Dần (có sách đặt ở Sửu, Mùi)."
+        )
+    if c.has_year_luck and can_chi.year_can(c.view_year) == 6:
+        notes.append(
+            f"Năm xem {c.view_year} can Canh: lưu Tứ Hóa cũng theo Tân Biên (Hóa Khoa Thái "
+            "Âm, Hóa Kỵ Thiên Đồng); vài sách ghi ngược Khoa và Kỵ."
+        )
+    return notes
 
 
 # Đọc nhanh một cung: chính tinh sáng cộng, hãm trừ; Tứ hóa; cát/sát tinh (mỗi phía tối
@@ -522,8 +731,12 @@ def format_chart(c: Chart) -> str:
             lines.append(f"📌 {s.name}{level} thủ Mệnh: {texts.get(s.name, '')}")
     else:
         lines.append("📌 Mệnh vô chính diệu: " + str(_texts().get("vo_chinh_dieu", "")))
+    lines += ["", *_year_luck_lines(c)]
+    notes = c.notes
+    if notes:
+        lines += ["", "⚠️ Lưu ý quy ước của lá số này:", *(f"  · {note}" for note in notes)]
     lines.append(
-        f"Độ sáng trong [ ]: M miếu, V vượng, Đ đắc, B bình, H hãm. {_NOTE}"
+        f"\nĐộ sáng trong [ ]: M miếu, V vượng, Đ đắc, B bình, H hãm. {_NOTE}"
         f"\n\n{DISCLAIMER} Gõ /tuvi_chitiet để AI luận giải."
     )
     return "\n".join(lines)
@@ -612,6 +825,11 @@ def chart_data(c: Chart) -> dict:
         "brightnessLegend": BRIGHTNESS_NAMES,
         "note": _NOTE,
         "disclaimer": DISCLAIMER,
+        # Vận năm của năm xem (null khi năm xem trước năm sinh) và ghi chú quy ước riêng
+        # của lá số này (rỗng khi không rơi vào chỗ các phái khác nhau).
+        "viewYear": c.view_year,
+        "vanNam": year_luck(c) if c.has_year_luck else None,
+        "notes": c.notes,
     }
 
 
@@ -626,6 +844,22 @@ _CHI_WORDS = {
     "thân": 8, "than": 8, "dậu": 9, "dau": 9, "tuất": 10, "tuat": 10, "hợi": 11, "hoi": 11,
 }  # fmt: skip
 _DATE_RE = re.compile(r"(\d{1,2})[/.-](\d{1,2})(n)?[/.-](\d{4})")
+# Năm xem ở CUỐI tham số: "năm 2027", "xem 2027", "năm xem 2027", "nam 2027" (không dấu).
+_VIEW_YEAR_RE = re.compile(r"(?:^|[\s,;])(năm xem|xem năm|năm|nam|xem)\s*:?\s*(\d{4})\s*\.?$")
+_FEMALE_RE = re.compile(r"\b(nữ|nu|gái|gai)\b")
+_MALE_RE = re.compile(r"\b(nam|trai)\b")
+
+
+def _split_view_year(low: str) -> tuple[str, int | None]:
+    """(phần còn lại, năm xem) khi tham số kết thúc bằng năm xem. "nam 2027" không dấu
+    mà phần trước chưa có giới tính thì "nam" là giới tính, 2027 vẫn là năm xem."""
+    found = _VIEW_YEAR_RE.search(low)
+    if not found:
+        return low, None
+    head = low[: found.start()].strip()
+    if found.group(1) == "nam" and not (_FEMALE_RE.search(head) or _MALE_RE.search(head)):
+        head += " nam"
+    return head, int(found.group(2))
 
 
 def hour_to_chi(hour: int) -> int:
@@ -655,8 +889,11 @@ def _apply_period(hour: int, after: str) -> int:
 
 
 def parse(argument: str) -> Chart | str:
-    """Lá số từ "15/3/1990 9h30 nam" / "âm 20/2/1990 giờ Tỵ nữ", hoặc câu báo lỗi."""
-    low = (argument or "").lower().strip()
+    """Lá số từ "15/3/1990 9h30 nam" / "âm 20/2/1990 giờ Tỵ nữ", hoặc câu báo lỗi.
+    Thêm "năm 2027" (hoặc "xem 2027") ở cuối để chọn năm xem vận năm."""
+    low, view_year = _split_view_year((argument or "").lower().strip())
+    if view_year is not None and not 1900 <= view_year <= 2100:
+        return "Năm xem cần trong khoảng 1900-2100."
     m = _DATE_RE.search(low)
     if not m:
         return USAGE
@@ -688,9 +925,9 @@ def parse(argument: str) -> Chart | str:
         hour = _apply_period(hour, folded[hm.end() :])
         hour_chi = hour_to_chi(hour)
         early_ty = hour == 23
-    if re.search(r"\b(nữ|nu|gái|gai)\b", rest):
+    if _FEMALE_RE.search(rest):
         male = False
-    elif re.search(r"\b(nam|trai)\b", rest):
+    elif _MALE_RE.search(rest):
         male = True
     else:
         return "Thiếu giới tính (nam/nữ).\n" + USAGE
@@ -710,18 +947,34 @@ def parse(argument: str) -> Chart | str:
             solar = dt.date(y, mo, d)
         except ValueError:
             return "Ngày sinh không hợp lệ.\n" + USAGE
-    return chart_for(solar, hour_chi, male, early_ty)
+    return chart_for(solar, hour_chi, male, early_ty, view_year)
 
 
-def chart_for(solar: dt.date, hour_chi: int, male: bool, early_ty: bool = False) -> Chart:
+def chart_for(
+    solar: dt.date,
+    hour_chi: int,
+    male: bool,
+    early_ty: bool = False,
+    view_year: int | None = None,
+) -> Chart:
     """Lá số từ ngày sinh DƯƠNG; early_ty (sinh 23h-24h) an theo ngày hôm sau
-    nhưng vẫn hiển thị ngày đã nhập."""
+    nhưng vẫn hiển thị ngày đã nhập. ``view_year``: năm xem vận năm (mặc định năm
+    âm lịch hiện tại)."""
     an_day = solar + dt.timedelta(days=1) if early_ty else solar
     ld, lm, ly, leap = lunar.solar_to_lunar(an_day.day, an_day.month, an_day.year)
-    return build_chart(ld, lm, ly, hour_chi, male, leap, solar, early_ty)
+    return build_chart(ld, lm, ly, hour_chi, male, leap, solar, early_ty, view_year)
 
 
 def build_ai_prompt(c: Chart) -> str:
+    year = f"{c.view_year} ({lunar.year_can_chi(c.view_year)})"
+    if c.has_year_luck:
+        van_nam = (
+            f"Vận năm {year}: CHỈ dựa vào mục “Vận năm” đã tính sẵn (tuổi âm, đại hạn, tiểu "
+            "hạn, lưu niên, lưu Tứ hóa, sao lưu), TUYỆT ĐỐI KHÔNG tự suy hay tính lại tiểu "
+            "hạn, lưu niên, đại hạn hay vị trí sao lưu"
+        )
+    else:
+        van_nam = "Lời khuyên chung (năm xem trước năm sinh nên không luận vận năm)"
     return (
         "Bạn là thầy tử vi Việt Nam (trường phái Tử Vi Đẩu Số), viết tiếng Việt, giọng "
         "điềm đạm, thực tế, không mê tín, không hù doạ, không phán chuyện sinh tử. Lá số "
@@ -729,9 +982,12 @@ def build_ai_prompt(c: Chart) -> str:
         "chỉ luận giải dựa trên đúng dữ liệu này (kể cả độ sáng miếu/vượng/đắc/hãm ghi "
         "trong ngoặc vuông). Viết khoảng 500-700 từ, chia mục ngắn: Tổng quan (Mệnh, "
         "Thân, Cục và bản mệnh); Tính cách; Công danh - Tài lộc (Quan Lộc, Tài Bạch); Gia "
-        "đạo - Tình duyên (Phu Thê, Tử Tức, Phụ Mẫu); Sức khoẻ (Tật Ách); Đại hạn hiện "
-        "tại và lời khuyên. Không dùng bảng markdown. Cuối bài nhắc đây là tham khảo.\n\n"
-        f"Năm hiện tại: {dt.datetime.now(_VN_TZ).year}.\nLá số:\n{format_chart(c)}"
+        "đạo - Tình duyên (Phu Thê, Tử Tức, Phụ Mẫu); Sức khoẻ (Tật Ách); "
+        f"{van_nam}; lời khuyên. Lá số có mục “Lưu ý quy ước” thì nhắc ngắn rằng sách "
+        "khác có thể an khác ở điểm đó. Không dùng bảng markdown. Cuối bài nhắc đây là "
+        "tham khảo.\n\n"
+        f"Năm hiện tại (giờ Việt Nam): {dt.datetime.now(_VN_TZ).year}. Năm xem vận: {year}.\n"
+        f"Lá số:\n{format_chart(c)}"
     )
 
 

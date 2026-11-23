@@ -7,14 +7,15 @@ Chuyển từ gói vn-info (MIT License, Copyright (c) 2026). Hàm chính:
                                         giờ hoàng đạo, số ngày tới Tết
     describe_date(info)              -> đoạn văn tiếng Việt làm grounding cho chat
 
-Tiết khí tính theo vị trí Mặt Trời lúc 0 giờ ngày hôm sau (giờ Việt Nam), giống
-lịch của Hồ Ngọc Đức, nên có thể lệch một ngày so với giờ chính xác của tiết.
+Tiết khí của một ngày là tiết đang hiệu lực lúc hết ngày (0 giờ hôm sau, giờ Việt
+Nam) như lịch Hồ Ngọc Đức: ngày giao tiết mang tên tiết mới. Kinh độ Mặt Trời tính
+bằng ``services.solar_terms`` (sai số vài giây).
 """
 
 from __future__ import annotations
 
 import datetime as dt
-import math
+import functools
 
 # Toán âm lịch thuần nằm ở core/lunar_math.py (tầng thấp như stock/calendar.py
 # dùng được); re-export để mọi chỗ gọi ``lunar.<tên>`` cũ giữ nguyên.
@@ -107,10 +108,59 @@ def month_can_chi(lunar_month: int, lunar_year: int) -> str:
     return f"{CAN[(lunar_year * 12 + lunar_month + 3) % 10]} {CHI[(lunar_month + 1) % 12]}"
 
 
+@functools.lru_cache(maxsize=1024)
 def solar_term(dd: int, mm: int, yy: int) -> str:
-    """Tiết khí của ngày dương lịch."""
-    jd = _jd_from_date(dd, mm, yy)
-    return TIET_KHI[int(math.floor(_sun_longitude(jd + 1) / math.pi * 12))]
+    """Tiết khí của ngày dương lịch: tiết đang hiệu lực lúc 0 giờ hôm sau (giờ Việt Nam).
+
+    Dùng kinh độ biểu kiến chính xác của ``solar_terms`` (công thức xấp xỉ cũ
+    ``_sun_longitude`` lệch tới ~15 phút, sai tên tiết ở 37 ngày giao tiết 1900-2100,
+    vd 23/10/2019, 04/04/2034). Bộ nhớ đệm có trần (1024 ngày, vài chục KB)."""
+    from services import solar_terms  # solar_terms import module này: import trễ
+
+    jd_ut = _jd_from_date(dd, mm, yy) + 0.5 - TZ / 24  # 0h giờ Việt Nam hôm sau, theo UT
+    return TIET_KHI[int(solar_terms.apparent_longitude(jd_ut) // 15) % 24]
+
+
+# Lịch âm Việt Nam tính theo giờ UTC+7 từ 1968 ở miền Bắc (Quyết định 121-CP ngày
+# 8/8/1967), cả nước từ 1976. Trước đó lịch âm thường theo lịch Trung Quốc: kinh tuyến
+# Bắc Kinh (116°25′ Đông) trước 1929, UTC+8 từ 1929 (H. Aslaksen; tư liệu ở thư mục
+# history/ của Nhật Nguyệt - nhiều năm không còn lịch in để đối chiếu). Cùng quy tắc,
+# chỉ khác giờ xét ngày sóc: 689 ngày 1900-1967 (2,8%) và 120 ngày 1968-1975 lệch.
+_BEIJING_MERIDIAN_TZ = (116 + 25 / 60) / 15
+_UTC7_NORTH_FROM = 1968
+_UTC7_SOUTH_FROM = 1976
+
+
+def old_calendar_lunar(dd: int, mm: int, yy: int) -> tuple[int, int, int, bool] | None:
+    """Ngày âm theo cách tính lịch cũ (giờ Bắc Kinh) nếu KHÁC cách tính hiện nay;
+    None khi trùng hoặc khi ngày từ 1976 trở đi."""
+    if yy >= _UTC7_SOUTH_FROM:
+        return None
+    tz = _BEIJING_MERIDIAN_TZ if yy < 1929 else 8.0
+    old = solar_to_lunar(dd, mm, yy, tz)
+    return None if old == solar_to_lunar(dd, mm, yy) else old
+
+
+def old_calendar_note(dd: int, mm: int, yy: int) -> str | None:
+    """1 câu lưu ý khi lịch âm thời đó có thể ghi ngày này khác (sinh trước 1968, hoặc
+    ở miền Nam trước 1976); None nếu không lệch. Không nhắc tên nước khác (chữ lên web)."""
+    old = old_calendar_lunar(dd, mm, yy)
+    if old is None:
+        return None
+    ld, lm, ly, leap = old
+    # Chữ này hiện cả trên web: chủ trang không muốn nhắc tên nước/thành phố khác
+    # (test_web_khong_nhac_trung_quoc), nên chỉ nói múi giờ.
+    if yy < 1929:
+        period = "Trước 1929, lịch âm thường tính theo kinh tuyến 116°25′ Đông (khoảng UTC+7:46)"
+    elif yy < _UTC7_NORTH_FROM:
+        period = "Trước 1968, lịch âm ở Việt Nam thường tính theo múi giờ UTC+8"
+    else:
+        period = "Lịch âm miền Nam tới 1975 (miền Bắc đổi từ 1968) còn tính theo múi giờ UTC+8"
+    return (
+        f"{period}; theo cách đó ngày {dd:02d}/{mm:02d}/{yy} là "
+        f"{lunar_text(ld, lm, ly, leap)}. Ở đây tính theo giờ Việt Nam (UTC+7) như lịch "
+        "hiện hành."
+    )
 
 
 def lucky_hours(dd: int, mm: int, yy: int) -> list[str]:

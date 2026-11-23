@@ -59,16 +59,22 @@ HELP_TEXT = (
     '"lưu vào kho" (cả chú thích, hoặc "lưu vào kho rồi <câu hỏi>") để em lưu tài liệu vào '
     "kho kiến thức rag/.\n\n"
     "📍 *Gửi vị trí*: em báo thời tiết hôm nay và ngày mai tại chỗ đó.\n\n"
-    "*Lịch, thần số học, tử vi, kỳ môn*\n"
+    "*Lịch, thần số học, tử vi, bát tự, kỳ môn, phong thủy*\n"
     "/lich <câu hỏi> — tra lịch tự do, không tốn AI: /lich, /lich 20/11, /lich rằm tháng 8, "
     "/lich tháng này, /lich trung thu, /lich ngày tốt tháng này, /lich tuổi 15/3/1990, "
-    "/lich sao hạn 1990 nam năm 2027 (/lich help xem thêm ví dụ)\n"
+    "/lich sao hạn 1990 nam năm 2027, /lich hội Lim, /lich lễ hội tháng Giêng ở Bắc Ninh "
+    "(/lich help xem thêm ví dụ)\n"
     "/tsh <ngày sinh> [họ tên] — thần số học: con số chủ đạo, biểu đồ ngày sinh (không tốn AI)\n"
     "/tsh\\_chitiet <như trên> — AI diễn giải chi tiết\n"
-    "/tuvi <ngày sinh> <giờ> <nam|nữ> — an lá số tử vi (không tốn AI), vd /tuvi 15/3/1990 9h30 nam\n"
+    "/tuvi <ngày sinh> <giờ> <nam|nữ> [năm xem] — an lá số tử vi kèm vận năm (không tốn AI), "
+    "vd /tuvi 15/3/1990 9h30 nam năm 2027\n"
     "/tuvi\\_chitiet <như trên> — AI luận giải lá số\n"
+    "/battu <ngày sinh> [giờ] <nam|nữ> — Bát Tự tứ trụ: tàng can, thập thần, đại vận (không "
+    "tốn AI); /battu\\_chitiet — AI luận giải\n"
     "/kymon [ngày] [giờ] — lập bàn Kỳ Môn Độn Giáp (không tốn AI), mặc định lúc này\n"
-    "/kymon\\_chitiet [thời điểm] <việc cần xem> — AI luận giải bàn Kỳ Môn cho việc đó\n\n"
+    "/kymon\\_chitiet [thời điểm] <việc cần xem> — AI luận giải bàn Kỳ Môn cho việc đó\n"
+    "/loban <số đo> [cửa|giường|bàn thờ...] — thước Lỗ Ban: cung tốt xấu, số đo tốt gần nhất\n"
+    "/cungphi <năm sinh> <nam|nữ> — cung phi Bát Trạch, hướng nhà tốt xấu (không tốn AI)\n\n"
     "*Đời sống (số liệu thật, không tốn AI)*\n"
     "/vang [sjc|nhẫn|doji|pnj|bảo tín|thế giới] — giá vàng SJC, DOJI, PNJ, Bảo Tín, thế giới "
     "(kèm quy đổi); /tygia [mã|100 usd] — tỷ giá Vietcombank, đổi tiền\n"
@@ -183,7 +189,8 @@ HELP_TEXT = (
     "Dưới câu trả lời chat có nút 👍/👎 (ghi theo provider), 🔄 Thử lại và ✂️ Ngắn hơn; bài "
     "Facebook chờ duyệt, người Zalo lạ và tin nhắc việc cũng có nút bấm.\n"
     "/huy — dừng câu trả lời đang chạy dở; trong lúc chờ vẫn dùng được /help, /notes, /lich, "
-    "/tsh, /tuvi, /kymon, /history, /memory (tin phải chờ lượt trước được thả 👀)\n"
+    "/tsh, /tuvi, /battu, /kymon, /loban, /cungphi, /history, /memory (tin phải chờ lượt "
+    "trước được thả 👀)\n"
     "/start — lời chào; /help — hướng dẫn ngắn; /help <chủ đề> (vd /help vàng); "
     "/help all — bản đầy đủ này\n"
     "Trang quản trị: /admin trên URL dịch vụ (thống kê, provider, RAM, DB)."
@@ -497,6 +504,30 @@ async def tuvi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 @common.restricted
+async def battu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/battu <ngày sinh> [giờ] <nam|nữ> - lá số Bát Tự (không AI)."""
+    await common.reply_long_text(
+        update.message, divination_commands.battu_chart(common.extract_arg(context))
+    )
+
+
+@common.restricted
+async def loban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/loban <số đo> [món đồ] - tra thước Lỗ Ban (không AI)."""
+    await common.reply_long_text(
+        update.message, divination_commands.loban(common.extract_arg(context))
+    )
+
+
+@common.restricted
+async def cungphi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/cungphi <năm sinh> <nam|nữ> - cung phi Bát Trạch, hướng tốt xấu (không AI)."""
+    await common.reply_long_text(
+        update.message, divination_commands.cungphi(common.extract_arg(context))
+    )
+
+
+@common.restricted
 async def kymon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/kymon [ngày] [giờ] - lập bàn Kỳ Môn Độn Giáp (không AI)."""
     await common.reply_long_text(
@@ -507,6 +538,7 @@ async def kymon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 _CHITIET = {
     "tsh": divination_commands.tsh_chitiet,
     "tuvi": divination_commands.tuvi_chitiet,
+    "battu": divination_commands.battu_chitiet,
     "kymon": divination_commands.kymon_chitiet,
 }
 
@@ -528,6 +560,12 @@ async def tsh_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def tuvi_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/tuvi_chitiet - lá số tử vi kèm AI luận giải (1 lượt AI)."""
     await _reply_chitiet(update, context, "tuvi")
+
+
+@common.restricted
+async def battu_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/battu_chitiet - lá số Bát Tự kèm AI luận giải (1 lượt AI)."""
+    await _reply_chitiet(update, context, "battu")
 
 
 @common.restricted
