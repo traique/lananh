@@ -26,6 +26,7 @@ phong thủy là quy tắc truyền thống, chưa được kiểm chứng; bot 
 | Thời khắc giao tiết | Kinh độ biểu kiến Mặt Trời, VSOP87 rút gọn (Meeus); lệch IMCCE trung bình 7 giây, tối đa 24 giây (1900-2100) | - | - |
 | "Tháng X nhuận" ở năm không nhuận tháng X | Báo không có tháng nhuận đó | Nhật Nguyệt coi là tháng X thường | Có (câu báo lỗi) |
 | Ngày 30 của tháng thiếu | Báo tháng chỉ có 29 ngày (`find_lunar_date`) | Thuật toán gốc lùi sang mùng 1 tháng sau | Có |
+| Giờ sinh nhập vào | Giờ đồng hồ UTC+7 | Đồng hồ Việt Nam từng chạy UTC+8 (1943-1945, vùng Pháp kiểm soát 1947-1955, miền Nam 01/01/1960-13/06/1975) và UTC+9 (1945); người sinh thời đó nên trừ 1-2 giờ trước khi nhập (thư mục `history/` của Nhật Nguyệt). Bot chưa tự đổi vì không biết nơi sinh | Chưa |
 | Thập nhị trực | Tháng theo tiết (Lập xuân = Dần); ngày giao tiết lặp trực hôm trước | - | - |
 | Tên thần trực giờ | Huyền Vũ, Câu Trận | Nhật Nguyệt: Nguyên Vũ, Câu Trần | - |
 
@@ -57,6 +58,29 @@ phong thủy là quy tắc truyền thống, chưa được kiểm chứng; bot 
 | Lưu Tứ Hóa | Theo can năm xem, cùng bảng Tứ Hóa của lá số (Canh theo Tân Biên) | Như dòng Tứ Hóa can Canh ở trên | Có (năm xem can Canh) |
 | Sao lưu | 5 sao: Lưu Thái Tuế, Lưu Lộc Tồn, Lưu Kình Dương, Lưu Đà La, Lưu Thiên Mã (như Nhật Nguyệt) | Sao lưu theo đại vận, theo tháng: chưa an | - |
 | Nguyệt hạn | Chưa an | Toàn Thư khởi từ cung năm; Tân Biên khởi từ tiểu hạn | - |
+
+## Bát Tự
+
+| Chỗ khác nhau | Repo chọn (nguồn) | Cách khác | Ghi chú |
+|---|---|---|---|
+| Sinh 23h-24h | Trụ ngày đổi lúc 23h (đầu giờ Tý), trụ giờ theo can ngày hôm sau (đa số sách Tử Bình; mặc định Nhật Nguyệt) | Đổi trụ ngày lúc 0h, tảo Tý / vãn Tý | Có |
+| Mốc đổi năm | Đúng thời khắc Lập Xuân, không theo Tết | Theo Tết âm lịch | Có (sinh giữa Lập Xuân và Tết) |
+| Trụ tháng | Theo 12 tiết, tới phút (`services/solar_terms.py`) | Theo tháng âm lịch (lệch trụ tháng ở khoảng 1/4 số ngày) | Có (sinh cách giờ giao tiết dưới 2 giờ) |
+| Giờ sinh | Giờ đồng hồ UTC+7 | Giờ mặt trời thật theo kinh độ nơi sinh | - |
+| Khởi vận | Dương nam, âm nữ thuận; đếm tới tiết kế tiếp (thuận) hoặc từ tiết vừa qua (nghịch), 3 ngày tính 1 năm (1 ngày = 4 tháng, 1 giờ = 5 ngày) | - | Có (dòng đại vận ghi số ngày) |
+| Tiểu vận | Từ trụ giờ đi số bước bằng tuổi mụ, theo chiều đại vận | - | - |
+| Không rõ giờ sinh | 3 trụ; tuổi khởi vận tạm lấy 12h00 | - | Có |
+| Thần sát | Chưa làm (mỗi phái một khác) | - | - |
+
+## Phong thủy
+
+| Chỗ khác nhau | Repo chọn (nguồn) | Cách khác | Ghi chú |
+|---|---|---|---|
+| Ba thước Lỗ Ban | Thông thủy 52,2 cm (khoảng rỗng), dương trạch 42,9 cm (khối đặc), âm phần 38,8 cm (bàn thờ, mộ); cung chia đều, tính tới 0,1 mm (mỗi cung thước 52,2 cm dài 65,25 mm) | Nhiều bảng in làm tròn 65 mm mỗi cung | - |
+| Số đo đúng mép hai cung | Tính vào cung sau | - | - |
+| Mốc năm của cung phi | Năm âm lịch: sinh trước Tết thuộc năm trước (lịch giờ Việt Nam) | Sách lấy Lập Xuân làm mốc năm | Có (khi chỉ nhập năm sinh) |
+| Số cung ra 5 | Nam lấy Khôn (2), nữ lấy Cấn (8) | - | Có |
+| Thứ tự 8 hướng | Theo bảng du niên: Sinh Khí, Thiên Y, Diên Niên, Phục Vị; Họa Hại, Lục Sát, Ngũ Quỷ, Tuyệt Mệnh (thứ tự liệt kê, không phải thang điểm) | Các sách xếp hạng sao khác nhau | - |
 
 ## Thần số học
 

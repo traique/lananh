@@ -504,6 +504,30 @@ async def tuvi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 @common.restricted
+async def battu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/battu <ngày sinh> [giờ] <nam|nữ> - lá số Bát Tự (không AI)."""
+    await common.reply_long_text(
+        update.message, divination_commands.battu_chart(common.extract_arg(context))
+    )
+
+
+@common.restricted
+async def loban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/loban <số đo> [món đồ] - tra thước Lỗ Ban (không AI)."""
+    await common.reply_long_text(
+        update.message, divination_commands.loban(common.extract_arg(context))
+    )
+
+
+@common.restricted
+async def cungphi_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/cungphi <năm sinh> <nam|nữ> - cung phi Bát Trạch, hướng tốt xấu (không AI)."""
+    await common.reply_long_text(
+        update.message, divination_commands.cungphi(common.extract_arg(context))
+    )
+
+
+@common.restricted
 async def kymon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/kymon [ngày] [giờ] - lập bàn Kỳ Môn Độn Giáp (không AI)."""
     await common.reply_long_text(
@@ -514,6 +538,7 @@ async def kymon_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 _CHITIET = {
     "tsh": divination_commands.tsh_chitiet,
     "tuvi": divination_commands.tuvi_chitiet,
+    "battu": divination_commands.battu_chitiet,
     "kymon": divination_commands.kymon_chitiet,
 }
 
@@ -535,6 +560,12 @@ async def tsh_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def tuvi_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/tuvi_chitiet - lá số tử vi kèm AI luận giải (1 lượt AI)."""
     await _reply_chitiet(update, context, "tuvi")
+
+
+@common.restricted
+async def battu_chitiet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/battu_chitiet - lá số Bát Tự kèm AI luận giải (1 lượt AI)."""
+    await _reply_chitiet(update, context, "battu")
 
 
 @common.restricted

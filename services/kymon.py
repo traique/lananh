@@ -71,7 +71,7 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-from services import can_chi, lunar, solar_terms
+from services import bat_tu, can_chi, lunar, solar_terms
 
 CAN = can_chi.CAN
 CHI = can_chi.CHI
@@ -292,20 +292,13 @@ def _rotate(ring_map: dict[int, str], shift: int) -> dict[int, str]:
 def build_chart(moment: dt.datetime | None = None) -> Chart:
     """Lập bàn Thời gia Kỳ Môn cho ``moment`` (xem ``localize``)."""
     local = localize(moment)
-    # Trụ ngày đổi ở đầu giờ Tý: 23h-24h thuộc ngày hôm sau.
-    pillar_day = local.date() + dt.timedelta(days=1 if local.hour == 23 else 0)
-    jd = lunar._jd_from_date(pillar_day.day, pillar_day.month, pillar_day.year)
-    day = ((jd + 9) % 10, (jd + 1) % 12)
+    # Tứ trụ dùng chung với /battu: trụ ngày đổi ở đầu giờ Tý (23h-24h thuộc ngày hôm
+    # sau), giờ theo Ngũ thử độn, năm đổi ở Lập xuân, tháng theo tiết + Ngũ hổ độn.
+    year, month, day, hour = bat_tu.four_pillars(local)
     day_idx = can_chi.jiazi_index(*day)
-    hour_branch = (local.hour + 1) // 2 % 12
-    hour = ((2 * (day[0] % 5) + hour_branch) % 10, hour_branch)  # Ngũ thử độn
+    hour_branch = hour[1]
     hour_idx = can_chi.jiazi_index(*hour)
     term = solar_terms.term_at(local)
-    year_no = local.year if local >= solar_terms.li_chun(local.year) else local.year - 1
-    year = (can_chi.year_can(year_no), can_chi.year_chi(year_no))
-    month_branch = ((term.index + 3) // 2 + 2) % 12  # Lập xuân/Vũ thủy = Dần ...
-    dan_stem = (2 * (year[0] % 5) + 2) % 10  # Ngũ hổ độn
-    month = ((dan_stem + (month_branch - 2) % 12) % 10, month_branch)
 
     yang = term.index >= 18 or term.index < 6
     yuan = day_idx % 15 // 5

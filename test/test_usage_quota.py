@@ -134,9 +134,17 @@ async def test_moi_lenh_huyen_hoc_goi_ai_deu_tinh_vao_tran_nang(monkeypatch):
         return "luận giải"
 
     monkeypatch.setattr(divination_commands, "ai_text", ai_text)
-    args = {"tsh": "12/3/1990 Nguyễn Văn A", "tuvi": "15/3/1990 9h30 nam", "kymon": "đi xa"}
-    commands = {"/lich", "/tsh", "/tuvi", "/kymon", *divination_commands.AI_COMMAND_KINDS}
-    for base in ("tsh", "ths", "tuvi", "kymon"):
+    args = {
+        "tsh": "12/3/1990 Nguyễn Văn A",
+        "tuvi": "15/3/1990 9h30 nam",
+        "battu": "15/3/1990 9h30 nam",
+        "kymon": "đi xa",
+        "loban": "80 cửa",
+        "cungphi": "1990 nữ",
+    }
+    commands = {"/lich", "/tsh", "/tuvi", "/battu", "/kymon", "/loban", "/cungphi"}
+    commands |= set(divination_commands.AI_COMMAND_KINDS)
+    for base in ("tsh", "ths", "tuvi", "battu", "kymon"):
         commands |= {f"/{base}_chitiet", f"/{base}chitiet"}
     for command in sorted(commands):
         called.clear()

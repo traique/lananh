@@ -344,6 +344,12 @@ def build_application():
         ("tuvi_chitiet", commands.tuvi_chitiet_cmd),
         ("kymon", commands.kymon_cmd),
         ("kymon_chitiet", commands.kymon_chitiet_cmd),
+        # Menu "/" đã đủ 100 lệnh (ALL_COMMANDS): 4 lệnh dưới chỉ đăng ký handler,
+        # có trong /help và hỏi tự nhiên (như /app, /userouter9).
+        ("battu", commands.battu_cmd),
+        ("battu_chitiet", commands.battu_chitiet_cmd),
+        ("loban", commands.loban_cmd),
+        ("cungphi", commands.cungphi_cmd),
         ("vang", daily_data_commands.vang_cmd),
         ("tygia", daily_data_commands.tygia_cmd),
         ("xang", daily_data_commands.xang_cmd),

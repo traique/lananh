@@ -1,0 +1,57 @@
+# Chữ soạn sẵn cho /loban và /cungphi (services/phong_thuy.py). Sửa thoải mái,
+# không cần đổi code. Tên thước, tên cung, cung nhỏ, tên sao và bảng hướng nằm
+# trong code (đối chiếu ca kiểm ở test/test_phong_thuy.py); ở đây chỉ có lời
+# giải thích ngắn do bot tự viết. Không dùng chữ Hán trong file này (chữ hiện
+# cho người dùng).
+
+thuoc:
+  thong_thuy:
+    dung_de: "đo khoảng rỗng (lọt lòng): cửa đi, cửa sổ, ô thoáng, giếng trời"
+    cung:
+      Quý Nhân: được người giúp đỡ, làm ăn hanh thông.
+      Hiểm Họa: dễ gặp rủi ro, tai tiếng, hao tổn.
+      Thiên Tai: dễ gặp hoạn nạn bất ngờ, ốm đau.
+      Thiên Tài: lộc trời cho, tiền bạc dồi dào.
+      Phúc Lộc: phúc đức, lộc ăn, con cháu sung túc.
+      Cô Độc: dễ lẻ loi, chia lìa, gia đạo lạnh nhạt.
+      Thiên Tặc: dễ mất trộm, mất mát, bệnh tật.
+      Tể Tướng: công danh, được trọng vọng, có thế lực.
+  duong_trach:
+    dung_de: "đo khối đặc: bệ, bậc, giường, tủ, bàn, kệ, bếp"
+    cung:
+      Tài: tiền của vào nhà.
+      Bệnh: dễ ốm đau, hao tài, vướng việc quan.
+      Ly: chia lìa, thất thoát của cải.
+      Nghĩa: nhân nghĩa, thêm người, nhiều điều lành.
+      Quan: thăng tiến, thi cử đỗ đạt.
+      Kiếp: mất của, ly tán, tai họa bất ngờ.
+      Hại: dễ gặp tai họa, bệnh tật, thị phi.
+      Bản: vững gốc, tài lộc đến, hưng vượng.
+  am_phan:
+    dung_de: "đo bàn thờ, đồ thờ, mộ phần"
+    cung:
+      Đinh: thêm người, con cháu đông đúc.
+      Hại: tổn hại, xui rủi.
+      Vượng: hưng thịnh, làm ăn phát đạt.
+      Khổ: vất vả, khó khăn.
+      Nghĩa: nhân nghĩa, con cháu hiếu thảo.
+      Quan: công danh, địa vị.
+      Tử: mất mát, tang thương.
+      Hưng: khởi sắc, hưng thịnh.
+      Thất: thất thoát, hao hụt.
+      Tài: tiền tài, của cải.
+
+# Một câu ngắn cho mỗi sao Bát Trạch (4 tốt, 4 xấu).
+sao:
+  sinh_khi: Hướng tốt nhất, vượng khí, lợi tiền bạc và công danh; hợp cửa chính, chỗ làm việc.
+  thien_y: Lợi sức khỏe, hay gặp người giúp; hợp phòng ngủ, chỗ nghỉ ngơi.
+  dien_nien: Lợi hôn nhân và các mối quan hệ, gia đạo hòa thuận.
+  phuc_vi: Bình yên, vững vàng; hợp bàn thờ, bàn học, nơi cần tĩnh tâm.
+  hoa_hai: Xấu nhẹ, dễ thị phi, hao hụt lặt vặt.
+  luc_sat: Dễ xích mích, rắc rối tình cảm, kiện tụng.
+  ngu_quy: Dễ hao tài, mất mát, tai nạn bất ngờ.
+  tuyet_menh: Xấu nhất, dễ bệnh tật, đổ vỡ; nên tránh đặt cửa chính, giường ngủ.
+
+cach_dung_huong: >-
+  Cách dùng phổ biến: cửa chính, chỗ ngồi làm việc, đầu giường, bàn thờ, bếp quay
+  về 1 trong 4 hướng tốt; nhà vệ sinh, kho đặt ở phía hướng xấu.

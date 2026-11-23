@@ -1,7 +1,8 @@
-"""Lệnh /lich, /tsh, /tsh_chitiet, /tuvi, /tuvi_chitiet, /kymon, /kymon_chitiet
-dùng chung cho mọi kênh.
+"""Lệnh /lich, /tsh, /tsh_chitiet, /tuvi, /tuvi_chitiet, /battu, /battu_chitiet, /kymon,
+/kymon_chitiet, /loban, /cungphi dùng chung cho mọi kênh.
 
-/lich, /tsh, /tuvi, /kymon tính bằng code, KHÔNG gọi AI. Các lệnh *_chitiet gửi
+/lich, /tsh, /tuvi, /battu, /kymon, /loban, /cungphi tính bằng code, KHÔNG gọi AI. Các
+lệnh *_chitiet gửi
 kết quả đã tính cho AI diễn giải (1 lượt AI, có telemetry như các lệnh AI khác).
 Ngày sinh, họ tên, việc cần xem KHÔNG lưu vào DB/trí nhớ: telemetry chỉ ghi tên
 lệnh và độ dài câu trả lời để đếm lượt AI, không ghi tham số hay nội dung luận giải.
@@ -13,7 +14,7 @@ import datetime as dt
 import logging
 
 from ai.timeouts import TurnTimeoutError
-from services import calendar_query, kymon, numerology, reply_audience, tuvi
+from services import bat_tu, calendar_query, kymon, numerology, phong_thuy, reply_audience, tuvi
 from services.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -48,9 +49,22 @@ def tuvi_chart(argument: str) -> str:
     return chart if isinstance(chart, str) else tuvi.format_chart(chart)
 
 
+def battu_chart(argument: str) -> str:
+    chart = bat_tu.parse(argument)
+    return chart if isinstance(chart, str) else bat_tu.format_chart(chart)
+
+
 def kymon_chart(argument: str) -> str:
     chart = kymon.parse(argument)
     return chart if isinstance(chart, str) else kymon.format_chart(chart)
+
+
+def loban(argument: str) -> str:
+    return phong_thuy.loban_text(argument)
+
+
+def cungphi(argument: str) -> str:
+    return phong_thuy.cungphi_text(argument)
 
 
 async def ai_text(user_id: int, kind: str, channel: str, explain) -> str:
@@ -102,6 +116,19 @@ async def tuvi_chitiet(user_id: int, argument: str, channel: str) -> list[str]:
     )
 
 
+async def battu_chitiet(user_id: int, argument: str, channel: str) -> list[str]:
+    chart = bat_tu.parse(argument)
+    if isinstance(chart, str):
+        return [chart]
+    return await _with_ai(
+        user_id,
+        "battu_chitiet",
+        channel,
+        bat_tu.format_chart(chart),
+        lambda: bat_tu.explain_with_ai(chart),
+    )
+
+
 async def kymon_chitiet(user_id: int, argument: str, channel: str) -> list[str]:
     parsed = kymon.parse_question(argument)
     if isinstance(parsed, str):
@@ -123,11 +150,13 @@ AI_COMMAND_KINDS: dict[str, str] = {
     "/tsh_chitiet": "tsh_chitiet",
     "/ths_chitiet": "tsh_chitiet",
     "/tuvi_chitiet": "tuvi_chitiet",
+    "/battu_chitiet": "battu_chitiet",
     "/kymon_chitiet": "kymon_chitiet",
 }
 _AI_HANDLERS = {
     "tsh_chitiet": tsh_chitiet,
     "tuvi_chitiet": tuvi_chitiet,
+    "battu_chitiet": battu_chitiet,
     "kymon_chitiet": kymon_chitiet,
 }
 
@@ -140,8 +169,14 @@ async def handle(command: str, argument: str, user_id: int, channel: str) -> lis
         return [tsh(argument)]
     if command == "/tuvi":
         return [tuvi_chart(argument)]
+    if command == "/battu":
+        return [battu_chart(argument)]
     if command == "/kymon":
         return [kymon_chart(argument)]
+    if command == "/loban":
+        return [loban(argument)]
+    if command == "/cungphi":
+        return [cungphi(argument)]
     kind = AI_COMMAND_KINDS.get(command)
     if kind is not None:
         return await _AI_HANDLERS[kind](user_id, argument, channel)
