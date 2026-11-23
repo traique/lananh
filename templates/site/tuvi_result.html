@@ -56,6 +56,24 @@
     {% endfor %}
   </div>
 </section>
+{% if chart.vanNam %}{% set v = chart.vanNam %}
+<section class="sect" aria-labelledby="van-nam-title">
+  <header><h2 id="van-nam-title">Vận năm {{ v.year }} ({{ v.canChi }})</h2><span class="meta">{{ v.age }} tuổi âm, tính sẵn theo lá số</span></header>
+  <dl class="facts">
+    <dt>Đại hạn</dt><dd>{% if v.daiHan %}<a href="#cung-{{ v.daiHan.branchIndex }}">{{ v.daiHan.palace }}</a> ({{ v.daiHan.branch }}), {{ v.daiHan.fromAge }}-{{ v.daiHan.toAge }} tuổi{% elif v.age < chart.palaces[0].daiHan.fromAge %}Chưa vào đại hạn đầu (từ {{ chart.palaces[0].daiHan.fromAge }} tuổi){% else %}Đã qua 12 đại hạn{% endif %}</dd>
+    <dt>Tiểu hạn</dt><dd><a href="#cung-{{ v.tieuHan.branchIndex }}">{{ v.tieuHan.palace }}</a> ({{ v.tieuHan.branch }})</dd>
+    <dt>Lưu niên</dt><dd><a href="#cung-{{ v.luuNien.branchIndex }}">{{ v.luuNien.palace }}</a> ({{ v.luuNien.branch }})</dd>
+    <dt>Lưu Tứ hóa</dt><dd>{% for h in v.luuTuHoa %}{{ h.hoa }} {{ h.star }} ở {% if h.palace %}{{ h.palace }} ({{ h.branch }}){% else %}ngoài lá số{% endif %}{% if not loop.last %}; {% endif %}{% endfor %}</dd>
+    <dt>Sao lưu</dt><dd>{% for s in v.saoLuu %}{{ s.name }} ở {{ s.palace }} ({{ s.branch }}){% if s.relationText %}, {{ s.relationText }}{% endif %}{% if not loop.last %}; {% endif %}{% endfor %}</dd>
+  </dl>
+</section>
+{% endif %}
+{% if chart.notes %}
+<section class="sect" aria-labelledby="notes-title">
+  <header><h2 id="notes-title">Lưu ý quy ước của lá số này</h2><span class="meta">Chỗ các sách an khác nhau</span></header>
+  <ul class="read-overview" role="list">{% for n in chart.notes %}<li>{{ n }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
 <section class="sect reading" aria-labelledby="read-title">
   <header><h2 id="read-title">Diễn giải lá số</h2><span class="meta">Đọc nhanh theo quy tắc phổ biến, chưa xét các cách cục</span></header>
   <ul class="read-overview" role="list">{% for line in reading.overview %}<li>{{ line }}</li>{% endfor %}</ul>

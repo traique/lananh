@@ -19,9 +19,11 @@
       trong [lịch tháng](/lich).
   - q: Lịch trên trang được tính bằng gì?
     a: >-
-      Ngày âm, can chi, tiết khí và giờ hoàng đạo tính bằng thuật toán âm lịch của Hồ Ngọc
-      Đức theo múi giờ Việt Nam (UTC+7), chạy ngay trên máy chủ, không dùng AI. Thời tiết,
-      xổ số, giá vàng, giá xăng đọc từ nguồn công khai ghi trên từng trang.
+      Ngày âm, can chi và giờ hoàng đạo tính bằng thuật toán âm lịch của Hồ Ngọc Đức theo
+      múi giờ Việt Nam (UTC+7); tiết khí tính theo vị trí Mặt Trời (chuỗi VSOP87, lệch vài
+      giây). Tất cả chạy ngay trên máy chủ, không dùng AI, và được đối chiếu với bộ ca kiểm
+      độc lập của Nhật Nguyệt (nhatnguyet.org) cho các năm 1900-2100. Thời tiết, xổ số, giá
+      vàng, giá xăng đọc từ nguồn công khai ghi trên từng trang.
 
 "/lich":
   - q: Âm lịch Việt Nam tính như thế nào?
@@ -107,6 +109,22 @@
       Rằm tháng Giêng, Giỗ Tổ, Phật đản, Tết Đoan ngọ, Vu Lan, Trung thu, ông Công ông Táo
       và Tết cố định theo ngày âm nên ngày dương đổi hằng năm; còn các ngày như 1/1, 30/4,
       1/5, 2/9, 20/10, 20/11 cố định theo ngày dương. Bảng trên tính sẵn ngày dương của 12 tháng tới.
+
+"/lich/le-hoi":
+  - q: Trang có những lễ hội nào?
+    a: >-
+      206 lễ hội, lễ tết và ngày lễ Việt Nam: lễ tết cả nước, lễ hội tín ngưỡng và lễ hội
+      địa phương của 34 tỉnh, thành phố, kèm nơi tổ chức. Dữ liệu từ bộ le-hoi-viet-nam của
+      Nhật Nguyệt (nhatnguyet.org), giấy phép CC BY 4.0. Chọn năm và tỉnh để lọc.
+  - q: Ngày lễ hội âm lịch được tính thế nào?
+    a: >-
+      Lễ âm lịch đổi sang dương lịch theo giờ Việt Nam và tính vào tháng chính, không tính
+      tháng nhuận. Tháng âm thiếu chỉ có 29 ngày nên lễ ngày 30 năm đó không được ghi, vì
+      mỗi nơi dời lễ một kiểu. Muốn đổi một ngày âm bất kỳ, dùng trang [đổi ngày âm](/lich/doi-ngay).
+  - q: Vì sao một số lễ hội không có ngày cố định?
+    a: >-
+      42 lễ hội, festival do ban tổ chức công bố ngày từng năm (thường theo kế hoạch du lịch
+      của tỉnh). Trang ghi lịch đã công bố kèm nguồn; năm chưa công bố thì để trống.
 
 "/thoi-tiet":
   - q: Số liệu thời tiết lấy từ đâu?

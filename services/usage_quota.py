@@ -68,6 +68,7 @@ KIND_TTS = "tts"
 HEAVY_KINDS = (
     "image",
     "tuvi_chitiet",
+    "battu_chitiet",
     "kymon_chitiet",
     "tsh_chitiet",
     KIND_CHAT_SEARCH,

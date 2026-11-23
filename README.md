@@ -101,7 +101,22 @@ Repository được thiết kế cho **một chủ sở hữu**:
     nơi vừa hỏi.
   - `services/lunar.py` (phần tính toán ở `core/lunar_math.py`): âm lịch Hồ Ngọc
     Đức chạy offline - đổi âm ↔ dương, tháng nhuận, can chi, tiết khí, giờ hoàng
-    đạo, số ngày tới Tết.
+    đạo, số ngày tới Tết. Bước lùi tháng lặp tới khi đúng (bản gốc ra "ngày 0" ở
+    07/05/2054, 09/04/2062); tham số `tz` (mặc định 7) tính được lịch UTC+8. Tiết khí
+    của một ngày (tiết hiệu lực lúc hết ngày) dùng kinh độ Mặt Trời chính xác của
+    `services/solar_terms.py` (lệch IMCCE trung bình 7 giây). Ngày trước 1968 (miền
+    Nam tới 1975) lịch in thời đó tính theo UTC+8: `old_calendar_note` ghi lưu ý khi
+    ngày âm khác.
+  - Đối chiếu với ca kiểm độc lập của Nhật Nguyệt (CC BY 4.0, bản trích ở
+    `test/data/nhatnguyet/`, sinh bằng `scripts/make_golden_nhatnguyet.py`): đổi lịch
+    3 múi giờ, can chi, tiết khí, giờ hoàng đạo, tứ trụ, tử vi (lá số + vận năm),
+    thần số học, lễ hội, Lỗ Ban, cung phi. Chỗ chọn phái khác ghi ở
+    `docs/quy-uoc-truong-phai.md`; nguồn mã/dữ liệu ở `THIRD_PARTY_NOTICES.md`.
+  - `services/le_hoi.py`: 206 lễ hội, lễ tết Việt Nam (bộ le-hoi-viet-nam của Nhật
+    Nguyệt, CC BY 4.0, bản rút gọn `assets/le_hoi_viet_nam.json` ~90 KB nạp lười):
+    ngày của từng năm (lễ âm tính vào tháng chính, năm thiếu ngày 30 thì bỏ), tỉnh
+    theo 34 tỉnh năm 2025, nơi tổ chức; `/lich hội Lim`, `/lich lễ hội tháng Giêng ở
+    Bắc Ninh`, trang `/lich/le-hoi`. Câu trả lời có dòng ghi nguồn.
   - `services/lunar_chat.py`: câu hỏi âm lịch hay gặp ("rằm tháng 8 là ngày
     nào", "rằm tháng sau", "hôm nay âm lịch ngày mấy", "còn mấy ngày nữa Tết",
     "mai giờ hoàng đạo", "hôm nay tốt hay xấu"...) trả lời thẳng bằng code, KHÔNG
@@ -671,7 +686,8 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   inbox không chạy lại lượt đã huỷ. `/agent`, `/rag`, `/gia` và lệnh `*_chitiet`
   chưa huỷ được. Trong lúc một lượt dài đang chạy, lệnh chỉ đọc không tốn AI vẫn
   trả lời ngay: `/help`, `/start`, `/notes`, `/history`, `/lich`, `/tsh`, `/tuvi`,
-  `/kymon`, `/danhgia`, `/memory` hoặc `/nhac` không kèm tham số
+  `/battu`, `/kymon`, `/loban`, `/cungphi`, `/danhgia`, `/memory` hoặc `/nhac` không kèm
+  tham số
   (`services/turn_control.py`; khi lượt khác đang chạy, các lệnh này đi thẳng từ
   webhook, không qua inbox nên không được thử lại nếu lỗi).
 - Nút bấm (chỉ chủ bot bấm được; người khác bấm bị bỏ qua và ghi log):
@@ -1417,6 +1433,9 @@ danh bạ lệnh `services/command_catalog.py`, chi tiết ở `docs/nang-cap-ja
 | "xem tử vi giúp anh" → "15/3/1990 9h30 nam" | Hỏi ngày giờ sinh, giới tính rồi an lá số |
 | "thần số học 15/3/1990 tên Nguyễn Văn An" | `/tsh 15/3/1990 Nguyễn Văn An` |
 | "lập bàn kỳ môn lúc này", "kỳ môn 9h mai ký hợp đồng có thuận không" | `/kymon`, `/kymon_chitiet` |
+| "bát tự 15/3/1990 9h30 nam", "luận giải bát tự chi tiết ..." | `/battu`, `/battu_chitiet` |
+| "cửa rộng 80cm có hợp lỗ ban không", "cung phi 1990 nữ hợp hướng nào" | `/loban 80 cửa`, `/cungphi 1990 nữ` |
+| "hội Lim năm nay ngày nào", "lễ hội tháng Giêng ở Bắc Ninh" | `/lich <câu hỏi>` |
 | "ngày tốt tháng này", "sao hạn 1990 nam năm 2027", "xem hợp tuổi 1990 và 1992" | `/lich <câu hỏi>` |
 | "tìm giá iPhone 16 Pro", "dịch giúp anh sang tiếng Nhật: cảm ơn" | `/gia`, `/dich vi>ja` |
 | "tạo ảnh con mèo đội nón lá", "viết prompt tạo ảnh ..." | `/anh`, `/prompt` |
@@ -1462,12 +1481,15 @@ Telegram chỉ còn 18 lệnh hay dùng; mọi lệnh khác vẫn gõ được.
 | `/canhbaogia <MÃ> [về\|lên] <GIÁ>`, `/xoacanhbao <MÃ> [GIÁ]` | Ngưỡng giá tự đặt, báo trong giờ giao dịch (hoặc nhắn "báo anh khi HPG về 25") |
 | `/anh <mô tả>` / `/anh on\|off` | Tạo ảnh thật (Agnes AI) / bật tắt |
 | `/tintuc` | Điểm tin mới ngay tại kênh đang gọi (không broadcast) |
-| `/lich <câu hỏi>` | Tra lịch tự do bằng code, KHÔNG tốn AI (`services/calendar_query.py`): âm ↔ dương, bảng tháng, ngày lễ (kèm năm: "Tết 2028"), đếm ngày, ngày hoàng đạo/Tam nương (tháng này chỉ từ hôm nay; cuối tuần đủ Thứ Bảy + Chủ Nhật), xem ngày theo việc ("xem ngày cưới tháng 12", "ngày khai trương", "xem ngày động thổ", "20/12 cưới được không": hoàng đạo + không Tam nương/Nguyệt kỵ + Thập nhị trực hợp việc, `can_chi.day_truc`), tuổi - mệnh - hợp xung, sao hạn/Tam tai/Kim lâu/Hoang ốc (`services/can_chi.py`); ngày không có thật ("29/2/2027", "32/12") báo đúng lỗi; không hiểu thì gợi ý cách hỏi |
-| `/tsh <ngày sinh> [họ tên]` | Thần số học (`services/numerology.py`, hệ Pythagoras phổ biến ở VN - số chủ đạo có 10, không có 1; số theo tên rút gọn từng từ, Y là nguyên âm khi không kề nguyên âm khác): số chủ đạo, ngày sinh, thái độ, năm/tháng cá nhân, 4 đỉnh cao + 4 thử thách theo tuổi (kim tự tháp 36 − số chủ đạo), biểu đồ ngày sinh + mũi tên; có họ tên thì thêm sứ mệnh/linh hồn/nhân cách/trưởng thành và biểu đồ tổng hợp; ý nghĩa soạn sẵn ở `assets/than_so_hoc.yaml` |
-| `/tuvi <ngày sinh> <giờ> <nam\|nữ>` | An lá số Tử Vi Đẩu Số (`services/tuvi.py`, cách Thái Thứ Lang): 12 cung, 14 chính tinh kèm độ sáng miếu/vượng/đắc/bình/hãm, ~70 phụ tinh (Lộc Tồn Kình Đà, Khôi Việt, Xương Khúc, Tả Hữu, Không Kiếp, Hỏa Linh, Thiên Quan Thiên Phúc, Lưu Hà Thiên Trù, Quốc Ấn Đường Phù, Lưu Niên Văn Tinh, Đẩu Quân, Thiên Không, Giải Thần...), Tứ hóa, vòng Tràng sinh / Lộc Tồn / Thái Tuế, Tuần/Triệt, đại hạn; ý nghĩa sao thủ Mệnh và bảng độ sáng ở `assets/tu_vi.yaml` |
+| `/lich <câu hỏi>` | Tra lịch tự do bằng code, KHÔNG tốn AI (`services/calendar_query.py`): âm ↔ dương, bảng tháng, ngày lễ (kèm năm: "Tết 2028"), 206 lễ hội ("hội Lim", "lễ hội tháng Giêng ở Bắc Ninh", "tháng này có lễ hội gì" - `services/le_hoi.py`), đếm ngày, ngày hoàng đạo/Tam nương (tháng này chỉ từ hôm nay; cuối tuần đủ Thứ Bảy + Chủ Nhật), xem ngày theo việc ("xem ngày cưới tháng 12", "ngày khai trương", "xem ngày động thổ", "20/12 cưới được không": hoàng đạo + không Tam nương/Nguyệt kỵ + Thập nhị trực hợp việc, `can_chi.day_truc`), tuổi - mệnh - hợp xung, sao hạn/Tam tai/Kim lâu/Hoang ốc (`services/can_chi.py`); ngày không có thật ("29/2/2027", "32/12") báo đúng lỗi; không hiểu thì gợi ý cách hỏi |
+| `/tsh <ngày sinh> [họ tên]` | Thần số học (`services/numerology.py`, hệ Pythagoras phổ biến ở VN - số chủ đạo có 10, không có 1; số theo tên rút gọn từng từ, Y là nguyên âm khi không kề nguyên âm khác): số chủ đạo, ngày sinh, thái độ, năm/tháng/ngày cá nhân, số nợ nghiệp (sinh ngày 13, 14, 16, 19), 4 đỉnh cao + 4 thử thách theo tuổi (kim tự tháp 36 − số chủ đạo), biểu đồ ngày sinh + mũi tên; có họ tên thì thêm sứ mệnh/linh hồn/nhân cách/trưởng thành và biểu đồ tổng hợp; ý nghĩa soạn sẵn ở `assets/than_so_hoc.yaml` |
+| `/tuvi <ngày sinh> <giờ> <nam\|nữ> [năm <năm xem>]` | An lá số Tử Vi Đẩu Số (`services/tuvi.py`, cách Thái Thứ Lang): 12 cung, 14 chính tinh kèm độ sáng miếu/vượng/đắc/bình/hãm, ~70 phụ tinh (Lộc Tồn Kình Đà, Khôi Việt, Xương Khúc, Tả Hữu, Không Kiếp, Hỏa Linh, Thiên Quan Thiên Phúc, Lưu Hà Thiên Trù, Quốc Ấn Đường Phù, Lưu Niên Văn Tinh, Đẩu Quân, Thiên Không, Giải Thần...), Tứ hóa, vòng Tràng sinh / Lộc Tồn / Thái Tuế, Tuần/Triệt, đại hạn; vận năm (mặc định năm âm hiện tại): lưu niên, tiểu hạn, đại hạn của năm, lưu Tứ Hóa, 5 sao lưu kèm quan hệ với cung hạn (chuyển ngữ từ Nhật Nguyệt, MIT); dòng lưu ý khi lá rơi vào chỗ các phái khác nhau (giờ Tý đầu, tháng nhuận, tuổi Canh, lịch cũ trước 1968 - `docs/quy-uoc-truong-phai.md`); ý nghĩa sao thủ Mệnh và bảng độ sáng ở `assets/tu_vi.yaml` |
 | `/tsh_chitiet` (hoặc `/ths_chitiet`), `/tuvi_chitiet` | Như trên + AI diễn giải (1 lượt AI; AI chỉ diễn giải số/lá số đã tính, không tính lại). Ngày sinh, họ tên không lưu DB |
 | `/kymon [dd/mm[/yyyy]] [HH:MM\|8h\|9h sáng mai]` | Lập bàn Kỳ Môn Độn Giáp 9 cung bằng code, mặc định lúc này, không tốn AI |
 | `/kymon_chitiet [thời điểm] <việc cần xem>` | Bàn Kỳ Môn + 1 lượt AI luận giải việc đó |
+| `/battu <ngày sinh> [giờ] <nam\|nữ> [năm <năm xem>]`, `/battu_chitiet` | Bát Tự (`services/bat_tu.py`, chuyển ngữ một phần từ Nhật Nguyệt, MIT): tứ trụ dùng chung code Kỳ Môn (năm đổi ở Lập Xuân, tháng theo tiết tới phút, ngày đổi lúc 23h), tàng can, thập thần, trường sinh, nạp âm, mệnh cung, thai nguyên, đại vận + tuổi khởi vận, tiểu vận năm xem, đếm ngũ hành; không rõ giờ sinh thì 3 trụ. `/battu_chitiet` thêm 1 lượt AI luận giải |
+| `/loban <số đo> [cửa\|giường\|tủ\|bàn thờ...]` | Thước Lỗ Ban (`services/phong_thuy.py`): cung, cung nhỏ, tốt/xấu trên thước 52,2 cm (thông thủy), 42,9 cm (dương trạch), 38,8 cm (âm phần), số đo tốt gần nhất; nói loại đồ thì chọn đúng thước (không tốn AI) |
+| `/cungphi <năm sinh\|ngày sinh> <nam\|nữ>` | Cung phi Bát Trạch: số Kua, quái, Đông/Tây tứ mệnh, 4 hướng tốt + 4 hướng xấu (năm tính theo năm âm, sinh trước Tết thuộc năm trước; không tốn AI) |
 | `/vang [sjc\|nhẫn\|doji\|pnj\|bảo tín\|thế giới]`, `/tygia [mã\|100 usd]` | Giá vàng SJC/DOJI/PNJ/Bảo Tín + thế giới (vang.today, SJC dự phòng); tỷ giá Vietcombank, đổi tiền (không tốn AI) |
 | `/xang [xăng\|diesel\|dầu hỏa]` | Giá xăng dầu Petrolimex vùng 1/vùng 2, tăng giảm kỳ trước, PVOIL, giờ cập nhật (không tốn AI) |
 | `/xoso [mb\|mn\|mt\|tỉnh] [hôm nay\|hôm qua\|dd/mm\|thứ] [số vé]`, `/xoso tinh` | Kết quả xổ số theo miền hoặc từng đài, dò vé bằng code; danh sách đài + lịch quay (`/xoso help`) |
@@ -1722,6 +1744,7 @@ LCTA có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo n
 | `/lich/hoi?q=...` | Hỏi lịch tự do (như lệnh `/lich`); câu không hiểu thì gợi ý cách hỏi kiểu web (`calendar_query.WEB_HELP`, không có cú pháp lệnh chat) |
 | `/lich/doi-ngay?am=15/8/2027&nhuan=1` | Đổi ngày âm sang dương |
 | `/lich/ngay-le` | Ngày lễ âm/dương trong 12 tháng tới (tên lễ dẫn tới trang riêng) |
+| `/lich/le-hoi[?nam=2027&tinh=bac-ninh]` | 206 lễ hội, lễ tết Việt Nam theo năm, lọc theo 34 tỉnh: ngày dương + âm, nơi tổ chức, mô tả; bảng riêng cho 42 lễ ban tổ chức công bố ngày từng năm. Dữ liệu Nhật Nguyệt (CC BY 4.0, ghi nguồn cuối trang). Trang xem 1 ngày (`/lich?ngay=`) và API `/api/v1/calendar/days/` có thêm trường `festivals` |
 | `/lich/ngay-le/<khoá>` (vd `tet-nguyen-dan`, `tet-trung-thu`) | Một ngày lễ: lần tới là ngày nào, thứ mấy, ngày âm, còn bao nhiêu ngày, 5 lần tới; giới thiệu ngắn + ngày nghỉ theo Điều 112 Bộ luật Lao động 2019 trong `assets/site_holidays.yaml`. Khoá = tên lễ trong `calendar_query.HOLIDAYS` bỏ dấu, bỏ phần trong ngoặc (`site_data.slug`); khoá lạ trả 404 |
 | `/lich/ngay-tot?thang=YYYY-MM&viec=cuoi-hoi\|khai-truong\|dong-tho\|nhap-trach\|xuat-hanh\|ky-ket` | Ngày tốt trong tháng theo việc, cùng cách chọn với Hỏi lịch (`calendar_query.is_good_day`: hoàng đạo, tránh Tam nương/Nguyệt kỵ, trực hợp việc), kèm ngày âm, thần trực, trực, giờ hoàng đạo; tháng này canonical bỏ `?thang=`; chỉ tháng trước tới 24 tháng sau vào chỉ mục |
 | `/tuoi`, `/tuoi/<năm sinh>` | Tuổi theo năm sinh (1900 tới năm nay; năm khác 404): can chi, con giáp, mệnh, khoảng ngày dương của năm âm, tuổi hợp/kỵ kèm năm sinh gần, bảng sao hạn/Tam tai/Kim lâu/Hoang ốc năm nay và năm sau (`can_chi.han_profile`, cùng số liệu với chat); `/tuoi?nam=1990` chuyển sang `/tuoi/1990`; trang mục lục liệt kê 1940 tới năm nay |
@@ -1738,7 +1761,7 @@ LCTA có 2 bản `static/logo-light.webp` / `logo-dark.webp` (tự đổi theo n
 | `GET /api/v1/gold` | JSON giá vàng: `source` (`vang.today` hoặc `sjc.com.vn`), `fallback` (true = vang.today lỗi, đang dùng bảng SJC, không có tăng giảm/thế giới), `updated`, `unit` (`VND/lượng`), `domestic[]` {code, name, brand, branch, buy, sell, changeBuy, changeSell} (đồng/lượng, tăng giảm so với hôm trước, `null` khi không có), `world` {priceUsdPerOunce, change, unit, `conversion` {vndPerTael, usdVnd, rateSource, rateUpdated, sjcSellGap, note} hoặc null khi thiếu tỷ giá} hoặc null, `fx` (như `/fx`, null khi tỷ giá lỗi); cả vang.today lẫn SJC lỗi → 503 `SOURCE_UNAVAILABLE` |
 | `GET /api/v1/fuel` | JSON giá xăng dầu: `source`, `updated`, `unit` (`VND/lít`), `petrolimex[]` {name, kind (`xang`/`diesel`/`dau_hoa`/`khac`), zone1, zone2, change, prevChange}, `pvoil[]` {name, kind, price, change, prevChange}; nguồn lỗi 503 `SOURCE_UNAVAILABLE` |
 | `GET /api/v1/fx` | JSON tỷ giá Vietcombank: `source`, `updated`, `unit` (`VND`), `rates[]` {code, name, nameVi, cashBuy, transferBuy, sell} cho USD, EUR, JPY, CNY, KRW, GBP, AUD, SGD, THB (mã nào nguồn thiếu thì bỏ); nguồn lỗi 503 `SOURCE_UNAVAILABLE` |
-| `POST /api/v1/numerology/readings`, `POST /api/v1/tuvi/charts` | JSON thần số học/lá số (ngày sinh trong body, không nằm trong URL/log; `birthDate` nhận `YYYY-MM-DD` hoặc `DD/MM/YYYY`). Lá số: `isLeapMonth`/`isEarlyTy` là bool (sinh 23h-24h: `isEarlyTy: true`, an theo ngày hôm sau); mỗi cung có `mainStars`/`minorStars` (tên) như cũ và thêm `stars[]` {name, isMain, hoa, brightness M/V/Đ/B/H}, `daiHan.fromAge/toAge`; thần số học thêm `asOf`, `age`, `lifePath.single`, `maturity`, `pinnacles[]`, `challenges[]`, `personalMonthDetail`, `nameChart`, `combinedChart` |
+| `POST /api/v1/numerology/readings`, `POST /api/v1/tuvi/charts` | JSON thần số học/lá số (ngày sinh trong body, không nằm trong URL/log; `birthDate` nhận `YYYY-MM-DD` hoặc `DD/MM/YYYY`). Lá số: `isLeapMonth`/`isEarlyTy` là bool (sinh 23h-24h: `isEarlyTy: true`, an theo ngày hôm sau); mỗi cung có `mainStars`/`minorStars` (tên) như cũ và thêm `stars[]` {name, isMain, hoa, brightness M/V/Đ/B/H}, `daiHan.fromAge/toAge`, `viewYear` (body, tuỳ chọn 1900-2100; sai kiểu 422 `INVALID_VIEW_YEAR`), `vanNam` {year, canChi, age, luuNien, tieuHan, daiHan, luuTuHoa[], saoLuu[]} và `notes[]` (lưu ý quy ước của lá số); thần số học thêm `asOf`, `age`, `lifePath.single`, `maturity`, `pinnacles[]`, `challenges[]`, `personalMonthDetail`, `personalDay` {date, value, meaning}, `karmicDebt` ({value, meaning} hoặc null), `nameChart`, `combinedChart` |
 | `POST /api/v1/qimen/charts` | JSON bàn Kỳ Môn: body `{"dateTime"?: "YYYY-MM-DDTHH:MM[+07:00]"}` (không múi giờ = giờ VN, bỏ trống = lúc này); trả `pillars`, `solarTerm`, `dun`, `ju`, `yuan`, `xunShou`, `zhiFu`, `zhiShi`, `void`, `horse`, cờ phục/phản ngâm, `grid`, `palaces`, `patterns`, `patternGroups`; GET trả 405 chuẩn |
 
 Lỗi nhập liệu là HTTP 422 `{"error": {"code": "...", "message": "..."}}` (body JSON

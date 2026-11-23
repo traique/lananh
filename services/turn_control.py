@@ -30,7 +30,10 @@ _READONLY_ANY = frozenset(
         "/lich",
         "/tsh",
         "/tuvi",
+        "/battu",
         "/kymon",
+        "/loban",
+        "/cungphi",
         "/danhgia",
         "/chuy",
     }

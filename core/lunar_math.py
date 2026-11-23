@@ -5,6 +5,11 @@ Tết/Giỗ Tổ khi bảng ngày nghỉ giao dịch chưa có năm mới) dùng
 import ngược lên services/. Chỉ dùng thư viện chuẩn; services/lunar.py re-export
 lại toàn bộ tên ở đây nên code cũ (``lunar.lunar_to_solar``,
 ``lunar._jd_from_date``...) giữ nguyên.
+
+``tz`` (giờ lệch UTC dùng để xét "ngày có điểm sóc") mặc định 7 = lịch Việt Nam
+từ 1968; truyền 8 để tính lịch Trung Quốc / lịch in ở Việt Nam trước đó (xem
+``services.lunar.old_calendar_lunar``). Đối chiếu từng ngày 1900-2100 với ca kiểm
+của Nhật Nguyệt (test/test_golden_nhatnguyet.py).
 """
 
 from __future__ import annotations
@@ -47,12 +52,12 @@ def _new_moon(k: int) -> float:
     return Jd1 + C1 - deltat
 
 
-def _new_moon_day(k: int) -> int:
-    return int(math.floor(_new_moon(k) + 0.5 + TZ / 24))
+def _new_moon_day(k: int, tz: float = TZ) -> int:
+    return int(math.floor(_new_moon(k) + 0.5 + tz / 24))
 
 
-def _sun_longitude(jdn: float) -> float:
-    T = (jdn - 2451545.5 - TZ / 24) / 36525
+def _sun_longitude(jdn: float, tz: float = TZ) -> float:
+    T = (jdn - 2451545.5 - tz / 24) / 36525
     T2 = T * T
     dr = math.pi / 180
     M = 357.52910 + 35999.05030 * T - 0.0001559 * T2 - 0.00000048 * T * T2
@@ -64,53 +69,56 @@ def _sun_longitude(jdn: float) -> float:
     return L
 
 
-def _sun_long_index(jdn: int) -> int:
-    return int(math.floor(_sun_longitude(jdn) / math.pi * 6))
+def _sun_long_index(jdn: int, tz: float = TZ) -> int:
+    return int(math.floor(_sun_longitude(jdn, tz) / math.pi * 6))
 
 
-def _lunar_month11(yy: int) -> int:
+def _lunar_month11(yy: int, tz: float = TZ) -> int:
     off = _jd_from_date(31, 12, yy) - 2415021
     k = int(math.floor(off / 29.530588853))
-    nm = _new_moon_day(k)
-    if _sun_long_index(nm) >= 9:
-        nm = _new_moon_day(k - 1)
+    nm = _new_moon_day(k, tz)
+    if _sun_long_index(nm, tz) >= 9:
+        nm = _new_moon_day(k - 1, tz)
     return nm
 
 
-def _leap_month_offset(a11: int) -> int:
+def _leap_month_offset(a11: int, tz: float = TZ) -> int:
     k = int(math.floor((a11 - 2415021.076998695) / 29.530588853 + 0.5))
     i = 1
-    arc = _sun_long_index(_new_moon_day(k + i))
+    arc = _sun_long_index(_new_moon_day(k + i, tz), tz)
     while True:
         last = arc
         i += 1
-        arc = _sun_long_index(_new_moon_day(k + i))
+        arc = _sun_long_index(_new_moon_day(k + i, tz), tz)
         if not (arc != last and i < 14):
             break
     return i - 1
 
 
-def solar_to_lunar(dd: int, mm: int, yy: int) -> tuple[int, int, int, bool]:
+def solar_to_lunar(dd: int, mm: int, yy: int, tz: float = TZ) -> tuple[int, int, int, bool]:
     """Return (lunar_day, lunar_month, lunar_year, is_leap_month)."""
     day_number = _jd_from_date(dd, mm, yy)
-    k = int(math.floor((day_number - 2415021.076998695) / 29.530588853))
-    month_start = _new_moon_day(k + 1)
-    if month_start > day_number:
-        month_start = _new_moon_day(k)
-    a11 = _lunar_month11(yy)
+    k = int(math.floor((day_number - 2415021.076998695) / 29.530588853)) + 1
+    month_start = _new_moon_day(k, tz)
+    # Ước theo tháng sóc trung bình có lúc đi trước HAI kỳ sóc (07/05/2054, 09/04/2062):
+    # bản gốc chỉ lùi 1 lần nên ra "ngày 0". Lùi tới khi mùng 1 không còn sau ngày xét.
+    while month_start > day_number:
+        k -= 1
+        month_start = _new_moon_day(k, tz)
+    a11 = _lunar_month11(yy, tz)
     b11 = a11
     if a11 >= month_start:
         lunar_year = yy
-        a11 = _lunar_month11(yy - 1)
+        a11 = _lunar_month11(yy - 1, tz)
     else:
         lunar_year = yy + 1
-        b11 = _lunar_month11(yy + 1)
+        b11 = _lunar_month11(yy + 1, tz)
     lunar_day = day_number - month_start + 1
     diff = (month_start - a11) // 29
     leap = False
     lunar_month = diff + 11
     if b11 - a11 > 365:
-        leap_diff = _leap_month_offset(a11)
+        leap_diff = _leap_month_offset(a11, tz)
         if diff >= leap_diff:
             lunar_month = diff + 10
             if diff == leap_diff:
@@ -136,19 +144,19 @@ def _jd_to_date(jd: int) -> tuple[int, int, int]:
 
 
 def lunar_to_solar(
-    lunar_day: int, lunar_month: int, lunar_year: int, leap: bool = False
+    lunar_day: int, lunar_month: int, lunar_year: int, leap: bool = False, tz: float = TZ
 ) -> tuple[int, int, int] | None:
     """Đổi ngày âm sang dương. Trả về None nếu tháng nhuận không tồn tại."""
     if lunar_month < 11:
-        a11, b11 = _lunar_month11(lunar_year - 1), _lunar_month11(lunar_year)
+        a11, b11 = _lunar_month11(lunar_year - 1, tz), _lunar_month11(lunar_year, tz)
     else:
-        a11, b11 = _lunar_month11(lunar_year), _lunar_month11(lunar_year + 1)
+        a11, b11 = _lunar_month11(lunar_year, tz), _lunar_month11(lunar_year + 1, tz)
     k = int(math.floor(0.5 + (a11 - 2415021.076998695) / 29.530588853))
     off = lunar_month - 11
     if off < 0:
         off += 12
     if b11 - a11 > 365:
-        leap_off = _leap_month_offset(a11)
+        leap_off = _leap_month_offset(a11, tz)
         leap_month = leap_off - 2
         if leap_month < 0:
             leap_month += 12
@@ -158,4 +166,4 @@ def lunar_to_solar(
             off += 1
     elif leap:
         return None
-    return _jd_to_date(_new_moon_day(k + off) + lunar_day - 1)
+    return _jd_to_date(_new_moon_day(k + off, tz) + lunar_day - 1)

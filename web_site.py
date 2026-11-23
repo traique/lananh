@@ -1,4 +1,4 @@
-"""Web LCTA: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le, /ngay-le/<lễ>, /ngay-tot),
+"""Web LCTA: trang chủ, /lich (+ /hoi, /doi-ngay, /ngay-le, /ngay-le/<lễ>, /le-hoi, /ngay-tot),
 /tuoi (+ /tuoi/<năm sinh>), /tu-vi, /than-so-hoc (form -> trang kết quả riêng), /ky-mon,
 /thoi-tiet, /xo-so, /gia-vang, /gia-xang và JSON API /api/v1.
 
@@ -37,7 +37,9 @@ JSON API (chỉ thêm trường mới, không đổi/bỏ trường cũ):
   POST /api/v1/tuvi/charts          {"birthDate": "YYYY-MM-DD"|"DD/MM/YYYY",
                                      "calendar": "solar"|"lunar", "isLeapMonth"?: bool (chỉ lunar),
                                      "hourBranch": 0-11, "gender": "male"|"female",
-                                     "isEarlyTy"?: bool (sinh 23h-24h, an theo ngày hôm sau)}
+                                     "isEarlyTy"?: bool (sinh 23h-24h, an theo ngày hôm sau),
+                                     "viewYear"?: 1900-2100 (năm xem vận năm, mặc định năm
+                                     âm lịch hiện tại)}
   POST /api/v1/qimen/charts         {"dateTime"?: "YYYY-MM-DDTHH:MM[+07:00]" (bỏ trống = lúc này;
                                      không múi giờ = giờ Việt Nam)}
 Ngày sinh/họ tên đi bằng POST để không nằm trong URL và log truy cập.
@@ -82,6 +84,7 @@ from services import (
     concurrency,
     divination_commands,
     kymon,
+    le_hoi,
     lottery_lookup,
     lottery_provinces,
     lunar,
@@ -114,6 +117,7 @@ _SITEMAP_PATHS = (
     "/lich/hoi",
     "/lich/doi-ngay",
     "/lich/ngay-le",
+    "/lich/le-hoi",
     "/thoi-tiet",
     "/xo-so",
     "/gia-vang",
@@ -128,7 +132,9 @@ _SITEMAP_PATHS = (
 _LOTTERY_SHORT = {"mn": "XSMN", "mt": "XSMT", "mb": "XSMB"}
 # Trang đổi số liệu mỗi ngày (lastmod hôm nay trong sitemap).
 _DAILY_PATHS = frozenset({"/", "/lich", "/thoi-tiet", "/xo-so", "/gia-vang", "/gia-xang"})
-_CANONICAL_PARAMS = frozenset({"thang", "ngay", "q", "am", "nhuan", "noi", "dai", "gio", "viec"})
+_CANONICAL_PARAMS = frozenset(
+    {"thang", "ngay", "q", "am", "nhuan", "noi", "dai", "gio", "viec", "nam", "tinh"}
+)
 # Health check (Render, UptimeRobot...) chỉ cần mã 200: GET / trả JSON nhẹ cho các client
 # này; mọi client khác (trình duyệt, trình đọc link Facebook/Zalo gửi Accept: */*)
 # nhận trang chủ HTML có thẻ og:.
@@ -144,6 +150,7 @@ _NAV = [
             ("/lich/hoi", "Hỏi lịch", "ask"),
             ("/lich/doi-ngay", "Đổi ngày âm", "swap"),
             ("/lich/ngay-le", "Ngày lễ", "flag"),
+            ("/lich/le-hoi", "Lễ hội", "flag"),
         ],
     ),
     (
@@ -776,6 +783,72 @@ async def lich_holidays_page() -> HTMLResponse:
     )
 
 
+def _year_param(raw: str, default: int) -> int:
+    raw = (raw or "").strip()
+    year = int(raw) if raw.isdigit() and len(raw) == 4 else default
+    return year if le_hoi.MIN_YEAR <= year <= le_hoi.MAX_YEAR else default
+
+
+@router.get("/lich/le-hoi", response_class=HTMLResponse)
+async def lich_festivals_page(nam: str = "", tinh: str = "") -> HTMLResponse:
+    """206 lễ hội, lễ tết Việt Nam theo năm và tỉnh (bộ dữ liệu le-hoi-viet-nam của Nhật
+    Nguyệt, CC BY 4.0 - services/le_hoi.py). Tham số sai thì về năm nay / cả nước."""
+    today = site_data.today()
+    year = _year_param(nam, today.year)
+    names = le_hoi.provinces()
+    code = tinh if tinh in names else ""
+    where = f" ở {names[code]}" if code else ""
+    months: dict[int, list[dict]] = {}
+    for day, f in le_hoi.between(dt.date(year, 1, 1), dt.date(year, 12, 31), code or None):
+        ld, lm, _, leap = lunar.solar_to_lunar(day.day, day.month, day.year)
+        first = day - dt.timedelta(days=f.before)
+        last = day + dt.timedelta(days=f.after)
+        months.setdefault(day.month, []).append(
+            {
+                "date": day,
+                "weekday": site_data.day_info(day)["weekday"],
+                "lunar": f"{ld}/{lm}{' nhuận' if leap else ''} âm lịch",
+                "name": f.name,
+                "holiday": f.public_holiday,
+                "span": f"Diễn ra {first:%d/%m} - {last:%d/%m}" if first != last else "",
+                "description": f.description,
+                "place": f.place,
+            }
+        )
+    yearly = [
+        {
+            "name": f.name,
+            "place": f.place,
+            "announced": re.sub(r"(\d{4})-(\d{2})-(\d{2})", r"\3/\2/\1", f.announced),
+        }
+        for f in le_hoi.festivals()
+        if f.kind == "theo-nam" and (not code or code in f.province_codes)
+    ]
+    total = sum(len(rows) for rows in months.values())
+    query = f"&tinh={code}" if code else ""
+    return _render_lich(
+        "lich_lehoi.html",
+        tab="/lich/le-hoi",
+        title=f"Lễ hội Việt Nam năm {year}{where}: ngày âm lịch và dương lịch",
+        description=f"{total} lễ hội, lễ tết có ngày cố định năm {year}{where}, kèm ngày âm "
+        "lịch, nơi tổ chức và lễ hội do ban tổ chức công bố ngày từng năm.",
+        heading=f"Lễ hội năm {year}{where}",
+        summary=f"{total} lễ hội, lễ tết có ngày cố định, theo ngày dương lịch.",
+        year=year,
+        province=code,
+        province_name=names.get(code, ""),
+        provinces=sorted(names.items(), key=lambda kv: kv[1]),
+        months=[{"month": m, "rows": rows} for m, rows in sorted(months.items())],
+        yearly=yearly,
+        attribution=le_hoi.ATTRIBUTION,
+        links={
+            "prev": f"/lich/le-hoi?nam={max(year - 1, le_hoi.MIN_YEAR)}{query}",
+            "now": f"/lich/le-hoi?nam={today.year}{query}",
+            "next": f"/lich/le-hoi?nam={min(year + 1, le_hoi.MAX_YEAR)}{query}",
+        },
+    )
+
+
 _HOLIDAY_TEXTS_PATH = _ROOT / "assets" / "site_holidays.yaml"
 
 
@@ -1398,7 +1471,7 @@ async def tuvi_page() -> HTMLResponse:
     return _tuvi_form({"gio": "", "lich": "duong", "gioi": "male"})
 
 
-_TUVI_FIELDS = ("ngay", "thang", "nam", "gio", "gioi", "lich", "nhuan")
+_TUVI_FIELDS = ("ngay", "thang", "nam", "gio", "gioi", "lich", "nhuan", "namxem")
 _TSH_FIELDS = ("ngay", "ten")
 
 
@@ -1434,6 +1507,9 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
         except ValueError:
             raise InputError("INVALID_DATE", "Nhập đủ ngày, tháng, năm sinh và giờ sinh.") from None
         early_ty = hour == site_data.EARLY_TY
+        view_raw = (form.get("namxem") or "").strip()
+        if view_raw and not view_raw.isdigit():
+            raise InputError("INVALID_VIEW_YEAR", "Năm xem là số từ 1900 đến 2100.")
         c = site_data.build_tuvi(
             year,
             month,
@@ -1443,6 +1519,7 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
             is_lunar=form.get("lich") == "am",
             is_leap=form.get("nhuan") == "1",
             early_ty=early_ty,
+            view_year=int(view_raw) if view_raw else None,
         )
     except InputError as exc:
         return _tuvi_form(form, exc.message)
@@ -1643,6 +1720,8 @@ _LLMS_NOTES = {
     "/lich/doi-ngay": "ngày âm sang dương (?am=15/8 hoặc 15/8/2027, &nhuan=1 cho tháng nhuận)",
     "/lich/ngay-le": "ngày lễ trong 12 tháng tới; từng lễ ở /lich/ngay-le/<tên> (tet-nguyen-dan, "
     "tet-trung-thu...)",
+    "/lich/le-hoi": "206 lễ hội, lễ tết Việt Nam theo năm (?nam=2027) và tỉnh (&tinh=bac-ninh); "
+    "dữ liệu Nhật Nguyệt (nhatnguyet.org), CC BY 4.0",
     "/thoi-tiet": "thời tiết hiện tại và 7 ngày tới (?noi=Hà Nội)",
     "/xo-so": "kết quả xổ số (?dai=mn, mt, mb hoặc mã đài như tay-ninh; &ngay=YYYY-MM-DD)",
     "/gia-vang": "giá vàng trong nước, vàng thế giới quy đổi, tỷ giá Vietcombank",
@@ -1670,7 +1749,8 @@ async def llms_txt(request: Request) -> Response:
         f"- [Giá vàng]({base}/api/v1/gold)",
         f"- [Giá xăng dầu]({base}/api/v1/fuel)",
         f"- [Tỷ giá]({base}/api/v1/fx)",
-        '- POST /api/v1/tuvi/charts {"birthDate", "calendar", "hourBranch", "gender"}: lá số',
+        '- POST /api/v1/tuvi/charts {"birthDate", "calendar", "hourBranch", "gender", '
+        '"viewYear"?}: lá số kèm vận năm',
         '- POST /api/v1/numerology/readings {"birthDate", "name"}: thần số học',
         '- POST /api/v1/qimen/charts {"dateTime"}: bàn Kỳ Môn',
     ]
@@ -1876,6 +1956,7 @@ async def api_tuvi(request: Request) -> JSONResponse:
             is_lunar=calendar == "lunar",
             is_leap=leap,
             early_ty=early,
+            view_year=data.get("viewYear"),
         )
         return _ok(chart)
     except InputError as exc:

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="title-row">
+  <div>
+    <h1>{{ heading }}</h1>
+    <p class="sub">{{ summary }}</p>
+  </div>
+  <nav class="btn-group" aria-label="Chuyển năm">
+    <a class="btn" href="{{ links.prev }}">Năm trước</a>
+    <a class="btn" href="{{ links.now }}">Năm nay</a>
+    <a class="btn" href="{{ links.next }}">Năm sau</a>
+  </nav>
+</div>
+<form class="toolbar" action="/lich/le-hoi" method="get">
+  <div class="toolbar-row">
+    <div class="field">
+      <label for="nam">Năm</label>
+      <input class="input" type="number" id="nam" name="nam" value="{{ year }}" min="1900" max="2100" inputmode="numeric">
+    </div>
+    <div class="field f-wide">
+      <label for="tinh">Tỉnh, thành phố</label>
+      <select class="input" id="tinh" name="tinh">
+        <option value="">Cả nước</option>
+        {% for code, name in provinces %}
+        <option value="{{ code }}"{% if code == province %} selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+      <span class="hint">34 tỉnh, thành phố theo địa giới từ năm 2025.</span>
+    </div>
+    <div class="toolbar-actions"><button class="btn primary" type="submit">Xem lễ hội</button></div>
+  </div>
+</form>
+{% for m in months %}
+<section class="sect" aria-labelledby="thang-{{ m.month }}">
+  <header><h2 id="thang-{{ m.month }}">Tháng {{ m.month }}/{{ year }}</h2></header>
+  <div class="table-wrap" tabindex="0" role="region" aria-labelledby="thang-{{ m.month }}">
+    <table>
+      <thead><tr><th scope="col">Ngày</th><th scope="col">Lễ hội</th><th scope="col">Nơi tổ chức</th></tr></thead>
+      <tbody>
+        {% for r in m.rows %}
+        <tr>
+          <td class="nowrap"><a href="/lich?ngay={{ r.date.isoformat() }}">{{ r.weekday }}, {{ r.date.strftime('%d/%m') }}</a><span class="sub">{{ r.lunar }}</span></td>
+          <td>{{ r.name }}{% if r.holiday %} <span class="pill">Nghỉ lễ</span>{% endif %}{% if r.span %}<span class="sub">{{ r.span }}</span>{% endif %}{% if r.description %}<span class="sub">{{ r.description }}</span>{% endif %}</td>
+          <td>{{ r.place }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<p class="empty-line">Chưa có lễ hội ngày cố định nào {{ "ở " ~ province_name if province_name else "" }} trong năm {{ year }}.</p>
+{% endfor %}
+{% if yearly %}
+<section class="sect" aria-labelledby="theo-nam">
+  <header><h2 id="theo-nam">Lễ hội ban tổ chức công bố ngày từng năm</h2></header>
+  <div class="table-wrap" tabindex="0" role="region" aria-labelledby="theo-nam">
+    <table>
+      <thead><tr><th scope="col">Lễ hội</th><th scope="col">Nơi tổ chức</th><th scope="col">Lịch đã công bố</th></tr></thead>
+      <tbody>
+        {% for r in yearly %}
+        <tr><td>{{ r.name }}</td><td>{{ r.place }}</td><td>{{ r.announced or "Chưa có" }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+<p class="rule-note">Ngày âm lịch tính theo giờ Việt Nam. Lễ âm lịch tính vào tháng chính, không tính tháng nhuận; năm nào tháng thiếu không có ngày 30 thì không ghi lễ ngày 30. Xem thêm <a href="/lich/ngay-le">ngày lễ sắp tới</a>. {{ attribution }} (<a href="https://nhatnguyet.org" rel="noopener">nhatnguyet.org</a>).</p>
+{% endblock %}

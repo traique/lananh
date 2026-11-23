@@ -21,9 +21,13 @@ scripts/benchmark_perf.py
 scripts/benchmark_memory.py
 scripts/train_trend_model.py
 scripts/backup_drill.py
+scripts/make_golden_nhatnguyet.py
+scripts/make_le_hoi_data.py
 .claude
 *.md
 !README.md
 # core/version.py đọc số phiên bản + lịch sử từ đây.
 !CHANGELOG.md
+# Giấy phép MIT của mã chuyển ngữ từ Nhật Nguyệt: giữ kèm bản chạy.
+!THIRD_PARTY_NOTICES.md
 !rag/**/*.md

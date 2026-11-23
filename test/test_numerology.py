@@ -183,6 +183,47 @@ def test_mac_dinh_tinh_theo_gio_viet_nam(monkeypatch):
 
     monkeypatch.setattr(numerology.dt, "datetime", FakeDatetime)
     r = numerology.compute(dt.date(1990, 3, 15))
-    assert (r.for_year, r.as_of, r.personal_year, r.personal_month) == (
-        2027, dt.date(2027, 1, 1), 2, 3,
+    # Ngày cá nhân 3 + 1 = 4 (theo ngày UTC 31/12/2026 sẽ ra 4 + 31 = 35 -> 8).
+    assert (r.for_year, r.as_of, r.personal_year, r.personal_month, r.personal_day) == (
+        2027, dt.date(2027, 1, 1), 2, 3, 4,
     )  # fmt: skip
+
+
+def test_so_ngay_ca_nhan():
+    # 15/3/1990 xem ngày 21/10/2026: năm cá nhân 1, tháng 1 + 10 = 11 -> 2, ngày 2 + 21 = 23 -> 5.
+    r = numerology.compute(dt.date(1990, 3, 15), "", TODAY)
+    assert (r.personal_year, r.personal_month, r.personal_day) == (1, 2, 5)
+    assert "• Ngày cá nhân (21/10): 5 - " in numerology.format_reading(r)
+    day = numerology.reading_data(r)["personalDay"]
+    assert (day["date"], day["value"]) == ("2026-10-21", 5) and day["meaning"]
+    # Không giữ số bậc thầy: tháng cá nhân 2 + ngày 9 = 11 -> 2.
+    assert numerology.compute(dt.date(1990, 3, 15), "", dt.date(2026, 10, 9)).personal_day == 2
+
+
+@pytest.mark.parametrize(
+    "day,expected", [(13, 13), (14, 14), (16, 16), (19, 19), (4, None), (15, None), (31, None)]
+)
+def test_so_no_nghiep_ngay_sinh(day, expected):
+    r = numerology.compute(dt.date(1990, 1, day), "", TODAY)
+    assert r.karmic_debt == expected
+    karmic = numerology.reading_data(r)["karmicDebt"]
+    text = numerology.format_reading(r)
+    if expected is None:
+        assert karmic is None and "Nợ nghiệp" not in text
+    else:
+        assert karmic["value"] == expected and karmic["meaning"]
+        assert f"• Nợ nghiệp ngày sinh: {expected} - " in text
+
+
+def test_file_y_nghia_ngay_ca_nhan_va_no_nghiep():
+    texts = numerology._texts()
+    for n in range(1, 10):
+        assert texts["ngay_ca_nhan"][n]
+    for n in (13, 14, 16, 19):
+        assert texts["no_nghiep"][n]
+
+
+def test_ai_duoc_nhan_so_moi():
+    r = numerology.compute(dt.date(1990, 3, 13), "", TODAY)
+    prompt = numerology.build_ai_prompt(r)
+    assert "Nợ nghiệp ngày sinh: 13" in prompt and "Ngày cá nhân (21/10)" in prompt

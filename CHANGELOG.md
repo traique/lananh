@@ -11,6 +11,29 @@ Quy ước:
 - Tăng Y khi có tính năng mới, Z khi chỉ sửa lỗi, X khi thay đổi lớn làm đổi cách dùng cũ.
 - Các bản 0.x được đánh số lại sau, gom theo các PR đã merge (#1 - #46).
 
+## 1.4.0 - 2026-11-23
+
+- Bát Tự mới: `/battu 15/3/1990 9h30 nam` lập tứ trụ theo tiết khí tới phút, tàng can,
+  thập thần, đại vận và tiểu vận năm nay (không tốn AI); `/battu_chitiet` để AI luận giải.
+- Thước Lỗ Ban: `/loban 80 cửa` cho biết số đo rơi vào cung tốt hay xấu trên thước thông thủy,
+  dương trạch, âm phần và các số đo tốt gần nhất.
+- Cung phi Bát Trạch: `/cungphi 1990 nữ` cho cung mệnh, nhóm Đông/Tây tứ mệnh và 4 hướng tốt,
+  4 hướng xấu.
+- Tử vi có thêm vận năm: lưu niên, tiểu hạn, đại hạn, lưu Tứ Hóa và sao lưu; thêm "năm 2027"
+  ở cuối lệnh `/tuvi` để xem năm khác. AI luận giải vận năm dựa đúng các số này.
+- Lá số rơi vào chỗ các sách tính khác nhau (sinh 23h-24h, sinh tháng nhuận, tuổi Canh, sinh
+  trước 1968) có dòng lưu ý riêng để anh biết vì sao có thể khác app khác.
+- Thần số học thêm số ngày cá nhân và số nợ nghiệp (sinh ngày 13, 14, 16, 19).
+- `/lich` biết 206 lễ hội Việt Nam: hỏi "hội Lim", "lễ hội tháng Giêng ở Bắc Ninh", "tháng này
+  có lễ hội gì", "còn mấy ngày tới hội Lim"; xem một ngày cũng hiện lễ hội của ngày đó.
+- Trang web có thêm `/lich/le-hoi`: lễ hội cả năm, lọc theo tỉnh.
+- Sửa lịch âm ngày 07/05/2054 và 09/04/2062 bị ghi "ngày 0" (đúng là ngày 30 tháng 3 và
+  ngày 30 tháng 2); tiết khí của từng ngày giờ tính chính xác hơn (vài ngày giao tiết trước
+  đây ghi sai tên tiết, vd 23/10/2019).
+- Tra ngày trước 1968 có lưu ý: lịch âm thời đó tính theo múi giờ khác nên có ngày lệch 1
+  ngày so với cách tính hiện nay.
+- Trang thần số học sửa dòng giải thích tuổi đỉnh cao cho số chủ đạo 22, 33.
+
 ## 1.3.0 - 2026-11-18
 
 - Lệnh `/nhomzalo` gõ được từ Telegram, Zoom và Zalo: liệt kê mọi nhóm Zalo bot đang ở

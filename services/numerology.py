@@ -28,7 +28,11 @@ David A. Phillips), có đối chiếu với cách tính Pythagoras phương Tâ
   |thử thách 1 - thử thách 2|, |tháng-năm| (thành phần rút gọn 1..9, kết quả
   0..8), cùng mốc tuổi với đỉnh cao.
 - Năm cá nhân = ngày + tháng sinh + năm dương lịch hiện tại (rút gọn 1..9,
-  tính theo năm dương lịch); tháng cá nhân = năm cá nhân + tháng hiện tại.
+  tính theo năm dương lịch); tháng cá nhân = năm cá nhân + tháng hiện tại;
+  ngày cá nhân = tháng cá nhân + ngày hiện tại. "Hiện tại" theo giờ Việt Nam.
+- Số nợ nghiệp ngày sinh: sinh ngày 13, 14, 16 hoặc 19 thì nợ nghiệp là chính
+  ngày ấy (chỉ xét ngày sinh, như thư viện Nhật Nguyệt - nhatnguyet.org; có hệ
+  còn xét tổng trung gian của các số khác). Đọc như bài học cần rèn.
 - Biểu đồ ngày sinh: đếm chữ số 1-9 của ngày/tháng/năm sinh (bỏ 0); 8 mũi tên
   đủ và mũi tên trống theo Phillips. Biểu đồ tên: đếm giá trị 1-9 của các chữ
   trong họ tên; biểu đồ tổng hợp = ngày sinh + tên.
@@ -56,6 +60,7 @@ import yaml
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 _TEXTS_PATH = Path(__file__).resolve().parent.parent / "assets" / "than_so_hoc.yaml"
 _MASTER = (11, 22, 33)
+_KARMIC_DEBT_DAYS = (13, 14, 16, 19)
 _DATE_RE = re.compile(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})")
 _VOWELS = set("AEIOU")
 # Lưới biểu đồ ngày sinh (hàng trên xuống): 3 6 9 / 2 5 8 / 1 4 7.
@@ -111,6 +116,8 @@ class Reading:
     expression: int | None = None
     maturity: int | None = None
     name_counts: dict[int, int] | None = None
+    personal_day: int = 0  # theo as_of
+    karmic_debt: int | None = None  # 13/14/16/19 khi sinh vào ngày đó
 
     @property
     def combined_counts(self) -> dict[int, int] | None:
@@ -240,6 +247,7 @@ def compute(birth: dt.date, name: str = "", today: dt.date | None = None) -> Rea
         _digits_sum(birth.day) + _digits_sum(birth.month) + _digits_sum(today.year),
         keep_master=False,
     )
+    personal_month = reduce_number(personal_year + today.month, keep_master=False)
     lp = life_path(birth)
     single = reduce_number(lp, keep_master=False)
     pinnacles, challenges = pinnacles_and_challenges(birth, lp)
@@ -252,7 +260,7 @@ def compute(birth: dt.date, name: str = "", today: dt.date | None = None) -> Rea
         day_number=reduce_number(birth.day, keep_master=False),
         attitude=reduce_number(birth.day + birth.month, keep_master=False),
         personal_year=personal_year,
-        personal_month=reduce_number(personal_year + today.month, keep_master=False),
+        personal_month=personal_month,
         for_year=today.year,
         as_of=today,
         age=max(age, 0),
@@ -261,6 +269,8 @@ def compute(birth: dt.date, name: str = "", today: dt.date | None = None) -> Rea
         empty_arrows=empty,
         pinnacles=pinnacles,
         challenges=challenges,
+        personal_day=reduce_number(personal_month + today.day, keep_master=False),
+        karmic_debt=birth.day if birth.day in _KARMIC_DEBT_DAYS else None,
     )
     letters = _letters(name)
     if letters:
@@ -317,12 +327,20 @@ def format_reading(r: Reading) -> str:
     lines.append(f"\n⭐ Con số chủ đạo: {r.life_path}")
     lines.append(str(texts.get("chu_dao", {}).get(r.life_path, "")))
     lines.append(f"\n• Số ngày sinh: {r.day_number} - {_meaning(r.day_number)}")
+    if r.karmic_debt is not None:
+        lines.append(
+            f"• Nợ nghiệp ngày sinh: {r.karmic_debt} - {_meaning(r.karmic_debt, 'no_nghiep')}"
+        )
     lines.append(f"• Số thái độ: {r.attitude} - {_meaning(r.attitude)}")
     year_text = texts.get("nam_ca_nhan", {}).get(r.personal_year, "")
     lines.append(f"• Năm cá nhân {r.for_year}: {r.personal_year} - {year_text}")
     lines.append(
         f"• Tháng cá nhân (tháng {r.as_of.month}): {r.personal_month} - "
         f"{_meaning(r.personal_month, 'thang_ca_nhan')}"
+    )
+    lines.append(
+        f"• Ngày cá nhân ({r.as_of:%d/%m}): {r.personal_day} - "
+        f"{_meaning(r.personal_day, 'ngay_ca_nhan')}"
     )
     if r.expression is not None:
         lines.append(f"• Số sứ mệnh (cả tên): {r.expression} - {_meaning(r.expression)}")
@@ -383,7 +401,7 @@ def reading_data(r: Reading) -> dict:
     return {
         "birthDate": r.birth.isoformat(),
         "name": r.name,
-        # Các trường theo thời điểm (age, personalYear/Month, isCurrent) tính tại asOf (giờ VN).
+        # Các trường theo thời điểm (age, personalYear/Month/Day, isCurrent) tính tại asOf (giờ VN).
         "asOf": r.as_of.isoformat(),
         "age": r.age,
         "lifePath": {
@@ -403,6 +421,17 @@ def reading_data(r: Reading) -> dict:
             "month": r.as_of.month,
             "value": r.personal_month,
             "meaning": texts.get("thang_ca_nhan", {}).get(r.personal_month, ""),
+        },
+        "personalDay": {
+            "date": r.as_of.isoformat(),
+            "value": r.personal_day,
+            "meaning": texts.get("ngay_ca_nhan", {}).get(r.personal_day, ""),
+        },
+        "karmicDebt": None
+        if r.karmic_debt is None
+        else {
+            "value": r.karmic_debt,
+            "meaning": texts.get("no_nghiep", {}).get(r.karmic_debt, ""),
         },
         "expression": number(r.expression),
         "soul": number(r.soul),
@@ -431,7 +460,8 @@ def build_ai_prompt(r: Reading) -> str:
         "giải. Viết khoảng 400-550 từ, chia mục ngắn: Tổng quan con số chủ đạo; Điểm "
         "mạnh; Thách thức và lời khuyên; Đỉnh cao và thử thách của giai đoạn hiện tại; "
         "Năm cá nhân hiện tại nên tập trung gì; Ý nghĩa biểu đồ ngày sinh (mũi tên, số "
-        "thiếu). Không dùng bảng markdown. Cuối bài nhắc nhẹ đây là tham khảo.\n\n"
+        "thiếu). Nếu có số nợ nghiệp, nói ngắn như một bài học cần rèn, không phải điềm "
+        "xấu. Không dùng bảng markdown. Cuối bài nhắc nhẹ đây là tham khảo.\n\n"
         f"Dữ liệu (đã tính):\n{format_reading(r)}"
     )
 

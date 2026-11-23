@@ -1,11 +1,13 @@
 """Test services/tuvi.py: an lá số Tử Vi Đẩu Số bằng code."""
 
 import datetime as dt
+import json
+import re
 from types import SimpleNamespace
 
 import pytest
 
-from services import tuvi
+from services import lunar, tuvi
 
 DAN, MAO, THIN, TY_, NGO, THAN, DAU, TUAT, HOI, SUU = 2, 3, 4, 5, 6, 8, 9, 10, 11, 1
 
@@ -295,3 +297,134 @@ def test_dien_giai_la_so_bang_loi_thuong():
     young = tuvi.reading(c, dt.date(1992, 6, 1))  # 3 tuổi âm, đại hạn đầu từ 5 tuổi
     assert "chưa vào đại hạn đầu (từ 5 tuổi)" in young["overview"][-1]
     assert not any(p["isCurrent"] for p in young["palaces"])
+
+
+def test_van_nam_15_3_1990_nam_2026():
+    c = tuvi.parse("15/3/1990 9h30 nam năm 2026")  # Canh Ngọ, Mệnh Tuất, Thổ ngũ cục, thuận
+    v = tuvi.year_luck(c)
+    assert (v["year"], v["canChi"], v["age"]) == (2026, "Bính Ngọ", 37)
+    assert v["luuNien"] == {"branch": "Ngọ", "branchIndex": NGO, "palace": "Tài Bạch"}
+    # Năm Ngọ (Dần Ngọ Tuất): tiểu hạn 1 tuổi ở Thìn, nam đi thuận 36 cung -> lại Thìn.
+    assert v["tieuHan"] == {"branch": "Thìn", "branchIndex": THIN, "palace": "Thiên Di"}
+    assert v["daiHan"] == {
+        "branch": "Sửu", "branchIndex": SUU, "palace": "Điền Trạch", "fromAge": 35, "toAge": 44,
+    }  # fmt: skip
+    assert [(h["hoa"], h["star"], h["palace"]) for h in v["luuTuHoa"]] == [
+        ("Hóa Lộc", "Thiên Đồng", "Phụ Mẫu"),
+        ("Hóa Quyền", "Thiên Cơ", "Nô Bộc"),
+        ("Hóa Khoa", "Văn Xương", "Tật Ách"),
+        ("Hóa Kỵ", "Liêm Trinh", "Phu Thê"),
+    ]
+    luu = {s["id"]: s for s in v["saoLuu"]}
+    assert " ".join(luu) == "luu-thai-tue luu-loc-ton luu-kinh-duong luu-da-la luu-thien-ma"
+    assert luu["luu-thai-tue"]["branchIndex"] == NGO and luu["luu-thai-tue"]["byYearStem"] is False
+    assert luu["luu-loc-ton"]["branchIndex"] == TY_
+    assert luu["luu-loc-ton"]["withDaiHan"] == "tam-hop"
+    assert luu["luu-da-la"]["withTieuHan"] == "dong-cung"
+    assert luu["luu-thien-ma"]["branchIndex"] == THAN
+    assert luu["luu-thien-ma"]["relationText"] == "tam hợp tiểu hạn"
+    text = tuvi.format_chart(c)
+    assert "📅 Vận năm 2026 (Bính Ngọ), 37 tuổi âm:" in text
+    assert "  · Đại hạn: cung Điền Trạch (Sửu), 35-44 tuổi" in text
+    assert "  · Tiểu hạn: cung Thiên Di (Thìn) · Lưu niên: cung Tài Bạch (Ngọ)" in text
+    assert "Hóa Lộc Thiên Đồng → Phụ Mẫu (Hợi)" in text
+    assert "Lưu Thái Tuế → Tài Bạch (Ngọ), đồng cung lưu niên" in text
+    assert "Chưa an tiểu hạn" not in text and "Chưa an nguyệt hạn" in text
+
+
+def test_tieu_han_nam_thuan_nu_nghich_va_chua_vao_dai_han():
+    nam = tuvi.year_luck(tuvi.parse("15/3/1990 9h30 nam năm 2027"))
+    nu = tuvi.year_luck(tuvi.parse("15/3/1990 9h30 nữ năm 2027"))
+    assert (nam["tieuHan"]["branchIndex"], nu["tieuHan"]["branchIndex"]) == (TY_, MAO)
+    young = tuvi.parse("15/3/1990 9h30 nam năm 1992")  # 3 tuổi âm, đại hạn đầu từ 5 tuổi
+    assert tuvi.year_luck(young)["daiHan"] is None
+    assert "  · Đại hạn: chưa vào đại hạn đầu (từ 5 tuổi)" in tuvi.format_chart(young)
+
+
+def test_nam_xem_truoc_nam_sinh_khong_co_van_nam():
+    c = tuvi.parse("15/3/2030 9h nam năm 2026")
+    assert not c.has_year_luck and tuvi.chart_data(c)["vanNam"] is None
+    assert "📅 Vận năm 2026: năm xem trước năm sinh, chưa có vận năm." in tuvi.format_chart(c)
+
+
+@pytest.mark.parametrize(
+    "arg,male,year",
+    [
+        ("15/3/1990 9h30 nam năm 2027", True, 2027),
+        ("15/3/1990 9h30 nữ xem 2027", False, 2027),
+        ("15/3/1990 9h30 nam năm xem 2030.", True, 2030),
+        ("15/3/1990 9h30 nam 2027", True, 2027),  # không dấu, chưa có giới tính: "nam" là nam
+        ("15/3/1990 9h30 nu nam 2027", False, 2027),  # đã có giới tính: "nam" là "năm"
+        ("âm 20/2/1990 giờ Tỵ nữ năm 2027", False, 2027),
+    ],
+)
+def test_parse_nam_xem_o_cuoi(arg, male, year):
+    c = tuvi.parse(arg)
+    assert (c.male, c.view_year) == (male, year)
+
+
+def test_nam_xem_mac_dinh_la_nam_am_hien_tai_va_loi():
+    assert tuvi.parse("15/3/1990 9h30 nam").view_year == tuvi.current_view_year()
+    assert tuvi.current_view_year(dt.date(2027, 2, 5)) == 2026  # chưa qua Tết Đinh Mùi
+    assert tuvi.current_view_year(dt.date(2027, 2, 6)) == 2027
+    assert tuvi.parse("15/3/1990 9h30 nam năm 1800") == "Năm xem cần trong khoảng 1900-2100."
+    assert "năm 2027" in tuvi.USAGE
+
+
+def test_ghi_chu_quy_uoc_theo_tung_la_so():
+    assert tuvi.parse("15/3/1991 9h30 nam năm 2026").notes == []  # Tân Mùi, không chỗ khác phái
+    ty_dau = tuvi.parse("15/3/1991 23h30 nam năm 2026").notes
+    assert len(ty_dau) == 1
+    assert ty_dau[0].startswith("Sinh 23h-24h (giờ Tý đầu): lá số an theo ngày hôm sau, tức ngày")
+    after = tuvi.parse("âm 20/6n/2025 9h nam năm 2026").notes
+    assert after[0].startswith("Sinh ngày 20 tháng 6 nhuận: an sao như tháng 7 (Thái Thứ Lang")
+    before = tuvi.parse("âm 10/6n/2025 9h nam năm 2026").notes
+    assert before[0].startswith("Sinh ngày 10 tháng 6 nhuận: an sao như tháng 6 (ngày 1-15")
+    canh = tuvi.parse("15/3/1990 9h30 nam năm 2026").notes
+    assert canh[0].startswith("Năm sinh can Canh: Tứ Hóa theo Tân Biên (Hóa Khoa Thái Âm, Hóa Kỵ")
+    assert tuvi.parse("15/3/1991 9h30 nam năm 2030").notes == [
+        "Năm xem 2030 can Canh: lưu Tứ Hóa cũng theo Tân Biên (Hóa Khoa Thái Âm, Hóa Kỵ "
+        "Thiên Đồng); vài sách ghi ngược Khoa và Kỵ."
+    ]
+    old = lunar.old_calendar_note(4, 6, 1951)  # Tân Mão, lịch âm cũ trước 1968 lệch 1 ngày
+    assert old and tuvi.parse("4/6/1951 9h nam năm 2026").notes == [old]
+    # 22/3/1947 là mùng 1 tháng 2 nhuận theo UTC+7 (30 tháng 2 theo lịch cũ): đủ hai ghi chú.
+    assert len(tuvi.parse("22/3/1947 9h nam năm 2026").notes) == 2
+    c = tuvi.parse("âm 20/6n/2025 9h nam năm 2026")
+    assert "⚠️ Lưu ý quy ước của lá số này:\n  · Sinh ngày 20 tháng 6 nhuận" in tuvi.format_chart(c)
+    assert tuvi.chart_data(c)["notes"] == c.notes
+
+
+def test_chart_data_them_van_nam_giu_truong_cu():
+    data = tuvi.chart_data(tuvi.parse("15/3/1990 9h30 nam năm 2026"))
+    assert data["palaces"][0]["mainStars"] == ["Phá Quân"] and data["anMonth"] == 2  # trường cũ
+    assert data["viewYear"] == 2026 and data["vanNam"]["age"] == 37
+    assert data["vanNam"]["saoLuu"][0] == {
+        "id": "luu-thai-tue", "name": "Lưu Thái Tuế", "byYearStem": False, "branch": "Ngọ",
+        "branchIndex": NGO, "palace": "Tài Bạch", "withDaiHan": "", "withTieuHan": "",
+        "withLuuNien": "dong-cung", "relationText": "đồng cung lưu niên",
+    }  # fmt: skip
+    assert data["notes"][0].startswith("Năm sinh can Canh")
+
+
+def test_prompt_ai_dua_so_lieu_van_nam_va_cam_tu_suy():
+    prompt = tuvi.build_ai_prompt(tuvi.parse("15/3/1990 9h30 nam năm 2026"))
+    assert "Vận năm 2026 (Bính Ngọ): CHỈ dựa vào mục “Vận năm” đã tính sẵn" in prompt
+    assert "TUYỆT ĐỐI KHÔNG tự suy hay tính lại tiểu hạn, lưu niên, đại hạn" in prompt
+    assert "Năm xem vận: 2026 (Bính Ngọ)" in prompt and "Đại hạn hiện tại" not in prompt
+    assert "  · Đại hạn: cung Điền Trạch (Sửu), 35-44 tuổi" in prompt
+    assert "Lưu ý quy ước" in prompt and "Năm sinh can Canh" in prompt
+    before = tuvi.build_ai_prompt(tuvi.parse("15/3/2030 9h nam năm 2026"))
+    assert "năm xem trước năm sinh nên không luận vận năm" in before
+
+
+def test_chu_hien_thi_khong_nhac_trung_quoc():
+    """Chủ trang yêu cầu: chữ cho người dùng (bot, web, API) không nhắc tới Trung Quốc."""
+    banned = re.compile(r"trung\s+qu[ốo]c|trung\s+hoa|china|chinese|bắc kinh|[\u4e00-\u9fff]", re.I)
+    charts = [
+        tuvi.parse(arg)
+        for arg in ("15/3/1990 9h30 nam năm 2030", "22/3/1947 23h30 nữ", "âm 20/6n/2025 9h nam")
+    ]
+    texts = [tuvi.USAGE, *(tuvi.format_chart(c) for c in charts)]
+    texts += [json.dumps(tuvi.chart_data(c), ensure_ascii=False) for c in charts]
+    assert banned.findall("\n".join(texts)) == []
