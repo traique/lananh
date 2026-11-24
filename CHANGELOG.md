@@ -11,6 +11,16 @@ Quy ước:
 - Tăng Y khi có tính năng mới, Z khi chỉ sửa lỗi, X khi thay đổi lớn làm đổi cách dùng cũ.
 - Các bản 0.x được đánh số lại sau, gom theo các PR đã merge (#1 - #46).
 
+## 1.4.1 - 2026-11-24
+
+- Tra được mã CEO (C.E.O Group, sàn HNX): "CEO", "giá CEO", "phân tích CEO", "CEO hôm nay
+  sao rồi"... trước đây em hiểu nhầm là chữ "CEO" (giám đốc) nên báo chưa tra ra mã.
+  Câu kiểu "CEO của công ty X là ai" thì vẫn hiểu là chức danh.
+- Tra được mã có chữ số, có nhiều ở sàn HNX: L14, VC3, S99, C69, PC1, HT1...
+- Mã sàn HNX/UPCOM hết cảnh lúc tra được lúc không: em kiểm tra mã theo danh sách niêm yết
+  của cả ba sàn, không còn phụ thuộc một lần lấy giá có thể lỗi rồi bị nhớ 10 phút.
+- "tra mã CEO", "tra HPG" không còn kéo theo giá mã TRA (Traphaco); hỏi "giá TRA" vẫn ra mã này.
+
 ## 1.4.0 - 2026-11-23
 
 - Bát Tự mới: `/battu 15/3/1990 9h30 nam` lập tứ trụ theo tiết khí tới phút, tàng can,

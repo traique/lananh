@@ -1,6 +1,7 @@
 """Danh sách mã/sàn, khối ngoại và lịch sự kiện lấy thẳng REST VCI - thay vnstock
 (bản 4.x bị khoá từ 10/11/2026, kho vnstocks.com trả 410)."""
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from stock import analysis as stock_analysis  # noqa: E402
 from stock import fundamentals, providers, vci_direct  # noqa: E402
 
 # Dạng dòng GET trading.vietcap.com.vn/api/price/symbols/getAll (16/11/2026).
@@ -120,3 +122,109 @@ def test_goi_rest_bang_gia_va_danh_sach_ma(monkeypatch):
 
     monkeypatch.setattr(vci_direct.requests, "post", lambda *a, **k: _Response([]))
     assert vci_direct.fetch_match_price("FPT") == {}
+
+
+@pytest.mark.asyncio
+async def test_xac_minh_ma_bang_danh_sach_niem_yet(monkeypatch):
+    """Mã ngoài SECTOR_MAP (phần lớn HNX/UPCOM) từng chỉ được xác minh bằng 1 lần gọi
+    giá DNSE: lỗi tạm thời bị nhớ 10 phút là "không tồn tại" - lúc tra được lúc không.
+    Nay danh sách niêm yết (cache 24h) xác nhận trước, giá chỉ còn là dự phòng."""
+    listing = [
+        {"symbol": "HUT", "type": "STOCK", "board": "HNX"},
+        {"symbol": "L14", "type": "STOCK", "board": "HNX"},
+        {"symbol": "VC3", "type": "STOCK", "board": "HNX"},
+    ]
+    fetches, priced = [], []
+
+    def fake_listing():
+        fetches.append(1)
+        return listing
+
+    async def fake_price(symbol):
+        priced.append(symbol)
+        return 0.0
+
+    monkeypatch.setattr(vci_direct, "fetch_listing", fake_listing)
+    monkeypatch.setattr(providers, "fetch_current_price", fake_price)
+    monkeypatch.setattr(providers, "_exchange_map_cache", None)
+    monkeypatch.setattr(providers, "_exchange_map_lock", None)
+    monkeypatch.setattr(providers, "_verify_cache", {})
+    checks = await asyncio.gather(
+        *(providers.verify_symbol_exists(s) for s in ("hut", "L14", "S24", "XYZ"))
+    )
+    assert checks == [True, True, False, False]
+    assert fetches == [1]  # 4 lượt cùng lúc chỉ tải danh sách 1 lần
+    assert priced == ["XYZ"]  # S24 có số mà không niêm yết: không tốn lượt gọi giá
+    assert await stock_analysis.find_valid_symbols("phân tích L14 và VC3") == ["L14", "VC3"]
+    assert await stock_analysis.find_valid_symbols("giá hut") == ["HUT"]
+    assert await stock_analysis.find_valid_symbols("Samsung S24 có tốt không") == []
+    assert priced == ["XYZ"]
+
+
+@pytest.mark.asyncio
+async def test_danh_sach_loi_thi_xac_minh_bang_gia_nhu_cu(monkeypatch):
+    def down():
+        raise RuntimeError("VCI lỗi")
+
+    async def fake_price(symbol):
+        return 15_000.0 if symbol in {"HUT", "L14"} else 0.0
+
+    monkeypatch.setattr(vci_direct, "fetch_listing", down)
+    monkeypatch.setattr(providers, "fetch_current_price", fake_price)
+    monkeypatch.setattr(providers, "_exchange_map_cache", None)
+    monkeypatch.setattr(providers, "_verify_cache", {})
+    assert await providers.verify_symbol_exists("HUT") is True
+    assert await providers.verify_symbol_exists("L14") is True
+    assert await providers.verify_symbol_exists("ABC") is False
+
+
+@pytest.mark.asyncio
+async def test_ma_moi_len_san_tai_lai_danh_sach_toi_da_1_lan_moi_gio(monkeypatch):
+    """Danh sách cache 24h có thể chưa có mã vừa lên sàn: tra trượt thì tải lại, nhưng tối
+    đa 1 lần mỗi giờ (tên sản phẩm như S24 không làm tải liên tục); tải lỗi giữ bản cũ."""
+    old = [{"symbol": "HUT", "type": "STOCK", "board": "HNX"}]
+    new = old + [{"symbol": "F88", "type": "STOCK", "board": "UPCOM"}]
+    listings = [old, new]
+    fetches = []
+
+    def fake_listing():
+        fetches.append(1)
+        if not listings:
+            raise RuntimeError("VCI lỗi")
+        return listings.pop(0)
+
+    async def no_price(symbol):
+        raise AssertionError(f"không được gọi giá cho {symbol}")
+
+    hour = providers._EXCHANGE_MAP_MISS_REFRESH_SEC
+    monkeypatch.setattr(vci_direct, "fetch_listing", fake_listing)
+    monkeypatch.setattr(providers, "fetch_current_price", no_price)
+    monkeypatch.setattr(providers, "_exchange_map_cache", None)
+    monkeypatch.setattr(providers, "_exchange_map_lock", None)
+    monkeypatch.setattr(providers, "_exchange_map_miss_refresh_at", None)
+    monkeypatch.setattr(providers, "_verify_cache", {})
+
+    assert await providers.verify_symbol_exists("HUT") is True
+    assert await providers.verify_symbol_exists("F88") is False  # danh sách mới tải
+    assert len(fetches) == 1
+
+    def age_listing(seconds):
+        ts, mapping = providers._exchange_map_cache
+        providers._exchange_map_cache = (ts - seconds, mapping)
+        providers._verify_cache.clear()
+
+    age_listing(hour + 1)
+    checks = await asyncio.gather(
+        providers.verify_symbol_exists("F88"), providers.verify_symbol_exists("S24")
+    )
+    assert checks == [True, False] and len(fetches) == 2  # 2 lượt trượt chỉ tải lại 1 lần
+    assert await providers.fetch_symbol_exchange("F88") == "UPCOM"
+
+    # Tải lại lỗi: giữ bản đang có, 1 giờ sau mới thử lại.
+    age_listing(hour + 1)
+    providers._exchange_map_miss_refresh_at -= hour + 1
+    assert await providers.verify_symbol_exists("S24") is False
+    assert len(fetches) == 3
+    assert await providers.verify_symbol_exists("F88") is True
+    assert await providers.verify_symbol_exists("VF8") is False
+    assert len(fetches) == 3

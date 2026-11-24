@@ -20,10 +20,10 @@ from stock import providers
 #   - _SECTOR_SAMPLE_SIZE chỉ lấy 8 mã ĐẦU của mỗi ngành để tính hiệu suất,
 #     nên hãy xếp các mã vốn hoá lớn / tiêu biểu lên trước.
 #   - Không thêm mã trùng từ thông dụng đang nằm trong _COMMON_WORD_EXCLUDE /
-#     _LOWERCASE_NOISE_EXCLUDE của stock_analysis (vd CEO, SAN, MUA, BAN, HAI)
-#     - token đó bị lọc bỏ trước khi tra bản đồ nên sẽ không bao giờ nhận ra.
-#     Nếu buộc phải thêm, khai báo nó trong _AMBIGUOUS_KNOWN thay vì ở đây.
-#     test/test_sector_map.py canh giúp điều kiện này.
+#     _LOWERCASE_NOISE_EXCLUDE của stock_analysis (vd SAN, MUA, BAN, HAI) - mã
+#     đó cần quy tắc ngữ cảnh riêng: khai báo trong _AMBIGUOUS_KNOWN (từ Việt/
+#     Anh viết thường như GAS, OIL) hoặc _ACRONYM_SYMBOLS (từ viết tắt vốn viết
+#     HOA như CEO) rồi mới thêm vào đây. test/test_sector_map.py canh giúp.
 #   - Một mã có thể thuộc nhiều ngành (vd REE ở cả electrical lẫn utilities).
 #
 # ĐỘ MỊN CỦA NGÀNH là vấn đề đúng/sai, không phải thẩm mỹ: hiệu suất ngành
@@ -35,7 +35,7 @@ from stock import providers
 SECTOR_MAP: dict[str, dict] = {
     "banking":    {"label": "Ngân hàng",                 "symbols": ["VCB", "BID", "CTG", "TCB", "MBB", "ACB", "VPB", "HDB", "STB", "EIB", "TPB", "SHB", "VIB", "LPB", "SSB", "MSB", "OCB", "NAB", "BAB", "ABB"]},
     "steel":      {"label": "Thép",                       "symbols": ["HPG", "HSG", "NKG", "TLH", "SMC", "VGS", "TVN"]},
-    "realestate": {"label": "Bất động sản",               "symbols": ["VIC", "VHM", "NVL", "KDH", "DXG", "PDR", "NLG", "DIG", "VRE", "KBC", "BCM", "HDC", "IJC", "SCR", "TCH", "AGG", "NTL", "QCG", "LDG", "HQC", "ITA", "TDC"]},
+    "realestate": {"label": "Bất động sản",               "symbols": ["VIC", "VHM", "NVL", "KDH", "DXG", "PDR", "NLG", "DIG", "VRE", "KBC", "BCM", "HDC", "IJC", "SCR", "TCH", "AGG", "NTL", "QCG", "LDG", "HQC", "ITA", "TDC", "CEO"]},
     "oilgas":     {"label": "Dầu khí",                    "symbols": ["GAS", "PLX", "PVD", "PVT", "PVS", "BSR", "OIL", "PLC", "PVC", "PVB", "PGD", "CNG"]},
     "technology": {"label": "Công nghệ",                  "symbols": ["FPT", "CMG", "VGI", "CTR", "ELC", "ITD", "SGT", "FOX"]},
     "securities": {"label": "Chứng khoán",                "symbols": ["SSI", "VCI", "HCM", "VND", "VIX", "SHS", "MBS", "BVS", "FTS", "BSI", "CTS", "AGR", "VDS", "ORS", "DSC"]},

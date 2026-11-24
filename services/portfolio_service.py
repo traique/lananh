@@ -10,7 +10,8 @@ from stock.report_format import fmt_price as _fmt
 from stock.sector import ALL_KNOWN_SYMBOLS
 
 _NUMBER_RE = r"[\d.,]+(?:k|nghìn|nghin|tr|triệu|trieu|m)?"
-_SYMBOL_RE = r"[A-Za-z]{3,4}"
+# 3-4 chữ cái hoặc 3 ký tự có số bắt đầu bằng chữ (L14, VC3, PC1 - nhiều mã HNX).
+_SYMBOL_RE = r"(?:[A-Za-z]{3,4}|[A-Za-z][A-Za-z0-9]{2})"
 # Mã đứng riêng một từ: "Urban area" không được thành "ban AREA".
 _SYMBOL_WORD = rf"(?<![\w])({_SYMBOL_RE})(?![\w])"
 # Giá dưới ngưỡng này (không kèm k/nghìn/tr) được hiểu theo quy ước bảng giá

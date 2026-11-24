@@ -397,6 +397,13 @@ _EXCHANGE_MAP_TTL = 24 * 3600
 # mọi mã HOSE dùng bước giá 100đ dù nguồn đã hồi phục sau vài phút.
 _EXCHANGE_MAP_NEGATIVE_TTL = 10 * 60
 _exchange_map_cache: tuple[float, dict[str, str]] | None = None
+# Tạo lười trong event loop đang chạy (như get_vnstock_semaphore): nhiều lượt cùng gặp
+# cache hết hạn chỉ tải danh sách (~3.800 dòng) MỘT lần.
+_exchange_map_lock: asyncio.Lock | None = None
+# Tra trượt một mã (có thể vừa lên sàn sau lần tải trước) thì tải lại danh sách, nhưng
+# tối đa 1 lần mỗi giờ: tên sản phẩm (S24, U23) không làm tải liên tục.
+_EXCHANGE_MAP_MISS_REFRESH_SEC = 3600
+_exchange_map_miss_refresh_at: float | None = None
 
 
 def _fetch_exchange_map_sync() -> dict[str, str]:
@@ -407,25 +414,70 @@ def _fetch_exchange_map_sync() -> dict[str, str]:
         return {}
 
 
+async def _download_exchange_map() -> dict[str, str]:
+    try:
+        async with get_vnstock_semaphore():
+            return await asyncio.wait_for(asyncio.to_thread(_fetch_exchange_map_sync), timeout=30)
+    except (TimeoutError, asyncio.TimeoutError):
+        return {}
+
+
+def _fresh_exchange_map() -> dict[str, str] | None:
+    cache = _exchange_map_cache
+    if cache is None:
+        return None
+    ttl = _EXCHANGE_MAP_TTL if cache[1] else _EXCHANGE_MAP_NEGATIVE_TTL
+    return cache[1] if time.monotonic() - cache[0] < ttl else None
+
+
+async def exchange_map() -> dict[str, str]:
+    """{mã: HOSE|HNX|UPCOM} của mọi mã đang niêm yết (danh sách VCI), cache 24h.
+
+    Lỗi/rỗng trả {} và chỉ cache 10 phút - caller coi như "không biết" rồi tự dự
+    phòng (bước giá 100đ, xác minh mã bằng giá DNSE)."""
+    global _exchange_map_cache, _exchange_map_lock
+    mapping = _fresh_exchange_map()
+    if mapping is not None:
+        return mapping
+    if _exchange_map_lock is None:
+        _exchange_map_lock = asyncio.Lock()
+    async with _exchange_map_lock:
+        mapping = _fresh_exchange_map()
+        if mapping is not None:
+            return mapping
+        now = time.monotonic()
+        mapping = await _download_exchange_map()
+        _exchange_map_cache = (now, mapping)
+        return mapping
+
+
+async def _exchange_map_after_miss() -> dict[str, str]:
+    """Danh sách niêm yết sau khi tra trượt một mã: tải lại nếu bản đang có cũ hơn 1 giờ
+    và 1 giờ qua chưa thử; tải lỗi thì giữ bản cũ (vẫn đúng với mọi mã đã niêm yết)."""
+    global _exchange_map_cache, _exchange_map_lock, _exchange_map_miss_refresh_at
+    if _exchange_map_lock is None:
+        _exchange_map_lock = asyncio.Lock()
+    async with _exchange_map_lock:
+        cache = _exchange_map_cache
+        if cache is None or not cache[1]:
+            return {}
+        now = time.monotonic()
+        last_try = _exchange_map_miss_refresh_at
+        if now - cache[0] < _EXCHANGE_MAP_MISS_REFRESH_SEC or (
+            last_try is not None and now - last_try < _EXCHANGE_MAP_MISS_REFRESH_SEC
+        ):
+            return cache[1]
+        _exchange_map_miss_refresh_at = now
+        fetched = await _download_exchange_map()
+        if fetched:
+            _exchange_map_cache = (now, fetched)
+            return fetched
+        return cache[1]
+
+
 async def fetch_symbol_exchange(symbol: str) -> str | None:
     """Best-effort resolve sàn; thiếu dữ liệu thì caller dùng tick 100đ an toàn."""
-    global _exchange_map_cache
-    now = time.monotonic()
-    ttl = (
-        _EXCHANGE_MAP_TTL
-        if _exchange_map_cache and _exchange_map_cache[1]
-        else _EXCHANGE_MAP_NEGATIVE_TTL
-    )
-    if _exchange_map_cache is None or now - _exchange_map_cache[0] >= ttl:
-        try:
-            async with get_vnstock_semaphore():
-                mapping = await asyncio.wait_for(
-                    asyncio.to_thread(_fetch_exchange_map_sync), timeout=30
-                )
-        except (TimeoutError, asyncio.TimeoutError):
-            mapping = {}
-        _exchange_map_cache = (now, mapping)
-    return _exchange_map_cache[1].get(symbol.strip().upper())
+    return (await exchange_map()).get(symbol.strip().upper())
 
 
 async def fetch_current_price(symbol: str) -> float:
@@ -439,16 +491,27 @@ _verify_cache: dict[str, tuple[float, bool, int]] = {}  # (ts, result, ttl)
 
 
 async def verify_symbol_exists(symbol: str) -> bool:
-    """Kết quả âm dựa trên fetch_current_price (cùng chuỗi failover DNSE →
-    vnstock) - một lỗi mạng/rate-limit tạm thời sẽ trả giá 0. Nếu cache âm
-    dài như kết quả dương, mã hợp lệ bị coi là "không tồn tại" suốt 24h sau
-    một gián đoạn vài giây, nên TTL âm ngắn hơn hẳn."""
+    """Mã có thật không: tra danh sách niêm yết VCI (exchange_map, cache 24h) trước.
+
+    Trước đây chỉ dựa vào giá DNSE->VCI: một lỗi mạng/rate-limit tạm thời trả giá 0
+    và mã thật (phần lớn mã HNX/UPCOM, vì ALL_KNOWN_SYMBOLS chỉ có ~200 mã) bị coi là
+    "không tồn tại" 10 phút - lúc tra được lúc không. Tra trượt thì tải lại danh sách
+    (tối đa 1 lần/giờ) cho mã vừa lên sàn; giá vẫn là dự phòng khi danh sách lỗi. TTL
+    âm ngắn hơn hẳn TTL dương vì lý do trên. Mã có chữ số (L14, VC3) không có trong
+    danh sách thì thôi, không gọi giá: phần lớn là tên sản phẩm (S24, U23)."""
     sym = symbol.strip().upper()
     cached = _verify_cache.get(sym)
     if cached and time.monotonic() - cached[0] < cached[2]:
         return cached[1]
-    price = await fetch_current_price(sym)
-    result = price > 0
+    listed = await exchange_map()
+    if listed and sym not in listed:
+        listed = await _exchange_map_after_miss()
+    if sym in listed:
+        result = True
+    elif listed and any(ch.isdigit() for ch in sym):
+        result = False
+    else:
+        result = await fetch_current_price(sym) > 0
     ttl = _VERIFY_CACHE_TTL_POS if result else _VERIFY_CACHE_TTL_NEG
     _evict_expired(_verify_cache, _VERIFY_CACHE_TTL_POS)
     _verify_cache[sym] = (time.monotonic(), result, ttl)
