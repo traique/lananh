@@ -176,3 +176,55 @@ async def test_danh_sach_loi_thi_xac_minh_bang_gia_nhu_cu(monkeypatch):
     assert await providers.verify_symbol_exists("HUT") is True
     assert await providers.verify_symbol_exists("L14") is True
     assert await providers.verify_symbol_exists("ABC") is False
+
+
+@pytest.mark.asyncio
+async def test_ma_moi_len_san_tai_lai_danh_sach_toi_da_1_lan_moi_gio(monkeypatch):
+    """Danh sách cache 24h có thể chưa có mã vừa lên sàn: tra trượt thì tải lại, nhưng tối
+    đa 1 lần mỗi giờ (tên sản phẩm như S24 không làm tải liên tục); tải lỗi giữ bản cũ."""
+    old = [{"symbol": "HUT", "type": "STOCK", "board": "HNX"}]
+    new = old + [{"symbol": "F88", "type": "STOCK", "board": "UPCOM"}]
+    listings = [old, new]
+    fetches = []
+
+    def fake_listing():
+        fetches.append(1)
+        if not listings:
+            raise RuntimeError("VCI lỗi")
+        return listings.pop(0)
+
+    async def no_price(symbol):
+        raise AssertionError(f"không được gọi giá cho {symbol}")
+
+    hour = providers._EXCHANGE_MAP_MISS_REFRESH_SEC
+    monkeypatch.setattr(vci_direct, "fetch_listing", fake_listing)
+    monkeypatch.setattr(providers, "fetch_current_price", no_price)
+    monkeypatch.setattr(providers, "_exchange_map_cache", None)
+    monkeypatch.setattr(providers, "_exchange_map_lock", None)
+    monkeypatch.setattr(providers, "_exchange_map_miss_refresh_at", None)
+    monkeypatch.setattr(providers, "_verify_cache", {})
+
+    assert await providers.verify_symbol_exists("HUT") is True
+    assert await providers.verify_symbol_exists("F88") is False  # danh sách mới tải
+    assert len(fetches) == 1
+
+    def age_listing(seconds):
+        ts, mapping = providers._exchange_map_cache
+        providers._exchange_map_cache = (ts - seconds, mapping)
+        providers._verify_cache.clear()
+
+    age_listing(hour + 1)
+    checks = await asyncio.gather(
+        providers.verify_symbol_exists("F88"), providers.verify_symbol_exists("S24")
+    )
+    assert checks == [True, False] and len(fetches) == 2  # 2 lượt trượt chỉ tải lại 1 lần
+    assert await providers.fetch_symbol_exchange("F88") == "UPCOM"
+
+    # Tải lại lỗi: giữ bản đang có, 1 giờ sau mới thử lại.
+    age_listing(hour + 1)
+    providers._exchange_map_miss_refresh_at -= hour + 1
+    assert await providers.verify_symbol_exists("S24") is False
+    assert len(fetches) == 3
+    assert await providers.verify_symbol_exists("F88") is True
+    assert await providers.verify_symbol_exists("VF8") is False
+    assert len(fetches) == 3

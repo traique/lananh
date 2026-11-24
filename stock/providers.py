@@ -400,6 +400,10 @@ _exchange_map_cache: tuple[float, dict[str, str]] | None = None
 # Tạo lười trong event loop đang chạy (như get_vnstock_semaphore): nhiều lượt cùng gặp
 # cache hết hạn chỉ tải danh sách (~3.800 dòng) MỘT lần.
 _exchange_map_lock: asyncio.Lock | None = None
+# Tra trượt một mã (có thể vừa lên sàn sau lần tải trước) thì tải lại danh sách, nhưng
+# tối đa 1 lần mỗi giờ: tên sản phẩm (S24, U23) không làm tải liên tục.
+_EXCHANGE_MAP_MISS_REFRESH_SEC = 3600
+_exchange_map_miss_refresh_at: float | None = None
 
 
 def _fetch_exchange_map_sync() -> dict[str, str]:
@@ -407,6 +411,14 @@ def _fetch_exchange_map_sync() -> dict[str, str]:
         return exchange_map_from_listing(vci_direct.fetch_listing())
     except Exception:
         logger.debug("Không lấy được danh sách sàn từ VCI", exc_info=True)
+        return {}
+
+
+async def _download_exchange_map() -> dict[str, str]:
+    try:
+        async with get_vnstock_semaphore():
+            return await asyncio.wait_for(asyncio.to_thread(_fetch_exchange_map_sync), timeout=30)
+    except (TimeoutError, asyncio.TimeoutError):
         return {}
 
 
@@ -434,15 +446,33 @@ async def exchange_map() -> dict[str, str]:
         if mapping is not None:
             return mapping
         now = time.monotonic()
-        try:
-            async with get_vnstock_semaphore():
-                mapping = await asyncio.wait_for(
-                    asyncio.to_thread(_fetch_exchange_map_sync), timeout=30
-                )
-        except (TimeoutError, asyncio.TimeoutError):
-            mapping = {}
+        mapping = await _download_exchange_map()
         _exchange_map_cache = (now, mapping)
         return mapping
+
+
+async def _exchange_map_after_miss() -> dict[str, str]:
+    """Danh sách niêm yết sau khi tra trượt một mã: tải lại nếu bản đang có cũ hơn 1 giờ
+    và 1 giờ qua chưa thử; tải lỗi thì giữ bản cũ (vẫn đúng với mọi mã đã niêm yết)."""
+    global _exchange_map_cache, _exchange_map_lock, _exchange_map_miss_refresh_at
+    if _exchange_map_lock is None:
+        _exchange_map_lock = asyncio.Lock()
+    async with _exchange_map_lock:
+        cache = _exchange_map_cache
+        if cache is None or not cache[1]:
+            return {}
+        now = time.monotonic()
+        last_try = _exchange_map_miss_refresh_at
+        if now - cache[0] < _EXCHANGE_MAP_MISS_REFRESH_SEC or (
+            last_try is not None and now - last_try < _EXCHANGE_MAP_MISS_REFRESH_SEC
+        ):
+            return cache[1]
+        _exchange_map_miss_refresh_at = now
+        fetched = await _download_exchange_map()
+        if fetched:
+            _exchange_map_cache = (now, fetched)
+            return fetched
+        return cache[1]
 
 
 async def fetch_symbol_exchange(symbol: str) -> str | None:
@@ -465,15 +495,17 @@ async def verify_symbol_exists(symbol: str) -> bool:
 
     Trước đây chỉ dựa vào giá DNSE->VCI: một lỗi mạng/rate-limit tạm thời trả giá 0
     và mã thật (phần lớn mã HNX/UPCOM, vì ALL_KNOWN_SYMBOLS chỉ có ~200 mã) bị coi là
-    "không tồn tại" 10 phút - lúc tra được lúc không. Giá vẫn là dự phòng khi danh
-    sách lỗi hoặc chưa có mã mới lên sàn; TTL âm ngắn hơn hẳn TTL dương vì lý do trên.
-    Mã có chữ số (L14, VC3) không có trong danh sách thì thôi, không gọi giá: phần lớn
-    là tên sản phẩm (S24, U23)."""
+    "không tồn tại" 10 phút - lúc tra được lúc không. Tra trượt thì tải lại danh sách
+    (tối đa 1 lần/giờ) cho mã vừa lên sàn; giá vẫn là dự phòng khi danh sách lỗi. TTL
+    âm ngắn hơn hẳn TTL dương vì lý do trên. Mã có chữ số (L14, VC3) không có trong
+    danh sách thì thôi, không gọi giá: phần lớn là tên sản phẩm (S24, U23)."""
     sym = symbol.strip().upper()
     cached = _verify_cache.get(sym)
     if cached and time.monotonic() - cached[0] < cached[2]:
         return cached[1]
     listed = await exchange_map()
+    if listed and sym not in listed:
+        listed = await _exchange_map_after_miss()
     if sym in listed:
         result = True
     elif listed and any(ch.isdigit() for ch in sym):
