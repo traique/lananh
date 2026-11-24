@@ -50,8 +50,15 @@ def _cache_set(symbol: str, holding: bool, value: str, full_access: bool = True)
         _cache.pop(oldest_key, None)
     _cache[(symbol, holding, full_access)] = (time.time(), value)
 
+# Mã cổ phiếu VN là 3 ký tự chữ/số bắt đầu bằng chữ (HPG, L14, VC3, PC1); giữ cả token
+# 4 chữ cái như trước. Trước đây chỉ nhận chữ cái nên mã có số - rất nhiều ở HNX (L14,
+# VC3, S99, C69) - không bao giờ được nhận, kể cả HT1/PC1 có sẵn trong SECTOR_MAP.
+_TICKER_PATTERN = r"(?:[A-Za-z]{3,4}|[A-Za-z][A-Za-z0-9]{2})"
+_CANDIDATE_TOKEN_RE = re.compile(rf"\b{_TICKER_PATTERN}\b")
+_UPPERCASE_TOKEN_RE = re.compile(r"\b(?:[A-Z]{3,4}|[A-Z][A-Z0-9]{2})\b")
+# Chỉ chữ cái: rào "hỏi giá mà không ra mã" (looks_like_price_question) giữ như cũ để
+# câu hỏi giá sản phẩm có số ("giá S24") đi tiếp xuống tra web, không bị chặn.
 _SYMBOL_TOKEN_RE = re.compile(r"\b[A-Za-z]{3,4}\b")
-_UPPERCASE_TOKEN_RE = re.compile(r"\b[A-Z]{3,4}\b")
 _INDEX_NAME_RE = re.compile(r"\b(vn[\s\-]?index|vn[\s\-]?30|hnx[\s\-]?index|hnx[\s\-]?30|upcom[\s\-]?index)\b", re.IGNORECASE)
 
 def _normalize_index_name(raw: str) -> str:
@@ -61,17 +68,35 @@ _COMMON_WORD_EXCLUDE = {
     "ANH", "EM", "OI", "GIA", "CHO", "KHI", "NAY", "ROI", "NHE", "NHA",
     "VOI", "LA", "VA", "DO", "CO", "KO", "MA", "THE", "SAO", "VAY", "NAO",
     "LAM", "XEM", "GIO", "DUOC", "MOT", "HAI", "BA", "NAM", "NGAY", "TUAN",
-    "OK", "CEO", "CFO", "CTO", "ATM", "PR", "FYI", "ASAP", "VIP", "FAQ",
+    "OK", "CFO", "CTO", "ATM", "PR", "FYI", "ASAP", "VIP", "FAQ",
     "TV", "PC", "AI", "US", "UK", "EU", "OS", "ID", "URL", "PDF", "CV", "OMG",
+    # Tên sàn ("mã sàn HNX"), không phải mã - khỏi tốn lượt xác minh.
+    "HNX", "HSX", "HOSE",
 }
+
+# Mã thật trùng từ viết tắt tiếng Anh vốn viết HOA (CEO - C.E.O Group, sàn HNX): chữ
+# HOA không phân biệt được nên không xử như _AMBIGUOUS_KNOWN. Trước đây CEO nằm trong
+# _COMMON_WORD_EXCLUDE nên KHÔNG BAO GIỜ tra được ("giá CEO" bị báo chưa tra ra mã,
+# "phân tích CEO" rơi xuống chat không có số liệu). Xem _acronym_symbol_intended.
+_ACRONYM_SYMBOLS = {"CEO"}
+# Câu dùng "CEO" theo nghĩa chức danh ("CEO của X là ai", "lương CEO").
+_JOB_TITLE_RE = re.compile(
+    r"(?<!\w)(?:là ai|la ai|là gì|la gi|là ceo|la ceo|làm ceo|lam ceo|lương|luong|"
+    r"giám đốc|giam doc|chủ tịch|chu tich|tuyển|tuyen dung|từ chức|tu chuc|bổ nhiệm|"
+    r"bo nhiem|sáng lập|sang lap|founder|ceo of|the ceo)(?!\w)",
+    re.IGNORECASE,
+)
 
 # Chỉ áp dụng cho token VIẾT THƯỜNG (xem detect_symbol_candidates). Tiếng Việt
 # không dấu sinh ra khá nhiều token 3-4 ký tự vô hại; loại sẵn nhóm hay gặp
-# nhất để đỡ tốn request verify tới DNSE. Tính đúng đắn vẫn do DNSE quyết
-# định - list này thuần túy là tối ưu, không phải rào chắn.
+# nhất để đỡ tốn request xác minh. Tính đúng đắn vẫn do danh sách niêm yết/giá
+# DNSE quyết định (providers.verify_symbol_exists) - list này thuần túy là tối
+# ưu, không phải rào chắn.
 _LOWERCASE_NOISE_EXCLUDE = {
     "BAO", "HOM", "MAI", "QUA", "DANG", "CHUA", "HAY", "TOI", "MINH",
     "VAN", "CON", "THI", "MOI", "BAY", "MUA", "BAN", "GIU", "SAN",
+    # "tra mã CEO" = tra cứu; TRA (Traphaco) viết HOA vẫn nhận.
+    "TRA",
 }
 _MAX_UNVERIFIED_PER_MSG = 6
 
@@ -84,11 +109,12 @@ def _has_stock_context(text: str) -> bool:
     return any(kw in lower for kw in _STOCK_CONTEXT_KEYWORDS)
 
 
-_BARE_SYMBOL_MSG_RE = re.compile(r"^[A-Za-z]{3,4}$")
+_BARE_SYMBOL_MSG_RE = re.compile(rf"^{_TICKER_PATTERN}$")
 
 
 def is_bare_symbol_message(text: str) -> bool:
-    """Tin nhắn chỉ gồm ĐÚNG một token 3-4 chữ cái, không gì khác.
+    """Tin nhắn chỉ gồm ĐÚNG một token dạng mã (3-4 chữ cái, hoặc 3 ký tự có số
+    như L14), không gì khác.
 
     Đây là tín hiệu tra mã mạnh nhất mà không cần tới cách viết hoa. Lý do
     phải tách riêng khỏi rào "viết HOA nguyên bản": bàn phím di động tự viết
@@ -100,7 +126,7 @@ def is_bare_symbol_message(text: str) -> bool:
 
     Trong bối cảnh bot này (một người dùng duy nhất, chơi chứng khoán), một
     tin nhắn trơ trọi 3-4 chữ cái gần như chắc chắn là mã. Chi phí trường hợp
-    xấu nhất là 1 request verify tới DNSE (đã cache 24h).
+    xấu nhất là 1 lượt xác minh (danh sách niêm yết cache 24h, dự phòng giá DNSE).
     """
     return bool(_BARE_SYMBOL_MSG_RE.match(text.strip()))
 
@@ -114,9 +140,27 @@ def _strip_urls(text: str) -> str:
     return _URL_IN_TEXT_RE.sub(" ", text or "")
 
 
+def _acronym_symbol_intended(is_upper: bool, text: str, allow_lowercase: bool) -> bool:
+    """Mã trùng từ viết tắt (_ACRONYM_SYMBOLS) có đang được hỏi như MÃ không.
+
+    Câu nói rõ "mã/cổ phiếu/cp/CK/phân tích CEO" luôn là mã. Còn lại, câu dùng theo
+    nghĩa chức danh ("CEO của X là ai", "lương CEO") thì không. Ngoài hai trường hợp
+    đó: viết HOA, hoặc viết thường kèm ngữ cảnh như mã thường (hỏi giá, tin nhắn
+    trơ trọi) hay từ ngữ phân tích/đầu tư ("ceo nên mua không")."""
+    if _has_stock_context(text) or _has_explicit_stock_word(text):
+        return True
+    if _JOB_TITLE_RE.search(text):
+        return False
+    return (
+        is_upper
+        or allow_lowercase
+        or bool(_STRONG_ANALYSIS_RE.search(text) or _INVESTMENT_TALK_RE.search(text))
+    )
+
+
 def detect_symbol_candidates(text: str) -> tuple[list[str], list[str]]:
     text = _strip_urls(text)
-    tokens = _SYMBOL_TOKEN_RE.findall(text)
+    tokens = _CANDIDATE_TOKEN_RE.findall(text)
     uppercase_tokens = set(_UPPERCASE_TOKEN_RE.findall(text))
     known, unverified = [], []
     seen = set()
@@ -139,6 +183,10 @@ def detect_symbol_candidates(text: str) -> tuple[list[str], list[str]]:
         upper = tok.upper()
         if upper in seen: continue
         seen.add(upper)
+        if upper in _ACRONYM_SYMBOLS:
+            if _acronym_symbol_intended(tok in uppercase_tokens, text, allow_lowercase):
+                known.append(upper)
+            continue
         if upper in ALL_KNOWN_SYMBOLS or upper == "VNINDEX":
             if upper in _AMBIGUOUS_KNOWN and not (tok in uppercase_tokens or stock_context or bare_symbol_msg):
                 # mã trùng từ tiếng Việt/tiếng Anh thông dụng ("gas", "vnd"...)
@@ -151,7 +199,8 @@ def detect_symbol_candidates(text: str) -> tuple[list[str], list[str]]:
                 continue
             known.append(upper)
         else:
-            # nhóm unverified (cần verify qua DNSE). TRƯỚC ĐÂY nhóm này chỉ
+            # nhóm unverified (cần xác minh: danh sách niêm yết, dự phòng giá
+            # DNSE - providers.verify_symbol_exists). TRƯỚC ĐÂY nhóm này chỉ
             # nhận token viết HOA NGUYÊN BẢN, nên mọi mã không nằm trong
             # ALL_KNOWN_SYMBOLS mà người dùng gõ thường (vd "gvr") bị bỏ rơi
             # hoàn toàn - find_valid_symbols trả rỗng, câu hỏi rơi xuống

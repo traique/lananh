@@ -4,6 +4,7 @@ SECTOR_MAP vừa là bản đồ ngành, vừa là nguồn sinh ALL_KNOWN_SYMBOL
 sách mã mà stock_analysis coi là đã biết chắc. Sai sót ở đây lan sang tầng
 nhận diện mã, nên bắt bằng test thay vì bằng mắt.
 """
+
 import re
 
 from stock import analysis as stock_analysis
@@ -35,13 +36,11 @@ def test_no_duplicate_symbol_within_a_sector():
 def test_no_symbol_collides_with_excluded_words():
     """Rào quan trọng nhất của file này.
 
-    detect_symbol_candidates() lọc bỏ token nằm trong _COMMON_WORD_EXCLUDE /
-    _LOWERCASE_NOISE_EXCLUDE TRƯỚC khi tra ALL_KNOWN_SYMBOLS. Nên nếu thêm
-    vào đây một mã trùng từ thông dụng (vd CEO - C.E.O Group là mã có thật),
-    nó sẽ nằm im trong bản đồ mà không bao giờ được nhận diện, và im lặng như
-    vậy rất khó phát hiện. Trường hợp buộc phải hỗ trợ mã kiểu đó thì khai
-    báo trong _AMBIGUOUS_KNOWN để đi qua nhánh cần ngữ cảnh, chứ không phải
-    thêm suông vào SECTOR_MAP.
+    Token nằm trong _COMMON_WORD_EXCLUDE / _LOWERCASE_NOISE_EXCLUDE là từ thông
+    dụng; một mã trùng từ đó (vd SAN, HAI) mà thêm suông vào SECTOR_MAP sẽ bị
+    nhận ở MỌI câu có từ ấy - bot trả giá cổ phiếu cho câu chẳng liên quan. Mã
+    kiểu đó phải khai báo quy tắc ngữ cảnh riêng: _AMBIGUOUS_KNOWN (GAS, OIL)
+    hoặc _ACRONYM_SYMBOLS (từ viết tắt vốn viết HOA, vd CEO - C.E.O Group).
     """
     excluded = stock_analysis._COMMON_WORD_EXCLUDE | stock_analysis._LOWERCASE_NOISE_EXCLUDE
     collisions = {
@@ -49,13 +48,17 @@ def test_no_symbol_collides_with_excluded_words():
         for sym in stock_sector.ALL_KNOWN_SYMBOLS
         if sym in excluded and sym not in stock_analysis._AMBIGUOUS_KNOWN
     }
-    assert not collisions, f"mã trùng từ thông dụng nhưng chưa khai báo _AMBIGUOUS_KNOWN: {sorted(collisions)}"
+    assert not collisions, (
+        f"mã trùng từ thông dụng nhưng chưa khai báo _AMBIGUOUS_KNOWN: {sorted(collisions)}"
+    )
 
 
 def test_ambiguous_known_symbols_exist_in_map():
     """_AMBIGUOUS_KNOWN chỉ có nghĩa với mã thật sự nằm trong bản đồ."""
     for sym in stock_analysis._AMBIGUOUS_KNOWN:
-        assert sym in stock_sector.ALL_KNOWN_SYMBOLS, f"{sym} khai ambiguous nhưng không có trong SECTOR_MAP"
+        assert sym in stock_sector.ALL_KNOWN_SYMBOLS, (
+            f"{sym} khai ambiguous nhưng không có trong SECTOR_MAP"
+        )
 
 
 def test_gvr_is_covered():
@@ -67,7 +70,16 @@ def test_gvr_is_covered():
 
 
 def test_newly_added_sectors_are_reachable():
-    for key in ("rubber", "chemicals", "insurance", "aviation", "textile", "pharma", "materials", "seafood"):
+    for key in (
+        "rubber",
+        "chemicals",
+        "insurance",
+        "aviation",
+        "textile",
+        "pharma",
+        "materials",
+        "seafood",
+    ):
         assert key in stock_sector.SECTOR_MAP
 
 
@@ -79,3 +91,15 @@ def test_unknown_symbol_falls_back_to_khac():
 def test_lookup_is_case_insensitive():
     assert stock_sector.get_symbol_sectors("gvr") == stock_sector.get_symbol_sectors("GVR")
     assert stock_sector.get_symbol_sectors("  gvr  ") == stock_sector.get_symbol_sectors("GVR")
+
+
+def test_acronym_symbols_exist_in_map():
+    """_ACRONYM_SYMBOLS (vd CEO) được nhận thẳng vào nhóm "đã biết" nên phải là mã thật
+    có trong bản đồ, và không được nằm trong danh sách từ bị loại."""
+    excluded = stock_analysis._COMMON_WORD_EXCLUDE | stock_analysis._LOWERCASE_NOISE_EXCLUDE
+    for sym in stock_analysis._ACRONYM_SYMBOLS:
+        assert sym in stock_sector.ALL_KNOWN_SYMBOLS, (
+            f"{sym} khai acronym nhưng không có trong SECTOR_MAP"
+        )
+        assert sym not in excluded
+    assert stock_sector.get_primary_sector_label("CEO") == "Bất động sản"

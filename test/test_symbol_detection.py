@@ -176,3 +176,73 @@ def test_luot_co_phieu_dau_tu_can_phan_co_phieu(text):
 )
 def test_chuyen_doi_thuong_khong_keo_phan_co_phieu(text):
     assert stock_analysis.chat_needs_stock_rules(text) is False
+
+
+# ─── Sửa 24/11: mã HNX lúc tra được lúc không, đặc biệt CEO ─────────────────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "CEO",
+        "ceo",
+        "Ceo",
+        "giá CEO",
+        "gia ceo",
+        "CEO giá bao nhiêu",
+        "mã CEO",
+        "cổ phiếu CEO",
+        "phân tích CEO",
+        "CEO hôm nay sao rồi",
+        "ceo nên mua không",
+        "mã CEO là gì",
+    ],
+)
+def test_ceo_la_ma_c_e_o_group(text):
+    """CEO (C.E.O Group, HNX) từng nằm trong danh sách từ thông dụng nên không cách gõ
+    nào ra mã: "giá CEO" bị báo chưa tra ra mã, "phân tích CEO" rơi xuống chat thường
+    không có số liệu thật."""
+    known, unverified = stock_analysis.detect_symbol_candidates(text)
+    assert known == ["CEO"] and unverified == []
+
+
+@pytest.mark.parametrize(
+    "text", ["CEO là gì", "CEO của Apple là ai", "lương CEO bao nhiêu", "làm CEO có sướng không"]
+)
+def test_ceo_theo_nghia_chuc_danh_khong_phai_ma(text):
+    known, unverified = stock_analysis.detect_symbol_candidates(text)
+    assert "CEO" not in known + unverified
+    assert stock_analysis.looks_like_price_question(text) is False
+
+
+@pytest.mark.parametrize(
+    ("text", "symbols"),
+    [
+        ("L14", ["L14"]),
+        ("l14", ["L14"]),
+        ("giá vc3", ["VC3"]),
+        ("phân tích S99 và C69", ["S99", "C69"]),
+    ],
+)
+def test_ma_co_chu_so_la_ung_vien(text, symbols):
+    """Mã có số (rất nhiều ở HNX) từng không bao giờ khớp regex 3-4 chữ cái."""
+    known, unverified = stock_analysis.detect_symbol_candidates(text)
+    assert known + unverified == symbols
+
+
+def test_ma_co_chu_so_trong_ban_do_nganh_nay_moi_nhan_duoc():
+    assert stock_analysis.detect_symbol_candidates("HT1")[0] == ["HT1"]
+    assert stock_analysis.detect_symbol_candidates("giá pc1")[0] == ["PC1"]
+
+
+def test_hoi_gia_san_pham_co_so_van_di_tra_web():
+    """Rào "chưa tra ra mã" giữ như cũ với token có số: "giá S24" là hỏi giá điện thoại."""
+    assert stock_analysis.looks_like_price_question("giá S24") is False
+    assert stock_analysis.wants_product_price("giá S24") is True
+
+
+def test_chu_tra_va_ten_san_khong_thanh_ma():
+    """ "tra mã CEO sàn HNX": "tra" (tra cứu) từng được xác minh thành TRA (Traphaco)."""
+    assert stock_analysis.detect_symbol_candidates("tra mã CEO sàn HNX") == (["CEO"], [])
+    assert stock_analysis.detect_symbol_candidates("TRA") == ([], ["TRA"])
+    assert stock_analysis.detect_symbol_candidates("HNX") == ([], [])

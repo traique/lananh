@@ -1,6 +1,7 @@
 """Danh sách mã/sàn, khối ngoại và lịch sự kiện lấy thẳng REST VCI - thay vnstock
 (bản 4.x bị khoá từ 10/11/2026, kho vnstocks.com trả 410)."""
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from stock import analysis as stock_analysis  # noqa: E402
 from stock import fundamentals, providers, vci_direct  # noqa: E402
 
 # Dạng dòng GET trading.vietcap.com.vn/api/price/symbols/getAll (16/11/2026).
@@ -120,3 +122,57 @@ def test_goi_rest_bang_gia_va_danh_sach_ma(monkeypatch):
 
     monkeypatch.setattr(vci_direct.requests, "post", lambda *a, **k: _Response([]))
     assert vci_direct.fetch_match_price("FPT") == {}
+
+
+@pytest.mark.asyncio
+async def test_xac_minh_ma_bang_danh_sach_niem_yet(monkeypatch):
+    """Mã ngoài SECTOR_MAP (phần lớn HNX/UPCOM) từng chỉ được xác minh bằng 1 lần gọi
+    giá DNSE: lỗi tạm thời bị nhớ 10 phút là "không tồn tại" - lúc tra được lúc không.
+    Nay danh sách niêm yết (cache 24h) xác nhận trước, giá chỉ còn là dự phòng."""
+    listing = [
+        {"symbol": "HUT", "type": "STOCK", "board": "HNX"},
+        {"symbol": "L14", "type": "STOCK", "board": "HNX"},
+        {"symbol": "VC3", "type": "STOCK", "board": "HNX"},
+    ]
+    fetches, priced = [], []
+
+    def fake_listing():
+        fetches.append(1)
+        return listing
+
+    async def fake_price(symbol):
+        priced.append(symbol)
+        return 0.0
+
+    monkeypatch.setattr(vci_direct, "fetch_listing", fake_listing)
+    monkeypatch.setattr(providers, "fetch_current_price", fake_price)
+    monkeypatch.setattr(providers, "_exchange_map_cache", None)
+    monkeypatch.setattr(providers, "_exchange_map_lock", None)
+    monkeypatch.setattr(providers, "_verify_cache", {})
+    checks = await asyncio.gather(
+        *(providers.verify_symbol_exists(s) for s in ("hut", "L14", "S24", "XYZ"))
+    )
+    assert checks == [True, True, False, False]
+    assert fetches == [1]  # 4 lượt cùng lúc chỉ tải danh sách 1 lần
+    assert priced == ["XYZ"]  # S24 có số mà không niêm yết: không tốn lượt gọi giá
+    assert await stock_analysis.find_valid_symbols("phân tích L14 và VC3") == ["L14", "VC3"]
+    assert await stock_analysis.find_valid_symbols("giá hut") == ["HUT"]
+    assert await stock_analysis.find_valid_symbols("Samsung S24 có tốt không") == []
+    assert priced == ["XYZ"]
+
+
+@pytest.mark.asyncio
+async def test_danh_sach_loi_thi_xac_minh_bang_gia_nhu_cu(monkeypatch):
+    def down():
+        raise RuntimeError("VCI lỗi")
+
+    async def fake_price(symbol):
+        return 15_000.0 if symbol in {"HUT", "L14"} else 0.0
+
+    monkeypatch.setattr(vci_direct, "fetch_listing", down)
+    monkeypatch.setattr(providers, "fetch_current_price", fake_price)
+    monkeypatch.setattr(providers, "_exchange_map_cache", None)
+    monkeypatch.setattr(providers, "_verify_cache", {})
+    assert await providers.verify_symbol_exists("HUT") is True
+    assert await providers.verify_symbol_exists("L14") is True
+    assert await providers.verify_symbol_exists("ABC") is False

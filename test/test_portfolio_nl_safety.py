@@ -189,3 +189,10 @@ async def test_themcp_gia_nghin_dong_nhung_so_luong_giu_nguyen(monkeypatch):
     assert calls == [
         (100, 25_500, {"stop_price": 24_000, "target_price": 30_000, "replace": False})
     ]
+
+
+@pytest.mark.asyncio
+async def test_cau_ke_mua_ma_co_chu_so(recorder):
+    """Mã có số (L14, VC3 - nhiều ở HNX) từng không khớp regex mã 3-4 chữ cái."""
+    await portfolio_service.maybe_handle_natural_language(1, "đã mua L14 1000 giá 15")
+    assert recorder["add"][0][:3] == ("L14", 1000, 15_000)
