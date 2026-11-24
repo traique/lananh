@@ -241,8 +241,22 @@ def test_hoi_gia_san_pham_co_so_van_di_tra_web():
     assert stock_analysis.wants_product_price("giá S24") is True
 
 
-def test_chu_tra_va_ten_san_khong_thanh_ma():
-    """ "tra mã CEO sàn HNX": "tra" (tra cứu) từng được xác minh thành TRA (Traphaco)."""
-    assert stock_analysis.detect_symbol_candidates("tra mã CEO sàn HNX") == (["CEO"], [])
-    assert stock_analysis.detect_symbol_candidates("TRA") == ([], ["TRA"])
-    assert stock_analysis.detect_symbol_candidates("HNX") == ([], [])
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("tra mã CEO sàn HNX", (["CEO"], [])),
+        ("Tra giá HPG giúp anh", (["HPG"], [])),
+        ("tra HPG", (["HPG"], [])),
+        ("tra cứu giá cổ phiếu HUT", ([], ["HUT"])),
+        ("HNX", ([], [])),
+        # Mã TRA (Traphaco) vẫn tra được khi không phải động từ "tra".
+        ("TRA", ([], ["TRA"])),
+        ("tra", ([], ["TRA"])),
+        ("giá tra", ([], ["TRA"])),
+        ("TRA giá bao nhiêu", ([], ["TRA"])),
+    ],
+)
+def test_dong_tu_tra_va_ten_san_khong_thanh_ma(text, expected):
+    """ "tra mã CEO": "tra" (tra cứu) từng được xác minh thành TRA (Traphaco) nên bot trả
+    giá Traphaco cho câu hỏi về CEO. Tên sàn cũng không phải mã."""
+    assert stock_analysis.detect_symbol_candidates(text) == expected

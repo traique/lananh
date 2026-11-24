@@ -95,8 +95,6 @@ _JOB_TITLE_RE = re.compile(
 _LOWERCASE_NOISE_EXCLUDE = {
     "BAO", "HOM", "MAI", "QUA", "DANG", "CHUA", "HAY", "TOI", "MINH",
     "VAN", "CON", "THI", "MOI", "BAY", "MUA", "BAN", "GIU", "SAN",
-    # "tra mã CEO" = tra cứu; TRA (Traphaco) viết HOA vẫn nhận.
-    "TRA",
 }
 _MAX_UNVERIFIED_PER_MSG = 6
 
@@ -140,6 +138,16 @@ def _strip_urls(text: str) -> str:
     return _URL_IN_TEXT_RE.sub(" ", text or "")
 
 
+# "tra mã CEO", "tra giá HPG", "Tra HPG giúp anh": "tra" là động từ tra cứu, không phải mã
+# TRA (Traphaco) - trước đây được xác minh thành mã thật nên "tra mã CEO" trả cả giá
+# Traphaco. Chỉ bỏ "tra"/"Tra" đứng ngay trước từ tra cứu hoặc trước một mã viết HOA;
+# "TRA", "giá tra", "tra" trơ trọi vẫn là mã.
+_LOOKUP_VERB_RE = re.compile(
+    r"(?<!\w)[Tt]ra(?=\s+(?:[A-Z][A-Z0-9]{2,3}(?!\w)|(?i:mã|ma|giá|gia|cứu|cuu|giúp|giup|"
+    r"giùm|gium|dùm|dum|hộ|ho|thử|thu|lại|lai|xem|coi|cho|em|anh)(?!\w)))"
+)
+
+
 def _acronym_symbol_intended(is_upper: bool, text: str, allow_lowercase: bool) -> bool:
     """Mã trùng từ viết tắt (_ACRONYM_SYMBOLS) có đang được hỏi như MÃ không.
 
@@ -160,8 +168,9 @@ def _acronym_symbol_intended(is_upper: bool, text: str, allow_lowercase: bool) -
 
 def detect_symbol_candidates(text: str) -> tuple[list[str], list[str]]:
     text = _strip_urls(text)
-    tokens = _CANDIDATE_TOKEN_RE.findall(text)
-    uppercase_tokens = set(_UPPERCASE_TOKEN_RE.findall(text))
+    scan = _LOOKUP_VERB_RE.sub(" ", text)
+    tokens = _CANDIDATE_TOKEN_RE.findall(scan)
+    uppercase_tokens = set(_UPPERCASE_TOKEN_RE.findall(scan))
     known, unverified = [], []
     seen = set()
     stock_context = _has_stock_context(text)

@@ -19,7 +19,7 @@ Quy ước:
 - Tra được mã có chữ số, có nhiều ở sàn HNX: L14, VC3, S99, C69, PC1, HT1...
 - Mã sàn HNX/UPCOM hết cảnh lúc tra được lúc không: em kiểm tra mã theo danh sách niêm yết
   của cả ba sàn, không còn phụ thuộc một lần lấy giá có thể lỗi rồi bị nhớ 10 phút.
-- "tra mã CEO" không còn kéo theo giá mã TRA (Traphaco); gõ "TRA" viết hoa vẫn ra mã này.
+- "tra mã CEO", "tra HPG" không còn kéo theo giá mã TRA (Traphaco); hỏi "giá TRA" vẫn ra mã này.
 
 ## 1.4.0 - 2026-11-23
 
