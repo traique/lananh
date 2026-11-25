@@ -374,8 +374,13 @@ class DeliverRepo:
     async def release(self, ids, channel):
         self.released.append((channel, ids))
 
+    async def already_delivered(self, account_id, channel, ids):
+        return {i for i in ids if i in self.delivered}
+
     async def consensus(self, account_id, day, symbols):
         return {("HPG", "buy"): (2, 1)}
+
+    delivered: set[int] = set()
 
 
 @pytest.fixture
@@ -442,6 +447,40 @@ async def test_zalo_controller_chua_pair_thi_xep_thang_outbox(monkeypatch, deliv
     monkeypatch.setattr(zs.zalo_repository, "enqueue_outbox", enqueue)
     assert await zs.deliver("acc") == 1
     assert outbox and outbox[0][:2] == ("acc", "ctrl") and deliver_env == []
+
+
+def test_gop_cung_nguoi_nhieu_nhom_va_bo_tin_da_bao():
+    a = _signal(id=1, alias="room-vip")
+    b = _signal(id=2, alias="room-2")  # cùng người, mã, hướng, loại, ngày
+    c = _signal(id=3, alias="room-3", action="sell")
+    d = _signal(id=4, alias="room-vip", sender_id="khac")
+    merged = zs.merge_by_person([a, b, c, d], skip=set())
+    assert [(s.id, s.alias) for s in merged] == [
+        (1, "room-vip, room-2"),
+        (3, "room-3"),
+        (4, "room-vip"),
+    ]
+    assert [s.id for s in zs.merge_by_person([a, b, c], skip={1, 2})] == [3]
+    again = zs.merge_by_person([a, _signal(id=5, alias="room-vip")], skip=set())
+    assert [(s.id, s.alias) for s in again] == [(1, "room-vip")], "không lặp tên nhóm"
+
+
+async def test_cung_nguoi_da_bao_tu_nhom_khac_thi_khong_bao_lai(monkeypatch, deliver_env):
+    repo = DeliverRepo([_signal(id=7, alias="room-2")])
+    repo.delivered = {7}
+    monkeypatch.setattr(zs, "repo", repo)
+    monkeypatch.setenv("ZALO_SIGNAL_CHANNELS", "zoom")
+    assert await zs.deliver("acc") == 0
+    assert deliver_env == [] and repo.released == [], "giữ đánh dấu đã giao, không gửi"
+
+
+async def test_gop_nhieu_nhom_trong_1_tin_bao(monkeypatch, deliver_env):
+    repo = DeliverRepo([_signal(id=1), _signal(id=2, alias="room-2")])
+    monkeypatch.setattr(zs, "repo", repo)
+    monkeypatch.setenv("ZALO_SIGNAL_CHANNELS", "zoom")
+    assert await zs.deliver("acc") == 1
+    text = deliver_env[0][2]
+    assert "💬 nhóm room-vip, room-2" in text and text.count("🟢 MUA HPG") == 1
 
 
 async def test_gui_loi_thi_tra_lai_de_luot_sau(monkeypatch, deliver_env):

@@ -1,6 +1,6 @@
 """Lệnh /tinhieu (channels/zalo_signal_commands.py) qua dispatcher nhóm dùng chung."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -67,7 +67,8 @@ class FakeRepo:
     async def signals_since(self, account_id, start, *, end=None, symbol=None, limit=30):
         return [s for s in self.signals if symbol in (None, s.symbol)]
 
-    async def top_symbols(self, account_id, start, limit=10):
+    async def top_symbols(self, account_id, start, end=None, limit=10):
+        self.top_window = (start, end)
         return [("HPG", "buy", 3, 2, datetime(2026, 11, 25, 3, 0, tzinfo=timezone.utc))]
 
 
@@ -136,6 +137,10 @@ async def test_tra_ma_va_top(repo):
     assert zalo_signals.DISCLAIMER in reply
     assert "Chưa ai" in await _run("/tinhieu SSI 30d")
     assert "1. HPG 🟢 mua — 3 người · 2 nhóm" in await _run("/tinhieu top")
+    assert repo.top_window[1] is None
+    assert "(hôm qua)" in await _run("/tinhieu top homqua")
+    start, end = repo.top_window
+    assert end is not None and end - start == timedelta(days=1), "top homqua có mốc kết thúc"
 
 
 async def test_nhom_va_help(repo):

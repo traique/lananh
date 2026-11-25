@@ -106,6 +106,12 @@ async def test_luu_tin_hieu_chong_trung_nhan_gui_nguyen_tu(delivery_db):
     assert crowd == {("HPG", "buy"): (2, 2), ("HPG", "sell"): (1, 1)}
     top = await repo.top_symbols("acc", datetime(2026, 1, 1, tzinfo=timezone.utc))
     assert top[0][:4] == ("HPG", "buy", 2, 2)
+    top_yesterday = await repo.top_symbols(
+        "acc",
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 11, 25, tzinfo=timezone.utc),
+    )
+    assert top_yesterday == [], "top homqua không tính tín hiệu từ mốc kết thúc trở đi"
 
     claimed = await repo.claim_pending("acc", "zoom", 6, 2)
     assert [s.id for s in claimed] == sorted(s.id for s in claimed) and len(claimed) == 2
@@ -117,8 +123,25 @@ async def test_luu_tin_hieu_chong_trung_nhan_gui_nguyen_tu(delivery_db):
     await repo.release([claimed[0].id], "zoom")
     assert [s.id for s in await repo.claim_pending("acc", "zoom", 6, 10)] == [claimed[0].id]
 
+    # Cùng người (boss) nói cùng mã/hướng/loại ở nhóm khác trong ngày: lưu riêng dòng
+    # (đếm nhóm cho /tinhieu), nhưng đã báo từ nhóm kia thì không báo lại.
+    await _store("m3", "boss", "HPG gom tiếp", group="g2", minute=5)
+    await _settle(delivery_db)
+    (third,) = await repo.messages_between("acc", second.row_id, 10**9, 5)
+    cross = await repo.save_signal("acc", third, **values)
+    assert cross is not None
+    assert await repo.already_delivered("acc", "zoom", [cross]) == {cross}
+    # Cùng 1 lô vừa nhận: không coi là "đã báo" - merge_by_person gộp thành 1 dòng.
+    assert await repo.already_delivered("acc", "zoom", [one, cross]) == set()
+    assert await repo.already_delivered("acc", "zoom", []) == set()
+    zalo_ids = [
+        s.id for s in await repo.signals_since("acc", datetime(2026, 1, 1, tzinfo=timezone.utc))
+    ]
+    await repo.release(zalo_ids, "zalo")
+    assert await repo.already_delivered("acc", "zalo", [cross]) == set(), "chưa báo ở kênh này"
+
     found = await repo.signals_since("acc", datetime(2026, 1, 1, tzinfo=timezone.utc), symbol="HPG")
-    assert len(found) == 3
+    assert len(found) == 4
     cutoff = datetime(2026, 11, 25, 3, 0, tzinfo=timezone.utc)
     before = await repo.signals_since("acc", datetime(2026, 1, 1, tzinfo=timezone.utc), end=cutoff)
     assert before == [], "end loại tín hiệu từ mốc đó trở đi (homqua)"

@@ -1286,7 +1286,9 @@ Hết lượt AI hoặc AI lỗi thì con trỏ dừng ở tin chưa xử lý, l
 lần liền thì bỏ lô đó để không chặn tin phía sau); tin cũ hơn `ZALO_SIGNAL_MAX_AGE_MIN` phút
 (mặc định 120) thì bỏ. Lần đầu bật bot bắt đầu từ tin mới nhất, không quét lại lịch sử.
 
-**Gửi.** 1 người - 1 mã - 1 hướng - 1 loại chỉ báo 1 lần mỗi ngày. Mỗi lượt quét gộp tối
+**Gửi.** 1 người - 1 mã - 1 hướng - 1 loại chỉ báo 1 lần mỗi ngày, kể cả khi người đó nói ở
+nhiều nhóm (cùng lượt thì gộp 1 dòng ghi các nhóm; đã báo từ nhóm khác thì không báo lại -
+`/tinhieu <mã>` và `top` vẫn đếm đủ từng nhóm). Mỗi lượt quét gộp tối
 đa 8 tín hiệu thành 1 tin cho mỗi kênh, qua `notify_hub` nguồn `zalo_signal` (URGENT: gửi
 ngay, trong giờ yên lặng thì giữ tới sáng):
 

@@ -256,8 +256,8 @@ async def _remove_person(account_id: str, args: list[str]) -> ChannelResult:
 
 
 async def _top(account_id: str, spec: str) -> ChannelResult:
-    start, _, label = _window(spec, _now())
-    rows = await repo.top_symbols(account_id, start)
+    start, end, label = _window(spec, _now())
+    rows = await repo.top_symbols(account_id, start, end)
     if not rows:
         return ChannelResult([f"📭 Chưa có tín hiệu nào trong {label}."])
     lines = [f"🏆 Mã được nhiều người nói nhất ({label}):"]

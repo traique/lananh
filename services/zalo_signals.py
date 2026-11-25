@@ -35,7 +35,7 @@ import re
 import time
 from collections import deque
 from collections.abc import Container
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -624,17 +624,42 @@ async def _send(channel: str, account_id: str, text: str, dedup: str) -> bool | 
     return True
 
 
+def _person_key(signal: Signal) -> tuple[str, str, str, str, date]:
+    return (signal.sender_id, signal.symbol, signal.action, signal.kind, _vn_date(signal.sent_at))
+
+
+def merge_by_person(signals: list[Signal], skip: set[int]) -> list[Signal]:
+    """1 người - 1 mã - 1 hướng - 1 loại chỉ báo 1 lần mỗi ngày: bỏ tín hiệu đã báo từ
+    nhóm khác (``skip``), gộp các nhóm của cùng người trong lô thành 1 dòng."""
+    merged: dict[tuple[str, str, str, str, date], Signal] = {}
+    for signal in signals:
+        if signal.id in skip:
+            continue
+        key = _person_key(signal)
+        first = merged.get(key)
+        if first is None:
+            merged[key] = signal
+        elif signal.alias not in first.alias.split(", "):
+            merged[key] = replace(first, alias=f"{first.alias}, {signal.alias}")
+    return list(merged.values())
+
+
 async def deliver(account_id: str) -> int:
     """Gửi tín hiệu chưa giao tới từng kênh (mỗi kênh tối đa 1 tin gộp/lượt)."""
     sent = 0
     for channel in channels():
-        signals = await repo.claim_pending(
+        claimed = await repo.claim_pending(
             account_id, channel, _NOTIFY_MAX_AGE_HOURS, _MAX_PER_NOTICE
         )
-        if not signals:
+        if not claimed:
             continue
-        ids = [signal.id for signal in signals]
+        ids = [signal.id for signal in claimed]
+        signals: list[Signal] = []
         try:
+            skip = await repo.already_delivered(account_id, channel, ids)
+            signals = merge_by_person(claimed, skip)
+            if not signals:
+                continue  # đều đã báo từ nhóm khác hôm nay: giữ đánh dấu đã giao
             text = await compose(account_id, signals)
             ok = await _send(channel, account_id, text, f"zsig:{channel}:{ids[0]}:{ids[-1]}")
         except Exception:
@@ -646,7 +671,7 @@ async def deliver(account_id: str) -> int:
         if ok is None:
             logger.info("zalo_signals: kênh %s chưa có người nhận, bỏ %d tin.", channel, len(ids))
             continue
-        sent += len(ids)
+        sent += len(signals)
     return sent
 
 

@@ -350,6 +350,29 @@ async def claim_pending(
     return [_signal(row) for row in rows]
 
 
+async def already_delivered(account_id: str, channel: str, ids: list[int]) -> set[int]:
+    """Trong ``ids``, các tín hiệu mà CÙNG người - mã - hướng - loại - ngày đã được giao
+    cho ``channel`` từ một dòng khác (thường là cùng người nói ở nhóm khác): không báo lại."""
+    if not ids:
+        return set()
+    column = _sent_column(channel)
+    rows = await (await _pool()).fetch(
+        f"""
+        SELECT s.id FROM zalo_stock_signals s
+        WHERE s.account_id = $1 AND s.id = ANY($2::bigint[]) AND EXISTS (
+            SELECT 1 FROM zalo_stock_signals o
+            WHERE o.account_id = s.account_id AND o.sender_id = s.sender_id
+              AND o.symbol = s.symbol AND o.action = s.action AND o.kind = s.kind
+              AND o.signal_date = s.signal_date AND o.{column} IS NOT NULL
+              AND NOT (o.id = ANY($2::bigint[]))
+        )
+        """,
+        account_id,
+        ids,
+    )
+    return {row["id"] for row in rows}
+
+
 async def release(ids: list[int], channel: str) -> None:
     """Trả tín hiệu đã nhận nhưng gửi lỗi về trạng thái chưa giao."""
     if not ids:
@@ -388,20 +411,25 @@ async def signals_since(
     return [_signal(row) for row in rows]
 
 
-async def top_symbols(account_id: str, start: datetime, limit: int = 10):
-    """(mã, hướng, số người khác nhau, số nhóm khác nhau, lần gần nhất) - nhiều người trước."""
+async def top_symbols(
+    account_id: str, start: datetime, end: datetime | None = None, limit: int = 10
+):
+    """(mã, hướng, số người khác nhau, số nhóm khác nhau, lần gần nhất) trong [start, end)
+    (end None = tới giờ) - nhiều người trước."""
     rows = await (await _pool()).fetch(
         """
         SELECT symbol, action, count(DISTINCT sender_id) AS people,
                count(DISTINCT group_id) AS groups, max(sent_at) AS last_at
         FROM zalo_stock_signals
         WHERE account_id = $1 AND sent_at >= $2
+          AND ($3::timestamptz IS NULL OR sent_at < $3)
         GROUP BY symbol, action
         ORDER BY people DESC, groups DESC, last_at DESC
-        LIMIT $3
+        LIMIT $4
         """,
         account_id,
         start,
+        end,
         limit,
     )
     return [
