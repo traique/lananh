@@ -10,6 +10,8 @@ export type ControlHandlers = {
   forgetSender(id: string): boolean;
   /** Mọi nhóm bot đang tham gia (Python /nhomzalo); null khi Zalo chưa kết nối. */
   groups(): Promise<GroupList | null>;
+  /** Nạp lại danh sách nhóm theo dõi từ Python ngay; false khi Zalo chưa kết nối. */
+  refreshGroups(): Promise<boolean>;
 };
 
 /** Body JSON tối đa của control server (chỉ chứa 1 id Zalo). */
@@ -52,6 +54,11 @@ export function startControlServer(port: number, handlers: ControlHandlers): Ser
         const result = await handlers.groups();
         if (!result) return reply(409, { error: "Zalo is not connected" });
         return reply(200, result);
+      }
+      if (req.method === "POST" && req.url === "/groups/refresh") {
+        if (!(await handlers.refreshGroups()))
+          return reply(409, { error: "Zalo is not connected" });
+        return reply(200, { ok: true });
       }
       if (req.method === "POST" && req.url === "/login/qr") {
         return reply(200, { ok: true, state: await handlers.startQr() });

@@ -449,6 +449,9 @@ ENTRIES: tuple[Entry, ...] = (
        ("tong ket nhom", "tom tat nhom")),
     _e("dangnoi", LOOKUP, S, B, "nhom", "/dangnoi <tên>", "Nguyên văn thảo luận hôm nay",
        "nhóm Gia đình đang nói gì", "cmd:cmd_dangnoi", ("dang noi gi", "thao luan")),
+    _e("tinhieu", ADMIN, S, B, "nhom", "/tinhieu [mã|on|off|top|nguoi|nhip]",
+       "Tín hiệu mua/bán cổ phiếu từ nhóm Zalo gửi Zoom + Zalo", nl="suggest",
+       kw=("tin hieu", "goi y mua", "nhom goi y", "ai goi y", "room khuyen nghi")),
     *(
         _e(f"fb_{n}", DANGER if n == "reset" else ADMIN, S, B, "nhom", u, d, nl="suggest",
            kw=("facebook", "bai fb", "fanpage", *k))

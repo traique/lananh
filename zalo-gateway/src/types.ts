@@ -44,11 +44,27 @@ export type ZaloMessage = {
   };
 };
 
+export type ZaloGroupEvent = {
+  type?: string;
+  threadId?: string | number;
+  isSelf?: boolean;
+};
+
+/** Phần getGroupInfo gateway đọc (zca-js dist/models/Group.d.ts GroupInfo). */
+export type ZaloGroupDetail = {
+  name?: string;
+  totalMember?: number;
+  creatorId?: string;
+  adminIds?: string[];
+};
+
 export type ZaloListener = {
   on(event: "message", handler: (message: ZaloMessage) => void): void;
   on(event: "connected", handler: () => void): void;
   on(event: "disconnected" | "closed", handler: (code?: number, reason?: string) => void): void;
   on(event: "error", handler: (error: unknown) => void): void;
+  /** Sự kiện nhóm (zca-js GroupEvent): chỉ dùng type + threadId để làm mới danh sách admin. */
+  on(event: "group_event", handler: (event: ZaloGroupEvent) => void): void;
   /** retryOnClose: zca-js tự kết nối lại khi socket đóng với mã Zalo cho phép thử lại. */
   start(options?: { retryOnClose?: boolean }): void;
   stop?(): void;
@@ -133,8 +149,8 @@ export type ZaloApi = {
   getAllGroups(): Promise<{ gridVerMap?: Record<string, unknown> }>;
   /** Nhận 1 id hoặc mảng id (zca-js 2.1.2 gửi cả lô trong 1 request). */
   getGroupInfo(groupId: string | string[]): Promise<{
-    changed_groups?: Record<string, { name?: string; totalMember?: number }>;
-    gridInfoMap?: Record<string, { name?: string; totalMember?: number }>;
+    changed_groups?: Record<string, ZaloGroupDetail>;
+    gridInfoMap?: Record<string, ZaloGroupDetail>;
   }>;
 };
 

@@ -111,6 +111,11 @@ class ZaloNoticeResponse(BaseModel):
     paired: bool | None = None
 
 
+# Vai trò người gửi trong nhóm do gateway lấy từ getGroupInfo (zalo-gateway/src/
+# group-roles.ts): trưởng nhóm, phó nhóm, thành viên, chưa lấy được. Giá trị lạ -> "".
+GROUP_SENDER_ROLES = ("owner", "admin", "member", "unknown")
+
+
 class ZaloGroupMessageRequest(BaseModel):
     account_id: str = Field(min_length=1)
     group_id: str = Field(min_length=1)
@@ -119,11 +124,27 @@ class ZaloGroupMessageRequest(BaseModel):
     sender_name: str = Field(default="", max_length=500)
     text: str = Field(min_length=1, max_length=20_000)
     sent_at_ms: int = Field(gt=0)
+    # Tin đang được trả lời (cắt ở QUOTE_TEXT_MAX_CHARS); gateway cũ không gửi -> "".
+    quote_text: str = ""
+    sender_role: str = ""
 
     @field_validator("text", "sender_name")
     @classmethod
     def _normalize_nfc(cls, value: str) -> str:
         return nfc(value)
+
+    @field_validator("quote_text", mode="before")
+    @classmethod
+    def _clip_quote(cls, value: object) -> str:
+        if value is None:
+            return ""
+        return nfc(str(value)).strip()[:QUOTE_TEXT_MAX_CHARS]
+
+    @field_validator("sender_role", mode="before")
+    @classmethod
+    def _known_role(cls, value: object) -> str:
+        role = str(value or "").strip().lower()
+        return role if role in GROUP_SENDER_ROLES else ""
 
 
 class ZaloGroupConfig(BaseModel):

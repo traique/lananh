@@ -11,6 +11,8 @@ channels/zalo_users.remove) qua POST /known/forget.
 
 list_groups(): mọi nhóm tài khoản bot đang tham gia (GET /groups) cho lệnh
 /nhomzalo (channels/zalo_group_list.py).
+
+refresh_groups(): báo gateway nạp lại danh sách nhóm theo dõi ngay (POST /groups/refresh).
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ _FIELDS = ("state", "connected", "controllerPaired", "stats", "queue")
 # Route control server của gateway (zalo-gateway/src/control-server.ts).
 FORGET_PATH = "/known/forget"
 GROUPS_PATH = "/groups"
+REFRESH_GROUPS_PATH = "/groups/refresh"
 # Gateway gọi Zalo getAllGroups + getGroupInfo theo lô 20 nhóm (tối đa 200 nhóm, thường
 # vài giây) và tự bỏ chờ sau 25s. Trần ngắn vì lệnh chạy trong khoá lượt, và Telegram xử
 # lý tin tuần tự: chờ lâu chặn mọi lệnh khác của chủ bot.
@@ -98,6 +101,23 @@ async def forget_sender(external_id: str) -> bool:
             response.raise_for_status()
     except httpx.HTTPError as exc:
         logger.warning("Không báo được gateway Zalo quên người gửi đã gỡ pairing: %s", exc)
+        return False
+    return True
+
+
+async def refresh_groups() -> bool:
+    """Báo gateway nạp lại danh sách nhóm theo dõi NGAY (sau /themnhom, /xoanhom,
+    /fb_themnhom... gõ từ Telegram/Zoom) thay vì chờ tới ZALO_GROUP_REFRESH_MS - tin nhóm
+    vừa thêm không bị bỏ trong lúc chờ. Best-effort: lỗi chỉ log, gateway vẫn tự nạp lại
+    theo chu kỳ."""
+    if not _enabled():
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            response = await client.post(f"{_control_base()}{REFRESH_GROUPS_PATH}")
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.info("Chưa báo được gateway Zalo nạp lại nhóm (tự nạp theo chu kỳ): %s", exc)
         return False
     return True
 

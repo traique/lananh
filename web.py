@@ -35,7 +35,7 @@ from channels import tts_media
 from ai.timeouts import turn_deadline
 from core import config, database as db, idempotency, trace, webhook_inbox
 from diagnose_router9 import main as diagnose_main
-from services import db_maintenance, market_page, morning_news, notify_hub
+from services import db_maintenance, market_page, morning_news, notify_hub, zalo_signals
 from services import action_buttons, channel_dispatch, turn_control, voice_reply
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.concurrency import OWNER_TURN_KEY, assistant_turn, cancel_turn, is_busy
@@ -174,6 +174,7 @@ async def lifespan(_: FastAPI):
         )
         logger.info("Webhook đã set tới: %s", webhook_url)
         zalo_scheduler.start()
+        zalo_signals.start()
         morning_news.start()
         market_page.start()
         db_maintenance.start()
@@ -181,6 +182,7 @@ async def lifespan(_: FastAPI):
     finally:
         logger.info("Đang tắt bot...")
         await _safe_shutdown("Zalo scheduler", zalo_scheduler.stop())
+        await _safe_shutdown("Zalo signals", zalo_signals.stop())
         await _safe_shutdown("Morning news scheduler", morning_news.stop())
         await _safe_shutdown("Market page scheduler", market_page.stop())
         await _safe_shutdown("DB maintenance", db_maintenance.stop())

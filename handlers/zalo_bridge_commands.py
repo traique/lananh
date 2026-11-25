@@ -1,5 +1,5 @@
 """Lệnh Telegram chạy trên tài khoản Zalo đang đăng nhập: quản lý/xem lại
-nhóm Zalo (/nhomzalo, /nhom, /themnhom, /xoanhom, /tongket, /dangnoi) và luồng
+nhóm Zalo (/nhomzalo, /nhom, /themnhom, /xoanhom, /tongket, /dangnoi, /tinhieu) và luồng
 Zalo → Facebook Page (/fb_*). Cùng dispatcher với Zalo/Zoom
 (channels.group_commands, channels.facebook_commands); handler ở đây chỉ suy ra
 account_id rồi chuyển tiếp."""
@@ -65,7 +65,7 @@ async def _facebook_command(
 
 # Bảng lệnh -> handler dùng chung; tạo module attribute ``<tên>_cmd`` để
 # bot_app đăng ký như trước (thay cho 20 wrapper giống hệt nhau).
-_GROUP_COMMANDS = ("nhomzalo", "nhom", "themnhom", "xoanhom", "tongket", "dangnoi")
+_GROUP_COMMANDS = ("nhomzalo", "nhom", "themnhom", "xoanhom", "tongket", "dangnoi", "tinhieu")
 _FACEBOOK_COMMANDS = (
     "fb_nhom",
     "fb_pages",

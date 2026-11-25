@@ -148,6 +148,8 @@ _HELP_ADMIN_ONLY = """Chỉ admin
   (số thứ tự lấy từ /nhomzalo; bỏ trống tên thì em đặt theo tên nhóm)
 /tongket <tên> [24h|7d|homnay|homqua] — tổng kết nhóm bằng AI; /dangnoi <tên> — xem nguyên văn hôm nay
 /tongket on|off [tên] — bật/tắt tổng kết tự động hằng ngày (bỏ trống tên = mọi nhóm)
+/tinhieu on|off [tên] [admin|tatca] — báo tín hiệu mua/bán cổ phiếu từ nhóm về Zoom + Zalo;
+  /tinhieu <mã> — ai đã gợi ý mã đó; /tinhieu help — đủ cách dùng
   (dữ liệu nhóm Zalo, dùng được từ cả Zalo lẫn Zoom)"""
 _HELP_FACEBOOK = """📣 Zalo → Facebook Page (tách riêng khỏi /tongket, chỉ admin):
 /fb_nhom — xem nhóm nguồn Facebook

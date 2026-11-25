@@ -31,6 +31,7 @@ import { loadConfig } from "./config.js";
 import { startControlServer } from "./control-server.js";
 import { FacebookPostBuffer } from "./facebook-buffer.js";
 import { FastLane } from "./fast-lane.js";
+import { GroupRoles, ROLE_EVENTS } from "./group-roles.js";
 import { collectGroups, sharedScan } from "./groups.js";
 import { TypingKeepalive, fireAndForget, withTimeout } from "./feedback.js";
 import {
@@ -115,7 +116,14 @@ const queuedReactions = new KeyedRateLimiter(15000, 256);
 const sendLock = new KeyedMutex(SEND_LOCK_MAX_WAIT_MS);
 // Ngân sách tin outbox của tài khoản theo giờ: vượt thì hoãn sang lượt poll sau.
 const outboxBudget = new SlidingWindowBudget(config.outboxMaxPerHour, 3600000);
+// Tin chữ nhóm /tongket + tín hiệu cổ phiếu: hàng đợi RIÊNG, không xếp sau việc tải ảnh
+// của nhóm nguồn Facebook (trước đây dùng chung 1 hàng nối tiếp: nhóm Facebook đăng dồn
+// ảnh làm đầy hàng và tin chữ nhóm chứng khoán bị từ chối, mất hẳn).
+const summaryQueue = new BoundedSerialQueue(256);
+// Nhóm nguồn Facebook: tải ảnh + gộp bài.
 const groupQueue = new BoundedSerialQueue(128);
+// Trưởng/phó nhóm của các nhóm đang theo dõi (lọc tín hiệu "chỉ admin nhóm" bên Python).
+const groupRoles = new GroupRoles(() => api);
 const facebookBuffer = new FacebookPostBuffer({
   store: (post) => storeFacebookGroupPost(config, post),
   enqueue: (work) => groupQueue.add(work),
@@ -385,6 +393,7 @@ async function refreshGroups(): Promise<void> {
   if (!api) return;
   try {
     allowedGroups = await fetchAllowedGroups(config);
+    groupRoles.retain(allowedGroups);
   } catch (error) {
     console.error("[zalo] summary group refresh failed", error);
   }
@@ -490,28 +499,39 @@ function handleGroupMessage(message: ZaloMessage, msg: ParsedMessage): void {
   const gid = msg.threadId;
   let sentAtMs = Number(message.data?.ts || Date.now());
   if (sentAtMs < 1e12) sentAtMs *= 1000;
-  if (allowedGroups.has(gid) && msg.text) {
-    groupQueue
-      .add(() =>
-        retry(
+  // Ảnh kèm chú thích: lưu chú thích (luồng Facebook vốn đã đọc text || caption).
+  const text = msg.text || msg.caption;
+  if (allowedGroups.has(gid) && text) {
+    summaryQueue
+      .add(async () => {
+        // Vai trò TẠI LÚC NHẮN; lấy lỗi -> "unknown" (Python không coi là admin).
+        const senderRole = await groupRoles.roleOf(gid, msg.sender);
+        await retry(
           () =>
             storeGroupMessage(config, {
               groupId: gid,
               messageId: msg.id,
               senderId: msg.sender,
               senderName: msg.senderName,
-              text: msg.text,
+              text,
               sentAtMs,
+              quoteText: msg.quoteText,
+              senderRole,
             }),
           { delaysMs: STORE_RETRY_DELAYS_MS },
-        ),
-      )
-      .catch((error) =>
+        );
+        stats.inc("group_messages");
+      })
+      .catch((error) => {
+        stats.inc("group_store_failures");
         console.error(
-          `[zalo] lưu tin nhóm ${msg.id} (nhóm ${gid}) thất bại sau ${STORE_RETRY_DELAYS_MS.length + 1} lần`,
+          `[zalo] lưu tin nhóm ${msg.id} (nhóm ${gid}) thất bại` +
+            (error instanceof QueueFullError
+              ? " - hàng đợi tin nhóm đầy"
+              : ` sau ${STORE_RETRY_DELAYS_MS.length + 1} lần`),
           error,
-        ),
-      );
+        );
+      });
   }
   if (!facebookGroups.has(gid)) return;
   const postText = msg.text || msg.caption;
@@ -865,6 +885,14 @@ async function attach(next: ZaloApi): Promise<void> {
   listener.on("message", (message) => {
     if (api === next) onMessage(message);
   });
+  // Đổi trưởng/phó nhóm: lấy lại danh sách admin ở tin kế tiếp của nhóm đó.
+  listener.on("group_event", (event) => {
+    if (api !== next) return;
+    const gid = String(event?.threadId ?? "");
+    if (gid && allowedGroups.has(gid) && ROLE_EVENTS.has(String(event?.type ?? ""))) {
+      groupRoles.invalidate(gid);
+    }
+  });
   listener.on("connected", () => {
     if (api === next) state = "connected";
     // Listener cũ tự kết nối lại sau logout: đóng ngay.
@@ -1070,6 +1098,8 @@ startControlServer(config.controlPort, {
       senders: directQueue.keys,
       batching: batcher.size,
       fastLane: fastLane.active,
+      groupStore: summaryQueue.pending,
+      groupRoles: groupRoles.size,
       outboxBudgetLeft: Number.isFinite(outboxBudget.remaining()) ? outboxBudget.remaining() : null,
     },
   }),
@@ -1083,6 +1113,13 @@ startControlServer(config.controlPort, {
   },
   // Python /nhomzalo (Telegram, Zoom, Zalo): mọi nhóm tài khoản bot đang tham gia.
   groups: async () => (api ? scanGroups() : null),
+  // Python vừa đổi danh sách nhóm theo dõi (/themnhom, /xoanhom... gõ từ Telegram/Zoom):
+  // nạp lại ngay thay vì chờ tới ZALO_GROUP_REFRESH_MS.
+  refreshGroups: async () => {
+    if (!api) return false;
+    await refreshGroups();
+    return true;
+  },
   startPairing: () => {
     if (!api) return null;
     pairing = { code: String(randomInt(100000, 1000000)), expires: Date.now() + 300000 };

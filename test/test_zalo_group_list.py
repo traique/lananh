@@ -115,6 +115,7 @@ async def test_themnhom_theo_so_thu_tu_tu_dat_ten_goi_nho(gateway, monkeypatch):
     assert saved[-1] == ("B", G4, "hoi-chay-bo")
     assert result.messages[0] == (
         f"✅ Đã thêm nhóm hoi-chay-bo — Hội Chạy Bộ ({G4}). Tổng kết: /tongket hoi-chay-bo"
+        " · Tín hiệu: /tinhieu on hoi-chay-bo"
     )
     await group_commands.maybe_handle_group_command("B", "/themnhom 3 Sale")
     assert saved[-1] == ("B", G1, "sale")

@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import asyncpg
 
-from channels import facebook_repository, zalo_group_list, zalo_repository
+from channels import facebook_repository, zalo_gateway_status, zalo_group_list, zalo_repository
 from core.envutil import env_on
 from services import facebook_caption, market_page
 from services.channel_result import ChannelResult
@@ -353,6 +353,7 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
             await facebook_repository.add_group(account_id, group_id, alias)
         except asyncpg.UniqueViolationError:
             return ChannelResult([f"Tên gợi nhớ “{alias}” đang được dùng cho nhóm Facebook khác."])
+        await zalo_gateway_status.refresh_groups()
         label = zalo_group_list.describe(group_id, name)
         return ChannelResult(
             [f"✅ Đã thêm nhóm Facebook {alias} — {label}. Không ảnh hưởng /tongket."]
@@ -366,6 +367,7 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         group_removed = await facebook_repository.remove_group(account_id, target)
         if not group_removed:
             return ChannelResult([f"Không tìm thấy nhóm Facebook “{target}”."])
+        await zalo_gateway_status.refresh_groups()
         return ChannelResult(
             [f"✅ Đã xóa nhóm Facebook {target}. Danh sách /tongket không thay đổi."]
         )
