@@ -57,6 +57,8 @@ def _signal(**kw):
 def _reset(monkeypatch):
     zs._ai_calls.clear()
     monkeypatch.setattr(zs, "_interval_cache", None)
+    monkeypatch.setattr(zs, "_stuck", None)
+    monkeypatch.setattr(zs, "_last_cleanup", None)
     for name in (
         "ZALO_SIGNAL_MAX_AI_PER_HOUR",
         "ZALO_SIGNAL_MAX_AGE_MIN",
@@ -276,6 +278,58 @@ async def test_ai_loi_thi_lan_sau_lam_lai(scan_env):
     scan_env(repo, None)
     assert await zs.scan("acc", NOW) == 0
     assert repo.cursor == 0
+
+
+async def test_lo_ai_loi_3_lan_lien_thi_bo_qua_khong_chan_tin_sau(scan_env):
+    messages = [_msg(1), _msg(2, "canh mua SSI", group_id="g2", alias="room2")]
+    repo = FakeRepo(messages)
+
+    def answer(prompt):
+        return None if "mã ứng viên: HPG" in prompt else {"signals": []}
+
+    calls = scan_env(repo, answer)
+    await zs.scan("acc", NOW)
+    await zs.scan("acc", NOW)
+    assert repo.cursor == 0, "2 lần lỗi đầu: chờ thử lại"
+    await zs.scan("acc", NOW)
+    assert repo.cursor == 2, "lần lỗi thứ 3: bỏ lô HPG, xử lý tiếp lô SSI"
+    assert sum("mã ứng viên: SSI" in c for c in calls) == 1
+
+
+async def test_ai_tra_loi_duoc_thi_xoa_dem_loi(scan_env):
+    repo = FakeRepo([_msg(1)])
+    state = {"fail": True}
+
+    def answer(prompt):
+        return None if state["fail"] else {"signals": []}
+
+    scan_env(repo, answer)
+    await zs.scan("acc", NOW)
+    assert zs._stuck == (1, 1)
+    state["fail"] = False
+    await zs.scan("acc", NOW)
+    assert zs._stuck is None and repo.cursor == 1
+
+
+async def test_don_tin_hieu_cu_ngay_luot_dau_cua_process(monkeypatch):
+    cleaned = []
+
+    async def account():
+        return "acc"
+
+    async def nothing(*args, **kwargs):
+        return 0
+
+    async def cleanup(account_id):
+        cleaned.append(account_id)
+
+    monkeypatch.setattr(zs.zalo_repository, "resolve_active_account_id", account)
+    monkeypatch.setattr(zs, "scan", nothing)
+    monkeypatch.setattr(zs, "deliver", nothing)
+    monkeypatch.setattr(zs.repo, "cleanup", cleanup)
+    await zs.run_tick()
+    await zs.run_tick()
+    assert cleaned == ["acc"], "lượt đầu dọn ngay, sau đó 24 giờ/lần"
 
 
 async def test_gom_theo_nhom_moi_lo_toi_da_chunk_tin(scan_env):

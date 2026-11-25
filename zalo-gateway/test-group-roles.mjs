@@ -81,6 +81,21 @@ test("GroupRoles: lấy lỗi -> unknown, không gọi lại trước retryMs, g
   }
 });
 
+test("GroupRoles: phản hồi thiếu creatorId lẫn adminIds -> unknown, không đoán là thành viên", async () => {
+  const warn = console.warn;
+  console.warn = () => undefined;
+  try {
+    const roles = new GroupRoles(() => fakeApi({ name: "Room", totalMember: 9 }));
+    assert.equal(await roles.roleOf(GID, "boss"), "unknown");
+    assert.equal(roles.size, 0);
+    const onlyAdmins = new GroupRoles(() => fakeApi({ adminIds: ["mod"] }));
+    assert.equal(await onlyAdmins.roleOf(GID, "mod"), "admin");
+    assert.equal(await onlyAdmins.roleOf(GID, "x"), "member");
+  } finally {
+    console.warn = warn;
+  }
+});
+
 test("GroupRoles: Zalo chưa kết nối -> unknown; chưa trả kịp thì không chặn quá timeout", async () => {
   const offline = new GroupRoles(() => null);
   assert.equal(await offline.roleOf(GID, "boss"), "unknown");

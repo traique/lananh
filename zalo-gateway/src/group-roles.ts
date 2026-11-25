@@ -135,6 +135,11 @@ export class GroupRoles {
       const info = await client.getGroupInfo(groupId);
       const detail = info?.gridInfoMap?.[groupId] || info?.changed_groups?.[groupId];
       if (!detail) throw new Error("getGroupInfo không trả thông tin nhóm");
+      // Thiếu hẳn cả 2 trường (phản hồi rút gọn): coi như chưa lấy được, không suy ra
+      // "mọi người là thành viên" rồi lặng lẽ bỏ tin của admin.
+      if (detail.creatorId == null && !Array.isArray(detail.adminIds)) {
+        throw new Error("getGroupInfo không có creatorId/adminIds");
+      }
       const owner = detail.creatorId == null ? "" : String(detail.creatorId);
       const admins = new Set(
         (Array.isArray(detail.adminIds) ? detail.adminIds : [])

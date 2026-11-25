@@ -1282,9 +1282,9 @@ thành viên; `/tinhieu nguoi` thêm "chuyên gia" không làm admin vào chế 
    trong tin; câu trích phải là nguyên văn (không thì lấy đầu tin gốc). Người nêu, nhóm,
    giờ lấy từ tin gốc, không từ AI. Tin nhóm được rào như dữ liệu ngoài (`core.untrusted`).
 
-Hết lượt AI hoặc AI lỗi thì con trỏ dừng ở tin chưa xử lý, lượt sau làm tiếp; tin cũ hơn
-`ZALO_SIGNAL_MAX_AGE_MIN` phút (mặc định 120) thì bỏ. Lần đầu bật bot bắt đầu từ tin mới
-nhất, không quét lại lịch sử.
+Hết lượt AI hoặc AI lỗi thì con trỏ dừng ở tin chưa xử lý, lượt sau làm tiếp (một lô lỗi 3
+lần liền thì bỏ lô đó để không chặn tin phía sau); tin cũ hơn `ZALO_SIGNAL_MAX_AGE_MIN` phút
+(mặc định 120) thì bỏ. Lần đầu bật bot bắt đầu từ tin mới nhất, không quét lại lịch sử.
 
 **Gửi.** 1 người - 1 mã - 1 hướng - 1 loại chỉ báo 1 lần mỗi ngày. Mỗi lượt quét gộp tối
 đa 8 tín hiệu thành 1 tin cho mỗi kênh, qua `notify_hub` nguồn `zalo_signal` (URGENT: gửi

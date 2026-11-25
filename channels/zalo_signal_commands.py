@@ -60,9 +60,7 @@ def _now() -> datetime:
 
 async def _signals(account_id: str, spec: str, symbol: str | None = None):
     start, end, label = _window(spec, _now())
-    rows = await repo.signals_since(account_id, start, symbol=symbol, limit=60)
-    if end is not None:
-        rows = [row for row in rows if row.sent_at < end]
+    rows = await repo.signals_since(account_id, start, end=end, symbol=symbol, limit=60)
     return rows, label
 
 
@@ -201,19 +199,16 @@ def _role(role: str) -> str:
     return f" ({label})" if label else ""
 
 
-async def _resolve_group(account_id: str, target: str):
-    group = await zalo_repository.resolve_group(account_id, target)
-    if group is None:
-        return None, ChannelResult([f"Không tìm thấy nhóm “{target}” trong danh sách /nhom."])
-    return group, None
+def _no_group(target: str) -> ChannelResult:
+    return ChannelResult([f"Không tìm thấy nhóm “{target}” trong danh sách /nhom."])
 
 
 async def _add_person(account_id: str, args: list[str]) -> ChannelResult:
     if len(args) < 2:
         return ChannelResult(["Cú pháp: /tinhieu nguoi <nhóm> <tên hoặc id người gửi>"])
-    group, error = await _resolve_group(account_id, args[0])
-    if error:
-        return error
+    group = await zalo_repository.resolve_group(account_id, args[0])
+    if group is None:
+        return _no_group(args[0])
     group_id, alias = group
     query = " ".join(args[1:]).strip()
     senders = [
@@ -244,9 +239,9 @@ async def _add_person(account_id: str, args: list[str]) -> ChannelResult:
 async def _remove_person(account_id: str, args: list[str]) -> ChannelResult:
     if len(args) < 2:
         return ChannelResult(["Cú pháp: /tinhieu bonguoi <nhóm> <tên hoặc id>"])
-    group, error = await _resolve_group(account_id, args[0])
-    if error:
-        return error
+    group = await zalo_repository.resolve_group(account_id, args[0])
+    if group is None:
+        return _no_group(args[0])
     group_id, alias = group
     query = " ".join(args[1:]).strip()
     people = (await repo.list_people(account_id)).get(group_id) or {}

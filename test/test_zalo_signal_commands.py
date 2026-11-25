@@ -64,7 +64,7 @@ class FakeRepo:
         self.removed.append((group_id, sender_id))
         return True
 
-    async def signals_since(self, account_id, start, *, symbol=None, limit=30):
+    async def signals_since(self, account_id, start, *, end=None, symbol=None, limit=30):
         return [s for s in self.signals if symbol in (None, s.symbol)]
 
     async def top_symbols(self, account_id, start, limit=10):

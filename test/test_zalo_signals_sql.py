@@ -62,8 +62,11 @@ async def test_che_do_quet_tin_moi_va_nguoi_theo_doi(delivery_db):
     await repo.save_cursor("acc", upto)
     assert await repo.load_cursor("acc") == upto
 
+    await _store("m4", "mem", "thêm 1 tin", role="member", minute=3)
     senders = await repo.recent_senders("acc", "g1", days=3650)
-    assert {(s[0], s[2]) for s in senders} == {("boss", "owner"), ("mem", "member")}
+    assert [(s[0], s[2], s[3]) for s in senders] == [("mem", "member", 2), ("boss", "owner", 1)]
+    top_one = await repo.recent_senders("acc", "g1", days=3650, limit=1)
+    assert [s[0] for s in top_one] == ["mem"], "nhắn nhiều trước"
     await repo.add_person("acc", "g1", "mem", "Tên mem")
     await repo.add_person("acc", "g1", "mem", "Tên mới")
     assert await repo.list_people("acc") == {"g1": {"mem": "Tên mới"}}
@@ -116,6 +119,9 @@ async def test_luu_tin_hieu_chong_trung_nhan_gui_nguyen_tu(delivery_db):
 
     found = await repo.signals_since("acc", datetime(2026, 1, 1, tzinfo=timezone.utc), symbol="HPG")
     assert len(found) == 3
+    cutoff = datetime(2026, 11, 25, 3, 0, tzinfo=timezone.utc)
+    before = await repo.signals_since("acc", datetime(2026, 1, 1, tzinfo=timezone.utc), end=cutoff)
+    assert before == [], "end loại tín hiệu từ mốc đó trở đi (homqua)"
     assert (
         await repo.signals_since("acc", datetime(2026, 1, 1, tzinfo=timezone.utc), symbol="SSI")
         == []

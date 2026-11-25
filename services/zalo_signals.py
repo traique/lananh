@@ -73,6 +73,7 @@ _NOTIFY_MAX_AGE_HOURS = 6
 _POLL_SEC = 20
 _INTERVAL_CACHE_SEC = 60
 _CLEANUP_EVERY_SEC = 24 * 3600
+_MAX_CHUNK_FAILURES = 3
 
 ACTIONS = ("buy", "sell")
 KINDS = ("recommend", "self")
@@ -101,7 +102,12 @@ _NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
 
 _ai_calls: deque[float] = deque()
 _interval_cache: tuple[float, int] | None = None
-_last_cleanup = 0.0
+# None = chưa dọn lần nào trong process này (monotonic tính từ lúc máy khởi động: so với
+# 0.0 thì container mới bật chưa đủ 24h sẽ không bao giờ dọn).
+_last_cleanup: float | None = None
+# Lô AI lỗi liên tiếp: (row_id tin đầu lô, số lần). Lô lỗi _MAX_CHUNK_FAILURES lần liền
+# thì bỏ qua để 1 lô "độc" (provider luôn từ chối) không chặn mọi tin phía sau.
+_stuck: tuple[int, int] | None = None
 _task: asyncio.Task | None = None
 
 
@@ -362,9 +368,12 @@ def validate(items: list, chunk: list[Candidate]) -> list[Found]:
     for item in items:
         if not isinstance(item, dict):
             continue
+        raw_index = item.get("n")
+        if isinstance(raw_index, bool) or not isinstance(raw_index, (int, str)):
+            continue
         try:
-            index = int(item.get("n"))
-        except (TypeError, ValueError):
+            index = int(raw_index)
+        except ValueError:
             continue
         if not 1 <= index <= len(chunk):
             continue
@@ -415,16 +424,39 @@ def _chunks(candidates: list[Candidate]) -> list[list[Candidate]]:
     return sorted(chunks, key=lambda chunk: chunk[0].message.row_id)
 
 
+def _chunk_failed(row_id: int) -> bool:
+    """Ghi 1 lần AI lỗi cho lô bắt đầu ở ``row_id``; True = đã lỗi đủ số lần, bỏ lô."""
+    global _stuck
+    count = _stuck[1] + 1 if _stuck and _stuck[0] == row_id else 1
+    if count >= _MAX_CHUNK_FAILURES:
+        _stuck = None
+        return True
+    _stuck = (row_id, count)
+    return False
+
+
 async def _process(account_id: str, candidates: list[Candidate]) -> tuple[int, int | None]:
     """(số tín hiệu mới, row_id tin đầu tiên CHƯA xử lý được nếu phải dừng)."""
+    global _stuck
     saved = 0
     for chunk in _chunks(candidates):
+        first = chunk[0].message.row_id
         if not _take_ai_budget():
             logger.info("zalo_signals: hết %d lượt AI/giờ, để lượt sau.", max_ai_per_hour())
-            return saved, chunk[0].message.row_id
+            return saved, first
         items = await _ask_ai(build_prompt(chunk[0].message.alias, chunk))
         if items is None:
-            return saved, chunk[0].message.row_id
+            if not _chunk_failed(first):
+                return saved, first
+            logger.warning(
+                "zalo_signals: AI lỗi %d lần liền với lô %d tin từ tin #%d, bỏ qua lô này.",
+                _MAX_CHUNK_FAILURES,
+                len(chunk),
+                first,
+            )
+            continue
+        if _stuck and _stuck[0] == first:
+            _stuck = None
         for item in validate(items, chunk):
             message = item.candidate.message
             new_id = await repo.save_signal(
@@ -624,7 +656,7 @@ async def run_tick(now: datetime | None = None) -> tuple[int, int]:
     account_id = await zalo_repository.resolve_active_account_id()
     saved = await scan(account_id, now)
     sent = await deliver(account_id)
-    if time.monotonic() - _last_cleanup >= _CLEANUP_EVERY_SEC:
+    if _last_cleanup is None or time.monotonic() - _last_cleanup >= _CLEANUP_EVERY_SEC:
         _last_cleanup = time.monotonic()
         await repo.cleanup(account_id)
     if saved or sent:

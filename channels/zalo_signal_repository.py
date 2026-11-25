@@ -145,15 +145,19 @@ async def list_people(account_id: str) -> dict[str, dict[str, str]]:
 
 
 async def recent_senders(account_id: str, group_id: str, days: int = 30, limit: int = 300):
-    """Người đã nhắn trong nhóm gần đây: (sender_id, tên mới nhất, vai trò mới nhất, số tin)."""
+    """Người đã nhắn trong nhóm gần đây, nhắn nhiều trước:
+    (sender_id, tên mới nhất, vai trò mới nhất, số tin)."""
     rows = await (await _pool()).fetch(
         """
-        SELECT DISTINCT ON (sender_id) sender_id, sender_name, sender_role,
-               count(*) OVER (PARTITION BY sender_id) AS total
-        FROM zalo_group_messages
-        WHERE account_id = $1 AND group_id = $2
-          AND sent_at >= now() - ($3::integer * INTERVAL '1 day')
-        ORDER BY sender_id, sent_at DESC
+        SELECT sender_id, sender_name, sender_role, total FROM (
+            SELECT DISTINCT ON (sender_id) sender_id, sender_name, sender_role,
+                   count(*) OVER (PARTITION BY sender_id) AS total
+            FROM zalo_group_messages
+            WHERE account_id = $1 AND group_id = $2
+              AND sent_at >= now() - ($3::integer * INTERVAL '1 day')
+            ORDER BY sender_id, sent_at DESC
+        ) latest
+        ORDER BY total DESC, sender_id
         LIMIT $4
         """,
         account_id,
@@ -358,18 +362,26 @@ async def release(ids: list[int], channel: str) -> None:
 
 
 async def signals_since(
-    account_id: str, start: datetime, *, symbol: str | None = None, limit: int = 30
+    account_id: str,
+    start: datetime,
+    *,
+    end: datetime | None = None,
+    symbol: str | None = None,
+    limit: int = 30,
 ) -> list[Signal]:
-    """Tín hiệu từ ``start`` (mới nhất trước), lọc theo mã nếu có."""
+    """Tín hiệu trong [start, end) (end None = tới giờ), mới nhất trước, lọc theo mã."""
     rows = await (await _pool()).fetch(
         _SIGNAL_SELECT
         + """
-        WHERE s.account_id = $1 AND s.sent_at >= $2 AND ($3::text IS NULL OR s.symbol = $3)
+        WHERE s.account_id = $1 AND s.sent_at >= $2
+          AND ($3::timestamptz IS NULL OR s.sent_at < $3)
+          AND ($4::text IS NULL OR s.symbol = $4)
         ORDER BY s.sent_at DESC, s.id DESC
-        LIMIT $4
+        LIMIT $5
         """,
         account_id,
         start,
+        end,
         symbol,
         limit,
     )
