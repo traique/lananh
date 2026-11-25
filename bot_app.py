@@ -69,8 +69,8 @@ logger = logging.getLogger(__name__)
 # Mô tả MỌI lệnh Telegram (tối đa 100 như giới hạn setMyCommands) - tài liệu/test. Menu
 # thật (COMMANDS bên dưới) chỉ còn ~18 lệnh hay dùng: người dùng cứ nhắn tự nhiên
 # (services/nl_commands.py), bỏ khỏi MENU không có nghĩa là bỏ lệnh - handler vẫn
-# đăng ký đủ trong build_application(). /userouter9 và /app (đã chạm trần 100) không có
-# trong danh sách này.
+# đăng ký đủ trong build_application(). /userouter9, /app và /tinhieu (đã chạm trần 100)
+# không có trong danh sách này.
 ALL_COMMANDS = [
     BotCommand("start", "Bắt đầu"),
     BotCommand("help", "Hướng dẫn ngắn; /help all xem đủ lệnh"),
@@ -386,6 +386,7 @@ def build_application():
         ("xoanhom", zalo_bridge_commands.xoanhom_cmd),
         ("tongket", zalo_bridge_commands.tongket_cmd),
         ("dangnoi", zalo_bridge_commands.dangnoi_cmd),
+        ("tinhieu", zalo_bridge_commands.tinhieu_cmd),
         ("fb_nhom", zalo_bridge_commands.fb_nhom_cmd),
         ("fb_pages", zalo_bridge_commands.fb_pages_cmd),
         ("fb_market", zalo_bridge_commands.fb_market_cmd),

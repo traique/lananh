@@ -596,6 +596,8 @@ async def group_message(
         sender_name=payload.sender_name,
         text=payload.text,
         sent_at_ms=payload.sent_at_ms,
+        quote_text=payload.quote_text,
+        sender_role=payload.sender_role,
     )
     return Response(status_code=204)
 

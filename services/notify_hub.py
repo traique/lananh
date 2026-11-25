@@ -33,6 +33,9 @@ routine                NORMAL  Kết quả tác vụ định kỳ (services/rout
                                tổng hợp hẹn giờ như bản tin sáng.
 release                URGENT  Báo chủ bot đã lên bản mới sau deploy
                                (services/release_notes.py) - giờ yên lặng thì giữ.
+zalo_signal            URGENT  Tín hiệu mua/bán cổ phiếu từ nhóm Zalo
+                               (services/zalo_signals.py) tới Zoom + Zalo chủ bot;
+                               giờ yên lặng thì giữ.
 =====================  ======  =================================================
 
 Không qua hub (gửi như cũ): nhắc việc (trên), câu hỏi cấp quyền người Zalo lạ (kèm
@@ -125,6 +128,7 @@ SOURCES: dict[str, SourceSpec] = {
     "background_job": SourceSpec("Kết quả việc nền", URGENT),
     "routine": SourceSpec("Tác vụ định kỳ", NORMAL, digest=True),
     "release": SourceSpec("Bản mới đã lên", URGENT),
+    "zalo_signal": SourceSpec("Tín hiệu cổ phiếu nhóm Zalo", URGENT),
 }
 _DIGEST_SOURCES = [name for name, spec in SOURCES.items() if spec.digest]
 

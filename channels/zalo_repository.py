@@ -143,9 +143,10 @@ async def save_group_message(**values) -> bool:
     result = await (await db.get_pool()).execute(
         """
         INSERT INTO zalo_group_messages (
-            account_id, group_id, message_id, sender_id, sender_name, content, sent_at
+            account_id, group_id, message_id, sender_id, sender_name, content, sent_at,
+            quote_text, sender_role
         )
-        SELECT $1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0)
+        SELECT $1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0), $8, $9
         WHERE EXISTS (
             SELECT 1 FROM zalo_groups WHERE account_id = $1 AND group_id = $2
         )
@@ -158,6 +159,8 @@ async def save_group_message(**values) -> bool:
         values["sender_name"][:500],
         values["text"],
         values["sent_at_ms"],
+        (values.get("quote_text") or "")[:600],
+        values.get("sender_role") or "",
     )
     return result == "INSERT 0 1"
 
@@ -172,7 +175,7 @@ async def get_group_messages(
     await ensure_schema()
     return await (await db.get_pool()).fetch(
         """
-        SELECT sender_id, sender_name, content, sent_at
+        SELECT sender_id, sender_name, content, sent_at, quote_text
         FROM zalo_group_messages
         WHERE account_id = $1 AND group_id = $2
           AND sent_at >= $3 AND sent_at < $4

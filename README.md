@@ -1229,9 +1229,86 @@ danh sách được giữ 60 phút (setting `zalo:group_pick:<account_id>`) đ�
 bỏ trống alias thì bot đặt theo tên nhóm bỏ dấu (`Gia Đình Nhỏ` → `gia-dinh-nho`),
 nhóm đã theo dõi thì giữ alias cũ.
 
-Đối với allowlist `/tongket`, gateway chỉ lưu text mới, không backfill, không
-lưu media nhóm và không trả lời trong nhóm. Luồng Facebook bên dưới có allowlist
-riêng và tải media riêng.
+Đối với allowlist `/tongket`, gateway chỉ lưu text mới (kể cả chú thích của ảnh), không
+backfill, không lưu media nhóm và không trả lời trong nhóm. Mỗi tin lưu kèm chữ của tin
+được trả lời (reply, tối đa 600 ký tự - `/tongket`, `/dangnoi` hiện dạng `(↪ trả lời: "...")`)
+và vai trò người gửi tại lúc nhắn (trưởng nhóm / phó nhóm / thành viên, xem mục tín hiệu
+bên dưới). Tin chữ nhóm đi hàng đợi riêng (256 việc), không xếp sau việc tải ảnh của nhóm
+nguồn Facebook; `/admin` có bộ đếm `group_messages`, `group_store_failures`. Thêm/xoá
+nhóm từ Telegram/Zoom (`/themnhom`, `/xoanhom`, `/fb_themnhom`, `/fb_xoanhom`) báo gateway
+nạp lại danh sách ngay (`POST /groups/refresh`), không chờ `ZALO_GROUP_REFRESH_MS`.
+Luồng Facebook bên dưới có allowlist riêng và tải media riêng.
+
+### Tín hiệu mua/bán cổ phiếu từ nhóm Zalo (`/tinhieu`)
+
+Đọc tin các nhóm chứng khoán đang theo dõi, nhận ra ai gợi ý mua/bán mã nào ở nhóm nào,
+rồi báo chủ bot qua **Zoom và Zalo** khoảng 2-3 phút sau khi có tin
+(`services/zalo_signals.py`, `channels/zalo_signal_commands.py`, migration 031).
+
+```text
+/tinhieu                         tình trạng + tín hiệu hôm nay
+/tinhieu on [nhóm] [admin|tatca] bật quét (mặc định chỉ trưởng/phó nhóm; bỏ trống = mọi nhóm)
+/tinhieu off [nhóm]              tắt quét
+/tinhieu nhom                    chế độ từng nhóm + người theo dõi thêm
+/tinhieu nguoi <nhóm> <tên|id>   theo dõi thêm 1 người không phải admin (tên không dấu được)
+/tinhieu bonguoi <nhóm> <tên|id> bỏ người đó
+/tinhieu <mã> [homnay|7d|30d]    ai đã nói mua/bán mã đó, ở nhóm nào
+/tinhieu top [homnay|7d|30d]     mã được nhiều người khác nhau nói nhất
+/tinhieu homnay|homqua|7d        danh sách tín hiệu
+/tinhieu nhip <phút>             nhịp quét 1-60 phút (mặc định 2; chậm thì đặt 30)
+```
+
+Nhóm phải được theo dõi trước bằng `/themnhom`. Dùng được từ Telegram, Zoom và Zalo
+(admin), cùng quyền với `/tongket`. Telegram đã đủ 100 lệnh menu nên `/tinhieu` không có
+trong menu gợi ý nhưng gõ vẫn chạy.
+
+**Lọc admin nhóm.** Gateway lấy trưởng nhóm (`creatorId`) và phó nhóm (`adminIds`) bằng
+`getGroupInfo` (bot không cần là admin), giữ trong RAM tối đa 200 nhóm, làm mới 30 phút/lần
+và ngay khi Zalo báo đổi admin (`zalo-gateway/src/group-roles.ts`). Vai trò được lưu kèm
+từng tin TẠI LÚC NHẮN. Chưa lấy được danh sách admin thì vai trò là "unknown" và tin đó
+không được báo ở chế độ `admin` (không báo nhầm tin thành viên). Chế độ `tatca` nhận mọi
+thành viên; `/tinhieu nguoi` thêm "chuyên gia" không làm admin vào chế độ `admin`.
+
+**Ba lớp lọc, chống AI bịa:**
+
+1. Code (không tốn AI): tin của người được theo dõi, có từ khoá mua/bán (mua, gom, múc,
+   giải ngân, canh mua, bán, chốt lời, cắt lỗ, target...) VÀ có mã đang niêm yết (danh sách
+   VCI cache 24h). Tin không có mã thì lấy mã từ tin được trả lời ("múc được" trả lời
+   "HPG thế nào?").
+2. AI trả JSON (`utility_json`: Groq trước, Gemini dự phòng), gom tối đa 8 tin/lượt theo
+   nhóm, trần `ZALO_SIGNAL_MAX_AI_PER_HOUR` lượt/giờ. Phân loại mua/bán và gợi ý cho nhóm /
+   tự báo đã mua-bán; bỏ câu hỏi, tin tức, nhận định chung, giả định, quảng cáo môi giới.
+3. Code kiểm lại: mã phải là mã ứng viên của chính tin đó; giá chỉ giữ khi mọi con số có
+   trong tin; câu trích phải là nguyên văn (không thì lấy đầu tin gốc). Người nêu, nhóm,
+   giờ lấy từ tin gốc, không từ AI. Tin nhóm được rào như dữ liệu ngoài (`core.untrusted`).
+
+Hết lượt AI hoặc AI lỗi thì con trỏ dừng ở tin chưa xử lý, lượt sau làm tiếp (một lô lỗi 3
+lần liền thì bỏ lô đó để không chặn tin phía sau); tin cũ hơn `ZALO_SIGNAL_MAX_AGE_MIN` phút
+(mặc định 120) thì bỏ. Lần đầu bật bot bắt đầu từ tin mới nhất, không quét lại lịch sử.
+
+**Gửi.** 1 người - 1 mã - 1 hướng - 1 loại chỉ báo 1 lần mỗi ngày, kể cả khi người đó nói ở
+nhiều nhóm (cùng lượt thì gộp 1 dòng ghi các nhóm; đã báo từ nhóm khác thì không báo lại -
+`/tinhieu <mã>` và `top` vẫn đếm đủ từng nhóm). Mỗi lượt quét gộp tối
+đa 8 tín hiệu thành 1 tin cho mỗi kênh, qua `notify_hub` nguồn `zalo_signal` (URGENT: gửi
+ngay, trong giờ yên lặng thì giữ tới sáng):
+
+- Zoom: jid đã ghép đôi; Zoom tắt hoặc chưa ghép đôi thì về Telegram.
+- Zalo: tài khoản Zalo chủ bot (controller), tôn trọng `/yenlang` riêng của tài khoản đó.
+
+Mỗi kênh đánh dấu đã giao riêng, nhận nguyên tử (2 instance chạy chồng lúc deploy không
+gửi đôi); gửi lỗi thì thử lại trong 6 giờ. Tin báo ghi người nêu + vai trò, nhóm, giờ,
+vùng mua/mục tiêu/cắt lỗ nếu có, câu trích, "🔥 N người ở M nhóm cùng nói mua X" khi từ 2
+người, "⭐ đang có trong danh mục", và dòng miễn trừ: đây là ý kiến thành viên nhóm, không
+phải khuyến nghị của Lan Anh (bot không chấm điểm hay đổi tín hiệu; phân tích của bot vẫn
+do `stock/policy.py` quyết định khi gõ lệnh phân tích).
+
+Biến môi trường (đều có mặc định): `ZALO_SIGNALS` (0 = tắt hẳn), `ZALO_SIGNAL_INTERVAL_MIN`
+(2), `ZALO_SIGNAL_MAX_AI_PER_HOUR` (30), `ZALO_SIGNAL_MAX_AGE_MIN` (120),
+`ZALO_SIGNAL_CHANNELS` (`zoom,zalo`), `ZALO_SIGNAL_RETENTION_DAYS` (90).
+
+Giới hạn: không đọc chữ trong ảnh biểu đồ (chỉ đọc chú thích); tin chỉ có giá mà không có
+mã (mã nằm ở tin trước đó, không phải tin được trả lời) thì bỏ qua; tin đến lúc gateway
+mất kết nối không được lấy lại.
 
 ### Zalo → Facebook Page (độc lập `/tongket`)
 
@@ -1539,6 +1616,7 @@ Telegram chỉ còn 18 lệnh hay dùng; mọi lệnh khác vẫn gõ được.
 | `/tongket <alias> [24h\|7d\|homnay\|homqua]` | Tổng kết nhóm Zalo (AI) |
 | `/tongket on\|off [alias]` | Bật/tắt tổng kết tự động hằng ngày (bỏ trống = mọi nhóm; `/nhom` hiện 🔔/🔕) |
 | `/dangnoi <alias>` | Xem nguyên văn thảo luận nhóm Zalo hôm nay |
+| `/tinhieu [mã\|on\|off\|top\|nguoi\|nhip]` | Tín hiệu mua/bán cổ phiếu từ nhóm Zalo, gửi Zoom + Zalo |
 | `/fb_nhom` | Xem danh sách nhóm Zalo làm nguồn đăng Facebook |
 | `/fb_pages` | Xem các Facebook Page đã cấu hình (`/fb_ok` đăng lên tất cả) |
 | `/fb_themnhom <số\|group_id> [alias]` | Thêm nhóm vào luồng Zalo → Facebook, độc lập `/tongket` |

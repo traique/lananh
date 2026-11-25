@@ -12,16 +12,20 @@ export class QueueFullError extends Error {
 
 export class BoundedSerialQueue {
   private tail: Promise<void> = Promise.resolve();
-  private pending = 0;
+  private count = 0;
   constructor(private readonly capacity: number) {}
+  /** Số việc đang chờ hoặc đang chạy. */
+  get pending(): number {
+    return this.count;
+  }
   add(work: () => Promise<unknown>): Promise<void> {
-    if (this.pending >= this.capacity) return Promise.reject(new QueueFullError("global"));
-    this.pending++;
+    if (this.count >= this.capacity) return Promise.reject(new QueueFullError("global"));
+    this.count++;
     const job = this.tail
       .then(work)
       .then(() => undefined)
       .finally(() => {
-        this.pending--;
+        this.count--;
       });
     this.tail = job.catch(() => undefined);
     return job;

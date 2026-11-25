@@ -127,11 +127,23 @@ def _header(alias: str, start: datetime, end: datetime, count: int) -> str:
     )
 
 
+# Trích tin được trả lời trong bản ghi: đủ để biết "mã này" là mã nào, không phình prompt.
+_QUOTE_IN_TRANSCRIPT = 160
+
+
 def _transcript(rows) -> list[str]:
-    return [
-        f"[{sent_at.astimezone(VN_TZ).strftime('%d/%m %H:%M')}] {sender_name or sender_id}: {content}"
-        for sender_id, sender_name, content, sent_at in rows
-    ]
+    """Mỗi tin 1 dòng; tin trả lời tin khác kèm đoạn đầu tin đó (cột quote_text, có thể
+    không có ở dữ liệu giả lập 4 cột)."""
+    lines = []
+    for row in rows:
+        sender_id, sender_name, content, sent_at = row[0], row[1], row[2], row[3]
+        quote = (row[4] if len(row) > 4 else "") or ""
+        line = f"[{sent_at.astimezone(VN_TZ).strftime('%d/%m %H:%M')}] {sender_name or sender_id}: {content}"
+        if quote.strip():
+            snippet = " ".join(quote.split())[:_QUOTE_IN_TRANSCRIPT]
+            line += f' (↪ trả lời: "{snippet}")'
+        lines.append(line)
+    return lines
 
 
 def _chunks(lines: list[str]) -> list[str]:

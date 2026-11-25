@@ -17,6 +17,10 @@ export type IncomingGroupMessage = {
   senderName: string;
   text: string;
   sentAtMs: number;
+  /** Chữ tin được trả lời (reply) - câu "mã này múc được" cần nó để biết mã nào. */
+  quoteText?: string;
+  /** Vai trò người gửi lúc nhắn (group-roles.ts): owner | admin | member | unknown. */
+  senderRole?: string;
 };
 export type IncomingFacebookPost = {
   groupId: string;
@@ -329,6 +333,8 @@ export async function storeGroupMessage(c: GatewayConfig, m: IncomingGroupMessag
         sender_name: m.senderName,
         text: m.text,
         sent_at_ms: m.sentAtMs,
+        quote_text: m.quoteText || "",
+        sender_role: m.senderRole || "",
       }),
       signal: AbortSignal.timeout(SHORT_TIMEOUT_MS),
     }),

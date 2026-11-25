@@ -11,6 +11,23 @@ Quy ước:
 - Tăng Y khi có tính năng mới, Z khi chỉ sửa lỗi, X khi thay đổi lớn làm đổi cách dùng cũ.
 - Các bản 0.x được đánh số lại sau, gom theo các PR đã merge (#1 - #46).
 
+## 1.5.0 - 2026-11-25
+
+- Tín hiệu cổ phiếu từ nhóm Zalo: em đọc các nhóm chứng khoán đang theo dõi, thấy ai gợi ý
+  mua/bán mã nào (kể cả tự báo đã mua, đã bán, chốt lời, cắt lỗ) thì báo về Zoom và Zalo
+  sau khoảng 2-3 phút, kèm tên người nói, nhóm, giờ, vùng giá và câu nguyên văn.
+- Mặc định chỉ theo dõi trưởng nhóm và phó nhóm. Bật bằng `/tinhieu on <nhóm>`, nhận mọi
+  thành viên thì thêm `tatca`, theo dõi thêm một người không phải admin bằng
+  `/tinhieu nguoi <nhóm> <tên>`.
+- `/tinhieu HPG` xem ai đã nói về HPG, ở nhóm nào; `/tinhieu top` xem mã được nhiều người
+  nói nhất; `/tinhieu nhip 30` đổi sang quét 30 phút một lần.
+- Tin báo có dòng "🔥" khi nhiều người cùng nói một mã trong ngày và "⭐" khi mã đang có
+  trong danh mục. Đây là ý kiến thành viên nhóm, không phải khuyến nghị của em.
+- Tổng kết nhóm và `/dangnoi` hiểu được tin trả lời: câu "mã này múc được" giờ kèm tin được
+  trả lời. Chú thích của ảnh trong nhóm cũng được lưu.
+- Nhóm Facebook đăng dồn ảnh không còn làm mất tin chữ của nhóm chứng khoán.
+- Thêm nhóm từ Telegram hoặc Zoom có hiệu lực ngay, không phải chờ tới 1 phút.
+
 ## 1.4.1 - 2026-11-24
 
 - Tra được mã CEO (C.E.O Group, sàn HNX): "CEO", "giá CEO", "phân tích CEO", "CEO hôm nay

@@ -37,6 +37,10 @@ export const STAT_KEYS = [
   /** Tin thoại trả lời /noi đã gửi (voice.ts) / gửi không được. */
   "voice_replies",
   "voice_reply_failures",
+  /** Tin nhóm (/tongket, tín hiệu cổ phiếu) đã lưu sang Python. */
+  "group_messages",
+  /** Tin nhóm không lưu được: hàng đợi đầy hoặc Python lỗi sau mọi lần thử. */
+  "group_store_failures",
 ] as const;
 
 export type StatKey = (typeof STAT_KEYS)[number];

@@ -9,7 +9,7 @@ handlers/zalo_bridge_commands.py)."""
 
 import asyncpg
 
-from channels import zalo_group_list, zalo_repository
+from channels import zalo_gateway_status, zalo_group_list, zalo_repository, zalo_signal_commands
 from channels.zalo_summary import resolve_window, summarize_group, today_discussion
 from services.channel_result import ChannelResult
 
@@ -90,8 +90,11 @@ async def maybe_handle_group_command(account_id: str, text: str) -> ChannelResul
             await zalo_repository.add_group(account_id, group_id, alias)
         except asyncpg.UniqueViolationError:
             return ChannelResult([f"Tên gợi nhớ “{alias}” đang được dùng cho nhóm khác."])
+        await zalo_gateway_status.refresh_groups()
         # /tongket <nhóm> chỉ đọc 1 từ: chỉ gợi ý khi tên gợi nhớ là 1 từ.
-        hint = "" if " " in alias else f" Tổng kết: /tongket {alias}"
+        hint = (
+            "" if " " in alias else f" Tổng kết: /tongket {alias} · Tín hiệu: /tinhieu on {alias}"
+        )
         label = zalo_group_list.describe(group_id, name)
         return ChannelResult([f"✅ Đã thêm nhóm {alias} — {label}.{hint}"])
 
@@ -103,6 +106,7 @@ async def maybe_handle_group_command(account_id: str, text: str) -> ChannelResul
         removed = await zalo_repository.remove_group(account_id, target)
         if not removed:
             return ChannelResult([f"Không tìm thấy nhóm “{target}”."])
+        await zalo_gateway_status.refresh_groups()
         return ChannelResult([f"✅ Đã ngừng theo dõi và xóa dữ liệu đã lưu của nhóm {target}."])
 
     if command == "/tongket":
@@ -124,6 +128,9 @@ async def maybe_handle_group_command(account_id: str, text: str) -> ChannelResul
             return ChannelResult([content])
         except ValueError as exc:
             return ChannelResult([str(exc)])
+
+    if command == "/tinhieu":
+        return await zalo_signal_commands.handle(account_id, raw)
 
     if command == "/dangnoi":
         parts = raw.split(maxsplit=1)
