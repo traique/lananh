@@ -60,7 +60,7 @@ async def test_reminder_gui_that_bai_duoc_release_de_thu_lai(monkeypatch):
     monkeypatch.setattr(idempotency, "release_reminder_claim", fake_release)
     scheduler.set_notify_callback(failing_callback)
 
-    await scheduler._process_due_reminders([(101, 1, "uống thuốc")])
+    assert await scheduler._process_due_reminders([(101, 1, "uống thuốc")]) == 1
 
     assert mark_calls == []
     assert release_calls == [101]
@@ -103,7 +103,7 @@ async def test_reminder_nhieu_reminder_doc_lap_nhau(monkeypatch):
     monkeypatch.setattr(idempotency, "release_reminder_claim", fake_release)
     scheduler.set_notify_callback(flaky_callback)
 
-    await scheduler._process_due_reminders(
+    released = await scheduler._process_due_reminders(
         [
             (1, 1, "binh thuong 1"),
             (2, 1, "loi"),
@@ -111,8 +111,13 @@ async def test_reminder_nhieu_reminder_doc_lap_nhau(monkeypatch):
         ]
     )
 
+    assert released == 1
     assert mark_calls == [1, 3]
     assert release_calls == [2]
+
+
+async def _due_now(lease=None):
+    return 0.0
 
 
 @pytest.mark.asyncio
@@ -139,7 +144,8 @@ async def test_dong_lech_cot_chi_bo_qua_dong_do(monkeypatch, caplog):
 async def test_vong_nhac_song_sot_loi_bat_ngo(monkeypatch):
     """Claim lỗi, dòng lệch cột, lỗi bất ngờ khi xử lý: task nhắc việc vẫn sống và
     gửi được nhắc ở lượt sau."""
-    monkeypatch.setattr(scheduler.config, "REMINDER_CHECK_INTERVAL_SEC", 0)
+    monkeypatch.setattr(scheduler, "_interval", lambda: 0.01)
+    monkeypatch.setattr(scheduler, "_seconds_until_next_due", _due_now)
     batches = [
         RuntimeError("supabase chập chờn"),
         [("không", "phải", "dòng", "nhắc", 1, 2, 3, 4, 5, 6, 7)],
@@ -211,6 +217,143 @@ async def test_watchdog_chay_lai_vong_nhac_da_chet(monkeypatch):
     assert scheduler.revive_reminder_loop() is None
     monkeypatch.setattr(scheduler, "_reminder_task", None)
     assert scheduler.revive_reminder_loop() is None
+
+
+# ─── Vòng nhắc: ngủ tới lần đến hạn kế tiếp, thức khi đặt/hoãn nhắc ─────────
+
+
+@pytest.fixture
+def next_due(monkeypatch):
+    """Giờ tới nhắc kế tiếp (giả) + claim/giao giả; ghi lại số lần claim."""
+    state = {"wait": None, "claims": 0, "due": [], "released": 0, "checks": 0}
+
+    async def seconds_until_next_due(lease=None):
+        state["checks"] += 1
+        value = state["wait"]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def claim(**kwargs):
+        state["claims"] += 1
+        assert kwargs == {"limit": scheduler._CLAIM_LIMIT, "lease": scheduler._CLAIM_LEASE}
+        return state["due"]
+
+    async def process(due):
+        return state["released"]
+
+    monkeypatch.setattr(scheduler, "_seconds_until_next_due", seconds_until_next_due)
+    monkeypatch.setattr(idempotency, "claim_due_reminders", claim)
+    monkeypatch.setattr(scheduler, "_process_due_reminders", process)
+    monkeypatch.setattr(scheduler.config, "REMINDER_CHECK_INTERVAL_SEC", 30)
+    return state
+
+
+@pytest.mark.asyncio
+async def test_luot_nhac_ngu_toi_lan_den_han_ke_tiep(next_due):
+    # Không còn nhắc nào chờ: ngủ trọn nhịp kiểm tra, không claim.
+    assert await scheduler._reminder_pass() == 30
+    # Nhắc kế tiếp sau 12,5 s: ngủ đúng chừng đó (gửi đúng giờ, không trễ tới 30 s).
+    next_due["wait"] = 12.5
+    assert await scheduler._reminder_pass() == 12.5
+    # Còn lâu (1 giờ): nhịp kiểm tra tối đa là lưới an toàn.
+    next_due["wait"] = 3600.0
+    assert await scheduler._reminder_pass() == 30
+    assert next_due["claims"] == 0
+
+
+@pytest.mark.asyncio
+async def test_luot_nhac_toi_han_thi_claim_roi_kiem_tra_lai_ngay(next_due):
+    next_due["wait"] = -2.0
+    next_due["due"] = [(1, 1, "uống thuốc")]
+    assert await scheduler._reminder_pass() == 0.0
+    assert next_due["claims"] == 1
+    # Giao lỗi đã nhả claim: chờ 1 nhịp rồi mới thử lại, không quay vòng gấp.
+    next_due["released"] = 1
+    assert await scheduler._reminder_pass() == 30
+    # DB báo có nhắc nhưng claim không lấy được (instance khác đang claim): chờ 1 nhịp.
+    next_due["released"] = 0
+    next_due["due"] = []
+    assert await scheduler._reminder_pass() == 30
+    # Đọc DB lỗi: log, chờ 1 nhịp.
+    next_due["wait"] = ConnectionError("db down")
+    assert await scheduler._reminder_pass() == 30
+
+
+@pytest.mark.asyncio
+async def test_dat_nhac_moi_danh_thuc_vong_nhac(next_due, monkeypatch):
+    monkeypatch.setattr(scheduler, "_wake_event", asyncio.Event())
+    checked = asyncio.Event()
+
+    async def seconds_until_next_due(lease=None):
+        next_due["checks"] += 1
+        checked.set()
+        return None  # không có nhắc: lẽ ra ngủ trọn 30 s
+
+    monkeypatch.setattr(scheduler, "_seconds_until_next_due", seconds_until_next_due)
+    task = asyncio.create_task(scheduler._reminder_loop())
+    try:
+        await asyncio.wait_for(checked.wait(), 1)
+        checked.clear()
+        await asyncio.sleep(0.01)
+        assert next_due["checks"] == 1
+        scheduler.wake()
+        await asyncio.wait_for(checked.wait(), 1)
+        assert next_due["checks"] == 2
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_danh_thuc_trong_luc_dang_kiem_tra_khong_bi_mat(next_due, monkeypatch):
+    """Nhắc được ghi + wake() TRONG LÚC lượt kiểm tra đang đọc DB (đọc trước khi dòng
+    mới commit nên không thấy): vòng không được ngủ trọn nhịp mà phải kiểm tra lại."""
+    monkeypatch.setattr(scheduler, "_wake_event", asyncio.Event())
+    second = asyncio.Event()
+
+    async def seconds_until_next_due(lease=None):
+        next_due["checks"] += 1
+        if next_due["checks"] == 1:
+            scheduler.wake()  # reminder_service.create chạy xen giữa lúc đang đọc
+            return None
+        second.set()
+        return None
+
+    monkeypatch.setattr(scheduler, "_seconds_until_next_due", seconds_until_next_due)
+    task = asyncio.create_task(scheduler._reminder_loop())
+    try:
+        await asyncio.wait_for(second.wait(), 1)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_wake_khi_chua_start_khong_loi(monkeypatch):
+    monkeypatch.setattr(scheduler, "_wake_event", None)
+    scheduler.wake()
+
+
+@pytest.mark.asyncio
+async def test_start_stop_tao_va_bo_co_danh_thuc(monkeypatch):
+    async def idle_loop():
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(scheduler, "_reminder_loop", idle_loop)
+    monkeypatch.setattr(scheduler.config, "ENABLE_DAILY_DIGEST", False)
+    monkeypatch.setattr(scheduler, "_reminder_task", None)
+    scheduler.start(0)
+    assert isinstance(scheduler._wake_event, asyncio.Event)
+    await scheduler.stop()
+    assert scheduler._wake_event is None and scheduler._reminder_task is None
+
+
+def test_gio_ngu_toi_da_co_san(monkeypatch):
+    monkeypatch.setattr(scheduler.config, "REMINDER_CHECK_INTERVAL_SEC", 0)
+    assert scheduler._interval() == scheduler._MIN_INTERVAL_SEC
+    monkeypatch.setattr(scheduler.config, "REMINDER_CHECK_INTERVAL_SEC", 300)
+    assert scheduler._interval() == 300
 
 
 # ─── Daily digest: guard "đã gửi hôm nay" + gửi bù khi lỡ giờ ───────────────

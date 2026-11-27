@@ -210,6 +210,22 @@ async def test_nhac_hoan_doi_gio(fake):
 
 
 @pytest.mark.asyncio
+async def test_dat_va_hoan_nhac_danh_thuc_vong_nhac(fake, monkeypatch):
+    """Vòng nhắc ngủ tới lần đến hạn kế tiếp: đặt nhắc mới (1 lần/lặp) và dời giờ
+    phải đánh thức nó (SAU khi đã ghi DB) để nhắc "sau 1 phút" gửi đúng giờ."""
+    woke: list[int] = []
+    monkeypatch.setattr(scheduler, "wake", lambda: woke.append(len(fake.rows)))
+    await reminder_commands.nhac(1, "8h tối mai gọi mẹ")
+    assert woke == [1]  # dòng nhắc đã ghi trước khi đánh thức
+    await reminder_commands.nhac(1, "7h sáng mỗi ngày uống thuốc")
+    assert woke == [1, 2]
+    await reminder_commands.nhac(1, "hoan 1 30p")
+    assert len(woke) == 3
+    await reminder_commands.nhac(1, "hoan 99 30p")  # không tìm thấy: không đánh thức
+    assert len(woke) == 3
+
+
+@pytest.mark.asyncio
 async def test_nhac_chu_dau_trung_huy_hoan_khi_bo_dau_van_dat_nhac(fake):
     """bỏ/bố, Huy, đổi/đợi bỏ dấu trùng lệnh huỷ/hoãn: vẫn là đặt nhắc mới, không
     huỷ/dời nhầm 1 nhắc khác."""
