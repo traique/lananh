@@ -7,8 +7,9 @@ mọi dòng log của 1 câu trả lời), và handler gom lỗi theo chữ ký
 (services/error_digest.py: báo chủ bot lỗi mới + tổng hợp hằng ngày; tắt bằng
 ERROR_DIGEST_ENABLED=0).
 
-Ghi log qua hàng đợi (LOG_QUEUE_ENABLED, mặc định bật): khi tiến trình chưa ai cấu
-hình logging (uvicorn chạy web.py, main.py), handler ghi stderr của basicConfig
+Ghi log qua hàng đợi (mặc định; ``configure_logging(use_queue=False)`` để ghi đồng
+bộ): khi tiến trình chưa ai cấu hình logging (uvicorn chạy web.py, main.py), handler
+ghi stderr của basicConfig
 được dời ra sau 1 QueueListener (luồng riêng); root chỉ còn 1 QueueHandler - event
 loop không bao giờ chờ ghi stderr (pipe supervisord nghẽn = cả bot đứng). Mã lượt
 gắn và secret được che Ở LUỒNG GỬI, trên chuỗi đã format (gồm cả traceback), trước
@@ -207,10 +208,6 @@ def add_redacted_secret(value: str) -> None:
         _active_filter.add_secret(value)
 
 
-def _queue_enabled() -> bool:
-    return os.getenv("LOG_QUEUE_ENABLED", "1").strip() != "0"
-
-
 def _start_queue(root: logging.Logger, turn_filter: logging.Filter) -> None:
     """Dời handler hiện có của root (stderr của basicConfig) ra sau QueueListener."""
     global _listener, _queue_handler, _atexit_registered
@@ -246,7 +243,9 @@ def stop_logging() -> None:
             pass
 
 
-def configure_logging() -> None:
+def configure_logging(*, use_queue: bool = True) -> None:
+    """``use_queue=False``: ghi stderr đồng bộ trên luồng gọi như trước (script/CLI
+    muốn chắc từng dòng đã ra trước khi thoát bất thường)."""
     global _active_filter
     root = logging.getLogger()
     # Chưa ai gắn handler vào root (uvicorn/python chạy web.py, main.py): logging do
@@ -266,7 +265,7 @@ def configure_logging() -> None:
     # Mã lượt (core/trace.py) gắn cùng chỗ: format trên dùng %(turn_tag)s nên
     # filter này phải chạy trên MỌI handler gốc (luôn đặt giá trị mặc định).
     turn_filter = trace.TurnIdFilter()
-    if fresh and _queue_enabled():
+    if fresh and use_queue:
         # QueueHandler che secret trong prepare() (cả traceback), gắn mã lượt ở luồng gửi.
         _start_queue(root, turn_filter)
     else:

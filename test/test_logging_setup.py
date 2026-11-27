@@ -29,7 +29,6 @@ def _fresh_root(monkeypatch):
     gắn handler bắt log của nó vào root sau khi fixture chạy) và trả lại đúng các
     handler đó sau test; dọn luồng ghi."""
     monkeypatch.setenv("ERROR_DIGEST_ENABLED", "0")
-    monkeypatch.delenv("LOG_QUEUE_ENABLED", raising=False)
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
     root.handlers.clear()
@@ -145,10 +144,9 @@ def test_configure_logging_goi_lai_khong_tao_them_luong(monkeypatch):
         assert len(filters) == 1 and isinstance(filters[0], trace.TurnIdFilter)
 
 
-def test_tat_hang_doi_bang_env_thi_ghi_dong_bo_nhu_cu(monkeypatch):
+def test_khong_dung_hang_doi_thi_ghi_dong_bo_nhu_cu(monkeypatch):
     with _fresh_root(monkeypatch) as root:
-        monkeypatch.setenv("LOG_QUEUE_ENABLED", "0")
-        logging_setup.configure_logging()
+        logging_setup.configure_logging(use_queue=False)
         handlers = root.handlers
         assert len(handlers) == 1 and not isinstance(handlers[0], logging_setup._QueueHandler)
         assert any(isinstance(f, logging_setup._RedactFilter) for f in handlers[0].filters)
