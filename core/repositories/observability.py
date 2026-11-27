@@ -4,6 +4,7 @@
   lượt gọi của 1 lượt trả lời (mã lượt core/trace.py), số lượt/token đã dùng trong
   cửa sổ quota của từng provider (services/quota_burn.py).
 - turn_metrics: 1 dòng/lượt (chờ khoá, chờ slot, gom ngữ cảnh, LLM, gửi tin).
+- user_calls: chuỗi thời gian lượt gọi AI cho biểu đồ trang admin.
 
 Mọi truy vấn đều có cửa sổ thời gian + LIMIT, đi theo index sẵn có
 (idx_provider_calls_provider, idx_provider_calls_turn, idx_turn_metrics_created).
@@ -141,3 +142,25 @@ async def burn_since(pool: Any, providers: list[str], since: datetime) -> list[d
         since,
     )
     return [dict(row) for row in rows]
+
+
+_TIMELINE_BUCKETS = ("hour", "day")
+
+
+async def calls_timeline(pool: Any, since_hours: int, bucket: str) -> list[Any]:
+    """Số lượt gọi AI (bảng user_calls) trong ``since_hours`` giờ qua, gom theo giờ/ngày
+    giờ VN - biểu đồ trang admin (web_admin.py điền 0 cho mốc trống). ``bucket`` được
+    chèn thẳng vào SQL nên chỉ nhận "hour" | "day"."""
+    if bucket not in _TIMELINE_BUCKETS:
+        raise ValueError(f"bucket không hợp lệ: {bucket!r}")
+    return await pool.fetch(
+        f"""
+        SELECT date_trunc('{bucket}', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS bucket,
+               COUNT(*) AS calls
+        FROM user_calls
+        WHERE created_at >= now() - ($1 || ' hours')::interval
+        GROUP BY 1
+        ORDER BY 1
+        """,
+        str(since_hours),
+    )

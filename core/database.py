@@ -664,6 +664,15 @@ async def provider_calls_for_turn(turn_id: str, limit: int = 50) -> list[dict]:
 
 
 @_with_reconnect
+async def user_calls_timeline(since_hours: int, bucket: str) -> list[dict]:
+    """Lượt gọi AI theo giờ/ngày (giờ VN) cho biểu đồ /admin; bucket "hour" | "day"."""
+    from core.repositories import observability
+
+    rows = await observability.calls_timeline(await get_pool(), since_hours, bucket)
+    return [dict(row) for row in rows]
+
+
+@_with_reconnect
 async def provider_burn_since(providers: list[str], since: datetime) -> list[dict]:
     """Lượt/token/credit đã dùng từ ``since`` (services/quota_burn.py)."""
     from core.repositories import observability

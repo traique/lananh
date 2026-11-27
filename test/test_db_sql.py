@@ -152,6 +152,25 @@ async def test_don_cache_idempotency_theo_lo(delivery_db):
 
 
 @pytest.mark.asyncio
+async def test_bieu_do_luot_goi_admin_theo_gio_va_ngay(delivery_db):
+    from core.repositories import observability
+
+    await delivery_db.execute(
+        """INSERT INTO user_calls (channel, telegram_user_id, kind, created_at) VALUES
+        ('telegram', 1, 'chat', now() - interval '30 minutes'),
+        ('telegram', 1, 'chat', now() - interval '40 minutes'),
+        ('zalo', -5, 'chat', now() - interval '3 days'),
+        ('zalo', -5, 'chat', now() - interval '30 days')"""
+    )
+    hourly = await db.user_calls_timeline(24, "hour")
+    assert sum(r["calls"] for r in hourly) == 2 and len(hourly) <= 2
+    daily = await db.user_calls_timeline(24 * 7, "day")
+    assert sum(r["calls"] for r in daily) == 3
+    with pytest.raises(ValueError):
+        await observability.calls_timeline(delivery_db, 24, "hour'); DROP TABLE user_calls; --")
+
+
+@pytest.mark.asyncio
 async def test_insert_nhieu_dong_1_cau_unnest(delivery_db):
     from datetime import datetime, timedelta, timezone
 
