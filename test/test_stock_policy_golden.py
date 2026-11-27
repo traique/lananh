@@ -15,7 +15,6 @@ Tạo lại file golden (CHỈ khi cố ý đổi hành vi): ``python test/test_
 
 import dataclasses
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -26,60 +25,18 @@ from stock import features as feat  # noqa: E402
 from stock import policy as pol  # noqa: E402
 from stock.validation import DataQuality  # noqa: E402
 from test_stock_policy import (  # noqa: E402
+    _breakout_inputs,
     _closes_downtrend,
     _closes_flat,
+    _closes_pullback,
     _closes_uptrend,
     _make_inputs,
+    _with_resistance,
 )
+from test_stock_policy import _pullback_buy_inputs as _pullback_buy  # noqa: E402
 
 GOLDEN_PATH = Path(__file__).resolve().parent / "data" / "stock_policy_golden.json"
 
-
-def _pullback(n=120, base=40_000.0, slope=150.0, dip_bars=2, dip=0.01, wiggle=900.0):
-    """Xu hướng tăng có nhịp lắc, 2 phiên cuối điều chỉnh nhẹ (setup pullback)."""
-    closes = [base + i * slope + wiggle * math.sin(i / 3.0) for i in range(n)]
-    for k in range(dip_bars):
-        closes[n - dip_bars + k] = closes[n - dip_bars - 1] * (1 - dip * (k + 1))
-    return closes
-
-
-def _breakout(n=120):
-    """Đỉnh cũ ~60.000, tích luỹ quanh 51.000, phiên cuối vượt kênh Donchian."""
-    closes = []
-    for i in range(n):
-        if i < 60:
-            closes.append(45_000.0 + i * 250)
-        elif i < 75:
-            closes.append(60_000.0 - (i - 60) * 600)
-        else:
-            closes.append(51_000 + 800 * math.sin(i / 2.0))
-    closes[-1] = 54_000.0
-    return closes
-
-
-def _with_resistance(inputs, factor):
-    """Đặt kháng cự thật (đỉnh 30 phiên trước) ở price x factor; None = không có."""
-    p = inputs.price
-    sr = inputs.support_resistance
-    level = round(p * factor) if factor else None
-    inputs.support_resistance = feat.SupportResistance(
-        sr.support,
-        level,
-        sr.dist_to_support,
-        sr.dist_to_resistance,
-        resistance_prior=level,
-        support_prior=sr.support_prior,
-    )
-    return inputs
-
-
-_VOLUME_CONFIRM = feat.Liquidity(
-    avg_volume_20=500_000,
-    current_volume=800_000,
-    liquidity_ratio_pct=160.0,
-    volume_percentile=90.0,
-    is_thin=False,
-)
 _THIN = feat.Liquidity(
     avg_volume_20=5_000,
     current_volume=4_000,
@@ -87,20 +44,6 @@ _THIN = feat.Liquidity(
     volume_percentile=20.0,
     is_thin=True,
 )
-
-
-def _pullback_buy(exchange="HOSE", **kwargs):
-    inputs = _with_resistance(_make_inputs(_pullback(), relative_strength=8.0, **kwargs), 1.12)
-    inputs.exchange = exchange
-    return inputs
-
-
-def _breakout_inputs(factor=1.12, session=None):
-    inputs = _make_inputs(
-        _breakout(), relative_strength=8.0, liquidity=_VOLUME_CONFIRM, session=session
-    )
-    inputs.exchange = "HOSE"
-    return _with_resistance(inputs, factor)
 
 
 def _holding(inputs):
@@ -165,12 +108,12 @@ def _scenarios():
         ("pullback_buy_news_neg", lambda: _pullback_buy(news_impact=-1.0), {}),
         (
             "pullback_close_resistance",
-            lambda: _make_inputs(_pullback(), relative_strength=8.0),
+            lambda: _make_inputs(_closes_pullback(), relative_strength=8.0),
             {},
         ),
         (
             "pullback_no_resistance",
-            lambda: _with_resistance(_make_inputs(_pullback(), relative_strength=8.0), None),
+            lambda: _with_resistance(_make_inputs(_closes_pullback(), relative_strength=8.0), None),
             {},
         ),
         ("pullback_stale", lambda: _stale(_pullback_buy()), {}),

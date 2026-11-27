@@ -44,8 +44,9 @@ class PolicyParams:
     min_rr_ratio: float = 1.5
     # >= N ngày phân phối / 25 phiên -> ép risk_off (chuẩn O'Neil)
     distribution_day_threshold: int = 4
-    # Ước lượng "sát trần" cho HOSE (trần 7%) - với HNX/UPCoM (trần 10%) ngưỡng
-    # này phạt sớm một chút; chấp nhận được vì chỉ là cảnh báo T+2.5.
+    # "Sát trần" tính theo HOSE (biên độ 7%); sàn khác quy đổi theo biên độ của
+    # sàn đó (HNX 10% -> ~7,86%, UPCOM 15% -> ~11,79%), xem _band_scale. Chưa rõ
+    # sàn thì dùng nguyên mức HOSE. near_floor_pct bên dưới quy đổi y hệt.
     near_ceiling_pct: float = 5.5
     near_ceiling_strength_penalty: float = 0.15
     # B2: sizing theo % NAV
@@ -373,8 +374,17 @@ class _SessionFlags:
     reasons: list[str]
 
 
+def _band_scale(exchange: str | None) -> float:
+    """Hệ số quy đổi ngưỡng tính theo biên độ HOSE (7%) sang sàn của mã: HNX
+    10/7, UPCOM 15/7. Chưa rõ sàn -> 1 (giữ mức HOSE như trước)."""
+    band = feat.price_band_pct(exchange)
+    return band / feat.HOSE_PRICE_BAND_PCT if band else 1.0
+
+
 def _evaluate_session(
-    session: feat.SessionMetrics | None, enhanced: feat.EnhancedIndicators | None
+    session: feat.SessionMetrics | None,
+    enhanced: feat.EnhancedIndicators | None,
+    exchange: str | None = None,
 ) -> _SessionFlags:
     """Nhận diện phiên rủi ro cao để chặn BUY sai. Với cổ phiếu Việt Nam,
     volume bùng nổ trong phiên giảm mạnh/đóng sát đáy thường là phân phối
@@ -386,8 +396,10 @@ def _evaluate_session(
 
     # Ngưỡng session risk (port từ session-risk guardrail cũ, giờ là 1 phần của
     # Gate C thay vì hậu xử lý action sau khi đã quyết định) - xem PolicyParams.
+    # "Gần sàn" theo biên độ của chính sàn: -6% là gần sàn HOSE (7%) nhưng chỉ
+    # là phiên giảm mạnh với UPCOM (15%).
     is_selloff = session.daily_change_pct <= PARAMS.selloff_pct
-    is_near_floor_like = session.daily_change_pct <= PARAMS.near_floor_pct
+    is_near_floor_like = session.daily_change_pct <= PARAMS.near_floor_pct * _band_scale(exchange)
     is_close_near_low = (
         session.close_position_pct <= PARAMS.close_near_low_pct and session.daily_change_pct < 0
     )
@@ -501,7 +513,8 @@ def _detect_setup(
             reasons.append("breakout khỏi kênh Donchian 20 phiên nhưng volume chưa xác nhận rõ")
         if bias.direction == "bullish":
             strength += 0.1
-        if inputs.session is not None and inputs.session.daily_change_pct > _NEAR_CEILING_PCT:
+        near_ceiling = _NEAR_CEILING_PCT * _band_scale(inputs.exchange)
+        if inputs.session is not None and inputs.session.daily_change_pct > near_ceiling:
             strength -= _NEAR_CEILING_STRENGTH_PENALTY
             reasons.append(
                 "mua đuổi phiên tăng sát trần: hàng về T+2.5, nếu breakout fail sẽ không kịp thoát"
@@ -891,7 +904,7 @@ def evaluate_policy(inputs: PolicyInputs) -> Decision:
             data_quality=quality.status,
         )
 
-    session_flags = _evaluate_session(inputs.session, inputs.enhanced)
+    session_flags = _evaluate_session(inputs.session, inputs.enhanced, inputs.exchange)
     bias = _classify_bias(inputs)
     setup_type, setup_strength, setup_reasons = _detect_setup(inputs, bias, session_flags)
     confidence = _compute_confidence(inputs, bias, setup_strength, regime)

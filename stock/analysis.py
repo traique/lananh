@@ -702,17 +702,19 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
     # dưới đây tạo series MỚI (dataclasses.replace) - object gốc đang nằm
     # trong cache 90s của providers, mutate sẽ làm các lượt phân tích kế
     # tiếp nhận luôn chuỗi/cờ đã đổi mà không kiểm lại.
-    audit = price_adjust.audit_series(symbol, symbol_series.source, symbol_series.closes, symbol_series.dates)
+    # Ngưỡng gap "nghi ngờ" theo biên độ của sàn (HOSE 9,1% / HNX 13% / UPCOM
+    # 19,5%; chưa rõ sàn 12%) - một phiên trần UPCOM hợp lệ không phải gap quyền.
+    audit = price_adjust.audit_series(symbol, symbol_series.source, symbol_series.closes, symbol_series.dates, exchange=exchange)
     if audit.gaps:
         logger.warning("Chuỗi giá %s (nguồn %s) có %d gap nghi điều chỉnh giá", symbol, symbol_series.source, len(audit.gaps))
     adjustment_note = audit.note
     events_applied = 0
     # Điều chỉnh cổ tức tiền/sự kiện cổ phiếu cho MỌI chuỗi (không chỉ khi có
-    # gap >= 12%): cổ tức 3-6% là trường hợp phổ biến nhất và trước đây bị bỏ qua.
+    # gap vượt biên độ): cổ tức 3-6% là trường hợp phổ biến nhất và trước đây bị bỏ qua.
     if symbol_series.closes:
         outcome = await corporate_actions.adjust_with_corporate_actions(
             symbol, symbol_series.closes, symbol_series.highs, symbol_series.lows, symbol_series.dates,
-            symbol_series.volumes,
+            symbol_series.volumes, exchange=exchange,
         )
         if outcome.events_applied:
             events_applied = outcome.events_applied
@@ -725,7 +727,7 @@ async def build_context(symbol: str, *, user_id: int | None = None, is_holding: 
     # Gap còn lại SAU điều chỉnh = gap chưa giải thích được. Chỉ coi là "đã
     # điều chỉnh" khi đã áp sự kiện VÀ không còn gap nào (trước đây chỉ cần
     # note bắt đầu bằng "ℹ️" là gắn is_adjusted=True dù vẫn còn gap).
-    remaining_gaps = price_adjust.detect_price_gaps(symbol_series.closes, symbol_series.dates)
+    remaining_gaps = price_adjust.detect_price_gaps(symbol_series.closes, symbol_series.dates, exchange=exchange)
     if events_applied and not remaining_gaps:
         is_adjusted = True
     elif any(gap.level == "certain" for gap in remaining_gaps):

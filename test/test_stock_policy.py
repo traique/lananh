@@ -4,6 +4,7 @@ risk-off, tín hiệu mâu thuẫn, R:R kém, thanh khoản thấp...) để ki�
 Decision cuối cùng có hợp lý không, thay vì chỉ test từng hàm biệt lập.
 """
 
+import math
 import sys
 from pathlib import Path
 
@@ -90,6 +91,71 @@ def _make_inputs(
         vnindex_multi_tf=vnindex_multi_tf,
         vnindex_adx=vnindex_adx,
     )
+
+
+def _closes_pullback(n=120, base=40_000.0, slope=150.0, dip_bars=2, dip=0.01, wiggle=900.0):
+    """Xu hướng tăng có nhịp lắc, 2 phiên cuối điều chỉnh nhẹ (setup pullback)."""
+    closes = [base + i * slope + wiggle * math.sin(i / 3.0) for i in range(n)]
+    for k in range(dip_bars):
+        closes[n - dip_bars + k] = closes[n - dip_bars - 1] * (1 - dip * (k + 1))
+    return closes
+
+
+def _closes_breakout(n=120):
+    """Đỉnh cũ ~60.000, tích luỹ quanh 51.000, phiên cuối vượt kênh Donchian."""
+    closes = []
+    for i in range(n):
+        if i < 60:
+            closes.append(45_000.0 + i * 250)
+        elif i < 75:
+            closes.append(60_000.0 - (i - 60) * 600)
+        else:
+            closes.append(51_000 + 800 * math.sin(i / 2.0))
+    closes[-1] = 54_000.0
+    return closes
+
+
+def _with_resistance(inputs, factor):
+    """Đặt kháng cự thật (đỉnh 30 phiên trước) ở price x factor; None = không có."""
+    p = inputs.price
+    sr = inputs.support_resistance
+    level = round(p * factor) if factor else None
+    inputs.support_resistance = feat.SupportResistance(
+        sr.support,
+        level,
+        sr.dist_to_support,
+        sr.dist_to_resistance,
+        resistance_prior=level,
+        support_prior=sr.support_prior,
+    )
+    return inputs
+
+
+VOLUME_CONFIRM = feat.Liquidity(
+    avg_volume_20=500_000,
+    current_volume=800_000,
+    liquidity_ratio_pct=160.0,
+    volume_percentile=90.0,
+    is_thin=False,
+)
+
+
+def _pullback_buy_inputs(exchange="HOSE", **kwargs):
+    """Setup pullback đủ điều kiện BUY (kháng cự thật cách giá 12%)."""
+    inputs = _with_resistance(
+        _make_inputs(_closes_pullback(), relative_strength=8.0, **kwargs), 1.12
+    )
+    inputs.exchange = exchange
+    return inputs
+
+
+def _breakout_inputs(factor=1.12, session=None, exchange="HOSE"):
+    """Breakout Donchian có volume xác nhận; factor=None: không có kháng cự thật."""
+    inputs = _make_inputs(
+        _closes_breakout(), relative_strength=8.0, liquidity=VOLUME_CONFIRM, session=session
+    )
+    inputs.exchange = exchange
+    return _with_resistance(inputs, factor)
 
 
 # ─── Gate B: data quality ────────────────────────────────────────────────────
@@ -499,3 +565,58 @@ def test_build_trade_plan_size_mult_giam_ty_trong():
     )
     assert full is not None and reduced is not None
     assert reduced.position_size_pct < full.position_size_pct
+
+
+# ─── Ngưỡng sát trần/gần sàn theo biên độ của sàn (HOSE 7%, HNX 10%, UPCOM 15%) ─
+
+
+def test_band_scale_giu_nguyen_muc_hose_va_quy_doi_hnx_upcom():
+    assert pol._band_scale("HOSE") == 1.0 and pol._band_scale(None) == 1.0
+    assert pol._band_scale("hsx") == 1.0
+    assert pol._band_scale("HNX") == 10.0 / 7.0
+    assert pol._band_scale("UPCOM") == 15.0 / 7.0
+
+
+def test_gan_san_tinh_theo_bien_do_cua_san():
+    drop = feat.SessionMetrics(
+        daily_change_pct=-6.5, close_position_pct=40.0, volume_ratio_pct=100.0
+    )
+    # HOSE (sàn -7%) và chưa rõ sàn: -6,5% là gần sàn -> chặn mua mới.
+    assert pol._evaluate_session(drop, None, "HOSE").is_near_floor_like
+    assert pol._evaluate_session(drop, None, None).hard_no_buy
+    # HNX (sàn -10%, ngưỡng ~-8,57%) / UPCOM (sàn -15%, ~-12,86%): chỉ là phiên giảm mạnh.
+    for exchange in ("HNX", "UPCOM"):
+        flags = pol._evaluate_session(drop, None, exchange)
+        assert not flags.is_near_floor_like and not flags.hard_no_buy
+        assert flags.is_selloff
+    deep = feat.SessionMetrics(
+        daily_change_pct=-9.0, close_position_pct=40.0, volume_ratio_pct=100.0
+    )
+    assert pol._evaluate_session(deep, None, "HNX").is_near_floor_like
+    assert not pol._evaluate_session(deep, None, "UPCOM").is_near_floor_like
+
+
+def test_phien_giam_manh_upcom_khong_bi_chan_mua_nhu_gan_san_hose():
+    drop = feat.SessionMetrics(
+        daily_change_pct=-6.5, close_position_pct=40.0, volume_ratio_pct=100.0
+    )
+    hose = pol.evaluate_policy(_pullback_buy_inputs("HOSE", session=drop))
+    upcom = pol.evaluate_policy(_pullback_buy_inputs("UPCOM", session=drop))
+    assert hose.action == "WATCH" and any("gần sàn" in r for r in hose.reasons)
+    assert upcom.action == "BUY" and not any("gần sàn" in r for r in upcom.reasons)
+
+
+def test_sat_tran_tinh_theo_bien_do_cua_san():
+    up6 = feat.SessionMetrics(daily_change_pct=6.0, close_position_pct=90.0, volume_ratio_pct=160.0)
+    hose = pol.evaluate_policy(_breakout_inputs(session=up6, exchange="HOSE"))
+    hnx = pol.evaluate_policy(_breakout_inputs(session=up6, exchange="HNX"))
+    plain = pol.evaluate_policy(_breakout_inputs(session=None, exchange="HNX"))
+    # +6% sát trần HOSE (5,5%) -> phạt strength; với HNX (~7,86%) thì chưa.
+    assert any("sát trần" in r for r in hose.reasons)
+    assert not any("sát trần" in r for r in hnx.reasons)
+    assert hose.confidence < hnx.confidence == plain.confidence
+    up12 = feat.SessionMetrics(
+        daily_change_pct=12.0, close_position_pct=90.0, volume_ratio_pct=160.0
+    )
+    upcom = pol.evaluate_policy(_breakout_inputs(session=up12, exchange="UPCOM"))
+    assert any("sát trần" in r for r in upcom.reasons)

@@ -40,6 +40,23 @@ def round_order_price(v: float, exchange: str | None = None) -> float:
     return round(v / tick) * tick
 
 
+# Biên độ dao động giá tối đa một phiên (% so với giá tham chiếu) theo sàn. Phiên
+# chào sàn/giao dịch trở lại sau tạm ngừng dài có biên độ riêng rộng hơn (20-40%).
+HOSE_PRICE_BAND_PCT = 7.0
+_PRICE_BAND_PCT = {
+    "HOSE": HOSE_PRICE_BAND_PCT,
+    "HSX": HOSE_PRICE_BAND_PCT,
+    "HNX": 10.0,
+    "UPCOM": 15.0,
+}
+
+
+def price_band_pct(exchange: str | None) -> float | None:
+    """Biên độ giá một phiên (%) của sàn: HOSE 7, HNX 10, UPCOM 15; None khi chưa
+    biết sàn (caller tự chọn mức dự phòng)."""
+    return _PRICE_BAND_PCT.get((exchange or "").strip().upper().replace(" ", ""))
+
+
 def calc_relative_strength(
     symbol_closes: list[float],
     benchmark_closes: list[float],

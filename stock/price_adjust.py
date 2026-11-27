@@ -24,12 +24,28 @@ liệu và bật PolicyInputs.unadjusted_gap (policy không ra tín hiệu đị
 
 from dataclasses import dataclass
 
+from stock import features as feat
 from stock import report_format as rfmt
 
 # Gap trong khoảng này: có thể là trần/sàn liên tiếp thật, cũng có thể là GDKHQ.
+# Mức này chỉ dùng khi CHƯA biết sàn; biết sàn thì dùng suspect_gap_pct(exchange).
 SUSPECT_GAP_PCT = 12.0
 # Vượt mức này thì không còn cách giải thích nào khác ngoài corporate action.
 CERTAIN_GAP_PCT = 25.0
+# Ngưỡng nghi ngờ theo sàn = biên độ x 1,3: biên độ tính trên GIÁ THAM CHIẾU (HNX/UPCOM
+# là giá bình quân phiên trước, không phải giá đóng cửa) nên close-to-close có thể
+# nhỉnh hơn biên độ một chút. HOSE 7% -> 9,1; HNX 10% -> 13; UPCOM 15% -> 19,5. Trước
+# đây mọi sàn dùng chung 12%: một phiên trần UPCOM hợp lệ (+14%) bị coi là gap chưa điều
+# chỉnh và policy đứng ngoài (confidence 0) suốt ~3 tháng cửa sổ chỉ báo.
+_SUSPECT_BAND_MULT = 1.3
+
+
+def suspect_gap_pct(exchange: str | None) -> float:
+    """Ngưỡng gap "nghi ngờ" (%) theo sàn; chưa rõ sàn -> SUSPECT_GAP_PCT như cũ."""
+    band = feat.price_band_pct(exchange)
+    return round(band * _SUSPECT_BAND_MULT, 2) if band else SUSPECT_GAP_PCT
+
+
 _RATIO_TOLERANCE_PCT = 1.5
 _MAX_GAPS_IN_NOTE = 2
 
@@ -79,13 +95,18 @@ def detect_price_gaps(
     closes,
     dates=None,
     *,
-    suspect_pct: float = SUSPECT_GAP_PCT,
+    exchange: str | None = None,
+    suspect_pct: float | None = None,
     certain_pct: float = CERTAIN_GAP_PCT,
 ) -> list[PriceGap]:
-    """Liệt kê các bước nhảy close-to-close vượt biên độ giao dịch một phiên."""
+    """Liệt kê các bước nhảy close-to-close vượt biên độ giao dịch một phiên.
+
+    Ngưỡng nghi ngờ mặc định theo sàn (suspect_gap_pct); truyền suspect_pct để ép."""
     gaps: list[PriceGap] = []
     if not closes or len(closes) < 2:
         return gaps
+    if suspect_pct is None:
+        suspect_pct = suspect_gap_pct(exchange)
     for index in range(1, len(closes)):
         previous = closes[index - 1]
         current = closes[index]
@@ -118,7 +139,7 @@ def last_gap_in_window(
     return max(in_window, key=lambda gap: gap.index) if in_window else None
 
 
-def infer_is_adjusted(closes, dates=None) -> bool | None:
+def infer_is_adjusted(closes, dates=None, exchange: str | None = None) -> bool | None:
     """False khi chắc chắn chuỗi chưa điều chỉnh, None khi không xác định được.
 
     KHÔNG bao giờ trả True: không thấy gap chỉ có nghĩa là trong cửa sổ dữ liệu
@@ -126,7 +147,7 @@ def infer_is_adjusted(closes, dates=None) -> bool | None:
     nguồn dữ liệu có điều chỉnh. Khẳng định True ở đây sẽ tạo cảm giác an toàn
     giả.
     """
-    for gap in detect_price_gaps(closes, dates):
+    for gap in detect_price_gaps(closes, dates, exchange=exchange):
         if gap.level == "certain":
             return False
     return None
@@ -177,7 +198,9 @@ def build_note(symbol: str, source: str, gaps: list[PriceGap]) -> str:
     )
 
 
-def audit_series(symbol: str, source: str, closes, dates=None) -> PriceAudit:
-    gaps = detect_price_gaps(closes, dates)
-    is_adjusted = infer_is_adjusted(closes, dates)
+def audit_series(
+    symbol: str, source: str, closes, dates=None, exchange: str | None = None
+) -> PriceAudit:
+    gaps = detect_price_gaps(closes, dates, exchange=exchange)
+    is_adjusted = False if any(gap.level == "certain" for gap in gaps) else None
     return PriceAudit(is_adjusted, gaps, build_note(symbol, source, gaps))
