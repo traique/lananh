@@ -392,7 +392,7 @@ async def test_list_groups_gui_kem_secret(control, monkeypatch):
         async def get(self, url):
             return _response("GET", url, 200, {"total": 0, "groups": []})
 
-    monkeypatch.setattr(zalo_gateway_status.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(zalo_gateway_status.http_client, "scoped", _Client)
     assert await zalo_gateway_status.list_groups() == ([], 0)
     assert seen["headers"] == {"x-zalo-bridge-secret": SECRET}
 

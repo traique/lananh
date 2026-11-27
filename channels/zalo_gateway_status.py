@@ -198,9 +198,7 @@ async def list_groups() -> tuple[list[ZaloGroup], int]:
     if not _enabled():
         raise GatewayGroupsError("Gateway Zalo đang tắt (ZALO_ENABLED) nên chưa xem được nhóm.")
     try:
-        # Lệnh hiếm (/nhomzalo): vẫn client riêng như trước vì test/test_zalo_group_list.py
-        # giả gateway bằng cách thay httpx.AsyncClient (đổi sang http_client.scoped cùng test đó).
-        async with httpx.AsyncClient(timeout=_GROUPS_TIMEOUT, headers=control_headers()) as client:
+        async with http_client.scoped(timeout=_GROUPS_TIMEOUT, headers=control_headers()) as client:
             response = await client.get(f"{_control_base()}{GROUPS_PATH}")
     except httpx.HTTPError as exc:
         logger.warning("Không lấy được danh sách nhóm từ gateway Zalo: %r", exc)

@@ -251,14 +251,14 @@ async def test_list_groups_doc_route_groups_cua_gateway(monkeypatch):
         await zalo_gateway_status.list_groups()
 
     monkeypatch.setenv("ZALO_ENABLED", "1")
-    monkeypatch.setattr(zalo_gateway_status.httpx, "AsyncClient", _client(ok))
+    monkeypatch.setattr(zalo_gateway_status.http_client, "scoped", _client(ok))
     groups, total = await zalo_gateway_status.list_groups()
     assert urls == ["http://127.0.0.1:9911/groups"]
     assert groups == [ZaloGroup(G1, "Sale Team", 25), ZaloGroup(G2, "", None)]
     assert total == 250
 
     monkeypatch.setattr(
-        zalo_gateway_status.httpx, "AsyncClient", _client(lambda url: _Response(409, {}))
+        zalo_gateway_status.http_client, "scoped", _client(lambda url: _Response(409, {}))
     )
     with pytest.raises(zalo_gateway_status.GatewayGroupsError, match="chưa đăng nhập"):
         await zalo_gateway_status.list_groups()
@@ -266,7 +266,7 @@ async def test_list_groups_doc_route_groups_cua_gateway(monkeypatch):
     def refused(url):
         raise httpx.ConnectError("refused")
 
-    monkeypatch.setattr(zalo_gateway_status.httpx, "AsyncClient", _client(refused))
+    monkeypatch.setattr(zalo_gateway_status.http_client, "scoped", _client(refused))
     with pytest.raises(zalo_gateway_status.GatewayGroupsError, match="Không kết nối được"):
         await zalo_gateway_status.list_groups()
 
