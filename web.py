@@ -26,6 +26,7 @@ import web_site
 import logging_setup
 from channels import (
     facebook_commands,
+    facebook_intake,
     group_commands,
     zalo_repository,
     zalo_scheduler,
@@ -217,6 +218,9 @@ async def lifespan(_: FastAPI):
         await _safe_shutdown("DB maintenance", db_maintenance.stop())
         await _safe_shutdown("webhook inbox", webhook_inbox.stop())
         await _safe_shutdown("Telegram turn feedback", turn_feedback.stop())
+        # Bài Facebook đã vào hàng chờ nhưng chưa gửi xem trước (việc nền, AI viết lại):
+        # chờ xong trước khi đóng DB; quá hạn thì huỷ, admin xem lại bằng /fb_xem.
+        await _safe_shutdown("Facebook intake", facebook_intake.drain(grace_sec=10.0))
         # Dòng turn_metrics của các lượt vừa xong (ghi nền) trước khi đóng DB.
         await _safe_shutdown("turn metrics", trace.drain())
         if app_started:
