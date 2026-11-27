@@ -194,7 +194,10 @@ handlers/           Telegram handlers mỏng (parse lệnh -> gọi service -> t
                     feedback_commands.py, callbacks.py (nút inline), turn_feedback.py,
                     unsupported.py (vị trí, tin chưa hỗ trợ)
 services/           Logic dùng chung cho mọi kênh: channel_chat_service.run_chat_turn
-                    (pipeline chat), channel_dispatch (Zalo/Zoom), memory_service,
+                    (pipeline chat), quick_reply (trả lời nhanh bằng code, mọi kênh),
+                    command_catalog (MỘT bảng lệnh cho Telegram/Zalo/Zoom),
+                    nl_commands/ (hỏi tự nhiên thay cho lệnh), channel_dispatch
+                    (Zalo/Zoom), memory_service (facade: memory_extract + memory_context),
                     tools + tool_registry, reminder_service, expense_service,
                     morning_brief, attention (/chuy), notify_hub (gom thông báo,
                     giờ yên lặng), background_jobs (/viec), routines (/lichtacvu),

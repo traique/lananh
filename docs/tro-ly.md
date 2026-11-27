@@ -625,8 +625,14 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
 - Xử lý text dài, ảnh, image document, tin thoại/audio, file PDF/TXT/MD/DOCX, vị
   trí; sticker, video, file lạ nhận 1 câu nói rõ em hiểu được những gì.
 - Lệnh quản lý memory, provider, model và Zalo. Menu "/" chỉ còn 18 lệnh hay dùng
-  (`bot_app.MENU_COMMANDS`); mọi lệnh vẫn gõ được, hoặc nhắn tự nhiên (mục "Hỏi tự
-  nhiên thay cho lệnh").
+  (`services/command_catalog.TELEGRAM_MENU`); mọi lệnh vẫn gõ được, hoặc nhắn tự nhiên
+  (mục "Hỏi tự nhiên thay cho lệnh").
+- Một bảng lệnh cho cả ba kênh: mỗi lệnh là MỘT mục trong `services/command_catalog.py`
+  (tên, alias, mô tả menu, hàm Telegram `tg`, khoá xử lý Zalo/Zoom `chat`, chỉ admin hay
+  không). `bot_app.py` sinh CommandHandler + menu BotFather từ đó, Zalo/Zoom tra cùng
+  bảng; thêm lệnh = thêm 1 mục + hàm xử lý. Câu trả lời nhanh bằng code trước lượt AI
+  (chi tiêu, nhắc việc, vàng/tỷ giá, thời tiết, âm lịch...) đi qua CÙNG một chuỗi cổng
+  `services/quick_reply.py` cho mọi kênh.
 - Phản hồi khi chờ: Telegram luôn hiện "đang nhập…"; lượt quá
   `TELEGRAM_STATUS_DELAY_SEC` giây (mặc định 7, 0 = tắt) thì em gửi 1 dòng trạng
   thái theo việc đang làm ("🔎 Em đang tra web xíu nha anh…", "📖 Em đang đọc trang
@@ -669,7 +675,7 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
 ## Hỏi tự nhiên thay cho lệnh
 
 Không cần nhớ ~100 lệnh: nhắn tự nhiên (có dấu hay không dấu đều được) là em tự làm
-đúng việc; lệnh / vẫn chạy như cũ cho ai thích gõ. Cơ chế (`services/nl_commands.py`,
+đúng việc; lệnh / vẫn chạy như cũ cho ai thích gõ. Cơ chế (gói `services/nl_commands/`,
 danh bạ lệnh `services/command_catalog.py`, chi tiết ở `docs/nang-cap-jarvis.md` mục
 "Hỏi tự nhiên thay cho lệnh"):
 
