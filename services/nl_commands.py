@@ -3,9 +3,8 @@
 MỘT cơ chế, tái dùng danh bạ ToolSpec (services/tool_registry.py) và router JSON
 của chat (services/tools.py) - không dựng router thứ hai:
 
-1. Đường code (rẻ, không AI) - ``maybe_handle`` chạy trong chuỗi trả lời nhanh
-   (Telegram handlers/chat_router._quick_reply, Zalo/Zoom
-   channel_chat_service.handle_channel_text):
+1. Đường code (rẻ, không AI) - ``maybe_handle`` là 1 cổng trong chuỗi trả lời nhanh
+   dùng chung mọi kênh (services/quick_reply.py):
    - "em làm được gì", "làm sao để dò vé số", "có lệnh nào xem vàng không" -> trả
      lời từ danh bạ lệnh (services/command_catalog.py) theo vai trò;
    - mẫu câu rõ ràng: tử vi/thần số học/kỳ môn có ngày giờ, "ngày tốt tháng này",

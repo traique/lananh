@@ -1,8 +1,9 @@
 """Điểm vào cho mọi tin nhắn văn bản thường (không phải lệnh /).
 
-Phần riêng Telegram nằm ở đây (typing, danh mục bằng lời, nhánh cổ phiếu gửi
-bản số liệu trước qua handlers/stock_handler.py, gửi rich text); lượt chat AI
-dùng chung pipeline với Zalo/Zoom: services/channel_chat_service.run_chat_turn.
+Phần riêng Telegram nằm ở đây (typing, nhánh cổ phiếu gửi bản số liệu trước qua
+handlers/stock_handler.py, gửi rich text, /noi đọc kèm); trả lời nhanh bằng code
+(services/quick_reply.py) và lượt chat AI (services/channel_chat_service.run_chat_turn)
+dùng chung với Zalo/Zoom.
 """
 
 import base64
@@ -20,23 +21,27 @@ from handlers import callbacks, common, stock_handler, turn_feedback
 from services import (
     action_buttons,
     answer_feedback,
-    article_reader,
     channel_chat_service,
-    chat_context,
     concurrency,
     conversation_log,
-    expense_service,
-    lunar_chat,
-    nutrition_service,
-    portfolio_service,
-    reminder_service,
+    quick_reply,
     style_approval,
     turn_control,
     turn_progress,
     voice_reply,
+)
+
+# Các cổng trả lời nhanh nay ở services/quick_reply.py; giữ tên module ở đây cho test
+# đang monkeypatch qua ``chat_router.<module>``.
+from services import (  # noqa: F401
+    article_reader,
+    expense_service,
+    lunar_chat,
+    portfolio_service,
+    reminder_service,
+    vn_daily_chat,
     weather_chat,
 )
-from services import attention, nl_commands, routines, vn_daily_chat
 from services.concurrency import OWNER_TURN_KEY
 from services.telemetry import telemetry
 
@@ -134,110 +139,23 @@ async def _speak(
 async def _quick_reply(
     update: Update, user_id: int, text: str, *, allow_side_effects: bool = True
 ) -> str | None:
-    """Các nhánh trả lời bằng code (không tốn lượt AI). Đã trả lời thì trả câu vừa
-    gửi (để /noi đọc kèm), không thì None."""
-    # Câu trả lời nhanh cũng vào lịch sử để câu hỏi nối tiếp có ngữ cảnh.
-    record = conversation_log.record_exchange
-
-    # "ghi nhớ"/"bỏ" ngay sau câu em hỏi duyệt cách trả lời (services/style_approval).
-    approval = (
-        await style_approval.maybe_handle_reply(user_id, text) if allow_side_effects else None
+    """Trả lời bằng code, không tốn lượt AI (services/quick_reply.py - cùng chuỗi cổng
+    với Zalo/Zoom, đã ghi lịch sử). Đã trả lời thì trả câu vừa gửi (để /noi đọc kèm;
+    "" = không đọc), không thì None."""
+    # Telegram chỉ phục vụ chủ bot (@common.restricted): quyền admin như khi gõ lệnh.
+    reply = await quick_reply.resolve(
+        user_id, text, "telegram", is_admin=True, allow_side_effects=allow_side_effects
     )
-    if approval is not None:
-        await common.reply_long_text(update.message, approval)
-        return approval
-
-    # "hoãn 10p" / "xong" ngay sau tin nhắc việc: code xử lý, không tốn lượt AI.
-    shortcut = (
-        await reminder_service.maybe_handle_shortcut(user_id, text) if allow_side_effects else None
-    )
-    if shortcut is not None:
-        await record(user_id, text, shortcut, conversation_log.KIND_REMINDER)
-        await common.reply_long_text(update.message, shortcut)
-        return shortcut
-
-    # "mỗi sáng thứ 2 8h tóm tắt tin VNM cho anh": tác vụ định kỳ (services/routines) -
-    # TRƯỚC router AI để không thành nhắc việc gửi câu cố định.
-    routine_reply = (
-        await routines.maybe_handle_chat(user_id, text, "telegram") if allow_side_effects else None
-    )
-    if routine_reply is not None:
-        await record(user_id, text, routine_reply, conversation_log.KIND_REMINDER)
-        await common.reply_long_text(update.message, routine_reply)
-        return True
-
-    portfolio_result = (
-        await portfolio_service.maybe_handle_natural_language(user_id, text)
-        if allow_side_effects
-        else None
-    )
-    if portfolio_result is not None:
-        await record(user_id, text, portfolio_result, conversation_log.KIND_PORTFOLIO)
-        await common.reply_long_text(update.message, portfolio_result)
-        return portfolio_result
-
-    expense_reply = (
-        await expense_service.maybe_handle_chat(user_id, text) if allow_side_effects else None
-    )
-    if expense_reply is not None:
-        await record(user_id, text, expense_reply, conversation_log.KIND_EXPENSE)
-        await common.reply_long_text(update.message, expense_reply)
-        return expense_reply
-
-    # "trưa nay anh ăn bún chả" (chỉ khi NUTRITION_NL=1): ghi bữa ăn bằng code.
-    meal_reply = (
-        await nutrition_service.maybe_handle_chat(user_id, text) if allow_side_effects else None
-    )
-    if meal_reply is not None:
-        await record(user_id, text, meal_reply, conversation_log.KIND_MEAL)
-        await common.reply_long_text(update.message, meal_reply)
-        return meal_reply
-
-    article = await article_reader.maybe_handle(text)
-    if article is not None:
-        await record(user_id, text, article, conversation_log.KIND_ARTICLE)
-        chat_context.remember_article(user_id, text, article)
-        await common.reply_long_text(update.message, article)
-        return article
-
-    # "Có gì cần anh chú ý?": tin /chuy tính bằng code (services/attention.py).
-    if attention.is_attention_question(text):
-        reply = await attention.build(user_id, "telegram")
-        await record(user_id, text, reply, conversation_log.KIND_DAILY)
-        await common.reply_long_text(update.message, reply)
-        return reply
-
-    # "em làm được gì", "xem tử vi 15/3/1990 9h30 nam", "bật giọng nói"...: lệnh chạy
-    # từ câu tự nhiên bằng code (services/nl_commands.py). Không đọc kèm /noi.
-    command_reply = await nl_commands.maybe_handle(
-        user_id, text, channel="telegram", is_admin=True, allow_side_effects=allow_side_effects
-    )
-    if command_reply is not None:
-        await record(user_id, text, command_reply.text, conversation_log.KIND_COMMAND)
-        await send_command_output(update.message, command_reply)
+    if reply is None:
+        return None
+    if reply.command:
+        # Lệnh chạy từ câu tự nhiên (services/nl_commands.py): gửi như gõ lệnh, không
+        # đọc kèm /noi.
+        await send_command_output(update.message, reply)
         return ""
-
-    # Giá vàng/tỷ giá/xổ số, thời tiết và âm lịch: trả lời thẳng bằng code,
-    # không tốn lượt AI nào.
-    # Lượt chỉ đọc: không lưu thành phố thời tiết mặc định ("anh ở Đà Nẵng").
-    daily_reply = await vn_daily_chat.maybe_handle(text, user_id if allow_side_effects else None)
-    if daily_reply is not None:
-        await record(user_id, text, daily_reply, conversation_log.KIND_DAILY)
-        await common.reply_long_text(update.message, daily_reply)
-        return daily_reply
-
-    weather_reply = await weather_chat.maybe_handle(text, user_id=user_id)
-    if weather_reply is not None:
-        await record(user_id, text, weather_reply, conversation_log.KIND_WEATHER)
-        await common.reply_long_text(update.message, weather_reply)
-        return weather_reply
-
-    lunar_reply = await lunar_chat.maybe_handle(text)
-    if lunar_reply is not None:
-        await record(user_id, text, lunar_reply, conversation_log.KIND_LUNAR)
-        await common.reply_long_text(update.message, lunar_reply)
-        return lunar_reply
-    return None
+    for message in reply.messages:
+        await common.reply_long_text(update.message, message)
+    return reply.text
 
 
 async def send_command_output(message, run, status_message=None) -> None:
