@@ -8,11 +8,21 @@
 - Không khoá cứng toàn cục: tổng số lần sai gần đây chỉ làm CHẬM mọi lượt đăng
   nhập (tối đa vài giây), để người lạ không thể khoá luôn chủ bot ra ngoài.
   State nằm trong RAM vì service chạy 1 worker; restart thì bộ đếm reset.
-- Cookie phiên ký HMAC (khoá ADMIN_PASS) kèm "epoch" lưu ở bảng settings;
-  đăng xuất đổi epoch => mọi phiên đang mở hết hiệu lực ngay.
+- Cookie phiên ký HMAC kèm "epoch" lưu ở bảng settings; đăng xuất đổi epoch => mọi
+  phiên đang mở hết hiệu lực ngay. Khoá ký dẫn xuất HKDF từ ADMIN_PASS + SETTINGS_ENC_KEY
+  (không phải chính ADMIN_PASS): cookie lộ ra không dùng để dò mật khẩu offline được nếu
+  không có SETTINGS_ENC_KEY. Thiếu một trong hai thì không phiên nào hợp lệ (fail closed).
+- Chống CSRF ngoài cookie SameSite=Lax: request đổi dữ liệu (POST/PUT/PATCH/DELETE) mang
+  ``Sec-Fetch-Site`` của trang khác bị từ chối (kể cả đăng nhập/đăng xuất), và mọi POST
+  của ``api_router`` chỉ nhận ``Content-Type: application/json`` (form chéo trang không
+  gửi được kiểu này nếu không qua CORS preflight - app không mở CORS).
+- ``/admin/api/overview``: mọi số liệu "sống" của trang admin trong 1 request, mỗi phần có
+  cache TTL phía server (xem ``_OVERVIEW_TTL_SEC``) - trang tự làm mới 60 giây/lần chỉ
+  chiếm 1 chỗ uvicorn thay vì 12 request song song.
 """
 
 import asyncio
+import collections
 import functools
 import hashlib
 import hmac
@@ -27,6 +37,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -68,6 +80,13 @@ _CHANNEL_LABELS = {"telegram": "Telegram", "zoom": "Zoom", "zalo": "Zalo"}
 # Key bảng settings giữ epoch phiên admin (xem SessionEpoch).
 _SESSION_EPOCH_KEY = "admin_session_epoch"
 _MAX_CLIENT_KEY_LEN = 64
+# Ngữ cảnh HKDF của khoá ký cookie phiên; đổi chuỗi này = đăng xuất mọi phiên.
+_SESSION_KEY_INFO = b"lcta admin session v2"
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# Sec-Fetch-Site của request do trang KHÁC gây ra (form/fetch/img từ site lạ hoặc tên
+# miền con khác cùng site). Trang admin luôn gửi "same-origin"; thiếu header = trình
+# duyệt cũ hoặc client không phải trình duyệt (vẫn còn rào JSON + SameSite).
+_FOREIGN_FETCH_SITES = frozenset({"cross-site", "same-site"})
 
 
 class LoginRateLimiter:
@@ -242,21 +261,41 @@ def _hours_param(request: Request, default: int = 168) -> int:
     return min(max(hours, 1), 24 * 365)
 
 
-def _admin_session_sig(expiry: int, epoch: str) -> str:
+@functools.lru_cache(maxsize=2)
+def _derive_session_key(password: str, server_secret: str) -> bytes:
+    """HKDF-SHA256, muối là bí mật của server (SETTINGS_ENC_KEY), đầu vào là ADMIN_PASS:
+    chữ ký trong cookie không còn là HMAC khoá bằng chính mật khẩu, nên cookie lộ không
+    cho dò mật khẩu offline. Đổi mật khẩu hoặc SETTINGS_ENC_KEY = mọi phiên cũ hết hạn."""
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=server_secret.encode(),
+        info=_SESSION_KEY_INFO,
+    ).derive(password.encode())
+
+
+def _session_key() -> bytes | None:
+    """Khoá ký cookie phiên; None (fail closed) khi thiếu ADMIN_PASS hoặc SETTINGS_ENC_KEY
+    (khi chạy thật config.validate đã bắt buộc SETTINGS_ENC_KEY)."""
+    if not config.ADMIN_PASS or not config.SETTINGS_ENC_KEY:
+        return None
+    return _derive_session_key(config.ADMIN_PASS, config.SETTINGS_ENC_KEY)
+
+
+def _admin_session_sig(key: bytes, expiry: int, epoch: str) -> str:
     return hmac.new(
-        config.ADMIN_PASS.encode(),
-        f"{config.ADMIN_USER}:{expiry}:{epoch}".encode(),
-        hashlib.sha256,
+        key, f"{config.ADMIN_USER}:{expiry}:{epoch}".encode(), hashlib.sha256
     ).hexdigest()
 
 
-def _admin_session_token(epoch: str) -> str:
+def _admin_session_token(key: bytes, epoch: str) -> str:
     expiry = int(time.time()) + config.ADMIN_SESSION_TTL_SEC
-    return f"{expiry}.{_admin_session_sig(expiry, epoch)}"
+    return f"{expiry}.{_admin_session_sig(key, expiry, epoch)}"
 
 
 async def _admin_session_valid(request: Request) -> bool:
-    if not config.ADMIN_USER or not config.ADMIN_PASS:
+    key = _session_key()
+    if not config.ADMIN_USER or key is None:
         return False
     expiry_str, _, sig = request.cookies.get(_ADMIN_SESSION_COOKIE, "").partition(".")
     if not expiry_str or not sig:
@@ -271,7 +310,7 @@ async def _admin_session_valid(request: Request) -> bool:
     if epoch is None:
         return False
     # So sánh bytes: cookie có thể chứa ký tự non-ASCII, compare_digest(str) sẽ TypeError.
-    return hmac.compare_digest(sig.encode(), _admin_session_sig(expiry, epoch).encode())
+    return hmac.compare_digest(sig.encode(), _admin_session_sig(key, expiry, epoch).encode())
 
 
 async def is_logged_in(request: Request) -> bool:
@@ -294,14 +333,39 @@ def safe_next(value: str) -> str:
     return value
 
 
+def cross_site_write(request: Request) -> bool:
+    """Request đổi dữ liệu (POST/PUT/PATCH/DELETE) do trang KHÁC gây ra, theo header
+    Sec-Fetch-Site mà trình duyệt tự gắn (trang không sửa được)."""
+    if request.method not in _UNSAFE_METHODS:
+        return False
+    return (request.headers.get("sec-fetch-site") or "").strip().lower() in _FOREIGN_FETCH_SITES
+
+
+def _json_body_required(request: Request) -> bool:
+    """POST sửa dữ liệu chỉ nhận JSON: form chéo trang (text/plain, form-urlencoded)
+    không đặt được Content-Type này nếu không qua CORS preflight - thêm 1 lớp chống
+    CSRF ngoài cookie SameSite=Lax."""
+    return "application/json" in (request.headers.get("content-type") or "").lower()
+
+
 async def require_admin(request: Request) -> None:
-    if not await _admin_session_valid(request):
+    """Phiên admin hợp lệ; request đổi dữ liệu còn phải do chính trang của site gửi
+    (dùng chung cho /admin/api/* và /admin/api/avatar/*)."""
+    if cross_site_write(request) or not await _admin_session_valid(request):
         raise HTTPException(status_code=403)
+
+
+async def require_json_write(request: Request) -> None:
+    """Mọi request đổi dữ liệu của ``api_router`` phải là JSON (415 nếu không)."""
+    if request.method in _UNSAFE_METHODS and not _json_body_required(request):
+        raise HTTPException(status_code=415)
 
 
 router = APIRouter(include_in_schema=False)
 api_router = APIRouter(
-    prefix="/admin/api", dependencies=[Depends(require_admin)], include_in_schema=False
+    prefix="/admin/api",
+    dependencies=[Depends(require_admin), Depends(require_json_write)],
+    include_in_schema=False,
 )
 
 
@@ -321,12 +385,24 @@ def _with_logo_version(page: str) -> str:
     return page
 
 
+# admin.html (~110 KB) và trang đăng nhập: đọc + gắn phiên bản logo 1 lần mỗi process -
+# template, logo chỉ đổi khi deploy mà deploy luôn khởi động lại.
+@functools.lru_cache(maxsize=1)
+def _admin_page_html() -> bytes:
+    return _with_logo_version(_ADMIN_TEMPLATE_PATH.read_text(encoding="utf-8")).encode()
+
+
+@functools.lru_cache(maxsize=1)
+def _login_template() -> str:
+    return _with_logo_version(_ADMIN_LOGIN_PATH.read_text(encoding="utf-8"))
+
+
 def _login_page(error: str, status_code: int, next_path: str = "/admin") -> HTMLResponse:
     next_path = safe_next(next_path)
     # Khách lỡ bấm vào: link quay lại trang web đang xem (trang admin thì về trang chủ).
     back = "/" if next_path.startswith("/admin") else next_path
     login_html = (
-        _with_logo_version(_ADMIN_LOGIN_PATH.read_text(encoding="utf-8"))
+        _login_template()
         .replace("<!--NEXT-->", html.escape(next_path, quote=True))
         .replace("<!--BACK-->", html.escape(back, quote=True))
     )
@@ -339,17 +415,24 @@ def _login_page(error: str, status_code: int, next_path: str = "/admin") -> HTML
 async def admin_page(request: Request) -> Response:
     if not await _admin_session_valid(request):
         return _login_page("", 200, request.query_params.get("next", "/admin"))
-    return HTMLResponse(_with_logo_version(_ADMIN_TEMPLATE_PATH.read_text(encoding="utf-8")))
+    return HTMLResponse(_admin_page_html())
 
 
 @router.post("/admin/login")
 async def admin_login(request: Request) -> Response:
+    if cross_site_write(request):
+        # Form đăng nhập luôn nằm ở chính site: trang lạ gửi hộ (vd dò mật khẩu qua
+        # trình duyệt của người khác) thì từ chối luôn, không tính vào bộ đếm sai.
+        return _login_page("Yêu cầu đăng nhập không hợp lệ, mở lại trang đăng nhập.", 403)
     client_ip = _client_ip(request)
     too_many = "Sai quá nhiều lần. Thử lại sau ít phút."
     if _login_limiter.is_blocked(client_ip):
         return _login_page(too_many, 429)
     form = await request.form()
     next_path = safe_next(str(form.get("next", "/admin")))
+    if config.ADMIN_USER and config.ADMIN_PASS and _session_key() is None:
+        # Thiếu SETTINGS_ENC_KEY: không ký được cookie (khi chạy thật config.validate chặn).
+        return _login_page("Máy chủ thiếu SETTINGS_ENC_KEY, chưa đăng nhập được.", 503, next_path)
     username = str(form.get("username", ""))
     password = str(form.get("password", ""))
     # Làm chậm mọi lượt (kể cả đúng mật khẩu) theo tổng số lần sai gần đây từ
@@ -381,13 +464,14 @@ async def admin_login(request: Request) -> Response:
         return _login_page("Sai tài khoản hoặc mật khẩu.", 401, next_path)
     _login_limiter.reset(client_ip)
     epoch = await _session_epoch.get()
-    if epoch is None:
+    key = _session_key()
+    if epoch is None or key is None:
         # Fail closed: không có epoch thì không phát cookie được.
         return _login_page("Không kết nối được cơ sở dữ liệu. Thử lại sau.", 503, next_path)
     response = RedirectResponse(next_path, status_code=303)
     response.set_cookie(
         _ADMIN_SESSION_COOKIE,
-        _admin_session_token(epoch),
+        _admin_session_token(key, epoch),
         httponly=True,
         samesite="lax",
         secure=True,
@@ -398,6 +482,9 @@ async def admin_login(request: Request) -> Response:
 
 @router.post("/admin/logout")
 async def admin_logout(request: Request) -> Response:
+    if cross_site_write(request):
+        # Trang lạ không được đăng xuất hộ (xoá cookie, đổi epoch) chủ bot.
+        return Response(status_code=403)
     # Chỉ phiên hợp lệ mới được đổi epoch: nếu không, ai cũng có thể POST liên
     # tục vào đây để đá chủ bot ra khỏi trang admin.
     if await _admin_session_valid(request):
@@ -731,13 +818,6 @@ async def _journal_user(raw) -> dict | None:
     return next((e for e in await _memory_user_entries() if e["user_id"] == user_id), None)
 
 
-def _json_body_required(request: Request) -> bool:
-    """POST sửa dữ liệu chỉ nhận JSON: form chéo trang (text/plain, form-urlencoded)
-    không đặt được Content-Type này nếu không qua CORS preflight - thêm 1 lớp chống
-    CSRF ngoài cookie SameSite=Lax."""
-    return "application/json" in (request.headers.get("content-type") or "").lower()
-
-
 @api_router.get("/journal")
 async def admin_journal(request: Request) -> Response:
     """?user_id=&q=&page= - 1 trang ghi chú phiên gom theo ngày + tóm tắt dài hạn."""
@@ -752,9 +832,8 @@ async def admin_journal(request: Request) -> Response:
 @api_router.post("/journal/note")
 async def admin_journal_note(request: Request) -> Response:
     """Body: {"user_id": int, "session_key": int, "action": "edit"|"delete",
-    "title"?, "bullets"?, "summary"?}. 404 nếu ghi chú không còn, 409 nếu đang bận."""
-    if not _json_body_required(request):
-        return Response(status_code=415)
+    "title"?, "bullets"?, "summary"?}. 404 nếu ghi chú không còn, 409 nếu đang bận.
+    Không phải JSON -> 415 (require_json_write của api_router)."""
     body = await request.json()
     if not isinstance(body, dict):
         return Response(status_code=400)
@@ -788,7 +867,10 @@ async def admin_journal_note(request: Request) -> Response:
 
 @api_router.get("/usage")
 async def admin_usage(request: Request) -> Response:
-    since_hours = _hours_param(request)
+    return JSONResponse(await _usage_rows(_hours_param(request)))
+
+
+async def _usage_rows(since_hours: int) -> list[dict]:
     rows = await db.usage_by_user(since_hours)
     zalo_by_id = {u.internal_user_id: u for u in await zalo_users.list_users()}
 
@@ -812,7 +894,7 @@ async def admin_usage(request: Request) -> Response:
                 "last_call_at": row["last_call_at"].isoformat() if row["last_call_at"] else None,
             }
         )
-    return JSONResponse(result)
+    return result
 
 
 @api_router.get("/usage/models")
@@ -820,19 +902,20 @@ async def admin_usage_models(request: Request) -> Response:
     """Lượt gọi thành công theo (provider, model) - xem
     ai/orchestrator.py::_record_provider_call, ghi mỗi khi 1 provider trong
     provider-chain trả lời thành công (router9/groq/openrouter/api1/api2)."""
-    since_hours = _hours_param(request)
+    return JSONResponse(await _usage_model_rows(_hours_param(request)))
+
+
+async def _usage_model_rows(since_hours: int) -> list[dict]:
     rows = await db.usage_by_model(since_hours)
-    return JSONResponse(
-        [
-            {
-                "provider": row["provider"],
-                "model": row["model"],
-                "calls": row["calls"],
-                "last_call_at": row["last_call_at"].isoformat() if row["last_call_at"] else None,
-            }
-            for row in rows
-        ]
-    )
+    return [
+        {
+            "provider": row["provider"],
+            "model": row["model"],
+            "calls": row["calls"],
+            "last_call_at": row["last_call_at"].isoformat() if row["last_call_at"] else None,
+        }
+        for row in rows
+    ]
 
 
 def _ms(value) -> int | None:
@@ -843,20 +926,22 @@ def _ms(value) -> int | None:
 async def admin_usage_outcomes(request: Request) -> Response:
     """Lượt gọi theo (provider, kết quả) kèm độ trễ p50/p95 - thấy provider nào
     chậm/lỗi/hết quota (core.database.provider_outcomes), không chỉ lượt thành công."""
-    rows = await db.provider_outcomes(_hours_param(request))
-    return JSONResponse(
-        [
-            {
-                "provider": row["provider"],
-                "outcome": row["outcome"],
-                "calls": row["calls"],
-                "p50_ms": _ms(row["p50_ms"]),
-                "p95_ms": _ms(row["p95_ms"]),
-                "last_at": row["last_at"].isoformat() if row["last_at"] else None,
-            }
-            for row in rows
-        ]
-    )
+    return JSONResponse(await _outcome_rows(_hours_param(request)))
+
+
+async def _outcome_rows(since_hours: int) -> list[dict]:
+    rows = await db.provider_outcomes(since_hours)
+    return [
+        {
+            "provider": row["provider"],
+            "outcome": row["outcome"],
+            "calls": row["calls"],
+            "p50_ms": _ms(row["p50_ms"]),
+            "p95_ms": _ms(row["p95_ms"]),
+            "last_at": row["last_at"].isoformat() if row["last_at"] else None,
+        }
+        for row in rows
+    ]
 
 
 def _iso(value) -> str | None:
@@ -867,18 +952,19 @@ def _iso(value) -> str | None:
 async def admin_usage_turns(request: Request) -> Response:
     """Lượt trả lời gần đây (turn_metrics): chờ khoá, chờ slot, gom ngữ cảnh, LLM,
     gửi tin + p95 từng giai đoạn theo kênh (core/trace.py)."""
-    hours = min(_hours_param(request, 24), 24 * 14)
+    return JSONResponse(await _turns_data(min(_hours_param(request, 24), 24 * 14)))
+
+
+async def _turns_data(hours: int) -> dict:
     recent = await db.recent_turn_metrics(hours, 50)
     summary = await db.turn_stage_summary(hours)
-    return JSONResponse(
-        {
-            "recent": [{**row, "created_at": _iso(row["created_at"])} for row in recent],
-            "summary": [
-                {k: (_ms(v) if k.endswith(("_p50", "_p95")) else v) for k, v in row.items()}
-                for row in summary
-            ],
-        }
-    )
+    return {
+        "recent": [{**row, "created_at": _iso(row["created_at"])} for row in recent],
+        "summary": [
+            {k: (_ms(v) if k.endswith(("_p50", "_p95")) else v) for k, v in row.items()}
+            for row in summary
+        ],
+    }
 
 
 @api_router.get("/usage/turn")
@@ -933,10 +1019,12 @@ async def admin_jobs() -> Response:
 @api_router.get("/usage/burn")
 async def admin_usage_burn() -> Response:
     """Quota miễn phí đã dùng theo cửa sổ của từng provider (services/quota_burn.py)."""
+    return JSONResponse(await _burn_data())
+
+
+async def _burn_data() -> dict:
     burns = await quota_burn.snapshot()
-    return JSONResponse(
-        {"alert_pct": quota_burn.alert_pct(), "providers": [b.as_dict() for b in burns]}
-    )
+    return {"alert_pct": quota_burn.alert_pct(), "providers": [b.as_dict() for b in burns]}
 
 
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -1003,15 +1091,17 @@ async def admin_watchdog() -> Response:
     khởi động lại 7 ngày qua, trạng thái sao lưu DB (services/watchdog.py,
     error_digest.py, backup_status.py), bộ đếm gateway Zalo
     (channels/zalo_gateway_status.py)."""
-    return JSONResponse(
-        {
-            "errors": error_digest.summary(),
-            "restarts": await _safe_section("khởi động lại", watchdog.restart_summary),
-            "backup": await _safe_section("sao lưu", backup_status.status),
-            "key_rotation": await _safe_section("xoay khoá", key_rotation.status),
-            "zalo_gateway": await _safe_section("gateway Zalo", zalo_gateway_status.snapshot),
-        }
-    )
+    return JSONResponse(await _watchdog_data())
+
+
+async def _watchdog_data() -> dict:
+    return {
+        "errors": error_digest.summary(),
+        "restarts": await _safe_section("khởi động lại", watchdog.restart_summary),
+        "backup": await _safe_section("sao lưu", backup_status.status),
+        "key_rotation": await _safe_section("xoay khoá", key_rotation.status),
+        "zalo_gateway": await _safe_section("gateway Zalo", zalo_gateway_status.snapshot),
+    }
 
 
 @api_router.post("/key-rotation/run")
@@ -1022,6 +1112,7 @@ async def admin_key_rotation_run() -> Response:
         report = await key_rotation.rotate_all()
     except RuntimeError as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
+    _overview_forget("watchdog")  # ô "Khoá settings" của tổng quan đọc lại ngay
     return JSONResponse(
         {"old_keys_configured": key_rotation.old_keys_configured(), **asdict(report)}
     )
@@ -1030,17 +1121,132 @@ async def admin_key_rotation_run() -> Response:
 @api_router.get("/db-usage")
 async def admin_db_usage() -> Response:
     """Dung lượng bảng ảnh Facebook và job VACUUM FULL tuần tới có chạy không."""
+    return JSONResponse(await _db_usage_data())
+
+
+async def _db_usage_data() -> dict:
     usage = await db_maintenance.measure()
     ok, reason = db_maintenance.should_vacuum(usage)
     mib = db_maintenance.MIB
-    return JSONResponse(
-        {
-            "database_mib": round(usage.database_bytes / mib, 1),
-            "media_table_mib": round(usage.total_bytes / mib, 1),
-            "media_live_mib": round(usage.live_bytes / mib, 1),
-            "media_wasted_mib": round(usage.wasted_bytes / mib, 1),
-            "auto_vacuum_enabled": db_maintenance.enabled(),
-            "vacuum_would_run": ok,
-            "reason": reason,
-        }
-    )
+    return {
+        "database_mib": round(usage.database_bytes / mib, 1),
+        "media_table_mib": round(usage.total_bytes / mib, 1),
+        "media_live_mib": round(usage.live_bytes / mib, 1),
+        "media_wasted_mib": round(usage.wasted_bytes / mib, 1),
+        "auto_vacuum_enabled": db_maintenance.enabled(),
+        "vacuum_would_run": ok,
+        "reason": reason,
+    }
+
+
+# ─── Tổng quan: mọi số liệu "sống" trong 1 request ───────────────────────────
+# Trang admin tự làm mới bằng 1 request /admin/api/overview thay vì 12 request song song
+# (db-usage quét cả bảng ảnh, watchdog, thống kê theo năm...). Mỗi phần có TTL riêng
+# phía server; 0 = luôn đọc mới (trong RAM, rẻ). Các endpoint lẻ cũ vẫn giữ nguyên.
+_OVERVIEW_TTL_SEC = {
+    "state": 0,
+    "market": 0,
+    "ram": 0,
+    "usage": 60,
+    "models": 60,
+    "outcomes": 60,
+    "burn": 60,
+    "turns": 60,
+    "daily": 60,
+    "db": 300,
+    "watchdog": 300,
+    "jobs": 300,
+}
+# Phần đổi theo khoảng ?hours= (cache riêng từng khoảng); phần khác dùng chung.
+_OVERVIEW_BY_HOURS = frozenset({"usage", "models", "outcomes", "daily"})
+_OVERVIEW_CACHE_MAX = 32  # (phần, khoảng giờ) -> trần số bản giữ trong RAM
+_OVERVIEW_SECTION_TIMEOUT_SEC = 20
+# Số phần đọc DB cùng lúc: pool DB nhỏ (dùng chung với lượt chat), không chiếm hết.
+_OVERVIEW_PARALLEL = 3
+_overview_cache: collections.OrderedDict[tuple[str, int], tuple[float, object]] = (
+    collections.OrderedDict()
+)
+# Hai tab/hai lượt làm mới cùng lúc: lượt sau chờ lượt trước rồi dùng luôn cache.
+_overview_lock = asyncio.Lock()
+
+
+def _overview_forget(name: str) -> None:
+    for key in [k for k in _overview_cache if k[0] == name]:
+        del _overview_cache[key]
+
+
+def _overview_sources(hours: int) -> dict:
+    """Tên phần -> hàm async lấy số liệu (cùng dữ liệu với endpoint lẻ tương ứng)."""
+
+    async def state():
+        return orchestrator.get_provider_state_snapshot()
+
+    async def jobs():
+        from services import background_jobs
+
+        return await background_jobs.admin_overview()
+
+    return {
+        "state": state,
+        "market": market_page.status,
+        "ram": lambda: asyncio.to_thread(memory_stats.snapshot),
+        "usage": lambda: _usage_rows(hours),
+        "models": lambda: _usage_model_rows(hours),
+        "outcomes": lambda: _outcome_rows(hours),
+        "burn": _burn_data,
+        "turns": lambda: _turns_data(24),
+        # Cùng lời gọi với admin_usage_daily (_usage_timeline giữ nguyên).
+        "daily": lambda: db.with_reconnect(_usage_timeline)(hours),
+        "db": _db_usage_data,
+        "watchdog": _watchdog_data,
+        "jobs": jobs,
+    }
+
+
+async def _overview_section(name: str, hours: int, fresh: bool, load) -> tuple[object, float]:
+    """(số liệu, tuổi giây) của 1 phần: còn hạn TTL thì lấy cache, không thì đọc mới."""
+    ttl = _OVERVIEW_TTL_SEC[name]
+    key = (name, hours if name in _OVERVIEW_BY_HOURS else 0)
+    hit = _overview_cache.get(key)
+    if ttl and not fresh and hit is not None and time.monotonic() - hit[0] < ttl:
+        return hit[1], time.monotonic() - hit[0]
+    value = await asyncio.wait_for(load(), _OVERVIEW_SECTION_TIMEOUT_SEC)
+    if ttl:
+        _overview_cache[key] = (time.monotonic(), value)
+        _overview_cache.move_to_end(key)
+        while len(_overview_cache) > _OVERVIEW_CACHE_MAX:
+            _overview_cache.popitem(last=False)
+    return value, 0.0
+
+
+@api_router.get("/overview")
+async def admin_overview(request: Request) -> Response:
+    """?hours= (khoảng thống kê như /usage), ?fresh=1 (nút Làm mới: bỏ qua cache).
+    Trả {tên phần: số liệu như endpoint lẻ, "errors": {phần: loại lỗi}, "ages": {phần:
+    số giây từ lúc đọc}}; phần lỗi/quá giờ là null, các phần khác vẫn có."""
+    hours = _hours_param(request)
+    fresh = request.query_params.get("fresh") == "1"
+    sources = _overview_sources(hours)
+    slots = asyncio.Semaphore(_OVERVIEW_PARALLEL)
+
+    async def run(name: str, load) -> tuple[object, float]:
+        async with slots:
+            return await _overview_section(name, hours, fresh, load)
+
+    async with _overview_lock:
+        results = await asyncio.gather(
+            *(run(name, load) for name, load in sources.items()), return_exceptions=True
+        )
+    payload: dict = {"hours": hours, "errors": {}, "ages": {}}
+    for name, result in zip(sources, results, strict=True):
+        if isinstance(result, BaseException):
+            if not isinstance(result, Exception):
+                raise result
+            logger.warning("Admin overview: không đọc được %s.", name, exc_info=result)
+            payload[name] = None
+            payload["errors"][name] = type(result).__name__
+            continue
+        payload[name], age = result
+        if age >= 1:
+            payload["ages"][name] = int(age)
+    return JSONResponse(payload)
