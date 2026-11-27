@@ -460,6 +460,20 @@ def test_container_start_offset_doc_proc(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_vong_nhac_viec_chet_thi_chay_lai_va_bao(monkeypatch, sent):
+    import scheduler
+
+    reasons = ["KeyError", None]
+    monkeypatch.setattr(scheduler, "revive_reminder_loop", lambda: reasons.pop(0))
+    await watchdog.check_reminder_loop()
+    assert len(sent) == 1
+    text, key = sent[0]
+    assert key == "watchdog:reminder_loop" and "KeyError" in text and "chạy lại" in text
+    await watchdog.check_reminder_loop()  # đang sống: im lặng
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
 async def test_run_checks_mot_luat_loi_khong_chan_luat_khac(monkeypatch, caplog):
     ran = []
 
@@ -470,13 +484,14 @@ async def test_run_checks_mot_luat_loi_khong_chan_luat_khac(monkeypatch, caplog)
         ran.append(args)
 
     monkeypatch.setattr(watchdog, "check_memory", broken)
+    monkeypatch.setattr(watchdog, "check_reminder_loop", ok)
     monkeypatch.setattr(watchdog, "check_db_size", ok)
     monkeypatch.setattr(watchdog, "check_inbox", ok)
     monkeypatch.setattr(watchdog, "check_missed_jobs", ok)
     monkeypatch.setattr(watchdog, "write_heartbeat", ok)
     monkeypatch.setattr(watchdog, "check_restart_burst", ok)
     await watchdog.run_checks(datetime(2026, 10, 26, 9, 0, tzinfo=VN))
-    assert len(ran) == 5
+    assert len(ran) == 6
     assert any("RAM" in r.getMessage() and r.levelname == "WARNING" for r in caplog.records)
     monkeypatch.setenv("WATCHDOG_ENABLED", "0")
     ran.clear()

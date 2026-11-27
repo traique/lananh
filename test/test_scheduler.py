@@ -1,5 +1,6 @@
 """Tests for reminder delivery ordering and retry leases."""
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -112,6 +113,104 @@ async def test_reminder_nhieu_reminder_doc_lap_nhau(monkeypatch):
 
     assert mark_calls == [1, 3]
     assert release_calls == [2]
+
+
+@pytest.mark.asyncio
+async def test_dong_lech_cot_chi_bo_qua_dong_do(monkeypatch, caplog):
+    """1 dòng dữ liệu lệch cột (DueReminder(*item) raise) không được chặn các nhắc
+    khác trong cùng lượt claim."""
+    mark_calls = []
+
+    async def fake_mark_reminder_sent(reminder_id):
+        mark_calls.append(reminder_id)
+
+    async def ok_callback(uid, text):
+        return None
+
+    monkeypatch.setattr(db, "mark_reminder_sent", fake_mark_reminder_sent)
+    scheduler.set_notify_callback(ok_callback)
+    too_many = tuple(range(20))
+    await scheduler._process_due_reminders([too_many, (7,), (8, 1, "uống thuốc")])
+    assert mark_calls == [8]
+    assert "reminder id=0" in caplog.text and "reminder id=7" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_vong_nhac_song_sot_loi_bat_ngo(monkeypatch):
+    """Claim lỗi, dòng lệch cột, lỗi bất ngờ khi xử lý: task nhắc việc vẫn sống và
+    gửi được nhắc ở lượt sau."""
+    monkeypatch.setattr(scheduler.config, "REMINDER_CHECK_INTERVAL_SEC", 0)
+    batches = [
+        RuntimeError("supabase chập chờn"),
+        [("không", "phải", "dòng", "nhắc", 1, 2, 3, 4, 5, 6, 7)],
+        [(9, 1, "lượt gặp lỗi chưa lường trước")],
+        [(10, 1, "họp")],
+    ]
+    sent = []
+    delivered = asyncio.Event()
+
+    async def claim(**kwargs):
+        batch = batches.pop(0) if batches else []
+        if isinstance(batch, Exception):
+            raise batch
+        return batch
+
+    real_process = scheduler._process_due_reminders
+
+    async def process(due):
+        if due and due[0][0] == 9:
+            raise RuntimeError("lỗi ngoài vòng từng nhắc")
+        await real_process(due)
+
+    async def mark_sent(reminder_id):
+        sent.append(reminder_id)
+        delivered.set()
+
+    async def ok_callback(uid, text):
+        return None
+
+    monkeypatch.setattr(idempotency, "claim_due_reminders", claim)
+    monkeypatch.setattr(scheduler, "_process_due_reminders", process)
+    monkeypatch.setattr(db, "mark_reminder_sent", mark_sent)
+    scheduler.set_notify_callback(ok_callback)
+    task = asyncio.create_task(scheduler._reminder_loop())
+    try:
+        await asyncio.wait_for(delivered.wait(), 2)
+        assert sent == [10] and not task.done()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_watchdog_chay_lai_vong_nhac_da_chet(monkeypatch):
+    started = []
+
+    async def fake_loop():
+        started.append(1)
+        await asyncio.Event().wait()
+
+    async def crash():
+        raise KeyError("cột lạ")
+
+    dead = asyncio.create_task(crash())
+    await asyncio.gather(dead, return_exceptions=True)
+    monkeypatch.setattr(scheduler, "_reminder_loop", fake_loop)
+    monkeypatch.setattr(scheduler, "_reminder_task", dead)
+    try:
+        assert scheduler.revive_reminder_loop() == "KeyError"
+        revived = scheduler._reminder_task
+        assert revived is not dead
+        await asyncio.sleep(0)
+        assert started == [1] and not revived.done()
+        assert scheduler.revive_reminder_loop() is None  # đang sống: không làm gì
+    finally:
+        scheduler._reminder_task.cancel()
+        await asyncio.gather(scheduler._reminder_task, return_exceptions=True)
+    # Bị huỷ lúc tắt app hoặc chưa start: không chạy lại.
+    assert scheduler.revive_reminder_loop() is None
+    monkeypatch.setattr(scheduler, "_reminder_task", None)
+    assert scheduler.revive_reminder_loop() is None
 
 
 # ─── Daily digest: guard "đã gửi hôm nay" + gửi bù khi lỡ giờ ───────────────

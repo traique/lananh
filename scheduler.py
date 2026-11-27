@@ -79,12 +79,24 @@ async def _schedule_next(reminder: idempotency.DueReminder, now: datetime) -> No
         )
 
 
+def _item_id(item) -> object:
+    """Id của 1 dòng nhắc để ghi log, kể cả khi dòng lệch cột (không raise)."""
+    try:
+        return item[0]
+    except Exception:
+        return "?"
+
+
 async def _process_due_reminders(due: list[tuple]) -> None:
     from services import reminder_service
 
     for item in due:
-        reminder = idempotency.DueReminder(*item)
+        reminder_id = _item_id(item)
         try:
+            # Dựng trong try: 1 dòng lệch cột chỉ bỏ qua dòng đó (claim giữ lease, thử
+            # lại sau 5 phút), không giết cả vòng nhắc việc.
+            reminder = idempotency.DueReminder(*item)
+            reminder_id = reminder.id
             now = datetime.now(_VN_TZ)
             if reminder.series_id:
                 await _schedule_next(reminder, now)
@@ -130,7 +142,7 @@ async def _process_due_reminders(due: list[tuple]) -> None:
         except Exception:
             logger.warning(
                 "scheduler: giao/ghi trạng thái reminder id=%s lỗi; lease giữ lần thử tiếp theo.",
-                reminder.id,
+                reminder_id,
                 exc_info=True,
             )
 
@@ -139,13 +151,31 @@ async def _reminder_loop() -> None:
     trace.detach()
     while True:
         await asyncio.sleep(config.REMINDER_CHECK_INTERVAL_SEC)
-        with trace.job("reminders"):
-            try:
+        # Bọc cả thân vòng như _daily_digest_loop: lỗi bất ngờ (claim, dựng dòng, giao)
+        # chỉ bỏ lượt này, task nhắc việc không bao giờ chết âm thầm tới lần deploy sau.
+        try:
+            with trace.job("reminders"):
                 due = await idempotency.claim_due_reminders()
-            except Exception:
-                logger.warning("scheduler: lỗi khi claim reminders đến hạn.", exc_info=True)
-                continue
-            await _process_due_reminders(due)
+                await _process_due_reminders(due)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("scheduler: vòng nhắc việc lỗi; thử lại ở nhịp sau.", exc_info=True)
+
+
+def revive_reminder_loop() -> str | None:
+    """Watchdog (services/watchdog.py): vòng nhắc việc đã start mà task đã chết vì
+    lỗi không bắt được thì chạy lại. Trả tên lỗi đã giết task; None khi task còn
+    sống, chưa start/đã stop, hoặc bị huỷ lúc tắt app (không chạy lại)."""
+    global _reminder_task
+    task = _reminder_task
+    if task is None or not task.done() or task.cancelled():
+        return None
+    exc = task.exception()
+    reason = type(exc).__name__ if exc is not None else "vòng lặp tự kết thúc"
+    logger.warning("scheduler: vòng nhắc việc đã chết (%s) - chạy lại.", reason, exc_info=exc)
+    _reminder_task = asyncio.create_task(_reminder_loop())
+    return reason
 
 
 def _seconds_until_next_hour(hour: int) -> float:
