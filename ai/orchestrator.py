@@ -911,6 +911,9 @@ async def ask(
             gemini["max_output_tokens"] = max_tokens
         if temperature is not None:
             gemini["temperature"] = temperature
+        if json_mode or _call_stage.get() == "utility":
+            # Việc phụ/JSON: không tốn token và độ trễ cho suy luận.
+            gemini["thinking_budget"] = official_client.UTILITY_THINKING_BUDGET
         return await official_client.generate(
             idx,
             effective_prompt,
@@ -1181,6 +1184,7 @@ async def chat(
             # official_client - xem chú thích tương tự trong ask()._api_call.
             # official_client.generate() tự dùng config.GOOGLE_AI_STUDIO_MODEL
             # khi model=None. official_client tự thêm dòng giờ VN.
+            thinking = config.GEMINI_CHAT_THINKING_BUDGET
             return await official_client.generate(
                 idx,
                 full_prompt,
@@ -1190,6 +1194,7 @@ async def chat(
                 temperature=temperature,
                 enable_search=provider_search or gemini_search,
                 require_search_evidence=provider_search,
+                **({"thinking_budget": thinking} if thinking is not None else {}),
             )
 
         async def _live_call():

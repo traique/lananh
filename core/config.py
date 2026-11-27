@@ -60,6 +60,23 @@ GOOGLE_AI_STUDIO_API_KEY_2 = os.getenv("GOOGLE_AI_STUDIO_API_KEY_2", "").strip()
 GOOGLE_AI_STUDIO_API_KEY = GOOGLE_AI_STUDIO_API_KEY_1
 GOOGLE_AI_STUDIO_MODEL = os.getenv("GOOGLE_AI_STUDIO_MODEL", "gemini-3.5-flash-lite").strip()
 
+
+def _thinking_budget(raw: str) -> int | None:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    try:
+        return max(-1, int(value))
+    except ValueError:
+        logger.warning("GEMINI_CHAT_THINKING_BUDGET=%r không phải số nguyên - bỏ qua.", raw)
+        return None
+
+
+# Token suy luận (thinking) tối đa của Gemini cho lượt CHAT: trống = mặc định của model;
+# 0 = tắt suy luận (nhanh, đỡ quota); -1 = model tự quyết. Lượt JSON/tiện ích (router
+# tool, trích trí nhớ, việc phụ ngắn) luôn 0. Model từ chối tham số thì tự bỏ.
+GEMINI_CHAT_THINKING_BUDGET = _thinking_budget(os.getenv("GEMINI_CHAT_THINKING_BUDGET", ""))
+
 HAS_ANY_AI_STUDIO_KEY = bool(GOOGLE_AI_STUDIO_API_KEY_1 or GOOGLE_AI_STUDIO_API_KEY_2)
 
 

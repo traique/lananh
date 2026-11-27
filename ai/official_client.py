@@ -191,6 +191,61 @@ def is_quota_exhausted_error(exc: BaseException) -> bool:
     )
 
 
+# ─── Ngân sách suy luận (thinking) ───────────────────────────────────────────
+# Token suy luận của Gemini tính vào quota và độ trễ: lượt JSON/tiện ích luôn 0, lượt
+# chat theo GEMINI_CHAT_THINKING_BUDGET (None = mặc định của model). Model từ chối
+# tham số này (400, vd model chỉ chạy ở chế độ suy luận) thì gọi lại 1 lần không kèm
+# và nhớ model đó trong RAM (có trần) để lượt sau khỏi tốn request hỏng.
+UTILITY_THINKING_BUDGET = 0
+_THINKING_REJECTED: set[str] = set()
+_THINKING_REJECTED_MAX = 8
+_THINKING_ERROR_RE = re.compile(r"think", re.IGNORECASE)
+
+
+def _thinking_config(model: str, budget: Optional[int]) -> dict:
+    if budget is None or model in _THINKING_REJECTED:
+        return {}
+    from google.genai import types
+
+    return {"thinking_config": types.ThinkingConfig(thinking_budget=budget)}
+
+
+def _rejects_thinking(exc: BaseException) -> bool:
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    return code == 400 and bool(_THINKING_ERROR_RE.search(str(exc)))
+
+
+def _forget_thinking(model: str, exc: BaseException) -> None:
+    if len(_THINKING_REJECTED) < _THINKING_REJECTED_MAX:
+        _THINKING_REJECTED.add(model)
+    logger.warning("Model %s không nhận thinking_config (%s) - gọi lại không kèm.", model, exc)
+
+
+async def _generate_content(
+    client, model: str, contents, cfg_kwargs: dict, label: str, limit_sec: float
+):
+    """generate_content có trần ``limit_sec``; cfg_kwargs có thinking_config mà model
+    từ chối thì gọi lại đúng 1 lần không kèm (_forget_thinking)."""
+    from google.genai import types
+
+    async def _call(kwargs: dict):
+        return await with_timeout(
+            client.aio.models.generate_content(
+                model=model, contents=contents, config=types.GenerateContentConfig(**kwargs)
+            ),
+            limit_sec,
+            label,
+        )
+
+    try:
+        return await _call(cfg_kwargs)
+    except Exception as exc:
+        if "thinking_config" not in cfg_kwargs or not _rejects_thinking(exc):
+            raise
+        _forget_thinking(model, exc)
+        return await _call({k: v for k, v in cfg_kwargs.items() if k != "thinking_config"})
+
+
 async def generate(
     idx: int,
     prompt: str,
@@ -204,13 +259,15 @@ async def generate(
     require_search_evidence: bool = False,
     max_output_tokens: Optional[int] = None,
     json_mode: bool = False,
+    thinking_budget: Optional[int] = None,
 ) -> FallbackResponse:
     """``temperature``: ghi đè nhiệt độ persona (lượt có dữ liệu tra cứu dùng
     thấp hơn để giữ đúng số liệu). ``require_search_evidence``: lượt bắt buộc
     tự tra web - Gemini trả lời mà không có grounding metadata thì raise
     NoSearchEvidenceError (provider-chain chuyển provider kế tiếp).
     ``max_output_tokens``/``json_mode`` (orchestrator.ask cho việc phụ ngắn): trần
-    token trả lời và JSON mode (response_mime_type) của Gemini."""
+    token trả lời và JSON mode (response_mime_type) của Gemini.
+    ``thinking_budget``: token suy luận tối đa (0 = tắt; None = mặc định của model)."""
     from google.genai import types
 
     client = await _get_official_client(idx)
@@ -242,19 +299,21 @@ async def generate(
     if enable_search:
         cfg_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
 
+    model_name = model or await _model_for(idx)
+    cfg_kwargs.update(_thinking_config(model_name, thinking_budget))
+
     call_log.note_prompt_chars(
         len(prompt_with_time)
         + len(system_instruction or "")
         + sum(len(content) for _role, content in history or ())
     )
-    response = await with_timeout(
-        client.aio.models.generate_content(
-            model=model or await _model_for(idx),
-            contents=contents,
-            config=types.GenerateContentConfig(**cfg_kwargs),
-        ),
-        OFFICIAL_CHAT_TIMEOUT_SEC,
+    response = await _generate_content(
+        client,
+        model_name,
+        contents,
+        cfg_kwargs,
         f"api{idx} generate_content",
+        OFFICIAL_CHAT_TIMEOUT_SEC,
     )
     call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
     searched = bool(enable_search) and _used_google_search(response)
@@ -489,22 +548,25 @@ async def generate_utility_json(prompt: str) -> Optional[dict]:
     kèm độ trễ, kết quả và token như provider-chain."""
     if not config.HAS_ANY_AI_STUDIO_KEY:
         return None
-    from google.genai import types
-
     last_exc: Optional[BaseException] = None
     for idx in await usable_indices():
         try:
             client = await _get_official_client(idx)
             model_name = await _model_for(idx)
 
-            def _call(client=client, model_name=model_name):
-                return client.aio.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.1,
-                        response_mime_type="application/json",
-                    ),
+            def _call(client=client, model_name=model_name, label=f"api{idx} utility JSON"):
+                return _generate_content(
+                    client,
+                    model_name,
+                    prompt,
+                    {
+                        "temperature": 0.1,
+                        "response_mime_type": "application/json",
+                        # Lượt JSON tiện ích: không tốn token/độ trễ cho suy luận.
+                        **_thinking_config(model_name, UTILITY_THINKING_BUDGET),
+                    },
+                    label,
+                    OFFICIAL_UTILITY_TIMEOUT_SEC,
                 )
 
             async def _attempt(_call=_call):
