@@ -24,14 +24,12 @@ from core.db.pool import statement_cache_size as statement_cache_size
 from core.db.pool import with_reconnect as with_reconnect
 from core.repositories import feedback as _feedback
 from core.repositories import observability as _observability
+from core.repositories import prompts as _prompts
 from core.repositories import quota as _quota
 
 logger = logging.getLogger(__name__)
 
-# Chỉ giữ tối đa N prompt gần nhất / user - results liên quan tự xoá theo
-# (ON DELETE CASCADE). Tránh bảng phình vô hạn theo thời gian (đặc biệt vì
-# đây là bot 1 người dùng nhưng chạy 24/7).
-HISTORY_RETENTION_LIMIT = 20
+HISTORY_RETENTION_LIMIT = _prompts.HISTORY_RETENTION_LIMIT
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -95,70 +93,14 @@ async def ensure_migrations() -> None:
 @_with_reconnect
 async def init_db() -> None:
     await ensure_migrations()
-
-    # Data retention is operational cleanup, not schema migration.
-    await (await get_pool()).execute(
-        """
-        DELETE FROM prompts p
-        WHERE p.id NOT IN (
-            SELECT id FROM (
-                SELECT id, ROW_NUMBER() OVER (
-                    PARTITION BY telegram_user_id ORDER BY id DESC
-                ) AS rn
-                FROM prompts
-            ) ranked
-            WHERE ranked.rn <= $1
-        )
-        """,
-        HISTORY_RETENTION_LIMIT,
-    )
+    # Dọn dữ liệu là việc vận hành, không phải migration schema.
+    await _prompts.prune_all(await get_pool())
 
 
-@_with_reconnect(idempotent=False)
-async def save_prompt(
-    telegram_user_id: int, command_type: str, prompt: str, channel: str = "telegram"
-) -> int:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            row = await conn.fetchrow(
-                "INSERT INTO prompts (telegram_user_id, command_type, prompt, channel) "
-                "VALUES ($1, $2, $3, $4) RETURNING id",
-                telegram_user_id,
-                command_type,
-                prompt,
-                channel,
-            )
-            # Ghi song song vào user_calls (KHÔNG bị dọn theo số lượng như
-            # `prompts` bên dưới) - đây là nguồn số liệu thật cho
-            # usage_by_user()/`/thongke`, xem docstring bảng user_calls trong
-            # init_db().
-            await conn.execute(
-                "INSERT INTO user_calls (channel, telegram_user_id, kind) VALUES ($1, $2, $3)",
-                channel,
-                telegram_user_id,
-                command_type,
-            )
-            # Chỉ giữ HISTORY_RETENTION_LIMIT prompt gần nhất của user này -
-            # chạy ngay sau mỗi insert nên bảng không bao giờ phình quá giới
-            # hạn, dù bot chạy liên tục trong thời gian dài. Việc dọn này CHỈ
-            # phục vụ /history (xem lại nội dung prompt gần đây) - KHÔNG được
-            # dùng để đếm usage (xem user_calls ở trên).
-            await conn.execute(
-                """
-                DELETE FROM prompts
-                WHERE telegram_user_id = $1
-                  AND id NOT IN (
-                      SELECT id FROM prompts
-                      WHERE telegram_user_id = $1
-                      ORDER BY id DESC
-                      LIMIT $2
-                  )
-                """,
-                telegram_user_id,
-                HISTORY_RETENTION_LIMIT,
-            )
-    return row["id"]
+# ─── Lịch sử lệnh /history: prompts + results (core/repositories/prompts.py) ─
+save_prompt = _bind(_prompts.save, idempotent=False)
+save_result = _bind(_prompts.save_result, idempotent=False)
+get_history = _bind(_prompts.history)
 
 
 # ─── Số liệu lượt gọi / provider / truy vết lượt (migrations/015, 021, 025) ──
@@ -192,54 +134,6 @@ answer_feedback_stats = _bind(_feedback.stats)
 answer_feedback_recent_down = _bind(_feedback.recent_down)
 answer_feedback_owner_down = _bind(_feedback.owner_down_for_evals)
 answer_feedback_clear = _bind(_feedback.clear)
-
-
-@_with_reconnect(idempotent=False)
-async def save_result(
-    prompt_id: int,
-    result_type: str,
-    content_text: Optional[str] = None,
-    file_path: Optional[str] = None,
-    *,
-    provider: Optional[str] = None,
-    model: Optional[str] = None,
-) -> None:
-    """``provider``/``model`` (migrations/021): ai trả lời lượt này - đánh giá 👍/👎
-    sau đó (services/answer_feedback.py) biết câu trả lời của provider nào."""
-    pool = await get_pool()
-    await pool.execute(
-        "INSERT INTO results (prompt_id, result_type, content_text, file_path, provider, model) "
-        "VALUES ($1, $2, $3, $4, $5, $6)",
-        prompt_id,
-        result_type,
-        content_text,
-        file_path,
-        provider,
-        model,
-    )
-
-
-@_with_reconnect
-async def get_history(telegram_user_id: int, limit: int = 10):
-    pool = await get_pool()
-    rows = await pool.fetch(
-        """
-        SELECT p.command_type, p.prompt, p.created_at,
-               STRING_AGG(DISTINCT r.result_type, ',') AS result_types
-        FROM prompts p
-        LEFT JOIN results r ON r.prompt_id = p.id
-        WHERE p.telegram_user_id = $1
-        GROUP BY p.id
-        ORDER BY p.id DESC
-        LIMIT $2
-        """,
-        telegram_user_id,
-        limit,
-    )
-    return [
-        (r["command_type"], r["prompt"], r["created_at"].isoformat(), r["result_types"] or "")
-        for r in rows
-    ]
 
 
 # Giữ tối đa N tin nhắn gần nhất / user trong chat_messages, để bảng không
