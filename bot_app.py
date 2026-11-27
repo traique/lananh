@@ -25,7 +25,7 @@ from ai import (
     tavily_client,
 )
 from channels import facebook_commands, zalo_users, zoom
-from core import config, database as db, idempotency
+from core import config, database as db, idempotency, memtrim
 from handlers import (
     callbacks,
     chat_router,
@@ -221,6 +221,12 @@ async def _post_init(app):
     proactive_service.start()
     # Việc nền /viec + tác vụ định kỳ (routines đăng ký vòng xếp lịch vào bộ chạy nền).
     background_jobs.start()
+    # CUỐI CÙNG: heap khởi động (module, bảng tra, cache dựng sẵn) không đổi nữa - đóng
+    # băng (gc.freeze) để gc.collect() sau mỗi lượt (core/memtrim.py) khỏi quét lại.
+    # getattr: bản memtrim chưa có hàm này thì bỏ qua.
+    freeze_startup_heap = getattr(memtrim, "freeze_startup_heap", None)
+    if freeze_startup_heap is not None:
+        freeze_startup_heap()
 
 
 async def _post_shutdown(app):
