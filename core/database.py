@@ -6,9 +6,10 @@ hàm repository thì các hàm ở đây thấy ngay (tra tên lúc gọi).
 """
 
 import logging
-from collections.abc import Callable
+import sys
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Optional
+from typing import Any, Concatenate, Optional, ParamSpec, TypeVar, overload
 
 from core import config
 from core.db.pool import DatabaseUnavailableError as DatabaseUnavailableError
@@ -21,6 +22,9 @@ from core.db.pool import pool_stats as pool_stats
 from core.db.pool import reset_circuit_breaker as reset_circuit_breaker
 from core.db.pool import statement_cache_size as statement_cache_size
 from core.db.pool import with_reconnect as with_reconnect
+from core.repositories import feedback as _feedback
+from core.repositories import observability as _observability
+from core.repositories import quota as _quota
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +32,50 @@ logger = logging.getLogger(__name__)
 # (ON DELETE CASCADE). Tránh bảng phình vô hạn theo thời gian (đặc biệt vì
 # đây là bot 1 người dùng nhưng chạy 24/7).
 HISTORY_RETENTION_LIMIT = 20
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+_T = TypeVar("_T")
+
+
+@overload
+def _bind(
+    fn: Callable[Concatenate[Any, _P], Awaitable[_R]], *, idempotent: bool = True
+) -> Callable[_P, Awaitable[_R]]: ...
+
+
+@overload
+def _bind(
+    fn: Callable[Concatenate[Any, _P], Awaitable[Any]],
+    *,
+    idempotent: bool = True,
+    post: Callable[[Any], _T],
+) -> Callable[_P, Awaitable[_T]]: ...
+
+
+def _bind(fn, *, idempotent=True, post=None):
+    """``db.xxx = _bind(repo.fn)``: hàm gọi ``repo.fn(await get_pool(), *args, **kwargs)``
+    có with_reconnect (``idempotent=False``: lệnh có thể đã commit thì không chạy lại).
+    Hàm repository và ``get_pool`` được tra theo tên LÚC GỌI - test thay ``db.get_pool``
+    hay hàm trong core/repositories vẫn có hiệu lực như với wrapper viết tay. ``post`` đổi
+    kết quả (vd Record -> dict). Chữ ký (pyright) lấy từ hàm repository, bỏ tham số pool."""
+    module, name = sys.modules[fn.__module__], fn.__name__
+
+    async def bound(*args, **kwargs):
+        result = await getattr(module, name)(await get_pool(), *args, **kwargs)
+        return result if post is None else post(result)
+
+    bound.__name__ = bound.__qualname__ = name
+    bound.__doc__ = fn.__doc__
+    return _with_reconnect(bound, idempotent=idempotent)
+
+
+def _dicts(rows) -> list[dict]:
+    return [dict(row) for row in rows]
+
+
+def _dict_or_none(row) -> dict | None:
+    return dict(row) if row else None
 
 
 @_with_reconnect
@@ -113,203 +161,37 @@ async def save_prompt(
     return row["id"]
 
 
-@_with_reconnect
-async def usage_by_user(since_hours: int = 24 * 7) -> list[dict]:
-    """Số lượt gọi AI (bảng user_calls - KHÔNG phải `prompts`, xem docstring
-    bảng user_calls trong init_db() để biết lý do) theo (channel,
-    telegram_user_id), dùng cho trang admin và /thongke. telegram_user_id âm =
-    tài khoản Zalo đã pair (xem channels/zalo_users.py); dương = chủ bot
-    (Telegram/Zoom dùng chung config.ALLOWED_USER_ID vì Zoom hiện chỉ có 1
-    pairing)."""
-    pool = await get_pool()
-    rows = await pool.fetch(
-        """
-        SELECT channel, telegram_user_id, COUNT(*) AS calls, MAX(created_at) AS last_call_at
-        FROM user_calls
-        WHERE created_at >= now() - ($1 || ' hours')::interval
-        GROUP BY channel, telegram_user_id
-        ORDER BY calls DESC
-        """,
-        str(since_hours),
-    )
-    return [dict(row) for row in rows]
+# ─── Số liệu lượt gọi / provider / truy vết lượt (migrations/015, 021, 025) ──
+# SQL ở core/repositories/{observability,quota,feedback}.py. INSERT số liệu không
+# idempotent; ghi đánh giá 👍/👎 là UPSERT theo (người, prompt) nên thử lại an toàn.
+usage_by_user = _bind(_observability.usage_by_user)
+usage_by_model = _bind(_observability.usage_by_model)
+provider_outcomes = _bind(_observability.provider_outcomes)
+record_provider_call = _bind(_observability.insert_provider_call, idempotent=False)
+provider_latency_summary = _bind(_observability.latency_by_provider)
+record_turn_metrics = _bind(_observability.insert_turn_metrics, idempotent=False)
+recent_turn_metrics = _bind(_observability.recent_turns)
+turn_stage_summary = _bind(_observability.turn_stage_summary)
+provider_calls_for_turn = _bind(_observability.provider_calls_for_turn)
+provider_burn_since = _bind(_observability.burn_since)
+user_calls_timeline = _bind(_observability.calls_timeline)
 
+# Quota ngày thành viên Zalo (services/usage_quota.py, migrations/025).
+user_calls_since = _bind(_quota.count_since)
+user_calls_by_user_since = _bind(_quota.counts_by_user_since)
+record_user_call = _bind(_quota.insert, idempotent=False)
+# Không idempotent: UPDATE chọn lượt from_kind MỚI NHẤT, chạy lại sau khi đã commit sẽ
+# đổi luôn lượt trước đó (lượt nặng +2) - chỉ retry khi lệnh chưa gửi đi.
+relabel_last_user_call = _bind(_quota.relabel_latest, idempotent=False)
 
-# ─── Quota ngày thành viên Zalo (services/usage_quota.py, migrations/025) ───
-# SQL ở core/repositories/quota.py.
-
-
-@_with_reconnect
-async def user_calls_since(
-    channel: str, telegram_user_id: int, since: datetime, heavy_kinds: list[str]
-) -> tuple[int, int]:
-    """(số lượt, số lượt nặng) của 1 người từ ``since`` (bảng user_calls)."""
-    from core.repositories import quota
-
-    return await quota.count_since(await get_pool(), channel, telegram_user_id, since, heavy_kinds)
-
-
-@_with_reconnect
-async def user_calls_by_user_since(
-    channel: str, since: datetime, heavy_kinds: list[str], limit: int = 100
-) -> list[dict]:
-    from core.repositories import quota
-
-    return await quota.counts_by_user_since(await get_pool(), channel, since, heavy_kinds, limit)
-
-
-@_with_reconnect(idempotent=False)
-async def record_user_call(channel: str, telegram_user_id: int, kind: str) -> None:
-    from core.repositories import quota
-
-    await quota.insert(await get_pool(), channel, telegram_user_id, kind)
-
-
-# Không idempotent: UPDATE chọn lượt from_kind MỚI NHẤT, chạy lại sau khi đã commit
-# sẽ đổi luôn lượt trước đó (lượt nặng +2) - chỉ retry khi lệnh chưa gửi đi.
-@_with_reconnect(idempotent=False)
-async def relabel_last_user_call(
-    channel: str, telegram_user_id: int, from_kind: str, to_kind: str, since: datetime
-) -> bool:
-    from core.repositories import quota
-
-    return await quota.relabel_latest(
-        await get_pool(), channel, telegram_user_id, from_kind, to_kind, since
-    )
-
-
-@_with_reconnect(idempotent=False)
-async def record_provider_call(
-    provider: str,
-    model: str,
-    *,
-    outcome: str = "ok",
-    latency_ms: Optional[int] = None,
-    stage: Optional[str] = None,
-    prompt_chars: Optional[int] = None,
-    turn_id: Optional[str] = None,
-    prompt_tokens: Optional[int] = None,
-    completion_tokens: Optional[int] = None,
-) -> None:
-    """Ghi 1 lượt gọi provider/model (bảng provider_calls). ``outcome``: ok |
-    error | timeout | rate_limited | contaminated. ``turn_id`` (mã lượt
-    core/trace.py) và token (provider tự báo) - migrations/025. Lỗi DB ở đây
-    KHÔNG được để văng lên caller (chỉ là số liệu thống kê, không phải luồng
-    chính) - caller (ai/call_log.py) tự bọc try/except khi gọi hàm này."""
-    pool = await get_pool()
-    await pool.execute(
-        """INSERT INTO provider_calls (provider, model, outcome, latency_ms, stage, prompt_chars,
-                                       turn_id, prompt_tokens, completion_tokens)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
-        provider,
-        model,
-        outcome,
-        latency_ms,
-        stage,
-        prompt_chars,
-        turn_id,
-        prompt_tokens,
-        completion_tokens,
-    )
-
-
-@_with_reconnect
-async def provider_outcomes(since_hours: int = 24 * 7) -> list[dict]:
-    """Số lượt theo (provider, outcome) + độ trễ trung vị/p95 - trang admin dùng
-    để thấy provider nào chậm/lỗi/hết quota thay vì chỉ đếm lượt thành công."""
-    pool = await get_pool()
-    rows = await pool.fetch(
-        """
-        SELECT provider, outcome, COUNT(*) AS calls,
-               percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) AS p50_ms,
-               percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95_ms,
-               MAX(created_at) AS last_at
-        FROM provider_calls
-        WHERE created_at >= now() - ($1 || ' hours')::interval
-        GROUP BY provider, outcome
-        ORDER BY provider, calls DESC
-        """,
-        str(since_hours),
-    )
-    return [dict(row) for row in rows]
-
-
-# ─── Truy vết lượt trả lời (core/trace.py, migrations/025) ──────────────────
-# SQL ở core/repositories/observability.py.
-
-
-@_with_reconnect
-async def provider_latency_summary(since_hours: int = 24) -> list[dict]:
-    """Mỗi provider: số lượt, số lượt lỗi, p50/p95 độ trễ lượt thành công (/status)."""
-    from core.repositories import observability
-
-    return await observability.latency_by_provider(await get_pool(), since_hours)
-
-
-@_with_reconnect(idempotent=False)
-async def record_turn_metrics(**row) -> None:
-    """1 dòng turn_metrics khi 1 lượt kết thúc (core/trace.py ghi ở nền)."""
-    from core.repositories import observability
-
-    await observability.insert_turn_metrics(await get_pool(), **row)
-
-
-@_with_reconnect
-async def recent_turn_metrics(since_hours: int = 24, limit: int = 50) -> list[dict]:
-    from core.repositories import observability
-
-    return await observability.recent_turns(await get_pool(), since_hours, limit)
-
-
-@_with_reconnect
-async def turn_stage_summary(since_hours: int = 24) -> list[dict]:
-    from core.repositories import observability
-
-    return await observability.turn_stage_summary(await get_pool(), since_hours)
-
-
-@_with_reconnect
-async def provider_calls_for_turn(turn_id: str, limit: int = 50) -> list[dict]:
-    from core.repositories import observability
-
-    return await observability.provider_calls_for_turn(await get_pool(), turn_id, limit)
-
-
-@_with_reconnect
-async def user_calls_timeline(since_hours: int, bucket: str) -> list[dict]:
-    """Lượt gọi AI theo giờ/ngày (giờ VN) cho biểu đồ /admin; bucket "hour" | "day"."""
-    from core.repositories import observability
-
-    rows = await observability.calls_timeline(await get_pool(), since_hours, bucket)
-    return [dict(row) for row in rows]
-
-
-@_with_reconnect
-async def provider_burn_since(providers: list[str], since: datetime) -> list[dict]:
-    """Lượt/token/credit đã dùng từ ``since`` (services/quota_burn.py)."""
-    from core.repositories import observability
-
-    return await observability.burn_since(await get_pool(), providers, since)
-
-
-@_with_reconnect
-async def usage_by_model(since_hours: int = 24 * 7) -> list[dict]:
-    """Số lượt gọi thành công (bảng provider_calls) theo (provider, model),
-    dùng cho trang admin - khác usage_by_user() ở chỗ đây là góc nhìn theo
-    HẠ TẦNG AI đang trả lời, không phải theo user/kênh nào đang hỏi."""
-    pool = await get_pool()
-    rows = await pool.fetch(
-        """
-        SELECT provider, model, COUNT(*) AS calls, MAX(created_at) AS last_call_at
-        FROM provider_calls
-        WHERE created_at >= now() - ($1 || ' hours')::interval
-          AND outcome = 'ok'
-        GROUP BY provider, model
-        ORDER BY calls DESC
-        """,
-        str(since_hours),
-    )
-    return [dict(row) for row in rows]
+# Đánh giá câu trả lời (services/answer_feedback.py, migrations/021).
+answer_feedback_upsert = _bind(_feedback.upsert)
+answer_feedback_turn = _bind(_feedback.turn_snapshot)
+answer_feedback_last_chat = _bind(_feedback.last_chat_snapshot)
+answer_feedback_stats = _bind(_feedback.stats)
+answer_feedback_recent_down = _bind(_feedback.recent_down)
+answer_feedback_owner_down = _bind(_feedback.owner_down_for_evals)
+answer_feedback_clear = _bind(_feedback.clear)
 
 
 @_with_reconnect(idempotent=False)
@@ -335,63 +217,6 @@ async def save_result(
         provider,
         model,
     )
-
-
-# ─── Đánh giá câu trả lời (services/answer_feedback.py, migrations/021) ─────
-# SQL ở core/repositories/feedback.py. Ghi đánh giá là UPSERT theo (người, prompt)
-# nên thử lại an toàn.
-
-
-@_with_reconnect
-async def answer_feedback_upsert(**kw) -> int:
-    from core.repositories import feedback
-
-    return await feedback.upsert(await get_pool(), **kw)
-
-
-@_with_reconnect
-async def answer_feedback_turn(
-    telegram_user_id: int, prompt_id: int, max_chars: int = 2000
-) -> dict | None:
-    from core.repositories import feedback
-
-    return await feedback.turn_snapshot(await get_pool(), telegram_user_id, prompt_id, max_chars)
-
-
-@_with_reconnect
-async def answer_feedback_last_chat(telegram_user_id: int, max_chars: int = 2000) -> dict | None:
-    from core.repositories import feedback
-
-    return await feedback.last_chat_snapshot(await get_pool(), telegram_user_id, max_chars)
-
-
-@_with_reconnect
-async def answer_feedback_stats(days: int) -> list[dict]:
-    from core.repositories import feedback
-
-    return await feedback.stats(await get_pool(), days)
-
-
-@_with_reconnect
-async def answer_feedback_recent_down(telegram_user_id: int, days: int, limit: int = 5) -> list:
-    from core.repositories import feedback
-
-    return await feedback.recent_down(await get_pool(), telegram_user_id, days, limit)
-
-
-@_with_reconnect
-async def answer_feedback_owner_down(telegram_user_id: int, days: int, limit: int = 50) -> list:
-    """👎 trên Telegram của chủ bot -> case đánh giá ứng viên (services/eval_export.py)."""
-    from core.repositories import feedback
-
-    return await feedback.owner_down_for_evals(await get_pool(), telegram_user_id, days, limit)
-
-
-@_with_reconnect
-async def answer_feedback_clear(telegram_user_id: int) -> None:
-    from core.repositories import feedback
-
-    await feedback.clear(await get_pool(), telegram_user_id)
 
 
 @_with_reconnect
