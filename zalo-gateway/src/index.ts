@@ -300,12 +300,15 @@ installShutdownHandlers(async () => {
       session.stopListening();
       dispatcher.close();
       clearInterval(groupRefreshTimer);
+      // Bài Facebook đang gom (chờ cửa sổ gộp tới 30 s): gửi ngay cho Python thay vì mất.
+      void facebookBuffer.flushAll();
     },
     stopOutbox: () => {
       outbox.stop();
       return outboxPoller.stop();
     },
-    idle: () => dispatcher.idle,
+    // Cả tin nhóm (/tongket, tín hiệu) và bài Facebook đang chờ gửi sang Python.
+    idle: () => dispatcher.idle && groupQueue.pending === 0 && facebookBuffer.size === 0,
     flushOutboxProgress: () => outbox.flushProgress(),
     closeServer: () =>
       new Promise<void>((resolve) => {

@@ -91,3 +91,31 @@ test("Python trả lỗi thì báo BridgeHttpError kèm mã trạng thái (4xx b
     server.close();
   }
 });
+
+test("tắt máy: flushAll gửi ngay bài đang gom, không chờ hết cửa sổ gộp", async () => {
+  const { FacebookPostBuffer } = await import("./dist/facebook-buffer.js");
+  const stored = [];
+  const buffer = new FacebookPostBuffer({
+    store: async (post) => {
+      stored.push(post);
+    },
+    enqueue: async (work) => {
+      await work();
+    },
+    windowMs: 60_000,
+  });
+  await buffer.add("g1", "u1", "Lan", "m1", "Nồi chiên 899k", []);
+  await buffer.add("g2", "u2", "Mai", "m2", "Quạt mini 129k", []);
+  assert.equal(buffer.size, 2);
+
+  await buffer.flushAll();
+
+  assert.equal(buffer.size, 0);
+  assert.deepEqual(
+    stored.map((post) => [post.groupId, post.text]),
+    [
+      ["g1", "Nồi chiên 899k"],
+      ["g2", "Quạt mini 129k"],
+    ],
+  );
+});

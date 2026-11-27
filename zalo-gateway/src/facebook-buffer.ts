@@ -190,6 +190,19 @@ export class FacebookPostBuffer {
     }
   }
 
+  /**
+   * Tắt máy (SIGTERM, shutdown.ts): gửi ngay mọi bài đang gom thay vì chờ hết cửa sổ
+   * gộp - không thì bài của người vừa đăng trước lúc deploy bị mất. Gửi lỗi thì bài
+   * vẫn nằm trong bộ đệm (shutdown chỉ chờ có hạn). Không ném.
+   */
+  async flushAll(): Promise<void> {
+    await Promise.all(
+      [...this.buffers.keys()].map((key) =>
+        this.deps.enqueue(() => this.flush(key)).catch(() => undefined),
+      ),
+    );
+  }
+
   private totalBufferedBytes(): number {
     let total = 0;
     for (const pending of this.buffers.values()) total += mediaSize(pending.media);
