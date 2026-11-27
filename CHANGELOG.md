@@ -46,6 +46,9 @@ Quy ước:
   thì không tải lại.
 - Bot khởi động nhanh, nhẹ hơn (biên dịch sẵn, gỡ thư viện không dùng); log không ghi nội dung
   tin thoại, khoá bí mật lỡ lọt vào chi tiết lỗi cũng được che.
+- DB: bot không còn treo khi DB đang chạy lệnh dài; mỗi lệnh 1 vòng mạng thay vì 2, ít truy
+  vấn khi rảnh; Zalo không còn lỗi lệnh đầu tiên sau khi Supabase cắt kết nối rảnh. /status có
+  thêm dòng pool kết nối DB.
 
 ## 1.5.0 - 2026-11-25
 
