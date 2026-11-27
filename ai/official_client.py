@@ -31,7 +31,6 @@ _VN_WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu"
 # nên luân phiên api1/api2 không tạo client mới mỗi lượt; đổi key qua trang
 # admin thì client cũ của ĐÚNG slot đó được đóng (giải phóng connection pool).
 _official_clients: dict[int, tuple[str, object]] = {}
-_PERSONA_TEMPERATURE = 0.95
 _PERSONA_TOP_P = 0.95
 
 
@@ -232,7 +231,7 @@ async def generate(
 
     cfg_kwargs = {"system_instruction": system_instruction or None}
     if persona_generation_config:
-        cfg_kwargs.update(temperature=_PERSONA_TEMPERATURE, top_p=_PERSONA_TOP_P)
+        cfg_kwargs.update(temperature=config.CHAT_TEMPERATURE, top_p=_PERSONA_TOP_P)
     if temperature is not None:
         cfg_kwargs["temperature"] = temperature
     if max_output_tokens:

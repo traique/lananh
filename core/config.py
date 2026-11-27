@@ -261,6 +261,22 @@ WEB_READER_MAX_BYTES = max(64 * 1024, _env_int("WEB_READER_MAX_BYTES", 2 * 1024 
 # khi vượt ngân sách.
 CHAT_HISTORY_TURNS = _env_int("CHAT_HISTORY_TURNS", 10)
 CHAT_SESSION_TIMEOUT_SEC = _env_int("CHAT_SESSION_TIMEOUT_SEC", 21600)  # 6 giờ
+
+
+def _env_temperature(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        logger.warning("%s=%r không phải số - dùng %s.", name, raw, default)
+        value = default
+    return max(0.0, min(2.0, value))
+
+
+# Nhiệt độ lượt chat tự do (không dữ liệu tra cứu/tool/cổ phiếu - lượt đó dùng 0,55).
+# 0,95 cũ làm Gemini flash-lite hay lẫn chữ Trung/Nhật/Hàn (lượt bị bộ lọc CJK bỏ,
+# tốn thêm 1 provider); 0,8 vẫn giữ giọng tự nhiên.
+CHAT_TEMPERATURE = _env_temperature("CHAT_TEMPERATURE", 0.8)
 # Số dòng chat_messages giữ lại cho MỖI người (tin người dùng + câu trả lời,
 # xoay vòng): đủ cho tool search_history ("hôm trước em nói gì về ...") mà vẫn có
 # trần - mỗi thành viên Zalo cũng giữ chừng này dòng trên Supabase free 500 MB.

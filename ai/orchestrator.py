@@ -316,9 +316,9 @@ _SEARCH_UNAVAILABLE_NOTE = (
     "lúc này em chưa tra được thông tin mới nhất; phần kiến thức nền chung (không "
     "phụ thuộc thời điểm) vẫn có thể trả lời, và gợi ý anh hỏi lại sau ít phút."
 )
-# Nhiệt độ: chat tự do giữ 0.95 (giọng tự nhiên); lượt có dữ liệu tra cứu/tool/
-# số liệu cổ phiếu hoặc tự tra web dùng thấp hơn để không "sáng tác" số.
-_FREE_CHAT_TEMPERATURE = 0.95
+# Nhiệt độ: chat tự do theo CHAT_TEMPERATURE (mặc định 0.8 - 0.95 cũ làm Gemini
+# flash-lite hay lẫn chữ CJK); lượt có dữ liệu tra cứu/tool/số liệu cổ phiếu hoặc tự
+# tra web dùng thấp hơn để không "sáng tác" số.
 _GROUNDED_TEMPERATURE = 0.55
 
 
@@ -1098,7 +1098,7 @@ async def chat(
         prompt=prompt,
     )
     wants_search = mode in (SEARCH_NATIVE, SEARCH_FORCED)
-    temperature = _GROUNDED_TEMPERATURE if (grounding or wants_search) else _FREE_CHAT_TEMPERATURE
+    temperature = _GROUNDED_TEMPERATURE if (grounding or wants_search) else config.CHAT_TEMPERATURE
     allow_cjk = cjk_output_expected(prompt, grounding)
 
     def _compose(directive: str, extra_grounding: str = "") -> tuple[str, str]:
