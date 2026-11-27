@@ -108,6 +108,81 @@ async def test_tong_luot_khong_vuot_max_khi_co_chu_bot(monkeypatch):
     assert peak == 2
 
 
+async def test_viec_nen_cua_chu_bot_khong_chiem_cho_danh_rieng():
+    """MAX=2, dành riêng 1: việc nền (/viec) của chủ bot + 1 lượt Zalo thành viên
+    không được chiếm hết 2 chỗ - lượt chat của chủ bot vẫn vào ngay, thành viên chờ
+    chỗ thành viên (việc nền đang giữ)."""
+    release = asyncio.Event()
+    job_started = asyncio.Event()
+    order = []
+
+    async def owner_job():
+        async with concurrency.background_slot(concurrency.OWNER_TURN_KEY):
+            order.append("job")
+            job_started.set()
+            await release.wait()
+
+    async def member_turn():
+        async with concurrency.assistant_turn("zalo:-1"):
+            order.append("zalo:-1")
+
+    job = asyncio.create_task(owner_job())
+    await job_started.wait()
+    member = asyncio.create_task(member_turn())
+    await asyncio.sleep(0.01)
+    assert order == ["job"]
+    async with asyncio.timeout(1):
+        async with concurrency.assistant_turn(concurrency.OWNER_TURN_KEY):
+            order.append("owner")
+    release.set()
+    await asyncio.gather(job, member)
+    assert order == ["job", "owner", "zalo:-1"]
+
+
+async def test_chu_bot_luon_con_cho_du_viec_nen_va_thanh_vien_don_dap():
+    """Bất biến: mọi tổ hợp việc nền (chủ bot lẫn thành viên) + lượt thành viên đang
+    chạy/đang chờ, lượt chat của chủ bot vẫn có chỗ ngay; tổng số lượt không vượt MAX."""
+    release = asyncio.Event()
+    active = peak = 0
+
+    async def hold(slot):
+        nonlocal active, peak
+        async with slot:
+            active += 1
+            peak = max(peak, active)
+            await release.wait()
+            active -= 1
+
+    holders = [
+        asyncio.create_task(hold(concurrency.background_slot(concurrency.OWNER_TURN_KEY))),
+        asyncio.create_task(hold(concurrency.assistant_turn("zalo:-1"))),
+        asyncio.create_task(hold(concurrency.background_slot("zalo:-2"))),
+        asyncio.create_task(hold(concurrency.background_slot(concurrency.OWNER_TURN_KEY))),
+        asyncio.create_task(hold(concurrency.assistant_turn("zalo:-3"))),
+    ]
+    await asyncio.sleep(0.01)
+    assert active == 1  # chỉ 1 chỗ thành viên: 1 bên giữ, 4 bên chờ
+    for _ in range(3):  # chủ bot chat nhiều lượt liền vẫn không phải chờ
+        async with asyncio.timeout(1):
+            async with concurrency.assistant_turn(concurrency.OWNER_TURN_KEY):
+                assert active == 1
+    release.set()
+    await asyncio.gather(*holders)
+    assert peak == 1
+
+
+def test_viec_nen_toi_da_bang_so_cho_thanh_vien(monkeypatch):
+    monkeypatch.setattr(concurrency, "_max_turns", 2)
+    monkeypatch.setattr(concurrency, "_reserved_slots", 1)
+    assert concurrency.background_capacity() == 1
+    monkeypatch.setattr(concurrency, "_max_turns", 4)
+    assert concurrency.background_capacity() == 3
+    # Không dành riêng (MAX = 1 hoặc OWNER_RESERVED_SLOTS=0): dùng đủ MAX.
+    monkeypatch.setattr(concurrency, "_max_turns", 1)
+    monkeypatch.setattr(concurrency, "_reserved_slots", 0)
+    assert concurrency.background_capacity() == 1
+
+
 def test_max_1_khong_danh_rieng_de_khoi_chan_chet(monkeypatch):
     monkeypatch.setenv("OWNER_RESERVED_SLOTS", "1")
     assert concurrency._owner_reserved_slots(1) == 0

@@ -127,6 +127,14 @@ class FakeJobs:
         return rows
 
 
+@pytest.fixture(autouse=True)
+def fresh_slots(monkeypatch):
+    """Semaphore mới cho mỗi test (semaphore asyncio đã phải chờ trong event loop của
+    test trước thì gắn với loop đó). Như production: MAX=2, dành riêng 1 chỗ."""
+    monkeypatch.setattr(concurrency, "_turn_slots", asyncio.Semaphore(2))
+    monkeypatch.setattr(concurrency, "_member_slots", asyncio.Semaphore(1))
+
+
 @pytest.fixture
 def jobs(monkeypatch):
     fake = FakeJobs()
@@ -331,7 +339,10 @@ async def test_viec_nen_chiem_cho_semaphore_tong(jobs, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_viec_cua_thanh_vien_lay_cho_thanh_vien_khong_dung_cho_chu_bot(jobs, monkeypatch):
+async def test_viec_nen_cua_moi_nguoi_lay_cho_thanh_vien_khong_dung_cho_chu_bot(jobs, monkeypatch):
+    """Việc nền của cả thành viên lẫn chủ bot chờ chỗ thành viên; chỗ dành riêng chỉ
+    dành cho lượt chat của chủ bot (vẫn vào ngay trong lúc 2 việc đang chờ)."""
+    monkeypatch.setattr(concurrency, "_turn_slots", asyncio.Semaphore(2))
     member_slots = asyncio.Semaphore(1)
     monkeypatch.setattr(concurrency, "_member_slots", member_slots)
     seen: list[int] = []
@@ -345,11 +356,25 @@ async def test_viec_cua_thanh_vien_lay_cho_thanh_vien_khong_dung_cho_chu_bot(job
     await bg.submit(OWNER, "telegram", "việc của anh")
     await member_slots.acquire()  # thành viên khác đang chat
     member_task = asyncio.create_task(bg.run_job(await _claim(jobs)))
-    await asyncio.wait_for(bg.run_job(await _claim(jobs)), 1)  # việc chủ bot vẫn chạy
-    assert seen == [OWNER]
+    owner_task = asyncio.create_task(bg.run_job(await _claim(jobs)))
+    await asyncio.sleep(0.05)
+    assert seen == []
+    async with asyncio.timeout(1):
+        async with concurrency.assistant_turn(concurrency.OWNER_TURN_KEY):
+            pass
     member_slots.release()
-    await asyncio.wait_for(member_task, 1)
-    assert seen == [OWNER, -5]
+    await asyncio.wait_for(asyncio.gather(member_task, owner_task), 1)
+    assert sorted(seen) == [-5, OWNER]
+
+
+def test_so_worker_viec_nen_khong_vuot_so_cho_thanh_vien(monkeypatch):
+    monkeypatch.setenv("BACKGROUND_JOBS_CONCURRENCY", "3")
+    monkeypatch.setattr(concurrency, "background_capacity", lambda: 1)
+    assert bg.worker_count() == 1
+    monkeypatch.setattr(concurrency, "background_capacity", lambda: 3)
+    assert bg.worker_count() == 3
+    monkeypatch.setenv("BACKGROUND_JOBS_CONCURRENCY", "2")
+    assert bg.worker_count() == 2
 
 
 @pytest.mark.asyncio

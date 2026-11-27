@@ -4,12 +4,14 @@ Centre) và BỘ CHẠY LƯỢT AI NỀN dùng chung với tác vụ định k�
 - ``/viec <yêu cầu>``: xếp 1 dòng bg_jobs (migrations/027) rồi trả lời NGAY "em làm
   rồi báo anh". Việc chạy NGOÀI khoá lượt của người dùng (họ vẫn chat bình thường)
   nhưng vẫn chiếm 1 chỗ trong semaphore tổng MAX_CONCURRENT_TURNS
-  (``concurrency.background_slot``: thành viên Zalo lấy cả chỗ thành viên, không bao
-  giờ đụng chỗ dành riêng cho chủ bot). Chỉ có lệnh /viec chuyển việc ra nền; /agent,
-  đọc tài liệu lớn vẫn chạy như cũ (tiêu chí đơn giản: người dùng tự chọn).
-- Toàn bot chạy tối đa BACKGROUND_JOBS_CONCURRENCY (1) việc cùng lúc; mỗi người tối
-  đa BACKGROUND_JOBS_MAX_PER_USER (3) việc đang chờ/chạy, cả hàng đợi tối đa
-  ``GLOBAL_QUEUE_CAP`` việc chờ.
+  (``concurrency.background_slot``: việc của MỌI người, kể cả chủ bot, lấy chỗ
+  thành viên, không bao giờ đụng chỗ dành riêng cho lượt chat của chủ bot). Chỉ có
+  lệnh /viec chuyển việc ra nền; /agent, đọc tài liệu lớn vẫn chạy như cũ (tiêu chí
+  đơn giản: người dùng tự chọn).
+- Toàn bot chạy tối đa BACKGROUND_JOBS_CONCURRENCY (1) việc cùng lúc, không vượt số
+  chỗ thành viên (``concurrency.background_capacity``: worker thừa chỉ nhận việc rồi
+  ngồi chờ chỗ); mỗi người tối đa BACKGROUND_JOBS_MAX_PER_USER (3) việc đang
+  chờ/chạy, cả hàng đợi tối đa ``GLOBAL_QUEUE_CAP`` việc chờ.
 - Mỗi việc có hạn chót riêng BACKGROUND_JOB_TIMEOUT_SEC (600, trần 1800) thay cho
   CHAT_TURN_TIMEOUT_SEC: mọi lượt gọi AI vẫn đi qua ``ai.timeouts.bounded()`` nhờ
   ``turn_deadline``; thêm 1 lớp asyncio.wait_for dự phòng.
@@ -101,8 +103,9 @@ def job_timeout_sec() -> int:
 
 
 def worker_count() -> int:
-    """Số việc nền chạy cùng lúc toàn bot (không vượt MAX_CONCURRENT_TURNS)."""
-    return min(env_int("BACKGROUND_JOBS_CONCURRENCY", 1, 1, 3), concurrency.max_turns())
+    """Số việc nền chạy cùng lúc toàn bot: không vượt số chỗ thành viên (MAX - dành
+    riêng cho chủ bot) - worker thừa chỉ nhận việc (lease chạy) rồi ngồi chờ chỗ."""
+    return min(env_int("BACKGROUND_JOBS_CONCURRENCY", 1, 1, 3), concurrency.background_capacity())
 
 
 def per_user_cap() -> int:

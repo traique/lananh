@@ -18,7 +18,9 @@ mà tổng số lượt vẫn không vượt MAX - RAM đỉnh không đổi. MA
 riêng (Semaphore(0) sẽ chặn chết mọi thành viên). Đánh đổi: với MAX = 2, hai
 thành viên không còn chạy song song - gateway Zalo nên đặt
 ZALO_DIRECT_CONCURRENCY = số chỗ thành viên (1) để hàng đợi nằm ở gateway (không
-có timeout) thay vì chờ trong Python quá BRIDGE_TIMEOUT_MS.
+có timeout) thay vì chờ trong Python quá BRIDGE_TIMEOUT_MS. Việc nền (/viec, tác
+vụ định kỳ - ``background_slot``) của mọi người, kể cả chủ bot, cũng lấy chỗ
+thành viên nên không bao giờ đụng chỗ dành riêng.
 
 /huy: phần việc AI của 1 lượt chạy trong 1 task CON đăng ký theo khoá người
 dùng (``run_cancellable``); ``cancel_turn(key)`` chỉ huỷ task con đó. Không
@@ -119,15 +121,26 @@ async def assistant_turn(key: str = OWNER_TURN_KEY) -> AsyncIterator[None]:
             memtrim.request("lượt trả lời")
 
 
+def background_capacity() -> int:
+    """Số lượt AI NỀN chạy cùng lúc tối đa: số chỗ thành viên (MAX - dành riêng);
+    không dành riêng (MAX = 1 hoặc OWNER_RESERVED_SLOTS=0) thì MAX."""
+    return _max_turns - _reserved_slots
+
+
 @asynccontextmanager
 async def background_slot(key: str = OWNER_TURN_KEY) -> AsyncIterator[None]:
-    """Chỗ trong semaphore tổng cho 1 lượt AI NỀN (services/background_jobs.py:
-    /viec, tác vụ định kỳ) - KHÔNG lấy khoá lượt của người dùng (họ vẫn chat được
-    trong lúc việc chạy), nhưng tính như 1 lượt của chính người đó: thành viên Zalo
-    lấy cả chỗ thành viên như ``assistant_turn``, nên việc nền không bao giờ đụng
-    chỗ dành riêng cho chủ bot; việc của chủ bot dùng chính chỗ của chủ bot. Tổng
-    số lượt AI (chat + nền) vẫn không vượt MAX_CONCURRENT_TURNS - RAM đỉnh không đổi."""
-    member_slots = None if key == OWNER_TURN_KEY else _member_slots
+    """Chỗ cho 1 lượt AI NỀN (services/background_jobs.py: /viec, tác vụ định kỳ) -
+    KHÔNG lấy khoá lượt của người dùng (họ vẫn chat được trong lúc việc chạy).
+
+    Việc nền của MỌI người - kể cả chủ bot (``key`` chỉ để ghi nhận người sở hữu) -
+    lấy chỗ thành viên TRƯỚC semaphore tổng. Nếu việc nền của chủ bot chỉ lấy
+    semaphore tổng thì "việc nền + 1 lượt Zalo thành viên" chiếm hết MAX = 2 chỗ và
+    lượt chat của chính chủ bot phải chờ tới BACKGROUND_JOB_TIMEOUT_SEC. Nay mọi bên
+    giữ chỗ trong semaphore tổng đều đã giữ 1 chỗ thành viên, trừ lượt chat của chủ
+    bot (khoá riêng => tối đa 1 lượt), nên chủ bot LUÔN còn chỗ dành riêng. Đánh
+    đổi: việc nền xếp hàng chung với lượt chat của thành viên Zalo. Tổng số lượt AI
+    (chat + nền) vẫn không vượt MAX_CONCURRENT_TURNS - RAM đỉnh không đổi."""
+    member_slots = _member_slots
     try:
         async with member_slots if member_slots is not None else nullcontext():
             async with _turn_slots:
