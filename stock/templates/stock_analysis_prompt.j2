@@ -34,9 +34,6 @@ Giá dùng để tính toán (close phiên gần nhất): {{ price }} VND
 {% if adjustment_note %}
 {{ adjustment_note }}
 {% endif %}
-{% if ml_prob_line and not reference_only %}
-{{ ml_prob_line }}
-{% endif %}
 {% if realtime_quote_line %}
 {{ realtime_quote_line }}
 {% endif %}

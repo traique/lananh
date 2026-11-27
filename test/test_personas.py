@@ -3,6 +3,7 @@
 Persona là tầng chat giải trí: detect intent bằng từ khóa, prompt BẮT BUỘC
 cấm sinh số mới - test phải chặn việc prompt bị bỏ ràng buộc này.
 """
+
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,7 +27,11 @@ def test_detect_persona_khong_dau():
 
 
 def test_detect_generic_tra_ve_ca_ba():
-    assert stock_personas.detect_personas("3 huyền thoại nhìn HPG thế nào?") == ["buffett", "duan", "minervini"]
+    assert stock_personas.detect_personas("3 huyền thoại nhìn HPG thế nào?") == [
+        "buffett",
+        "duan",
+        "minervini",
+    ]
 
 
 def test_detect_khong_phai_persona():
@@ -36,7 +41,10 @@ def test_detect_khong_phai_persona():
 
 def test_build_prompt_co_day_du_rang_buoc_va_du_lieu():
     prompt = stock_personas.build_persona_prompt(
-        "FPT", ["buffett"], "Giá 100.000 VND | RSI14 55", "buffett nghĩ gì về FPT",
+        "FPT",
+        ["buffett"],
+        "Giá 100.000 VND | RSI14 55",
+        "buffett nghĩ gì về FPT",
     )
     assert "TUYỆT ĐỐI không đưa giá mua/giá mục tiêu/giá cắt lỗ" in prompt
     assert "Warren Buffett" in prompt
@@ -51,13 +59,20 @@ def _fake_ctx():
         price=100_000.0,
         fetched_at_vn="12:00 07/09/2026",
         decision=SimpleNamespace(
-            action="HOLD", target_price=None, stop_price=None, rr_ratio=None,
-            confidence=6.0, setup_type="range", market_regime="sideways",
-            risk_level="trung bình", reasons=["nến tay hai"], invalidation_reason=None,
+            action="HOLD",
+            target_price=None,
+            stop_price=None,
+            rr_ratio=None,
+            confidence=6.0,
+            setup_type="range",
+            market_regime="sideways",
+            risk_level="trung bình",
+            reasons=["nến tay hai"],
+            invalidation_reason=None,
         ),
         stats=SimpleNamespace(rsi14=None, trend_3m=None),
         last_bar_date=None,
-        ml_prob_up=None,
+        fundamentals_prompt="",
         realtime_quote_line="",
         liquidity=None,
         adjustment_note=None,
@@ -68,13 +83,15 @@ def _fake_ctx():
 @pytest.mark.asyncio
 async def test_analyze_persona_tra_loi_co_disclaimer(monkeypatch):
     async def fake_ctx(*args, **kwargs):
-        return _fake_ctx()
+        ctx = _fake_ctx()
+        ctx.fundamentals_prompt = "[ĐỊNH GIÁ & DÒNG TIỀN THẬT — FPT] P/E: 18"
+        return ctx
 
     async def fake_holding(user_id, symbol):
         return False
 
-    async def fake_fundamentals(symbol):
-        return ""
+    async def no_refetch(symbol):
+        raise AssertionError("build_context đã có phần định giá - không lấy lại")
 
     class FakeResponse:
         text = "**Warren Buffett** Doanh nghiệp này có lợi thế cạnh tranh rõ ràng."
@@ -82,15 +99,19 @@ async def test_analyze_persona_tra_loi_co_disclaimer(monkeypatch):
     async def fake_ask(prompt):
         assert "TUYỆT ĐỐI không đưa giá mua" in prompt
         assert "[DỮ LIỆU HỆ THỐNG CHO FPT]" in prompt
+        assert "[ĐỊNH GIÁ & DÒNG TIỀN THẬT — FPT] P/E: 18" in prompt
         return FakeResponse()
 
     monkeypatch.setattr(stock_analysis, "build_context", fake_ctx)
     monkeypatch.setattr(stock_analysis, "_is_holding_symbol", fake_holding)
-    monkeypatch.setattr(stock_analysis, "_safe_fundamentals_prompt", fake_fundamentals)
+    monkeypatch.setattr(stock_analysis, "_safe_fundamentals_prompt", no_refetch)
     from ai import orchestrator
+
     monkeypatch.setattr(orchestrator, "ask", fake_ask)
 
-    result = await stock_analysis.analyze_persona("FPT", ["buffett"], "buffett nghĩ gì về FPT", user_id=1)
+    result = await stock_analysis.analyze_persona(
+        "FPT", ["buffett"], "buffett nghĩ gì về FPT", user_id=1
+    )
 
     assert "Warren Buffett" in result
     assert result.count("\n\n") >= 1 and result != FakeResponse.text  # đã nối disclaimer
