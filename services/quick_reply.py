@@ -47,7 +47,7 @@ READ = "read"
 NATIVE_COMMAND_CHANNELS = frozenset({"telegram"})
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class QuickTurn:
     """Tin đang xét. is_admin: Telegram (chỉ chủ bot) luôn True như lệnh /."""
 
@@ -58,7 +58,7 @@ class QuickTurn:
     allow_side_effects: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class QuickReply:
     """Câu trả lời nhanh; kênh tự định dạng và gửi."""
 
@@ -79,7 +79,7 @@ class QuickReply:
 GateFn = Callable[[QuickTurn], Awaitable["QuickReply | str | None"]]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Gate:
     name: str
     kind: str | None  # conversation_log.KIND_* để ghi lịch sử; None = không ghi

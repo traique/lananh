@@ -65,7 +65,7 @@ CHAT_FACEBOOK = "facebook"  # Zalo -> Facebook: channels/facebook_commands (admi
 CHAT_UPSTREAM = frozenset({CHAT_PORTFOLIO, CHAT_GROUP, CHAT_FACEBOOK})
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Topic:
     key: str
     icon: str
@@ -209,7 +209,7 @@ TOPICS: tuple[Topic, ...] = (
 _TOPIC_BY_KEY = {t.key: t for t in TOPICS}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Entry:
     name: str
     group: str

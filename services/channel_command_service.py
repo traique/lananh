@@ -527,7 +527,7 @@ ADMIN_ONLY = "Lệnh này chỉ dành cho admin."
 Reply = tuple[list[str], str | None]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CommandCall:
     user_id: int
     command: str  # "/tuvi": chữ thường, đã bỏ "@tên_bot"
