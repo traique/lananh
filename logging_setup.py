@@ -24,7 +24,7 @@ import logging.handlers
 import os
 import queue
 import re
-from typing import Optional
+from typing import Optional, cast
 
 from core import config, trace
 
@@ -173,7 +173,8 @@ class _QueueListener(logging.handlers.QueueListener):
     bỏ phần còn lại thay vì treo tiến trình (bản gốc put_nowait/join không hạn)."""
 
     def enqueue_sentinel(self) -> None:
-        self.queue.put(self._sentinel, timeout=_STOP_TIMEOUT_SEC)
+        log_queue = cast(queue.Queue, self.queue)  # queue.Queue có trần do _start_queue tạo
+        log_queue.put(getattr(self, "_sentinel", None), timeout=_STOP_TIMEOUT_SEC)
 
     def stop(self) -> None:
         thread = self._thread
