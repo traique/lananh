@@ -123,6 +123,19 @@ def test_verify_webhook_token_legacy(monkeypatch):
     assert zoom.verify_webhook_token("wrong") is False
 
 
+def test_verify_webhook_token_non_ascii_header_is_rejected_not_500(monkeypatch):
+    """Starlette giải header theo latin-1: Authorization chứa byte >= 0x80 thành str
+    non-ASCII; compare_digest(str, str) ném TypeError -> 500. Phải là False (403)."""
+    monkeypatch.setattr(config, "ZOOM_VERIFICATION_TOKEN", "abc")
+    assert zoom.verify_webhook_token("abc\xe9") is False
+    assert zoom.verify_webhook_token("tiếng việt") is False
+    assert zoom.verify_webhook_token("") is False
+    monkeypatch.setattr(config, "ZOOM_VERIFICATION_TOKEN", "")
+    assert zoom.verify_webhook_token("abc") is False
+    monkeypatch.setattr(config, "ZOOM_VERIFICATION_TOKEN", "mã-bí-mật")
+    assert zoom.verify_webhook_token("mã-bí-mật") is True
+
+
 def test_build_url_validation_response(monkeypatch):
     monkeypatch.setattr(config, "ZOOM_SECRET_TOKEN", "secret123")
     result = zoom.build_url_validation_response("plain-token-xyz")
