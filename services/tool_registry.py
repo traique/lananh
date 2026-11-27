@@ -303,6 +303,22 @@ def router_tool_list(items: Iterable[ToolSpec]) -> str:
     return "\n".join(lines)
 
 
+def router_schema(items: Iterable[ToolSpec]) -> dict[str, Any]:
+    """JSON Schema đầu ra của router JSON ({"tool": ..., "args": {...}}): "tool" chỉ
+    được là tên trong danh sách hoặc "none" - Groq/Gemini trả đúng khuôn (ai/structured)
+    thay vì bịa tên tool. "args" để mở: tham số từng tool vẫn do ToolSpec.allowed_args
+    và handler kiểm."""
+    names = [spec.name for spec in items]
+    return {
+        "type": "object",
+        "properties": {
+            "tool": {"type": "string", "enum": [*names, "none"]},
+            "args": {"type": "object"},
+        },
+        "required": ["tool"],
+    }
+
+
 def catalog_chars(items: Iterable[ToolSpec]) -> int:
     """Tổng ký tự mô tả tool gửi model (dòng router + JSON tools OpenAI) - đo/đặt
     trần để prompt router và /agent vừa TPM free của Groq."""

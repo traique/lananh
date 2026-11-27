@@ -1132,11 +1132,13 @@ async def _route_and_run(
     except Exception:
         history = ""
     prompt = _build_router_prompt(user_text, history, role)
-    from ai import orchestrator
+    from ai import orchestrator, structured
 
     # Provider chỉ thấy nhãn "[đã ẩn: mật khẩu]"; tham số tool (chạy trong bot, ghi DB
     # của chính người dùng) được đổi lại giá trị gốc - services/prompt_redaction.
-    with prompt_redaction.scope() as redactor:
+    # Groq/Gemini trả đúng khuôn {"tool": <tên trong danh sách|none>, "args": {...}}.
+    schema = reg.router_schema(_turn_specs(user_text, role))
+    with prompt_redaction.scope() as redactor, structured.json_schema(schema, "tool_router"):
         try:
             data = await orchestrator.utility_json(prompt)
         except Exception:

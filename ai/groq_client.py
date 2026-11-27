@@ -16,7 +16,7 @@ import logging
 import re
 from typing import Optional
 
-from ai import openai_compatible, prompt_budget, provider_overrides
+from ai import openai_compatible, prompt_budget, provider_overrides, structured
 from ai.openai_compatible import Response
 from core import config
 from core.envutil import env_on
@@ -95,7 +95,9 @@ check_status = _provider.check_status
 
 
 async def generate_json(prompt: str, *, max_tokens: int = 1024) -> Optional[dict]:
-    """Lượt phụ trả JSON (structured output qua response_format=json_object).
+    """Lượt phụ trả JSON (structured output qua response_format=json_object, hoặc
+    json_schema khi caller mở ai/structured.json_schema - model từ chối schema thì
+    gọi lại 1 lần bằng json_object và nhớ model đó).
 
     Groq yêu cầu prompt có nhắc tới "JSON" khi dùng json_object - các prompt
     utility trong repo đều có; thêm 1 dòng chốt cho chắc. Trả None nếu model
@@ -105,13 +107,34 @@ async def generate_json(prompt: str, *, max_tokens: int = 1024) -> Optional[dict
         None,
         None,
     )
-    raw = await _provider.complete(
-        messages,
-        label="Groq JSON",
-        temperature=0.1,
-        max_tokens=max_tokens,
-        extra_payload={"response_format": {"type": "json_object"}},
-    )
+    await _provider.credentials()
+    model_name = await _model()
+    schema = structured.for_model("groq", model_name)
+
+    async def _complete(response_format: dict) -> str:
+        return await _provider.complete(
+            messages,
+            label="Groq JSON",
+            model=model_name,
+            temperature=0.1,
+            max_tokens=max_tokens,
+            extra_payload={"response_format": response_format},
+        )
+
+    json_object = {"type": "json_object"}
+    if schema is None:
+        raw = await _complete(json_object)
+    else:
+        name, body = schema
+        try:
+            raw = await _complete(
+                {"type": "json_schema", "json_schema": {"name": name, "schema": body}}
+            )
+        except openai_compatible.OpenAICompatibleError as exc:
+            if not structured.rejected(exc):
+                raise
+            structured.mark_unsupported("groq", model_name, exc)
+            raw = await _complete(json_object)
     try:
         data = json.loads(strip_json_fence(raw))
     except (TypeError, ValueError):

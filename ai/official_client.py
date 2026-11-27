@@ -19,7 +19,7 @@ from ai.timeouts import (
     bounded,
     with_timeout,
 )
-from ai import call_log, provider_overrides
+from ai import call_log, provider_overrides, structured
 from ai.provider_state import provider_state
 from core import config
 from core.text_utils import strip_json_fence
@@ -224,8 +224,9 @@ def _forget_thinking(model: str, exc: BaseException) -> None:
 async def _generate_content(
     client, model: str, contents, cfg_kwargs: dict, label: str, limit_sec: float
 ):
-    """generate_content có trần ``limit_sec``; cfg_kwargs có thinking_config mà model
-    từ chối thì gọi lại đúng 1 lần không kèm (_forget_thinking)."""
+    """generate_content có trần ``limit_sec``. Tham số tuỳ chọn model từ chối (400):
+    thinking_config (_forget_thinking) và response_json_schema (ai/structured) - bỏ
+    đúng tham số đó, gọi lại; mỗi tham số tối đa 1 lần."""
     from google.genai import types
 
     async def _call(kwargs: dict):
@@ -237,13 +238,19 @@ async def _generate_content(
             label,
         )
 
-    try:
-        return await _call(cfg_kwargs)
-    except Exception as exc:
-        if "thinking_config" not in cfg_kwargs or not _rejects_thinking(exc):
-            raise
-        _forget_thinking(model, exc)
-        return await _call({k: v for k, v in cfg_kwargs.items() if k != "thinking_config"})
+    kwargs = dict(cfg_kwargs)
+    while True:
+        try:
+            return await _call(kwargs)
+        except Exception as exc:
+            if "thinking_config" in kwargs and _rejects_thinking(exc):
+                _forget_thinking(model, exc)
+                kwargs.pop("thinking_config")
+            elif "response_json_schema" in kwargs and structured.rejected(exc):
+                structured.mark_unsupported("gemini", model, exc)
+                kwargs.pop("response_json_schema")
+            else:
+                raise
 
 
 async def generate(
@@ -554,19 +561,25 @@ async def generate_utility_json(prompt: str) -> Optional[dict]:
             client = await _get_official_client(idx)
             model_name = await _model_for(idx)
 
-            def _call(client=client, model_name=model_name, label=f"api{idx} utility JSON"):
+            cfg_kwargs: dict = {
+                "temperature": 0.1,
+                "response_mime_type": "application/json",
+                # Lượt JSON tiện ích: không tốn token/độ trễ cho suy luận.
+                **_thinking_config(model_name, UTILITY_THINKING_BUDGET),
+            }
+            schema = structured.for_model("gemini", model_name)
+            if schema is not None:
+                # Caller mở ai/structured.json_schema: Gemini trả đúng khuôn đó.
+                cfg_kwargs["response_json_schema"] = schema[1]
+
+            def _call(
+                client=client,
+                model_name=model_name,
+                cfg_kwargs=cfg_kwargs,
+                label=f"api{idx} utility JSON",
+            ):
                 return _generate_content(
-                    client,
-                    model_name,
-                    prompt,
-                    {
-                        "temperature": 0.1,
-                        "response_mime_type": "application/json",
-                        # Lượt JSON tiện ích: không tốn token/độ trễ cho suy luận.
-                        **_thinking_config(model_name, UTILITY_THINKING_BUDGET),
-                    },
-                    label,
-                    OFFICIAL_UTILITY_TIMEOUT_SEC,
+                    client, model_name, prompt, cfg_kwargs, label, OFFICIAL_UTILITY_TIMEOUT_SEC
                 )
 
             async def _attempt(_call=_call):
