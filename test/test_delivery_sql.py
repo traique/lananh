@@ -613,6 +613,8 @@ async def test_retention_sql_deletes_only_old_sent_rows(delivery_db, monkeypatch
         "notify_queue": 1,
         "bg_jobs": 1,
         "answer_feedback": 1,
+        "backup_runs": 0,
+        "app_devices": 0,
     }
     assert [r["prompt"] for r in await pool.fetch("SELECT prompt FROM bg_jobs ORDER BY id")] == [
         "old queued",

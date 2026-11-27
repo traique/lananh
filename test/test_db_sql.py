@@ -15,6 +15,27 @@ sql_pool = _delivery_sql.sql_pool
 delivery_db = _delivery_sql.delivery_db
 
 
+@pytest.mark.asyncio
+async def test_migration_033_index_moi_va_bo_index_thua(delivery_db):
+    indexes = {
+        r["indexname"]: r["indexdef"]
+        for r in await delivery_db.fetch(
+            "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = current_schema()"
+        )
+    }
+    assert "(prompt_id, id DESC)" in indexes["idx_results_prompt"]
+    assert "(created_at)" in indexes["idx_chat_messages_created"]
+    assert "WHERE (routine_id IS NOT NULL)" in indexes["idx_bg_jobs_routine"]
+    assert "idx_reminders_due" not in indexes and "idx_prompts_channel" not in indexes
+    # Index thay thế/giữ lại vẫn còn.
+    assert "idx_reminders_claimable" in indexes and "idx_user_facts_user" in indexes
+    # Xoá prompt vẫn kéo theo results (FK CASCADE, nay có index).
+    pid = await db.save_prompt(9, "chat", "hỏi")
+    await db.save_result(pid, "text", "đáp")
+    await delivery_db.execute("DELETE FROM prompts WHERE id = $1", pid)
+    assert await delivery_db.fetchval("SELECT count(*) FROM results") == 0
+
+
 async def _chat(pool, uid, rows):
     """rows: [(role, content, số giây trước "bây giờ")], cũ -> mới (id tăng dần)."""
     for role, content, ago in rows:
