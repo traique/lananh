@@ -293,6 +293,31 @@ async def test_close_pool_co_han_roi_cat_han(monkeypatch):
     await db.close_pool()  # chưa có pool: không làm gì
 
 
+@pytest.mark.asyncio
+async def test_ap_migration_xong_thi_thay_ket_noi_pool(monkeypatch):
+    """Schema vừa đổi -> mọi kết nối được thay (không còn prepared statement cũ);
+    không áp gì thì giữ nguyên."""
+    from core import migrations
+
+    pool = _HangingPool()
+
+    async def get_pool():
+        return pool
+
+    applied = iter([2, 0])
+
+    async def run(p):
+        assert p is pool
+        return next(applied)
+
+    monkeypatch.setattr(db, "get_pool", get_pool)
+    monkeypatch.setattr(migrations, "run", run)
+    await db.ensure_migrations()
+    assert pool.expired == 1
+    await db.ensure_migrations()
+    assert pool.expired == 1
+
+
 # ─── get_pool: singleton ─────────────────────────────────────────────────────
 
 

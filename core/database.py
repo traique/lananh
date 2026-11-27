@@ -422,7 +422,13 @@ async def ensure_migrations() -> None:
     """Apply all pending versioned schema migrations."""
     from core import migrations
 
-    await migrations.run(await get_pool())
+    pool = await get_pool()
+    if await migrations.run(pool):
+        # Schema vừa đổi: thay mọi kết nối (lúc được mượn/trả lại) để không kết nối nào
+        # còn giữ prepared statement soạn theo schema cũ.
+        expire = getattr(pool, "expire_connections", None)
+        if expire is not None:
+            await expire()
 
 
 @_with_reconnect
