@@ -22,6 +22,8 @@ hay đĩa nào trên Render.
 - Xong thì ghi 1 dòng vào bảng `backup_runs` (migration 023). Bot kiểm tra mỗi
   ngày: bản mới nhất cũ hơn `BACKUP_STALE_DAYS` (mặc định 3) ngày thì báo chủ bot.
   Lý do: GitHub **tự tắt lịch chạy** của repo public sau 60 ngày không có commit.
+  Job dọn DB hằng ngày xoá dòng `backup_runs` cũ hơn `RETENTION_BACKUP_RUNS_DAYS`
+  (mặc định 400 ngày) nhưng luôn giữ dòng mới nhất của mỗi loại (backup/drill).
 - **Ngày 2 hằng tháng** (hoặc Run workflow với `drill = true`): diễn tập khôi phục -
   giải mã bản vừa tạo, `pg_restore` vào Postgres tạm, chạy migration runner thật
   (checksum phải khớp), kiểm tra bảng có dữ liệu thì khôi phục xong vẫn có. Đạt thì
