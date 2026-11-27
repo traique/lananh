@@ -3,6 +3,8 @@ singleton, và logic ranh giới phiên chat (get_session_messages) - dùng fake
 pool thay vì Postgres thật, vì đây là logic Python thuần (không phải test
 câu SQL)."""
 
+import asyncio
+import inspect
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -175,6 +177,122 @@ async def test_doi_loai_luot_quota_khong_retry_khi_co_the_da_commit(monkeypatch)
     assert calls["n"] == 1
 
 
+@pytest.mark.asyncio
+async def test_with_reconnect_chay_lai_1_lan_khi_prepared_statement_cu(monkeypatch):
+    """Schema đổi (migration của instance khác) -> InvalidCachedStatementError trong
+    transaction: câu lỗi chưa chạy, transaction đã rollback -> chạy lại 1 lần, kể cả
+    hàm không idempotent; không reset pool (asyncpg đã xoá cache)."""
+
+    async def fail_reset(failed_pool):
+        pytest.fail("không reset pool vì prepared statement cũ")
+
+    monkeypatch.setattr(db, "_reset_pool", fail_reset)
+    calls = {"n": 0}
+
+    @db._with_reconnect(idempotent=False)
+    async def insert():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise asyncpg.InvalidCachedStatementError("cached plan must not change result type")
+        return "ok"
+
+    assert await insert() == "ok" and calls["n"] == 2
+
+    @db._with_reconnect
+    async def always_stale():
+        calls["n"] += 1
+        raise asyncpg.InvalidCachedStatementError("cached plan must not change result type")
+
+    calls["n"] = 0
+    with pytest.raises(asyncpg.InvalidCachedStatementError):
+        await always_stale()
+    assert calls["n"] == 2  # chỉ chạy lại đúng 1 lần
+
+
+# ─── _reset_pool / close_pool: không chờ lệnh dài ────────────────────────────
+
+
+class _HangingPool:
+    """Pool có 1 kết nối đang bị mượn rất lâu (VACUUM FULL, migration): close()
+    chờ mãi. Đếm số lần expire/terminate."""
+
+    def __init__(self, closing=False):
+        self.expired = 0
+        self.terminated = 0
+        self.closing = closing
+
+    def is_closing(self):
+        return self.closing
+
+    async def expire_connections(self):
+        self.expired += 1
+
+    async def close(self):
+        await asyncio.Event().wait()  # không bao giờ xong
+
+    def terminate(self):
+        self.terminated += 1
+
+
+@pytest.mark.asyncio
+async def test_reset_pool_thay_ket_noi_khong_cho_lenh_dang_chay(monkeypatch):
+    pool = _HangingPool()
+    monkeypatch.setattr(db, "_pool", pool)
+    await asyncio.wait_for(db._reset_pool(pool), 1)  # bản cũ treo ở pool.close()
+    assert pool.expired == 1 and db._pool is pool  # giữ pool, chỉ thay kết nối
+    # Pool không còn là pool hiện tại (coroutine khác đã thay): không đụng tới.
+    await db._reset_pool(_HangingPool())
+    assert pool.expired == 1
+    monkeypatch.setattr(db, "_pool", None)
+
+
+@pytest.mark.asyncio
+async def test_reset_pool_bo_pool_dang_dong(monkeypatch):
+    pool = _HangingPool(closing=True)
+    monkeypatch.setattr(db, "_pool", pool)
+    await asyncio.wait_for(db._reset_pool(pool), 1)
+    assert db._pool is None and pool.expired == 0
+
+
+@pytest.mark.asyncio
+async def test_loi_ket_noi_trong_luc_co_lenh_dai_khong_treo_luot_khac(monkeypatch):
+    pool = _HangingPool()
+    monkeypatch.setattr(db, "_pool", pool)
+    calls = {"n": 0}
+
+    @db._with_reconnect
+    async def query():
+        await db.get_pool()
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise asyncpg.ConnectionDoesNotExistError("connection was closed")
+        return "ok"
+
+    assert await asyncio.wait_for(query(), 1) == "ok"
+    assert pool.expired == 1
+    monkeypatch.setattr(db, "_pool", None)
+
+
+@pytest.mark.asyncio
+async def test_close_pool_co_han_roi_cat_han(monkeypatch):
+    pool = _HangingPool()
+    monkeypatch.setattr(db, "_pool", pool)
+    await asyncio.wait_for(db.close_pool(grace_sec=0.05), 1)
+    assert pool.terminated == 1 and db._pool is None
+
+    class _Quick:
+        closed = False
+
+        async def close(self):
+            self.closed = True
+
+    quick = _Quick()
+    monkeypatch.setattr(db, "_pool", quick)
+    await db.close_pool()
+    assert quick.closed and db._pool is None
+    await db.close_pool()  # chưa có pool: không làm gì
+
+
 # ─── get_pool: singleton ─────────────────────────────────────────────────────
 
 
@@ -195,6 +313,89 @@ async def test_get_pool_chi_tao_pool_1_lan(monkeypatch):
     assert pool1 is pool2
     assert create_calls["n"] == 1
     monkeypatch.setattr(db, "_pool", None)  # dọn lại state global cho test khác
+
+
+@pytest.mark.parametrize(
+    "dsn,expected",
+    [
+        ("postgresql://u.ref:p%40ss@aws-0-ap.pooler.supabase.com:5432/postgres", 100),
+        ("postgresql://u.ref:p@aws-0-ap.pooler.supabase.com:6543/postgres?sslmode=require", 0),
+        ("postgresql://u:p@db.local/postgres", 100),  # không ghi cổng
+        ("postgresql://u:p@host:abc/postgres", 100),  # cổng hỏng: asyncpg tự báo lỗi
+    ],
+)
+def test_statement_cache_theo_cong(monkeypatch, dsn, expected):
+    """Session Pooler (5432) giữ prepared statement -> cache như mặc định asyncpg;
+    transaction pooler (6543) thì không."""
+    monkeypatch.setattr(db.config, "DATABASE_URL", dsn)
+    monkeypatch.setattr(db.config, "DB_STATEMENT_CACHE_SIZE", None)
+    assert db.statement_cache_size() == expected
+    monkeypatch.setattr(db.config, "DB_STATEMENT_CACHE_SIZE", 7)  # env đè
+    assert db.statement_cache_size() == 7
+
+
+@pytest.mark.asyncio
+async def test_tao_pool_theo_cau_hinh_va_do_thoi_gian_muon(monkeypatch):
+    captured = {}
+    real_create_pool = asyncpg.create_pool
+
+    async def fake_create_pool(dsn, **kwargs):
+        captured.update(kwargs)
+        # Pool asyncpg thật, min_size=0 nên khởi tạo không mở kết nối nào.
+        return await real_create_pool("postgresql://u:p@127.0.0.1:1/x", min_size=0, max_size=2)
+
+    monkeypatch.setattr(asyncpg, "create_pool", fake_create_pool)
+    monkeypatch.setattr(db.config, "DATABASE_URL", "postgresql://u:p@host:6543/postgres")
+    monkeypatch.setattr(db.config, "DB_STATEMENT_CACHE_SIZE", None)
+    monkeypatch.setattr(db.config, "DB_POOL_MIN_SIZE", 2)
+    monkeypatch.setattr(db.config, "DB_POOL_MAX_SIZE", 8)
+    pool = await db._create_pool()
+    try:
+        assert captured["statement_cache_size"] == 0
+        assert (captured["min_size"], captured["max_size"]) == (2, 8)
+        assert isinstance(pool, db._MeteredPool)
+
+        async def slow_acquire(self, _timeout):
+            await asyncio.sleep(0.02)
+            return "conn"
+
+        monkeypatch.setattr(asyncpg.pool.Pool, "_acquire", slow_acquire)
+        monkeypatch.setattr(db, "_SLOW_ACQUIRE_SEC", 0.01)
+        monkeypatch.setattr(db, "_acquire_stats", db._AcquireStats())
+        assert await pool._acquire(None) == "conn"
+        stats = db._acquire_stats
+        assert stats.acquires == 1 and stats.slow == 1 and stats.max_wait >= 0.02
+        assert stats.last_slow_at is not None
+    finally:
+        await pool.close()
+
+
+def test_acquire_cua_asyncpg_con_dung_chu_ky():
+    """_MeteredPool đè Pool._acquire(self, timeout) - nâng asyncpg mà đổi thì báo ngay."""
+    params = list(inspect.signature(asyncpg.pool.Pool._acquire).parameters)
+    assert params == ["self", "timeout"]
+
+
+@pytest.mark.asyncio
+async def test_pool_stats(monkeypatch):
+    monkeypatch.setattr(db, "_pool", None)
+    monkeypatch.setattr(db, "_acquire_stats", db._AcquireStats())
+    stats = db.pool_stats()
+    assert stats["ready"] is False and stats["size"] is None and stats["in_use"] is None
+    assert stats["max"] == db.config.DB_POOL_MAX_SIZE and stats["slow_waits"] == 0
+
+    pool = await asyncpg.create_pool("postgresql://u:p@127.0.0.1:1/x", min_size=0, max_size=3)
+    try:
+        monkeypatch.setattr(db, "_pool", pool)
+        db._record_acquire(pool, 2.5, True)
+        db._record_acquire(pool, 0.2, False)
+        stats = db.pool_stats()
+        assert (stats["ready"], stats["size"], stats["idle"], stats["in_use"]) == (True, 0, 0, 0)
+        assert stats["acquires"] == 2 and stats["exhausted"] == 1 and stats["slow_waits"] == 1
+        assert stats["max_wait_ms"] == 2500 and stats["last_slow_wait_at"] is not None
+    finally:
+        await pool.close()
+        monkeypatch.setattr(db, "_pool", None)
 
 
 # ─── get_session_messages: ranh giới phiên theo session_timeout_sec ─────────
