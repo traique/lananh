@@ -224,6 +224,10 @@ async def add(user_id: int, spec: SpecialDate, *, key_suffix: str = "") -> tuple
         event_key=f"{target.event_key}{key_suffix}" if target.event_key else None,
         first=[first],
     )
+    # Vòng nhắc (scheduler.py) đang ngủ tới lần đến hạn cũ: tính lại giờ ngay.
+    import scheduler
+
+    scheduler.wake()
     event = _event_on_or_after(spec.rule, now.date())
     label = recurrence.date_label(spec.rule)
     when = f", lần tới {_day_label(event.date())}" if event else ""

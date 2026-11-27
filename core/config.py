@@ -323,7 +323,10 @@ VISION_PROVIDER_ORDER = _parse_provider_order(
 )
 
 # ─── Scheduler: reminder + daily digest danh mục (Bước 6) ──────────────────
-REMINDER_CHECK_INTERVAL_SEC = _env_int("REMINDER_CHECK_INTERVAL_SEC", 30)
+# Giờ ngủ TỐI ĐA của vòng nhắc việc (scheduler.py): vòng ngủ đúng tới lần đến hạn kế tiếp
+# và được đánh thức khi đặt/hoãn nhắc, nên nhịp này chỉ là lưới an toàn (vd nhắc ghi từ
+# instance khác lúc deploy chồng) - đặt lớn để bớt truy vấn DB khi rảnh.
+REMINDER_CHECK_INTERVAL_SEC = _env_int("REMINDER_CHECK_INTERVAL_SEC", 120)
 ENABLE_DAILY_DIGEST = _env_bool("ENABLE_DAILY_DIGEST", True)
 # Cảnh báo danh mục cuối phiên (chạm stop/target, breakout Donchian) - services/portfolio_alerts.py.
 ENABLE_PORTFOLIO_ALERTS = _env_bool("ENABLE_PORTFOLIO_ALERTS", True)

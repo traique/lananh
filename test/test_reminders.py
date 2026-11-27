@@ -491,3 +491,19 @@ async def test_ban_tin_sang_co_muc_ngay_nho(fake):
     assert text.startswith("🗓 Ngày nhớ: Sinh nhật mẹ còn 3 ngày")
     other = morning_brief.BriefContext(1, "telegram", ctx.now, ctx.settings, True)
     assert await section.build(other) is None  # dữ liệu Zalo không sang Telegram
+
+
+@pytest.mark.asyncio
+async def test_them_ngay_nho_danh_thuc_vong_nhac(fake, monkeypatch):
+    """Ngày nhớ mới ghi xong thì vòng nhắc (scheduler.py) tính lại giờ ngủ ngay."""
+    import scheduler
+
+    woken = []
+    monkeypatch.setattr(scheduler, "wake", lambda: woken.append(1))
+    soon = dt.datetime.now(VN).date() + dt.timedelta(days=2)
+    spec = ngay_nho.SpecialDate(
+        "Giỗ ông", "gio", {"type": "yearly", "month": soon.month, "day": soon.day, "at": "08:00"}, 0
+    )
+    with notification_target(NotificationTarget("zalo", "z-me", "acc")):
+        await ngay_nho.add(-6, spec)
+    assert woken == [1]

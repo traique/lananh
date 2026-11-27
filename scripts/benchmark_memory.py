@@ -100,12 +100,18 @@ class _FakeResponse:
 
 
 async def _background_path() -> None:
-    import requests
+    import httpx
 
-    from stock import corporate_actions, providers
+    from stock import corporate_actions, providers, vci_direct
 
     providers._client = _fake_http()
-    requests.get = lambda *a, **k: _FakeResponse()  # type: ignore[assignment]
+    # Lịch sự kiện quyền VCI (stock/vci_direct.py dùng 1 httpx.Client đồng bộ chung):
+    # trả dữ liệu giả, không gọi mạng thật.
+    vci_direct._client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=_FakeResponse().json())
+        )
+    )
     for symbol in ("FPT", "HPG", "VNM"):
         await providers.fetch_quote(symbol)
         series = await providers.fetch_ohlcv(symbol, days=90)

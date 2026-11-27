@@ -37,7 +37,7 @@ from channels.router import router as zalo_router
 from channels.zalo_media import router as zalo_media_router
 from channels import tts_media
 from ai.timeouts import turn_deadline
-from core import config, database as db, idempotency, trace, webhook_inbox
+from core import config, database as db, idempotency, memtrim, trace, webhook_inbox
 from diagnose_router9 import main as diagnose_main
 from services import db_maintenance, market_page, morning_news, notify_hub, zalo_signals
 from services import action_buttons, channel_dispatch, turn_control, voice_reply
@@ -208,6 +208,9 @@ async def lifespan(_: FastAPI):
         morning_news.start()
         market_page.start()
         db_maintenance.start()
+        # Heap khởi động (module, bảng hằng...) sang thế hệ vĩnh viễn: gc.collect sau
+        # mỗi lượt (core/memtrim.py) không quét lại ~126 nghìn object này.
+        memtrim.freeze_startup_heap()
         yield
     finally:
         logger.info("Đang tắt bot...")
