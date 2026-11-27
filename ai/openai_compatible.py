@@ -2,19 +2,24 @@
 (9Router, Groq, OpenRouter): HTTP client pool, dựng messages, POST
 /chat/completions (+ parse SSE dự phòng khi gateway trả stream dù request
 không xin), gọi ảnh, check_status - chuẩn hoá lỗi thành OpenAICompatibleError.
+
+``OpenAICompatibleProvider`` gom phần lặp của 3 nhánh (khoá API, base URL, model
+mặc định, semaphore + timeout tổng, chat/tools/ảnh/check_status, bọc lỗi riêng).
 router9_client/groq_client/openrouter_client chỉ còn giữ phần đặc thù riêng
-(model mặc định, generate_realtime của Groq, catalog model của 9Router...).
+(generate_realtime/JSON/Whisper của Groq, tra web + PDF của OpenRouter, catalog
+model và base URL của 9Router...) và alias tên hàm cũ cho caller/test/web_admin.
 """
 
 import asyncio
 import base64
+import inspect
 import json
 import logging
 import mimetypes
 import re
 import time
 from email.utils import parsedate_to_datetime
-from typing import Any, Awaitable, Callable, Iterable, Optional
+from typing import Any, Awaitable, Callable, Iterable, Optional, TypeVar
 
 import httpx
 
@@ -22,6 +27,8 @@ from ai import call_log, drafts
 from core import urls
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class OpenAICompatibleError(RuntimeError):
@@ -890,3 +897,236 @@ async def check_status(
         return False, str(exc)
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
+
+
+# ─── 1 nhánh provider OpenAI-compatible (Groq, OpenRouter, 9Router) ──────────
+
+
+async def _resolve(getter: Callable[[], Any]) -> Any:
+    """Gọi getter, chờ nếu nó trả awaitable (khoá/model đọc từ trang admin là async)."""
+    value = getter()
+    if inspect.isawaitable(value):
+        value = await value
+    return value
+
+
+class OpenAICompatibleProvider:
+    """Phần chung của 1 nhánh OpenAI-compatible (groq_client, openrouter_client,
+    router9_client) - trước đây mỗi module tự viết lại ~18 hàm gần giống nhau.
+
+    Khoá API, base URL và model mặc định đọc LÚC GỌI qua getter: module client truyền
+    ``lambda: _api_key()`` nên test/web_admin thay ``_api_key``/``_model`` ở cấp module
+    vẫn có hiệu lực. Mọi lượt gọi đi qua semaphore + timeout tổng của ``pool``.
+    ``error_cls`` (9Router: Router9Error) bọc lại OpenAICompatibleError để caller phân
+    loại như cũ (TimeoutError của timeout tổng KHÔNG bị bọc). ``extra_payload(model)``:
+    tham số riêng của nhà cung cấp cho lượt chat/JSON/tools (vd reasoning_effort)."""
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        pool: ClientPool,
+        base_url: Callable[[], Any],
+        api_key: Callable[[], Any],
+        default_model: Callable[[], Any],
+        vision_model: Callable[[], str],
+        missing_key: str,
+        include_usage: Callable[[], bool] = lambda: False,
+        extra_payload: Optional[Callable[[str], dict[str, Any]]] = None,
+        tools_payload: Optional[dict[str, Any]] = None,
+        tools_temperature: float = 0.3,
+        tools_max_tokens: int = 1024,
+        error_cls: Optional[type[Exception]] = None,
+    ) -> None:
+        self.label = label
+        self.pool = pool
+        self._base_url = base_url
+        self._api_key = api_key
+        self._default_model = default_model
+        self._vision_model = vision_model
+        self._missing_key = missing_key
+        self._include_usage = include_usage
+        self._extra_payload = extra_payload
+        self._tools_payload = dict(tools_payload or {})
+        self._tools_temperature = tools_temperature
+        self._tools_max_tokens = tools_max_tokens
+        self._error_cls = error_cls
+
+    async def api_key(self) -> str:
+        return await _resolve(self._api_key)
+
+    async def model_name(self) -> str:
+        return await _resolve(self._default_model)
+
+    def _error(self, message: str) -> Exception:
+        return (self._error_cls or OpenAICompatibleError)(message)
+
+    async def credentials(self) -> tuple[str, str]:
+        """(api_key, base_url); chưa có key -> lỗi "Chưa cấu hình ..." của nhánh."""
+        api_key = await self.api_key()
+        if not api_key:
+            raise self._error(self._missing_key)
+        return api_key, await _resolve(self._base_url)
+
+    def payload_for(self, model: str, extra: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Tham số riêng của nhà cung cấp cho ``model`` + ``extra`` của lượt gọi."""
+        payload = dict(self._extra_payload(model)) if self._extra_payload else {}
+        payload.update(extra or {})
+        return payload
+
+    async def run(self, label: str, call: Callable[[httpx.AsyncClient], Awaitable[T]]) -> T:
+        """Chạy ``call(client)`` trong semaphore + timeout tổng, bọc lỗi theo ``error_cls``."""
+
+        async def _call() -> T:
+            async with self.pool.get_semaphore():
+                try:
+                    return await call(self.pool.get_client())
+                except OpenAICompatibleError as exc:
+                    if self._error_cls is None:
+                        raise
+                    raise self._error_cls(str(exc)) from exc
+
+        return await self.pool.bounded(label, _call)
+
+    async def complete(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        label: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        extra_payload: Optional[dict[str, Any]] = None,
+    ) -> str:
+        """1 lượt /chat/completions trả text (post_chat_completion)."""
+        api_key, base_url = await self.credentials()
+        model_name = model or await self.model_name()
+        payload = self.payload_for(model_name, extra_payload)
+        return await self.run(
+            label or self.label,
+            lambda client: post_chat_completion(
+                client,
+                base_url=base_url,
+                api_key=api_key,
+                messages=messages,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider_label=label or self.label,
+                extra_payload=payload or None,
+                include_usage=self._include_usage(),
+            ),
+        )
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        system_instruction: Optional[str] = None,
+        history: Optional[list[tuple[str, str]]] = None,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> Response:
+        """Gọi 1 lượt chat. ``history`` là list (role, content) với role "user"/"model"
+        (quy ước của official_client.generate)."""
+        messages = build_messages(prompt, system_instruction, history)
+        return Response(
+            await self.complete(
+                messages, model=model, temperature=temperature, max_tokens=max_tokens
+            )
+        )
+
+    async def complete_full(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        label: str,
+        model: Optional[str] = None,
+        temperature: float,
+        max_tokens: int,
+        extra_payload: Optional[dict[str, Any]] = None,
+        stream: bool = False,
+    ) -> CompletionResult:
+        """Như complete() nhưng trả cả bằng chứng tra web (post_chat_completion_full)."""
+        api_key, base_url = await self.credentials()
+        model_name = model or await self.model_name()
+        return await self.run(
+            label,
+            lambda client: post_chat_completion_full(
+                client,
+                base_url=base_url,
+                api_key=api_key,
+                messages=messages,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider_label=label,
+                extra_payload=extra_payload,
+                stream=stream,
+            ),
+        )
+
+    async def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> ToolCallResponse:
+        """1 bước function-calling chuẩn OpenAI cho agent (ai/agent_service.py): caller
+        tự quản lý toàn bộ messages (kể cả assistant mang tool_calls, role "tool").
+        KHÔNG đặt cooldown khi lỗi (429...): agent tự chuyển provider kế, utility_json
+        của chat không bị vạ lây."""
+        api_key, base_url = await self.credentials()
+        label = f"{self.label} tools"
+        tokens = self._tools_max_tokens if max_tokens is None else max_tokens
+        model_name = model or await self.model_name()
+        payload = self.payload_for(model_name, self._tools_payload)
+        return await self.run(
+            label,
+            lambda client: post_chat_completion_with_tools(
+                client,
+                base_url=base_url,
+                api_key=api_key,
+                messages=messages,
+                tools=tools,
+                model=model_name,
+                temperature=self._tools_temperature if temperature is None else temperature,
+                max_tokens=tokens,
+                provider_label=label,
+                extra_payload=payload or None,
+                include_usage=self._include_usage(),
+            ),
+        )
+
+    async def generate_image_prompt(self, instruction: str, image_path: str) -> Response:
+        api_key, base_url = await self.credentials()
+        try:
+            return await generate_image_prompt(
+                self.pool,
+                base_url=base_url,
+                api_key=api_key,
+                vision_model=self._vision_model(),
+                provider_label=f"{self.label} vision",
+                instruction=instruction,
+                image_path=image_path,
+                include_usage=self._include_usage(),
+            )
+        except OpenAICompatibleError as exc:
+            if self._error_cls is None:
+                raise
+            raise self._error_cls(str(exc)) from exc
+
+    async def check_status(self) -> tuple[bool, str]:
+        return await check_status(
+            self.generate,
+            api_key=await self.api_key(),
+            missing_key_msg=self._missing_key,
+            expected_error=self._error_cls or OpenAICompatibleError,
+        )
+
+    async def close(self) -> None:
+        await self.pool.close()
