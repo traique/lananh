@@ -30,6 +30,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
+from ai import background_writes
 from core import database as db
 from core import trace
 
@@ -219,7 +220,8 @@ async def record(
     usage: CallUsage | None = None,
 ) -> None:
     """Ghi 1 lượt gọi. ``stage`` None -> giai đoạn đang đặt qua ``call_stage()``.
-    Không bao giờ raise."""
+    Không bao giờ raise. Số đo của lượt (core/trace) cập nhật ngay; dòng
+    provider_calls INSERT ở nền (ai/background_writes) - câu trả lời không chờ DB."""
     stage = stage if stage is not None else _call_stage.get()
     if outcome not in _NOT_A_CALL:
         trace.note_call(provider, outcome, latency_ms, stage)
@@ -227,8 +229,8 @@ async def record(
         trace.note_tokens(usage.prompt_tokens, usage.completion_tokens)
     if usage is not None and usage.ratelimit and provider in _RATELIMIT_PROVIDERS:
         _keep_ratelimit(provider, model or provider, usage.ratelimit)
-    try:
-        await db.record_provider_call(
+    background_writes.spawn(
+        _insert(
             provider,
             model or provider,
             outcome=outcome,
@@ -238,9 +240,20 @@ async def record(
             turn_id=trace.current(),
             prompt_tokens=usage.prompt_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
-        )
+        ),
+        "provider_calls",
+    )
+
+
+async def _insert(provider: str, model: str, **row: Any) -> None:
+    try:
+        await db.record_provider_call(provider, model, **row)
     except Exception:
         logger.warning("Không ghi được lượt gọi provider=%s vào DB.", provider, exc_info=True)
+
+
+# Chờ các dòng provider_calls còn đang ghi nền (lúc tắt app, test đọc lại).
+drain = background_writes.drain
 
 
 def classify(exc: BaseException) -> str:

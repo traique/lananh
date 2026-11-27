@@ -193,14 +193,16 @@ def get_provider_state_snapshot() -> ProviderStateSnapshot:
     return provider_state.snapshot()
 
 
-async def set_router9_enabled(enabled: bool) -> None:
+async def set_router9_enabled(enabled: bool) -> bool:
+    """Bật/tắt 9Router (áp dụng ngay trong RAM); False = chưa lưu được xuống DB."""
     await provider_state.ensure_loaded()
-    await provider_state.set_router9_enabled(enabled)
+    return await provider_state.set_router9_enabled(enabled)
 
 
-async def reset_api_cooldown(provider: str) -> None:
+async def reset_api_cooldown(provider: str) -> bool:
+    """Xoá cooldown (áp dụng ngay trong RAM); False = chưa lưu được xuống DB."""
     await provider_state.ensure_loaded()
-    await provider_state.reset_api_cooldown(provider)
+    return await provider_state.reset_api_cooldown(provider)
 
 
 class RealSearchUnavailableError(RuntimeError):

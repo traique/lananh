@@ -13,6 +13,7 @@ import time
 from typing import Awaitable, Callable, Optional, TypedDict
 
 import messages
+from ai import background_writes
 from core import alerts, config
 from core import database as db
 
@@ -95,6 +96,9 @@ class ProviderChainState:
         self._router9_strikes: list[float] = []
         self._lock = asyncio.Lock()
         self._loaded = False
+        # Ghi nền theo khoá (_persist_soon): giá trị mới nhất chưa ghi + khoá đang ghi.
+        self._dirty: dict[str, str] = {}
+        self._writing: set[str] = set()
 
     async def ensure_loaded(self) -> None:
         if not self._loaded:
@@ -156,12 +160,31 @@ class ProviderChainState:
                 "Không ghi được state provider %s xuống DB (bỏ qua).", key, exc_info=True
             )
 
+    def _persist_soon(self, key: str, value: str) -> None:
+        """Như _persist nhưng KHÔNG chờ DB (ai/background_writes): đổi provider sau 1
+        lượt trả lời, khai tử/hồi sinh 9Router, đặt cooldown không còn thêm 1 vòng
+        mạng Supabase vào lượt đó. Mỗi khoá tối đa 1 lượt ghi đang chạy; giá trị đổi
+        tiếp trong lúc ghi được ghi ngay sau (DB luôn kết thúc ở giá trị MỚI NHẤT)."""
+        self._dirty[key] = value
+        if key in self._writing:
+            return
+        self._writing.add(key)
+        if not background_writes.spawn(self._flush(key), f"state {key}"):
+            self._writing.discard(key)
+
+    async def _flush(self, key: str) -> None:
+        try:
+            while key in self._dirty:
+                await self._persist(key, self._dirty.pop(key))
+        finally:
+            self._writing.discard(key)
+
     async def set_active_provider(self, name: str) -> None:
         if self.active_provider == name:
             return  # không đổi -> không ghi DB mỗi lượt gọi
         logger.info("Provider-chain: chuyển active_provider -> %s", name)
         self.active_provider = name
-        await self._persist(_STATE_ACTIVE_PROVIDER, name)
+        self._persist_soon(_STATE_ACTIVE_PROVIDER, name)
 
     async def mark_router9_dead(self, reason: str = "") -> None:
         just_died = self.router9_dead_since is None
@@ -173,7 +196,7 @@ class ProviderChainState:
         if reason:
             self.cooldown_reasons["router9_dead"] = reason
         logger.warning("Provider-chain: khai tử 9Router (%s).", reason or "lỗi")
-        await self._persist(_STATE_ROUTER9_DEAD_SINCE, str(now))
+        self._persist_soon(_STATE_ROUTER9_DEAD_SINCE, str(now))
         send_alert(messages.ROUTER9_DEAD_ALERT)
 
     async def mark_router9_alive(self) -> None:
@@ -182,7 +205,7 @@ class ProviderChainState:
             return  # đang sống -> không ghi DB mỗi lượt gọi
         self.router9_dead_since = None
         self.cooldown_reasons.pop("router9_dead", None)
-        await self._persist(_STATE_ROUTER9_DEAD_SINCE, "")
+        self._persist_soon(_STATE_ROUTER9_DEAD_SINCE, "")
         send_alert(messages.ROUTER9_ALIVE_ALERT)
 
     def note_router9_health_failure(self) -> bool:
@@ -197,10 +220,26 @@ class ProviderChainState:
         self._router9_strikes.append(now)
         return len(self._router9_strikes) >= ROUTER9_HEALTH_STRIKES
 
-    async def set_router9_enabled(self, enabled: bool) -> None:
+    async def _persist_checked(self, key: str, value: str) -> bool:
+        """Ghi NGAY và báo đã lưu chưa (lệnh admin /router9, reset cooldown): lỗi DB
+        chỉ log - thay đổi trong RAM vẫn có hiệu lực tới lần restart sau."""
+        self._dirty.pop(key, None)  # giá trị cũ đang chờ ghi nền không được đè lên
+        try:
+            await db.set_setting(key, value)
+            return True
+        except Exception:
+            logger.warning(
+                "Không lưu được %s xuống DB - vẫn áp dụng trong RAM tới khi restart.",
+                key,
+                exc_info=True,
+            )
+            return False
+
+    async def set_router9_enabled(self, enabled: bool) -> bool:
+        """Bật/tắt 9Router thủ công; trả False nếu chưa lưu được xuống DB."""
         self.router9_enabled = enabled
-        await db.set_setting(_STATE_ROUTER9_ENABLED, "1" if enabled else "0")
         logger.info("Provider-chain: 9Router %s thủ công.", "bật" if enabled else "tắt")
+        return await self._persist_checked(_STATE_ROUTER9_ENABLED, "1" if enabled else "0")
 
     async def mark_api_exhausted(
         self, provider: str, seconds: Optional[float] = None, reason: str = ""
@@ -218,15 +257,17 @@ class ProviderChainState:
             duration,
             reason or "mặc định",
         )
-        await self._persist(f"{_STATE_API_EXHAUSTED_PREFIX}{provider}", str(until))
+        self._persist_soon(f"{_STATE_API_EXHAUSTED_PREFIX}{provider}", str(until))
         if reason:
-            await self._persist(f"{_STATE_COOLDOWN_REASON_PREFIX}{provider}", reason)
+            self._persist_soon(f"{_STATE_COOLDOWN_REASON_PREFIX}{provider}", reason)
 
-    async def reset_api_cooldown(self, provider: str) -> None:
+    async def reset_api_cooldown(self, provider: str) -> bool:
+        """Xoá cooldown thủ công; trả False nếu chưa lưu được xuống DB."""
         self.api_exhausted_until[provider] = 0.0
         self.cooldown_reasons.pop(provider, None)
-        await db.set_setting(f"{_STATE_API_EXHAUSTED_PREFIX}{provider}", "")
         logger.info("%s: cooldown reset thủ công.", provider)
+        self._persist_soon(f"{_STATE_COOLDOWN_REASON_PREFIX}{provider}", "")
+        return await self._persist_checked(f"{_STATE_API_EXHAUSTED_PREFIX}{provider}", "")
 
     def api_in_cooldown(self, provider: str) -> bool:
         return time.time() < self.api_exhausted_until.get(provider, 0.0)
