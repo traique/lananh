@@ -57,6 +57,14 @@ class ReminderError(ValueError):
     """Câu báo tiếng Việt cho người dùng (vượt trần, không tìm thấy...)."""
 
 
+def _wake_scheduler() -> None:
+    """Đã ghi nhắc mới/đổi giờ (gọi SAU khi ghi DB): vòng nhắc (scheduler.py) đang
+    ngủ tới lần đến hạn cũ thì thức dậy tính lại - nhắc "sau 1 phút" gửi đúng giờ."""
+    import scheduler
+
+    scheduler.wake()
+
+
 def you_word() -> str:
     """Cách gọi người nhận của lượt (core/address.py), mặc định "anh"."""
     return address.normalize(reply_audience.current().address_form) or "anh"
@@ -149,6 +157,7 @@ async def create(
             event_key=event_key,
             first=[(due_at, message)],
         )
+        _wake_scheduler()
         return Created(due_at.astimezone(VN_TZ), message, rule, series_id)
     if await db.reminder_count_pending_once(user_id) >= MAX_PENDING_ONCE:
         raise ReminderError(
@@ -164,6 +173,7 @@ async def create(
         user_jid=target.user_jid,
         event_key=event_key,
     )
+    _wake_scheduler()
     return Created((stored or due_at).astimezone(VN_TZ), message)
 
 
@@ -319,6 +329,7 @@ async def snooze_pending(user_id: int, target: str, when_text: str) -> tuple[str
         return "Chỉ hoãn trong vòng 1 năm tới thôi nha.", False
     if not await db.reminder_reschedule(user_id, item.reminder_id, due):
         return "Nhắc việc này vừa được gửi hoặc trùng giờ với lần nhắc khác của chuỗi.", False
+    _wake_scheduler()
     return f"⏰ Đã dời sang {vn_time_parse.describe_due(due, now)}: {item.message}", True
 
 

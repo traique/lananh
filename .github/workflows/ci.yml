@@ -111,6 +111,16 @@ jobs:
       - name: Pytest
         run: pytest -q
 
+      # Chỉ để xem, KHÔNG chặn merge/deploy (continue-on-error): RAM sau import web và
+      # sau lượt chat giả (provider + DB giả, không mạng), 20 module import chậm nhất -
+      # so với run trước để bắt hồi quy RAM/khởi động (scripts/benchmark_memory.py).
+      - name: Benchmark RAM và thời gian import (thông tin)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          python scripts/benchmark_memory.py web luot_chat
+          python scripts/benchmark_memory.py --importtime
+
   python-typecheck:
     runs-on: ubuntu-latest
     steps:

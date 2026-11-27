@@ -3,9 +3,13 @@ pandas/vnstock (stock/providers.py VCI httpx, stock/corporate_actions.py REST VC
 sửa sau khi chạy thật 27/10 (Render free 512 MB)."""
 
 import asyncio
+import gc
+import importlib.util
 import json
+import logging
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -32,6 +36,32 @@ def test_trim_now_ghi_so_do_va_co_malloc_trim_tren_linux():
         assert stats.malloc_trim is True and stats.last_after_mib is not None
     snap = memory_stats.snapshot()["trim"]
     assert snap["runs"] == 1 and snap["interval_sec"] == 600
+
+
+def test_trim_cham_hon_100ms_thi_log_info(monkeypatch, caplog):
+    """trim_now chặn event loop: lần nào chậm (> SLOW_TRIM_MS) phải thấy được trong log
+    INFO của Render, lần nhanh chỉ DEBUG."""
+    monkeypatch.setattr(memtrim.gc, "collect", lambda *a: time.sleep(0.12))
+    with caplog.at_level(logging.INFO, logger="core.memtrim"):
+        stats = memtrim.trim_now("chậm")
+    assert stats.last_ms > memtrim.SLOW_TRIM_MS
+    assert [r.levelno for r in caplog.records] == [logging.INFO]
+    assert "memtrim(chậm)" in caplog.records[0].getMessage()
+    caplog.clear()
+    monkeypatch.setattr(memtrim.gc, "collect", lambda *a: 0)
+    with caplog.at_level(logging.INFO, logger="core.memtrim"):
+        memtrim.trim_now("nhanh")
+    assert caplog.records == []
+
+
+def test_dong_bang_heap_khoi_dong():
+    try:
+        frozen = memtrim.freeze_startup_heap()
+        assert frozen > 0 and gc.get_freeze_count() == frozen
+        assert memtrim.snapshot()["frozen_objects"] == frozen
+    finally:
+        gc.unfreeze()  # không để cả phiên test chạy với heap đóng băng
+    assert memtrim.snapshot()["frozen_objects"] == 0
 
 
 @pytest.mark.asyncio
@@ -164,3 +194,45 @@ def test_viec_nen_gia_khong_nap_pandas_vnstock():
     assert proc.returncode == 0, proc.stderr[-800:]
     result = json.loads(proc.stdout.strip().splitlines()[-1])
     assert result["pandas_loaded"] is False and result["vnstock_loaded"] is False
+
+
+def test_kich_ban_luot_chat_chay_tron_duong_khong_mang():
+    """Kịch bản đo RAM 1 lượt chat (provider 9Router giả qua MockTransport, DB giả)
+    phải chạy hết đường thật mà không gọi mạng - không để kịch bản mục ruỗng."""
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "benchmark_memory.py"), "--run=luot_chat"],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        timeout=120,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-800:]
+    result = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert result["provider_ok"] is True and len(result["turn_ms"]) == 5
+    assert result["rss_mib"] is None or result["rss_mib"] >= result["after_import_mib"] - 5
+    assert result["pandas_loaded"] is False
+    # Lượt chat thường không được log cảnh báo/lỗi (DB giả trả id, câu không cần tra web).
+    assert " - WARNING - " not in proc.stderr and " - ERROR - " not in proc.stderr
+
+
+def test_doc_ket_qua_importtime():
+    spec = importlib.util.spec_from_file_location(
+        "benchmark_memory", ROOT / "scripts" / "benchmark_memory.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    stderr = "\n".join(
+        [
+            "import time: self [us] | cumulative | imported package",
+            "import time:       120 |        120 |     core.config",
+            "import time:      3000 |       3120 |   services.tools",
+            "dòng log khác",
+            "import time:       500 |       3620 | web",
+        ]
+    )
+    assert module.parse_importtime(stderr) == [
+        ("core.config", 120, 120),
+        ("services.tools", 3000, 3120),
+        ("web", 500, 3620),
+    ]

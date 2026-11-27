@@ -80,7 +80,9 @@ def test_backup_and_write_preserves_original(rag_dir):
 def test_cleaned_file_is_searchable_but_backup_is_not(rag_dir):
     _write("sach.md", "goc ocr ban khong co heading")
     path = rag_clean_service.resolve_path("sach.md")
-    rag_clean_service._backup_and_write(path, "goc ocr ban", "# Đầu tư\n\n## Chiến lược DCA\nVào tiền khi giá giảm.")
+    rag_clean_service._backup_and_write(
+        path, "goc ocr ban", "# Đầu tư\n\n## Chiến lược DCA\nVào tiền khi giá giảm."
+    )
     # Kho /rag thấy nội dung đã dọn...
     assert rag_service.search("chien luoc dca")
     # ...nhưnh bỏ qua thư mục backup
@@ -123,10 +125,7 @@ async def test_clean_file_happy_path_with_fake_ai(rag_dir, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_clean_file_long_input_is_processed_sequentially(rag_dir, monkeypatch):
-    paragraphs = [
-        f"Đoạn {i} về quản trị rủi ro và chiến lược đầu tư. " * 80
-        for i in range(1, 10)
-    ]
+    paragraphs = [f"Đoạn {i} về quản trị rủi ro và chiến lược đầu tư. " * 80 for i in range(1, 10)]
     raw = "\n\n".join(paragraphs)
     assert len(raw) > rag_clean_service.CLEAN_CHUNK_MAX_CHARS
     _write("dai.md", raw)
@@ -151,9 +150,7 @@ async def test_clean_file_long_input_is_processed_sequentially(rag_dir, monkeypa
 
 @pytest.mark.asyncio
 async def test_clean_file_middle_part_failure_keeps_original(rag_dir, monkeypatch):
-    raw = "\n\n".join(
-        f"Khối {i}: nội dung quan trọng về DCA. " * 90 for i in range(1, 8)
-    )
+    raw = "\n\n".join(f"Khối {i}: nội dung quan trọng về DCA. " * 90 for i in range(1, 8))
     _write("loi-giua.md", raw)
     calls = 0
 
@@ -212,3 +209,41 @@ async def test_clean_file_rejects_suspicious_ai_output(rag_dir, monkeypatch):
     reply = await rag_clean_service.clean_file("tongquan.md")
     assert "CHƯA ghi đè" in reply
     assert (rag_service.RAG_DIR / "tongquan.md").read_text(encoding="utf-8") == raw
+
+
+@pytest.mark.asyncio
+async def test_dong_bo_github_dung_client_chung_va_thu_lai_khi_409(rag_dir, monkeypatch):
+    """Commit lên GitHub đi qua client HTTP chung (services/http_client - keep-alive,
+    có trần kết nối, không đóng sau mỗi lần); token chỉ nằm trong header từng request;
+    409 (file vừa đổi giữa GET và PUT) thì đọc lại SHA và thử đúng 1 lần nữa."""
+    import httpx
+
+    from services import http_client
+
+    calls = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path, request.headers.get("authorization")))
+        if request.method == "GET":
+            return httpx.Response(200, json={"sha": f"sha{len(calls)}"})
+        if sum(method == "PUT" for method, _, _ in calls) == 1:
+            return httpx.Response(409, text="conflict")
+        return httpx.Response(201, json={"commit": {"sha": "1234567890"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(http_client, "_client", client)
+    monkeypatch.setenv("GITHUB_RAG_TOKEN", "ghp_test")
+    monkeypatch.setenv("RAG_GITHUB_REPO", "owner/repo")
+    monkeypatch.setenv("RAG_GITHUB_BRANCH", "main")
+    _write("kho/a.md", "cũ")
+    try:
+        ok, detail = await rag_clean_service.sync_file_to_github(
+            rag_dir / "kho" / "a.md", "nội dung mới", action="kho"
+        )
+        assert ok and detail == "GitHub: owner/repo@main (1234567)"
+        assert [method for method, _, _ in calls] == ["GET", "PUT", "GET", "PUT"]
+        assert {path for _, path, _ in calls} == {"/repos/owner/repo/contents/rag/kho/a.md"}
+        assert {auth for _, _, auth in calls} == {"Bearer ghp_test"}
+        assert not client.is_closed and client.headers.get("authorization") is None
+    finally:
+        await client.aclose()

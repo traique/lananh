@@ -178,7 +178,8 @@ def clean_transcript(text: str) -> str:
     if not text:
         return ""
     if _is_hallucination(text):
-        logger.info("Bỏ bản chép lời nghi là ảo giác của Whisper: %r", text[:80])
+        # Chỉ ghi độ dài: bản chép lời là lời nói của người dùng (dữ liệu riêng tư).
+        logger.info("Bỏ bản chép lời nghi là ảo giác của Whisper (%d ký tự).", len(text))
         return ""
     return text[:TRANSCRIPT_MAX_CHARS]
 
