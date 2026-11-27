@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from core import database as db
+from core import database as db, settings_cache
 from core.envutil import env_int, env_on
 from services import backup_status
 
@@ -286,12 +286,12 @@ async def run_if_due(now: datetime | None = None, *, force: bool = False) -> str
     if not force:
         if not enabled() or not in_window(now):
             return None
-        if await db.get_setting(_SETTING_KEY) == _week_key(now):
+        if await settings_cache.get(_SETTING_KEY) == _week_key(now):
             return None
     usage = await measure()
     ok, reason = should_vacuum(usage)
     # Ghi nhận đã kiểm tra tuần này dù chạy hay không: tránh đo lại mỗi 30 phút.
-    await db.set_setting(_SETTING_KEY, _week_key(now))
+    await settings_cache.set(_SETTING_KEY, _week_key(now))
     if not ok:
         message = (
             f"Bỏ qua VACUUM FULL {TABLE}: {reason} "
@@ -358,10 +358,11 @@ async def run_retention_if_due(now: datetime | None = None) -> dict[str, int] | 
     """Tối đa 1 lần/ngày (theo giờ VN); None nếu hôm nay đã chạy."""
     now = now or datetime.now(VN_TZ)
     day = now.date().isoformat()
-    if await db.get_setting(_RETENTION_KEY) == day:
+    # Mốc chạy đọc mỗi 30 phút nhưng chỉ đổi 1 lần/ngày: qua cache RAM, không chạm DB.
+    if await settings_cache.get(_RETENTION_KEY) == day:
         return None
     result = await prune_retention()
-    await db.set_setting(_RETENTION_KEY, day)
+    await settings_cache.set(_RETENTION_KEY, day)
     return result
 
 

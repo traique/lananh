@@ -6,6 +6,7 @@ import functools
 import logging
 import time
 from datetime import datetime
+from collections.abc import Callable
 from typing import Optional
 from urllib.parse import urlsplit
 
@@ -1705,11 +1706,28 @@ async def list_reminders_between(
     )
 
 
+# ─── Settings (bảng key-value) ───────────────────────────────────────────────
+# Mọi lần ghi qua set_setting/compare_and_set_setting báo cho các bộ đệm đã đăng ký
+# (core/settings_cache.py) - khoá đọc qua cache không bao giờ cũ hơn những gì chính
+# process này đã ghi. Ghi lỗi (không rõ đã commit chưa) thì báo value=None = bỏ khỏi cache.
+_setting_listeners: list[Callable[[str, Optional[str]], None]] = []
+
+
+def on_setting_write(listener: Callable[[str, Optional[str]], None]) -> None:
+    if listener not in _setting_listeners:
+        _setting_listeners.append(listener)
+
+
+def _setting_written(key: str, value: Optional[str]) -> None:
+    for listener in tuple(_setting_listeners):
+        listener(key, value)
+
+
 @_with_reconnect
 async def get_setting(key: str) -> Optional[str]:
-    pool = await get_pool()
-    row = await pool.fetchrow("SELECT value FROM settings WHERE key = $1", key)
-    return row["value"] if row else None
+    from core.repositories import settings as settings_repository
+
+    return await settings_repository.get(await get_pool(), key)
 
 
 @_with_reconnect
@@ -1721,15 +1739,14 @@ async def list_settings_with_prefix(prefix: str, limit: int = 100) -> list[tuple
 
 @_with_reconnect
 async def set_setting(key: str, value: str) -> None:
-    pool = await get_pool()
-    await pool.execute(
-        """
-        INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, now())
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
-        """,
-        key,
-        value,
-    )
+    from core.repositories import settings as settings_repository
+
+    try:
+        await settings_repository.set(await get_pool(), key, value)
+    except BaseException:
+        _setting_written(key, None)
+        raise
+    _setting_written(key, value)
 
 
 @_with_reconnect
@@ -1744,7 +1761,14 @@ async def list_encrypted_settings(limit: int = 500) -> list[tuple[str, str]]:
 async def compare_and_set_setting(key: str, expected: str, value: str) -> bool:
     from core.repositories import settings as settings_repository
 
-    return await settings_repository.compare_and_set(await get_pool(), key, expected, value)
+    try:
+        swapped = await settings_repository.compare_and_set(await get_pool(), key, expected, value)
+    except BaseException:
+        _setting_written(key, None)
+        raise
+    if swapped:
+        _setting_written(key, value)
+    return swapped
 
 
 # ─── Danh mục cổ phiếu: vị thế, sổ giao dịch, theo dõi/cảnh báo giá ─────────
@@ -2275,22 +2299,29 @@ _SETTING_ZOOM_NAME = "zoom_paired_name"
 
 
 async def zoom_get_pairing() -> Optional[tuple[str, str]]:
-    """Trả về (jid, display_name) đã pair, hoặc None nếu chưa pair ai."""
-    jid = await get_setting(_SETTING_ZOOM_JID)
+    """Trả về (jid, display_name) đã pair, hoặc None nếu chưa pair ai. Đọc qua
+    core.settings_cache: mỗi webhook Zoom/thông báo chủ động không còn 2 lượt đọc DB."""
+    from core import settings_cache
+
+    jid = await settings_cache.get(_SETTING_ZOOM_JID)
     if not jid:
         return None
-    name = await get_setting(_SETTING_ZOOM_NAME) or ""
+    name = await settings_cache.get(_SETTING_ZOOM_NAME) or ""
     return jid, name
 
 
 async def zoom_set_pairing(jid: str, display_name: str = "") -> None:
-    await set_setting(_SETTING_ZOOM_JID, jid)
-    await set_setting(_SETTING_ZOOM_NAME, display_name)
+    from core import settings_cache
+
+    await settings_cache.set(_SETTING_ZOOM_JID, jid)
+    await settings_cache.set(_SETTING_ZOOM_NAME, display_name)
 
 
 async def zoom_clear_pairing() -> None:
-    await set_setting(_SETTING_ZOOM_JID, "")
-    await set_setting(_SETTING_ZOOM_NAME, "")
+    from core import settings_cache
+
+    await settings_cache.set(_SETTING_ZOOM_JID, "")
+    await settings_cache.set(_SETTING_ZOOM_NAME, "")
 
 
 # ─── Thiết bị app màn hình thông tin (/app, services/app_devices.py) ─────────

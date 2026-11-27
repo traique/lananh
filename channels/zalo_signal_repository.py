@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from core import database as db
+from core import database as db, settings_cache
 
 MODES = ("off", "admin", "all")
 CHANNELS = ("zoom", "zalo")
@@ -180,8 +180,9 @@ async def recent_senders(account_id: str, group_id: str, days: int = 30, limit: 
 # ─── Quét tin ───────────────────────────────────────────────────────────────
 
 
+# Con trỏ đọc mỗi lượt quét (mặc định 2 phút) và chỉ process này ghi: qua cache RAM.
 async def load_cursor(account_id: str) -> int | None:
-    raw = await db.get_setting(_CURSOR_KEY.format(account_id))
+    raw = await settings_cache.get(_CURSOR_KEY.format(account_id))
     try:
         return int(raw) if raw not in (None, "") else None
     except ValueError:
@@ -189,7 +190,7 @@ async def load_cursor(account_id: str) -> int | None:
 
 
 async def save_cursor(account_id: str, row_id: int) -> None:
-    await db.set_setting(_CURSOR_KEY.format(account_id), str(int(row_id)))
+    await settings_cache.set(_CURSOR_KEY.format(account_id), str(int(row_id)))
 
 
 @db.with_reconnect

@@ -1,18 +1,21 @@
-"""Encrypted persistence for the personal Zalo session and controller pairing."""
+"""Encrypted persistence for the personal Zalo session and controller pairing.
+
+Đọc/ghi qua core.settings_cache (db.get_setting/set_setting đã tự nối lại kết nối):
+session và controller được đọc ở mỗi tin Zalo và mỗi lượt job nền (tổng kết nhóm, quét
+tín hiệu...) nhưng chỉ đổi khi gateway đăng nhập lại - cache giữ bản ĐÃ MÃ HOÁ, giải
+mã mỗi lần đọc.
+"""
 
 import json
 
-from core import crypto, database as db
-from core.repositories import settings as settings_repository
+from core import crypto, settings_cache
 
 _SESSION_KEY = "zalo:session:v1"
 _CONTROLLER_KEY = "zalo:controller:v1"
 
 
-@db.with_reconnect
 async def load_session() -> dict | None:
-    pool = await db.get_pool()
-    raw = crypto.decrypt(await settings_repository.get(pool, _SESSION_KEY))
+    raw = crypto.decrypt(await settings_cache.get(_SESSION_KEY))
     if not raw:
         return None
     try:
@@ -29,34 +32,22 @@ async def load_account_id() -> str:
     return str(session.get("accountId") or session.get("account_id") or "").strip()
 
 
-@db.with_reconnect
 async def save_session(value: dict) -> None:
-    pool = await db.get_pool()
-    await settings_repository.set(
-        pool,
-        _SESSION_KEY,
-        crypto.encrypt(json.dumps(value, separators=(",", ":"))),
-    )
+    await settings_cache.set(_SESSION_KEY, crypto.encrypt(json.dumps(value, separators=(",", ":"))))
 
 
-@db.with_reconnect
 async def clear_session() -> None:
-    await settings_repository.set(await db.get_pool(), _SESSION_KEY, "")
+    await settings_cache.set(_SESSION_KEY, "")
 
 
-@db.with_reconnect
 async def load_controller() -> str:
-    raw = await settings_repository.get(await db.get_pool(), _CONTROLLER_KEY)
+    raw = await settings_cache.get(_CONTROLLER_KEY)
     return (crypto.decrypt(raw) or "").strip()
 
 
-@db.with_reconnect
 async def save_controller(controller_id: str) -> None:
-    await settings_repository.set(
-        await db.get_pool(), _CONTROLLER_KEY, crypto.encrypt(controller_id.strip())
-    )
+    await settings_cache.set(_CONTROLLER_KEY, crypto.encrypt(controller_id.strip()))
 
 
-@db.with_reconnect
 async def clear_controller() -> None:
-    await settings_repository.set(await db.get_pool(), _CONTROLLER_KEY, "")
+    await settings_cache.set(_CONTROLLER_KEY, "")
