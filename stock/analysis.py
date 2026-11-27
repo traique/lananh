@@ -857,12 +857,12 @@ def build_prompt(
     ctx: StockContext,
     *,
     news_analysis=None,
-    bull_case=None,
-    bear_case=None,
-    final_decision=None,
+    debate_case=None,
     reference_only: bool = False,
     position_line: str | None = None,
 ) -> str:
+    """Prompt tổng hợp cuối. ``debate_case`` (schemas.DebateCase: bull + bear) là ngữ
+    liệu tranh luận; vai Research Manager do chính bước tổng hợp này đảm nhận."""
     d = ctx.decision
     price = ctx.price
     atr_pct = ctx.enhanced.atr_pct if ctx.enhanced else None
@@ -1002,8 +1002,10 @@ def build_prompt(
         adjustment_note=ctx.adjustment_note, ml_prob_line=ml_prob_line,
         trade_plan=trade_plan, entry_zone_text=entry_zone_text, scenarios=scenarios,
         backtest_stats_line=backtest_stats_line,
-        news_analysis=news_analysis, bull_case=bull_case, bear_case=bear_case,
-        final_decision=final_decision, reference_only=reference_only, position_line=position_line,
+        news_analysis=news_analysis,
+        bull_case=debate_case.bull if debate_case is not None else None,
+        bear_case=debate_case.bear if debate_case is not None else None,
+        reference_only=reference_only, position_line=position_line,
     )
 
 
@@ -1327,22 +1329,25 @@ async def analyze_symbol(
 
     position_line = await _position_line(user_id, symbol, ctx.realtime_price or ctx.price) if holding else None
 
-    # Debate tuần tự (KHÔNG song song - bear cần thấy bull_case để phản biện
-    # trực tiếp). Bản tham khảo chỉ chạy bước tóm tắt tin tức: bull/bear/
-    # manager đều xoay quanh action hệ thống - nội dung thành viên không được xem.
+    # Debate: tóm tắt tin -> bull+bear trong 1 lượt (bear phản biện thẳng bull);
+    # vai Research Manager nằm trong bước tổng hợp cuối. Bản tham khảo chỉ chạy
+    # bước tóm tắt tin tức: bull/bear xoay quanh action hệ thống - nội dung
+    # thành viên không được xem.
     from stock import debate as stock_debate
-    news_analysis = bull_case = bear_case = final_decision = None
+    from stock.schemas import ChainPacer
+    pacer = ChainPacer()
+    news_analysis = debate_case = None
     try:
         if full_access:
-            news_analysis, bull_case, bear_case, final_decision = await stock_debate.run_debate(ctx)
+            news_analysis, debate_case = await stock_debate.run_debate(ctx, pacer)
         else:
-            news_analysis = await stock_debate.run_news_step(ctx)
+            news_analysis = await stock_debate.run_news_step(ctx, pacer)
     except Exception:
         logger.exception("Lỗi pipeline debate cho %s - bỏ qua, dùng prompt không có debate", symbol)
-        news_analysis = bull_case = bear_case = final_decision = None
+        news_analysis = debate_case = None
 
     prompt = build_prompt(
-        ctx, news_analysis=news_analysis, bull_case=bull_case, bear_case=bear_case, final_decision=final_decision,
+        ctx, news_analysis=news_analysis, debate_case=debate_case,
         reference_only=not full_access, position_line=position_line,
     )
     if user_text:
@@ -1365,13 +1370,10 @@ async def analyze_symbol(
         )
 
     from ai import orchestrator
-    from core import config
-    # Nhịp giãn tải trước bước tổng hợp cuối - chỉ cần khi debate đã chạy ít
-    # nhất 1 bước; nếu cả 4 bước đều None thì không có lệnh LLM nào vừa gọi,
-    # ngủ 3s là chết thời gian thuần.
-    if config.ROUTER9_STEP_DELAY_SEC and any([news_analysis, bull_case, bear_case, final_decision]):
-        await asyncio.sleep(config.ROUTER9_STEP_DELAY_SEC)
     try:
+        # Nhịp giãn tải 9Router: chỉ nghỉ khi bước debate trước đó đã phải rơi về
+        # provider-chain (lượt JSON qua utility_json không tính) - schemas.ChainPacer.
+        await pacer.before_chain_call()
         response = await orchestrator.ask(prompt)
         # Làm sạch trước khi trả về: bỏ câu tự giới thiệu, bỏ danh xưng thân
         # mật, gộp disclaimer LLM tự viết (ensure_disclaimer đặt dòng chuẩn).
