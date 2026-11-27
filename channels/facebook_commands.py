@@ -256,20 +256,28 @@ def _row_fingerprint(row) -> "facebook_dedup.Fingerprint":
 
 async def _pending_duplicates(account_id: str, rows: list) -> list:
     """[(bài chờ, DuplicateMatch)] - bài chờ trùng một bài CŨ HƠN (id nhỏ hơn) trong cửa
-    sổ chống trùng, ở bất kỳ nhóm nguồn nào. So trong thread (CPU thuần Python)."""
+    sổ chống trùng, ở bất kỳ nhóm nguồn nào. Như lúc nhận bài: trùng chính xác nội dung/
+    sản phẩm tra trên cả cửa sổ ngày, so gần giống với FACEBOOK_DEDUP_SCAN_LIMIT bài gần
+    nhất. So trong thread (CPU thuần Python)."""
     if not rows:
         return []
+    candidates = [(row, _row_fingerprint(row)) for row in rows]
+    text_hashes = sorted({fp.text_hash for _, fp in candidates if fp.text_hash})
+    product_keys = sorted({key for _, fp in candidates for key in fp.product_keys})
     try:
+        exact = await facebook_repository.exact_fingerprints(account_id, text_hashes, product_keys)
         recent = await facebook_repository.recent_fingerprints(account_id)
     except Exception:
         logger.warning("Không đọc được dấu vân tay để lọc trùng hàng chờ.", exc_info=True)
         return []
+    seen = {int(row["post_id"]) for row in exact}
+    fingerprints = [*exact, *(row for row in recent if int(row["post_id"]) not in seen)]
 
     def scan() -> list:
-        index = facebook_dedup.DedupIndex(recent)
+        index = facebook_dedup.DedupIndex(fingerprints)
         found = []
-        for row in sorted(rows, key=lambda item: int(item["id"])):
-            match = index.find(_row_fingerprint(row), before_post_id=int(row["id"]))
+        for row, fingerprint in sorted(candidates, key=lambda item: int(item[0]["id"])):
+            match = index.find(fingerprint, before_post_id=int(row["id"]))
             if match is not None:
                 found.append((row, match))
         return found

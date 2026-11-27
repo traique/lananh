@@ -315,8 +315,11 @@ async def _deliver_if_gateway_gave_up(
     """Gateway chờ 1 lượt tối đa BRIDGE_TIMEOUT_MS (240 s) rồi báo lỗi cho người dùng;
     thời gian chờ khoá lượt (assistant_turn) CỘNG hạn chót AI có thể vượt mức đó. Khi đã
     có câu trả lời mà gateway đã ngắt kết nối thì gửi bù qua outbox thay vì bỏ mất (gateway
-    vẫn nhận bản cache idempotency nếu hỏi lại đúng message_id)."""
-    if request is None or not response.messages:
+    vẫn nhận bản cache idempotency nếu hỏi lại đúng message_id). Outbox chỉ chở chữ: câu
+    trả lời có ảnh/tin thoại thì gửi chữ kèm 1 dòng báo phần đó không gửi bù được (câu
+    trả lời CHỈ có ảnh/tin thoại vẫn có dòng báo này, không im lặng)."""
+    has_media = bool(response.image_b64) or response.voice is not None
+    if request is None or not (response.messages or has_media):
         return
     try:
         gave_up = await request.is_disconnected()
@@ -324,7 +327,11 @@ async def _deliver_if_gateway_gave_up(
         return
     if not gave_up:
         return
-    chunks = list(response.messages)
+    chunks = [chunk for chunk in response.messages if chunk]
+    if has_media:
+        chunks.append(messages_module.ZALO_LATE_MEDIA_NOTE)
+    if not chunks:
+        return
     chunks[0] = f"{messages_module.ZALO_LATE_REPLY_PREFIX}\n{chunks[0]}"
     try:
         for chunk in chunks:

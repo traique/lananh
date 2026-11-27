@@ -294,6 +294,9 @@ async def test_fb_loclai_rejects_cross_group_duplicates_in_queue(monkeypatch, so
     async def recent(account_id):
         return [fp_row(52, other), fp_row(51, repost), fp_row(50, first)]
 
+    async def exact(account_id, text_hashes, product_keys):
+        return []
+
     async def reject(account_id, post_id):
         rejected.append(post_id)
         return True
@@ -303,6 +306,7 @@ async def test_fb_loclai_rejects_cross_group_duplicates_in_queue(monkeypatch, so
 
     monkeypatch.setattr(facebook_repository, "list_pending_for_refilter", list_pending)
     monkeypatch.setattr(facebook_repository, "recent_fingerprints", recent)
+    monkeypatch.setattr(facebook_repository, "exact_fingerprints", exact)
     monkeypatch.setattr(facebook_repository, "reject_post", reject)
     monkeypatch.setattr(facebook_repository, "record_duplicate", record)
 
@@ -345,3 +349,67 @@ def test_real_sale_posts_are_kept(text):
 
 def test_non_sale_filter_can_be_switched_off():
     assert skip_reason("Ai có link mua cái nồi này không ạ?", True, skip_non_sale=False) is None
+
+
+@pytest.mark.asyncio
+async def test_fb_loclai_finds_exact_duplicate_older_than_the_recent_scan(monkeypatch, sources):
+    """Như lúc nhận bài: trùng chính xác (cùng link sản phẩm) với bài cũ đã trôi khỏi
+    FACEBOOK_DEDUP_SCAN_LIMIT bài gần nhất vẫn bị bỏ khi /fb_loclai."""
+    old = facebook_dedup.build_fingerprint(DEAL, group_id=G1, sender_id="a")
+    repost_text = "Deal hời lắm mọi người ơi https://s.shopee.vn/AbC123"
+    repost = facebook_dedup.build_fingerprint(repost_text, group_id=G2, sender_id="b")
+    pending = [
+        {
+            "id": 90,
+            "group_id": G2,
+            "sender_id": "b",
+            "original_content": repost_text,
+            "media_count": 1,
+            "text_hash": repost.text_hash,
+            "product_keys": repost.product_keys,
+            "image_hashes": [],
+            "folded_text": repost.folded_text,
+        }
+    ]
+    asked = []
+
+    async def list_pending(account_id):
+        return pending
+
+    async def recent(account_id):
+        return []  # bài gốc đã trôi khỏi phạm vi quét gần giống
+
+    async def exact(account_id, text_hashes, product_keys):
+        asked.append((list(text_hashes), list(product_keys)))
+        return [
+            {
+                "post_id": 7,
+                "text_hash": old.text_hash,
+                "product_keys": old.product_keys,
+                "image_hashes": [],
+                "folded_text": old.folded_text,
+                "group_id": G1,
+                "sender_id": "a",
+            }
+        ]
+
+    rejected = []
+
+    async def reject(account_id, post_id):
+        rejected.append(post_id)
+        return True
+
+    async def record(post_id, group_id):
+        return None
+
+    monkeypatch.setattr(facebook_repository, "list_pending_for_refilter", list_pending)
+    monkeypatch.setattr(facebook_repository, "recent_fingerprints", recent)
+    monkeypatch.setattr(facebook_repository, "exact_fingerprints", exact)
+    monkeypatch.setattr(facebook_repository, "reject_post", reject)
+    monkeypatch.setattr(facebook_repository, "record_duplicate", record)
+
+    result = await facebook_commands.maybe_handle_facebook_command("acc", "/fb_loclai")
+
+    assert asked == [([repost.text_hash], repost.product_keys)]
+    assert rejected == [90]
+    assert "trùng bài #7 ở nhóm Săn Sale Giá Rẻ" in result.messages[0]

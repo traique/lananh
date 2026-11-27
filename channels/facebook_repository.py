@@ -420,6 +420,37 @@ async def _insert_post(
     return int(post_id)
 
 
+# /fb_loclai: trần số dòng trùng chính xác lấy thêm cho cả hàng chờ (hàng chờ tối đa
+# FACEBOOK_MAX_PENDING bài, mỗi bài vài dòng trùng là đủ báo bài gốc).
+_REFILTER_EXACT_LIMIT = 2000
+
+
+@db.with_reconnect
+async def exact_fingerprints(
+    account_id: str, text_hashes: list[str], product_keys: list[str]
+) -> list:
+    """Dấu vân tay trùng CHÍNH XÁC nội dung (text_hash) hoặc sản phẩm (product_keys) với
+    bất kỳ giá trị nào cho trước, trên TOÀN cửa sổ chống trùng (index) - như lúc nhận bài,
+    không bị giới hạn FACEBOOK_DEDUP_SCAN_LIMIT bài gần nhất. Mới nhất trước."""
+    if not text_hashes and not product_keys:
+        return []
+    await ensure_schema()
+    return await (await db.get_pool()).fetch(
+        f"""
+        SELECT {_FINGERPRINT_COLUMNS} FROM facebook_post_fingerprints
+        WHERE account_id = $1 AND created_at > now() - make_interval(days => $2)
+          AND (text_hash = ANY($3::text[]) OR product_keys && $4::text[])
+        ORDER BY created_at DESC
+        LIMIT $5
+        """,
+        account_id,
+        facebook_dedup.dedup_days(),
+        text_hashes,
+        product_keys,
+        _REFILTER_EXACT_LIMIT,
+    )
+
+
 @db.with_reconnect
 async def recent_fingerprints(account_id: str) -> list:
     """Dấu vân tay trong cửa sổ chống trùng (mới nhất trước) để /fb_loclai so lại."""

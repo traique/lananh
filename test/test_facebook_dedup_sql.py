@@ -119,3 +119,21 @@ async def test_hang_cho_tra_ve_dau_van_tay_de_loc_lai(delivery_db):
     assert rows[0]["group_id"] == "g1" and rows[0]["folded_text"]
     recent = await repo.recent_fingerprints("acc")
     assert [r["post_id"] for r in recent] == [post_id]
+
+
+@pytest.mark.asyncio
+async def test_tra_trung_chinh_xac_cho_loc_lai_hang_cho(delivery_db, monkeypatch):
+    """/fb_loclai: exact_fingerprints tìm bài trùng nội dung/sản phẩm trên cả cửa sổ ngày,
+    kể cả khi bài đó đã trôi khỏi FACEBOOK_DEDUP_SCAN_LIMIT bài gần nhất."""
+    await repo.add_group("acc", "g1", "sansale")
+    monkeypatch.setattr(facebook_dedup, "scan_limit", lambda: 1)
+    original = await _create("g1", DEAL + " https://s.shopee.vn/Keep01", "m0")
+    await _create("g1", "Bài khác hẳn, mô tả riêng biệt hoàn toàn, giá 101k", "m1")
+    fp = facebook_dedup.build_fingerprint(DEAL + " https://s.shopee.vn/Keep01")
+
+    assert [r["post_id"] for r in await repo.recent_fingerprints("acc")] != [original]
+    by_hash = await repo.exact_fingerprints("acc", [fp.text_hash], [])
+    by_product = await repo.exact_fingerprints("acc", [], fp.product_keys)
+    assert [r["post_id"] for r in by_hash] == [original]
+    assert [r["post_id"] for r in by_product] == [original]
+    assert await repo.exact_fingerprints("acc", [], []) == []
