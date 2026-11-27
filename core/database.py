@@ -22,7 +22,9 @@ from core.db.pool import pool_stats as pool_stats
 from core.db.pool import reset_circuit_breaker as reset_circuit_breaker
 from core.db.pool import statement_cache_size as statement_cache_size
 from core.db.pool import with_reconnect as with_reconnect
+from core.repositories import chat_history as _chat_history
 from core.repositories import feedback as _feedback
+from core.repositories import memory as _memory
 from core.repositories import observability as _observability
 from core.repositories import prompts as _prompts
 from core.repositories import quota as _quota
@@ -136,39 +138,18 @@ answer_feedback_owner_down = _bind(_feedback.owner_down_for_evals)
 answer_feedback_clear = _bind(_feedback.clear)
 
 
-# Giữ tối đa N tin nhắn gần nhất / user trong chat_messages, để bảng không
-# phình vô hạn (prompt chỉ cần CHAT_HISTORY_TURNS*2 dòng - CHAT_HISTORY_TURNS là
-# số LƯỢT; phần dư là bộ đệm cho trích trí nhớ theo lô, services/memory_service,
-# và cho tool search_history tìm lại câu đã trao đổi). Mặc định 1000, env
-# CHAT_MESSAGES_RETENTION_LIMIT (kẹp 200-2000).
+# ─── Lịch sử chat ngắn hạn: chat_messages (core/repositories/chat_history.py) ─
+# Giữ tối đa N tin nhắn gần nhất / user (prompt chỉ cần CHAT_HISTORY_TURNS*2 dòng;
+# phần dư là bộ đệm cho trích trí nhớ theo lô và tool search_history). Mặc định 1000,
+# env CHAT_MESSAGES_RETENTION_LIMIT (kẹp 200-2000). Hàm ghi đọc hằng này LÚC GỌI.
 CHAT_MESSAGES_RETENTION_LIMIT = config.CHAT_MESSAGES_RETENTION_LIMIT
 
 
 @_with_reconnect(idempotent=False)
 async def add_chat_message(telegram_user_id: int, role: str, content: str) -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                "INSERT INTO chat_messages (telegram_user_id, role, content) VALUES ($1, $2, $3)",
-                telegram_user_id,
-                role,
-                content,
-            )
-            await conn.execute(
-                """
-                DELETE FROM chat_messages
-                WHERE telegram_user_id = $1
-                  AND id NOT IN (
-                      SELECT id FROM chat_messages
-                      WHERE telegram_user_id = $1
-                      ORDER BY id DESC
-                      LIMIT $2
-                  )
-                """,
-                telegram_user_id,
-                CHAT_MESSAGES_RETENTION_LIMIT,
-            )
+    await _chat_history.add_message(
+        await get_pool(), telegram_user_id, role, content, retention=CHAT_MESSAGES_RETENTION_LIMIT
+    )
 
 
 @_with_reconnect(idempotent=False)
@@ -180,9 +161,7 @@ async def add_chat_turn(
     ``kind``: loại lượt (services/conversation_log.py) - trích nhớ chỉ đọc lượt
     chat/rag/agent, lượt "stock" giúp chặn câu chat sau mâu thuẫn policy. Trả
     id 2 dòng vừa lưu (🔄/✂️ xoá đúng cặp này sau khi làm lại)."""
-    from core.repositories import chat_history
-
-    return await chat_history.add_turn(
+    return await _chat_history.add_turn(
         await get_pool(),
         telegram_user_id,
         user_text,
@@ -193,75 +172,19 @@ async def add_chat_turn(
 
 
 @_with_reconnect
-async def delete_chat_rows(telegram_user_id: int, ids: list[int] | tuple[int, ...]) -> int:
-    """Xoá các dòng lịch sử theo id (của chính người dùng) - nút 🔄 Thử lại/✂️
-    Ngắn hơn bỏ cặp cũ SAU khi lượt làm lại đã lưu cặp mới, không để 2 câu trả
-    lời trong lịch sử. Lặp lại an toàn: lần 2 không còn dòng nào để xoá."""
-    from core.repositories import chat_history
-
-    return await chat_history.delete_rows(await get_pool(), telegram_user_id, list(ids))
-
-
-@_with_reconnect
-async def get_chat_rows_after(
-    telegram_user_id: int, after_id: int, limit: int = 60, max_chars: int = 1500
-) -> list[dict]:
-    """Dòng lịch sử có id > after_id (cũ -> mới) - cửa sổ chưa trích nhớ."""
-    from core.repositories import memory
-
-    rows = await memory.chat_rows_after(
-        await get_pool(), telegram_user_id, after_id, limit, max_chars
-    )
-    return [dict(row) for row in rows]
-
-
-@_with_reconnect
-async def get_recent_chat_rows(
-    telegram_user_id: int, limit: int = 40, max_chars: int = 1500
-) -> list[dict]:
-    """``limit`` dòng gần nhất, mới -> cũ (kèm id, kind, created_at)."""
-    from core.repositories import memory
-
-    rows = await memory.recent_chat_rows(await get_pool(), telegram_user_id, limit, max_chars)
-    return [dict(row) for row in rows]
-
-
-@_with_reconnect
 async def search_chat_history(
     telegram_user_id: int, terms: list[str], *, scan_limit: int = 300, max_chars: int = 600
 ) -> list[dict]:
     """Tìm trong lịch sử chat CỦA CHÍNH người này (tool search_history): dòng
     chứa ít nhất 1 từ trong ``terms`` (đã bỏ dấu, chữ thường; từ không phải
     a-z0-9 bị bỏ - không có ký tự đại diện LIKE), kèm câu cùng lượt; mới -> cũ."""
-    from core.repositories import chat_history
-
     patterns = [f"%{term}%" for term in terms if term.isascii() and term.isalnum()]
     if not patterns:
         return []
-    rows = await chat_history.search(
-        await get_pool(),
-        telegram_user_id,
-        patterns,
-        scan_limit=scan_limit,
-        max_chars=max_chars,
+    rows = await _chat_history.search(
+        await get_pool(), telegram_user_id, patterns, scan_limit=scan_limit, max_chars=max_chars
     )
     return [dict(row) for row in rows]
-
-
-@_with_reconnect
-async def get_last_model_row(telegram_user_id: int, max_chars: int = 4000) -> dict | None:
-    """Câu trả lời gần nhất của bot (id, kind, content, created_at) hoặc None."""
-    from core.repositories import memory
-
-    row = await memory.last_model_row(await get_pool(), telegram_user_id, max_chars)
-    return dict(row) if row else None
-
-
-@_with_reconnect
-async def users_with_chat_since(since: datetime, limit: int = 50) -> list[int]:
-    from core.repositories import memory
-
-    return await memory.users_with_chat_after(await get_pool(), since, limit)
 
 
 @_with_reconnect
@@ -274,18 +197,19 @@ async def get_session_messages(
     phiên cũ đã kết thúc và KHÔNG lấy các tin trước điểm nghỉ đó."""
     if k <= 0:
         return []
-    from core.repositories import chat_history
-
-    rows = await chat_history.session_messages(
+    rows = await _chat_history.session_messages(
         await get_pool(), telegram_user_id, k, session_timeout_sec
     )
     return [(r["role"], r["content"]) for r in rows]
 
 
-@_with_reconnect
-async def clear_chat(telegram_user_id: int) -> None:
-    pool = await get_pool()
-    await pool.execute("DELETE FROM chat_messages WHERE telegram_user_id = $1", telegram_user_id)
+delete_chat_rows = _bind(_chat_history.delete_rows)
+clear_chat = _bind(_chat_history.clear)
+# Cửa sổ chưa trích nhớ (id > after_id, cũ -> mới) / lượt gần nhất (mới -> cũ).
+get_chat_rows_after = _bind(_memory.chat_rows_after, post=_dicts)
+get_recent_chat_rows = _bind(_memory.recent_chat_rows, post=_dicts)
+get_last_model_row = _bind(_memory.last_model_row, post=_dict_or_none)
+users_with_chat_since = _bind(_memory.users_with_chat_after)
 
 
 # ─── Trí nhớ dài hạn: user_facts + highlights + ghi chú phiên ─────────────────

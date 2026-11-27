@@ -52,6 +52,38 @@ async def add_turn(
     return [int(row["id"]) for row in inserted]
 
 
+async def add_message(
+    pool: Any, telegram_user_id: int, role: str, content: str, *, retention: int
+) -> None:
+    """INSERT 1 tin rồi cắt bảng về ``retention`` dòng gần nhất của người đó (1 transaction)."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "INSERT INTO chat_messages (telegram_user_id, role, content) VALUES ($1, $2, $3)",
+                telegram_user_id,
+                role,
+                content,
+            )
+            await conn.execute(
+                """
+                DELETE FROM chat_messages
+                WHERE telegram_user_id = $1
+                  AND id NOT IN (
+                      SELECT id FROM chat_messages
+                      WHERE telegram_user_id = $1
+                      ORDER BY id DESC
+                      LIMIT $2
+                  )
+                """,
+                telegram_user_id,
+                retention,
+            )
+
+
+async def clear(pool: Any, telegram_user_id: int) -> None:
+    await pool.execute("DELETE FROM chat_messages WHERE telegram_user_id = $1", telegram_user_id)
+
+
 async def session_messages(
     pool: Any, telegram_user_id: int, k: int, session_timeout_sec: int
 ) -> list[Any]:
@@ -86,9 +118,10 @@ async def session_messages(
     )
 
 
-async def delete_rows(pool: Any, telegram_user_id: int, ids: list[int]) -> int:
+async def delete_rows(pool: Any, telegram_user_id: int, ids: list[int] | tuple[int, ...]) -> int:
     """Xoá các dòng ``ids`` CỦA ``telegram_user_id`` (id lạ/của người khác bỏ qua);
-    trả số dòng đã xoá."""
+    trả số dòng đã xoá. Nút 🔄 Thử lại/✂️ Ngắn hơn bỏ cặp cũ SAU khi lượt làm lại đã
+    lưu cặp mới; lặp lại an toàn (lần 2 không còn dòng nào để xoá)."""
     if not ids:
         return 0
     status = await pool.execute(

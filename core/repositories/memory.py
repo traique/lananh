@@ -402,7 +402,7 @@ async def clear_session_notes(pool: Any, telegram_user_id: int) -> None:
 
 
 async def chat_rows_after(
-    pool: Any, telegram_user_id: int, after_id: int, limit: int, max_chars: int
+    pool: Any, telegram_user_id: int, after_id: int, limit: int = 60, max_chars: int = 1500
 ) -> list[Any]:
     """Các dòng có id > after_id (cũ -> mới), nội dung cắt ``max_chars`` ngay
     trong SQL để không kéo câu trả lời dài vào RAM."""
@@ -417,9 +417,9 @@ async def chat_rows_after(
 
 
 async def recent_chat_rows(
-    pool: Any, telegram_user_id: int, limit: int, max_chars: int
+    pool: Any, telegram_user_id: int, limit: int = 40, max_chars: int = 1500
 ) -> list[Any]:
-    """``limit`` dòng gần nhất, mới -> cũ (xác định ranh giới phiên)."""
+    """``limit`` dòng gần nhất, mới -> cũ (kèm id, kind, created_at)."""
     return await pool.fetch(
         "SELECT id, role, kind, left(content, $3) AS content, created_at FROM chat_messages "
         "WHERE telegram_user_id = $1 ORDER BY id DESC LIMIT $2",
@@ -429,7 +429,8 @@ async def recent_chat_rows(
     )
 
 
-async def last_model_row(pool: Any, telegram_user_id: int, max_chars: int) -> Any:
+async def last_model_row(pool: Any, telegram_user_id: int, max_chars: int = 4000) -> Any:
+    """Câu trả lời gần nhất của bot (id, kind, content, created_at) hoặc None."""
     return await pool.fetchrow(
         "SELECT id, kind, left(content, $2) AS content, created_at FROM chat_messages "
         "WHERE telegram_user_id = $1 AND role = 'model' ORDER BY id DESC LIMIT 1",
@@ -438,7 +439,7 @@ async def last_model_row(pool: Any, telegram_user_id: int, max_chars: int) -> An
     )
 
 
-async def users_with_chat_after(pool: Any, since: dt.datetime, limit: int) -> list[int]:
+async def users_with_chat_after(pool: Any, since: dt.datetime, limit: int = 50) -> list[int]:
     """Người có tin nhắn từ ``since`` (quét nền trích nhớ khi rảnh)."""
     rows = await pool.fetch(
         "SELECT telegram_user_id, MAX(id) AS last_id FROM chat_messages "
