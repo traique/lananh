@@ -1338,7 +1338,7 @@ FACEBOOK_PAGE_ACCESS_TOKEN_2=...
 access token). **Không cần gán page cho từng nhóm Zalo** — mọi nhóm nguồn đều
 dùng chung tập page này khi đăng.
 
-**Lọc bài từ nhóm Zalo trước khi vào hàng chờ Facebook** (`channels/router.py`,
+**Lọc bài từ nhóm Zalo trước khi vào hàng chờ Facebook** (`channels/facebook_intake.py`,
 `services/facebook_caption.skip_reason`). Gateway gộp ảnh + chữ liên tiếp của cùng một người
 gửi thành một bài (chờ tối đa `ZALO_FB_MERGE_WINDOW_MS`, mặc định 30 giây kể từ tin cuối) và
 tự tách khi người bán đăng liên tục nhiều sản phẩm: caption mới mở bài mới; với kiểu "ảnh trước
@@ -1348,6 +1348,9 @@ Bài bị bỏ (trả 204, ghi log "Bỏ qua bài Zalo (<lý do>)") khi:
 - **Có ảnh nhưng không có caption**: chỉ có ảnh, hoặc ảnh + link, hoặc ảnh + vài chữ ngắn như
   "Link mua:" (caption cần từ 10 chữ/số trở lên, không tính link kể cả link không có `https://`).
 - **Có caption nhưng không có ảnh** (kể cả khi gateway không tải được ảnh sau 2 lần thử).
+- **Không phải bài bán hàng**: thành viên hỏi xin link ("ai có link", "cho mình xin link"), tuyển
+  CTV/việc làm online, vay tiền, cờ bạc - CHỈ khi bài không có giá và không có link Shopee (bài bán
+  hàng thật kèm "nhận sỉ, tuyển CTV" ở cuối vẫn giữ). Số tiền kiểu "thu nhập 10-15tr" không tính là giá.
 - **Chỉ báo mã giảm giá/săn deal**: nhắc "lưu mã", "mã giảm", "deal VIP"... mà không có giá sản
   phẩm, dưới 400 ký tự. Giá nhận cả dạng "159k", "1tr2", "1.299.000", "199.000đ"; con số là điều
   kiện của mã ("đơn 0đ", "tối đa 50k", "max 30k", "hoàn xu 15%") không tính là giá. Bài có link
@@ -1355,15 +1358,30 @@ Bài bị bỏ (trả 204, ghi log "Bỏ qua bài Zalo (<lý do>)") khi:
   Nhận cả bài "canh mã/back" theo khung giờ: "15H BACK SVIP 25% MAX 999K/300K", "15H CANH BACK
   MÃ TRENDY", "BACK MÃ BÁCH HÓA", "LOẠT MÃ EXTRA", "Mã FB 30%", "ÁP TOÀN SÀN"; vế sau dấu "/"
   ("999K/300K") là đơn tối thiểu, không tính là giá.
-- **Trùng lặp** với bài trong `FACEBOOK_DEDUP_DAYS` ngày (mặc định 7, kể cả bài đã đăng/bỏ qua/
-  đã bị dọn): cùng nội dung (bỏ dấu, link, ký tự đặc biệt); cùng sản phẩm/short-link Shopee; chữ
-  gần giống và cùng bộ giá; ảnh trùng và chữ khá giống; hoặc toàn bộ ảnh (từ 2 ảnh) đều trùng.
-  Ảnh trùng một mình không tính (người bán hay dùng chung banner); cùng mẫu chữ nhưng khác giá là
-  deal mới. Xem `services/facebook_dedup.py`.
+- **Trùng lặp - so chung MỌI nhóm nguồn, không chỉ trong một nhóm**: một deal được chia sẻ ở
+  nhiều nhóm chỉ vào hàng chờ 1 lần. So với bài trong `FACEBOOK_DEDUP_DAYS` ngày (mặc định 7, kể
+  cả bài đã đăng/bỏ qua/đã bị dọn): cùng nội dung (bỏ dấu, link, ký tự đặc biệt); cùng sản
+  phẩm/short-link Shopee; chữ gần giống và cùng giá; bài đăng lại có thêm/bớt vài dòng chào hỏi,
+  hashtag, lời mời vào nhóm (85% chữ của bài ngắn nằm trong bài kia) và giá khớp; ảnh trùng (chịu
+  được ảnh bị Zalo nén lại khi chuyển tiếp) và chữ khá giống; cùng người bán đăng lại ảnh + giá ở
+  nhóm khác; hoặc toàn bộ ảnh (từ 2 ảnh) đều trùng. Ảnh trùng một mình không tính (người bán hay
+  dùng chung banner); cùng mẫu chữ nhưng khác giá là deal mới. Giá đọc được dạng "159k", "1tr2",
+  "1.299.000", "199.000đ". Trùng chính xác nội dung/sản phẩm được tra bằng index trên cả cửa sổ
+  ngày; so "gần giống" xét `FACEBOOK_DEDUP_SCAN_LIMIT` bài gần nhất (mặc định 800), chạy trong
+  thread. Bài gốc ghi lại số lần bị đăng lại và các nhóm đã đăng lại nó (xem ở `/fb_xem`). Xem
+  `services/facebook_dedup.py`.
 
 Tắt từng bộ lọc trên Render: `FACEBOOK_REQUIRE_PHOTO_AND_CAPTION=0` (cho phép bài thiếu ảnh/caption),
-`FACEBOOK_SKIP_VOUCHER_POSTS=0` (giữ bài mã giảm giá). Dùng `/fb_boloc` để xem bộ lọc đã giữ/bỏ
-bao nhiêu bài, lý do và các bài bị bỏ gần nhất (`/fb_boloc reset` để đếm lại).
+`FACEBOOK_SKIP_VOUCHER_POSTS=0` (giữ bài mã giảm giá), `FACEBOOK_SKIP_NON_SALE_POSTS=0` (giữ bài hỏi
+đáp/tuyển dụng). Dùng `/fb_boloc` để xem bộ lọc đã giữ/bỏ bao nhiêu bài, lý do, **theo từng nhóm
+nguồn** (vào hàng chờ / trùng / trùng nhóm khác / bỏ) và các bài bị bỏ gần nhất (`/fb_boloc reset`
+để đếm lại). `/fb_loclai` chạy lại bộ lọc cho bài đang chờ và bỏ các bài trùng một bài cũ hơn ở
+bất kỳ nhóm nào.
+
+**Tên nhóm thay cho group ID.** Bản xem trước ("Nhóm: Săn Sale Giá Rẻ"), `/fb_nhom`, `/fb_themnhom`,
+`/fb_xoanhom`, `/fb_loclai`, `/fb_boloc` hiện tên thật của nhóm Zalo. Tên được lưu khi `/fb_themnhom
+<số>`, cập nhật mỗi lần xem `/nhomzalo` (nhóm đổi tên), và tự hỏi gateway khi còn nhóm chưa có tên
+(tối đa 1 lần/6 giờ). `/fb_xoanhom` nhận tên gợi nhớ, tên nhóm (không cần dấu) hoặc group ID.
 
 **Dung lượng Supabase (free tier 500 MB).** Ảnh được nén trước khi lưu (cạnh dài tối đa 2048px,
 JPEG, bỏ EXIF) và bị xoá ngay khi bài đăng xong hoặc bị `/fb_boqua`. Hàng chờ giữ tối đa
@@ -1427,10 +1445,12 @@ Bỏ trống 2 biến là tắt luồng. Nội dung do AI chain của bot sinh (
 Các lệnh `/fb_*` dùng được từ **Zalo admin, Telegram owner và Zoom jid đã pair**:
 
 ```text
-/fb_nhom
+/fb_nhom                              # nhóm nguồn theo TÊN nhóm Zalo
 /fb_pages
 /fb_themnhom <số|group_id> [alias]   # số thứ tự lấy từ /nhomzalo
-/fb_xoanhom <group_id-or-alias>
+/fb_xoanhom <tên gợi nhớ|tên nhóm|group_id>
+/fb_loclai                            # lọc lại hàng chờ + bỏ bài trùng giữa các nhóm
+/fb_boloc [reset]                     # thống kê bộ lọc theo từng nhóm
 /fb_xem <post_id>
 /fb_sua <post_id> <nội dung mới>
 /fb_link <post_id> <affiliate_url>  # bài chỉ có 1 link Shopee
@@ -1447,8 +1467,10 @@ Quy trình vận hành:
 2. Gõ `/fb_themnhom <số> [alias]` (số thứ tự trong danh sách vừa xem, hoặc
    `/fb_themnhom <group_id> <alias>`).
 3. Gateway tự thu text + ảnh mới của nhóm đó và gom các message liên tiếp của
-   cùng người gửi thành một bài chờ duyệt. Luồng này không ghi vào dữ liệu
-   `/tongket` trừ khi nhóm đó cũng được thêm riêng bằng `/themnhom`.
+   cùng người gửi thành một bài chờ duyệt (ảnh gửi sang Python dạng nhị phân,
+   `POST /internal/zalo/facebook-group-post-multipart`). Bài vào hàng chờ ngay,
+   phần AI viết lại + gửi xem trước chạy nền nên gateway không phải chờ. Luồng này
+   không ghi vào dữ liệu `/tongket` trừ khi nhóm đó cũng được thêm riêng bằng `/themnhom`.
 4. Preview có `post_id` và các link Shopee gốc chưa chuyển đổi để copy. Bot
    gửi preview tới Zalo admin, Telegram owner và Zoom jid đã pair (nếu Zoom
    đang bật); cũng có thể xem lại bằng `/fb_xem <post_id>`. Trên Telegram,
