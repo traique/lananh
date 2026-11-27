@@ -31,7 +31,7 @@ async def webhook_backlog(pool: Any, stale_after: timedelta) -> tuple[int, float
     return int(row["stale"] or 0), (float(oldest) if oldest is not None else None)
 
 
-async def latest_backup_run(pool: Any, kind: str) -> dict | None:
+async def latest_backup_run(pool: Any, kind: str = "backup") -> dict | None:
     """Lượt sao lưu/diễn tập khôi phục thành công gần nhất (bảng backup_runs do
     workflow GitHub Actions ghi, migration 023); None nếu chưa có lượt nào."""
     row = await pool.fetchrow(

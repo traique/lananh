@@ -22,17 +22,23 @@ from core.db.pool import pool_stats as pool_stats
 from core.db.pool import reset_circuit_breaker as reset_circuit_breaker
 from core.db.pool import statement_cache_size as statement_cache_size
 from core.db.pool import with_reconnect as with_reconnect
+from core.repositories import app_devices as _app_devices
 from core.repositories import avatar as _avatar
 from core.repositories import brief as _brief
 from core.repositories import chat_history as _chat_history
 from core.repositories import expenses as _expenses
 from core.repositories import feedback as _feedback
 from core.repositories import meals as _meals
+from core.repositories import jobs as _jobs
 from core.repositories import memory as _memory
+from core.repositories import notify as _notify
 from core.repositories import observability as _observability
+from core.repositories import ops as _ops
+from core.repositories import portfolio as _portfolio
 from core.repositories import prompts as _prompts
 from core.repositories import quota as _quota
 from core.repositories import reminders as _reminders
+from core.repositories import settings as _settings
 
 logger = logging.getLogger(__name__)
 
@@ -413,39 +419,27 @@ def _setting_written(key: str, value: Optional[str]) -> None:
         listener(key, value)
 
 
-@_with_reconnect
-async def get_setting(key: str) -> Optional[str]:
-    from core.repositories import settings as settings_repository
-
-    return await settings_repository.get(await get_pool(), key)
+get_setting = _bind(_settings.get)
 
 
 @_with_reconnect
 async def set_setting(key: str, value: str) -> None:
-    from core.repositories import settings as settings_repository
-
     try:
-        await settings_repository.set(await get_pool(), key, value)
+        await _settings.set(await get_pool(), key, value)
     except BaseException:
         _setting_written(key, None)
         raise
     _setting_written(key, value)
 
 
-@_with_reconnect
-async def list_encrypted_settings(limit: int = 500) -> list[tuple[str, str]]:
-    """Các dòng settings đã mã hoá (xoay khoá - services/key_rotation.py)."""
-    from core.repositories import settings as settings_repository
-
-    return await settings_repository.list_encrypted(await get_pool(), limit)
+# Các dòng settings đã mã hoá (xoay khoá - services/key_rotation.py).
+list_encrypted_settings = _bind(_settings.list_encrypted)
 
 
 @_with_reconnect
 async def compare_and_set_setting(key: str, expected: str, value: str) -> bool:
-    from core.repositories import settings as settings_repository
-
     try:
-        swapped = await settings_repository.compare_and_set(await get_pool(), key, expected, value)
+        swapped = await _settings.compare_and_set(await get_pool(), key, expected, value)
     except BaseException:
         _setting_written(key, None)
         raise
@@ -455,497 +449,91 @@ async def compare_and_set_setting(key: str, expected: str, value: str) -> bool:
 
 
 # ─── Danh mục cổ phiếu: vị thế, sổ giao dịch, theo dõi/cảnh báo giá ─────────
-# SQL ở core/repositories/portfolio.py. Hàm ghi vị thế INSERT dòng sổ giao dịch
-# trong cùng transaction -> idempotent=False (không retry khi lệnh có thể đã
-# commit). Ngày truyền dạng text YYYY-MM-DD.
-
-
-@_with_reconnect
-async def portfolio_list_holdings(user_id: int):
-    from core.repositories import portfolio
-
-    return await portfolio.list_holdings(await get_pool(), user_id)
-
-
-@_with_reconnect
-async def portfolio_get_holding(user_id: int, symbol: str):
-    from core.repositories import portfolio
-
-    return await portfolio.get_holding(await get_pool(), user_id, symbol)
-
-
-@_with_reconnect
-async def portfolio_list_all_holdings(limit: int, *, after: tuple[int, str] | None = None):
-    from core.repositories import portfolio
-
-    return await portfolio.list_all_holdings(await get_pool(), limit, after=after)
-
-
-@_with_reconnect(idempotent=False)
-async def portfolio_replace_holding(
-    user_id: int, symbol: str, quantity: float, average_price: float, **kw
-):
-    from core.repositories import portfolio
-
-    return await portfolio.replace_holding(
-        await get_pool(), user_id, symbol, quantity, average_price, **kw
-    )
-
-
-@_with_reconnect(idempotent=False)
-async def portfolio_record_purchase(user_id: int, symbol: str, quantity: float, price: float, **kw):
-    from core.repositories import portfolio
-
-    return await portfolio.record_purchase(await get_pool(), user_id, symbol, quantity, price, **kw)
-
-
-@_with_reconnect(idempotent=False)
-async def portfolio_record_sale(
-    user_id: int, symbol: str, quantity: float | None, price: float | None, **kw
-):
-    from core.repositories import portfolio
-
-    return await portfolio.record_sale(await get_pool(), user_id, symbol, quantity, price, **kw)
-
-
-@_with_reconnect(idempotent=False)
-async def portfolio_update_alerts(user_id: int, symbol: str, **kw):
-    from core.repositories import portfolio
-
-    return await portfolio.update_alerts(await get_pool(), user_id, symbol, **kw)
-
-
-@_with_reconnect(idempotent=False)
-async def portfolio_rebase_holding(user_id: int, symbol: str, rebase):
-    from core.repositories import portfolio
-
-    return await portfolio.rebase_holding(await get_pool(), user_id, symbol, rebase)
-
-
-@_with_reconnect(idempotent=False)
-async def portfolio_delete_holding(user_id: int, symbol: str) -> bool:
-    from core.repositories import portfolio
-
-    return await portfolio.delete_holding(await get_pool(), user_id, symbol)
-
-
-@_with_reconnect
-async def portfolio_was_closed(user_id: int, symbol: str) -> bool:
-    from core.repositories import portfolio
-
-    return await portfolio.was_closed(await get_pool(), user_id, symbol)
-
-
-@_with_reconnect
-async def portfolio_list_transactions(user_id: int, *, symbol: str | None = None, limit: int = 15):
-    from core.repositories import portfolio
-
-    return await portfolio.list_transactions(await get_pool(), user_id, symbol=symbol, limit=limit)
-
-
-@_with_reconnect
-async def portfolio_transactions_between(user_id: int, start, end, *, limit: int = 2000):
-    from core.repositories import portfolio
-
-    return await portfolio.transactions_between(await get_pool(), user_id, start, end, limit=limit)
-
-
+# SQL ở core/repositories/portfolio.py. Hàm ghi vị thế INSERT dòng sổ giao dịch trong
+# cùng transaction -> idempotent=False (không retry khi lệnh có thể đã commit). Ngày
+# truyền dạng text YYYY-MM-DD.
+portfolio_list_holdings = _bind(_portfolio.list_holdings)
+portfolio_get_holding = _bind(_portfolio.get_holding)
+portfolio_list_all_holdings = _bind(_portfolio.list_all_holdings)
+portfolio_replace_holding = _bind(_portfolio.replace_holding, idempotent=False)
+portfolio_record_purchase = _bind(_portfolio.record_purchase, idempotent=False)
+portfolio_record_sale = _bind(_portfolio.record_sale, idempotent=False)
+portfolio_update_alerts = _bind(_portfolio.update_alerts, idempotent=False)
+portfolio_rebase_holding = _bind(_portfolio.rebase_holding, idempotent=False)
+portfolio_delete_holding = _bind(_portfolio.delete_holding, idempotent=False)
+portfolio_was_closed = _bind(_portfolio.was_closed)
+portfolio_list_transactions = _bind(_portfolio.list_transactions)
+portfolio_transactions_between = _bind(_portfolio.transactions_between)
 # Không idempotent: chạy lại sau khi đã commit sẽ điền giá cho lệnh bán CŨ HƠN.
-@_with_reconnect(idempotent=False)
-async def portfolio_fill_sale_price(user_id: int, symbol: str, price: float, **kw):
-    from core.repositories import portfolio
-
-    return await portfolio.fill_sale_price(await get_pool(), user_id, symbol, price, **kw)
-
-
-@_with_reconnect
-async def portfolio_watchlist(user_id: int) -> list[str]:
-    from core.repositories import portfolio
-
-    return await portfolio.watchlist(await get_pool(), user_id)
-
-
-@_with_reconnect
-async def portfolio_add_watch(user_id: int, symbols: list[str], max_symbols: int) -> list[str]:
-    from core.repositories import portfolio
-
-    return await portfolio.add_watch(await get_pool(), user_id, symbols, max_symbols)
-
-
-@_with_reconnect
-async def portfolio_remove_watch(user_id: int, symbol: str) -> tuple[bool, int]:
-    from core.repositories import portfolio
-
-    return await portfolio.remove_watch(await get_pool(), user_id, symbol)
-
-
-@_with_reconnect
-async def portfolio_list_price_alerts(user_id: int):
-    from core.repositories import portfolio
-
-    return await portfolio.list_price_alerts(await get_pool(), user_id)
-
-
-@_with_reconnect
-async def portfolio_add_price_alert(user_id: int, symbol: str, direction: str, level: float, **kw):
-    from core.repositories import portfolio
-
-    return await portfolio.add_price_alert(
-        await get_pool(), user_id, symbol, direction, level, **kw
-    )
-
-
-@_with_reconnect
-async def portfolio_delete_price_alerts(user_id: int, symbol: str, level: float | None) -> int:
-    from core.repositories import portfolio
-
-    return await portfolio.delete_price_alerts(await get_pool(), user_id, symbol, level)
-
-
-@_with_reconnect
-async def portfolio_active_price_alerts(limit: int):
-    from core.repositories import portfolio
-
-    return await portfolio.active_price_alerts(await get_pool(), limit)
-
-
-@_with_reconnect
-async def portfolio_set_price_alert_state(alert_id: int, state: str, *, notified: bool) -> None:
-    from core.repositories import portfolio
-
-    await portfolio.set_price_alert_state(await get_pool(), alert_id, state, notified=notified)
-
-
-@_with_reconnect
-async def portfolio_alert_logged(
-    user_id: int, kind: str, ref_key: str, sent_on: str | None = None
-) -> bool:
-    from core.repositories import portfolio
-
-    return await portfolio.alert_logged(await get_pool(), user_id, kind, ref_key, sent_on)
-
-
-@_with_reconnect
-async def portfolio_log_alert(user_id: int, kind: str, ref_key: str, sent_on: str) -> None:
-    from core.repositories import portfolio
-
-    await portfolio.log_alert(await get_pool(), user_id, kind, ref_key, sent_on)
-
-
-@_with_reconnect
-async def portfolio_count_alerts_on(user_id: int, sent_on: str) -> int:
-    from core.repositories import portfolio
-
-    return await portfolio.count_alerts_on(await get_pool(), user_id, sent_on)
-
-
-@_with_reconnect
-async def portfolio_prune_alert_log(keep_days: int, batch: int = 5000) -> int:
-    from core.repositories import portfolio
-
-    return await portfolio.prune_alert_log(await get_pool(), keep_days, batch)
-
+portfolio_fill_sale_price = _bind(_portfolio.fill_sale_price, idempotent=False)
+portfolio_watchlist = _bind(_portfolio.watchlist)
+portfolio_add_watch = _bind(_portfolio.add_watch)
+portfolio_remove_watch = _bind(_portfolio.remove_watch)
+portfolio_list_price_alerts = _bind(_portfolio.list_price_alerts)
+portfolio_add_price_alert = _bind(_portfolio.add_price_alert)
+portfolio_delete_price_alerts = _bind(_portfolio.delete_price_alerts)
+portfolio_active_price_alerts = _bind(_portfolio.active_price_alerts)
+portfolio_set_price_alert_state = _bind(_portfolio.set_price_alert_state)
+portfolio_alert_logged = _bind(_portfolio.alert_logged)
+portfolio_log_alert = _bind(_portfolio.log_alert)
+portfolio_count_alerts_on = _bind(_portfolio.count_alerts_on)
+portfolio_prune_alert_log = _bind(_portfolio.prune_alert_log)
+# (kind, ref_key, ngày) nhật ký thông báo danh mục từ ngày ``since``.
+portfolio_alert_log_since = _bind(_portfolio.alert_log_since)
 
 # ─── Hàng đợi thông báo gom (migrations/026, services/notify_hub.py) ────────
-# SQL nằm ở core/repositories/notify.py.
-
-
-@_with_reconnect(idempotent=False)
-async def notify_enqueue(
-    channel: str,
-    user_id: int,
-    level: str,
-    source: str,
-    content: str,
-    dedup_key: str | None,
-    cap: int,
-) -> tuple[int | None, int]:
-    """Xếp 1 tin vào hàng đợi; (id mới hoặc None nếu trùng dedup_key, số tin cũ bị
-    bỏ vì vượt trần). Không retry sau khi mất kết nối: tin không có dedup_key có thể
-    đã được xếp ở lần đầu."""
-    from core.repositories import notify
-
-    return await notify.enqueue(
-        await get_pool(), channel, user_id, level, source, content, dedup_key, cap
-    )
-
-
-@_with_reconnect
-async def notify_pending_recipients(priority_sources: list[str], limit: int = 100) -> list[dict]:
-    from core.repositories import notify
-
-    return await notify.pending_recipients(await get_pool(), limit, priority_sources)
-
-
-@_with_reconnect(idempotent=False)
-async def notify_claim(channel: str, user_id: int, limit: int, lease_sec: int) -> list[dict]:
-    from core.repositories import notify
-
-    return await notify.claim(await get_pool(), channel, user_id, limit, lease_sec)
-
-
-@_with_reconnect
-async def notify_mark_sent(ids: list[int]) -> None:
-    from core.repositories import notify
-
-    await notify.mark_sent(await get_pool(), ids)
-
-
-@_with_reconnect
-async def notify_release(ids: list[int]) -> None:
-    from core.repositories import notify
-
-    await notify.release(await get_pool(), ids)
-
-
-@_with_reconnect(idempotent=False)
-async def notify_take_dropped(channel: str, user_id: int) -> int:
-    from core.repositories import notify
-
-    return await notify.take_dropped(await get_pool(), channel, user_id)
-
-
-@_with_reconnect(idempotent=False)
-async def notify_flush_zalo(
-    user_id: int, limit: int, account_id: str, recipient_id: str, compose
-) -> int:
-    from core.repositories import notify
-
-    return await notify.flush_zalo(
-        await get_pool(), user_id, limit, account_id, recipient_id, compose
-    )
-
-
-@_with_reconnect
-async def notify_drop_pending(channel: str, user_id: int) -> int:
-    from core.repositories import notify
-
-    return await notify.drop_pending(await get_pool(), channel, user_id)
-
-
-@_with_reconnect
-async def notify_count_pending(user_id: int) -> int:
-    from core.repositories import notify
-
-    return await notify.count_pending(await get_pool(), user_id)
-
-
-@_with_reconnect
-async def notify_clear_user(user_id: int) -> None:
-    from core.repositories import notify
-
-    await notify.clear_user(await get_pool(), user_id)
-
+# Xếp tin không retry sau khi mất kết nối: tin không có dedup_key có thể đã được xếp.
+notify_enqueue = _bind(_notify.enqueue, idempotent=False)
+notify_pending_recipients = _bind(_notify.pending_recipients)
+notify_claim = _bind(_notify.claim, idempotent=False)
+notify_mark_sent = _bind(_notify.mark_sent)
+notify_release = _bind(_notify.release)
+notify_take_dropped = _bind(_notify.take_dropped, idempotent=False)
+notify_flush_zalo = _bind(_notify.flush_zalo, idempotent=False)
+notify_drop_pending = _bind(_notify.drop_pending)
+notify_count_pending = _bind(_notify.count_pending)
+notify_clear_user = _bind(_notify.clear_user)
 
 # ─── Việc nền + tác vụ định kỳ (migrations/027, services/background_jobs.py,
 # services/routines.py). SQL ở core/repositories/jobs.py.
-
-
-@_with_reconnect(idempotent=False)
-async def bg_job_insert(
-    user_id: int, channel: str, prompt: str, *, user_cap: int, global_cap: int
-) -> tuple[int | None, str]:
-    from core.repositories import jobs
-
-    return await jobs.insert_job(
-        await get_pool(), user_id, channel, prompt, user_cap=user_cap, global_cap=global_cap
-    )
-
-
-@_with_reconnect(idempotent=False)
-async def bg_job_claim(lease_sec: int) -> dict | None:
-    from core.repositories import jobs
-
-    return await jobs.claim_next(await get_pool(), lease_sec)
-
-
-@_with_reconnect
-async def bg_job_renew(job_id: int, lease_sec: int) -> bool:
-    from core.repositories import jobs
-
-    return await jobs.renew_lease(await get_pool(), job_id, lease_sec)
-
-
-@_with_reconnect
-async def bg_job_finish(job_id: int, status: str, **fields) -> bool:
-    from core.repositories import jobs
-
-    return await jobs.finish(await get_pool(), job_id, status, **fields)
-
-
-@_with_reconnect(idempotent=False)
-async def bg_job_recover(max_attempts: int) -> list[dict]:
-    from core.repositories import jobs
-
-    return await jobs.recover_stale(await get_pool(), max_attempts)
-
-
-@_with_reconnect
-async def bg_job_cancel(user_id: int, job_id: int) -> str | None:
-    from core.repositories import jobs
-
-    return await jobs.cancel(await get_pool(), user_id, job_id)
-
-
-@_with_reconnect
-async def bg_job_get(user_id: int, job_id: int) -> dict | None:
-    from core.repositories import jobs
-
-    return await jobs.get_job(await get_pool(), user_id, job_id)
-
-
-@_with_reconnect
-async def bg_job_list(user_id: int, limit: int = 10) -> list[dict]:
-    from core.repositories import jobs
-
-    return await jobs.list_jobs(await get_pool(), user_id, limit)
-
-
-@_with_reconnect
-async def bg_job_active(user_id: int) -> list[dict]:
-    from core.repositories import jobs
-
-    return await jobs.active_jobs(await get_pool(), user_id)
-
-
-@_with_reconnect
-async def bg_job_position(job_id: int) -> int:
-    from core.repositories import jobs
-
-    return await jobs.queue_position(await get_pool(), job_id)
-
-
-@_with_reconnect
-async def bg_job_recent_all(limit: int = 30) -> list[dict]:
-    from core.repositories import jobs
-
-    return await jobs.recent_all(await get_pool(), limit)
-
-
-@_with_reconnect
-async def bg_job_clear_user(user_id: int) -> None:
-    from core.repositories import jobs
-
-    await jobs.clear_user(await get_pool(), user_id)
-
-
-@_with_reconnect
-async def routine_count(user_id: int) -> int:
-    from core.repositories import jobs
-
-    return await jobs.count_routines(await get_pool(), user_id)
-
-
-@_with_reconnect(idempotent=False)
-async def routine_insert(
-    user_id: int, channel: str, prompt: str, rule: dict, next_run_at: datetime
-) -> int:
-    from core.repositories import jobs
-
-    return await jobs.insert_routine(await get_pool(), user_id, channel, prompt, rule, next_run_at)
-
-
-@_with_reconnect
-async def routine_list(user_id: int) -> list[dict]:
-    from core.repositories import jobs
-
-    return await jobs.list_routines(await get_pool(), user_id)
-
-
-@_with_reconnect
-async def routine_all(limit: int = 50) -> list[dict]:
-    from core.repositories import jobs
-
-    return await jobs.all_routines(await get_pool(), limit)
-
-
-@_with_reconnect
-async def routine_get(user_id: int, routine_id: int) -> dict | None:
-    from core.repositories import jobs
-
-    return await jobs.get_routine(await get_pool(), user_id, routine_id)
-
-
-@_with_reconnect
-async def routine_delete(user_id: int, routine_id: int) -> bool:
-    from core.repositories import jobs
-
-    return await jobs.delete_routine(await get_pool(), user_id, routine_id)
-
-
-@_with_reconnect
-async def routine_set_status(
-    user_id: int, routine_id: int, status: str, next_run_at: datetime | None = None
-) -> bool:
-    from core.repositories import jobs
-
-    return await jobs.set_routine_status(await get_pool(), user_id, routine_id, status, next_run_at)
-
-
-@_with_reconnect
-async def routine_due(now: datetime, limit: int = 20) -> list[dict]:
-    from core.repositories import jobs
-
-    return await jobs.due_routines(await get_pool(), now, limit)
-
-
+bg_job_insert = _bind(_jobs.insert_job, idempotent=False)
+bg_job_claim = _bind(_jobs.claim_next, idempotent=False)
+bg_job_renew = _bind(_jobs.renew_lease)
+bg_job_finish = _bind(_jobs.finish)
+bg_job_recover = _bind(_jobs.recover_stale, idempotent=False)
+bg_job_cancel = _bind(_jobs.cancel)
+bg_job_get = _bind(_jobs.get_job)
+bg_job_list = _bind(_jobs.list_jobs)
+bg_job_active = _bind(_jobs.active_jobs)
+bg_job_position = _bind(_jobs.queue_position)
+bg_job_recent_all = _bind(_jobs.recent_all)
+bg_job_clear_user = _bind(_jobs.clear_user)
+routine_count = _bind(_jobs.count_routines)
+routine_insert = _bind(_jobs.insert_routine, idempotent=False)
+routine_list = _bind(_jobs.list_routines)
+routine_all = _bind(_jobs.all_routines)
+routine_get = _bind(_jobs.get_routine)
+routine_delete = _bind(_jobs.delete_routine)
+routine_set_status = _bind(_jobs.set_routine_status)
+routine_due = _bind(_jobs.due_routines)
 # Idempotent nhờ điều kiện next_run_at = giá trị cũ + dedup_key của bg_jobs.
-@_with_reconnect
-async def routine_fire(
-    routine: dict, scheduled: datetime, next_run_at: datetime | None, *, enqueue: bool
-) -> int | None:
-    from core.repositories import jobs
-
-    return await jobs.fire_routine(
-        await get_pool(), routine, scheduled, next_run_at, enqueue=enqueue
-    )
-
-
-@_with_reconnect
-async def routine_runs_since(since: datetime) -> int:
-    from core.repositories import jobs
-
-    return await jobs.routine_runs_since(await get_pool(), since)
-
-
-@_with_reconnect
-async def routine_jobs_since(user_id: int, since: datetime) -> list[dict]:
-    from core.repositories import jobs
-
-    return await jobs.routine_jobs_since(await get_pool(), user_id, since)
-
-
-@_with_reconnect
-async def portfolio_alert_log_since(user_id: int, since: str) -> list[tuple[str, str, str]]:
-    """(kind, ref_key, ngày) nhật ký thông báo danh mục từ ngày ``since``."""
-    from core.repositories import portfolio
-
-    return await portfolio.alert_log_since(await get_pool(), user_id, since)
-
+routine_fire = _bind(_jobs.fire_routine)
+routine_runs_since = _bind(_jobs.routine_runs_since)
+routine_jobs_since = _bind(_jobs.routine_jobs_since)
 
 # ─── Giám sát vận hành / sao lưu (services/watchdog.py, backup_status.py) ───
-# SQL nằm ở core/repositories/ops.py; đây chỉ là wrapper có retry kết nối.
+database_bytes = _bind(_ops.database_bytes)
+webhook_backlog = _bind(_ops.webhook_backlog)
+latest_backup_run = _bind(_ops.latest_backup_run)
 
-
-@_with_reconnect
-async def database_bytes() -> int:
-    from core.repositories import ops
-
-    return await ops.database_bytes(await get_pool())
-
-
-@_with_reconnect
-async def webhook_backlog(stale_after) -> tuple[int, float | None]:
-    from core.repositories import ops
-
-    return await ops.webhook_backlog(await get_pool(), stale_after)
-
-
-@_with_reconnect
-async def latest_backup_run(kind: str = "backup") -> dict | None:
-    from core.repositories import ops
-
-    return await ops.latest_backup_run(await get_pool(), kind)
+# ─── Thiết bị app màn hình thông tin (/app, core/repositories/app_devices.py) ─
+# Chỉ nhận HASH của mã ghép/token. Không idempotent: tạo chờ ghép lần 2 thêm 1 dòng
+# thứ hai; ghép lần 2 thấy mã đã bị xoá -> báo sai "mã hết hạn".
+app_device_create_pending = _bind(_app_devices.create_pending, idempotent=False)
+app_device_pair = _bind(_app_devices.pair, idempotent=False)
+app_device_by_token = _bind(_app_devices.by_token)
+app_device_list = _bind(_app_devices.list_for_user)
+app_device_revoke = _bind(_app_devices.revoke)
 
 
 # ─── Zoom Team Chat pairing (bot 1 chủ, dùng chung ALLOWED_USER_ID) ─────────
@@ -981,48 +569,3 @@ async def zoom_clear_pairing() -> None:
 
     await settings_cache.set(_SETTING_ZOOM_JID, "")
     await settings_cache.set(_SETTING_ZOOM_NAME, "")
-
-
-# ─── Thiết bị app màn hình thông tin (/app, services/app_devices.py) ─────────
-# SQL ở core/repositories/app_devices.py; chỉ nhận HASH của mã ghép/token.
-
-
-# Không idempotent: chạy lại sau khi đã commit sẽ thêm 1 dòng chờ ghép thứ hai.
-@_with_reconnect(idempotent=False)
-async def app_device_create_pending(
-    user_id: int, name: str, code_hash: str, ttl_sec: int, max_devices: int
-) -> int | None:
-    from core.repositories import app_devices
-
-    return await app_devices.create_pending(
-        await get_pool(), user_id, name, code_hash, ttl_sec, max_devices
-    )
-
-
-# Không idempotent: chạy lại sau khi đã commit thì mã ghép đã bị xoá -> báo sai "mã hết hạn".
-@_with_reconnect(idempotent=False)
-async def app_device_pair(code_hash: str, token_hash: str) -> dict | None:
-    from core.repositories import app_devices
-
-    return await app_devices.pair(await get_pool(), code_hash, token_hash)
-
-
-@_with_reconnect
-async def app_device_by_token(token_hash: str) -> dict | None:
-    from core.repositories import app_devices
-
-    return await app_devices.by_token(await get_pool(), token_hash)
-
-
-@_with_reconnect
-async def app_device_list(user_id: int) -> list[dict]:
-    from core.repositories import app_devices
-
-    return await app_devices.list_for_user(await get_pool(), user_id)
-
-
-@_with_reconnect
-async def app_device_revoke(user_id: int, device_id: int) -> bool:
-    from core.repositories import app_devices
-
-    return await app_devices.revoke(await get_pool(), user_id, device_id)

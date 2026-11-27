@@ -163,7 +163,7 @@ async def get_job(pool: Any, user_id: int, job_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-async def list_jobs(pool: Any, user_id: int, limit: int) -> list[dict]:
+async def list_jobs(pool: Any, user_id: int, limit: int = 10) -> list[dict]:
     """Việc /viec của 1 người: đang chạy/chờ trước, rồi mới nhất."""
     rows = await pool.fetch(
         f"""
@@ -200,7 +200,7 @@ async def queue_position(pool: Any, job_id: int) -> int:
     )
 
 
-async def recent_all(pool: Any, limit: int) -> list[dict]:
+async def recent_all(pool: Any, limit: int = 30) -> list[dict]:
     """Trang /admin: việc gần nhất của mọi người (đang chạy/chờ trước)."""
     rows = await pool.fetch(
         f"""
@@ -281,7 +281,7 @@ async def list_routines(pool: Any, user_id: int) -> list[dict]:
     return [_routine(r) for r in rows]
 
 
-async def all_routines(pool: Any, limit: int) -> list[dict]:
+async def all_routines(pool: Any, limit: int = 50) -> list[dict]:
     rows = await pool.fetch(
         f"SELECT {_ROUTINE_COLUMNS} FROM routines r ORDER BY r.id LIMIT $1", limit
     )
@@ -298,7 +298,11 @@ async def delete_routine(pool: Any, user_id: int, routine_id: int) -> bool:
 
 
 async def set_routine_status(
-    pool: Any, user_id: int, routine_id: int, status: str, next_run_at: datetime | None
+    pool: Any,
+    user_id: int,
+    routine_id: int,
+    status: str,
+    next_run_at: datetime | None = None,
 ) -> bool:
     found = await pool.fetchval(
         "UPDATE routines SET status = $3, next_run_at = COALESCE($4, next_run_at) "
@@ -320,7 +324,7 @@ async def get_routine(pool: Any, user_id: int, routine_id: int) -> dict | None:
     return _routine(row) if row else None
 
 
-async def due_routines(pool: Any, now: datetime, limit: int) -> list[dict]:
+async def due_routines(pool: Any, now: datetime, limit: int = 20) -> list[dict]:
     rows = await pool.fetch(
         f"""
         SELECT {_ROUTINE_COLUMNS} FROM routines r

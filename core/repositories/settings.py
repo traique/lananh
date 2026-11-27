@@ -19,7 +19,7 @@ async def set(pool: Any, key: str, value: str) -> None:
     )
 
 
-async def list_encrypted(pool: Any, limit: int) -> list[tuple[str, str]]:
+async def list_encrypted(pool: Any, limit: int = 500) -> list[tuple[str, str]]:
     """(key, value) của các dòng đã mã hoá (prefix "enc:" của core.crypto) - vài
     dòng (API key override, session Zalo); có trần để không kéo cả bảng vào RAM."""
     rows = await pool.fetch(

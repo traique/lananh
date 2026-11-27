@@ -482,7 +482,7 @@ async def was_closed(pool: Any, user_id: int, symbol: str) -> bool:
 # ─── Sổ giao dịch ────────────────────────────────────────────────────────────
 
 
-async def list_transactions(pool: Any, user_id: int, *, symbol: str | None, limit: int):
+async def list_transactions(pool: Any, user_id: int, *, symbol: str | None = None, limit: int = 15):
     return await pool.fetch(
         f"""
         SELECT {_TX_COLUMNS}
@@ -497,7 +497,7 @@ async def list_transactions(pool: Any, user_id: int, *, symbol: str | None, limi
     )
 
 
-async def transactions_between(pool: Any, user_id: int, start, end, *, limit: int):
+async def transactions_between(pool: Any, user_id: int, start, end, *, limit: int = 2000):
     """Dòng sổ trong [start, end) (timestamptz), cũ trước - để tổng hợp báo cáo."""
     return await pool.fetch(
         f"""
@@ -692,7 +692,7 @@ async def set_price_alert_state(pool: Any, alert_id: int, state: str, *, notifie
 
 
 async def alert_logged(
-    pool: Any, user_id: int, kind: str, ref_key: str, sent_on: str | None
+    pool: Any, user_id: int, kind: str, ref_key: str, sent_on: str | None = None
 ) -> bool:
     """Đã gửi (kind, ref_key) cho user chưa - trong ngày sent_on, hoặc bất kỳ
     ngày nào nếu sent_on None."""
@@ -750,7 +750,7 @@ async def count_alerts_on(pool: Any, user_id: int, sent_on: str) -> int:
     )
 
 
-async def prune_alert_log(pool: Any, keep_days: int, batch: int) -> int:
+async def prune_alert_log(pool: Any, keep_days: int, batch: int = 5000) -> int:
     result = await pool.execute(
         "DELETE FROM stock_alert_log WHERE ctid IN (SELECT ctid FROM stock_alert_log "
         "WHERE created_at < now() - ($1::integer * INTERVAL '1 day') LIMIT $2)",
