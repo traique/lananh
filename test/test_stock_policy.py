@@ -463,7 +463,9 @@ def test_find_key_levels_clustering_gom_pivot_gan_nhau():
         assert 0.0 <= lv.strength <= 1.0
 
 
-def test_sell_target_positive_news_khong_duoc_bearish_hon():
+def test_moc_tham_chieu_sell_khong_doi_theo_tin_tuc():
+    """Cùng chuỗi giá -> cùng mốc tham chiếu SELL: news_impact (cảm xúc theo từ khoá
+    tiêu đề Google News) không được làm lệch mốc dự phóng của nhánh thoát hàng."""
     closes = _closes_downtrend(90)
     price = closes[-1]
     volumes = [500_000.0] * len(closes)
@@ -481,7 +483,7 @@ def test_sell_target_positive_news_khong_duoc_bearish_hon():
     _, target_positive, _, _ = pol._compute_stop_target(
         price, enhanced, stats, 1.0, "exit", None, "HOSE"
     )
-    assert target_negative < target_neutral < target_positive < price
+    assert target_negative == target_neutral == target_positive < price
 
 
 def test_trade_plan_entry_price_luon_dung_tick_hose():
@@ -620,3 +622,82 @@ def test_sat_tran_tinh_theo_bien_do_cua_san():
     )
     upcom = pol.evaluate_policy(_breakout_inputs(session=up12, exchange="UPCOM"))
     assert any("sát trần" in r for r in upcom.reasons)
+
+
+# ─── Gate B: gap quyền chưa điều chỉnh, dữ liệu cũ; mốc SELL khi đang giữ ────
+
+
+def test_gate_gap_chua_dieu_chinh_de_len_ca_setup_buy_dep():
+    """Setup BUY đủ điều kiện nhưng chuỗi còn gap quyền trong cửa sổ chỉ báo: không
+    ra tín hiệu định hướng nào - NO_TRADE (chưa giữ) / HOLD (đang giữ), confidence 0,
+    không stop/target/R:R/kế hoạch."""
+    assert pol.evaluate_policy(_pullback_buy_inputs()).action == "BUY"
+    for holding, expected in ((False, "NO_TRADE"), (True, "HOLD")):
+        inputs = _pullback_buy_inputs()
+        inputs.unadjusted_gap = True
+        inputs.is_holding = holding
+        d = pol.evaluate_policy(inputs)
+        assert d.action == expected
+        assert d.confidence == 0.0 and d.setup_type == "none" and d.risk_level == "high"
+        assert d.stop_price is None and d.target_price is None and d.rr_ratio is None
+        assert d.trade_plan is None and d.scenarios == []
+        assert d.market_regime == "risk_on"  # regime vẫn được đánh giá
+        assert any("gap quyền chưa điều chỉnh" in r for r in d.reasons)
+        assert "điều chỉnh theo sự kiện quyền" in d.invalidation_reason
+
+
+def test_gate_gap_cung_chan_sell_khi_dang_giu():
+    inputs = _make_inputs(_closes_downtrend(90), vnindex_bullish=False, relative_strength=-8.0)
+    inputs.is_holding = True
+    assert pol.evaluate_policy(inputs).action == "SELL"
+    inputs.unadjusted_gap = True
+    d = pol.evaluate_policy(inputs)
+    assert d.action == "HOLD" and d.setup_type == "none" and d.stop_price is None
+
+
+def test_gate_du_lieu_cu_chan_mo_mua_moi_nhung_giu_nguyen_so_lieu():
+    """is_stale (chất lượng vẫn ok): cùng confidence/setup nhưng không mở BUY, không
+    kế hoạch/tỷ trọng; người đang giữ nhận HOLD."""
+    fresh = pol.evaluate_policy(_pullback_buy_inputs())
+    assert fresh.action == "BUY" and fresh.trade_plan is not None
+    for holding, expected in ((False, "WATCH"), (True, "HOLD")):
+        inputs = _pullback_buy_inputs()
+        inputs.quality = DataQuality(status="ok", bars_available=120, is_stale=True)
+        inputs.is_holding = holding
+        d = pol.evaluate_policy(inputs)
+        assert d.action == expected
+        assert d.confidence == fresh.confidence and d.setup_type == fresh.setup_type
+        assert d.trade_plan is None and d.stop_price is None and d.rr_ratio is None
+        assert any("dữ liệu giá đã cũ" in r for r in d.reasons)
+
+
+def test_sell_khi_dang_giu_moc_vo_hieu_tren_gia_moc_ho_tro_duoi_gia():
+    inputs = _make_inputs(_closes_downtrend(90), vnindex_bullish=False, relative_strength=-8.0)
+    inputs.is_holding = True
+    inputs.exchange = "HOSE"
+    d = pol.evaluate_policy(inputs)
+    assert d.action == "SELL"
+    price = inputs.price
+    assert d.stop_price > price > d.target_price
+    assert d.stop_price % 100 == 0 and d.target_price % 100 == 0  # bước giá HOSE >= 50.000
+    assert d.rr_ratio == round((price - d.target_price) / (d.stop_price - price), 2)
+    assert d.trade_plan is None and d.scenarios == []
+    assert d.invalidation_reason == (
+        f"nếu giá vượt lên trên {d.stop_price:,.0f} thì tín hiệu SELL coi như vô hiệu, "
+        "cần đánh giá lại"
+    ).replace(",", ".")
+    # Không giữ hàng: cùng tín hiệu giảm chỉ là "đừng mua mới", không có số SELL.
+    inputs.is_holding = False
+    d = pol.evaluate_policy(inputs)
+    assert d.action == "NO_TRADE" and d.stop_price is None and d.target_price is None
+
+
+def test_watch_thoat_hang_khi_dang_giu_dung_khang_cu_va_ho_tro_that():
+    inputs = _make_inputs(_closes_flat(90), relative_strength=0.0)
+    inputs.is_holding = True
+    d = pol.evaluate_policy(inputs)
+    assert d.action == "WATCH"
+    # Kháng cự 30.300 (cách giá 1%) -> mốc vô hiệu = 30.300 x 1,01 làm tròn 100đ;
+    # hỗ trợ thật 29.700 là mốc tham chiếu phía dưới.
+    assert d.stop_price == 30_600 and d.target_price == 29_700
+    assert d.rr_ratio == round((30_000 - 29_700) / (30_600 - 30_000), 2)

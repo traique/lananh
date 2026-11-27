@@ -93,7 +93,8 @@ class PolicyParams:
     thin_liquidity_confidence_mult: float = 0.85
     # Stop/target (_compute_stop_target): thiếu ATR thì rủi ro = biến động lịch sử
     # kẹp trong [min%, max%]; target dự phóng = rủi ro x reward_mult (kẹp min..max),
-    # reward_mult chỉnh theo RSI quá mua/quá bán; ngược xu hướng 3 tháng dùng hệ số riêng.
+    # reward_mult chỉnh theo RSI quá mua/quá bán (và tin tức - CHỈ nhánh mua, mốc
+    # tham chiếu SELL không theo tin); ngược xu hướng 3 tháng dùng hệ số riêng.
     volatility_stop_min_pct: float = 3.0
     volatility_stop_max_pct: float = 8.0
     reward_mult_base: float = 1.5
@@ -682,6 +683,10 @@ def _compute_stop_target(
     direction "exit" (SELL - tham khảo khi đang giữ): stop_price = mốc VÔ HIỆU
     tín hiệu SELL (phía trên giá), target_price = mốc hỗ trợ tham chiếu nếu giá
     giảm tiếp (phía dưới giá) - KHÔNG phải mức "chốt lời/cắt lỗ" để chờ bán.
+    Mốc dự phóng của nhánh này KHÔNG phụ thuộc tin tức: news_impact là điểm cảm
+    xúc theo từ khoá tiêu đề Google News, cùng một chuỗi giá mà mỗi lần tra lại
+    in ra một mốc tham chiếu khác. (Nhánh buy: target dự phóng không bao giờ
+    thành số BUY nên không cần chặn.)
     """
     if price <= 0 or direction == "watch":
         return None, None, None, "watch"
@@ -707,11 +712,11 @@ def _compute_stop_target(
         rsi_adj = -PARAMS.reward_rsi_adj
     elif rsi is not None and rsi < PARAMS.reward_rsi_oversold:
         rsi_adj = PARAMS.reward_rsi_adj
-    news_boost = feat.clamp(news_impact, -1, 1)
     support = support_resistance.support if support_resistance else None
     level_reach = risk_amount * PARAMS.level_max_risk_mult
 
     if direction == "buy":
+        news_boost = feat.clamp(news_impact, -1, 1)
         reward_mult = (
             feat.clamp(
                 PARAMS.reward_mult_base + news_boost * PARAMS.reward_mult_news_coef + rsi_adj,
@@ -762,10 +767,11 @@ def _compute_stop_target(
         return stop, target, rr, basis
 
     # exit reference cho SELL: invalidation ở TRÊN giá (nếu giá vượt lên thì
-    # tín hiệu SELL bị vô hiệu), mốc hỗ trợ tham chiếu ở DƯỚI giá.
+    # tín hiệu SELL bị vô hiệu), mốc hỗ trợ tham chiếu ở DƯỚI giá. Không cộng
+    # tin tức (xem docstring): cùng chuỗi giá -> cùng mốc tham chiếu.
     reward_mult = (
         feat.clamp(
-            PARAMS.reward_mult_base - news_boost * PARAMS.reward_mult_news_coef - rsi_adj,
+            PARAMS.reward_mult_base - rsi_adj,
             PARAMS.reward_mult_min,
             PARAMS.reward_mult_max,
         )
