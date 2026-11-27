@@ -20,6 +20,7 @@ from datetime import timedelta
 import messages
 from core import alerts, config
 from core import database as db
+from core.envutil import env_int
 
 logger = logging.getLogger(__name__)
 _tasks: set[asyncio.Task] = set()
@@ -34,6 +35,26 @@ _LEASE_SAFETY_SEC = 20.0
 # Quét sự kiện hết lượt thử (reap_exhausted) tối đa 1 lần/phút lúc rảnh.
 _REAP_INTERVAL_SEC = 60.0
 _last_reap = 0.0
+
+
+def _idle_wait_sec() -> float:
+    """Worker rảnh chờ bao lâu rồi tự claim() lại (WEBHOOK_INBOX_IDLE_SEC, mặc định 30 s).
+    Sự kiện mới đánh thức worker ngay qua ``_wake`` nên nhịp này chỉ là lưới an toàn
+    (lease hết hạn của instance đã chết, sự kiện instance khác xếp) - trước đây 5 s là
+    ~35.000 câu claim/ngày lúc không có ai nhắn."""
+    return float(env_int("WEBHOOK_INBOX_IDLE_SEC", 30, 5, 300))
+
+
+def _wake_after(delay_sec: float) -> None:
+    """Hẹn đánh thức worker đúng lúc sự kiện thử lại tới hạn (backoff ngắn nhất 5 s,
+    ngắn hơn nhịp chờ lúc rảnh)."""
+    if delay_sec >= _idle_wait_sec():
+        return
+    try:
+        asyncio.get_running_loop().call_later(max(0.0, delay_sec), _wake.set)
+    except RuntimeError:
+        pass
+
 
 # Lần thử hiện tại (1 = lần đầu) của sự kiện đang được xử lý trong task này;
 # None khi không chạy qua inbox (vd long polling local).
@@ -207,6 +228,7 @@ async def retry(row, error: BaseException) -> None:
         delay,
         error_name,
     )
+    _wake_after(delay.total_seconds())
 
 
 @db.with_reconnect
@@ -340,6 +362,10 @@ async def _maybe_reap() -> None:
 
 async def _worker(processor) -> None:
     while True:
+        # Xoá cờ đánh thức TRƯỚC khi claim: enqueue() xảy ra trong lúc claim vẫn để cờ lại
+        # cho lần chờ bên dưới. Bản cũ xoá SAU claim nên đánh mất lần đánh thức đó và sự
+        # kiện mới phải chờ hết nhịp quét lúc rảnh.
+        _wake.clear()
         try:
             row = await claim()
             if row is not None:
@@ -350,9 +376,8 @@ async def _worker(processor) -> None:
             raise
         except Exception:
             logger.warning("Webhook inbox worker lỗi; sẽ thử lại.", exc_info=True)
-        _wake.clear()
         try:
-            await asyncio.wait_for(_wake.wait(), timeout=5)
+            await asyncio.wait_for(_wake.wait(), timeout=_idle_wait_sec())
         except TimeoutError:
             pass
 
