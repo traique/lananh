@@ -9,6 +9,7 @@ import pytest
 
 from core import database as db, settings_cache
 from core.db import pool as dbpool
+from core.repositories import settings as settings_repository
 
 
 class _SettingsPool:
@@ -86,7 +87,7 @@ async def test_doc_cham_khong_nhet_gia_tri_cu_vao_cache_sau_khi_ghi(monkeypatch)
         return "gia-tri-cu"
 
     async def set_setting(key, value):
-        db._setting_written(key, value)
+        settings_repository._written(key, value)
 
     monkeypatch.setattr(db, "get_setting", slow_get_setting)
     monkeypatch.setattr(db, "set_setting", set_setting)

@@ -167,11 +167,7 @@ async def add_chat_message(telegram_user_id: int, role: str, content: str) -> No
 async def add_chat_turn(
     telegram_user_id: int, user_text: str, model_text: str, *, kind: str = "chat"
 ) -> list[int]:
-    """Lưu CẢ lượt (tin người dùng + câu trả lời) trong 1 transaction - không
-    bao giờ còn nửa lượt (chỉ có câu hỏi) khi DB lỗi giữa 2 lệnh INSERT.
-    ``kind``: loại lượt (services/conversation_log.py) - trích nhớ chỉ đọc lượt
-    chat/rag/agent, lượt "stock" giúp chặn câu chat sau mâu thuẫn policy. Trả
-    id 2 dòng vừa lưu (🔄/✂️ xoá đúng cặp này sau khi làm lại)."""
+    """Lưu cả lượt trong 1 transaction; trả id 2 dòng (xem chat_history.add_turn)."""
     return await _chat_history.add_turn(
         await get_pool(),
         telegram_user_id,
@@ -202,10 +198,9 @@ async def search_chat_history(
 async def get_session_messages(
     telegram_user_id: int, k: int, session_timeout_sec: int
 ) -> list[tuple[str, str]]:
-    """Trả về tối đa `k` lượt gần nhất (role, content) THEO THỨ TỰ CŨ -> MỚI,
-    chỉ trong phạm vi "phiên hiện tại": nếu khoảng nghỉ giữa 2 tin nhắn liên
-    tiếp (hoặc giữa "bây giờ" và tin gần nhất) > session_timeout_sec, coi như
-    phiên cũ đã kết thúc và KHÔNG lấy các tin trước điểm nghỉ đó."""
+    """Tối đa ``k`` (role, content) của phiên hiện tại, cũ -> mới: khoảng nghỉ >
+    session_timeout_sec giữa 2 tin (hoặc tới "bây giờ") là hết phiên (SQL ở
+    chat_history.session_messages); k <= 0 trả [] không chạm DB."""
     if k <= 0:
         return []
     rows = await _chat_history.session_messages(
@@ -224,11 +219,9 @@ users_with_chat_since = _bind(_memory.users_with_chat_after)
 
 
 # ─── Trí nhớ dài hạn: user_facts + highlights + ghi chú phiên ─────────────────
-# (xem services/memory_service.py; SQL ở core/repositories/memory.py). Từ
-# migrations/017: fact có ghim/độ quan trọng/nguồn, giá trị cũ được vô hiệu hoá
-# (invalid_at) thay vì xoá - mọi hàm đọc "fact" dưới đây chỉ trả dòng hiện hành.
-
-# Trần giá trị cũ giữ lại (cho câu hỏi "trước đây..."): theo từng key và tổng.
+# (services/memory_service.py; SQL ở core/repositories/memory.py). Từ migrations/017
+# giá trị cũ của fact được vô hiệu hoá (invalid_at) thay vì xoá - hàm đọc "fact" chỉ trả
+# dòng hiện hành. Trần giá trị cũ giữ lại (câu hỏi "trước đây..."): theo key và tổng.
 SUPERSEDED_FACTS_PER_KEY = 3
 SUPERSEDED_FACTS_TOTAL = 60
 
@@ -238,7 +231,6 @@ async def upsert_fact(telegram_user_id: int, key: str, value: str) -> None:
     await save_fact(telegram_user_id, key, value)
 
 
-# Fact: giá trị đổi -> bản cũ vô hiệu hoá (giữ làm lịch sử); hàm đọc chỉ trả dòng hiện hành.
 save_fact = _bind(_memory.save_fact)
 get_facts = _bind(_memory.current_facts, post=lambda rows: [(r["key"], r["value"]) for r in rows])
 get_fact_rows = _bind(_memory.current_facts, post=_dicts)
@@ -352,8 +344,6 @@ clear_user_events = _bind(_memory.clear_events)
 
 
 # ─── Nhắc việc (services/reminder_service.py, scheduler.py, migrations/019) ──
-
-
 # Nhắc 1 lần: INSERT có thể đã commit -> idempotent=False (event_key chống trùng webhook).
 add_reminder = _bind(_reminders.insert_once, idempotent=False)
 mark_reminder_sent = _bind(_reminders.mark_sent)
@@ -402,50 +392,13 @@ avatar_photo_put = _bind(_avatar.put)
 avatar_photo_delete = _bind(_avatar.delete)
 
 
-# ─── Settings (bảng key-value) ───────────────────────────────────────────────
-# Mọi lần ghi qua set_setting/compare_and_set_setting báo cho các bộ đệm đã đăng ký
-# (core/settings_cache.py) - khoá đọc qua cache không bao giờ cũ hơn những gì chính
-# process này đã ghi. Ghi lỗi (không rõ đã commit chưa) thì báo value=None = bỏ khỏi cache.
-_setting_listeners: list[Callable[[str, Optional[str]], None]] = []
-
-
-def on_setting_write(listener: Callable[[str, Optional[str]], None]) -> None:
-    if listener not in _setting_listeners:
-        _setting_listeners.append(listener)
-
-
-def _setting_written(key: str, value: Optional[str]) -> None:
-    for listener in tuple(_setting_listeners):
-        listener(key, value)
-
-
+# ─── Settings (bảng key-value, core/repositories/settings.py) ─────────────────
+# Mọi lần ghi báo cho bộ đệm đăng ký qua on_setting_write (core/settings_cache.py).
+on_setting_write = _settings.on_write
 get_setting = _bind(_settings.get)
-
-
-@_with_reconnect
-async def set_setting(key: str, value: str) -> None:
-    try:
-        await _settings.set(await get_pool(), key, value)
-    except BaseException:
-        _setting_written(key, None)
-        raise
-    _setting_written(key, value)
-
-
-# Các dòng settings đã mã hoá (xoay khoá - services/key_rotation.py).
+set_setting = _bind(_settings.set)
+compare_and_set_setting = _bind(_settings.compare_and_set)
 list_encrypted_settings = _bind(_settings.list_encrypted)
-
-
-@_with_reconnect
-async def compare_and_set_setting(key: str, expected: str, value: str) -> bool:
-    try:
-        swapped = await _settings.compare_and_set(await get_pool(), key, expected, value)
-    except BaseException:
-        _setting_written(key, None)
-        raise
-    if swapped:
-        _setting_written(key, value)
-    return swapped
 
 
 # ─── Danh mục cổ phiếu: vị thế, sổ giao dịch, theo dõi/cảnh báo giá ─────────

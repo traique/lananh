@@ -22,9 +22,11 @@ async def add_turn(
     retention: int,
     kind: str = "chat",
 ) -> list[int]:
-    """INSERT tin người dùng + câu trả lời của bot trong CÙNG 1 transaction rồi
-    cắt bảng về ``retention`` dòng gần nhất của người dùng đó. ``kind`` (cột của
-    migrations/017) ghi cho cả 2 dòng. Trả id 2 dòng vừa lưu."""
+    """INSERT tin người dùng + câu trả lời của bot trong CÙNG 1 transaction (không bao
+    giờ còn nửa lượt khi DB lỗi giữa 2 lệnh) rồi cắt bảng về ``retention`` dòng gần nhất
+    của người dùng đó. ``kind`` (cột của migrations/017, services/conversation_log.py):
+    trích nhớ chỉ đọc lượt chat/rag/agent, lượt "stock" giúp chặn câu chat sau mâu thuẫn
+    policy. Trả id 2 dòng vừa lưu (🔄/✂️ xoá đúng cặp này sau khi làm lại)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             inserted = await conn.fetch(
