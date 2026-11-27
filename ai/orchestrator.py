@@ -62,7 +62,8 @@ from services import prompt_redaction
 __all__ = ["TurnTimeoutError", "remaining_turn_seconds", "turn_deadline"]
 
 logger = logging.getLogger(__name__)
-call_lock = asyncio.Lock()
+# Chỉ để /userouter9 và probe nền không cùng ping 9Router một lúc.
+_router9_probe_lock = asyncio.Lock()
 
 
 class OutputContaminatedError(RuntimeError):
@@ -1310,12 +1311,9 @@ async def utility_json(prompt: str) -> Optional[dict]:
 
 
 async def reset_chat() -> None:
-    # 9Router không giữ ChatSession phía server (không như cookie cũ) - lịch
-    # sử hội thoại hoàn toàn nằm trong DB, xoá qua core.database.clear_chat()
-    # (gọi riêng ở nơi gọi reset_chat(), xem handlers/commands.py). Hàm này
-    # giữ lại để tương thích chữ ký cũ và dự phòng cho state tương lai.
-    async with call_lock:
-        return
+    """Không còn việc gì: provider không giữ phiên chat phía server - lịch sử nằm
+    trong DB, xoá qua core.database.clear_chat() ở nơi gọi (handlers/commands.py,
+    services/channel_command_service.py). Giữ hàm vì các lệnh /reset, /model vẫn gọi."""
 
 
 async def analyze_image(instruction: str, image_path: str):
@@ -1623,7 +1621,7 @@ async def check_ai_studio_status(idx: int) -> tuple[bool, str]:
 
 async def try_router9_now() -> tuple[bool, str]:
     await provider_state.ensure_loaded()
-    async with call_lock:
+    async with _router9_probe_lock:
         ok, detail = await router9_client.check_status()
         if ok:
             await provider_state.mark_router9_alive()
@@ -1642,7 +1640,7 @@ async def _router9_probe_loop() -> None:
         if provider_state.router9_dead_since is None:
             continue
         try:
-            async with call_lock:
+            async with _router9_probe_lock:
                 ok, _ = await router9_client.check_status()
                 if ok:
                     await provider_state.mark_router9_alive()
