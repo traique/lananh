@@ -2,9 +2,11 @@
 (bản 4.x bị khoá từ 10/11/2026, kho vnstocks.com trả 410)."""
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -90,38 +92,104 @@ def test_lich_su_kien_phan_tich_qua_vci_direct(monkeypatch):
     assert fundamentals._fetch_events_sync("FPT") is None
 
 
-class _Response:
-    def __init__(self, payload):
-        self._payload = payload
-
-    def raise_for_status(self):
-        return None
-
-    def json(self):
-        return self._payload
+def _vci_client(monkeypatch, handler):
+    """Client httpx giả cho vci_direct (MockTransport, không socket)."""
+    monkeypatch.setattr(vci_direct, "_client", httpx.Client(transport=httpx.MockTransport(handler)))
 
 
 def test_goi_rest_bang_gia_va_danh_sach_ma(monkeypatch):
     calls = []
+    match_rows = [[{"listingInfo": {"symbol": "FPT"}, "matchPrice": {"currentRoom": 5}}], []]
 
-    def fake_post(url, json, headers, timeout):
-        calls.append((url, json, headers.get("Origin")))
-        return _Response([{"listingInfo": {"symbol": "FPT"}, "matchPrice": {"currentRoom": 5}}])
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        calls.append((request.method, str(request.url), body, request.headers.get("Origin")))
+        if request.url.path.endswith("/getList"):
+            return httpx.Response(200, json=match_rows.pop(0))
+        return httpx.Response(200, json=[*_LISTING[:2], "rác"])
 
-    def fake_get(url, headers, timeout):
-        calls.append((url, None, headers.get("Origin")))
-        return _Response([*_LISTING[:2], "rác"])
-
-    monkeypatch.setattr(vci_direct.requests, "post", fake_post)
-    monkeypatch.setattr(vci_direct.requests, "get", fake_get)
+    _vci_client(monkeypatch, handler)
     assert vci_direct.fetch_match_price(" fpt ") == {"currentRoom": 5}
     assert vci_direct.fetch_listing() == _LISTING[:2]
-    assert calls[0][0].endswith("/symbols/getList") and calls[0][1] == {"symbols": ["FPT"]}
-    assert calls[1][0].endswith("/symbols/getAll")
-    assert all(origin == "https://trading.vietcap.com.vn" for _, _, origin in calls)
-
-    monkeypatch.setattr(vci_direct.requests, "post", lambda *a, **k: _Response([]))
+    assert calls[0][0] == "POST" and calls[0][1].endswith("/symbols/getList")
+    assert calls[0][2] == {"symbols": ["FPT"]}
+    assert calls[1][0] == "GET" and calls[1][1].endswith("/symbols/getAll")
+    assert all(origin == "https://trading.vietcap.com.vn" for *_, origin in calls)
     assert vci_direct.fetch_match_price("FPT") == {}
+
+
+def test_vci_thu_lai_mot_lan_khi_429_5xx_va_loi_ket_noi(monkeypatch):
+    monkeypatch.setattr(vci_direct, "_RETRY_DELAY_SEC", 0)
+    statuses = [503, 200]
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        status = statuses.pop(0)
+        return httpx.Response(status, json=[{"symbol": "FPT", "type": "STOCK", "board": "HSX"}])
+
+    _vci_client(monkeypatch, handler)
+    assert vci_direct.fetch_listing() == [{"symbol": "FPT", "type": "STOCK", "board": "HSX"}]
+    assert len(seen) == 2
+
+    # 429 kèm Retry-After: nghỉ đúng Retry-After (có trần), rồi thử lại.
+    slept = []
+    monkeypatch.setattr(vci_direct.time, "sleep", slept.append)
+    responses = [httpx.Response(429, headers={"Retry-After": "1"}), httpx.Response(200, json=[])]
+    _vci_client(monkeypatch, lambda request: responses.pop(0))
+    assert vci_direct.fetch_listing() == []
+    assert slept == [1.0]
+    responses = [httpx.Response(429, headers={"Retry-After": "60"}), httpx.Response(200, json=[])]
+    _vci_client(monkeypatch, lambda request: responses.pop(0))
+    vci_direct.fetch_listing()
+    assert slept[-1] == vci_direct._RETRY_AFTER_MAX_SEC
+
+    # Kết nối giữ lâu bị server đóng: thử lại 1 lần.
+    attempts = []
+
+    def flaky(request):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise httpx.RemoteProtocolError("Server disconnected", request=request)
+        return httpx.Response(200, json=[])
+
+    _vci_client(monkeypatch, flaky)
+    assert vci_direct.fetch_listing() == [] and len(attempts) == 2
+
+
+def test_vci_loi_hai_lan_hoac_loi_khong_tam_thoi_thi_raise(monkeypatch):
+    monkeypatch.setattr(vci_direct, "_RETRY_DELAY_SEC", 0)
+    seen = []
+
+    def down(request):
+        seen.append(1)
+        return httpx.Response(502)
+
+    _vci_client(monkeypatch, down)
+    with pytest.raises(httpx.HTTPStatusError):
+        vci_direct.fetch_listing()
+    assert len(seen) == 2  # đúng 1 lần thử lại
+
+    seen.clear()
+
+    def missing(request):
+        seen.append(1)
+        return httpx.Response(404)
+
+    _vci_client(monkeypatch, missing)
+    with pytest.raises(httpx.HTTPStatusError):
+        vci_direct.fetch_match_price("FPT")
+    assert len(seen) == 1  # 404 không thử lại
+
+
+def test_vci_dung_chung_mot_client(monkeypatch):
+    monkeypatch.setattr(vci_direct, "_client", None)
+    first = vci_direct._http()
+    try:
+        assert vci_direct._http() is first
+    finally:
+        vci_direct.close_http_client()
+    assert vci_direct._client is None
 
 
 @pytest.mark.asyncio

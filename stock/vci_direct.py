@@ -13,9 +13,10 @@ Vì sao module này tồn tại (đọc trước khi sửa - đã xác minh 08/0
    lại là 2018-Q1..Q4 (tái hiện với CII: ratio() trả đúng 4 cột 2018, dù
    API raw có 41 quý tới 2026-Q2). Các method công khai không nhận limit,
    không lấy được tail() -> không dùng được.
-3. Do đó các endpoint dưới đây được gọi thẳng qua requests. Tất cả là GET
-   công khai KHÔNG cần cookie/handshake (test bằng curl không cookie vẫn
-   trả đủ dữ liệu):
+3. Do đó các endpoint dưới đây được gọi thẳng qua 1 httpx.Client đồng bộ dùng
+   chung (giữ kết nối TLS giữa các lượt gọi; mọi hàm ở đây chạy trong
+   asyncio.to_thread). Tất cả là GET công khai KHÔNG cần cookie/handshake
+   (test bằng curl không cookie vẫn trả đủ dữ liệu):
      GET {BASE}/{symbol}/statistics-financial
          -> data = list 41+ quý, mỗi quý 1 dict ratio raw.
      GET {BASE}/{symbol}/financial-statement?section=INCOME_STATEMENT
@@ -60,7 +61,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import requests
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,67 @@ _HEADERS = {
     "Referer": "https://trading.vietcap.com.vn/",
 }
 _REQUEST_TIMEOUT_SEC = 10
+
+# 1 client đồng bộ dùng chung cho mọi endpoint VCI: trước đây mỗi lượt gọi là 1
+# requests.get mới (TCP + TLS mới, ~13 lượt cho 1 /phantich lạnh). Client của httpx
+# an toàn khi dùng từ nhiều thread (các hàm ở đây chạy qua asyncio.to_thread); pool
+# nhỏ vì số request VCI đồng thời đã bị providers.get_vnstock_semaphore chặn.
+_HTTP_LIMITS = httpx.Limits(max_connections=6, max_keepalive_connections=3, keepalive_expiry=30)
+_client: httpx.Client | None = None
+_client_guard = threading.Lock()
+# Thử lại đúng 1 lần, nghỉ ngắn, khi VCI rate-limit/quá tải (429/502/503/504) hoặc kết
+# nối hỏng (kết nối giữ lâu bị server đóng). Retry-After của 429 được tôn trọng tới 2s.
+_RETRY_STATUS = frozenset({429, 502, 503, 504})
+_RETRY_DELAY_SEC = 0.5
+_RETRY_AFTER_MAX_SEC = 2.0
+
+
+def _http() -> httpx.Client:
+    global _client
+    client = _client
+    if client is None:
+        with _client_guard:
+            if _client is None:
+                _client = httpx.Client(
+                    timeout=_REQUEST_TIMEOUT_SEC, limits=_HTTP_LIMITS, follow_redirects=True
+                )
+            client = _client
+    return client
+
+
+def close_http_client() -> None:
+    """Đóng client dùng chung (lúc tắt app/test); lượt gọi sau tự tạo lại."""
+    global _client
+    with _client_guard:
+        client, _client = _client, None
+    if client is not None:
+        client.close()
+
+
+def _retry_delay(response: httpx.Response) -> float:
+    raw = response.headers.get("Retry-After", "")
+    try:
+        return min(max(float(raw), 0.0), _RETRY_AFTER_MAX_SEC)
+    except ValueError:
+        return _RETRY_DELAY_SEC
+
+
+def _request(method: str, url: str, **kwargs) -> httpx.Response:
+    """Gọi VCI qua client dùng chung, thử lại 1 lần khi lỗi thoáng qua; lỗi HTTP còn
+    lại -> raise (httpx.HTTPStatusError) như raise_for_status của requests trước đây."""
+    try:
+        response = _http().request(method, url, **kwargs)
+    except (httpx.ConnectError, httpx.RemoteProtocolError):
+        time.sleep(_RETRY_DELAY_SEC)
+        response = _http().request(method, url, **kwargs)
+    else:
+        if response.status_code in _RETRY_STATUS:
+            logger.info("VCI %s %s HTTP %s - thử lại 1 lần", method, url, response.status_code)
+            time.sleep(_retry_delay(response))
+            response = _http().request(method, url, **kwargs)
+    response.raise_for_status()
+    return response
+
 
 # Cache raw theo symbol, TTL đồng bộ với _FUNDAMENTALS_CACHE_TTL của
 # fundamentals (30 phút): cùng 1 mã được phân tích lại trong nửa giờ thì
@@ -98,19 +160,36 @@ _ratio_cache: dict[str, tuple[float, list[dict]]] = {}
 _income_cache: dict[str, tuple[float, list[dict]]] = {}
 _details_cache: dict[str, tuple[float, dict]] = {}
 
+# Chỉ cache ĐÚNG các trường stock/fundamentals.py đọc (+ trường sắp xếp quý) và số
+# quý nó dùng: hàng raw của VCI có 100-150 trường x 41+ quý, nhân 128 mã x 2
+# endpoint là hàng chục MB RAM cho dữ liệu không ai đọc. Thêm trường mới ở
+# fundamentals thì thêm vào đây.
+RATIO_HISTORY_QUARTERS = 20  # percentile P/E ~5 năm (fundamentals._PE_HISTORY_QUARTERS)
+_RATIO_KEYS = (
+    "pe",
+    "pb",
+    "roe",
+    "dividendYield",
+    "debtToEquity",
+    "debtPerEquity",
+    "currentRatio",
+    "yearReport",
+    "quarter",
+)
+INCOME_QUARTERS = 5  # QoQ cần quý [0],[1]; YoY cần quý [4]
+_INCOME_KEYS = ("isa3", "isa20", "yearReport", "lengthReport")
+_DETAILS_KEYS = ("currentPrice",)
+
+
+def _project(row: dict, keys: tuple[str, ...]) -> dict:
+    return {key: row[key] for key in keys if key in row}
+
 
 def _get_json(path: str, params: dict | None = None) -> dict:
     """GET {BASE}/{path} và trả về JSON. path là phần sau /v1/company/,
     ví dụ "{symbol}/statistics-financial" hoặc "details" (endpoint này nằm
     trực tiếp dưới /company, không theo {symbol})."""
-    response = requests.get(
-        f"{_BASE_URL}/{path}",
-        params=params,
-        headers=_HEADERS,
-        timeout=_REQUEST_TIMEOUT_SEC,
-    )
-    response.raise_for_status()
-    return response.json()
+    return _request("GET", f"{_BASE_URL}/{path}", params=params, headers=_HEADERS).json()
 
 
 def _key_lock(cache: dict, key: str) -> threading.Lock:
@@ -177,40 +256,44 @@ def _sorted_desc(rows: list[dict], year_key: str, quarter_key: str) -> list[dict
 
 
 def fetch_details(symbol: str) -> dict:
-    """Thông tin công ty + giá hiện tại (currentPrice, marketCap...). LƯU Ý
-    khác 2 endpoint còn lại: details nằm ở /company/details với query param
-    ?ticker= (KHÔNG phải /company/{symbol}/details - URL đó trả 404). Có thể
-    raise (mạng/HTTP/JSON lỗi) - caller tự xử lý."""
+    """Giá hiện tại của công ty ({"currentPrice": ...} - chỉ giữ trường
+    fundamentals dùng để suy EPS). LƯU Ý khác 2 endpoint còn lại: details nằm ở
+    /company/details với query param ?ticker= (KHÔNG phải /company/{symbol}/details
+    - URL đó trả 404). Có thể raise (mạng/HTTP/JSON lỗi) - caller tự xử lý."""
 
-    def _fetch() -> dict:
+    def _fetch() -> dict | None:
         data = _get_json("details", params={"ticker": symbol})
-        return data.get("data") if isinstance(data, dict) else None
+        details = data.get("data") if isinstance(data, dict) else None
+        return _project(details, _DETAILS_KEYS) if isinstance(details, dict) else None
 
     return _cached(_details_cache, symbol, _fetch) or {}
 
 
 def fetch_statistical_ratios(symbol: str) -> list[dict]:
-    """Toàn bộ quý ratio của {symbol}, sort MỚI->CŨ (quý mới nhất ở [0]).
+    """RATIO_HISTORY_QUARTERS quý ratio gần nhất của {symbol}, sort MỚI->CŨ (quý mới
+    nhất ở [0]), mỗi quý chỉ giữ các trường trong _RATIO_KEYS.
     Có thể raise (mạng/HTTP/JSON lỗi) - caller tự xử lý."""
 
-    def _fetch() -> dict:
+    def _fetch() -> list[dict]:
         data = _get_json(f"{symbol}/statistics-financial")
         rows = data.get("data") if isinstance(data, dict) else None
-        return _sorted_desc(rows or [], "yearReport", "quarter")
+        newest = _sorted_desc(rows or [], "yearReport", "quarter")[:RATIO_HISTORY_QUARTERS]
+        return [_project(row, _RATIO_KEYS) for row in newest]
 
     return _cached(_ratio_cache, symbol, _fetch)
 
 
 def fetch_income_statement(symbol: str) -> list[dict]:
-    """Các quý của báo cáo KQKD (INCOME_STATEMENT), sort MỚI->CŨ, trường ISA
-    raw (isa3 = doanh thu thuần, isa20 = LN sau thuế, isa23 = EPS cơ bản).
+    """INCOME_QUARTERS quý gần nhất của báo cáo KQKD (INCOME_STATEMENT), sort
+    MỚI->CŨ, chỉ giữ isa3 (doanh thu thuần), isa20 (LN sau thuế) và trường kỳ báo cáo.
     Có thể raise (mạng/HTTP/JSON lỗi) - caller tự xử lý."""
 
     def _fetch() -> list[dict]:
         data = _get_json(f"{symbol}/financial-statement", params={"section": "INCOME_STATEMENT"})
         payload = data.get("data") if isinstance(data, dict) else None
         rows = payload.get("quarters") if isinstance(payload, dict) else None
-        return _sorted_desc(rows or [], "yearReport", "lengthReport")
+        newest = _sorted_desc(rows or [], "yearReport", "lengthReport")[:INCOME_QUARTERS]
+        return [_project(row, _INCOME_KEYS) for row in newest]
 
     return _cached(_income_cache, symbol, _fetch)
 
@@ -309,7 +392,8 @@ def fetch_upcoming_events(symbol: str, days_ahead: int = 45) -> list[UpcomingEve
         if hit and time.monotonic() - hit[0] < _EVENTS_CACHE_TTL_SEC:
             return list(hit[1])
     today = datetime.now(_VN_TZ).date()
-    response = requests.get(
+    response = _request(
+        "GET",
         _EVENTS_URL,
         params={
             "ticker": key,
@@ -320,9 +404,7 @@ def fetch_upcoming_events(symbol: str, days_ahead: int = 45) -> list[UpcomingEve
             "size": _EVENTS_PAGE_SIZE,
         },
         headers=_HEADERS,
-        timeout=_REQUEST_TIMEOUT_SEC,
     )
-    response.raise_for_status()
     data = response.json()
     payload = data.get("data") if isinstance(data, dict) else None
     rows = payload.get("content") if isinstance(payload, dict) else payload
@@ -382,7 +464,8 @@ def fetch_event_history(symbol: str) -> list[dict]:
     raise (mạng/HTTP/JSON) - corporate_actions tự bắt và coi như không có sự kiện."""
     key = symbol.strip().upper()
     today = datetime.now(_VN_TZ).date()
-    response = requests.get(
+    response = _request(
+        "GET",
         _EVENTS_URL,
         params={
             "ticker": key,
@@ -393,9 +476,7 @@ def fetch_event_history(symbol: str) -> list[dict]:
             "size": _HISTORY_PAGE_SIZE,
         },
         headers=_HEADERS,
-        timeout=_REQUEST_TIMEOUT_SEC,
     )
-    response.raise_for_status()
     data = response.json()
     payload = data.get("data") if isinstance(data, dict) else None
     rows = payload.get("content") if isinstance(payload, dict) else payload
@@ -405,7 +486,7 @@ def fetch_event_history(symbol: str) -> list[dict]:
 # ─── Danh sách mã + bảng giá trading.vietcap.com.vn (thay vnstock) ──────────────
 # vnstock 4.x bị khoá từ 10/11/2026 (kho vnstocks.com trả 410). Hai endpoint công
 # khai dưới đây là nơi Listing/Trading(source="VCI") của vnstock gọi; không cần
-# cookie/khoá (đã thử 16/11/2026, trả JSON nén gzip - requests tự giải nén):
+# cookie/khoá (đã thử 16/11/2026, trả JSON nén gzip - httpx tự giải nén):
 #   GET  {_PRICE_API}/getAll  -> list {symbol, type: STOCK|CW|ETF|BOND|FU|...,
 #        board: HSX|HNX|UPCOM|DELISTED|BOND, organName...} (~3.800 dòng)
 #   POST {_PRICE_API}/getList {"symbols": [...]} -> list {listingInfo, bidAsk, matchPrice}
@@ -418,24 +499,18 @@ _PRICE_HEADERS = {**_HEADERS, "Origin": "https://trading.vietcap.com.vn"}
 def fetch_listing() -> list[dict]:
     """Mọi mã trên VCI (kể cả mã đã huỷ niêm yết, chứng quyền, trái phiếu). Có thể
     raise (mạng/HTTP/JSON) - caller tự xử lý và nên cache kết quả đã rút gọn."""
-    response = requests.get(
-        f"{_PRICE_API}/getAll", headers=_PRICE_HEADERS, timeout=_REQUEST_TIMEOUT_SEC
-    )
-    response.raise_for_status()
-    rows = response.json()
+    rows = _request("GET", f"{_PRICE_API}/getAll", headers=_PRICE_HEADERS).json()
     return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
 def fetch_match_price(symbol: str) -> dict:
     """Khối ``matchPrice`` trên bảng giá VCI của 1 mã ({} nếu không có). Có thể raise."""
-    response = requests.post(
+    rows = _request(
+        "POST",
         f"{_PRICE_API}/getList",
         json={"symbols": [symbol.strip().upper()]},
         headers=_PRICE_HEADERS,
-        timeout=_REQUEST_TIMEOUT_SEC,
-    )
-    response.raise_for_status()
-    rows = response.json()
+    ).json()
     first = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
     match = first.get("matchPrice")
     return match if isinstance(match, dict) else {}
