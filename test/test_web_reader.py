@@ -524,3 +524,20 @@ async def test_dns_resolution_runs_off_the_event_loop(monkeypatch):
     monkeypatch.setattr(web_reader.socket, "getaddrinfo", fake_getaddrinfo)
     assert await web_reader.normalize_public_http_url_async("https://example.com/x")
     assert resolver_threads and loop_thread not in resolver_threads
+
+
+def test_client_chung_co_tran_ket_noi_va_khong_tu_theo_redirect(monkeypatch):
+    """URL tuỳ ý người dùng đưa: client chung giới hạn 4 kết nối (2 keep-alive) và
+    không tự theo redirect (mỗi bước chuyển hướng phải qua lại SSRF guard)."""
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+    monkeypatch.setattr(web_reader, "_client", None)
+    monkeypatch.setattr(web_reader.httpx, "AsyncClient", FakeClient)
+    client = web_reader._get_client()
+    assert isinstance(client, FakeClient) and web_reader._get_client() is client
+    assert seen["limits"] == httpx.Limits(max_connections=4, max_keepalive_connections=2)
+    assert seen["follow_redirects"] is False
