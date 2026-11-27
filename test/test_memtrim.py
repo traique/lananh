@@ -3,9 +3,12 @@ pandas/vnstock (stock/providers.py VCI httpx, stock/corporate_actions.py REST VC
 sửa sau khi chạy thật 27/10 (Render free 512 MB)."""
 
 import asyncio
+import gc
 import json
+import logging
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -32,6 +35,32 @@ def test_trim_now_ghi_so_do_va_co_malloc_trim_tren_linux():
         assert stats.malloc_trim is True and stats.last_after_mib is not None
     snap = memory_stats.snapshot()["trim"]
     assert snap["runs"] == 1 and snap["interval_sec"] == 600
+
+
+def test_trim_cham_hon_100ms_thi_log_info(monkeypatch, caplog):
+    """trim_now chặn event loop: lần nào chậm (> SLOW_TRIM_MS) phải thấy được trong log
+    INFO của Render, lần nhanh chỉ DEBUG."""
+    monkeypatch.setattr(memtrim.gc, "collect", lambda *a: time.sleep(0.12))
+    with caplog.at_level(logging.INFO, logger="core.memtrim"):
+        stats = memtrim.trim_now("chậm")
+    assert stats.last_ms > memtrim.SLOW_TRIM_MS
+    assert [r.levelno for r in caplog.records] == [logging.INFO]
+    assert "memtrim(chậm)" in caplog.records[0].getMessage()
+    caplog.clear()
+    monkeypatch.setattr(memtrim.gc, "collect", lambda *a: 0)
+    with caplog.at_level(logging.INFO, logger="core.memtrim"):
+        memtrim.trim_now("nhanh")
+    assert caplog.records == []
+
+
+def test_dong_bang_heap_khoi_dong():
+    try:
+        frozen = memtrim.freeze_startup_heap()
+        assert frozen > 0 and gc.get_freeze_count() == frozen
+        assert memtrim.snapshot()["frozen_objects"] == frozen
+    finally:
+        gc.unfreeze()  # không để cả phiên test chạy với heap đóng băng
+    assert memtrim.snapshot()["frozen_objects"] == 0
 
 
 @pytest.mark.asyncio

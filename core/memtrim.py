@@ -16,6 +16,16 @@ chiếu (DataFrame, traceback giữ frame...) thật sự được giải phóng
   ``MEMORY_TRIM_AFTER_WORK=0`` tắt phần này (test đặt 0 để không để lại task hẹn).
 - ``maybe_periodic()``: monitor gọi mỗi chu kỳ, trim nếu đã quá
   ``MEMORY_TRIM_INTERVAL_SEC`` (mặc định 600 = 10 phút; 0 = tắt) kể từ lần trước.
+- ``freeze_startup_heap()``: gọi 1 lần ở CUỐI khởi động. gc.collect() đồng bộ trên
+  event loop và quét MỌI object được theo dõi - phần lớn là object sống suốt đời
+  tiến trình tạo lúc import (module, hàm, class, bảng hằng: ~126 nghìn object sau
+  ``import web``). gc.freeze() chuyển chúng sang thế hệ vĩnh viễn: các lần collect
+  sau chỉ quét object mới (đo trên máy dev: ~60 ms -> ~0 ms mỗi lần; Render free
+  ~0,1 CPU chậm hơn nhiều). Object đóng băng vẫn được giải phóng theo đếm tham
+  chiếu như thường, chỉ vòng tham chiếu giữa chúng không được gom - chấp nhận được
+  vì đó là object khởi động sống mãi.
+
+Lần trim nào mất hơn ``SLOW_TRIM_MS`` (100 ms - cả bot đứng chừng đó) thì log INFO.
 
 Không phải glibc (musl, macOS) -> malloc_trim không có: bỏ qua, chỉ gc.collect.
 Không bao giờ raise. Trạng thái trong RAM chỉ vài con số.
@@ -39,6 +49,8 @@ _MIB = 1024 * 1024
 # Chờ chừng này giây sau yêu cầu rồi mới trim: lượt kế tiếp (tin trả lời đang gửi,
 # lượt chat nối tiếp) không bị gc.collect chen giữa.
 REQUEST_DELAY_SEC = 3.0
+# Trim chạy đồng bộ trên event loop: chậm hơn ngưỡng này (ms) thì log INFO.
+SLOW_TRIM_MS = 100
 
 _libc_trim = None
 _libc_checked = False
@@ -123,8 +135,32 @@ def trim_now(reason: str = "", *, collect: bool = True) -> TrimStats:
     stats.last_ms = int((_last_at - started) * 1000)
     if before is not None and after is not None and before > after:
         stats.total_freed_mib = round(stats.total_freed_mib + before - after, 1)
-    logger.debug("memtrim(%s): RSS %s -> %s MiB trong %d ms", reason, before, after, stats.last_ms)
+    level = logging.INFO if stats.last_ms > SLOW_TRIM_MS else logging.DEBUG
+    logger.log(
+        level,
+        "memtrim(%s): RSS %s -> %s MiB trong %d ms (gc.collect + malloc_trim chặn event loop).",
+        reason,
+        before,
+        after,
+        stats.last_ms,
+    )
     return stats
+
+
+def freeze_startup_heap() -> int:
+    """Gọi 1 lần ở CUỐI khởi động (mọi module đã nạp, vòng nền đã start): gom rác
+    khởi động rồi gc.freeze() phần còn sống, để mọi gc.collect() về sau (trim_now
+    sau mỗi lượt và mỗi 10 phút, GC tự động) không quét lại heap khởi động. Trả số
+    object đã đóng băng (0 nếu lỗi). Không raise."""
+    try:
+        gc.collect()
+        gc.freeze()
+        count = gc.get_freeze_count()
+    except Exception:  # pragma: no cover - phòng thủ, không bao giờ làm hỏng khởi động
+        logger.debug("memtrim: gc.freeze lỗi", exc_info=True)
+        return 0
+    logger.info("memtrim: đóng băng %d object của heap khởi động (gc.freeze).", count)
+    return count
 
 
 async def _delayed(reason: str, delay: float) -> None:
@@ -182,6 +218,8 @@ def snapshot() -> dict:
         "last_ms": stats.last_ms,
         "total_freed_mib": stats.total_freed_mib,
         "interval_sec": interval_sec(),
+        # Số object heap khởi động đã đóng băng (freeze_startup_heap); 0 = chưa gọi.
+        "frozen_objects": gc.get_freeze_count(),
     }
 
 
