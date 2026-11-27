@@ -47,7 +47,8 @@ export function parseCommand(text: string): [string, string] {
   const space = raw.indexOf(" ");
   const head = space < 0 ? raw : raw.slice(0, space);
   const rest = space < 0 ? "" : raw.slice(space + 1).trim();
-  return [head.toLowerCase().split("@", 1)[0], rest];
+  const [name = ""] = head.toLowerCase().split("@", 1);
+  return [name, rest];
 }
 
 export function isCancelCommand(text: string): boolean {

@@ -95,7 +95,7 @@ function parseParams(value: unknown): Record_ {
 
 function extOf(name: string): string {
   const match = /\.([a-z0-9]{1,10})$/i.exec(name.trim());
-  return match ? match[1].toLowerCase() : "";
+  return match?.[1]?.toLowerCase() ?? "";
 }
 
 function positiveInt(value: unknown): number | null {
