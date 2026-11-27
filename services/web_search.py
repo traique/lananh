@@ -141,6 +141,10 @@ _DEEP_READ_MAX_PAGES = 2
 _DEEP_READ_MAX_CHARS = 6000
 # Trần mỗi khối fact đọc sâu (đã rào) chèn vào grounding chat.
 _DEEP_READ_SECTION_MAX_CHARS = 1500
+# Trần token trả lời của lượt phụ: tối đa 3 dòng truy vấn / vài gạch đầu dòng fact
+# (đủ chỗ cho token suy luận của gpt-oss).
+_REWRITE_MAX_TOKENS = 400
+_EXTRACT_MAX_TOKENS = 800
 
 _QUERY_REWRITE_PROMPT = """Dựa vào đoạn hội thoại gần đây và câu hỏi mới nhất của người dùng bên dưới, hãy:
 1. Viết lại câu hỏi mới nhất thành 1 câu truy vấn tìm kiếm ĐỘC LẬP, đầy đủ ngữ cảnh (không cần đọc hội thoại vẫn hiểu được), giữ nguyên ý định người dùng.
@@ -231,8 +235,11 @@ async def _rewrite_and_expand_query(query: str, history_text: str) -> list[str]:
     if not history_text:
         return [query]
     try:
-        response = await orchestrator.ask(
-            _QUERY_REWRITE_PROMPT.format(history=history_text, query=query)
+        # Việc phụ chạy MỖI lượt tra web có lịch sử: chuỗi ngắn (Groq -> Gemini),
+        # max_tokens nhỏ - không chạy cả chuỗi từ 9Router như lượt trả lời chính.
+        response = await orchestrator.ask_utility(
+            _QUERY_REWRITE_PROMPT.format(history=history_text, query=query),
+            max_tokens=_REWRITE_MAX_TOKENS,
         )
         lines = [
             line.strip(' -•\t"') for line in (response.text or "").splitlines() if line.strip()
@@ -303,7 +310,11 @@ async def _deep_read_top_results(
             content = untrusted.wrap_untrusted(
                 page_text[:_DEEP_READ_MAX_CHARS], f"trang {_domain(item.url)}"
             )
-            extracted = await orchestrator.ask(_EXTRACT_PROMPT.format(query=query, content=content))
+            extracted = await orchestrator.ask(
+                _EXTRACT_PROMPT.format(query=query, content=content),
+                max_tokens=_EXTRACT_MAX_TOKENS,
+                temperature=0.2,
+            )
             fact_text = (extracted.text or "").strip()
         except Exception:
             logger.warning("Trích xuất nội dung đọc sâu %r lỗi.", item.url, exc_info=True)

@@ -557,6 +557,16 @@ async def _timed(provider: str, call: Callable[[], Awaitable]):
     return result, _elapsed_ms(started), usage
 
 
+# Giai đoạn phụ (router tool, viết lại truy vấn, nghe tin thoại...): không phải câu
+# trả lời chính - không đổi active_provider (/status vẫn báo provider đang trả lời chat).
+_AUX_STAGES = frozenset({"utility", "stt"})
+
+
+async def _set_active(provider: str) -> None:
+    if _call_stage.get() not in _AUX_STAGES:
+        await provider_state.set_active_provider(provider)
+
+
 async def _run_provider_chain(
     *,
     router9_call,
@@ -615,7 +625,7 @@ async def _run_provider_chain_within_deadline(
         )
         await _assert_clean_recorded(result, "router9", allow_cjk, latency_ms, usage)
         await provider_state.mark_router9_alive()
-        await provider_state.set_active_provider("router9")
+        await _set_active("router9")
         await _record_provider_call("router9", latency_ms=latency_ms, usage=usage)
         return await _tag_answer(result, "router9")
 
@@ -625,14 +635,14 @@ async def _run_provider_chain_within_deadline(
             provider_name, lambda: bounded(lambda: api_call(idx))
         )
         await _assert_clean_recorded(result, provider_name, allow_cjk, latency_ms, usage)
-        await provider_state.set_active_provider(provider_name)
+        await _set_active(provider_name)
         await _record_provider_call(provider_name, latency_ms=latency_ms, usage=usage)
         return await _tag_answer(result, provider_name)
 
     async def _attempt_generic(name: str):
         result, latency_ms, usage = await _timed(name, lambda: bounded(generic_calls[name]))
         await _assert_clean_recorded(result, name, allow_cjk, latency_ms, usage)
-        await provider_state.set_active_provider(name)
+        await _set_active(name)
         await _record_provider_call(name, latency_ms=latency_ms, usage=usage)
         return await _tag_answer(result, name)
 
@@ -642,7 +652,7 @@ async def _run_provider_chain_within_deadline(
         assert live_call is not None
         result = await bounded(live_call)
         _assert_output_clean(result, "live", allow_cjk=allow_cjk)
-        await provider_state.set_active_provider("live")
+        await _set_active("live")
         return await _tag_answer(result, "live")
 
     async def _has_any_fallback_configured() -> bool:
@@ -815,6 +825,10 @@ async def ask(
     enable_search: bool = False,
     require_real_search: bool = False,
     providers_override: Optional[list[str]] = None,
+    *,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    json_mode: bool = False,
 ):
     """Run a one-turn task through the provider chain.
 
@@ -827,6 +841,11 @@ async def ask(
     ``providers_override`` lets callers pin a smaller provider order instead
     of using _search_only_providers() (for example /gia excludes OpenRouter
     because Tavily already runs before the grounded fallback).
+
+    ``max_tokens``/``temperature`` (None = mặc định của từng provider, như cũ) và
+    ``json_mode`` (JSON mode thật ở Groq json_object và Gemini; 9Router/OpenRouter
+    dựa vào chỉ dẫn trong prompt - prompt phải nhắc tới JSON): cho việc phụ đầu ra
+    ngắn, xem ``ask_utility``.
     """
     if require_real_search and providers_override is None:
         providers_override = await _search_only_providers()
@@ -837,24 +856,33 @@ async def ask(
     redactor.log("ask")
     effective_prompt = f"{_FORCED_SEARCH_DIRECTIVE}\n\n{prompt}" if require_real_search else prompt
     model_name = model or await router9_client.get_preferred_model_name()
+    # Chỉ truyền tham số caller đặt: không đặt thì mỗi provider giữ mặc định cũ.
+    sampling: dict = {}
+    if max_tokens is not None:
+        sampling["max_tokens"] = max_tokens
+    if temperature is not None:
+        sampling["temperature"] = temperature
+    json_kwargs = {"json_mode": True} if json_mode else {}
 
     async def _router9_call():
         if require_real_search and router9_client.supports_web_search():
-            return await router9_client.generate_search(effective_prompt, model=model_name)
-        return await router9_client.generate(effective_prompt, model=model_name)
+            return await router9_client.generate_search(
+                effective_prompt, model=model_name, **sampling
+            )
+        return await router9_client.generate(effective_prompt, model=model_name, **sampling)
 
     async def _groq_call():
         # require_real_search: Groq tự tra web bằng browser_search (model
         # GROQ_REALTIME_MODEL) thay vì model chat thường - xem
         # groq_client.generate_realtime.
         if require_real_search:
-            return await groq_client.generate_realtime(effective_prompt)
-        return await groq_client.generate(effective_prompt, model=model)
+            return await groq_client.generate_realtime(effective_prompt, **sampling)
+        return await groq_client.generate(effective_prompt, model=model, **sampling, **json_kwargs)
 
     async def _openrouter_call():
         if require_real_search and openrouter_client.supports_web_search():
-            return await openrouter_client.generate_search(effective_prompt)
-        return await openrouter_client.generate(effective_prompt, model=model)
+            return await openrouter_client.generate_search(effective_prompt, **sampling)
+        return await openrouter_client.generate(effective_prompt, model=model, **sampling)
 
     async def _api_call(idx: int):
         # KHÔNG truyền model_name (tên model của catalog 9Router, có thể mang
@@ -866,12 +894,18 @@ async def ask(
         # require_real_search: Gemini phải có grounding metadata (đã gọi Google
         # Search thật) như Groq/OpenRouter/9Router phải có bằng chứng - không thì
         # NoSearchEvidenceError, chuỗi chuyển provider kế (không cooldown).
+        gemini: dict = dict(json_kwargs)
+        if max_tokens is not None:
+            gemini["max_output_tokens"] = max_tokens
+        if temperature is not None:
+            gemini["temperature"] = temperature
         return await official_client.generate(
             idx,
             effective_prompt,
             model=model,
             enable_search=enable_search or require_real_search,
             require_search_evidence=require_real_search,
+            **gemini,
         )
 
     with call_stage("search") if require_real_search else nullcontext():
@@ -882,6 +916,35 @@ async def ask(
             openrouter_call=_openrouter_call,
             providers_override=providers_override,
             allow_cjk=allow_cjk,
+        )
+
+
+# Việc phụ 1 lượt, đầu ra ngắn (viết lại truy vấn tra web, router tool dự phòng...):
+# provider nhanh, free, max_tokens nhỏ - KHÔNG chạy cả chuỗi từ 9Router (timeout
+# 120s, max_tokens 4096) như ask() mặc định.
+UTILITY_PROVIDERS = ("groq", "api1", "api2")
+UTILITY_MAX_TOKENS = 512
+
+
+async def ask_utility(
+    prompt: str,
+    *,
+    max_tokens: int = UTILITY_MAX_TOKENS,
+    temperature: float = 0.2,
+    json_mode: bool = False,
+    providers: Optional[list[str]] = None,
+):
+    """ask() cho việc phụ ngắn: chuỗi UTILITY_PROVIDERS (Groq -> Gemini api1 -> api2,
+    hoặc ``providers``), ``max_tokens`` nhỏ, nhiệt độ thấp, giai đoạn "utility" (không
+    tính là câu trả lời chính trong turn_metrics, không đổi active_provider). Raise
+    như ask() khi mọi provider lỗi - caller tự có đường dự phòng."""
+    with call_stage("utility"):
+        return await ask(
+            prompt,
+            providers_override=list(providers or UTILITY_PROVIDERS),
+            max_tokens=max_tokens,
+            temperature=temperature,
+            json_mode=json_mode,
         )
 
 

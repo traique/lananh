@@ -1062,13 +1062,19 @@ class OpenAICompatibleProvider:
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        json_mode: bool = False,
     ) -> Response:
         """Gọi 1 lượt chat. ``history`` là list (role, content) với role "user"/"model"
-        (quy ước của official_client.generate)."""
+        (quy ước của official_client.generate). ``json_mode``: response_format
+        json_object (prompt phải nhắc tới JSON - yêu cầu của Groq)."""
         messages = build_messages(prompt, system_instruction, history)
         return Response(
             await self.complete(
-                messages, model=model, temperature=temperature, max_tokens=max_tokens
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                extra_payload={"response_format": {"type": "json_object"}} if json_mode else None,
             )
         )
 

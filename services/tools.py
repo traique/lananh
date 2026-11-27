@@ -953,12 +953,21 @@ def _looks_like_tool_intent(user_text: str) -> bool:
     )
 
 
+# Đầu ra router chỉ là 1 object JSON (tối đa 5 nhắc việc) + token suy luận gpt-oss.
+_ROUTER_CHAIN_MAX_TOKENS = 768
+
+
 async def _route_with_chain(prompt: str) -> dict | None:
     """Router dự phòng qua provider-chain (bounded theo hạn chót lượt) khi mọi
-    đường utility JSON đều hỏng - chỉ dùng cho câu có ý định GHI dữ liệu."""
+    đường utility JSON (Groq, Gemini) đều hỏng - chỉ dùng cho câu có ý định GHI dữ
+    liệu. Chạy cả chuỗi (cái đáng thử thêm là 9Router/OpenRouter) nhưng là lượt phụ:
+    JSON mode, max_tokens nhỏ, giai đoạn "utility"."""
     from ai import orchestrator
 
-    response = await orchestrator.ask(prompt)
+    with orchestrator.call_stage("utility"):
+        response = await orchestrator.ask(
+            prompt, max_tokens=_ROUTER_CHAIN_MAX_TOKENS, temperature=0.1, json_mode=True
+        )
     data = json.loads(strip_json_fence(getattr(response, "text", "") or ""))
     return data if isinstance(data, dict) else None
 

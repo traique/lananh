@@ -203,11 +203,15 @@ async def generate(
     model: Optional[str] = None,
     temperature: Optional[float] = None,
     require_search_evidence: bool = False,
+    max_output_tokens: Optional[int] = None,
+    json_mode: bool = False,
 ) -> FallbackResponse:
     """``temperature``: ghi đè nhiệt độ persona (lượt có dữ liệu tra cứu dùng
     thấp hơn để giữ đúng số liệu). ``require_search_evidence``: lượt bắt buộc
     tự tra web - Gemini trả lời mà không có grounding metadata thì raise
-    NoSearchEvidenceError (provider-chain chuyển provider kế tiếp)."""
+    NoSearchEvidenceError (provider-chain chuyển provider kế tiếp).
+    ``max_output_tokens``/``json_mode`` (orchestrator.ask cho việc phụ ngắn): trần
+    token trả lời và JSON mode (response_mime_type) của Gemini."""
     from google.genai import types
 
     client = await _get_official_client(idx)
@@ -231,6 +235,11 @@ async def generate(
         cfg_kwargs.update(temperature=_PERSONA_TEMPERATURE, top_p=_PERSONA_TOP_P)
     if temperature is not None:
         cfg_kwargs["temperature"] = temperature
+    if max_output_tokens:
+        cfg_kwargs["max_output_tokens"] = max_output_tokens
+    if json_mode and not enable_search:
+        # Gemini không cho JSON mode cùng tool google_search.
+        cfg_kwargs["response_mime_type"] = "application/json"
     if enable_search:
         cfg_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
 
