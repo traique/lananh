@@ -166,3 +166,112 @@ async def test_resolve_active_account_id_fallback_env_roi_groups(monkeypatch):
     monkeypatch.setattr(zalo_repository, "resolve_default_account_id", fake_default_none)
     monkeypatch.delenv("ZALO_BOT_ACCOUNT_ID", raising=False)
     assert await zalo_repository.resolve_active_account_id() == "zalo-bot"
+
+
+# ─── Tự nối lại sau khi Supavisor cắt kết nối rảnh ──────────────────────────
+
+
+class _FlakyPool:
+    """Lệnh đầu tiên gặp kết nối đã chết (lỗi kinh điển sau khi Supavisor cắt kết
+    nối rảnh), lệnh sau chạy bình thường."""
+
+    def __init__(self, error):
+        self.error = error
+        self.calls = 0
+
+    async def _run(self, result):
+        self.calls += 1
+        if self.calls == 1:
+            raise self.error
+        return result
+
+    async def execute(self, query, *args):
+        return await self._run("INSERT 0 1")
+
+    async def fetch(self, query, *args):
+        return await self._run([{"group_id": "g", "alias": "a", "signal_mode": "all"}])
+
+    async def fetchrow(self, query, *args):
+        return await self._run(None)
+
+    async def fetchval(self, query, *args):
+        return await self._run(7)
+
+
+@pytest.fixture
+def flaky(monkeypatch):
+    import asyncpg
+
+    from core import database
+    from core.db import pool as dbpool
+
+    async def no_reset(failed_pool):
+        return None
+
+    monkeypatch.setattr(dbpool, "_reset_pool", no_reset)
+    holder = {}
+
+    def make(error=None):
+        holder["pool"] = _FlakyPool(error or asyncpg.ConnectionDoesNotExistError("closed"))
+        return holder["pool"]
+
+    async def get_pool():
+        return holder["pool"]
+
+    async def no_migrations():
+        return None
+
+    monkeypatch.setattr(database, "get_pool", get_pool)
+    monkeypatch.setattr(database, "ensure_migrations", no_migrations)
+    return make
+
+
+@pytest.mark.asyncio
+async def test_lenh_dau_sau_khi_bi_cat_ket_noi_duoc_thu_lai(flaky):
+    from channels import zalo_session, zalo_signal_repository as signals
+
+    pool = flaky()
+    assert await zalo_repository.list_groups("acc") == [("g", "a")]
+    assert pool.calls == 2
+    # Tin nhóm: ON CONFLICT DO NOTHING nên chạy lại sau khi đã commit không tạo bản trùng.
+    pool = flaky()
+    assert await zalo_repository.save_group_message(
+        account_id="acc",
+        group_id="g",
+        message_id="m",
+        sender_id="s",
+        sender_name="n",
+        text="t",
+        sent_at_ms=1,
+    )
+    assert pool.calls == 2
+    pool = flaky()
+    assert await signals.list_groups("acc") == [("g", "a", "all")]
+    assert pool.calls == 2
+    pool = flaky()
+    assert await signals.settled_max_id("acc") == 7
+    pool = flaky()
+    assert await zalo_session.load_controller() == ""
+    assert pool.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_lenh_khong_idempotent_khong_chay_lai_khi_co_the_da_commit(flaky):
+    import asyncpg
+
+    from channels import zalo_signal_repository as signals
+
+    # Outbox không có khoá chống trùng: mất kết nối giữa chừng thì báo lỗi, không gửi 2 lần.
+    pool = flaky()
+    with pytest.raises(asyncpg.ConnectionDoesNotExistError):
+        await zalo_repository.enqueue_outbox("acc", "u", "xin chào")
+    assert pool.calls == 1
+    # Nhận tín hiệu đánh dấu đã giao ngay khi nhận: chạy lại sẽ làm mất lô đầu.
+    pool = flaky()
+    with pytest.raises(asyncpg.ConnectionDoesNotExistError):
+        await signals.claim_pending("acc", "zoom", 6, 8)
+    assert pool.calls == 1
+    # Lỗi chắc chắn chưa gửi lệnh đi thì vẫn thử lại.
+    pool = flaky(asyncpg.InterfaceError("cannot perform operation: connection is closed"))
+    await zalo_repository.enqueue_outbox("acc", "u", "xin chào")
+    assert pool.calls == 2

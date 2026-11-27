@@ -532,6 +532,37 @@ async def test_nhip_quet_luu_setting_va_kep_gioi_han(monkeypatch):
     assert await zs.interval_minutes() == 60
 
 
+@pytest.mark.asyncio
+async def test_vong_quet_ngu_dung_nhip_khong_doc_db_luc_ngu(monkeypatch):
+    """Ngủ đúng nhịp từ đầu lượt trước; lúc ngủ không đọc setting từ DB nhưng vẫn
+    theo kịp /tinhieu nhip (bản trong RAM) trong <= _POLL_SEC giây."""
+    import asyncio
+    import time
+
+    reads = []
+
+    async def get_setting(key):
+        reads.append(key)
+        return None
+
+    monkeypatch.setattr(zs.db, "get_setting", get_setting)
+    monkeypatch.setattr(zs, "_POLL_SEC", 0.01)
+    # Nhịp 0,001 phút (~0,06 s) còn hạn trong cache: không chạm DB.
+    monkeypatch.setattr(zs, "_interval_cache", (time.monotonic(), 0.001))
+    started = time.monotonic()
+    await asyncio.wait_for(zs._sleep_until_next_tick(started), 2)
+    assert 0.05 <= time.monotonic() - started < 1.5 and reads == []
+
+    # Đang ngủ nhịp 10 phút, chủ bot đổi nhịp -> dậy ngay ở lần xem kế tiếp.
+    monkeypatch.setattr(zs, "_interval_cache", (time.monotonic(), 10))
+    sleeper = asyncio.create_task(zs._sleep_until_next_tick(time.monotonic()))
+    await asyncio.sleep(0.05)
+    assert not sleeper.done()
+    monkeypatch.setattr(zs, "_interval_cache", (time.monotonic(), 0.0001))
+    await asyncio.wait_for(sleeper, 1)
+    assert reads == []
+
+
 def test_hop_dong_tin_nhom_nhan_quote_va_vai_tro():
     base = dict(
         account_id="a", group_id="g", message_id="m", sender_id="s", text="hi", sent_at_ms=1

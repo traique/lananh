@@ -2,6 +2,7 @@ from datetime import datetime
 
 import pytest
 
+from core.db import pool as dbpool
 from services import db_maintenance as dm
 
 MIB = dm.MIB
@@ -101,6 +102,8 @@ async def test_retention_deletes_in_bounded_batches_with_configured_windows(monk
         "notify_queue": 0,
         "bg_jobs": 0,
         "answer_feedback": 0,
+        "backup_runs": 0,
+        "app_devices": 0,
     }
     labels = [label for label, _, _ in pool.calls]
     assert labels.count("user_calls") == 2 and "provider_calls" not in labels
@@ -112,6 +115,8 @@ async def test_retention_deletes_in_bounded_batches_with_configured_windows(monk
     assert windows["user_events"] == timedelta(days=90)
     assert windows["answer_feedback"] == timedelta(days=180)
     assert windows["turn_metrics"] == timedelta(days=14)
+    assert windows["backup_runs"] == timedelta(days=400)
+    assert windows["app_devices"] == timedelta(days=90)
 
 
 def test_retention_sql_only_touches_old_sent_rows():
@@ -121,6 +126,75 @@ def test_retention_sql_only_touches_old_sent_rows():
     assert "failed_at IS NOT NULL" in sql["zalo_outbox_failed"]
     assert "sent = true" in sql["reminders"]
     assert all("LIMIT $2" in text for text in sql.values())
+    # Ghi chú của người dùng là dữ liệu của họ: không bao giờ xoá theo tuổi.
+    assert not any("notes" in label and "session" not in label for label in sql)
+    assert "max(finished_at)" in sql["backup_runs"]  # giữ dòng mới nhất mỗi loại
+    assert "revoked_at IS NOT NULL" in sql["app_devices"]
+
+
+@pytest.mark.asyncio
+async def test_ket_noi_ranh_bi_cat_khong_hoan_luot_don_va_vacuum(monkeypatch):
+    """Lệnh đầu tiên sau khi Supavisor cắt kết nối rảnh lỗi -> tự thử lại 1 lần,
+    không bỏ lượt dọn hằng ngày / lượt kiểm tra VACUUM hằng tuần."""
+    import asyncpg
+
+    calls = []
+
+    class Conn:
+        async def fetchval(self, sql, *args):
+            return 10 * MIB
+
+        async def execute(self, sql, *args, **kwargs):
+            calls.append(sql.split()[0])
+            return "OK"
+
+    class Pool:
+        dead = True
+
+        def _maybe_dead(self):
+            if self.dead:
+                self.dead = False
+                raise asyncpg.ConnectionDoesNotExistError("connection was closed")
+
+        async def fetchrow(self, sql, *args):
+            self._maybe_dead()
+            return {"total_bytes": 1, "live_bytes": 1, "database_bytes": 1, "posting": 0}
+
+        async def execute(self, sql, *args):
+            self._maybe_dead()
+            return "DELETE 3"
+
+        def acquire(self):
+            pool = self
+
+            class Ctx:
+                async def __aenter__(self):
+                    pool._maybe_dead()
+                    return Conn()
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return Ctx()
+
+    pool = Pool()
+
+    async def get_pool():
+        return pool
+
+    async def no_reset(failed_pool):
+        return None
+
+    monkeypatch.setattr(dm.db, "get_pool", get_pool)
+    monkeypatch.setattr(dbpool, "_reset_pool", no_reset)
+    assert (await dm.measure()).total_bytes == 1
+    pool.dead = True
+    assert await dm.vacuum_full() == (10 * MIB, 10 * MIB)
+    assert calls.count("VACUUM") == 1
+    pool.dead = True
+    for rule in dm.RETENTION_RULES[1:]:
+        monkeypatch.setenv(rule.env, "0")  # chỉ dọn user_calls
+    assert (await dm.prune_retention())["user_calls"] == 3
 
 
 @pytest.mark.asyncio

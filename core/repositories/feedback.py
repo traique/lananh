@@ -58,7 +58,9 @@ async def upsert(
     )
 
 
-async def turn_snapshot(pool: Any, user_id: int, prompt_id: int, max_chars: int) -> dict | None:
+async def turn_snapshot(
+    pool: Any, user_id: int, prompt_id: int, max_chars: int = 2000
+) -> dict | None:
     """Câu hỏi + câu trả lời + provider của 1 lượt (chỉ của chính người đó)."""
     row = await pool.fetchrow(
         _snapshot_sql("$3", "p.id = $2 AND p.telegram_user_id = $1"),
@@ -69,7 +71,7 @@ async def turn_snapshot(pool: Any, user_id: int, prompt_id: int, max_chars: int)
     return dict(row) if row else None
 
 
-async def last_chat_snapshot(pool: Any, user_id: int, max_chars: int) -> dict | None:
+async def last_chat_snapshot(pool: Any, user_id: int, max_chars: int = 2000) -> dict | None:
     """Lượt chat gần nhất có câu trả lời thật (bỏ lượt lỗi) - cho /sai."""
     row = await pool.fetchrow(
         _snapshot_sql(
@@ -101,7 +103,7 @@ async def stats(pool: Any, days: int) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-async def recent_down(pool: Any, user_id: int, days: int, limit: int) -> list[dict]:
+async def recent_down(pool: Any, user_id: int, days: int, limit: int = 5) -> list[dict]:
     """👎 gần đây của CHÍNH người xem (không lộ câu hỏi của thành viên khác)."""
     rows = await pool.fetch(
         """
@@ -120,7 +122,7 @@ async def recent_down(pool: Any, user_id: int, days: int, limit: int) -> list[di
     return [dict(row) for row in rows]
 
 
-async def owner_down_for_evals(pool: Any, user_id: int, days: int, limit: int) -> list[dict]:
+async def owner_down_for_evals(pool: Any, user_id: int, days: int, limit: int = 50) -> list[dict]:
     """👎 của ĐÚNG 1 người trên kênh Telegram (chủ bot) để làm case đánh giá ứng viên
     (services/eval_export.py) - không bao giờ lấy dòng Zalo/Zoom hay của người khác."""
     rows = await pool.fetch(

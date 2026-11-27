@@ -797,6 +797,20 @@ DB_CONNECT_TIMEOUT_SEC = max(2, min(60, _env_int("DB_CONNECT_TIMEOUT_SEC", 8)))
 # chừng này giây - mọi lệnh DB báo lỗi ngay thay vì treo; hết hạn cho 1 lệnh
 # thăm dò đi qua. 0 = tắt breaker.
 DB_BREAKER_OPEN_SEC = max(0, min(600, _env_int("DB_BREAKER_OPEN_SEC", 30)))
+# Pool kết nối DB (asyncpg). Supabase free: Session Pooler cho tối đa 15 kết nối, giữ
+# 8 cho bot (~20 vòng nền + lượt chat dùng chung) để còn chỗ cho sao lưu/SQL editor.
+# MIN chỉ là số kết nối mở sẵn lúc tạo pool: kết nối rảnh quá 60 s vẫn bị đóng (xem
+# max_inactive_connection_lifetime ở core/database.py).
+DB_POOL_MAX_SIZE = max(1, min(50, _env_int("DB_POOL_MAX_SIZE", 8)))
+DB_POOL_MIN_SIZE = max(0, min(DB_POOL_MAX_SIZE, _env_int("DB_POOL_MIN_SIZE", 2)))
+# Số prepared statement cache trên mỗi kết nối. Trống = tự chọn theo cổng DATABASE_URL:
+# 6543 (Supabase transaction pooler, không giữ prepared statement giữa các lượt) -> 0;
+# cổng khác (Session Pooler 5432, kết nối trực tiếp) -> 100 như mặc định asyncpg - mỗi
+# câu lệnh 1 vòng mạng thay vì 2.
+_db_statement_cache = os.getenv("DB_STATEMENT_CACHE_SIZE", "").strip()
+DB_STATEMENT_CACHE_SIZE: int | None = (
+    max(0, min(1000, _env_int("DB_STATEMENT_CACHE_SIZE", 100))) if _db_statement_cache else None
+)
 
 # Secret riêng cho endpoint /diagnose (KHÔNG dùng chung với WEBHOOK_SECRET), truyền
 # qua header X-Diagnose-Token thay vì query string để tránh lộ qua access log.

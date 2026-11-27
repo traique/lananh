@@ -44,6 +44,14 @@ _LOCK_HEADER = (
     "# Thêm/xoá file migration rồi cập nhật lock: python -m core.migrations --write-lock\n"
 )
 _ADVISORY_LOCK_KEY = 718_026_091
+# Migration (vd tạo index trên bảng lớn) được chạy tới 10 phút thay vì command_timeout
+# 30 s của pool - quá 30 s trước đây làm init_db ném lỗi, supervisord khởi động lại
+# và chạy lại đúng DDL đó mãi. Chờ khoá bảng tối đa 10 s rồi báo lỗi (thử lại ở lần
+# khởi động sau) thay vì xếp hàng sau 1 transaction dài và chặn mọi lượt đọc/ghi bảng.
+_STATEMENT_TIMEOUT_SEC = 600
+_TX_SETTINGS = (
+    f"SET LOCAL lock_timeout = '10s'; SET LOCAL statement_timeout = '{_STATEMENT_TIMEOUT_SEC}s'"
+)
 _lock = asyncio.Lock()
 _ran = False
 
@@ -78,14 +86,16 @@ async def _ensure_table(conn) -> None:
     await conn.execute("ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT")
 
 
-async def _apply_pending(conn) -> list[str]:
-    """Áp các migration chưa chạy; trả danh sách mô tả version bị sửa sau khi áp."""
+async def _apply_pending(conn, applied_now: list[int] | None = None) -> list[str]:
+    """Áp các migration chưa chạy (ghi version đã áp vào ``applied_now`` nếu có);
+    trả danh sách mô tả version bị sửa sau khi áp."""
     await _ensure_table(conn)
     applied = {
         int(row["version"]): row["checksum"]
         for row in await conn.fetch("SELECT version, checksum FROM schema_migrations")
     }
     mismatches: list[str] = []
+    pending: list[tuple[int, Path, str, str]] = []
     for version, path in _migration_files():
         sql = path.read_text(encoding="utf-8")
         digest = checksum(sql)
@@ -101,8 +111,16 @@ async def _apply_pending(conn) -> list[str]:
             elif stored != digest:
                 mismatches.append(f"{version:03d} ({path.name})")
             continue
+        pending.append((version, path, sql, digest))
+    if pending:
+        # Log TRƯỚC khi áp: migration treo/lỗi thì log deploy cho biết ngay là file nào.
+        logger.info(
+            "Sắp áp %d migration DB: %s", len(pending), ", ".join(p.name for _, p, _, _ in pending)
+        )
+    for version, path, sql, digest in pending:
         async with conn.transaction():
-            await conn.execute(sql)
+            await conn.execute(_TX_SETTINGS)
+            await conn.execute(sql, timeout=_STATEMENT_TIMEOUT_SEC)
             await conn.execute(
                 "INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)",
                 version,
@@ -110,6 +128,8 @@ async def _apply_pending(conn) -> list[str]:
                 digest,
             )
         logger.info("Applied DB migration %03d: %s", version, path.name)
+        if applied_now is not None:
+            applied_now.append(version)
     return mismatches
 
 
@@ -129,32 +149,44 @@ def _report_mismatches(mismatches: list[str]) -> None:
     )
 
 
-async def apply_locked(pool) -> list[str]:
+async def apply_locked(pool, applied_now: list[int] | None = None) -> list[str]:
     """Áp migration còn thiếu dưới advisory lock; trả danh sách version đã áp mà
     file bị sửa. KHÔNG báo chủ bot - ``run`` lo phần đó; diễn tập khôi phục
     (scripts/backup_drill.py) dùng trực tiếp để coi lệch checksum là lỗi."""
     async with pool.acquire() as conn:
         # Cross-instance lock: only one deployment migrates a shared DB at once.
         # Advisory lock theo session - cần Session Pooler (xem README).
-        await conn.execute(f"SELECT pg_advisory_lock({_ADVISORY_LOCK_KEY})")
+        if not await conn.fetchval(f"SELECT pg_try_advisory_lock({_ADVISORY_LOCK_KEY})"):
+            logger.info(
+                "Instance khác đang áp migration DB - chờ advisory lock (tối đa %ss).",
+                _STATEMENT_TIMEOUT_SEC,
+            )
+            await conn.execute(
+                f"SELECT pg_advisory_lock({_ADVISORY_LOCK_KEY})", timeout=_STATEMENT_TIMEOUT_SEC
+            )
         try:
-            return await _apply_pending(conn)
+            return await _apply_pending(conn, applied_now)
         finally:
             await conn.execute(f"SELECT pg_advisory_unlock({_ADVISORY_LOCK_KEY})")
 
 
-async def run(pool) -> None:
-    """Apply pending migrations once, serialised across processes/instances."""
+async def run(pool) -> int:
+    """Apply pending migrations once, serialised across processes/instances.
+
+    Trả số migration vừa áp ở lượt này (0 nếu không có/đã chạy) - core/database.py
+    thay các kết nối của pool khi schema vừa đổi."""
     global _ran
     if _ran:
-        return
+        return 0
 
     async with _lock:
         if _ran:
-            return
-        mismatches = await apply_locked(pool)
+            return 0
+        applied_now: list[int] = []
+        mismatches = await apply_locked(pool, applied_now)
         _report_mismatches(mismatches)
         _ran = True
+        return len(applied_now)
 
 
 # ─── migrations.lock: ghim checksum để CI bắt file đã áp bị sửa ──────────────

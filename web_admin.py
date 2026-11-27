@@ -1043,18 +1043,7 @@ async def _usage_timeline(since_hours: int) -> dict:
     trống để trang admin vẽ biểu đồ không cần tự tính múi giờ."""
     bucket = "hour" if since_hours <= _HOURLY_BUCKET_MAX_HOURS else "day"
     step = timedelta(hours=1) if bucket == "hour" else timedelta(days=1)
-    pool = await db.get_pool()
-    rows = await pool.fetch(
-        f"""
-        SELECT date_trunc('{bucket}', created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AS bucket,
-               COUNT(*) AS calls
-        FROM user_calls
-        WHERE created_at >= now() - ($1 || ' hours')::interval
-        GROUP BY 1
-        ORDER BY 1
-        """,
-        str(since_hours),
-    )
+    rows = await db.user_calls_timeline(since_hours, bucket)
     counts = {row["bucket"].replace(tzinfo=None): row["calls"] for row in rows}
     now_vn = datetime.now(_VN_TZ).replace(tzinfo=None, minute=0, second=0, microsecond=0)
     start = now_vn - timedelta(hours=since_hours)
@@ -1071,7 +1060,7 @@ async def _usage_timeline(since_hours: int) -> dict:
 @api_router.get("/usage/daily")
 async def admin_usage_daily(request: Request) -> Response:
     """Chuỗi thời gian lượt gọi AI cho biểu đồ trang admin (xem _usage_timeline)."""
-    return JSONResponse(await db.with_reconnect(_usage_timeline)(_hours_param(request)))
+    return JSONResponse(await _usage_timeline(_hours_param(request)))
 
 
 @api_router.get("/memory-usage")

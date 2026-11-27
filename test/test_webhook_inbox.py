@@ -214,3 +214,69 @@ async def test_loi_tam_thoi_van_hen_thu_lai(pool, alerts, monkeypatch):
     query, _args = pool.queries[-1]
     assert "status = 'PENDING'" in query
     assert alerts == []
+
+
+# ─── Worker rảnh: chờ dài, không mất lần đánh thức ──────────────────────────
+
+
+@pytest.fixture
+def fresh_wake(monkeypatch):
+    # Event gắn với event loop đầu tiên chờ nó: mỗi test dùng 1 Event riêng.
+    wake = asyncio.Event()
+    monkeypatch.setattr(webhook_inbox, "_wake", wake)
+    return wake
+
+
+@pytest.mark.parametrize("raw,expected", [(None, 30.0), ("120", 120.0), ("1", 5.0), ("x", 30.0)])
+def test_nhip_quet_luc_ranh_doc_tu_env(monkeypatch, raw, expected):
+    if raw is None:
+        monkeypatch.delenv("WEBHOOK_INBOX_IDLE_SEC", raising=False)
+    else:
+        monkeypatch.setenv("WEBHOOK_INBOX_IDLE_SEC", raw)
+    assert webhook_inbox._idle_wait_sec() == expected
+
+
+@pytest.mark.asyncio
+async def test_su_kien_xep_trong_luc_claim_khong_bi_mat_lan_danh_thuc(monkeypatch, fresh_wake):
+    """enqueue() chạy xen đúng lúc worker đang claim (claim chưa thấy dòng mới): worker
+    phải claim lại NGAY chứ không ngủ hết nhịp quét lúc rảnh."""
+    monkeypatch.setenv("WEBHOOK_INBOX_IDLE_SEC", "300")
+    calls = []
+    delivered = asyncio.Event()
+
+    async def claim():
+        calls.append(1)
+        if len(calls) == 1:
+            fresh_wake.set()  # enqueue() của request khác commit ngay sau SELECT của claim
+            return None
+        return _row() if len(calls) == 2 else None
+
+    async def deliver(row, processor):
+        delivered.set()
+
+    async def no_reap():
+        return None
+
+    monkeypatch.setattr(webhook_inbox, "claim", claim)
+    monkeypatch.setattr(webhook_inbox, "deliver", deliver)
+    monkeypatch.setattr(webhook_inbox, "_maybe_reap", no_reap)
+    worker = asyncio.create_task(webhook_inbox._worker(None))
+    try:
+        await asyncio.wait_for(delivered.wait(), 2)
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+    assert len(calls) >= 2
+
+
+@pytest.mark.asyncio
+async def test_hen_thu_lai_danh_thuc_worker_dung_luc(pool, alerts, monkeypatch, fresh_wake):
+    monkeypatch.setattr(webhook_inbox.config, "WEBHOOK_MAX_ATTEMPTS", 3)
+    later = []
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "call_later", lambda delay, cb, *a: later.append((delay, cb)))
+    await webhook_inbox.retry(_row(1), RuntimeError("x"))  # backoff 5 s < nhịp rảnh 30 s
+    assert later == [(5.0, fresh_wake.set)]
+    later.clear()
+    await webhook_inbox.retry(_row(6), RuntimeError("x"))  # backoff 160 s: nhịp rảnh lo
+    assert later == []

@@ -9,12 +9,56 @@ Telegram và ngược lại.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 # Tin nhắc đang chờ trong outbox Zalo: FK chỉ SET NULL khi xoá reminder, nên phải
 # xoá tin chưa gửi TRƯỚC, nếu không nhắc đã huỷ vẫn được gửi đi.
 _DELETE_UNSENT_OUTBOX = "DELETE FROM zalo_outbox WHERE sent_at IS NULL AND failed_at IS NULL AND reminder_id = ANY($1::int[])"
+
+
+async def insert_once(
+    pool: Any,
+    telegram_user_id: int,
+    message: str,
+    due_at: datetime,
+    *,
+    channel: str = "telegram",
+    recipient_id: str | None = None,
+    account_id: str = "",
+    user_jid: str = "",
+    event_key: str | None = None,
+) -> datetime:
+    """Nhắc 1 lần (tool add_reminder, /nhac). ``event_key`` trùng (webhook gửi lại) thì
+    không tạo thêm. Trả giờ hẹn đã lưu."""
+    if channel not in {"telegram", "zalo", "zoom"}:
+        raise ValueError("Kênh nhắc việc không hợp lệ.")
+    recipient_id = recipient_id or str(telegram_user_id)
+    if channel == "zalo" and not account_id:
+        raise ValueError("Thiếu tài khoản Zalo nhận nhắc việc.")
+    return await pool.fetchval(
+        """INSERT INTO reminders
+        (telegram_user_id, message, due_at, channel, recipient_id, account_id, user_jid, event_key)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (event_key) DO UPDATE SET event_key = EXCLUDED.event_key
+        RETURNING due_at""",
+        telegram_user_id,
+        message,
+        due_at,
+        channel,
+        recipient_id,
+        account_id,
+        user_jid,
+        event_key,
+    )
+
+
+async def mark_sent(pool: Any, reminder_id: int) -> None:
+    # fired_at: lúc nhắc thật - "hoãn 10p"/"xong" trong 30 phút tìm theo cột này.
+    await pool.execute(
+        "UPDATE reminders SET sent = true, fired_at = COALESCE(fired_at, now()) WHERE id = $1",
+        reminder_id,
+    )
 
 
 async def count_pending_once(pool: Any, user_id: int) -> int:
@@ -83,25 +127,35 @@ async def create_series(
                     "SELECT id FROM reminder_series WHERE event_key = $1", event_key
                 )
                 return int(existing), False
-            for due_at, text in first:
+            if first:
+                # 1 câu cho mọi lần nhắc đầu (trước: 1 câu/lần). Giờ hẹn truyền dạng chuỗi
+                # ISO (có múi giờ) rồi ép kiểu trong SQL - mảng datetime không đi được qua
+                # mọi driver/test adapter.
                 await conn.execute(
                     """
                     INSERT INTO reminders (
                         telegram_user_id, message, due_at, channel, recipient_id,
                         account_id, user_jid, series_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    )
+                    SELECT $1, f.message, f.due_at::timestamptz, $2, $3, $4, $5, $6
+                    FROM unnest($7::text[], $8::text[]) AS f(due_at, message)
                     ON CONFLICT (series_id, due_at) WHERE series_id IS NOT NULL DO NOTHING
                     """,
                     user_id,
-                    text,
-                    due_at,
                     channel,
                     recipient_id,
                     account_id,
                     user_jid,
                     series_id,
+                    [_iso(due_at) for due_at, _ in first],
+                    [text for _, text in first],
                 )
             return int(series_id), True
+
+
+def _iso(moment: datetime) -> str:
+    """ISO 8601 kèm múi giờ; datetime không múi giờ hiểu như asyncpg (giờ máy chủ app)."""
+    return moment.astimezone(timezone.utc).isoformat()
 
 
 async def get_series(pool: Any, series_id: int) -> dict | None:
@@ -146,7 +200,7 @@ async def add_occurrence(pool: Any, series: dict, due_at: datetime, message: str
     return inserted is not None
 
 
-async def list_pending_once(pool: Any, user_id: int, limit: int) -> list[dict]:
+async def list_pending_once(pool: Any, user_id: int, limit: int = 20) -> list[dict]:
     rows = await pool.fetch(
         """
         SELECT id, due_at, message FROM reminders
@@ -160,7 +214,9 @@ async def list_pending_once(pool: Any, user_id: int, limit: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def list_series(pool: Any, user_id: int, kind: str, limit: int) -> list[dict]:
+async def list_series(
+    pool: Any, user_id: int, kind: str = "reminder", limit: int = 50
+) -> list[dict]:
     """Chuỗi của 1 người kèm lần chờ gần nhất (next_id, next_due_at)."""
     rows = await pool.fetch(
         """
@@ -271,6 +327,7 @@ async def last_fired(pool: Any, user_id: int, within: timedelta) -> dict | None:
 
 
 async def get_owned(pool: Any, user_id: int, reminder_id: int) -> dict | None:
+    """1 nhắc việc của chính người đó (nút hoãn dưới tin nhắc Telegram)."""
     row = await pool.fetchrow(
         "SELECT id, message, series_id, fired_at, done_at, sent FROM reminders "
         "WHERE id = $1 AND telegram_user_id = $2",

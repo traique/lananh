@@ -694,19 +694,30 @@ async def run_tick(now: datetime | None = None) -> tuple[int, int]:
 
 async def _loop() -> None:
     trace.detach()
-    last_run = float("-inf")
     while True:
+        started = time.monotonic()
         try:
-            interval = await interval_minutes()
-            if time.monotonic() - last_run >= interval * 60 - _POLL_SEC / 2:
-                last_run = time.monotonic()
-                with trace.job("zalo_signals"):
-                    await run_tick()
+            with trace.job("zalo_signals"):
+                await run_tick()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Vòng quét tín hiệu Zalo lỗi")
-        await asyncio.sleep(_POLL_SEC)
+        await _sleep_until_next_tick(started)
+
+
+async def _sleep_until_next_tick(started: float) -> None:
+    """Ngủ tới lượt quét kế (``interval`` phút tính từ đầu lượt trước). Nhịp đọc từ DB 1
+    lần/lượt; lúc ngủ chỉ xem bản trong RAM (``/tinhieu nhip`` cập nhật ngay) mỗi
+    _POLL_SEC giây - bản cũ thức mỗi 20 s và đọc lại setting mỗi phút."""
+    interval = await interval_minutes()
+    while True:
+        if _interval_cache is not None:
+            interval = _interval_cache[1]
+        remaining = started + interval * 60 - time.monotonic()
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(remaining, _POLL_SEC))
 
 
 def start() -> None:
