@@ -38,7 +38,7 @@ async def current_facts(pool: Any, telegram_user_id: int) -> list[Any]:
     )
 
 
-async def superseded_facts(pool: Any, telegram_user_id: int, limit: int) -> list[Any]:
+async def superseded_facts(pool: Any, telegram_user_id: int, limit: int = 20) -> list[Any]:
     """Giá trị cũ đã bị thay (mới bị thay trước) - để trả lời "trước đây..."."""
     return await pool.fetch(
         f"SELECT {_FACT_COLUMNS}, invalid_at FROM user_facts "
@@ -55,13 +55,15 @@ async def save_fact(
     key: str,
     value: str,
     *,
-    importance: int,
-    category: str,
-    source: str,
-    pinned: bool,
-    protect: bool,
+    importance: int = 2,
+    category: str = "",
+    source: str = "auto",
+    pinned: bool = False,
+    protect: bool = True,
 ) -> str:
-    """Thêm/cập nhật fact hiện hành của ``key`` trong 1 transaction.
+    """Thêm/cập nhật fact hiện hành của ``key`` trong 1 transaction. Trả "added" |
+    "updated" | "unchanged" | "protected"; chạy lại sau lỗi kết nối an toàn (lần 2 thấy
+    đúng giá trị đã ghi -> "unchanged").
 
     Giá trị đổi -> dòng cũ được vô hiệu hoá (giữ lại làm lịch sử, superseded_by
     trỏ dòng mới) rồi chèn dòng mới. ``protect`` (bộ trích xuất tự động): không
@@ -126,7 +128,7 @@ async def save_fact(
 
 
 async def invalidate_fact(
-    pool: Any, telegram_user_id: int, fact_id: int, *, protect: bool
+    pool: Any, telegram_user_id: int, fact_id: int, *, protect: bool = True
 ) -> str | None:
     """Vô hiệu hoá 1 fact hiện hành (giữ làm lịch sử). Trả key, hoặc None nếu
     không có/được bảo vệ."""
@@ -149,6 +151,10 @@ async def forget_key(pool: Any, telegram_user_id: int, key: str) -> int:
         key,
     )
     return _count(result)
+
+
+async def clear_facts(pool: Any, telegram_user_id: int) -> None:
+    await pool.execute("DELETE FROM user_facts WHERE telegram_user_id = $1", telegram_user_id)
 
 
 async def set_pinned(pool: Any, telegram_user_id: int, fact_id: int, pinned: bool) -> bool:
@@ -223,8 +229,51 @@ async def trim_facts(
 # ─── user_memory_highlights ──────────────────────────────────────────────────
 
 
+async def add_highlight(pool: Any, telegram_user_id: int, content: str, keep_n: int) -> None:
+    """Thêm 1 dòng "ý quan trọng" mới, rồi cắt về ``keep_n`` dòng mới nhất/người (dòng
+    cũ nhất tự rơi ra) - xem services/memory_service.py."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "INSERT INTO user_memory_highlights (telegram_user_id, content) VALUES ($1, $2)",
+                telegram_user_id,
+                content,
+            )
+            await conn.execute(
+                """
+                DELETE FROM user_memory_highlights
+                WHERE telegram_user_id = $1
+                  AND id NOT IN (
+                      SELECT id FROM user_memory_highlights
+                      WHERE telegram_user_id = $1
+                      ORDER BY created_at DESC
+                      LIMIT $2
+                  )
+                """,
+                telegram_user_id,
+                keep_n,
+            )
+
+
+async def highlights(pool: Any, telegram_user_id: int, limit: int) -> list[str]:
+    """Nội dung ``limit`` ý gần nhất, CŨ -> MỚI (thứ tự đọc tự nhiên khi chèn vào prompt)."""
+    rows = await pool.fetch(
+        "SELECT content FROM user_memory_highlights WHERE telegram_user_id = $1 "
+        "ORDER BY created_at DESC LIMIT $2",
+        telegram_user_id,
+        limit,
+    )
+    return [row["content"] for row in reversed(rows)]
+
+
+async def clear_highlights(pool: Any, telegram_user_id: int) -> None:
+    await pool.execute(
+        "DELETE FROM user_memory_highlights WHERE telegram_user_id = $1", telegram_user_id
+    )
+
+
 async def highlight_rows(pool: Any, telegram_user_id: int, limit: int) -> list[Any]:
-    """(id, content, created_at) mới nhất trước."""
+    """(id, content, created_at) mới nhất trước - /memory đánh số, /quen xoá theo id."""
     return await pool.fetch(
         "SELECT id, content, created_at FROM user_memory_highlights "
         "WHERE telegram_user_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2",
@@ -300,7 +349,7 @@ async def upsert_session_note(
 
 
 async def session_notes(
-    pool: Any, telegram_user_id: int, limit: int, *, exclude_session_key: int | None = None
+    pool: Any, telegram_user_id: int, limit: int = 10, *, exclude_session_key: int | None = None
 ) -> list[Any]:
     """Ghi chú phiên mới nhất trước (bỏ phiên ``exclude_session_key`` nếu có)."""
     return await pool.fetch(
@@ -360,8 +409,8 @@ def _like_pattern(query: str) -> str:
 
 
 async def search_session_notes(
-    pool: Any, telegram_user_id: int, query: str, limit: int, offset: int
-) -> tuple[int, list[Any]]:
+    pool: Any, telegram_user_id: int, query: str = "", *, limit: int = 20, offset: int = 0
+) -> tuple[int, list[dict]]:
     """(tổng số khớp, 1 trang) ghi chú phiên mới bắt đầu trước - trang /admin "Nhật
     ký". ``query`` rỗng = tất cả; có thì tìm (không phân biệt hoa thường) trong
     tiêu đề, ý chính và tóm tắt."""
@@ -382,10 +431,31 @@ async def search_session_notes(
         limit,
         offset,
     )
-    return int(total or 0), list(rows)
+    return int(total or 0), [dict(row) for row in rows]
+
+
+async def summary(pool: Any, telegram_user_id: int) -> str:
+    row = await pool.fetchrow(
+        "SELECT summary FROM user_memory_summary WHERE telegram_user_id = $1", telegram_user_id
+    )
+    return row["summary"] if row else ""
+
+
+async def set_summary(pool: Any, telegram_user_id: int, summary: str) -> None:
+    await pool.execute(
+        """
+        INSERT INTO user_memory_summary (telegram_user_id, summary, updated_at)
+        VALUES ($1, $2, now())
+        ON CONFLICT (telegram_user_id)
+        DO UPDATE SET summary = EXCLUDED.summary, updated_at = now()
+        """,
+        telegram_user_id,
+        summary,
+    )
 
 
 async def summary_row(pool: Any, telegram_user_id: int) -> Any:
+    """Tóm tắt dài hạn kèm thời điểm cập nhật (trang /admin "Nhật ký")."""
     return await pool.fetchrow(
         "SELECT summary, updated_at FROM user_memory_summary WHERE telegram_user_id = $1",
         telegram_user_id,
@@ -453,7 +523,36 @@ async def users_with_chat_after(pool: Any, since: dt.datetime, limit: int = 50) 
 # ─── notes ───────────────────────────────────────────────────────────────────
 
 
-async def recent_notes(pool: Any, telegram_user_id: int, limit: int, max_chars: int) -> list[Any]:
+async def add_note(
+    pool: Any, telegram_user_id: int, content: str, *, event_key: str | None = None
+) -> None:
+    await pool.execute(
+        """INSERT INTO notes (telegram_user_id, content, event_key) VALUES ($1, $2, $3)
+        ON CONFLICT (event_key) DO NOTHING""",
+        telegram_user_id,
+        content,
+        event_key,
+    )
+
+
+async def notes(pool: Any, telegram_user_id: int, limit: int = 10) -> list[tuple[str, Any]]:
+    """[(content, created_at)] mới nhất trước."""
+    rows = await pool.fetch(
+        """
+        SELECT content, created_at FROM notes
+        WHERE telegram_user_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2
+        """,
+        telegram_user_id,
+        limit,
+    )
+    return [(row["content"], row["created_at"]) for row in rows]
+
+
+async def recent_notes(
+    pool: Any, telegram_user_id: int, limit: int = 200, max_chars: int = 400
+) -> list[Any]:
     """(id, content, created_at) mới nhất trước - quét có trần cho tìm kiếm."""
     return await pool.fetch(
         "SELECT id, left(content, $3) AS content, created_at FROM notes "
@@ -529,7 +628,7 @@ async def expire_events(pool: Any, before: dt.date) -> int:
     )
 
 
-async def users_with_due_events(pool: Any, on_or_before: dt.date, limit: int) -> list[int]:
+async def users_with_due_events(pool: Any, on_or_before: dt.date, limit: int = 20) -> list[int]:
     rows = await pool.fetch(
         "SELECT telegram_user_id, MIN(event_date) AS first_date FROM user_events "
         "WHERE status = 'pending' AND event_date <= $1 "
@@ -597,7 +696,7 @@ async def finish_event_ids(pool: Any, telegram_user_id: int, ids: list[int]) -> 
     )
 
 
-async def list_events(pool: Any, telegram_user_id: int, limit: int) -> list[Any]:
+async def list_events(pool: Any, telegram_user_id: int, limit: int = 20) -> list[Any]:
     return await pool.fetch(
         "SELECT id, title, when_text, event_date, status FROM user_events "
         "WHERE telegram_user_id = $1 ORDER BY event_date DESC, id DESC LIMIT $2",
@@ -606,7 +705,7 @@ async def list_events(pool: Any, telegram_user_id: int, limit: int) -> list[Any]
     )
 
 
-async def events_on(pool: Any, telegram_user_id: int, day: dt.date, limit: int) -> list[Any]:
+async def events_on(pool: Any, telegram_user_id: int, day: dt.date, limit: int = 5) -> list[Any]:
     return await pool.fetch(
         "SELECT id, title, when_text, event_date, status FROM user_events "
         "WHERE telegram_user_id = $1 AND event_date = $2 AND status <> 'done' "
