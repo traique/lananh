@@ -649,14 +649,6 @@ def find_key_levels(
     return KeyLevels(supports=supports, resistances=resistances)
 
 
-def calc_distance_pct(price: float, level: float) -> float | None:
-    """Khoảng cách % từ giá tới 1 mốc bất kỳ (MA20/MA50/support...) - dùng
-    chung cho mọi mốc thay vì viết lại công thức từng nơi."""
-    if level <= 0:
-        return None
-    return round((price - level) / level * 100, 2)
-
-
 @dataclass
 class MAAlignment:
     ma5: float
