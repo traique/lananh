@@ -1,8 +1,56 @@
 # Kế hoạch tối ưu và nâng cấp toàn hệ thống (11/2026)
 
-Kết quả rà soát toàn repo ngày 27/11/2026 trên commit `74f56b1` (bản 1.5.0). Tài liệu
-này là KẾ HOẠCH, chưa sửa dòng code nào. Mỗi mục ghi file:dòng, vấn đề, cách sửa và
+Kết quả rà soát toàn repo ngày 27/11/2026 trên commit `74f56b1` (bản 1.5.0). Phần 1-8 là
+kế hoạch ban đầu; trạng thái thực hiện ở mục 0. Mỗi mục ghi file:dòng, vấn đề, cách sửa và
 độ lớn (S = dưới nửa ngày, M = 1-2 ngày, L = 3 ngày trở lên).
+
+## 0. Trạng thái thực hiện (27/11/2026, bản 1.6.0)
+
+Đã làm toàn bộ 4 đợt trên nhánh `ccr-eaf8b8f9-jdsjbf`, cộng yêu cầu thêm của chủ bot cho
+luồng Zalo → Facebook (hiện tên nhóm thay group ID, lọc trùng giữa các nhóm, tối ưu bộ lọc).
+Chi tiết cho người dùng: mục 1.6.0 trong `CHANGELOG.md`.
+
+| Chỉ số | Trước | Sau |
+|---|---|---|
+| Test (`pytest -q`) | 4.269 | ~4.580 |
+| pyright | 0 lỗi, 887 cảnh báo | 0 lỗi, 383 cảnh báo (`core/` chặn truy cập None) |
+| `/phantich` 1 mã | 5 lượt AI, 12 s nghỉ | 3 lượt, 0 s nghỉ; hỏi lại trong 15 phút: 1 lượt, 0 lần tải dữ liệu |
+| So trùng 1 bài Facebook (800 bài cũ) | 63 ms, chặn event loop | 16 ms, trong thread |
+| `/lich/le-hoi` truyền tải | 120 KB | 26 KB (xem lại: 304) |
+| Admin tự làm mới | 12 request / 30 s | 1 request / 60 s |
+| `core/database.py` | 2.190 dòng | 524 dòng |
+| `services/nl_commands.py` | 1.705 dòng | gói 11 module |
+| Vòng nền khi rảnh | inbox 2×5 s, outbox 15 s, nhắc 30 s, nhóm 60 s, tín hiệu 20 s | inbox 30 s, outbox 90 s + kick, nhắc ngủ tới giờ đến hạn (tối đa 120 s), nhóm 5 phút, tín hiệu theo nhịp cấu hình |
+
+Làm một phần hoặc cố ý không làm:
+
+- **Cần mạng nên chưa làm** (AGENTS.md: phải hỏi chủ repo): nâng `uvicorn` 0.29, nâng
+  `zca-js` (đã có test bề mặt API + checklist trong `zalo-gateway/README.md`), tự host phông
+  chữ web (đã làm cho phông không chặn hiển thị).
+- **Không có gì để làm**: nén PNG không mất dữ liệu (ảnh đã tối ưu sẵn).
+- **Chưa đạt mục tiêu**: `/lich/le-hoi` gzip còn 26 KB (mục tiêu < 20 KB) - muốn thấp hơn phải
+  bớt/chuyển nội dung mô tả lễ hội, là quyết định nội dung.
+- **Giữ lại có lý do**: bảng `telegram_processed_updates`, `zoom_processed_events` (migration
+  008 và `backup.yml` còn dùng), `idx_user_facts_user` (còn truy vấn dùng); không tự xoá `notes`
+  theo tuổi (dữ liệu người dùng).
+- **AI**: dịch, `/gia`, bát tự vẫn đi chuỗi chat (đầu ra dài, không phải việc 1 dòng); JSON có
+  schema mới áp cho router lệnh, chưa cho trích nhớ.
+- **Lượt ảnh Zalo phía Python** vẫn giữ bytes ảnh tới hết lượt (lợi ích nhỏ, phải sửa nhiều
+  module); phía gateway đã nhả sớm.
+- **Tái cấu trúc**: lệnh nhóm Zalo và `/fb_*` chưa sinh từ `command_catalog`;
+  `turn_control.is_readonly` còn danh sách lệnh chỉ đọc riêng.
+
+Việc chủ bot cần làm khi deploy:
+
+1. Migration 032, 033 tự chạy ở lần dùng DB đầu tiên.
+2. Mọi phiên `/admin` bị đăng xuất 1 lần (khoá phiên mới dẫn xuất HKDF từ `ADMIN_PASS` +
+   `SETTINGS_ENC_KEY`).
+3. Nếu Render dashboard đặt tay `LIVE_CHAT_FALLBACK=1`, `ZALO_OUTBOX_POLL_MS=15000`,
+   `ZALO_GROUP_REFRESH_MS=60000` hoặc `REMINDER_CHECK_INTERVAL_SEC=30` thì sửa theo
+   `render.yaml`/`.env.example` (0 / 90000 / 300000 / 120) hoặc xoá để dùng mặc định.
+4. Build lại APK qua GitHub Actions (máy làm việc không có Android SDK).
+5. Gateway Zalo cần Node 22 (image Docker đã dùng Node 22) và mọi lệnh tới cổng điều khiển
+   phải kèm `x-zalo-bridge-secret` (Python đã gửi kèm).
 
 ## 1. Hiện trạng đo được
 
