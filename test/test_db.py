@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core import database as db  # noqa: E402
+from core.db import pool as dbpool  # noqa: E402
 
 
 # ─── _with_reconnect ─────────────────────────────────────────────────────────
@@ -26,9 +27,9 @@ async def test_with_reconnect_thu_lai_1_lan_khi_loi_ket_noi_roi_thanh_cong(monke
     async def fake_reset_pool(failed_pool):
         calls["reset_called"] += 1
 
-    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+    monkeypatch.setattr(dbpool, "_reset_pool", fake_reset_pool)
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def flaky():
         calls["n"] += 1
         if calls["n"] == 1:
@@ -46,9 +47,9 @@ async def test_with_reconnect_khong_nuot_loi_khac_loi_ket_noi(monkeypatch):
     async def fake_reset_pool(failed_pool):
         pytest.fail("_reset_pool không được gọi cho lỗi không phải lỗi kết nối")
 
-    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+    monkeypatch.setattr(dbpool, "_reset_pool", fake_reset_pool)
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def broken():
         raise ValueError("lỗi logic, không phải lỗi kết nối")
 
@@ -66,20 +67,20 @@ async def test_with_reconnect_chi_reset_dung_pool_vua_dung(monkeypatch):
     async def fake_reset_pool(failed_pool):
         reset_args.append(failed_pool)
 
-    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
-    monkeypatch.setattr(db, "_pool", old_pool)
+    monkeypatch.setattr(dbpool, "_reset_pool", fake_reset_pool)
+    monkeypatch.setattr(dbpool, "_pool", old_pool)
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def uses_pool():
         pool = await db.get_pool()
         if pool is old_pool:
-            db._pool = new_pool  # coroutine khác vừa thay pool
+            dbpool._pool = new_pool  # coroutine khác vừa thay pool
             raise asyncpg.InterfaceError("connection is closed")
         return "ok"
 
     assert await uses_pool() == "ok"
     assert reset_args == [old_pool]
-    monkeypatch.setattr(db, "_pool", None)
+    monkeypatch.setattr(dbpool, "_pool", None)
 
 
 @pytest.mark.asyncio
@@ -89,9 +90,9 @@ async def test_with_reconnect_khong_retry_insert_khi_mat_ket_noi_giua_chung(monk
     async def fake_reset_pool(failed_pool):
         return None
 
-    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+    monkeypatch.setattr(dbpool, "_reset_pool", fake_reset_pool)
 
-    @db._with_reconnect(idempotent=False)
+    @dbpool._with_reconnect(idempotent=False)
     async def insert():
         calls["n"] += 1
         raise asyncpg.ConnectionDoesNotExistError("closed in the middle of operation")
@@ -108,9 +109,9 @@ async def test_with_reconnect_van_retry_insert_khi_chua_gui_lenh(monkeypatch):
     async def fake_reset_pool(failed_pool):
         return None
 
-    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+    monkeypatch.setattr(dbpool, "_reset_pool", fake_reset_pool)
 
-    @db._with_reconnect(idempotent=False)
+    @dbpool._with_reconnect(idempotent=False)
     async def insert():
         calls["n"] += 1
         if calls["n"] == 1:
@@ -139,7 +140,7 @@ async def test_bo_sung_gia_ban_khong_retry_khi_co_the_da_commit(monkeypatch):
         calls["n"] += 1
         raise asyncpg.ConnectionDoesNotExistError("closed in the middle of operation")
 
-    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+    monkeypatch.setattr(dbpool, "_reset_pool", fake_reset_pool)
     monkeypatch.setattr(db, "get_pool", fake_pool)
     monkeypatch.setattr(repo, "fill_sale_price", fill)
     with pytest.raises(asyncpg.ConnectionDoesNotExistError):
@@ -168,7 +169,7 @@ async def test_doi_loai_luot_quota_khong_retry_khi_co_the_da_commit(monkeypatch)
         calls["n"] += 1
         raise asyncpg.ConnectionDoesNotExistError("closed in the middle of operation")
 
-    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+    monkeypatch.setattr(dbpool, "_reset_pool", fake_reset_pool)
     monkeypatch.setattr(db, "get_pool", fake_pool)
     monkeypatch.setattr(repo, "relabel_latest", relabel)
     with pytest.raises(asyncpg.ConnectionDoesNotExistError):
@@ -185,10 +186,10 @@ async def test_with_reconnect_chay_lai_1_lan_khi_prepared_statement_cu(monkeypat
     async def fail_reset(failed_pool):
         pytest.fail("không reset pool vì prepared statement cũ")
 
-    monkeypatch.setattr(db, "_reset_pool", fail_reset)
+    monkeypatch.setattr(dbpool, "_reset_pool", fail_reset)
     calls = {"n": 0}
 
-    @db._with_reconnect(idempotent=False)
+    @dbpool._with_reconnect(idempotent=False)
     async def insert():
         calls["n"] += 1
         if calls["n"] == 1:
@@ -197,7 +198,7 @@ async def test_with_reconnect_chay_lai_1_lan_khi_prepared_statement_cu(monkeypat
 
     assert await insert() == "ok" and calls["n"] == 2
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def always_stale():
         calls["n"] += 1
         raise asyncpg.InvalidCachedStatementError("cached plan must not change result type")
@@ -236,30 +237,30 @@ class _HangingPool:
 @pytest.mark.asyncio
 async def test_reset_pool_thay_ket_noi_khong_cho_lenh_dang_chay(monkeypatch):
     pool = _HangingPool()
-    monkeypatch.setattr(db, "_pool", pool)
-    await asyncio.wait_for(db._reset_pool(pool), 1)  # bản cũ treo ở pool.close()
-    assert pool.expired == 1 and db._pool is pool  # giữ pool, chỉ thay kết nối
+    monkeypatch.setattr(dbpool, "_pool", pool)
+    await asyncio.wait_for(dbpool._reset_pool(pool), 1)  # bản cũ treo ở pool.close()
+    assert pool.expired == 1 and dbpool._pool is pool  # giữ pool, chỉ thay kết nối
     # Pool không còn là pool hiện tại (coroutine khác đã thay): không đụng tới.
-    await db._reset_pool(_HangingPool())
+    await dbpool._reset_pool(_HangingPool())
     assert pool.expired == 1
-    monkeypatch.setattr(db, "_pool", None)
+    monkeypatch.setattr(dbpool, "_pool", None)
 
 
 @pytest.mark.asyncio
 async def test_reset_pool_bo_pool_dang_dong(monkeypatch):
     pool = _HangingPool(closing=True)
-    monkeypatch.setattr(db, "_pool", pool)
-    await asyncio.wait_for(db._reset_pool(pool), 1)
-    assert db._pool is None and pool.expired == 0
+    monkeypatch.setattr(dbpool, "_pool", pool)
+    await asyncio.wait_for(dbpool._reset_pool(pool), 1)
+    assert dbpool._pool is None and pool.expired == 0
 
 
 @pytest.mark.asyncio
 async def test_loi_ket_noi_trong_luc_co_lenh_dai_khong_treo_luot_khac(monkeypatch):
     pool = _HangingPool()
-    monkeypatch.setattr(db, "_pool", pool)
+    monkeypatch.setattr(dbpool, "_pool", pool)
     calls = {"n": 0}
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def query():
         await db.get_pool()
         calls["n"] += 1
@@ -269,15 +270,15 @@ async def test_loi_ket_noi_trong_luc_co_lenh_dai_khong_treo_luot_khac(monkeypatc
 
     assert await asyncio.wait_for(query(), 1) == "ok"
     assert pool.expired == 1
-    monkeypatch.setattr(db, "_pool", None)
+    monkeypatch.setattr(dbpool, "_pool", None)
 
 
 @pytest.mark.asyncio
 async def test_close_pool_co_han_roi_cat_han(monkeypatch):
     pool = _HangingPool()
-    monkeypatch.setattr(db, "_pool", pool)
+    monkeypatch.setattr(dbpool, "_pool", pool)
     await asyncio.wait_for(db.close_pool(grace_sec=0.05), 1)
-    assert pool.terminated == 1 and db._pool is None
+    assert pool.terminated == 1 and dbpool._pool is None
 
     class _Quick:
         closed = False
@@ -286,9 +287,9 @@ async def test_close_pool_co_han_roi_cat_han(monkeypatch):
             self.closed = True
 
     quick = _Quick()
-    monkeypatch.setattr(db, "_pool", quick)
+    monkeypatch.setattr(dbpool, "_pool", quick)
     await db.close_pool()
-    assert quick.closed and db._pool is None
+    assert quick.closed and dbpool._pool is None
     await db.close_pool()  # chưa có pool: không làm gì
 
 
@@ -322,7 +323,7 @@ async def test_ap_migration_xong_thi_thay_ket_noi_pool(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_pool_chi_tao_pool_1_lan(monkeypatch):
-    monkeypatch.setattr(db, "_pool", None)
+    monkeypatch.setattr(dbpool, "_pool", None)
     create_calls = {"n": 0}
 
     async def fake_create_pool(*args, **kwargs):
@@ -336,7 +337,7 @@ async def test_get_pool_chi_tao_pool_1_lan(monkeypatch):
 
     assert pool1 is pool2
     assert create_calls["n"] == 1
-    monkeypatch.setattr(db, "_pool", None)  # dọn lại state global cho test khác
+    monkeypatch.setattr(dbpool, "_pool", None)  # dọn lại state global cho test khác
 
 
 @pytest.mark.parametrize(
@@ -351,10 +352,10 @@ async def test_get_pool_chi_tao_pool_1_lan(monkeypatch):
 def test_statement_cache_theo_cong(monkeypatch, dsn, expected):
     """Session Pooler (5432) giữ prepared statement -> cache như mặc định asyncpg;
     transaction pooler (6543) thì không."""
-    monkeypatch.setattr(db.config, "DATABASE_URL", dsn)
-    monkeypatch.setattr(db.config, "DB_STATEMENT_CACHE_SIZE", None)
+    monkeypatch.setattr(dbpool.config, "DATABASE_URL", dsn)
+    monkeypatch.setattr(dbpool.config, "DB_STATEMENT_CACHE_SIZE", None)
     assert db.statement_cache_size() == expected
-    monkeypatch.setattr(db.config, "DB_STATEMENT_CACHE_SIZE", 7)  # env đè
+    monkeypatch.setattr(dbpool.config, "DB_STATEMENT_CACHE_SIZE", 7)  # env đè
     assert db.statement_cache_size() == 7
 
 
@@ -369,25 +370,25 @@ async def test_tao_pool_theo_cau_hinh_va_do_thoi_gian_muon(monkeypatch):
         return await real_create_pool("postgresql://u:p@127.0.0.1:1/x", min_size=0, max_size=2)
 
     monkeypatch.setattr(asyncpg, "create_pool", fake_create_pool)
-    monkeypatch.setattr(db.config, "DATABASE_URL", "postgresql://u:p@host:6543/postgres")
-    monkeypatch.setattr(db.config, "DB_STATEMENT_CACHE_SIZE", None)
-    monkeypatch.setattr(db.config, "DB_POOL_MIN_SIZE", 2)
-    monkeypatch.setattr(db.config, "DB_POOL_MAX_SIZE", 8)
-    pool = await db._create_pool()
+    monkeypatch.setattr(dbpool.config, "DATABASE_URL", "postgresql://u:p@host:6543/postgres")
+    monkeypatch.setattr(dbpool.config, "DB_STATEMENT_CACHE_SIZE", None)
+    monkeypatch.setattr(dbpool.config, "DB_POOL_MIN_SIZE", 2)
+    monkeypatch.setattr(dbpool.config, "DB_POOL_MAX_SIZE", 8)
+    pool = await dbpool._create_pool()
     try:
         assert captured["statement_cache_size"] == 0
         assert (captured["min_size"], captured["max_size"]) == (2, 8)
-        assert isinstance(pool, db._MeteredPool)
+        assert isinstance(pool, dbpool._MeteredPool)
 
         async def slow_acquire(self, _timeout):
             await asyncio.sleep(0.02)
             return "conn"
 
         monkeypatch.setattr(asyncpg.pool.Pool, "_acquire", slow_acquire)
-        monkeypatch.setattr(db, "_SLOW_ACQUIRE_SEC", 0.01)
-        monkeypatch.setattr(db, "_acquire_stats", db._AcquireStats())
+        monkeypatch.setattr(dbpool, "_SLOW_ACQUIRE_SEC", 0.01)
+        monkeypatch.setattr(dbpool, "_acquire_stats", dbpool._AcquireStats())
         assert await pool._acquire(None) == "conn"
-        stats = db._acquire_stats
+        stats = dbpool._acquire_stats
         assert stats.acquires == 1 and stats.slow == 1 and stats.max_wait >= 0.02
         assert stats.last_slow_at is not None
     finally:
@@ -402,24 +403,24 @@ def test_acquire_cua_asyncpg_con_dung_chu_ky():
 
 @pytest.mark.asyncio
 async def test_pool_stats(monkeypatch):
-    monkeypatch.setattr(db, "_pool", None)
-    monkeypatch.setattr(db, "_acquire_stats", db._AcquireStats())
+    monkeypatch.setattr(dbpool, "_pool", None)
+    monkeypatch.setattr(dbpool, "_acquire_stats", dbpool._AcquireStats())
     stats = db.pool_stats()
     assert stats["ready"] is False and stats["size"] is None and stats["in_use"] is None
-    assert stats["max"] == db.config.DB_POOL_MAX_SIZE and stats["slow_waits"] == 0
+    assert stats["max"] == dbpool.config.DB_POOL_MAX_SIZE and stats["slow_waits"] == 0
 
     pool = await asyncpg.create_pool("postgresql://u:p@127.0.0.1:1/x", min_size=0, max_size=3)
     try:
-        monkeypatch.setattr(db, "_pool", pool)
-        db._record_acquire(pool, 2.5, True)
-        db._record_acquire(pool, 0.2, False)
+        monkeypatch.setattr(dbpool, "_pool", pool)
+        dbpool._record_acquire(pool, 2.5, True)
+        dbpool._record_acquire(pool, 0.2, False)
         stats = db.pool_stats()
         assert (stats["ready"], stats["size"], stats["idle"], stats["in_use"]) == (True, 0, 0, 0)
         assert stats["acquires"] == 2 and stats["exhausted"] == 1 and stats["slow_waits"] == 1
         assert stats["max_wait_ms"] == 2500 and stats["last_slow_wait_at"] is not None
     finally:
         await pool.close()
-        monkeypatch.setattr(db, "_pool", None)
+        monkeypatch.setattr(dbpool, "_pool", None)
 
 
 # ─── get_session_messages: ranh giới phiên tính trong SQL ───────────────────

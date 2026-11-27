@@ -2,6 +2,7 @@ from datetime import datetime
 
 import pytest
 
+from core.db import pool as dbpool
 from services import db_maintenance as dm
 
 MIB = dm.MIB
@@ -185,7 +186,7 @@ async def test_ket_noi_ranh_bi_cat_khong_hoan_luot_don_va_vacuum(monkeypatch):
         return None
 
     monkeypatch.setattr(dm.db, "get_pool", get_pool)
-    monkeypatch.setattr(dm.db, "_reset_pool", no_reset)
+    monkeypatch.setattr(dbpool, "_reset_pool", no_reset)
     assert (await dm.measure()).total_bytes == 1
     pool.dead = True
     assert await dm.vacuum_full() == (10 * MIB, 10 * MIB)

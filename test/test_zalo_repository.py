@@ -203,11 +203,12 @@ def flaky(monkeypatch):
     import asyncpg
 
     from core import database
+    from core.db import pool as dbpool
 
     async def no_reset(failed_pool):
         return None
 
-    monkeypatch.setattr(database, "_reset_pool", no_reset)
+    monkeypatch.setattr(dbpool, "_reset_pool", no_reset)
     holder = {}
 
     def make(error=None):

@@ -8,6 +8,7 @@ import asyncpg
 import pytest
 
 from core import config, database as db
+from core.db import pool as dbpool
 
 
 # ─── Circuit breaker trong _with_reconnect ───────────────────────────────────
@@ -18,7 +19,7 @@ def no_pool_reset(monkeypatch):
     async def fake_reset_pool(failed_pool):
         return None
 
-    monkeypatch.setattr(db, "_reset_pool", fake_reset_pool)
+    monkeypatch.setattr(dbpool, "_reset_pool", fake_reset_pool)
     monkeypatch.setattr(config, "DB_BREAKER_OPEN_SEC", 30)
 
 
@@ -26,7 +27,7 @@ def no_pool_reset(monkeypatch):
 async def test_loi_ket_noi_le_duoc_reconnect_chua_khong_mo_breaker(no_pool_reset):
     calls = []
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def query():
         calls.append(1)
         if len(calls) == 1:
@@ -41,7 +42,7 @@ async def test_loi_ket_noi_le_duoc_reconnect_chua_khong_mo_breaker(no_pool_reset
 async def test_reconnect_van_mat_ket_noi_thi_mo_breaker_fail_nhanh(no_pool_reset, monkeypatch):
     calls = []
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def query():
         calls.append(1)
         raise ConnectionRefusedError("db down")
@@ -56,35 +57,35 @@ async def test_reconnect_van_mat_ket_noi_thi_mo_breaker_fail_nhanh(no_pool_reset
     assert len(calls) == 2
 
     # Hết hạn: đúng 1 lệnh thăm dò đi qua; thành công thì đóng breaker.
-    monkeypatch.setattr(db, "_breaker_open_until", 1.0)
+    monkeypatch.setattr(dbpool, "_breaker_open_until", 1.0)
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def healthy():
         return "ok"
 
     assert await healthy() == "ok"
-    assert not db.circuit_open() and db._breaker_open_until == 0.0
+    assert not db.circuit_open() and dbpool._breaker_open_until == 0.0
 
 
 @pytest.mark.asyncio
 async def test_lenh_tham_do_long_lenh_con_khong_tu_chan(no_pool_reset, monkeypatch):
-    monkeypatch.setattr(db, "_breaker_open_until", 1.0)  # đã hết hạn -> chờ thăm dò
+    monkeypatch.setattr(dbpool, "_breaker_open_until", 1.0)  # đã hết hạn -> chờ thăm dò
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def inner():
         return "inner"
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def outer():
         return await inner()
 
     assert await outer() == "inner"
-    assert db._breaker_open_until == 0.0
+    assert dbpool._breaker_open_until == 0.0
 
 
 @pytest.mark.asyncio
 async def test_command_timeout_khong_mo_breaker(no_pool_reset):
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def slow():
         raise TimeoutError("command timeout")
 
@@ -101,7 +102,7 @@ async def test_mo_ket_noi_qua_timeout_mo_breaker_va_bao_db_unavailable(monkeypat
         captured.update(kwargs)
         raise TimeoutError()
 
-    monkeypatch.setattr(db, "_pool", None)
+    monkeypatch.setattr(dbpool, "_pool", None)
     monkeypatch.setattr(config, "DB_BREAKER_OPEN_SEC", 30)
     monkeypatch.setattr(asyncpg, "create_pool", slow_create_pool)
     with pytest.raises(db.DatabaseUnavailableError):
@@ -305,10 +306,10 @@ async def test_add_chat_turn_ghi_2_dong_trong_1_transaction(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_lenh_tham_do_bi_huy_khong_ket_breaker(no_pool_reset, monkeypatch):
-    monkeypatch.setattr(db, "_breaker_open_until", 1.0)  # hết hạn, chờ thăm dò
+    monkeypatch.setattr(dbpool, "_breaker_open_until", 1.0)  # hết hạn, chờ thăm dò
     started = asyncio.Event()
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def hanging():
         started.set()
         await asyncio.sleep(10)
@@ -318,9 +319,9 @@ async def test_lenh_tham_do_bi_huy_khong_ket_breaker(no_pool_reset, monkeypatch)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert db._breaker_probe_inflight is False
+    assert dbpool._breaker_probe_inflight is False
 
-    @db._with_reconnect
+    @dbpool._with_reconnect
     async def healthy():
         return "ok"
 

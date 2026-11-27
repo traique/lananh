@@ -8,6 +8,7 @@ import asyncpg
 import pytest
 
 from core import database as db, settings_cache
+from core.db import pool as dbpool
 
 
 class _SettingsPool:
@@ -142,5 +143,5 @@ async def test_session_zalo_doc_tu_cache_va_tu_noi_lai(settings_pool, monkeypatc
         return None
 
     monkeypatch.setattr(settings_pool, "fetchrow", flaky_fetchrow)
-    monkeypatch.setattr(db, "_reset_pool", no_reset)
+    monkeypatch.setattr(dbpool, "_reset_pool", no_reset)
     assert await zalo_session.load_controller() == "ctl-1" and len(calls) == 2
