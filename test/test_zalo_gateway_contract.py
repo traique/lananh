@@ -4,6 +4,7 @@ báo, style zca-js, trần tin trích dẫn phải khớp hai bên; endpoint POS
 
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 from typing import get_args
@@ -247,19 +248,140 @@ def test_gateway_doc_truong_paired_va_co_route_quen_nguoi_gui():
     assert f'"{zalo_gateway_status.FORGET_PATH}"' in control
 
 
-@pytest.mark.asyncio
-async def test_bao_gateway_quen_nguoi_gui(monkeypatch):
+class _ScopedRecorder:
+    """Thay services.http_client.scoped: ghi lại timeout/header/request, trả response giả
+    (``respond(method, url)`` trả httpx.Response hoặc ném lỗi)."""
+
+    def __init__(self, respond=None):
+        self.calls: list[dict] = []
+        self.respond = respond or (lambda method, url: _response(method, url, 200, {}))
+
+    def __call__(self, **options):
+        # Cùng chữ ký từ khoá với http_client.scoped(timeout=..., headers=...).
+        return self._open(options.get("timeout"), options.get("headers"))
+
+    @contextlib.asynccontextmanager
+    async def _open(self, limit, headers):
+        recorder = self
+
+        class _Client:
+            async def request(self, method, url, **kwargs):
+                recorder.calls.append(
+                    {"method": method, "url": url, "timeout": limit, "headers": headers, **kwargs}
+                )
+                return recorder.respond(method, url)
+
+            async def get(self, url, **kwargs):
+                return await self.request("GET", url, **kwargs)
+
+            async def post(self, url, **kwargs):
+                return await self.request("POST", url, **kwargs)
+
+        yield _Client()
+
+
+def _response(method: str, url: str, status: int, body) -> httpx.Response:
+    return httpx.Response(status, json=body, request=httpx.Request(method, url))
+
+
+@pytest.fixture
+def control(monkeypatch):
+    """Gateway bật, cổng 9911, secret cố định; mọi lệnh gọi control server qua recorder."""
     from channels import zalo_gateway_status
 
-    posted = []
+    recorder = _ScopedRecorder()
+    monkeypatch.setattr(zalo_gateway_status.http_client, "scoped", recorder)
+    monkeypatch.setenv("ZALO_CONTROL_PORT", "9911")
+    monkeypatch.setenv("ZALO_ENABLED", "1")
+    monkeypatch.setenv("ZALO_BRIDGE_SECRET", f"  {SECRET} ")
+    return recorder
 
-    class _Response:
-        def raise_for_status(self):
-            return None
+
+@pytest.mark.asyncio
+async def test_bao_gateway_quen_nguoi_gui(control, monkeypatch):
+    from channels import zalo_gateway_status
+
+    monkeypatch.delenv("ZALO_ENABLED", raising=False)
+    assert await zalo_gateway_status.forget_sender("z-member") is False
+    assert control.calls == []
+
+    monkeypatch.setenv("ZALO_ENABLED", "1")
+    assert await zalo_gateway_status.forget_sender("z-member") is True
+    [call] = control.calls
+    assert (call["method"], call["url"], call["json"]) == (
+        "POST",
+        "http://127.0.0.1:9911/known/forget",
+        {"id": "z-member"},
+    )
+    assert call["headers"] == {"x-zalo-bridge-secret": SECRET}
+
+    def refused(method, url):
+        raise httpx.ConnectError("refused")
+
+    control.respond = refused
+    # Gateway tắt/không trả lời: chỉ log, không làm hỏng /zaloxoa.
+    assert await zalo_gateway_status.forget_sender("z-member") is False
+
+
+@pytest.mark.asyncio
+async def test_kick_outbox_gui_ngay_kem_secret_timeout_ngan_va_khong_bao_gio_nem(
+    control, monkeypatch
+):
+    from channels import zalo_gateway_status
+
+    monkeypatch.delenv("ZALO_ENABLED", raising=False)
+    assert await zalo_gateway_status.kick_outbox() is None
+    assert control.calls == [], "gateway tắt: không gọi"
+
+    monkeypatch.setenv("ZALO_ENABLED", "true")
+    await zalo_gateway_status.kick_outbox()
+    [call] = control.calls
+    assert (call["method"], call["url"]) == ("POST", "http://127.0.0.1:9911/outbox/kick")
+    assert call["headers"] == {"x-zalo-bridge-secret": SECRET}
+    assert call["timeout"].read <= 2 and call["timeout"].connect <= 1
+
+    # Mọi lỗi (gateway chưa chạy, lệch secret, lỗi lạ) bị nuốt: nơi enqueue không hỏng.
+    def refused(method, url):
+        raise httpx.ConnectError("refused")
+
+    def boom(method, url):
+        raise RuntimeError("lỗi lạ")
+
+    for respond in (
+        refused,
+        boom,
+        lambda method, url: _response(method, url, 403, {"error": "forbidden"}),
+    ):
+        control.respond = respond
+        assert await zalo_gateway_status.kick_outbox() is None
+
+
+@pytest.mark.asyncio
+async def test_status_va_nap_lai_nhom_gui_kem_secret(control):
+    from channels import zalo_gateway_status
+
+    control.respond = lambda method, url: _response(method, url, 200, {"state": "connected"})
+    assert (await zalo_gateway_status.snapshot())["state"] == "connected"
+    assert await zalo_gateway_status.refresh_groups() is True
+    assert [(c["method"], c["url"]) for c in control.calls] == [
+        ("GET", "http://127.0.0.1:9911/status"),
+        ("POST", "http://127.0.0.1:9911/groups/refresh"),
+    ]
+    assert all(c["headers"] == {"x-zalo-bridge-secret": SECRET} for c in control.calls)
+    # Gateway trả 403 (lệch secret): /admin coi như không với tới, không ném.
+    control.respond = lambda method, url: _response(method, url, 403, {"error": "forbidden"})
+    assert await zalo_gateway_status.snapshot() == {"enabled": True, "reachable": False}
+
+
+@pytest.mark.asyncio
+async def test_list_groups_gui_kem_secret(control, monkeypatch):
+    from channels import zalo_gateway_status
+
+    seen = {}
 
     class _Client:
         def __init__(self, *args, **kwargs):
-            pass
+            seen.update(kwargs)
 
         async def __aenter__(self):
             return self
@@ -267,23 +389,43 @@ async def test_bao_gateway_quen_nguoi_gui(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-        async def post(self, url, json):
-            posted.append((url, json))
-            return _Response()
+        async def get(self, url):
+            return _response("GET", url, 200, {"total": 0, "groups": []})
 
     monkeypatch.setattr(zalo_gateway_status.httpx, "AsyncClient", _Client)
-    monkeypatch.setenv("ZALO_CONTROL_PORT", "9911")
-    monkeypatch.delenv("ZALO_ENABLED", raising=False)
-    assert await zalo_gateway_status.forget_sender("z-member") is False
-    assert posted == []
+    assert await zalo_gateway_status.list_groups() == ([], 0)
+    assert seen["headers"] == {"x-zalo-bridge-secret": SECRET}
 
-    monkeypatch.setenv("ZALO_ENABLED", "1")
-    assert await zalo_gateway_status.forget_sender("z-member") is True
-    assert posted == [("http://127.0.0.1:9911/known/forget", {"id": "z-member"})]
 
-    async def refused(self, url, json):
-        raise httpx.ConnectError("refused")
+@pytest.mark.asyncio
+async def test_lenh_zalo_telegram_goi_control_server_kem_secret_dung_cong(control):
+    """/zalo, /zalologout (handlers/zalo_login.py) trước đây gọi cứng cổng 9901 và không
+    kèm secret - control server giờ từ chối mọi lệnh gọi thiếu secret."""
+    from handlers import zalo_login
 
-    monkeypatch.setattr(_Client, "post", refused)
-    # Gateway tắt/không trả lời: chỉ log, không làm hỏng /zaloxoa.
-    assert await zalo_gateway_status.forget_sender("z-member") is False
+    control.respond = lambda method, url: _response(method, url, 200, {"ok": True})
+    assert await zalo_login._json("POST", "/logout") == {"ok": True}
+    [call] = control.calls
+    assert (call["method"], call["url"]) == ("POST", "http://127.0.0.1:9911/logout")
+    assert call["headers"] == {"x-zalo-bridge-secret": SECRET}
+    control.respond = lambda method, url: _response(method, url, 403, {"error": "forbidden"})
+    with pytest.raises(httpx.HTTPStatusError):
+        await zalo_login._json("GET", "/status")
+
+
+def test_control_server_va_python_cung_header_secret_va_route():
+    """Header xác thực, route kick outbox và route/trường known-senders phải khớp hai bên."""
+    from channels import router as zalo_router
+    from channels import zalo_gateway_status
+
+    control = (GATEWAY_SRC / "control-server.ts").read_text(encoding="utf-8")
+    header = re.search(r'export const CONTROL_SECRET_HEADER = "([^"]+)";', control)
+    assert header and header.group(1) == zalo_gateway_status.SECRET_HEADER
+    assert f'"{zalo_gateway_status.KICK_OUTBOX_PATH}"' in control
+    bridge = (GATEWAY_SRC / "bridge.ts").read_text(encoding="utf-8")
+    assert "/known-senders/${encodeURIComponent(c.accountId)}" in bridge
+    assert "sender_ids" in bridge
+    match = re.search(r"export const MAX_KNOWN_SENDERS = (\d+);", bridge)
+    assert match and int(match.group(1)) == 500
+    paths = {route.path for route in zalo_router.router.routes}
+    assert "/internal/zalo/known-senders/{account_id}" in paths
