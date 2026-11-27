@@ -136,3 +136,26 @@ async def test_lenh_admin_bao_da_luu(monkeypatch):
     state = ProviderChainState()
     assert await state.set_router9_enabled(True) is True
     assert saved[provider_state_module._STATE_ROUTER9_ENABLED] == "1"
+
+
+async def test_cooldown_whisper_va_tts_nap_lai_sau_restart(monkeypatch):
+    until = str(time.time() + 600)
+    store = {
+        "provider_api_exhausted_until_groq_stt": until,
+        "provider_api_exhausted_until_tts_api1": until,
+        "provider_cooldown_reason_tts_api1": "hết quota NGÀY",
+    }
+
+    async def get_setting(key):
+        return store.get(key)
+
+    monkeypatch.setattr(db, "get_setting", get_setting)
+    assert orchestrator.STT_COOLDOWN_KEY in provider_state_module._COOLDOWN_PROVIDERS
+    for idx in (1, 2):
+        key = f"{orchestrator.TTS_COOLDOWN_PREFIX}api{idx}"
+        assert key in provider_state_module._COOLDOWN_PROVIDERS
+    state = ProviderChainState()
+    await state.load()
+    assert state.api_in_cooldown("groq_stt") and state.api_in_cooldown("tts_api1")
+    assert not state.api_in_cooldown("tts_api2")
+    assert state.cooldown_reasons["tts_api1"] == "hết quota NGÀY"

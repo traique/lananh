@@ -32,6 +32,7 @@ _STATE_COOLDOWN_REASON_PREFIX = "provider_cooldown_reason_"
 # "groq_search"/"router9_search": cooldown RIÊNG của model tự tra web
 # (GROQ_REALTIME_MODEL, ROUTER9_WEB_SEARCH_MODEL - bucket rate-limit khác model
 # chat) - 429 lúc tra web không khoá luôn chat/utility, và ngược lại.
+# Mọi khoá cooldown phải có ở đây để được nạp lại sau restart Render.
 _COOLDOWN_PROVIDERS = (
     "groq",
     "openrouter",
@@ -43,6 +44,11 @@ _COOLDOWN_PROVIDERS = (
     # Gemini Live (ai/live_client.py): quota tách hẳn chat api1/api2.
     "live_api1",
     "live_api2",
+    # Whisper của Groq (orchestrator.STT_COOLDOWN_KEY) và Gemini TTS
+    # (orchestrator.TTS_COOLDOWN_PREFIX + api1/api2): bucket quota riêng.
+    "groq_stt",
+    "tts_api1",
+    "tts_api2",
 )
 # router9 lỗi 5xx/mất kết nối: chỉ khai tử khi đủ ROUTER9_HEALTH_STRIKES lỗi
 # trong ROUTER9_HEALTH_WINDOW_SEC (timeout và 401/403 vẫn khai tử ngay).
