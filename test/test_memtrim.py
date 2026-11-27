@@ -4,6 +4,7 @@ sửa sau khi chạy thật 27/10 (Render free 512 MB)."""
 
 import asyncio
 import gc
+import importlib.util
 import json
 import logging
 import subprocess
@@ -193,3 +194,45 @@ def test_viec_nen_gia_khong_nap_pandas_vnstock():
     assert proc.returncode == 0, proc.stderr[-800:]
     result = json.loads(proc.stdout.strip().splitlines()[-1])
     assert result["pandas_loaded"] is False and result["vnstock_loaded"] is False
+
+
+def test_kich_ban_luot_chat_chay_tron_duong_khong_mang():
+    """Kịch bản đo RAM 1 lượt chat (provider 9Router giả qua MockTransport, DB giả)
+    phải chạy hết đường thật mà không gọi mạng - không để kịch bản mục ruỗng."""
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "benchmark_memory.py"), "--run=luot_chat"],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        timeout=120,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-800:]
+    result = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert result["provider_ok"] is True and len(result["turn_ms"]) == 5
+    assert result["rss_mib"] is None or result["rss_mib"] >= result["after_import_mib"] - 5
+    assert result["pandas_loaded"] is False
+    # Lượt chat thường không được log cảnh báo/lỗi (DB giả trả id, câu không cần tra web).
+    assert " - WARNING - " not in proc.stderr and " - ERROR - " not in proc.stderr
+
+
+def test_doc_ket_qua_importtime():
+    spec = importlib.util.spec_from_file_location(
+        "benchmark_memory", ROOT / "scripts" / "benchmark_memory.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    stderr = "\n".join(
+        [
+            "import time: self [us] | cumulative | imported package",
+            "import time:       120 |        120 |     core.config",
+            "import time:      3000 |       3120 |   services.tools",
+            "dòng log khác",
+            "import time:       500 |       3620 | web",
+        ]
+    )
+    assert module.parse_importtime(stderr) == [
+        ("core.config", 120, 120),
+        ("services.tools", 3000, 3120),
+        ("web", 500, 3620),
+    ]
