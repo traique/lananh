@@ -6,7 +6,6 @@ câu SQL)."""
 import asyncio
 import inspect
 import sys
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import asyncpg
@@ -423,20 +422,9 @@ async def test_pool_stats(monkeypatch):
         monkeypatch.setattr(db, "_pool", None)
 
 
-# ─── get_session_messages: ranh giới phiên theo session_timeout_sec ─────────
-
-
-class _FakePool:
-    def __init__(self, rows):
-        self._rows = rows
-
-    async def fetch(self, query, *args):
-        return self._rows
-
-
-def _row(role: str, content: str, created_at: datetime) -> dict:
-    # asyncpg trả về Record hỗ trợ r["col"] - dict cũng hỗ trợ __getitem__ tương tự.
-    return {"role": role, "content": content, "created_at": created_at}
+# ─── get_session_messages: ranh giới phiên tính trong SQL ───────────────────
+# Ngữ nghĩa (cắt ở khoảng nghỉ, tin mới nhất quá cũ -> rỗng, đúng k dòng) được kiểm
+# trên Postgres thật ở test/test_db_sql.py; ở đây chỉ kiểm phần Python.
 
 
 @pytest.mark.asyncio
@@ -450,53 +438,26 @@ async def test_get_session_messages_k_khong_duong_tra_rong_khong_dong_pool(monke
 
 
 @pytest.mark.asyncio
-async def test_get_session_messages_cat_dung_ranh_gioi_phien(monkeypatch):
-    now = datetime.now(timezone.utc)
-    # Thứ tự trả về từ DB: MỚI -> CŨ (ORDER BY id DESC), giống hành vi thật.
-    rows = [
-        _row("model", "tin moi nhat", now - timedelta(seconds=10)),
-        _row("user", "tin truoc do 30s", now - timedelta(seconds=40)),
-        # Khoảng nghỉ > session_timeout_sec (3600s) tại đây -> phiên cũ dừng lại.
-        _row("model", "tin phien truoc, qua cu", now - timedelta(hours=5)),
-        _row("user", "tin cang cu hon", now - timedelta(hours=6)),
-    ]
-    monkeypatch.setattr(db, "get_pool", _fake_get_pool_factory(rows))
+async def test_get_session_messages_doc_dung_k_dong_va_giu_thu_tu_sql(monkeypatch):
+    calls = []
 
-    result = await db.get_session_messages(telegram_user_id=1, k=10, session_timeout_sec=3600)
+    class Pool:
+        async def fetch(self, query, *args):
+            calls.append((query, args))
+            # SQL đã cắt phiên và sắp CŨ -> MỚI; Python chỉ đổi sang (role, content).
+            return [
+                {"role": "user", "content": "hỏi"},
+                {"role": "model", "content": "đáp"},
+            ]
 
-    # Chỉ lấy 2 tin trong cùng phiên (trước điểm nghỉ >1h), theo thứ tự CŨ -> MỚI.
-    assert result == [
-        ("user", "tin truoc do 30s"),
-        ("model", "tin moi nhat"),
-    ]
+    pool = Pool()
 
-
-@pytest.mark.asyncio
-async def test_get_session_messages_tin_gan_nhat_da_qua_han_tra_rong(monkeypatch):
-    now = datetime.now(timezone.utc)
-    rows = [_row("model", "tin cu", now - timedelta(hours=2))]
-    monkeypatch.setattr(db, "get_pool", _fake_get_pool_factory(rows))
-
-    result = await db.get_session_messages(telegram_user_id=1, k=10, session_timeout_sec=3600)
-    assert result == []
-
-
-@pytest.mark.asyncio
-async def test_get_session_messages_gioi_han_dung_k(monkeypatch):
-    now = datetime.now(timezone.utc)
-    # 5 tin cùng phiên (cách nhau 10s, không vượt session_timeout_sec), giới hạn k=2.
-    rows = [_row("model", f"tin {i}", now - timedelta(seconds=10 * i)) for i in range(5)]
-    monkeypatch.setattr(db, "get_pool", _fake_get_pool_factory(rows))
-
-    result = await db.get_session_messages(telegram_user_id=1, k=2, session_timeout_sec=3600)
-    assert len(result) == 2
-    assert result == [("model", "tin 1"), ("model", "tin 0")]  # cũ -> mới, trong 2 tin mới nhất
-
-
-def _fake_get_pool_factory(rows):
-    pool = _FakePool(rows)
-
-    async def fake_get_pool():
+    async def get_pool():
         return pool
 
-    return fake_get_pool
+    monkeypatch.setattr(db, "get_pool", get_pool)
+    result = await db.get_session_messages(telegram_user_id=7, k=20, session_timeout_sec=3600)
+    assert result == [("user", "hỏi"), ("model", "đáp")]
+    query, args = calls[0]
+    assert args == (7, 20, 3600)  # LIMIT đúng k, không còn đọc dư max(k*4, 40) dòng
+    assert "lag(created_at)" in query

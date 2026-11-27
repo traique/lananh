@@ -5,7 +5,7 @@ import contextvars
 import functools
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 from urllib.parse import urlsplit
 
@@ -933,37 +933,12 @@ async def get_session_messages(
     phiên cũ đã kết thúc và KHÔNG lấy các tin trước điểm nghỉ đó."""
     if k <= 0:
         return []
-    pool = await get_pool()
-    # Lấy dư hơn k để có đủ dữ liệu xác định điểm cắt phiên, rồi mới trim về k.
-    rows = await pool.fetch(
-        """
-        SELECT role, content, created_at
-        FROM chat_messages
-        WHERE telegram_user_id = $1
-        ORDER BY id DESC
-        LIMIT $2
-        """,
-        telegram_user_id,
-        max(k * 4, 40),
+    from core.repositories import chat_history
+
+    rows = await chat_history.session_messages(
+        await get_pool(), telegram_user_id, k, session_timeout_sec
     )
-    if not rows:
-        return []
-
-    now = datetime.now(timezone.utc)
-    if (now - rows[0]["created_at"]).total_seconds() > session_timeout_sec:
-        # Tin gần nhất đã quá cũ -> phiên trước đã hết hạn, bắt đầu phiên mới trống.
-        return []
-
-    session_rows = [rows[0]]
-    for i in range(1, len(rows)):
-        gap = (rows[i - 1]["created_at"] - rows[i]["created_at"]).total_seconds()
-        if gap > session_timeout_sec:
-            break
-        session_rows.append(rows[i])
-
-    session_rows = session_rows[:k]
-    session_rows.reverse()  # cũ -> mới
-    return [(r["role"], r["content"]) for r in session_rows]
+    return [(r["role"], r["content"]) for r in rows]
 
 
 @_with_reconnect
