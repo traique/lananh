@@ -43,11 +43,12 @@ services:
         sync: false
       - key: GOOGLE_AI_STUDIO_MODEL
         value: gemini-3.5-flash-lite
-      # Gemini Live (key api1/api2, cooldown riêng): provider chat dự phòng cuối chuỗi
-      # + bộ đọc /noi (VOICE_ENGINE). Hạn mức free tier chưa được Google công bố -
-      # xem aistudio.google.com/rate-limit; /status đếm số lượt Live trong ngày.
+      # Gemini Live (key api1/api2, cooldown riêng): bộ đọc /noi (VOICE_ENGINE); làm
+      # provider chat dự phòng cuối chuỗi chỉ khi LIVE_CHAT_FALLBACK=1 (từ 11/2026 tắt:
+      # lượt chữ đi WebSocket âm thanh là đường chậm, tốn RAM nhất). Hạn mức free tier chưa
+      # được Google công bố - xem aistudio.google.com/rate-limit; /status đếm lượt Live.
       - key: LIVE_CHAT_FALLBACK
-        value: "1"
+        value: "0"
       - key: LIVE_MODEL
         value: "gemini-3.8-live"
       - key: LIVE_MAX_SESSIONS
