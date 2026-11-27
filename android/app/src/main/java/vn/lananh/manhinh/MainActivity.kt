@@ -258,9 +258,11 @@ class MainActivity : Activity() {
         val server = prefs.serverUrl
         val token = prefs.token
         val place = prefs.place
+        // ETag của bản đang giữ: máy chủ trả 304 (không body) nếu dữ liệu không đổi.
+        val etag = data?.optString("_etag").orEmpty()
         io.execute {
             val result = try {
-                Result.success(Api.dashboard(ctx, server, token, place))
+                Result.success(Api.dashboard(ctx, server, token, place, etag))
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -268,13 +270,24 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun onRefreshed(result: Result<JSONObject>) {
+    private fun onRefreshed(result: Result<Fetched>) {
         loading = false
         if (isDestroyed) return
-        result.onSuccess { fresh ->
-            val merged = Store.merge(data, fresh)
+        result.onSuccess { got ->
+            val fresh = got.json
+            val current = data
+            val merged = when {
+                fresh != null -> Store.merge(current, fresh)
+                current != null -> current // 304: bản đang giữ vẫn đúng
+                else -> {
+                    // 304 mà không còn bản nào trong tay (hiếm): lấy lại bản đầy đủ sau ít phút.
+                    if (resumed) scheduleRefresh(RETRY_MS)
+                    return@onSuccess
+                }
+            }
             lastOkAt = System.currentTimeMillis()
             merged.put("_fetchedAt", lastOkAt)
+            merged.put("_etag", got.etag)
             data = merged
             errorText = null
             val text = merged.toString()

@@ -76,7 +76,12 @@ ngắt quãng.
 ## 4. Mạng, pin, tải máy chủ
 
 - App chỉ gọi API khi màn hình đang sáng: 1 request (~5-20 KB, nén gzip) mỗi 5 phút,
-  lỗi thì thử lại sau 1 phút. Màn hình tắt = không gọi mạng.
+  lỗi thì thử lại sau 1 phút. Màn hình tắt = không gọi mạng. App gửi lại ETag của bản
+  đang giữ (`If-None-Match`): dữ liệu không đổi thì máy chủ trả 304 không body.
+- Chỉ HTTPS: địa chỉ gõ `http://...` (hoặc lưu từ bản app cũ) tự đổi thành `https://`,
+  manifest đặt `usesCleartextTraffic="false"`.
+- Một IP gửi token sai 20 lần trong 10 phút thì bị từ chối (429) tới hết cửa sổ; màn hình
+  đã ghép và vừa cập nhật được trong vài giờ qua trên cùng mạng vẫn chạy bình thường.
 - Máy chủ cache cả bản trả về 60 giây và từng nguồn (vàng/tỷ giá 10 phút, xăng 1 giờ,
   thời tiết 10 phút, tin 15 phút, giá cổ phiếu 2 phút trong phiên / 30 phút ngoài phiên),
   không gọi AI - xem `services/app_dashboard.py`.

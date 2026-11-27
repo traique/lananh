@@ -15,6 +15,12 @@ vượt trần thì từ chối mọi lượt ghép tới khi cửa sổ trôi q
 Xác thực mỗi 5 phút: cache RAM có trần ``_AUTH_CACHE_MAX`` thiết bị, đọc lại DB sau
 ``_AUTH_TTL_SEC``. DB chập chờn thì dùng tiếp bản cache cũ (tối đa ``_AUTH_STALE_SEC``)
 để màn hình không tắt dữ liệu chỉ vì Supabase lỗi thoáng qua.
+
+Token sai (401): hash token DB báo không có được nhớ ``_UNKNOWN_TTL_SEC`` giây (trần
+``_UNKNOWN_MAX`` hash) để app cũ gửi lặp token đã thu hồi không đọc DB mỗi lần; mỗi IP
+chỉ được sai ``_AUTH_FAIL_LIMIT`` lần trong ``_AUTH_FAIL_WINDOW_SEC`` (bảng IP có trần
+``_AUTH_FAIL_MAX_IPS``), quá thì ``AuthLocked`` (429) mà không đọc DB. Thiết bị đã xác
+thực gần đây vẫn qua được dù cùng IP (màn hình thật chung mạng với máy gửi token sai).
 """
 
 from __future__ import annotations
@@ -59,6 +65,15 @@ _AUTH_STALE_SEC = 6 * 3600
 _AUTH_CACHE_MAX = 16
 # hash token -> (lúc đọc DB, thiết bị)
 _auth_cache: collections.OrderedDict[str, tuple[float, Device]] = collections.OrderedDict()
+# hash token DB báo không có -> lúc đọc DB (cache âm).
+_UNKNOWN_TTL_SEC = 60
+_UNKNOWN_MAX = 64
+_unknown_tokens: collections.OrderedDict[str, float] = collections.OrderedDict()
+# IP -> các mốc trả 401 gần đây.
+_AUTH_FAIL_LIMIT = 20
+_AUTH_FAIL_WINDOW_SEC = 600
+_AUTH_FAIL_MAX_IPS = 256
+_auth_failures: collections.OrderedDict[str, collections.deque[float]] = collections.OrderedDict()
 
 
 class PairError(Exception):
@@ -67,6 +82,14 @@ class PairError(Exception):
         self.code = code
         self.message = message
         self.status = status
+
+
+class AuthLocked(Exception):
+    """IP gửi token sai quá nhiều lần: từ chối (429) mà không đọc DB."""
+
+    def __init__(self, retry_after: int):
+        super().__init__("too many failed device authentications")
+        self.retry_after = retry_after
 
 
 def _hash(value: str) -> str:
@@ -89,6 +112,8 @@ def display_code(code: str) -> str:
 def clear_cache() -> None:
     _auth_cache.clear()
     _pair_failures.clear()
+    _unknown_tokens.clear()
+    _auth_failures.clear()
 
 
 def _prune_failures(now: float) -> None:
@@ -123,19 +148,69 @@ def _cache_put(key: str, device: Device, at: float) -> None:
         _auth_cache.popitem(last=False)
 
 
-async def authenticate(authorization: str) -> Device | None:
-    """Header ``Authorization: Bearer la_...`` -> thiết bị, hoặc None."""
+def _recent_failures(ip: str, now: float) -> collections.deque[float]:
+    times = _auth_failures.get(ip) or collections.deque()
+    while times and now - times[0] > _AUTH_FAIL_WINDOW_SEC:
+        times.popleft()
+    return times
+
+
+def _locked_for(ip: str, now: float) -> int:
+    """Số giây IP còn bị chặn (0 = không chặn)."""
+    if not ip:
+        return 0
+    times = _recent_failures(ip, now)
+    if len(times) < _AUTH_FAIL_LIMIT:
+        return 0
+    return max(1, int(_AUTH_FAIL_WINDOW_SEC - (now - times[0])) + 1)
+
+
+def _record_failure(ip: str, now: float) -> None:
+    if not ip:
+        return
+    times = _recent_failures(ip, now)
+    times.append(now)
+    _auth_failures[ip] = times
+    _auth_failures.move_to_end(ip)  # IP vừa sai đứng cuối; bảng đầy thì bỏ IP cũ nhất
+    while len(_auth_failures) > _AUTH_FAIL_MAX_IPS:
+        _auth_failures.popitem(last=False)
+
+
+def _remember_unknown(key: str, now: float) -> None:
+    _unknown_tokens[key] = now
+    _unknown_tokens.move_to_end(key)
+    while len(_unknown_tokens) > _UNKNOWN_MAX:
+        _unknown_tokens.popitem(last=False)
+
+
+async def authenticate(authorization: str, ip: str = "") -> Device | None:
+    """Header ``Authorization: Bearer la_...`` -> thiết bị, hoặc None (401).
+
+    ``ip``: IP client (web_admin.client_ip) cho giới hạn số lần sai; raise
+    ``AuthLocked`` khi IP đó đã sai quá ``_AUTH_FAIL_LIMIT`` lần trong cửa sổ."""
     scheme, _, token = str(authorization or "").partition(" ")
     token = token.strip()
-    if scheme.lower() != "bearer" or not token.startswith(TOKEN_PREFIX):
-        return None
-    if len(token) > _TOKEN_MAX_LEN:
-        return None
-    key = _hash(token)
+    well_formed = (
+        scheme.lower() == "bearer"
+        and token.startswith(TOKEN_PREFIX)
+        and len(token) <= _TOKEN_MAX_LEN
+    )
+    key = _hash(token) if well_formed else ""
     now = time.monotonic()
-    hit = _auth_cache.get(key)
+    hit = _auth_cache.get(key) if key else None
     if hit is not None and now - hit[0] < _AUTH_TTL_SEC:
         return hit[1]
+    locked = _locked_for(ip, now)
+    if locked:
+        # Thiết bị thật đã xác thực trong vài giờ qua vẫn qua (token thu hồi đã bị xoá
+        # khỏi cache nên không lọt); còn lại từ chối mà không đọc DB.
+        if hit is not None and now - hit[0] < _AUTH_STALE_SEC:
+            return hit[1]
+        raise AuthLocked(locked)
+    seen = _unknown_tokens.get(key) if key else None
+    if not key or (seen is not None and now - seen < _UNKNOWN_TTL_SEC):
+        _record_failure(ip, now)
+        return None
     try:
         row = await db.app_device_by_token(key)
     except Exception:
@@ -147,7 +222,10 @@ async def authenticate(authorization: str) -> Device | None:
         raise
     if row is None:
         _auth_cache.pop(key, None)
+        _remember_unknown(key, now)
+        _record_failure(ip, now)
         return None
+    _unknown_tokens.pop(key, None)
     device = Device(int(row["id"]), int(row["telegram_user_id"]), str(row["name"]))
     _cache_put(key, device, now)
     return device

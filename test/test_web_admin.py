@@ -9,6 +9,8 @@ from starlette.requests import Request
 import web_admin
 
 ROOT = Path(__file__).resolve().parent.parent
+# Bí mật server cho khoá ký cookie phiên (HKDF cùng ADMIN_PASS); dạng như Fernet key.
+ENC_KEY = "dGVzdC1vbmx5LWtleS1mb3ItYWRtaW4tc2Vzc2lvbnM="
 
 
 @pytest.fixture
@@ -43,6 +45,7 @@ def sleeps(monkeypatch):
 async def client(monkeypatch, settings_store, sleeps):
     monkeypatch.setattr(web_admin.config, "ADMIN_USER", "admin")
     monkeypatch.setattr(web_admin.config, "ADMIN_PASS", "pass")
+    monkeypatch.setattr(web_admin.config, "SETTINGS_ENC_KEY", ENC_KEY)
     monkeypatch.setattr(web_admin, "_login_limiter", web_admin.LoginRateLimiter(max_failures=3))
     monkeypatch.setattr(web_admin, "_login_slowdown", web_admin.LoginSlowdown())
     monkeypatch.setattr(web_admin, "_session_epoch", web_admin.SessionEpoch())
@@ -408,3 +411,221 @@ async def test_admin_sua_tri_nho_can_dang_nhap_va_kiem_tham_so(client, monkeypat
     missing = {**body, "id": 8}
     assert (await client.post("/admin/api/memory/item", json=missing)).status_code == 404
     assert calls == [(-3, "forget", "fact", 7), (-3, "forget", "fact", 8)]
+
+
+# ─── Tổng quan 1 request (/admin/api/overview) ───────────────────────────────
+
+
+@pytest.fixture
+def overview_sources(monkeypatch):
+    """Nguồn số liệu giả của từng phần tổng quan, đếm số lần đọc."""
+    import collections
+
+    from services import background_jobs
+
+    calls: collections.Counter = collections.Counter()
+
+    def fake(name, value):
+        async def load(*args):
+            calls[name] += 1
+            return value
+
+        return load
+
+    for attr, name, value in (
+        ("_usage_rows", "usage", [{"label": "Chủ bot", "calls": 3}]),
+        ("_usage_model_rows", "models", []),
+        ("_outcome_rows", "outcomes", []),
+        ("_burn_data", "burn", {"alert_pct": 80, "providers": []}),
+        ("_turns_data", "turns", {"recent": [], "summary": []}),
+        ("_usage_timeline", "daily", {"bucket": "day", "points": []}),
+        ("_db_usage_data", "db", {"database_mib": 12.5}),
+        ("_watchdog_data", "watchdog", {"errors": {"today_total": 0}}),
+    ):
+        monkeypatch.setattr(web_admin, attr, fake(name, value))
+    monkeypatch.setattr(web_admin.market_page, "status", fake("market", {"busy": False}))
+    monkeypatch.setattr(background_jobs, "admin_overview", fake("jobs", {"jobs": []}))
+    monkeypatch.setattr(
+        web_admin.orchestrator, "get_provider_state_snapshot", lambda: {"active_provider": "groq"}
+    )
+    monkeypatch.setattr(web_admin.memory_stats, "snapshot", lambda: {"python": {"rss_mib": 90}})
+    monkeypatch.setattr(web_admin, "_overview_cache", collections.OrderedDict())
+    return calls
+
+
+def _age_cache(seconds: float) -> None:
+    """Lùi mốc đọc của mọi phần đang cache (giả lập thời gian trôi)."""
+    for key, (at, value) in list(web_admin._overview_cache.items()):
+        web_admin._overview_cache[key] = (at - seconds, value)
+
+
+async def test_overview_mot_request_du_moi_phan_va_cache_theo_phan(client, overview_sources):
+    calls = overview_sources
+    assert (await client.get("/admin/api/overview")).status_code == 403
+    await _login(client)
+    body = (await client.get("/admin/api/overview?hours=168")).json()
+    sections = ("state", "market", "usage", "models", "outcomes", "burn", "turns", "daily")
+    for name in (*sections, "ram", "db", "watchdog", "jobs"):
+        assert body[name] is not None, name
+    assert body["errors"] == {} and body["hours"] == 168
+    assert body["state"] == {"active_provider": "groq"} and body["db"] == {"database_mib": 12.5}
+    # Lượt tự làm mới kế tiếp: thống kê/DB/giám sát lấy cache, phần trong RAM đọc mới.
+    again = (await client.get("/admin/api/overview?hours=168")).json()
+    assert again["usage"] == body["usage"]
+    assert calls["usage"] == calls["db"] == calls["watchdog"] == calls["jobs"] == 1
+    assert calls["market"] == 2
+    # Đổi khoảng thời gian: chỉ phần theo ?hours= đọc lại.
+    await client.get("/admin/api/overview?hours=24")
+    assert calls["usage"] == calls["daily"] == 2 and calls["db"] == 1
+    # Sau 61 giây: thống kê đọc lại, DB/giám sát/việc nền (5 phút) vẫn cache.
+    _age_cache(61)
+    aged = (await client.get("/admin/api/overview?hours=168")).json()
+    assert calls["usage"] == 3 and calls["burn"] == 2 and calls["db"] == 1
+    assert aged["ages"]["db"] >= 61 and "usage" not in aged["ages"]
+    _age_cache(301)
+    await client.get("/admin/api/overview?hours=168")
+    assert calls["db"] == calls["watchdog"] == calls["jobs"] == 2
+    # Nút Làm mới (?fresh=1): đo lại mọi phần.
+    await client.get("/admin/api/overview?hours=168&fresh=1")
+    assert calls["db"] == 3 and calls["usage"] == 5
+    # Cache có trần dù gọi đủ kiểu ?hours=.
+    for hours in range(1, 60):
+        await client.get(f"/admin/api/overview?hours={hours}")
+    assert len(web_admin._overview_cache) <= web_admin._OVERVIEW_CACHE_MAX
+
+
+async def test_overview_mot_phan_loi_khong_hong_ca_trang(client, overview_sources, monkeypatch):
+    async def broken():
+        raise RuntimeError("quét bảng ảnh lỗi")
+
+    monkeypatch.setattr(web_admin, "_db_usage_data", broken)
+    await _login(client)
+    body = (await client.get("/admin/api/overview")).json()
+    assert body["db"] is None and body["errors"] == {"db": "RuntimeError"}
+    assert body["usage"] == [{"label": "Chủ bot", "calls": 3}]
+    assert not any(key[0] == "db" for key in web_admin._overview_cache)  # lỗi không bị cache
+
+
+async def test_xoay_khoa_xoa_cache_giam_sat_cua_tong_quan(client, overview_sources, monkeypatch):
+    async def rotate_all():
+        return web_admin.key_rotation.RotationReport(1, 1, 0, 0, 0, 0, (), ())
+
+    monkeypatch.setattr(web_admin.key_rotation, "rotate_all", rotate_all)
+    await _login(client)
+    await client.get("/admin/api/overview")
+    assert overview_sources["watchdog"] == 1
+    assert (await client.post("/admin/api/key-rotation/run", json={})).status_code == 200
+    await client.get("/admin/api/overview")
+    assert overview_sources["watchdog"] == 2 and overview_sources["db"] == 1
+
+
+def test_trang_admin_tu_lam_moi_bang_overview_mac_dinh_60_giay():
+    html = (ROOT / "templates" / "admin.html").read_text(encoding="utf-8")
+    assert "/admin/api/overview?hours=" in html and "&fresh=1" in html
+    assert '<option value="60000" selected>' in html
+    assert "loadPref('admin.autoRefresh', '60000')" in html
+    loaders = html[html.index("const LIVE_LOADERS") : html.index("const CONFIG_LOADERS")]
+    assert loaders.count(", render") == 12 and "await api(" not in loaders
+
+
+# ─── Chống CSRF ──────────────────────────────────────────────────────────────
+
+
+async def test_api_admin_doi_du_lieu_chi_nhan_json_cung_trang(client, monkeypatch):
+    calls = []
+
+    async def set_enabled(on):
+        calls.append(on)
+
+    monkeypatch.setattr(web_admin.orchestrator, "set_router9_enabled", set_enabled)
+    monkeypatch.setattr(web_admin.orchestrator, "get_provider_state_snapshot", lambda: {})
+    await _login(client)
+    url = "/admin/api/router9"
+    plain = {"content-type": "text/plain"}
+    assert (await client.post(url, content=b'{"action": "on"}', headers=plain)).status_code == 415
+    assert (await client.post(url, data={"action": "on"})).status_code == 415
+    for site in ("cross-site", "same-site"):
+        r = await client.post(url, json={"action": "on"}, headers={"Sec-Fetch-Site": site})
+        assert r.status_code == 403, site
+    assert calls == []
+    ok = await client.post(url, json={"action": "on"}, headers={"Sec-Fetch-Site": "same-origin"})
+    assert ok.status_code == 200 and calls == [True]
+    # GET (chỉ đọc) từ trang khác vẫn theo phiên như cũ.
+    get = await client.get("/admin/api/state", headers={"Sec-Fetch-Site": "cross-site"})
+    assert get.status_code == 200
+
+
+async def test_dang_nhap_dang_xuat_tu_trang_khac_bi_tu_choi(client, settings_store, monkeypatch):
+    monkeypatch.setattr(web_admin.orchestrator, "get_provider_state_snapshot", lambda: {})
+    r = await client.post(
+        "/admin/login",
+        data={"username": "admin", "password": "pass"},
+        headers={"Sec-Fetch-Site": "cross-site"},
+    )
+    assert r.status_code == 403 and "set-cookie" not in r.headers
+    assert web_admin._login_limiter._failures == {}  # không tính là lần sai
+    await _login(client, headers={"Sec-Fetch-Site": "same-origin"})
+    epoch = settings_store[web_admin._SESSION_EPOCH_KEY]
+    out = await client.post("/admin/logout", headers={"Sec-Fetch-Site": "cross-site"})
+    assert out.status_code == 403 and settings_store[web_admin._SESSION_EPOCH_KEY] == epoch
+    assert (await client.get("/admin/api/state")).status_code == 200
+
+
+# ─── Khoá ký cookie phiên (HKDF) ─────────────────────────────────────────────
+
+
+async def test_cookie_phien_khong_ky_bang_chinh_mat_khau(client, monkeypatch):
+    import hashlib
+    import hmac
+
+    monkeypatch.setattr(web_admin.orchestrator, "get_provider_state_snapshot", lambda: {"ok": 1})
+    await _login(client)
+    expiry, sig = client.cookies.get("admin_session").split(".")
+    epoch = await web_admin._session_epoch.get()
+    old = hmac.new(b"pass", f"admin:{expiry}:{epoch}".encode(), hashlib.sha256).hexdigest()
+    assert sig != old  # cookie lộ không còn dò được ADMIN_PASS offline
+    assert (await client.get("/admin/api/state")).status_code == 200
+    # Đổi SETTINGS_ENC_KEY (hoặc ADMIN_PASS): mọi phiên cũ hết hiệu lực.
+    monkeypatch.setattr(web_admin.config, "SETTINGS_ENC_KEY", ENC_KEY[::-1])
+    assert (await client.get("/admin/api/state")).status_code == 403
+
+
+async def test_thieu_settings_enc_key_thi_khong_co_phien(client, monkeypatch):
+    monkeypatch.setattr(web_admin.config, "SETTINGS_ENC_KEY", None)
+    r = await _login(client)
+    assert r.status_code == 503 and "set-cookie" not in r.headers
+    assert "SETTINGS_ENC_KEY" in r.text
+    assert (await client.get("/admin/api/state")).status_code == 403
+
+
+# ─── Trang admin đọc 1 lần, API no-store ─────────────────────────────────────
+
+
+async def test_trang_admin_doc_template_mot_lan(client):
+    web_admin._admin_page_html.cache_clear()
+    await _login(client)
+    first = await client.get("/admin")
+    second = await client.get("/admin")
+    assert first.text == second.text and 'id="market-box"' in first.text
+    info = web_admin._admin_page_html.cache_info()
+    assert info.misses == 1 and info.hits >= 1
+    assert f"logo-dark.webp?v={web_admin._logo_version()}" in first.text
+
+
+async def test_api_admin_tra_no_store(monkeypatch, settings_store, sleeps):
+    from services.security_headers import SecurityHeadersMiddleware
+
+    monkeypatch.setattr(web_admin.config, "ADMIN_USER", "admin")
+    monkeypatch.setattr(web_admin.config, "ADMIN_PASS", "pass")
+    monkeypatch.setattr(web_admin.config, "SETTINGS_ENC_KEY", ENC_KEY)
+    monkeypatch.setattr(web_admin, "_session_epoch", web_admin.SessionEpoch())
+    monkeypatch.setattr(web_admin.orchestrator, "get_provider_state_snapshot", lambda: {"ok": 1})
+    app = FastAPI()
+    app.include_router(web_admin.router)
+    app.include_router(web_admin.api_router)
+    app.add_middleware(SecurityHeadersMiddleware)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
+        await _login(c)
+        r = await c.get("/admin/api/state")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-store"

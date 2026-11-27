@@ -361,8 +361,11 @@ async def test_ngoai_phien_giu_gia_lau_hon(sources, monkeypatch):
 
 @pytest.fixture
 async def client():
+    import web
+
     app = FastAPI()
     app.include_router(web_app_api.router)
+    app.add_middleware(web.CompressionMiddleware)  # nén gzip như web.api thật
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
         yield c
@@ -409,3 +412,77 @@ async def test_api_ghep_khi_db_loi_tra_503(client, devices, monkeypatch):
     monkeypatch.setattr(db, "app_device_pair", broken)
     r = await client.post("/api/v1/app/pair", json={"code": "K7QF-3MXA"})
     assert r.status_code == 503 and r.json()["error"]["code"] == "DB_UNAVAILABLE"
+
+
+# ─── ETag dashboard, token sai ───────────────────────────────────────────────
+
+
+async def _paired_auth(client, devices, monkeypatch) -> dict:
+    await _new_code(devices, monkeypatch)
+    token = (await client.post("/api/v1/app/pair", json={"code": "K7QF-3MXA"})).json()["token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def test_api_dashboard_etag_304_bo_qua_generated_at(client, devices, monkeypatch):
+    stamps = iter(f"2026-10-30T10:2{i}:00+07:00" for i in range(10))
+    data = {"refreshSec": 300, "gold": {"domestic": [{"name": "SJC", "sell": 1.2e8}]}}
+
+    async def dashboard(user_id, place=""):
+        return {**data, "generatedAt": next(stamps)}
+
+    monkeypatch.setattr(web_app_api.app_dashboard, "dashboard", dashboard)
+    auth = await _paired_auth(client, devices, monkeypatch)
+    first = await client.get("/api/v1/app/dashboard", headers=auth)
+    etag = first.headers["etag"]
+    assert first.status_code == 200 and etag.startswith('W/"')
+    # Bản cache 60 giây dựng lại (generatedAt mới) mà số liệu y nguyên: 304 không body.
+    same = await client.get("/api/v1/app/dashboard", headers={**auth, "If-None-Match": etag})
+    assert same.status_code == 304 and same.content == b""
+    assert same.headers["etag"] == etag and same.headers["cache-control"] == "no-store"
+    data["gold"] = {"domestic": [{"name": "SJC", "sell": 1.3e8}]}  # giá đổi -> bản mới
+    changed = await client.get("/api/v1/app/dashboard", headers={**auth, "If-None-Match": etag})
+    assert changed.status_code == 200 and changed.headers["etag"] != etag
+    assert changed.json()["gold"]["domestic"][0]["sell"] == 1.3e8
+
+
+async def test_token_la_nho_mot_phut_va_co_tran(devices):
+    for _ in range(5):
+        assert await app_devices.authenticate("Bearer la_da-thu-hoi") is None
+    assert devices.lookups == 1  # app cũ gửi lặp token đã thu hồi: chỉ đọc DB 1 lần
+    for i in range(app_devices._UNKNOWN_MAX + 10):
+        await app_devices.authenticate(f"Bearer la_x{i}")
+    assert len(app_devices._unknown_tokens) == app_devices._UNKNOWN_MAX
+
+
+async def test_ip_gui_token_sai_qua_nhieu_bi_chan_khong_doc_db(devices, monkeypatch):
+    monkeypatch.setattr(app_devices, "_AUTH_FAIL_LIMIT", 3)
+    await _new_code(devices, monkeypatch)
+    token, device = await app_devices.pair("K7QF3MXA")
+    assert await app_devices.authenticate(f"Bearer {token}", "1.2.3.4") == device
+    for bad in ("Bearer la_sai1", "Bearer la_sai2", "Basic xyz"):
+        assert await app_devices.authenticate(bad, "1.2.3.4") is None
+    lookups = devices.lookups
+    with pytest.raises(app_devices.AuthLocked) as err:
+        await app_devices.authenticate("Bearer la_sai3", "1.2.3.4")
+    assert 0 < err.value.retry_after <= app_devices._AUTH_FAIL_WINDOW_SEC + 1
+    assert devices.lookups == lookups  # đang bị chặn: không đọc DB
+    # Màn hình thật vừa xác thực cùng IP vẫn qua (kể cả hết TTL cache 5 phút).
+    monkeypatch.setattr(app_devices, "_AUTH_TTL_SEC", 0)
+    assert await app_devices.authenticate(f"Bearer {token}", "1.2.3.4") == device
+    # IP khác không bị ảnh hưởng; bảng IP có trần.
+    assert await app_devices.authenticate("Bearer la_khac", "5.6.7.8") is None
+    monkeypatch.setattr(app_devices, "_AUTH_FAIL_MAX_IPS", 4)
+    for i in range(10):
+        await app_devices.authenticate("", f"10.0.0.{i}")
+    assert len(app_devices._auth_failures) <= 4
+
+
+async def test_api_ip_gui_token_sai_qua_nhieu_nhan_429(client, devices, monkeypatch):
+    monkeypatch.setattr(app_devices, "_AUTH_FAIL_LIMIT", 2)
+    wrong = {"Authorization": "Bearer la_sai"}
+    for _ in range(2):
+        assert (await client.get("/api/v1/app/dashboard", headers=wrong)).status_code == 401
+    r = await client.get("/api/v1/app/dashboard", headers=wrong)
+    assert r.status_code == 429 and r.json()["error"]["code"] == "TOO_MANY_FAILURES"
+    assert int(r.headers["retry-after"]) > 0 and r.headers["cache-control"] == "no-store"
+    assert devices.lookups == 1

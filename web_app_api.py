@@ -4,45 +4,56 @@
   ``{"token": "la_...", "device": {"id", "name"}}``. Mã dùng 1 lần.
 - ``GET /api/v1/app/dashboard[?place=Hà Nội]``: header ``Authorization: Bearer la_...``
   -> JSON của services/app_dashboard.py (lịch, thời tiết, vàng, xăng, tin, watchlist).
+  Kèm ETag yếu theo nội dung (bỏ ``generatedAt``): app gửi lại ``If-None-Match``, dữ liệu
+  không đổi thì nhận 304 không body. Một IP gửi token sai quá nhiều lần -> 429 +
+  Retry-After (services/app_devices.py).
 
 Lỗi cùng dạng API công khai: ``{"error": {"code", "message"}}``. Dữ liệu riêng
-(watchlist) nên trả ``Cache-Control: no-store``; JSON nén gzip khi client nhận
+(watchlist) nên trả ``Cache-Control: no-store``; JSON nén gzip ở web.CompressionMiddleware
 (HttpURLConnection của Android tự gửi ``Accept-Encoding: gzip`` và tự giải nén).
 """
 
 from __future__ import annotations
 
-import gzip
 import json
 import logging
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
+import web_admin
 from services import app_dashboard, app_devices
+from web_site import etag_matches, weak_etag
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/app", include_in_schema=False)
 _MAX_BODY_BYTES = 1024
-_GZIP_MIN_BYTES = 1024
+_NO_STORE = {"Cache-Control": "no-store"}
 
 
 def _error(status: int, code: str, message: str, headers: dict | None = None) -> JSONResponse:
     return JSONResponse(
         {"error": {"code": code, "message": message}},
         status_code=status,
-        headers={"Cache-Control": "no-store", **(headers or {})},
+        headers={**_NO_STORE, **(headers or {})},
     )
 
 
-def _json(request: Request, data: dict) -> Response:
-    body = json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str).encode()
-    headers = {"Cache-Control": "no-store", "Vary": "Accept-Encoding"}
-    if len(body) >= _GZIP_MIN_BYTES and "gzip" in request.headers.get("accept-encoding", ""):
-        body = gzip.compress(body, compresslevel=6)
-        headers["Content-Encoding"] = "gzip"
-    return Response(body, media_type="application/json", headers=headers)
+def _dumps(data: dict) -> bytes:
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str).encode()
+
+
+def _json(data: dict, headers: dict | None = None) -> Response:
+    return Response(
+        _dumps(data), media_type="application/json", headers={**_NO_STORE, **(headers or {})}
+    )
+
+
+def _dashboard_etag(payload: dict) -> str:
+    """ETag theo nội dung, bỏ ``generatedAt`` (đổi mỗi lần dựng lại bản cache 60 giây dù
+    số liệu y nguyên; app không dùng trường này)."""
+    return weak_etag(_dumps({k: v for k, v in payload.items() if k != "generatedAt"}))
 
 
 @router.post("/pair")
@@ -64,13 +75,22 @@ async def pair(request: Request) -> Response:
     except Exception:
         logger.warning("app api: ghép thiết bị lỗi (DB).", exc_info=True)
         return _error(503, "DB_UNAVAILABLE", "Máy chủ đang bận, thử lại sau ít phút.")
-    return _json(request, {"token": token, "device": {"id": device.id, "name": device.name}})
+    return _json({"token": token, "device": {"id": device.id, "name": device.name}})
 
 
 @router.get("/dashboard")
 async def dashboard(request: Request, place: str = "") -> Response:
     try:
-        device = await app_devices.authenticate(request.headers.get("authorization", ""))
+        device = await app_devices.authenticate(
+            request.headers.get("authorization", ""), web_admin.client_ip(request)
+        )
+    except app_devices.AuthLocked as exc:
+        return _error(
+            429,
+            "TOO_MANY_FAILURES",
+            "Gửi mã thiết bị sai quá nhiều lần, thử lại sau ít phút.",
+            {"Retry-After": str(exc.retry_after)},
+        )
     except Exception:
         logger.warning("app api: không xác thực được thiết bị (DB lỗi).", exc_info=True)
         return _error(503, "DB_UNAVAILABLE", "Máy chủ đang bận, thử lại sau ít phút.")
@@ -82,4 +102,8 @@ async def dashboard(request: Request, place: str = "") -> Response:
             {"WWW-Authenticate": "Bearer"},
         )
     data = await app_dashboard.dashboard(device.user_id, place)
-    return _json(request, {**data, "device": {"id": device.id, "name": device.name}})
+    payload = {**data, "device": {"id": device.id, "name": device.name}}
+    etag = _dashboard_etag(payload)
+    if etag_matches(request.headers.get("if-none-match", ""), etag):
+        return Response(status_code=304, headers={**_NO_STORE, "ETag": etag})
+    return _json(payload, {"ETag": etag})
