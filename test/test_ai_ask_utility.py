@@ -140,3 +140,22 @@ async def test_router_du_phong_qua_chuoi_la_luot_phu_json(monkeypatch):
     assert await tools._route_with_chain("router JSON") == {"tool": "none", "args": {}}
     assert seen["json_mode"] is True and seen["stage"] == "utility"
     assert seen["max_tokens"] == tools._ROUTER_CHAIN_MAX_TOKENS
+
+
+async def test_ask_tra_web_bat_buoc_go_so_trich_dan(providers, monkeypatch):
+    """Trước đây chỉ chat() gỡ "[1]"; ask(require_real_search) (/gia, tra web dự phòng)
+    còn nguyên rác trích dẫn."""
+
+    async def search_only():
+        return ["groq"]
+
+    async def realtime(prompt, **kwargs):
+        return SimpleNamespace(text="Giá vàng 80 triệu [1][2]【3†L1-L2】. Nguồn SJC [1].")
+
+    monkeypatch.setattr(orchestrator, "_search_only_providers", search_only)
+    monkeypatch.setattr(groq_client, "generate_realtime", realtime)
+    response = await orchestrator.ask("giá vàng?", require_real_search=True)
+    assert response.text == "Giá vàng 80 triệu. Nguồn SJC."
+    # Lượt thường (không tra web): giữ nguyên chữ của provider.
+    plain = await orchestrator.ask("liệt kê [1] và [2]")
+    assert plain.text == "router9-ok"

@@ -593,7 +593,7 @@ async def _run_provider_chain(
     provider kế tiếp nữa.
     """
     with turn_deadline():
-        return await _run_provider_chain_within_deadline(
+        result = await _run_provider_chain_within_deadline(
             router9_call=router9_call,
             api_call=api_call,
             groq_call=groq_call,
@@ -602,6 +602,11 @@ async def _run_provider_chain(
             allow_cjk=allow_cjk,
             live_call=live_call,
         )
+    if _call_stage.get() == "search":
+        # Lượt tự tra web (cả ask(require_real_search) của /gia, tra web dự phòng...):
+        # gỡ số trích dẫn [1]/【2†L6】 ngay trong chuỗi, không chỉ ở chat().
+        result = _strip_citations(result)
+    return result
 
 
 async def _run_provider_chain_within_deadline(
