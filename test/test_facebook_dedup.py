@@ -111,3 +111,136 @@ def test_same_seller_template_for_different_products_is_not_duplicate():
     a = "Hàng mới về nha mọi người, áo thun nam cotton co giãn, giá 99k, đủ size M L XL"
     b = "Hàng mới về nha mọi người, quần short kaki nam túi hộp, giá 99k, đủ size M L XL"
     assert dedup.find_duplicate(dedup.build_fingerprint(b), [_row(1, a)]) is None
+
+
+# ─── Lọc trùng giữa các nhóm (bản 2) ─────────────────────────────────────────
+
+DEAL = (
+    "Nồi chiên không dầu 6 lít, lòng chống dính, hẹn giờ 60 phút, "
+    "bảo hành 12 tháng, giá chỉ 899k, freeship toàn quốc"
+)
+
+
+def _group_row(post_id, text, group_id, *, images=(), sender_id="seller"):
+    return {**_row(post_id, text, images), "group_id": group_id, "sender_id": sender_id}
+
+
+def test_repost_in_another_group_with_extra_lines_is_duplicate():
+    repost = (
+        "Chào cả nhà nhóm Săn Sale, hôm nay có deal ngon nè!\n"
+        + DEAL
+        + "\nVào nhóm để nhận thêm mã nha"
+    )
+    candidate = dedup.build_fingerprint(repost, group_id="g2", sender_id="khac")
+
+    match = dedup.find_duplicate(candidate, [_group_row(3, DEAL, "g1")])
+
+    assert match is not None
+    assert match.post_id == 3
+    assert match.reason == dedup.REASON_CONTAINED
+    assert match.group_id == "g1"
+    assert match.cross_group is True
+
+
+def test_same_group_duplicate_is_not_marked_cross_group():
+    candidate = dedup.build_fingerprint(DEAL + "!!", group_id="g1")
+
+    match = dedup.find_duplicate(candidate, [_group_row(3, DEAL, "g1")])
+
+    assert match is not None and match.cross_group is False
+
+
+def test_repost_with_extra_lines_but_new_price_is_a_new_deal():
+    repost = "Chào cả nhà, deal mới nè!\n" + DEAL.replace("899k", "799k") + "\nVào nhóm nha"
+    candidate = dedup.build_fingerprint(repost, group_id="g2")
+
+    assert dedup.find_duplicate(candidate, [_group_row(3, DEAL, "g1")]) is None
+
+
+def test_short_generic_greeting_contained_in_old_post_is_not_duplicate():
+    greeting = "Hàng mới về nha cả nhà ơi, giá 899k"
+    candidate = dedup.build_fingerprint(greeting, group_id="g2")
+
+    assert dedup.find_duplicate(candidate, [_group_row(3, DEAL, "g1")]) is None
+
+
+def test_same_seller_reposting_photo_with_new_intro_in_another_group_is_duplicate():
+    photo = image_dhash(_png("purple"))
+    first = "Nồi chiên 6 lít lòng chống dính, bảo hành 12 tháng, giá 899k, ship nhanh"
+    again = "Mọi người ơi nồi chiên 6 lít lòng chống dính đang rẻ lắm, chỉ 899k thôi nha"
+    candidate = dedup.build_fingerprint(again, [photo], group_id="g2", sender_id="seller")
+
+    match = dedup.find_duplicate(candidate, [_group_row(5, first, "g1", images=[photo])])
+
+    assert match is not None and match.reason == dedup.REASON_SAME_SENDER
+    assert match.cross_group is True
+
+
+def test_other_member_reusing_seller_photo_with_different_text_is_not_duplicate():
+    photo = image_dhash(_png("purple"))
+    first = "Nồi chiên 6 lít lòng chống dính, bảo hành 12 tháng, giá 899k, ship nhanh"
+    again = "Mọi người ơi nồi chiên 6 lít lòng chống dính đang rẻ lắm, chỉ 899k thôi nha"
+    candidate = dedup.build_fingerprint(again, [photo], group_id="g2", sender_id="nguoi-khac")
+
+    assert dedup.find_duplicate(candidate, [_group_row(5, first, "g1", images=[photo])]) is None
+
+
+def test_same_seller_photo_with_new_price_is_a_new_deal():
+    photo = image_dhash(_png("purple"))
+    first = "Nồi chiên 6 lít lòng chống dính, bảo hành 12 tháng, giá 899k, ship nhanh"
+    again = "Mọi người ơi nồi chiên 6 lít lòng chống dính đang rẻ lắm, còn 699k thôi nha"
+    candidate = dedup.build_fingerprint(again, [photo], group_id="g2", sender_id="seller")
+
+    assert dedup.find_duplicate(candidate, [_group_row(5, first, "g1", images=[photo])]) is None
+
+
+def test_slightly_different_recompressed_photo_with_similar_text_is_duplicate():
+    photo = image_dhash(_png("orange"))
+    near = photo ^ 0b1111111  # lệch 7 bit: ảnh bị nén/thu nhỏ lại khi chuyển tiếp
+    text = DEAL.replace("freeship toàn quốc", "")
+    candidate = dedup.build_fingerprint(text + " ship hoả tốc", [near], group_id="g2")
+
+    match = dedup.find_duplicate(candidate, [_group_row(8, DEAL, "g1", images=[photo])])
+
+    assert match is not None
+    assert match.post_id == 8
+
+
+def test_price_keys_reads_vietnamese_money_formats():
+    text = dedup.normalize_text(
+        "Áo 159k, giá gốc 1.299.000đ, còn 1tr2 hoặc 2tr500, 199000 vnd, đơn 0đ, 1 triệu 2 màu"
+    )
+
+    assert dedup.price_keys(text) == {159_000, 1_299_000, 1_200_000, 2_500_000, 199_000, 1_000_000}
+
+
+def test_index_compares_queue_posts_only_with_earlier_posts():
+    rows = [_group_row(9, DEAL, "g2"), _group_row(4, DEAL, "g1")]
+    index = dedup.DedupIndex(rows)
+    candidate = dedup.build_fingerprint(DEAL, group_id="g2")
+
+    assert index.find(candidate, before_post_id=9).post_id == 4
+    assert index.find(candidate, before_post_id=4) is None
+    assert index.find(candidate, exclude={9}).post_id == 4
+
+
+def test_old_rows_without_group_columns_still_match():
+    candidate = dedup.build_fingerprint(DEAL, group_id="g2")
+
+    match = dedup.find_duplicate(candidate, [_row(2, DEAL)])
+
+    assert match is not None and match.group_id is None and match.cross_group is False
+
+
+def test_scan_of_many_rows_is_fast():
+    import time
+
+    rows = [
+        _group_row(i, f"Sản phẩm số {i} " + "mô tả dài " * 60 + f" giá {i}k", f"g{i % 5}")
+        for i in range(800)
+    ]
+    candidate = dedup.build_fingerprint(DEAL, group_id="g9")
+    started = time.perf_counter()
+
+    assert dedup.find_duplicate(candidate, rows) is None
+    assert time.perf_counter() - started < 1.0

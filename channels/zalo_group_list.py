@@ -23,7 +23,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 
-from channels import facebook_repository, zalo_gateway_status, zalo_repository
+from channels import facebook_group_names, facebook_repository, zalo_gateway_status, zalo_repository
 from core import database as db
 from core.text_normalize import fold
 from services.channel_result import ChannelResult
@@ -134,6 +134,11 @@ async def render(account_id: str, keyword: str = "") -> ChannelResult:
     )
     followed = {gid: alias for gid, alias, _ in followed_rows}
     sources = dict(source_rows)
+    # Nhóm nguồn Facebook hiện TÊN thay cho group ID (channels/facebook_group_names.py):
+    # danh sách vừa lấy từ gateway là nguồn tên mới nhất (nhóm có thể vừa đổi tên).
+    await facebook_group_names.remember(
+        account_id, {g.group_id: g.name for g in groups if g.group_id in sources and g.name}
+    )
     groups = sorted(groups, key=lambda g: (not g.name, fold(g.name), g.group_id))
     numbered = list(enumerate(groups, 1))
     needle = fold(keyword)

@@ -341,23 +341,42 @@ export async function storeGroupMessage(c: GatewayConfig, m: IncomingGroupMessag
     "Group message",
   );
 }
+/**
+ * Bài Facebook gửi sang Python dạng multipart: phần "meta" là JSON, mỗi ảnh là 1 phần
+ * "media" nhị phân (POST /facebook-group-post-multipart). Trước đây ảnh đi dạng base64
+ * trong JSON: heap Node (~96 MB) giữ thêm chuỗi base64 + bản JSON.stringify (~2,7 lần
+ * dung lượng ảnh) và Python phải giải mã lại.
+ */
+export function facebookPostForm(c: GatewayConfig, m: IncomingFacebookPost): FormData {
+  const form = new FormData();
+  form.append(
+    "meta",
+    JSON.stringify({
+      account_id: c.accountId,
+      group_id: m.groupId,
+      message_ids: m.messageIds,
+      sender_id: m.senderId,
+      sender_name: m.senderName,
+      text: m.text,
+    }),
+  );
+  m.media.forEach((x, i) => {
+    // Ép kiểu thay vì new Uint8Array(...): Blob tự chép dữ liệu, khỏi thêm 1 bản sao.
+    form.append(
+      "media",
+      new Blob([x.bytes as Uint8Array<ArrayBuffer>], { type: x.mime }),
+      `anh-${i + 1}`,
+    );
+  });
+  return form;
+}
 export async function storeFacebookGroupPost(c: GatewayConfig, m: IncomingFacebookPost) {
   await ok(
-    await fetch(`${c.bridgeBaseUrl}/facebook-group-post`, {
+    await fetch(`${c.bridgeBaseUrl}/facebook-group-post-multipart`, {
       method: "POST",
-      headers: h(c),
-      body: JSON.stringify({
-        account_id: c.accountId,
-        group_id: m.groupId,
-        message_ids: m.messageIds,
-        sender_id: m.senderId,
-        sender_name: m.senderName,
-        text: m.text,
-        media: m.media.map((x) => ({
-          mime_type: x.mime,
-          data_b64: Buffer.from(x.bytes).toString("base64"),
-        })),
-      }),
+      // Không đặt content-type: fetch tự thêm "multipart/form-data; boundary=...".
+      headers: { "x-zalo-bridge-secret": c.bridgeSecret },
+      body: facebookPostForm(c, m),
       signal: AbortSignal.timeout(BRIDGE_TIMEOUT_MS),
     }),
     "Facebook group post",

@@ -44,7 +44,7 @@ _MEDIA_PATHS = (
 
 def _limits(path: str, declared: int) -> tuple[int, bool]:
     """(giới hạn byte, có phải body lớn cần tuần tự hoá khi đọc)."""
-    if path.endswith("/facebook-group-post"):
+    if path.endswith(("/facebook-group-post", "/facebook-group-post-multipart")):
         return 22 * MIB, True
     if path.endswith(_MEDIA_PATHS):
         return 8 * MIB, True

@@ -136,6 +136,9 @@ MARKET_PAGE_UNCERTAIN_ALERT = (
 )
 
 # --- zalo gateway ---
+# Lượt trả lời xong SAU khi gateway đã thôi chờ (đã báo lỗi cho người dùng): câu trả
+# lời được gửi bù qua outbox, dòng này mở đầu để người nhận hiểu vì sao tin tới muộn.
+ZALO_LATE_REPLY_PREFIX = "⏱️ Em trả lời muộn tin nhắn vừa rồi nha:"
 ZALO_OUTBOX_FAILED_ALERT = (
     "⚠️ Tin Zalo #{item_id} gửi tới {recipient} lỗi {attempts} lần liên tiếp ({error}) - "
     "đã ngừng thử lại để không chặn các tin sau."

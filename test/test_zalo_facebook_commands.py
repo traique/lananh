@@ -11,10 +11,18 @@ from channels import facebook_commands
 async def test_facebook_group_commands_use_separate_repository(monkeypatch):
     saved = {}
 
-    async def fake_add(account_id, group_id, alias):
+    async def fake_add(account_id, group_id, alias, group_name=""):
         saved.update(account_id=account_id, group_id=group_id, alias=alias)
 
+    async def fake_name_of(account_id, group_id):
+        return "Deal Team Hà Nội"
+
+    async def no_refresh():
+        return None
+
     monkeypatch.setattr(facebook_commands.facebook_repository, "add_group", fake_add)
+    monkeypatch.setattr(facebook_commands.facebook_group_names, "name_of", fake_name_of)
+    monkeypatch.setattr(facebook_commands.zalo_gateway_status, "refresh_groups", no_refresh)
     result = await facebook_commands.maybe_handle_facebook_command(
         "B", "/fb_themnhom 7212345678901234567 Deal Team"
     )
@@ -22,6 +30,9 @@ async def test_facebook_group_commands_use_separate_repository(monkeypatch):
     # Group ID Zalo thật dài 16-19 chữ số; số 1-3 chữ số là số thứ tự /nhomzalo.
     assert saved == {"account_id": "B", "group_id": "7212345678901234567", "alias": "deal team"}
     assert "Không ảnh hưởng /tongket" in result.messages[0]
+    # Thêm bằng group ID: hỏi gateway tên nhóm để hiện TÊN thay cho ID.
+    assert "“Deal Team Hà Nội” (gợi nhớ: deal team)" in result.messages[0]
+    assert "7212345678901234567" not in result.messages[0]
 
 
 @pytest.mark.asyncio

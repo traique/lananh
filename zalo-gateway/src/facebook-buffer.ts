@@ -14,8 +14,8 @@ const MAX_MEDIA_PER_POST = 10;
 const MAX_TEXT_CHARS = 20000;
 const MAX_BUFFERS = 64;
 /**
- * Tổng media giữ trong RAM cho TẤT CẢ bài đang gom. Heap Node bị chặn ~96 MB và
- * khi gửi sang Python, base64 + JSON.stringify nhân đôi dung lượng nên để 6 MiB.
+ * Tổng media giữ trong RAM cho TẤT CẢ bài đang gom. Heap Node bị chặn ~96 MB; lúc gửi
+ * sang Python mỗi ảnh còn 1 bản sao trong FormData (bridge.facebookPostForm) nên để 6 MiB.
  */
 export const MAX_BUFFERED_MEDIA_BYTES = 6 * 1024 * 1024;
 

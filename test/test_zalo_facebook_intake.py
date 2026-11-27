@@ -1,4 +1,5 @@
 """Bộ lọc bài từ nhóm Zalo trước khi vào hàng chờ Facebook (channels/router.py)."""
+
 import base64
 import sys
 from pathlib import Path
@@ -8,6 +9,7 @@ from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from channels import facebook_commands, facebook_group_names, facebook_intake  # noqa: E402
 from channels import facebook_repository  # noqa: E402
 from channels import router as zalo_router  # noqa: E402
 from channels.contracts import ZaloFacebookPostRequest  # noqa: E402
@@ -49,7 +51,13 @@ def intake(monkeypatch):
 
     monkeypatch.setattr(zalo_router, "_secret", lambda: "s3cr3t")
     monkeypatch.setattr(facebook_repository, "create_post", fake_create_post)
-    monkeypatch.setattr(zalo_router, "prepare_post", fake_prepare_post)
+
+    async def fake_labels(account_id):
+        return {"g1": "Săn Deal Chính", "g2": "Hội Mẹ Bỉm"}
+
+    # Xem trước + AI viết lại chạy NỀN (channels/facebook_intake.py): _submit chờ xong.
+    monkeypatch.setattr(facebook_commands, "prepare_post", fake_prepare_post)
+    monkeypatch.setattr(facebook_group_names, "labels", fake_labels)
     monkeypatch.setattr(facebook_repository, "enforce_pending_cap", fake_cap)
     monkeypatch.setattr(facebook_repository, "prune_history", fake_prune)
     monkeypatch.delenv("FACEBOOK_REQUIRE_PHOTO_AND_CAPTION", raising=False)
@@ -58,7 +66,9 @@ def intake(monkeypatch):
 
 
 async def _submit(payload):
-    return await zalo_router.facebook_group_post(payload, "s3cr3t")
+    response = await zalo_router.facebook_group_post(payload, "s3cr3t")
+    await facebook_intake.drain()
+    return response
 
 
 @pytest.mark.asyncio

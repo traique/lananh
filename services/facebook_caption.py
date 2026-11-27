@@ -133,6 +133,24 @@ _THRESHOLD_RE = re.compile(
 )
 _VOUCHER_ONLY_MAX_CHARS = 400
 _PRODUCT_URL_RE = re.compile(r"-i\.\d+\.\d+|/product/\d+/\d+", re.IGNORECASE)
+# Bài KHÔNG phải bài bán hàng hay gặp trong nhóm săn deal: thành viên hỏi xin link /
+# hỏi đáp, tuyển cộng tác viên, việc làm online, vay tiền, cờ bạc. Chỉ bỏ khi bài
+# không có giá và không có link Shopee nào (bài bán hàng thật hay kèm "nhận sỉ, tuyển
+# CTV" ở cuối vẫn giữ). So trên chữ đã bỏ dấu.
+_NON_SALE_RE = re.compile(
+    r"\b(ai\s+co\s+link|xin\s+(link|ma)|cho\s+(minh|em|toi|chau)\s+(xin|hoi)|"
+    r"co\s+ai\s+(biet|mua|dung|co)|tim\s+(giup|ho)|nho\s+moi\s+nguoi\s+tim|"
+    r"tuyen\s+(ctv|cong\s+tac\s+vien|nhan\s+vien|dai\s+ly|si)|"
+    r"viec\s+lam\s+(online|tai\s+nha|them)|kiem\s+tien\s+(online|tai\s+nha|tren\s+mang)|"
+    r"vay\s+(tien|von|nhanh|tin\s+chap|online)|ho\s+tro\s+vay|no\s+xau|"
+    r"nha\s+cai|ca\s+do|casino|tai\s+xiu|lo\s+de|danh\s+de)\b"
+)
+# "thu nhập 10-15tr", "lương từ 8 đến 12 triệu", "hoa hồng 20%": số tiền của tin tuyển
+# dụng không phải giá sản phẩm.
+_INCOME_RE = re.compile(
+    r"\b(thu\s+nhap|luong|hoa\s+hong|chiet\s+khau)\b"
+    r"(\s*(tu|den|toi|tren|khoang|-|~)?\s*\d[\d.,]*\s*(k|tr|trieu|d|vnd|%|cu)?)+"
+)
 
 
 def _fold(text: str) -> str:
@@ -152,7 +170,7 @@ def is_voucher_only(text: str) -> bool:
     # "/product/<shop>/<item>") là bài sản phẩm dù có nhắc mã giảm.
     if any(_PRODUCT_URL_RE.search(url) for url in find_shopee_urls(text)):
         return False
-    return _PRICE_RE.search(_THRESHOLD_RE.sub(" ", _PAIR_AMOUNT_RE.sub(" ", body))) is None
+    return not _has_price(body)
 
 
 # Để đếm chữ trong caption phải bỏ cả link không có "https://" (s.shopee.vn/abc, shope.ee/x).
@@ -168,6 +186,22 @@ def _without_links(text: str) -> str:
     return _LINK_LIKE_RE.sub(" ", text or "")
 
 
+def _has_price(body: str) -> bool:
+    """Có giá sản phẩm trong chữ đã bỏ dấu (bỏ trước phần điều kiện của mã giảm)."""
+    return _PRICE_RE.search(_THRESHOLD_RE.sub(" ", _PAIR_AMOUNT_RE.sub(" ", body))) is not None
+
+
+def is_non_sale(text: str) -> bool:
+    """True khi bài là hỏi đáp/xin link, tuyển dụng, vay tiền, cờ bạc - không có giá
+    và không có link Shopee (không đem đăng Page được)."""
+    if find_shopee_urls(text):
+        return False
+    body = " ".join(_fold(_without_links(text)).split())
+    if not body or _NON_SALE_RE.search(body) is None:
+        return False
+    return not _has_price(_INCOME_RE.sub(" ", body))
+
+
 def has_caption(text: str) -> bool:
     """Có chữ thật ngoài link: "Link mua: https://..." hay chỉ emoji không tính là caption."""
     return sum(ch.isalnum() for ch in _without_links(text)) >= _MIN_CAPTION_CHARS
@@ -179,6 +213,7 @@ def skip_reason(
     *,
     require_photo_and_caption: bool = True,
     skip_voucher: bool = True,
+    skip_non_sale: bool = True,
 ) -> str | None:
     """Lý do một bài Zalo không được đưa vào hàng chờ Facebook; None = giữ lại.
 
@@ -193,6 +228,8 @@ def skip_reason(
             return "có ảnh nhưng không có caption"
     if skip_voucher and caption and is_voucher_only(text):
         return "chỉ báo mã giảm giá"
+    if skip_non_sale and caption and is_non_sale(text):
+        return "không phải bài bán hàng (hỏi đáp, tuyển dụng, vay tiền...)"
     return None
 
 

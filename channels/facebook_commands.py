@@ -9,9 +9,15 @@ from urllib.parse import urlparse
 
 import asyncpg
 
-from channels import facebook_repository, zalo_gateway_status, zalo_group_list, zalo_repository
+from channels import (
+    facebook_group_names,
+    facebook_repository,
+    zalo_gateway_status,
+    zalo_group_list,
+    zalo_repository,
+)
 from core.envutil import env_on
-from services import facebook_caption, market_page
+from services import facebook_caption, facebook_dedup, market_page
 from services.channel_result import ChannelResult
 from services.facebook_caption import find_shopee_urls
 from services.facebook_image import brand_image
@@ -87,11 +93,17 @@ async def _preview(account_id: str, post_id: int) -> str:
     source_urls = find_shopee_urls(row["original_content"])
     cached = await _cached_affiliates(account_id, source_urls)
     missing = [url for url in source_urls if url not in cached]
+    names = await facebook_group_names.labels(account_id)
     lines = [
         f"📝 BÀI FACEBOOK CHỜ DUYỆT #{post_id}",
-        f"Nhóm: {row['group_id']}",
+        f"Nhóm: {facebook_group_names.label(names, row['group_id'])}",
         f"Người đăng: {row['sender_name'] or row['sender_id']}",
         f"Ảnh: {len(media)}",
+    ]
+    reposts = _repost_line(row, names)
+    if reposts:
+        lines.append(reposts)
+    lines += [
         "",
         facebook_caption.build_caption(row["processed_content"], bool(source_urls), seed=post_id)
         or "(không có caption)",
@@ -122,6 +134,22 @@ async def _preview(account_id: str, post_id: int) -> str:
     # underscores of two commands sharing a line ("/fbok ... /fbboqua").
     lines.extend(["", f"/fb_ok {post_id}", f"/fb_boqua {post_id}"])
     return "\n".join(lines)
+
+
+def _row_get(row, key: str, default=None):
+    getter = getattr(row, "get", None)
+    value = getter(key) if getter is not None else None
+    return default if value is None else value
+
+
+def _repost_line(row, names: dict[str, str]) -> str:
+    """ "🔁 Đã chặn 3 lần đăng lại, ở nhóm: A, B" - bài trùng tới từ các nhóm nguồn khác."""
+    count = int(_row_get(row, "dup_count", 0) or 0)
+    if count <= 0:
+        return ""
+    groups = facebook_group_names.labels_text(names, _row_get(row, "dup_groups", []) or [])
+    where = f", ở nhóm: {groups}" if groups else ""
+    return f"🔁 Đã chặn {count} lần đăng lại{where}"
 
 
 async def _held_in_quiet_hours_owner(preview: str) -> bool:
@@ -207,6 +235,48 @@ async def _fb_reset_warning(account_id: str) -> str:
     )
 
 
+def _row_fingerprint(row) -> "facebook_dedup.Fingerprint":
+    """Dấu vân tay đã lưu của bài chờ; bài cũ chưa có thì dựng lại từ chữ gốc."""
+    group_id = _row_get(row, "group_id", "")
+    sender_id = _row_get(row, "sender_id", "")
+    folded = _row_get(row, "folded_text")
+    if folded is None:
+        return facebook_dedup.build_fingerprint(
+            row["original_content"] or "", group_id=group_id, sender_id=sender_id
+        )
+    return facebook_dedup.Fingerprint(
+        text_hash=_row_get(row, "text_hash"),
+        product_keys=list(_row_get(row, "product_keys", []) or []),
+        image_hashes=list(_row_get(row, "image_hashes", []) or []),
+        folded_text=folded,
+        group_id=group_id,
+        sender_id=sender_id,
+    )
+
+
+async def _pending_duplicates(account_id: str, rows: list) -> list:
+    """[(bài chờ, DuplicateMatch)] - bài chờ trùng một bài CŨ HƠN (id nhỏ hơn) trong cửa
+    sổ chống trùng, ở bất kỳ nhóm nguồn nào. So trong thread (CPU thuần Python)."""
+    if not rows:
+        return []
+    try:
+        recent = await facebook_repository.recent_fingerprints(account_id)
+    except Exception:
+        logger.warning("Không đọc được dấu vân tay để lọc trùng hàng chờ.", exc_info=True)
+        return []
+
+    def scan() -> list:
+        index = facebook_dedup.DedupIndex(recent)
+        found = []
+        for row in sorted(rows, key=lambda item: int(item["id"])):
+            match = index.find(_row_fingerprint(row), before_post_id=int(row["id"]))
+            if match is not None:
+                found.append((row, match))
+        return found
+
+    return await asyncio.to_thread(scan)
+
+
 async def _facebook_sources(account_id: str) -> dict[str, str]:
     """group_id -> tên gợi nhớ của các nhóm nguồn Facebook."""
     return dict(await facebook_repository.list_groups(account_id))
@@ -235,21 +305,45 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         )
 
     if command == "/fb_loclai":
-        # Chạy lại bộ lọc hiện tại cho các bài đang chờ (bài vào hàng chờ trước khi
-        # bộ lọc được cải thiện). Bài bị lọc chuyển sang "bỏ qua" và xoá ảnh.
+        # Chạy lại bộ lọc hiện tại cho các bài đang chờ (bài vào hàng chờ trước khi bộ
+        # lọc được cải thiện), rồi lọc trùng GIỮA CÁC NHÓM: bài sau trùng bài trước (kể
+        # cả bài đã đăng/bỏ qua) thì bỏ. Bài bị lọc chuyển sang "bỏ qua" và xoá ảnh.
         rows = await facebook_repository.list_pending_for_refilter(account_id)
         removed: list[tuple[int, str]] = []
+        survivors = []
         for row in rows:
             reason = facebook_caption.skip_reason(
                 row["original_content"] or "",
                 int(row["media_count"] or 0) > 0,
                 require_photo_and_caption=env_on("FACEBOOK_REQUIRE_PHOTO_AND_CAPTION"),
                 skip_voucher=env_on("FACEBOOK_SKIP_VOUCHER_POSTS"),
+                skip_non_sale=env_on("FACEBOOK_SKIP_NON_SALE_POSTS"),
             )
-            if reason and await facebook_repository.reject_post(account_id, int(row["id"])):
+            if not reason:
+                survivors.append(row)
+            elif await facebook_repository.reject_post(account_id, int(row["id"])):
                 removed.append((int(row["id"]), reason))
+        duplicates = await _pending_duplicates(account_id, survivors)
+        names = await facebook_group_names.labels(account_id) if duplicates else {}
+        for row, match in duplicates:
+            post_id = int(row["id"])
+            if not await facebook_repository.reject_post(account_id, post_id):
+                continue
+            origin = (
+                f" ở nhóm {facebook_group_names.label(names, match.group_id)}"
+                if match.cross_group
+                else ""
+            )
+            removed.append((post_id, f"trùng bài #{match.post_id}{origin} ({match.reason})"))
+            try:
+                await facebook_repository.record_duplicate(
+                    match.post_id, _row_get(row, "group_id", "")
+                )
+            except Exception:
+                logger.warning("Không ghi được lần đăng lại của bài #%s.", match.post_id)
         if not removed:
             return ChannelResult([f"✅ Đã kiểm tra {len(rows)} bài chờ: không có bài nào cần bỏ."])
+        removed.sort()
         lines = [f"🧹 Đã bỏ {len(removed)}/{len(rows)} bài chờ không đạt bộ lọc:"]
         lines += [f"• #{post_id}: {reason}" for post_id, reason in removed[:30]]
         if len(removed) > 30:
@@ -271,13 +365,24 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         )
 
     if command == "/fb_nhom":
-        groups = await facebook_repository.list_groups(account_id)
+        groups = await facebook_group_names.sources(account_id)
         if not groups:
             return ChannelResult(
-                ["Chưa có nhóm nguồn Facebook. Dùng /fb_themnhom <group_id> <tên-gợi-nhớ>."]
+                [
+                    "Chưa có nhóm nguồn Facebook. Gõ /nhomzalo để xem nhóm rồi "
+                    "/fb_themnhom <số> [tên-gợi-nhớ]."
+                ]
             )
-        lines = ["📣 Nhóm nguồn đăng Facebook:"]
-        lines.extend(f"{i}. {alias} — {group_id}" for i, (group_id, alias) in enumerate(groups, 1))
+        lines = [f"📣 Nhóm nguồn đăng Facebook ({len(groups)}):"]
+        lines.extend(
+            f"{i}. {group.name or facebook_group_names.UNKNOWN} · gợi nhớ: {group.alias}"
+            for i, group in enumerate(groups, 1)
+        )
+        lines.append(
+            "🔁 Bài trùng được lọc chung cho mọi nhóm: một deal đăng ở nhiều nhóm chỉ vào "
+            "hàng chờ 1 lần."
+        )
+        lines.append("Bỏ nhóm: /fb_xoanhom <tên gợi nhớ hoặc tên nhóm>")
         return ChannelResult(["\n".join(lines)])
 
     if command == "/fb_pages":
@@ -350,26 +455,39 @@ async def maybe_handle_facebook_command(account_id: str, text: str) -> ChannelRe
         if not group_id or not alias or len(alias) > 100:
             return ChannelResult(["Group ID hoặc tên gợi nhớ không hợp lệ."])
         try:
-            await facebook_repository.add_group(account_id, group_id, alias)
+            await facebook_repository.add_group(account_id, group_id, alias, name)
         except asyncpg.UniqueViolationError:
             return ChannelResult([f"Tên gợi nhớ “{alias}” đang được dùng cho nhóm Facebook khác."])
+        facebook_group_names.invalidate(account_id)
         await zalo_gateway_status.refresh_groups()
-        label = zalo_group_list.describe(group_id, name)
+        if not name:
+            # Thêm bằng group ID: hỏi gateway tên thật của nhóm để hiện thay cho ID.
+            name = await facebook_group_names.name_of(account_id, group_id)
+        shown = f"“{name}” (gợi nhớ: {alias})" if name else f"“{alias}”"
         return ChannelResult(
-            [f"✅ Đã thêm nhóm Facebook {alias} — {label}. Không ảnh hưởng /tongket."]
+            [
+                f"✅ Đã thêm nhóm Facebook {shown}. Bài trùng được lọc chung với mọi nhóm "
+                "nguồn khác. Không ảnh hưởng /tongket."
+            ]
         )
 
     if command == "/fb_xoanhom":
         parts = raw.split(maxsplit=1)
         if len(parts) < 2:
-            return ChannelResult(["Cú pháp: /fb_xoanhom <group_id hoặc tên-gợi-nhớ>"])
+            return ChannelResult(["Cú pháp: /fb_xoanhom <tên gợi nhớ hoặc tên nhóm>"])
         target = parts[1].strip()
-        group_removed = await facebook_repository.remove_group(account_id, target)
-        if not group_removed:
-            return ChannelResult([f"Không tìm thấy nhóm Facebook “{target}”."])
+        groups = await facebook_group_names.sources(account_id, fill_missing=False)
+        group = facebook_group_names.find(groups, target)
+        group_id = group.group_id if group is not None else target
+        if not await facebook_repository.remove_group(account_id, group_id):
+            return ChannelResult(
+                [f"Không tìm thấy nhóm Facebook “{target}”. Gõ /fb_nhom để xem tên nhóm."]
+            )
+        facebook_group_names.invalidate(account_id)
         await zalo_gateway_status.refresh_groups()
+        shown = facebook_group_names.label_of(group) if group is not None else target
         return ChannelResult(
-            [f"✅ Đã xóa nhóm Facebook {target}. Danh sách /tongket không thay đổi."]
+            [f"✅ Đã xóa nhóm Facebook “{shown}”. Danh sách /tongket không thay đổi."]
         )
 
     if command == "/fb_xem":

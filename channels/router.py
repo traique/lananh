@@ -1,6 +1,5 @@
 """Authenticated HTTP bridge used by the local zca-js process."""
 
-import asyncio
 import base64
 import binascii
 import dataclasses
@@ -13,10 +12,16 @@ import time
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 import messages as messages_module
-from channels import facebook_repository, zalo_repository, zalo_session, zalo_users
+from channels import (
+    facebook_intake,
+    facebook_repository,
+    zalo_repository,
+    zalo_session,
+    zalo_users,
+)
 from channels.contracts import (
     ZaloGroupConfig,
     ZaloFacebookPostRequest,
@@ -25,18 +30,14 @@ from channels.contracts import (
     ZaloMessageResponse,
     ZaloOutboxItem,
 )
-from channels.facebook_commands import maybe_handle_facebook_command, prepare_post
+from channels.facebook_commands import maybe_handle_facebook_command
 from channels.group_commands import maybe_handle_group_command
 from channels.zalo_text import to_plain_text, zalo_rich_chunks
 from ai.timeouts import turn_deadline
 from core import alerts, idempotency, trace
-from core.envutil import env_on
 from services import channel_dispatch, reply_audience, turn_control, usage_quota, voice_reply
 from services.channel_chat_service import handle_channel_text, split_for_zalo
 from services.channel_image_service import MAX_ZALO_IMAGE_BYTES, handle_channel_image
-from services import facebook_dedup, facebook_intake_stats
-from services.facebook_caption import skip_reason
-from services.facebook_image import compact_image, image_dhash
 from services.concurrency import (
     TurnCancelled,
     assistant_turn,
@@ -290,6 +291,8 @@ async def delete_controller(x_zalo_bridge_secret: str | None = Header(default=No
 async def receive(
     payload: ZaloMessageRequest,
     x_zalo_bridge_secret: str | None = Header(default=None),
+    # FastAPI tiêm Request; test gọi thẳng hàm thì None (bỏ qua bước gửi bù).
+    request: Request = None,  # type: ignore[assignment]
 ):
     await _auth_sender(x_zalo_bridge_secret, payload.sender_id)
     async with channel_message_turn(payload.account_id, payload.message_id, "text"):
@@ -301,7 +304,43 @@ async def receive(
                 event_key=f"zalo:{payload.account_id}:{payload.message_id}",
             )
         ):
-            return await _receive_text(payload)
+            response = await _receive_text(payload)
+    await _deliver_if_gateway_gave_up(request, payload, response)
+    return response
+
+
+async def _deliver_if_gateway_gave_up(
+    request: Request | None, payload: ZaloMessageRequest, response: ZaloMessageResponse
+) -> None:
+    """Gateway chờ 1 lượt tối đa BRIDGE_TIMEOUT_MS (240 s) rồi báo lỗi cho người dùng;
+    thời gian chờ khoá lượt (assistant_turn) CỘNG hạn chót AI có thể vượt mức đó. Khi đã
+    có câu trả lời mà gateway đã ngắt kết nối thì gửi bù qua outbox thay vì bỏ mất (gateway
+    vẫn nhận bản cache idempotency nếu hỏi lại đúng message_id)."""
+    if request is None or not response.messages:
+        return
+    try:
+        gave_up = await request.is_disconnected()
+    except Exception:
+        return
+    if not gave_up:
+        return
+    chunks = list(response.messages)
+    chunks[0] = f"{messages_module.ZALO_LATE_REPLY_PREFIX}\n{chunks[0]}"
+    try:
+        for chunk in chunks:
+            await zalo_repository.enqueue_outbox(payload.account_id, payload.conversation_id, chunk)
+    except Exception:
+        logger.warning(
+            "Không gửi bù được câu trả lời tin Zalo %s qua outbox.",
+            payload.message_id,
+            exc_info=True,
+        )
+        return
+    logger.info(
+        "Gateway đã thôi chờ tin Zalo %s: gửi bù %d đoạn trả lời qua outbox.",
+        payload.message_id,
+        len(chunks),
+    )
 
 
 async def _is_controller(external_id: str) -> bool:
@@ -602,18 +641,24 @@ async def group_message(
     return Response(status_code=204)
 
 
-@router.post("/facebook-group-post", status_code=204)
-async def facebook_group_post(
-    payload: ZaloFacebookPostRequest,
-    x_zalo_bridge_secret: str | None = Header(default=None),
-):
-    _auth(x_zalo_bridge_secret)
+# Bài Facebook: tối đa 10 ảnh, mỗi ảnh <= ZALO_IMAGE_MAX_BYTES, tổng <= 16 MiB.
+_FACEBOOK_MAX_MEDIA = 10
+_FACEBOOK_MEDIA_TOTAL_BYTES = 16 * 1024 * 1024
+_FACEBOOK_IMAGE_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
+
+
+def _max_image_bytes() -> int:
+    try:
+        return int(os.getenv("ZALO_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
+    except ValueError:
+        return 8 * 1024 * 1024
+
+
+def _decode_facebook_media(payload: ZaloFacebookPostRequest) -> list[tuple[str, bytes]]:
+    """Ảnh base64 của bài (đường JSON cũ) -> bytes, kiểm trần từng ảnh và tổng (400/413)."""
     media: list[tuple[str, bytes]] = []
     total_bytes = 0
-    try:
-        max_image_bytes = int(os.getenv("ZALO_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
-    except ValueError:
-        max_image_bytes = 8 * 1024 * 1024
+    max_image_bytes = _max_image_bytes()
     for item in payload.media:
         try:
             body = base64.b64decode(item.data_b64, validate=True)
@@ -622,80 +667,90 @@ async def facebook_group_post(
         if not body or len(body) > max_image_bytes:
             raise HTTPException(413, "Image too large")
         total_bytes += len(body)
-        if total_bytes > 16 * 1024 * 1024:
+        if total_bytes > _FACEBOOK_MEDIA_TOTAL_BYTES:
             raise HTTPException(413, "Media payload too large")
         media.append((item.mime_type, body))
+    return media
+
+
+async def _read_form_media(items: list) -> list[tuple[str, bytes]]:
+    """Các phần "media" nhị phân của bài multipart -> (mime, bytes), cùng trần như JSON."""
+    media: list[tuple[str, bytes]] = []
+    total_bytes = 0
+    max_image_bytes = _max_image_bytes()
+    for item in items:
+        if isinstance(item, str) or not hasattr(item, "read"):
+            raise HTTPException(400, "Invalid media part")
+        mime = (item.content_type or "").split(";", 1)[0].strip().lower()
+        if mime not in _FACEBOOK_IMAGE_TYPES:
+            raise HTTPException(400, "Unsupported image type")
+        body = await item.read(max_image_bytes + 1)
+        if not body or len(body) > max_image_bytes:
+            raise HTTPException(413, "Image too large")
+        total_bytes += len(body)
+        if total_bytes > _FACEBOOK_MEDIA_TOTAL_BYTES:
+            raise HTTPException(413, "Media payload too large")
+        media.append((mime, body))
+    return media
+
+
+async def _ingest_facebook_post(
+    payload: ZaloFacebookPostRequest, media: list[tuple[str, bytes]]
+) -> Response:
     if not payload.text.strip() and not media:
         raise HTTPException(400, "Empty Facebook post")
-    # Lọc ở đây (sau khi gateway đã gộp ảnh + chữ cùng người gửi). Trả 204 chứ không báo lỗi:
-    # gateway thử lại bài bị lỗi (4xx: 1 lần rồi bỏ, 5xx/mạng: backoff có giới hạn).
-    reason = skip_reason(
-        payload.text,
-        bool(media),
-        require_photo_and_caption=env_on("FACEBOOK_REQUIRE_PHOTO_AND_CAPTION"),
-        skip_voucher=env_on("FACEBOOK_SKIP_VOUCHER_POSTS"),
-    )
-    if reason:
-        logger.info(
-            "Bỏ qua bài Zalo (%s) nhóm=%s người gửi=%s: %.60s",
-            reason,
-            payload.group_id,
-            payload.sender_id,
-            " ".join(payload.text.split()),
-        )
-        facebook_intake_stats.record(reason, payload.text)
-        return Response(status_code=204)
-    # Nén ảnh TRƯỚC khi lưu (Supabase free tier 500 MB) và lấy dHash để chống trùng.
-    # Xử lý tuần tự từng ảnh để giữ đỉnh RAM thấp trên máy 512 MB.
-    stored_media: list[tuple[str, bytes]] = []
-    image_hashes: list[int] = []
-    for mime_type, body in media:
-        stored = await asyncio.to_thread(compact_image, mime_type, body)
-        stored_media.append(stored)
-        digest = await asyncio.to_thread(image_dhash, stored[1])
-        if digest is not None:
-            image_hashes.append(digest)
-    media.clear()
-    fingerprint = facebook_dedup.build_fingerprint(payload.text, image_hashes)
-    try:
-        post_id = await facebook_repository.create_post(
+    await facebook_intake.ingest(
+        facebook_intake.IncomingPost(
             account_id=payload.account_id,
             group_id=payload.group_id,
             sender_id=payload.sender_id,
             sender_name=payload.sender_name,
-            source_message_ids=payload.message_ids,
-            content=payload.text.strip(),
-            media=stored_media,
-            fingerprint=fingerprint,
-        )
-    except facebook_repository.DuplicatePostError as exc:
-        logger.info(
-            "Bỏ qua bài Zalo trùng (%s) nhóm=%s người gửi=%s: %.60s",
-            exc,
-            payload.group_id,
-            payload.sender_id,
-            " ".join(payload.text.split()),
-        )
-        facebook_intake_stats.record(f"trùng lặp: {exc.match.reason}", payload.text)
-        return Response(status_code=204)
-    if post_id is None:
-        return Response(status_code=204)
-    facebook_intake_stats.record(facebook_intake_stats.QUEUED)
-    note = None
-    pruned = await facebook_repository.enforce_pending_cap(payload.account_id)
-    if pruned:
-        facebook_intake_stats.record(facebook_intake_stats.PRUNED, amount=len(pruned))
-        shown = ", ".join(f"#{i}" for i in pruned[:10]) + ("..." if len(pruned) > 10 else "")
-        note = (
-            f"🧹 Hàng chờ vượt {facebook_repository.max_pending()} bài: "
-            f"đã tự xoá {len(pruned)} bài chờ cũ nhất ({shown})."
-        )
-    await prepare_post(payload.account_id, post_id, note=note)
-    try:
-        await facebook_repository.prune_history()
-    except Exception:
-        logger.warning("Dọn dữ liệu Facebook cũ lỗi; thử lại lần sau.", exc_info=True)
+            message_ids=payload.message_ids,
+            text=payload.text,
+        ),
+        media,
+    )
     return Response(status_code=204)
+
+
+@router.post("/facebook-group-post", status_code=204)
+async def facebook_group_post(
+    payload: ZaloFacebookPostRequest,
+    x_zalo_bridge_secret: str | None = Header(default=None),
+):
+    """Bài đã gộp (ảnh + chữ cùng người gửi) từ nhóm nguồn Facebook, ảnh base64 trong
+    JSON (gateway cũ; gateway hiện tại dùng /facebook-group-post-multipart). Lọc, chống
+    trùng giữa các nhóm và ghi hàng chờ ở channels/facebook_intake.py; AI viết lại + gửi
+    xem trước chạy nền. Bài bị lọc/trùng vẫn trả 204: gateway thử lại bài lỗi (4xx: 1 lần
+    rồi bỏ, 5xx/mạng: backoff có giới hạn), không được thử lại bài bị lọc mãi."""
+    _auth(x_zalo_bridge_secret)
+    media = _decode_facebook_media(payload)
+    payload.media.clear()  # bản base64 không còn cần, nhả RAM sớm
+    return await _ingest_facebook_post(payload, media)
+
+
+@router.post("/facebook-group-post-multipart", status_code=204)
+async def facebook_group_post_multipart(
+    request: Request,
+    x_zalo_bridge_secret: str | None = Header(default=None),
+):
+    """Như /facebook-group-post nhưng gửi multipart: phần "meta" là JSON các trường của
+    ZaloFacebookPostRequest (không có media), mỗi ảnh là 1 phần "media" nhị phân - không
+    còn base64 (đỡ ~2,7 lần dung lượng ảnh trên heap gateway và 1 lần giải mã ở đây)."""
+    _auth(x_zalo_bridge_secret)
+    form = await request.form(max_files=_FACEBOOK_MAX_MEDIA, max_fields=2)
+    try:
+        meta = form.get("meta")
+        if not isinstance(meta, str):
+            raise HTTPException(400, "Missing meta")
+        try:
+            payload = ZaloFacebookPostRequest.model_validate_json(meta)
+        except ValidationError as exc:
+            raise HTTPException(422, "Invalid Facebook post meta") from exc
+        media = await _read_form_media(form.getlist("media"))
+    finally:
+        await form.close()
+    return await _ingest_facebook_post(payload, media)
 
 
 @router.get("/outbox/{account_id}/{recipient_id}", response_model=list[ZaloOutboxItem])
