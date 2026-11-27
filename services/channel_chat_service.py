@@ -643,7 +643,16 @@ async def _handle_stock(
         # Mã có bản số liệu nhưng không có phần diễn giải AI (LLM lỗi/hết hạn chót
         # lượt): 1 câu báo cuối thay cho lời hứa "⏳ ... sẽ gửi tiếp" rồi im lặng.
         skipped: list[str] = []
-        for symbol in symbols:
+        if len(symbols) > 1:
+            # "So sánh A B C" (như Telegram): lấy dữ liệu mọi mã SONG SONG trước (thuần
+            # I/O), vòng dưới đọc từ cache; lỗi ở đây không chặn - mã thiếu tự lấy lại.
+            try:
+                await stock_analysis.prefetch_contexts(
+                    symbols, user_id=user_id, full_access=is_admin
+                )
+            except Exception:
+                logger.warning("Không lấy trước được dữ liệu %s", ", ".join(symbols), exc_info=True)
+        for index, symbol in enumerate(symbols):
             # Giống Telegram: bản số liệu rule-based (nguồn số chuẩn) luôn là
             # tin đầu tiên, bản diễn giải LLM (đã kiểm hợp đồng policy) theo sau.
             reports_before = len(outputs)
@@ -658,6 +667,9 @@ async def _handle_stock(
                     user_id=user_id,
                     on_rule_report=collect_rule_report,
                     full_access=is_admin,
+                    # 2 mã đầu chạy đủ tóm tắt tin + tranh luận; mã sau 1 lượt tổng hợp
+                    # để cả lượt nằm trong hạn chót.
+                    with_debate=index < stock_analysis.MAX_DEBATE_SYMBOLS,
                 )
                 if result:
                     outputs.append(result)

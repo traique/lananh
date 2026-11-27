@@ -332,3 +332,33 @@ async def test_lenh_gia_kenh_chat_bao_het_gio(monkeypatch, no_telemetry):
     monkeypatch.setattr(ccs_cmd.config, "ALLOWED_USER_ID", 7)
     outputs, _ = await ccs_cmd._price(7, "iPhone 16")
     assert outputs[0].startswith("⏱️ AI trả lời chậm quá") and "🔎 Hết 200s" in outputs[0]
+
+
+@pytest.mark.asyncio
+async def test_zalo_so_sanh_nhieu_ma_lay_truoc_du_lieu_va_chi_2_ma_dau_tranh_luan(monkeypatch):
+    """Như Telegram: "so sánh A B C" trên Zalo/Zoom lấy dữ liệu mọi mã song song trước,
+    chỉ 2 mã đầu chạy đủ tóm tắt tin + tranh luận (cả lượt nằm trong hạn chót)."""
+    from services import channel_chat_service as ccs
+
+    prefetched, debates = [], []
+
+    async def three(text, limit=3):
+        return ["FPT", "HPG", "VNM"]
+
+    async def prefetch(symbols, **kwargs):
+        prefetched.append((list(symbols), kwargs.get("full_access")))
+
+    async def analyze(symbol, *, on_rule_report=None, with_debate=True, **kw):
+        debates.append((symbol, with_debate))
+        return f"Diễn giải {symbol}"
+
+    _patch_stock(monkeypatch, ccs.stock_analysis)
+    monkeypatch.setattr(ccs.stock_analysis, "find_valid_symbols", three)
+    monkeypatch.setattr(ccs.stock_analysis, "prefetch_contexts", prefetch)
+    monkeypatch.setattr(ccs.stock_analysis, "analyze_symbol", analyze)
+
+    result, _ = await ccs._handle_stock(1, "so sánh FPT HPG VNM", is_admin=False)
+
+    assert prefetched == [(["FPT", "HPG", "VNM"], False)]
+    assert debates == [("FPT", True), ("HPG", True), ("VNM", False)]
+    assert result.messages == ["Diễn giải FPT", "Diễn giải HPG", "Diễn giải VNM"]
