@@ -283,7 +283,9 @@ tbody tr:last-child td { border-bottom: 0; }
 th:first-child, td:first-child { padding-left: 0; }
 th:last-child, td:last-child { padding-right: 0; }
 th.n, td.n { text-align: right; }
-td .sub { display: block; color: var(--muted); font-size: var(--fs-small); }
+td .sub, .fest small { display: block; color: var(--muted); font-size: var(--fs-small); }
+/* bảng lễ hội (~220 dòng): cột ngày không xuống dòng, dòng phụ là <small> cho HTML gọn */
+.fest td:first-child { white-space: nowrap; }
 /* tiêu đề hàng (bảng sao hạn theo năm): cao như ô dữ liệu, xuống dòng được */
 tbody th[scope="row"] { height: auto; padding-block: 12px; vertical-align: baseline; }
 .han-table tbody th[scope="row"] { white-space: nowrap; }

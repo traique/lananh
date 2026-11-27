@@ -134,6 +134,7 @@
   {% if question %}<p class="muted">Việc cần xem: {{ question }}</p>{% endif %}
   <div class="answer" role="status">{{ ai_text }}</div>
   {% elif logged_in %}
+  {% if ai_busy %}<div class="error-box" role="alert">{{ ai_busy }}</div>{% endif %}
   <form class="form" method="post" action="/ky-mon" onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent='Đang luận giải…'">
     <input type="hidden" name="ngay" value="{{ form.ngay }}">
     <input type="hidden" name="gio" value="{{ form.gio }}">

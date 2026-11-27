@@ -51,11 +51,14 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import contextlib
 import contextvars
 import datetime as dt
 import functools
+import gzip
 import hashlib
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -243,6 +246,20 @@ _LOTTERY_TIMEOUT_SEC = 12
 # tải song song. Hạn chót 15 giây vì vàng có thể phải thử vang.today rồi mới tới SJC.
 _price_slots = asyncio.Semaphore(3)
 _PRICE_TIMEOUT_SEC = 15
+# Nút "AI luận giải": chờ khoá lượt của chủ bot (đang chat Telegram/Zalo/avatar) tối đa
+# chừng này giây rồi báo bận, không giữ request web (và 1 chỗ của uvicorn) tới vài phút.
+_AI_LOCK_WAIT_SEC = 20
+_AI_BUSY_TEXT = "Bot đang bận trả lời việc khác, thử lại sau ít phút nha."
+# Trang chỉ phụ thuộc URL (và ngày hôm nay): khách chưa đăng nhập được trình duyệt giữ
+# tối đa chừng này giây, không quá nửa đêm giờ VN (xem _cache_control).
+_PAGE_MAX_AGE = 3600
+# /lich/le-hoi: 206 lễ hội, ~110 KB HTML, render ~20 ms. Giữ bản ĐÃ NÉN gzip (~25 KB, chuỗi
+# HTML Python thì ~200 KB) của chừng này trang gần nhất: lượt sau không render, không nén.
+_FESTIVAL_PAGES_MAX = 32
+_festival_pages: collections.OrderedDict[tuple, tuple[bytes, str]] = collections.OrderedDict()
+_SAFE_METHODS = frozenset({"GET", "HEAD"})
+# Header bản 304 giữ lại từ bản 200 (RFC 9110 15.4.5).
+_NOT_MODIFIED_HEADERS = frozenset({"cache-control", "content-location", "etag", "expires", "vary"})
 
 
 # (đã đăng nhập, đường dẫn đang xem, gốc URL công khai) của request hiện tại - để thanh
@@ -262,7 +279,9 @@ def _base_url(request: Request) -> str:
 
 
 async def _set_viewer(request: Request) -> bool:
-    logged_in = await web_admin.is_logged_in(request)
+    # Form gửi từ trang KHÁC (Sec-Fetch-Site) không bao giờ được coi là của chủ trang: không
+    # tốn lượt AI, không đổi danh sách địa điểm (chống CSRF thêm 1 lớp ngoài SameSite=Lax).
+    logged_in = await web_admin.is_logged_in(request) and not web_admin.cross_site_write(request)
     # POST (kết quả form) không mở lại được bằng link: đăng nhập xong về trang form.
     path = _current_path(request) if request.method == "GET" else request.url.path
     _viewer.set((logged_in, path, _base_url(request)))
@@ -278,14 +297,15 @@ def _canonical_path(path: str) -> str:
 
 
 class _ViewerRoute(APIRoute):
-    """Ghi nhận trạng thái đăng nhập trước khi render trang."""
+    """Ghi nhận trạng thái đăng nhập trước khi render trang; trang xong thì gắn ETag/304
+    (_finish_page)."""
 
     def get_route_handler(self):
         handler = super().get_route_handler()
 
         async def with_viewer(request: Request) -> Response:
             await _set_viewer(request)
-            return await handler(request)
+            return _finish_page(request, await handler(request))
 
         return with_viewer
 
@@ -345,6 +365,12 @@ def _faq_html(text: str) -> Markup:
     return Markup(_FAQ_LINK.sub(r'<a href="\2">\1</a>', str(escape(text))))
 
 
+def _template_reload() -> bool:
+    """Đọc lại template khi file đổi (mỗi request stat từng file) chỉ khi chạy máy dev/test;
+    trên Render (env RENDER=true, Render tự đặt) template chỉ đổi khi deploy."""
+    return os.getenv("RENDER", "").strip().lower() != "true"
+
+
 @functools.lru_cache(maxsize=1)
 def _env() -> Environment:
     env = Environment(
@@ -352,6 +378,7 @@ def _env() -> Environment:
         autoescape=select_autoescape(["html"]),
         trim_blocks=True,
         lstrip_blocks=True,
+        auto_reload=_template_reload(),
     )
     env.filters["vn_date"] = lambda iso: dt.date.fromisoformat(iso).strftime("%d/%m/%Y")
     # Số kiểu Việt Nam: 25.060 / 4.015,1; đồng -> triệu: 141700000 -> "141,7".
@@ -447,6 +474,82 @@ def _vn_stamp(text: str | None) -> str:
     return stamp.replace(tzinfo=_VN_TZ).isoformat()
 
 
+# ─── ETag, Cache-Control ─────────────────────────────────────────────────────
+# Mọi trang HTML 200 của GET có ETag yếu theo nội dung: lượt xem lại (và Googlebot) gửi
+# If-None-Match, trùng thì nhận 304 không body. Cache-Control (khách chưa đăng nhập):
+# - trang chỉ phụ thuộc URL (tháng/ngày đã chọn, năm sinh, năm lễ hội, form): ``public``,
+#   giữ tối đa _PAGE_MAX_AGE giây và không qua nửa đêm giờ VN (link "Năm nay", ô "hôm
+#   nay" của lịch đổi đúng lúc sang ngày);
+# - trang theo "hôm nay" (tháng này, đếm ngày tới lễ, giờ hoàng đạo, giá, xổ số...):
+#   ``no-cache`` - trình duyệt hỏi lại mỗi lần, không đổi thì vẫn chỉ nhận 304.
+# Đã đăng nhập (thanh bên có nút Quản trị): ``private, no-cache``; mọi trang ``Vary: Cookie``.
+
+
+def weak_etag(body: bytes) -> str:
+    """ETag yếu theo nội dung (W/: cùng nghĩa dù gửi nén gzip hay không)."""
+    return f'W/"{hashlib.blake2b(body, digest_size=12).hexdigest()}"'
+
+
+def etag_matches(header: str, etag: str) -> bool:
+    """If-None-Match so khớp yếu (RFC 9110 13.1.2): bỏ tiền tố W/, "*" khớp mọi bản."""
+    if not header:
+        return False
+    tag = etag.removeprefix("W/")
+    return any(
+        item == "*" or item.removeprefix("W/") == tag
+        for item in (part.strip() for part in header.split(","))
+    )
+
+
+def not_modified(response: Response) -> Response:
+    """Bản 304 (không body) giữ ETag, Cache-Control, Vary của bản 200."""
+    headers = {k: v for k, v in response.headers.items() if k in _NOT_MODIFIED_HEADERS}
+    return Response(status_code=304, headers=headers)
+
+
+def _add_vary(response: Response, name: str) -> None:
+    current = response.headers.get("vary", "")
+    if name.lower() not in {part.strip().lower() for part in current.split(",")}:
+        response.headers["Vary"] = f"{current}, {name}" if current else name
+
+
+def _until_midnight(now: dt.datetime | None = None) -> int:
+    """Số giây tới 0 giờ hôm sau (giờ VN)."""
+    now = now or site_data.now()
+    midnight = dt.datetime.combine(now.date() + dt.timedelta(days=1), dt.time(), now.tzinfo)
+    return max(1, int((midnight - now).total_seconds()))
+
+
+def _cache_control(max_age: int | None, *, noindex: bool) -> str:
+    """Cache-Control cho khách chưa đăng nhập: None = không đặt, 0 = trang theo "hôm
+    nay" (no-cache), > 0 = trang chỉ phụ thuộc URL (trang noindex thì vẫn no-cache)."""
+    if max_age is None:
+        return ""
+    if max_age > 0 and not noindex:
+        return f"public, max-age={min(max_age, _until_midnight())}"
+    return "no-cache"
+
+
+def _finish_page(request: Request, response: Response) -> Response:
+    """Trang HTML 200 của GET: ETag + 304 khi If-None-Match khớp, Vary: Cookie; đã
+    đăng nhập thì chỉ trình duyệt của chính người đó được giữ (private)."""
+    if request.method not in _SAFE_METHODS or response.status_code != 200:
+        return response
+    etag = response.headers.get("etag")
+    if etag is None:
+        body = getattr(response, "body", b"")
+        if not body:
+            return response
+        etag = weak_etag(bytes(body))
+        response.headers["ETag"] = etag
+    if _viewer.get()[0]:
+        response.headers["Cache-Control"] = "private, no-cache"
+    _add_vary(response, "Cookie")
+    if etag_matches(request.headers.get("if-none-match", ""), etag):
+        return not_modified(response)
+    return response
+
+
 def _render(
     name: str,
     *,
@@ -456,11 +559,12 @@ def _render(
     modified: str = "",
     canonical: str = "",
     crumb: str = "",
+    max_age: int | None = None,
     **ctx,
 ) -> HTMLResponse:
     """``canonical``: đường dẫn chuẩn khi cùng nội dung mở được bằng nhiều kiểu URL;
     trống thì lấy đường dẫn đang xem (chỉ giữ tham số nội dung). ``crumb``: tên trang
-    con trong đường dẫn mục của JSON-LD."""
+    con trong đường dẫn mục của JSON-LD. ``max_age``: xem _cache_control."""
     css_version, version = _assets()
     logged_in, path, base = _viewer.get()
     canonical = canonical or _canonical_path(path)
@@ -496,7 +600,11 @@ def _render(
     # Lỗi nhập liệu hiện ngay trên trang (role=alert) với HTTP 200: trang HTML
     # trả 4xx làm trình duyệt ghi lỗi console dù người dùng chỉ nhập sai. Trang lỗi
     # nhập liệu truyền noindex để URL gõ bừa không thành trang trùng trong chỉ mục.
-    return HTMLResponse(html)
+    page = HTMLResponse(html)
+    cache = "" if logged_in else _cache_control(max_age, noindex=bool(ctx.get("noindex")))
+    if cache:
+        page.headers["Cache-Control"] = cache
+    return page
 
 
 def _source_down(page: HTMLResponse) -> HTMLResponse:
@@ -550,7 +658,7 @@ def _upcoming_holidays(today: dt.date, limit: int) -> list[dict]:
 async def home(request: Request) -> Response:
     """Trang chủ cho trình duyệt (web.py gọi khi Accept có text/html)."""
     await _set_viewer(request)
-    return home_page()
+    return _finish_page(request, home_page())
 
 
 def _hour_strip(lucky_hours: list[str], hour: int) -> list[dict]:
@@ -685,16 +793,18 @@ async def lich_page(request: Request) -> Response:
         if selected["holidays"]:
             description += f" {', '.join(selected['holidays'])}."
         canonical = f"/lich?ngay={selected_date.isoformat()}"
-    elif not error:
+    this_month = (grid["year"], grid["month"]) == (today.year, today.month)
+    if not day_page and not error:
         # Tháng này (nút Tháng trước/sau dẫn tới) là /lich; tháng gõ 10/2026 quy về ?thang=2026-10.
-        current = (grid["year"], grid["month"]) == (today.year, today.month)
-        canonical = "/lich" if current else f"/lich?thang={grid['year']}-{grid['month']:02d}"
+        canonical = "/lich" if this_month else f"/lich?thang={grid['year']}-{grid['month']:02d}"
     return _render_lich(
         "lich.html",
         tab="/lich",
         title=title,
         description=description,
         canonical=canonical,
+        # Tháng này đánh dấu ô "hôm nay"; tháng khác chỉ phụ thuộc URL.
+        max_age=0 if this_month else _PAGE_MAX_AGE,
         noindex=bool(error),
         month=grid,
         weeks=_weeks(grid),
@@ -715,6 +825,8 @@ async def lich_ask_page(request: Request) -> HTMLResponse:
         title=f"{q[:60]}: hỏi lịch" if q else "Hỏi lịch âm: ngày tốt, tuổi, sao hạn",
         description="Hỏi tự do về lịch âm: ngày tốt cưới hỏi, khai trương, động thổ, rằm, Tết, "
         "tuổi, sao hạn, đổi ngày; trả lời bằng thuật toán, không dùng AI.",
+        # Câu hỏi (noindex) trả lời theo hôm nay ("còn mấy ngày nữa Tết"): no-cache.
+        max_age=_PAGE_MAX_AGE,
         noindex=bool(q),
         q=q,
         answer=site_data.calendar_answer(q) if q else "",
@@ -763,6 +875,8 @@ async def lich_convert_page(request: Request) -> HTMLResponse:
         tab="/lich/doi-ngay",
         title=title,
         description=description,
+        # "15/8" không ghi năm là lần tới tính từ hôm nay: chỉ đổi khi sang ngày.
+        max_age=_PAGE_MAX_AGE,
         noindex=bool(error),
         am=am,
         nhuan=nhuan,
@@ -779,6 +893,7 @@ async def lich_holidays_page() -> HTMLResponse:
         title="Ngày lễ sắp tới trong năm: âm lịch và dương lịch",
         description="Ngày lễ, Tết âm lịch và dương lịch 12 tháng tới: Tết Nguyên đán, Giỗ Tổ "
         "Hùng Vương, Vu Lan, Trung thu, Quốc khánh, kèm thứ, ngày dương lịch, số ngày còn lại.",
+        max_age=0,  # đếm số ngày còn lại tính từ hôm nay
         holidays=_upcoming_holidays(site_data.today(), len(calendar_query.HOLIDAYS)),
     )
 
@@ -790,13 +905,39 @@ def _year_param(raw: str, default: int) -> int:
 
 
 @router.get("/lich/le-hoi", response_class=HTMLResponse)
-async def lich_festivals_page(nam: str = "", tinh: str = "") -> HTMLResponse:
+async def lich_festivals_page(request: Request, nam: str = "", tinh: str = "") -> Response:
     """206 lễ hội, lễ tết Việt Nam theo năm và tỉnh (bộ dữ liệu le-hoi-viet-nam của Nhật
-    Nguyệt, CC BY 4.0 - services/le_hoi.py). Tham số sai thì về năm nay / cả nước."""
+    Nguyệt, CC BY 4.0 - services/le_hoi.py). Tham số sai thì về năm nay / cả nước.
+
+    Trang đã render giữ dạng nén gzip trong _festival_pages (LRU có trần) theo mọi thứ
+    làm nên HTML: năm, tỉnh, đăng nhập, URL chuẩn, gốc URL, năm nay (link "Năm nay")."""
     today = site_data.today()
     year = _year_param(nam, today.year)
     names = le_hoi.provinces()
     code = tinh if tinh in names else ""
+    logged_in, path, base = _viewer.get()
+    key = (year, code, logged_in, _canonical_path(path), base, today.year)
+    cached = _festival_pages.get(key)
+    if cached is None:
+        body = _festival_page(today, year, code, names).body
+        cached = (gzip.compress(body, compresslevel=6, mtime=0), weak_etag(body))
+        _festival_pages[key] = cached
+        while len(_festival_pages) > _FESTIVAL_PAGES_MAX:
+            _festival_pages.popitem(last=False)
+    else:
+        _festival_pages.move_to_end(key)
+    packed, etag = cached
+    headers = {"ETag": etag}
+    if not logged_in:  # đã đăng nhập: _finish_page đặt private, no-cache
+        headers["Cache-Control"] = _cache_control(_PAGE_MAX_AGE, noindex=False)
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        # Gửi thẳng bản đã nén (CompressionMiddleware bỏ qua response có Content-Encoding).
+        headers |= {"Content-Encoding": "gzip", "Vary": "Accept-Encoding"}
+        return Response(packed, media_type="text/html; charset=utf-8", headers=headers)
+    return HTMLResponse(gzip.decompress(packed), headers=headers)
+
+
+def _festival_page(today: dt.date, year: int, code: str, names: dict[str, str]) -> HTMLResponse:
     where = f" ở {names[code]}" if code else ""
     months: dict[int, list[dict]] = {}
     for day, f in le_hoi.between(dt.date(year, 1, 1), dt.date(year, 12, 31), code or None):
@@ -957,6 +1098,8 @@ async def good_days_page(request: Request) -> HTMLResponse:
         description=f"{summary} Kèm ngày âm, giờ hoàng đạo từng ngày.",
         active="/lich/ngay-tot",
         canonical=_good_days_link(shown, purpose, current),
+        # Tháng này: ghi "đã qua", tóm tắt ngày tốt còn lại tính từ hôm nay.
+        max_age=0 if shown == current else _PAGE_MAX_AGE,
         noindex=bool(error) or not -1 <= offset <= 24,
         heading=heading,
         summary=summary,
@@ -1014,6 +1157,7 @@ async def tuoi_index_page(request: Request) -> Response:
         description=f"Tra tuổi theo năm sinh từ {_TUOI_FROM} đến {today.year}: can chi, con giáp, "
         f"mệnh ngũ hành, tuổi hợp và kỵ, sao hạn, Tam tai, Kim lâu, Hoang ốc năm {target}.",
         active="/tuoi",
+        max_age=_PAGE_MAX_AGE,
         noindex=bool(error),
         decades=decades,
         error=error,
@@ -1050,6 +1194,7 @@ async def tuoi_year_page(request: Request, raw: str) -> Response:
         description=description,
         active="/tuoi",
         crumb=f"Tuổi {data['canChi']} {year}",
+        max_age=_PAGE_MAX_AGE,
         p=data,
         prev_year=year - 1 if year > site_data.MIN_YEAR else None,
         next_year=year + 1 if year < today.year else None,
@@ -1451,13 +1596,14 @@ async def _form(request: Request) -> dict[str, str]:
     return {k: str(v)[:100] for k, v in form.items()}
 
 
-def _tuvi_form(form: dict, error: str = "") -> HTMLResponse:
+def _tuvi_form(form: dict, error: str = "", max_age: int | None = None) -> HTMLResponse:
     return _render(
         "tuvi.html",
         title="Lá số tử vi: an sao 12 cung theo ngày giờ sinh",
         description="Lập lá số Tử Vi Đẩu Số theo ngày, giờ sinh dương lịch hoặc âm lịch: 12 cung, "
         "chính tinh kèm độ sáng, phụ tinh, Tứ hóa, Tuần Triệt, đại hạn.",
         active="/tu-vi",
+        max_age=max_age,
         # Theo giờ đồng hồ từ 23h: Tý đầu (23h-24h) đứng trước Tý (0h-1h).
         hours=[site_data.HOUR_OPTIONS[site_data.EARLY_TY], *site_data.HOUR_OPTIONS[:12]],
         hour_table=[(name, *(f"{h}h" for h in span[:-1].split("-"))) for name, span in _HOURS],
@@ -1468,7 +1614,7 @@ def _tuvi_form(form: dict, error: str = "") -> HTMLResponse:
 
 @router.get("/tu-vi", response_class=HTMLResponse)
 async def tuvi_page() -> HTMLResponse:
-    return _tuvi_form({"gio": "", "lich": "duong", "gioi": "male"})
+    return _tuvi_form({"gio": "", "lich": "duong", "gioi": "male"}, max_age=_PAGE_MAX_AGE)
 
 
 _TUVI_FIELDS = ("ngay", "thang", "nam", "gio", "gioi", "lich", "nhuan", "namxem")
@@ -1484,14 +1630,24 @@ def _clean_ai_text(text: str) -> str:
     return "\n".join(lines).replace("**", "").strip()
 
 
-async def _ai_reading(form: dict, kind: str, explain) -> str:
-    """Luận giải AI khi người xem bấm nút AI và đã đăng nhập; còn lại trả "".
-    Chạy dưới khoá lượt của chủ bot như chat (AI qua provider-chain, có hạn chót)."""
+async def _ai_reading(form: dict, kind: str, explain) -> tuple[str, str]:
+    """(luận giải, câu báo bận). Luận giải AI khi người xem bấm nút AI và đã đăng nhập;
+    còn lại ("", ""). Chạy dưới khoá lượt của chủ bot như chat (AI qua provider-chain,
+    có hạn chót); chờ khoá quá _AI_LOCK_WAIT_SEC (chủ bot đang chat lượt dài) thì trả
+    câu báo bận để trang hiện lại nút, không giữ request tới khi lượt kia xong."""
     if form.get("ai") != "1" or not _viewer.get()[0]:
-        return ""
-    async with concurrency.assistant_turn(concurrency.OWNER_TURN_KEY):
+        return "", ""
+    async with contextlib.AsyncExitStack() as stack:
+        try:
+            async with asyncio.timeout(_AI_LOCK_WAIT_SEC):
+                await stack.enter_async_context(
+                    concurrency.assistant_turn(concurrency.OWNER_TURN_KEY)
+                )
+        except TimeoutError:
+            # Huỷ lúc đang chờ: assistant_turn tự nhả phần đã lấy (khối finally của nó).
+            return "", _AI_BUSY_TEXT
         text = await divination_commands.ai_text(config.ALLOWED_USER_ID, kind, "web", explain)
-    return _clean_ai_text(text)
+    return _clean_ai_text(text), ""
 
 
 @router.post("/tu-vi", response_class=HTMLResponse)
@@ -1523,7 +1679,7 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
         )
     except InputError as exc:
         return _tuvi_form(form, exc.message)
-    ai_text = await _ai_reading(form, "tuvi_chitiet", lambda: tuvi.explain_with_ai(c))
+    ai_text, ai_busy = await _ai_reading(form, "tuvi_chitiet", lambda: tuvi.explain_with_ai(c))
     return _render(
         "tuvi_result.html",
         title="Lá số tử vi",
@@ -1533,19 +1689,21 @@ async def tuvi_submit(request: Request) -> HTMLResponse:
         chart=tuvi.chart_data(c),
         reading=tuvi.reading(c, site_data.today()),
         ai_text=ai_text,
+        ai_busy=ai_busy,
         ai_action="/tu-vi",
         ai_fields={k: form[k] for k in _TUVI_FIELDS if k in form},
         ai_label="AI luận giải lá số",
     )
 
 
-def _tsh_form(form: dict, error: str = "") -> HTMLResponse:
+def _tsh_form(form: dict, error: str = "", max_age: int | None = None) -> HTMLResponse:
     return _render(
         "tsh.html",
         title="Thần số học: tính con số chủ đạo theo ngày sinh",
         description="Tính thần số học Pythagoras theo ngày sinh và họ tên: con số chủ đạo, biểu "
         "đồ ngày sinh, mũi tên, 4 đỉnh cao, năm và tháng cá nhân.",
         active="/than-so-hoc",
+        max_age=max_age,
         form=form,
         error=error,
     )
@@ -1553,7 +1711,7 @@ def _tsh_form(form: dict, error: str = "") -> HTMLResponse:
 
 @router.get("/than-so-hoc", response_class=HTMLResponse)
 async def tsh_page() -> HTMLResponse:
-    return _tsh_form({})
+    return _tsh_form({}, max_age=_PAGE_MAX_AGE)
 
 
 @router.post("/than-so-hoc", response_class=HTMLResponse)
@@ -1573,7 +1731,7 @@ async def tsh_submit(request: Request) -> HTMLResponse:
         ("Số trưởng thành (sau 35-40 tuổi)", reading["maturity"]),
     ]
     name = form.get("ten", "").strip()
-    ai_text = await _ai_reading(
+    ai_text, ai_busy = await _ai_reading(
         form, "tsh_chitiet", lambda: numerology.explain_with_ai(numerology.compute(birth, name))
     )
     return _render(
@@ -1585,13 +1743,16 @@ async def tsh_submit(request: Request) -> HTMLResponse:
         reading=reading,
         rows=rows,
         ai_text=ai_text,
+        ai_busy=ai_busy,
         ai_action="/than-so-hoc",
         ai_fields={k: form[k] for k in _TSH_FIELDS if k in form},
         ai_label="AI diễn giải chi tiết",
     )
 
 
-def _kymon_page(form: dict, *, ai_text: str = "", error: str = "") -> HTMLResponse:
+def _kymon_page(
+    form: dict, *, ai_text: str = "", ai_busy: str = "", error: str = ""
+) -> HTMLResponse:
     """Trang /ky-mon: form ngày/giờ (GET, chia sẻ link được) + bàn 9 cung. Nhập
     sai thì báo lỗi và hiện bàn lúc này."""
     is_now = not (form.get("ngay") or form.get("gio"))
@@ -1618,6 +1779,7 @@ def _kymon_page(form: dict, *, ai_text: str = "", error: str = "") -> HTMLRespon
         is_now=is_now,
         question=form.get("cau_hoi", ""),
         ai_text=ai_text,
+        ai_busy=ai_busy,
         error=error,
     )
     if is_now:  # bàn "lúc này" đổi theo giờ: trình duyệt phải hỏi lại server
@@ -1646,10 +1808,10 @@ async def kymon_submit(request: Request) -> HTMLResponse:
         return _kymon_page(form, error=exc.message)
     chart = kymon.build_chart(moment)
     question = form["cau_hoi"]
-    ai_text = await _ai_reading(
+    ai_text, ai_busy = await _ai_reading(
         form, "kymon_chitiet", lambda: kymon.explain_with_ai(chart, question)
     )
-    return _kymon_page(form, ai_text=ai_text)
+    return _kymon_page(form, ai_text=ai_text, ai_busy=ai_busy)
 
 
 @static_router.get("/static/{name}")
@@ -1860,23 +2022,34 @@ def _ok(data: dict) -> JSONResponse:
     return JSONResponse(data)
 
 
+def _ok_cacheable(request: Request, data: dict) -> Response:
+    """JSON chỉ phụ thuộc URL (ngày/tháng cố định, không theo hôm nay): cache công khai
+    1 giờ, ETag yếu + 304 khi If-None-Match khớp."""
+    response = JSONResponse(data, headers={"Cache-Control": f"public, max-age={_PAGE_MAX_AGE}"})
+    etag = weak_etag(bytes(response.body))
+    response.headers["ETag"] = etag
+    if etag_matches(request.headers.get("if-none-match", ""), etag):
+        return not_modified(response)
+    return response
+
+
 @api_router.get("/calendar/days/{date}")
-async def api_day(date: str) -> JSONResponse:
+async def api_day(request: Request, date: str) -> Response:
     if not re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", date):
         return _error(422, "INVALID_DATE", "Ngày có dạng YYYY-MM-DD.")
     try:
-        return _ok(site_data.day_info(site_data.parse_date(date)))
+        return _ok_cacheable(request, site_data.day_info(site_data.parse_date(date)))
     except InputError as exc:
         return _error(422, exc.code, exc.message)
 
 
 @api_router.get("/calendar/months/{month}")
-async def api_month(month: str) -> JSONResponse:
+async def api_month(request: Request, month: str) -> Response:
     m = re.fullmatch(r"(\d{4})-(\d{2})", month)
     if not m:
         return _error(422, "INVALID_MONTH", "Tháng có dạng YYYY-MM.")
     try:
-        return _ok(site_data.month_grid(int(m.group(1)), int(m.group(2))))
+        return _ok_cacheable(request, site_data.month_grid(int(m.group(1)), int(m.group(2))))
     except InputError as exc:
         return _error(422, exc.code, exc.message)
 
