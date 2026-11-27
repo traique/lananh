@@ -252,3 +252,27 @@ def test_goi_y_kenh_noi_sau_persona_va_cache_co_tran():
         assert len(config._chat_skill_cache) <= len(config.PERSONA_VARIANTS) + 1
     finally:
         config._chat_skill_cache.clear()
+
+
+def test_mac_dinh_khong_dung_gemini_live_cho_chat_chu(tmp_path):
+    """LIVE_CHAT_FALLBACK mặc định TẮT (chủ bot duyệt 11/2026): lượt chữ cuối chuỗi
+    không mở WebSocket âm thanh Gemini Live - chậm và tốn RAM nhất. Đặt =1 để bật."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    env = {k: v for k, v in os.environ.items() if k not in ("LIVE_CHAT_FALLBACK", "PROVIDER_ORDER")}
+    code = "from core import config; print(config.LIVE_CHAT_FALLBACK, config.PROVIDER_ORDER)"
+    root = Path(__file__).resolve().parent.parent
+    env["PYTHONPATH"] = str(root)
+    out = subprocess.run(
+        [sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "False ['router9', 'groq', 'openrouter', 'api1', 'api2']"
+    env["LIVE_CHAT_FALLBACK"] = "1"
+    out = subprocess.run(
+        [sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+    assert out.stdout.strip().endswith("'api2', 'live']")

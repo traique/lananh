@@ -28,8 +28,8 @@ tự core.config.PROVIDER_ORDER (mặc định router9 -> groq -> openrouter -> 
   "native") chỉ thử provider TỰ tra web được (Gemini Google Search, Groq
   browser_search, OpenRouter/9Router nếu bật), không ai tra được thì trả lời
   qua chuỗi thường kèm ghi chú "chưa tra được" - xem chat().
-- Gemini Live (ai/live_client.py, provider "live", mặc định đứng CUỐI chuỗi khi
-  LIVE_CHAT_FALLBACK=1): chỉ lượt chat thường (chat() truyền live_call) mới dùng -
+- Gemini Live (ai/live_client.py, provider "live", đứng CUỐI chuỗi khi bật
+  LIVE_CHAT_FALLBACK=1 - mặc định tắt): chỉ lượt chat thường (chat() truyền live_call) mới dùng -
   ask()/utility/ảnh/tài liệu/tra web không có live_call nên bỏ qua. Live tự thử
   api1 -> api2, tự ghi provider_calls "live_api1/2" và cooldown riêng "live_api*".
 """

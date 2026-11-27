@@ -300,10 +300,12 @@ MONITOR_INTERVAL_SEC = _env_int("MONITOR_INTERVAL_SEC", 300)  # 5 phút
 # api2. Chi phí phụ thuộc provider/model/tool thực tế; Gemini official đứng cuối
 # làm lưới an toàn.
 _PROVIDER_ORDER_RAW = os.getenv("PROVIDER_ORDER", "router9,groq,openrouter,api1,api2").strip()
-# Gemini Live (ai/live_client.py) làm provider chat dự phòng CUỐI: "live" chưa có
-# trong PROVIDER_ORDER thì được thêm vào cuối chuỗi; 0 = bỏ "live" khỏi chuỗi kể cả
-# khi PROVIDER_ORDER có ghi. Chỉ dùng cho chat thường (không tra web/JSON/cổ phiếu).
-LIVE_CHAT_FALLBACK = _env_bool("LIVE_CHAT_FALLBACK", True)
+# Gemini Live (ai/live_client.py) làm provider chat dự phòng CUỐI khi
+# LIVE_CHAT_FALLBACK=1: "live" chưa có trong PROVIDER_ORDER thì được thêm vào cuối
+# chuỗi; 0 (mặc định) = bỏ "live" khỏi chuỗi kể cả khi PROVIDER_ORDER có ghi. Mặc định
+# TẮT: lượt chữ cuối cùng phải mở WebSocket âm thanh - chậm nhất và tốn RAM nhất trên
+# Render 512 MB. Chỉ dùng cho chat thường (không tra web/JSON/cổ phiếu).
+LIVE_CHAT_FALLBACK = _env_bool("LIVE_CHAT_FALLBACK", False)
 
 
 def _parse_provider_order(raw: str, *, live: bool = True) -> list[str]:
