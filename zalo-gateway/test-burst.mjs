@@ -205,3 +205,19 @@ test("quá nhiều người đang debounce: lô mới vào hàng đợi ngay (RA
   batcher.flush("a");
   batcher.flush("b");
 });
+
+test("flushAll (lúc tắt): mọi lô đang debounce vào hàng đợi ngay, lô đã chờ lượt không bị đụng", async () => {
+  const { turns, batcher } = harness({ debounceMs: 5000, maxWaitMs: 10000 });
+  batcher.add("a", "tin a");
+  batcher.add("b", "tin b1");
+  batcher.add("b", "tin b2");
+  assert.equal(batcher.buffering, 2);
+  assert.equal(batcher.flushAll(), 2);
+  assert.equal(batcher.buffering, 0);
+  assert.equal(batcher.flushAll(), 0);
+  await wait(10);
+  assert.deepEqual(turns, [
+    ["a", "tin a"],
+    ["b", "tin b1 | tin b2"],
+  ]);
+});
