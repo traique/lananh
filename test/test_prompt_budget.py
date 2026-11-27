@@ -8,7 +8,14 @@ def test_trim_history_bo_tin_cu_truoc_va_cat_tung_tin():
     assert [r for r, _ in trimmed] == ["user", "model", "user"]
     assert len(trimmed[0][1]) == 1500
     trimmed = pb.trim_history(history, budget_chars=250, message_max_chars=1500)
-    assert [r for r, _ in trimmed] == ["model", "user"]  # tin cũ nhất bị bỏ, thứ tự giữ nguyên
+    # Tin cũ nhất bị bỏ, thứ tự giữ nguyên; câu trả lời mất câu hỏi ở đầu cũng bị bỏ.
+    assert [r for r, _ in trimmed] == ["user"]
+
+
+def test_lich_su_sau_khi_cat_luon_mo_dau_bang_tin_nguoi_dung():
+    history = [("model", "dạ"), ("user", "hỏi 1"), ("model", "đáp 1"), ("user", "hỏi 2")]
+    assert pb.trim_history(history, budget_chars=10_000)[0] == ("user", "hỏi 1")
+    assert pb.trim_history([("model", "x")], budget_chars=10_000) == []
 
 
 def test_fit_chat_prompt_cat_theo_thu_tu_lich_su_grounding_memory():
@@ -42,7 +49,27 @@ def test_fit_chat_prompt_khong_dung_den_khi_vua_ngan_sach():
 
 def test_estimate_tokens():
     assert pb.estimate_tokens("") == 0
-    assert pb.estimate_tokens("abcd" * 10) == 10
+    assert pb.estimate_tokens("x" * 28) == 10
+    assert pb.estimate_tokens("abcd" * 10) == 15  # làm tròn lên
+
+
+def test_ti_le_ky_tu_moi_token_tieng_viet_va_ngan_sach_theo_token(monkeypatch):
+    """Tiếng Việt có dấu chỉ ~2,5-3 ký tự/token với tokenizer của gpt-oss/Gemini
+    (provider_calls: prompt_chars/prompt_tokens) - 4 ký tự/token cũ đếm thiếu ~30%,
+    ngân sách "10k token" thật ra là 14k. Ngân sách đặt theo token nên đổi tỉ lệ thì
+    trần ký tự tự đổi theo, mục tiêu token giữ nguyên."""
+    assert pb.CHARS_PER_TOKEN == 2.8
+    assert 2.5 <= pb.CHARS_PER_TOKEN <= 3.0
+    monkeypatch.delenv("PROMPT_BUDGET_CHARS", raising=False)
+    monkeypatch.delenv("GROQ_HISTORY_MAX_CHARS", raising=False)
+    default = pb._env_int("PROMPT_BUDGET_CHARS", pb.chars_for_tokens(10_000), 12_000, 400_000)
+    assert pb.PROMPT_BUDGET_TOKENS == 10_000 and default == 28_000
+    assert pb.estimate_tokens("x" * default) == pb.PROMPT_BUDGET_TOKENS
+    groq = pb._env_int("GROQ_HISTORY_MAX_CHARS", pb.chars_for_tokens(1_250), 0, 100_000)
+    assert pb.GROQ_HISTORY_MAX_TOKENS == 1_250 and groq == 3_500
+    # Persona đầy đủ (~9-15k ký tự) đã ~3,5-5,6k token: cùng max_tokens 4096 là vượt
+    # trần ~8K token/phút của Groq free - lý do cần persona rút gọn (fit_groq_chat).
+    assert pb.estimate_tokens("p" * 9_400) + pb.GROQ_FULL_MAX_TOKENS > pb.GROQ_TPM_BUDGET
 
 
 def test_lich_su_rieng_cho_groq_co_tran_nho_hon():
@@ -71,7 +98,7 @@ async def test_chat_doc_lich_su_theo_luot_va_noi_cach_tra_loi_vao_persona(monkey
         seen["groq"] = kwargs["groq_call"]
         return SimpleNamespace(text="dạ")
 
-    async def fake_groq_generate(prompt, *, system_instruction, history, temperature):
+    async def fake_groq_generate(prompt, *, system_instruction, history, temperature, max_tokens):
         seen["persona"] = system_instruction
         return SimpleNamespace(text="dạ")
 

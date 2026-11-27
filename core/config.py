@@ -153,6 +153,25 @@ GROQ_CALL_TIMEOUT_SEC = _env_int("GROQ_CALL_TIMEOUT_SEC", 30)
 # chắc chắn chuyển tiếp được.
 GROQ_TOTAL_TIMEOUT_SEC = _env_int("GROQ_TOTAL_TIMEOUT_SEC", 90)
 GROQ_MAX_CONCURRENCY = _env_int("GROQ_MAX_CONCURRENCY", 4)
+# Mức suy luận của gpt-oss trên Groq cho chat, JSON utility (router tool, trích trí
+# nhớ) và tools /agent: Groq mặc định "medium" - token suy luận tính vào max_tokens
+# và trần 8K token/phút, thêm độ trễ. "low" | "medium" | "high"; "off" = để Groq tự
+# chọn. Chỉ gửi cho model openai/gpt-oss-* (model khác không nhận tham số này). Lượt
+# tự tra web (browser_search) luôn "low" theo khuyến nghị của Groq.
+_GROQ_REASONING_EFFORTS = {"low", "medium", "high"}
+
+
+def _groq_reasoning_effort(raw: str) -> str:
+    value = (raw or "").strip().lower()
+    if value in ("", "off", "0", "none"):
+        return ""
+    if value not in _GROQ_REASONING_EFFORTS:
+        logger.warning("GROQ_REASONING_EFFORT=%r không hợp lệ - dùng 'low'.", raw)
+        return "low"
+    return value
+
+
+GROQ_REASONING_EFFORT = _groq_reasoning_effort(os.getenv("GROQ_REASONING_EFFORT", "low"))
 # Groq Whisper (console.groq.com/docs/speech-to-text): chép lời tin nhắn thoại
 # (services/voice_service.py), cùng GROQ_API_KEY nhưng bucket rate-limit audio
 # riêng (cooldown "groq_stt", không khoá Groq chat). Nhận flac/mp3/mp4/m4a/ogg/
@@ -439,13 +458,16 @@ _PROFILE_PLACEHOLDERS = {"", "...", "…"}
 
 # Cache theo (phần, biến thể persona, cách xưng hô riêng): cách xưng hô chỉ áp cho
 # biến thể Zalo và nằm trong danh sách đóng core/address.ADDRESS_FORMS, nên phần lõi
-# tối đa 1 + 2 * (len(ADDRESS_FORMS) + 1) chuỗi (~15 chuỗi x ~10 KB); phần cổ phiếu
-# không phụ thuộc biến thể hay cách xưng hô (1 chuỗi ~5 KB).
+# tối đa 1 + 2 * (len(ADDRESS_FORMS) + 1) chuỗi (~15 chuỗi x ~10 KB); bản rút gọn
+# (load_chat_skill_compact) cùng số chuỗi x ~2 KB; phần cổ phiếu không phụ thuộc
+# biến thể hay cách xưng hô (1 chuỗi ~5 KB).
 _PART_CORE = "core"
 _PART_STOCK = "stock"
+_PART_COMPACT = "compact"
 _PART_TEMPLATES = {
     _PART_CORE: _CHAT_SKILL_TEMPLATE_PATH.name,
     _PART_STOCK: _CHAT_SKILL_STOCK_TEMPLATE_PATH.name,
+    _PART_COMPACT: "chat_skill_compact.j2",
 }
 _chat_skill_cache: dict[tuple[str, str, str | None], str] = {}
 
@@ -575,12 +597,7 @@ def load_chat_skill(
     ~1/3 token persona. PERSONA_STOCK_SPLIT=0 thì luôn trả bản đầy đủ. Phần lõi
     đứng trước và không đổi giữa hai dạng (giữ đầu prompt ổn định cho cache).
     """
-    if variant is None:
-        variant = PERSONA_OWNER if include_owner_profile else PERSONA_MEMBER
-    elif variant not in PERSONA_VARIANTS:
-        # Giá trị lạ: KHÔNG bao giờ rơi về biến thể chủ bot (lộ hồ sơ).
-        logger.warning("Biến thể persona %r không hợp lệ, dùng 'member'.", variant)
-        variant = PERSONA_MEMBER
+    variant = _persona_variant(variant, include_owner_profile)
     form = None if variant == PERSONA_OWNER else address.normalize(address_form)
     if force_reload:
         _chat_skill_cache.clear()
@@ -591,6 +608,35 @@ def load_chat_skill(
         section = _cached_part(_PART_STOCK, PERSONA_OWNER, None)
         if section:
             persona = f"{persona}\n\n{section}"
+    hint = channel_style_hint(channel)
+    return f"{persona}\n\n{hint}" if persona and hint else persona
+
+
+def _persona_variant(variant: str | None, include_owner_profile: bool = True) -> str:
+    if variant is None:
+        return PERSONA_OWNER if include_owner_profile else PERSONA_MEMBER
+    if variant not in PERSONA_VARIANTS:
+        # Giá trị lạ: KHÔNG bao giờ rơi về biến thể chủ bot (lộ hồ sơ).
+        logger.warning("Biến thể persona %r không hợp lệ, dùng 'member'.", variant)
+        return PERSONA_MEMBER
+    return variant
+
+
+def load_chat_skill_compact(
+    *,
+    variant: str | None = None,
+    channel: str | None = None,
+    address_form: str | None = None,
+) -> str:
+    """Persona RÚT GỌN (~1,5-2k ký tự, templates/chat_skill_compact.j2, cùng nguồn
+    chat_skill.yaml): danh tính, xưng hô, giọng và luật an toàn theo biến thể, bỏ ví
+    dụ giọng/nét riêng/nhịp cảm xúc/phần cổ phiếu. Dùng cho provider có trần token
+    mỗi phút nhỏ (Groq free ~8K TPM) khi bản đầy đủ không vừa - xem
+    ai/prompt_budget.fit_groq_chat. Tham số như load_chat_skill; rỗng khi
+    CHAT_SKILL_PATH là file .txt cũ (caller dùng bản đầy đủ)."""
+    variant = _persona_variant(variant)
+    form = None if variant == PERSONA_OWNER else address.normalize(address_form)
+    persona = _cached_part(_PART_COMPACT, variant, form)
     hint = channel_style_hint(channel)
     return f"{persona}\n\n{hint}" if persona and hint else persona
 

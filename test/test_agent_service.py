@@ -598,14 +598,21 @@ async def test_groq_generate_with_tools_gui_tham_so_agent(monkeypatch):
     async def key():
         return "k"
 
+    async def gpt_oss():
+        return "openai/gpt-oss-20b"
+
     monkeypatch.setattr(openai_compatible, "post_chat_completion_with_tools", fake_post)
     monkeypatch.setattr(groq_client, "_api_key", key)
+    monkeypatch.setattr(groq_client, "_model", gpt_oss)
     monkeypatch.setattr(openrouter_client, "_api_key", key)
+    monkeypatch.setattr(openrouter_client, "_model", gpt_oss)
     await groq_client.generate_with_tools([{"role": "user", "content": "x"}], [])
     await openrouter_client.generate_with_tools([{"role": "user", "content": "x"}], [])
 
-    assert seen[0]["extra_payload"] == {"parallel_tool_calls": False}
+    # gpt-oss trên Groq: suy luận "low" (GROQ_REASONING_EFFORT) thay vì "medium" mặc định.
+    assert seen[0]["extra_payload"] == {"parallel_tool_calls": False, "reasoning_effort": "low"}
     assert seen[0]["max_tokens"] == groq_client.AGENT_MAX_TOKENS == 1024
+    # OpenRouter không nhận tham số riêng của Groq.
     assert seen[1]["extra_payload"] == {"provider": {"require_parameters": True}}
 
 

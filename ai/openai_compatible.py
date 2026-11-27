@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Callable, Iterable, Optional, TypeVar
 
 import httpx
 
-from ai import call_log, drafts
+from ai import call_log, drafts, prompt_budget
 from core import urls
 
 logger = logging.getLogger(__name__)
@@ -133,6 +133,14 @@ def retry_after(exc: BaseException) -> Optional[float]:
 def error_text(exc: BaseException) -> str:
     """Toàn bộ thông điệp của chuỗi lỗi (để dò dấu hiệu quota theo ngày...)."""
     return " | ".join(str(item) for item in _error_chain(exc))
+
+
+class BudgetExceededError(OpenAICompatibleError):
+    """Request ước lượng (prompt + max_tokens) vượt ngân sách token/phút của provider
+    (Groq free ~8K TPM) - BỎ QUA, KHÔNG gửi (gửi chỉ nhận 413 và tốn 1 lượt). Không
+    phải lỗi sức khoẻ/quota: không cooldown, provider_calls ghi ``outcome``."""
+
+    outcome = "skipped_budget"
 
 
 class NoSearchEvidenceError(OpenAICompatibleError):
@@ -919,7 +927,10 @@ class OpenAICompatibleProvider:
     vẫn có hiệu lực. Mọi lượt gọi đi qua semaphore + timeout tổng của ``pool``.
     ``error_cls`` (9Router: Router9Error) bọc lại OpenAICompatibleError để caller phân
     loại như cũ (TimeoutError của timeout tổng KHÔNG bị bọc). ``extra_payload(model)``:
-    tham số riêng của nhà cung cấp cho lượt chat/JSON/tools (vd reasoning_effort)."""
+    tham số riêng của nhà cung cấp cho lượt chat/JSON/tools (vd reasoning_effort).
+    ``tpm_budget()`` (Groq): trần token/phút cho 1 request (prompt ước lượng +
+    max_tokens, ai/prompt_budget.request_tokens) - vượt thì BudgetExceededError, không
+    gửi; <= 0 = không kiểm."""
 
     def __init__(
         self,
@@ -937,6 +948,7 @@ class OpenAICompatibleProvider:
         tools_temperature: float = 0.3,
         tools_max_tokens: int = 1024,
         error_cls: Optional[type[Exception]] = None,
+        tpm_budget: Optional[Callable[[], int]] = None,
     ) -> None:
         self.label = label
         self.pool = pool
@@ -951,6 +963,7 @@ class OpenAICompatibleProvider:
         self._tools_temperature = tools_temperature
         self._tools_max_tokens = tools_max_tokens
         self._error_cls = error_cls
+        self._tpm_budget = tpm_budget
 
     async def api_key(self) -> str:
         return await _resolve(self._api_key)
@@ -967,6 +980,27 @@ class OpenAICompatibleProvider:
         if not api_key:
             raise self._error(self._missing_key)
         return api_key, await _resolve(self._base_url)
+
+    def check_budget(
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        tools: Optional[list[Any]] = None,
+        *,
+        label: Optional[str] = None,
+    ) -> None:
+        """Chốt chặn trước khi gửi: prompt ước lượng + max_tokens vượt tpm_budget thì
+        raise BudgetExceededError (số ký tự prompt vẫn ghi vào provider_calls)."""
+        budget = self._tpm_budget() if self._tpm_budget is not None else 0
+        if budget <= 0:
+            return
+        needed = prompt_budget.request_tokens(messages, tools) + max_tokens
+        if needed > budget:
+            _note_request(messages)
+            raise BudgetExceededError(
+                f"{label or self.label}: request ~{needed} token (prompt + max_tokens) vượt "
+                f"ngân sách {budget} token/phút - bỏ qua, không gửi"
+            )
 
     def payload_for(self, model: str, extra: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """Tham số riêng của nhà cung cấp cho ``model`` + ``extra`` của lượt gọi."""
@@ -1000,6 +1034,7 @@ class OpenAICompatibleProvider:
     ) -> str:
         """1 lượt /chat/completions trả text (post_chat_completion)."""
         api_key, base_url = await self.credentials()
+        self.check_budget(messages, max_tokens, label=label)
         model_name = model or await self.model_name()
         payload = self.payload_for(model_name, extra_payload)
         return await self.run(
@@ -1050,6 +1085,7 @@ class OpenAICompatibleProvider:
     ) -> CompletionResult:
         """Như complete() nhưng trả cả bằng chứng tra web (post_chat_completion_full)."""
         api_key, base_url = await self.credentials()
+        self.check_budget(messages, max_tokens, label=label)
         model_name = model or await self.model_name()
         return await self.run(
             label,
@@ -1083,6 +1119,7 @@ class OpenAICompatibleProvider:
         api_key, base_url = await self.credentials()
         label = f"{self.label} tools"
         tokens = self._tools_max_tokens if max_tokens is None else max_tokens
+        self.check_budget(messages, tokens, tools, label=label)
         model_name = model or await self.model_name()
         payload = self.payload_for(model_name, self._tools_payload)
         return await self.run(

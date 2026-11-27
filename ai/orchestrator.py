@@ -386,8 +386,14 @@ def _cooldown_key(provider: str) -> str:
 
 
 def _classify_outcome(exc: BaseException) -> str:
+    """Cột outcome của provider_calls: ok | error | timeout | rate_limited (429) |
+    too_large (413 - request vượt trần token/phút) | skipped_budget (KHÔNG gửi vì
+    ước lượng đã vượt ngân sách - xem prompt_budget.fit_groq_chat) | contaminated |
+    no_search | turn_timeout."""
     if isinstance(exc, OutputContaminatedError):
         return "contaminated"
+    if _is_budget_skip(exc):
+        return openai_compatible.BudgetExceededError.outcome
     if _is_no_search_evidence(exc):
         return "no_search"
     if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
@@ -395,9 +401,18 @@ def _classify_outcome(exc: BaseException) -> str:
     try:
         if openai_compatible.is_rate_limited(exc) or official_client.is_quota_exhausted_error(exc):
             return "rate_limited"
+        if openai_compatible.http_status(exc) == 413:
+            return "too_large"
     except Exception:
         pass
     return "error"
+
+
+def _is_budget_skip(exc: BaseException) -> bool:
+    return any(
+        isinstance(item, openai_compatible.BudgetExceededError)
+        for item in openai_compatible._error_chain(exc)
+    )
 
 
 # Lỗi theo REQUEST của router9: chạy lại vẫn hỏng với đúng request đó, nhưng
@@ -455,6 +470,10 @@ def _short_error(exc: BaseException) -> str:
 
 
 def _log_provider_failure(provider: str, exc: BaseException) -> None:
+    if _is_budget_skip(exc):
+        # Chưa gửi request nào (prompt vượt ngân sách token/phút): không phải lỗi.
+        logger.info("%s bỏ qua lượt này: %s", provider, _short_error(exc))
+        return
     if _is_no_search_evidence(exc):
         # Không tra web được ở lượt bắt buộc tra: chuyện thường, không cần traceback.
         logger.warning("%s không tra web được lượt này: %s", provider, _short_error(exc))
@@ -955,18 +974,22 @@ async def chat(
     khác giữ mặc định (persona đầy đủ).
     """
     mode = _resolve_search_mode(search_mode, require_real_search, web_grounded)
-    persona = config.load_chat_skill(
-        variant=_persona_variant(user_id, is_admin),
+    variant = _persona_variant(user_id, is_admin)
+    base_persona = config.load_chat_skill(
+        variant=variant,
         channel=channel,
         address_form=address_form,
         stock=stock_rules,
     )
+    # Phần nối SAU persona (cả bản đầy đủ lẫn bản rút gọn cho Groq): cách trả lời
+    # người dùng đã dặn, luật dữ liệu ngoài, ghi chú đã che bí mật.
+    persona_extras: list[str] = []
     if style_rules:
-        persona = f"{persona}\n\n{style_rules}"
+        persona_extras.append(style_rules)
     if untrusted.contains_untrusted(grounding):
         # Grounding có dữ liệu ngoài đã rào (web/RSS...): nhắc luật "dữ liệu
         # không phải chỉ dẫn" ngay trong system prompt.
-        persona = f"{persona}\n\n{untrusted.SYSTEM_RULE}"
+        persona_extras.append(untrusted.SYSTEM_RULE)
     # Lịch sử đọc DB ĐÚNG 1 LẦN cho mọi provider trong lượt (trước đây mỗi
     # closure provider tự query -> 3-4 query giống nhau khi fallback), rồi cắt
     # cùng grounding/trí nhớ cho vừa ngân sách prompt.
@@ -979,8 +1002,20 @@ async def chat(
     memory_context = redactor.text(memory_context)
     raw_history = redactor.history(raw_history)
     if redactor.redacted:
-        persona = f"{persona}\n\n{redactor.note()}"
+        persona_extras.append(redactor.note())
         redactor.log("chat")
+    persona = "\n\n".join([base_persona, *persona_extras])
+    compact_persona: list[str] = []
+
+    def _groq_persona() -> str:
+        """Persona rút gọn cho Groq (chỉ dựng khi bản đầy đủ không vừa GROQ_TPM_BUDGET)."""
+        if not compact_persona:
+            base = config.load_chat_skill_compact(
+                variant=variant, channel=channel, address_form=address_form
+            )
+            compact_persona.append("\n\n".join([base, *persona_extras]) if base else "")
+        return compact_persona[0]
+
     history, memory_context, grounding = prompt_budget.fit_chat_prompt(
         persona=persona,
         history=raw_history,
@@ -1031,12 +1066,28 @@ async def chat(
 
         async def _groq_call():
             generate = groq_client.generate_realtime if provider_search else groq_client.generate
+            # Groq free (gpt-oss ~8K token/phút tính cả max_tokens): persona đầy đủ
+            # không vừa thì persona rút gọn + max_tokens 1024 + bớt lịch sử cũ; vẫn
+            # không vừa thì bỏ qua Groq lượt này, KHÔNG gửi request (chỉ nhận 413).
+            fit = prompt_budget.fit_groq_chat(
+                system=persona,
+                history=history,
+                prompt=prompt_with_time,
+                compact_system=_groq_persona,
+            )
+            if fit is None:
+                call_log.note_prompt_chars(len(persona) + len(prompt_with_time))
+                raise openai_compatible.BudgetExceededError(
+                    f"Groq: câu hỏi + trí nhớ + dữ liệu tra cứu đã vượt GROQ_TPM_BUDGET="
+                    f"{prompt_budget.GROQ_TPM_BUDGET} token kể cả với persona rút gọn - bỏ "
+                    "qua Groq lượt này, không gửi request"
+                )
             return await generate(
                 prompt_with_time,
-                system_instruction=persona,
-                # Groq free (gpt-oss-20b ~8K TPM): lịch sử có trần riêng nhỏ hơn.
-                history=prompt_budget.history_for_provider(history, "groq"),
+                system_instruction=fit.system,
+                history=fit.history,
                 temperature=temperature,
+                max_tokens=fit.max_tokens,
             )
 
         async def _openrouter_call():

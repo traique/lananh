@@ -16,7 +16,7 @@ import logging
 import re
 from typing import Optional
 
-from ai import openai_compatible, provider_overrides
+from ai import openai_compatible, prompt_budget, provider_overrides
 from ai.openai_compatible import Response
 from core import config
 from core.envutil import env_on
@@ -51,6 +51,24 @@ class RealtimeNoEvidenceError(openai_compatible.NoSearchEvidenceError):
 # /agent nhiều bước (ai/agent_service.py): gpt-oss trên Groq không gọi tool song
 # song, TPM free nhỏ -> max_tokens thấp, kết quả tool đã cắt ~2.5K ký tự ở agent.
 AGENT_MAX_TOKENS = 1024
+# Model nhận tham số reasoning_effort (low/medium/high) trên Groq.
+_REASONING_MODEL_PREFIX = "openai/gpt-oss"
+
+
+def _reasoning_payload(model: str) -> dict:
+    """reasoning_effort (GROQ_REASONING_EFFORT) cho model gpt-oss; model khác thì
+    không gửi (Groq trả 400 với model không suy luận)."""
+    effort = config.GROQ_REASONING_EFFORT
+    if effort and (model or "").lower().startswith(_REASONING_MODEL_PREFIX):
+        return {"reasoning_effort": effort}
+    return {}
+
+
+def _tpm_budget() -> int:
+    # Đọc lúc gọi (test đổi được); 0 = không kiểm.
+    return prompt_budget.GROQ_TPM_BUDGET
+
+
 # Getter đọc tên module LÚC GỌI: test/web_admin thay _api_key/_model/_INCLUDE_USAGE
 # ở cấp module vẫn có hiệu lực.
 _provider = openai_compatible.OpenAICompatibleProvider(
@@ -62,9 +80,11 @@ _provider = openai_compatible.OpenAICompatibleProvider(
     vision_model=lambda: config.GROQ_VISION_MODEL,
     missing_key="Chưa cấu hình GROQ_API_KEY",
     include_usage=lambda: _INCLUDE_USAGE,
+    extra_payload=lambda model: _reasoning_payload(model),
     tools_payload={"parallel_tool_calls": False},
     tools_temperature=0.3,
     tools_max_tokens=AGENT_MAX_TOKENS,
+    tpm_budget=lambda: _tpm_budget(),
 )
 
 close = _provider.close
