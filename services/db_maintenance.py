@@ -14,9 +14,13 @@ Kết quả (trước/sau) được báo cho admin qua Telegram/Zoom.
 
 Ngoài ra mỗi ngày 1 lần dọn dữ liệu cũ của các bảng chỉ-thêm-không-bớt (xem
 ``prune_retention``): user_calls/provider_calls/turn_metrics (thống kê), zalo_outbox đã gửi,
-reminders đã gửi, ghi chú phiên, sự kiện hỏi thăm cũ, tin gom đã gửi (notify_queue) và
-việc nền đã xong (bg_jobs). Xoá theo lô nhỏ để không khoá bảng lâu; số ngày giữ chỉnh qua
-biến môi trường, đặt 0 để tắt từng loại.
+reminders đã gửi, ghi chú phiên, sự kiện hỏi thăm cũ, tin gom đã gửi (notify_queue), việc
+nền đã xong (bg_jobs), nhịp tim sao lưu cũ (backup_runs) và thiết bị app đã thu hồi. Xoá
+theo lô nhỏ để không khoá bảng lâu; số ngày giữ chỉnh qua biến môi trường, đặt 0 để tắt
+từng loại. Ghi chú (notes) của người dùng KHÔNG bao giờ bị xoá theo tuổi ở đây.
+
+Mọi lệnh DB ở đây đi qua ``db.with_reconnect``: kết nối rảnh bị Supavisor cắt không làm
+hoãn lượt dọn hằng ngày hay lượt kiểm tra VACUUM hằng tuần.
 
 Cùng vòng lặp, mỗi ngày kiểm tra bản sao lưu DB (workflow GitHub Actions) còn
 chạy không - xem services/backup_status.py.
@@ -151,6 +155,28 @@ RETENTION_RULES = (
         "DELETE FROM answer_feedback WHERE id IN (SELECT id FROM answer_feedback "
         "WHERE created_at < now() - $1::interval LIMIT $2)",
     ),
+    # Nhịp tim sao lưu (migrations/023, ~1 dòng/ngày do GitHub Actions ghi): giữ hơn 1 năm
+    # cho lịch sử diễn tập hằng tháng. LUÔN giữ dòng mới nhất mỗi loại - watchdog và
+    # /admin đọc nó; xoá mất thì cảnh báo "bản sao lưu đã cũ" im lặng luôn.
+    RetentionRule(
+        "backup_runs",
+        "RETENTION_BACKUP_RUNS_DAYS",
+        400,
+        "DELETE FROM backup_runs WHERE run_key IN (SELECT run_key FROM backup_runs b "
+        "WHERE finished_at < now() - $1::interval AND finished_at < "
+        "(SELECT max(finished_at) FROM backup_runs l WHERE l.kind = b.kind) LIMIT $2)",
+    ),
+    # Thiết bị app đã thu hồi (migrations/030; hash token/mã ghép đã xoá lúc thu hồi) và
+    # mã ghép hết hạn chưa từng dùng - chỉ còn tên + mốc thời gian.
+    RetentionRule(
+        "app_devices",
+        "RETENTION_APP_DEVICES_DAYS",
+        90,
+        "DELETE FROM app_devices WHERE id IN (SELECT id FROM app_devices WHERE "
+        "(revoked_at IS NOT NULL AND revoked_at < now() - $1::interval) OR "
+        "(token_hash IS NULL AND revoked_at IS NULL AND pair_expires_at < now() - $1::interval) "
+        "LIMIT $2)",
+    ),
 )
 
 _task: asyncio.Task | None = None
@@ -204,6 +230,7 @@ def _week_key(now: datetime) -> str:
     return f"{year}-W{week:02d}"
 
 
+@db.with_reconnect
 async def measure() -> TableUsage:
     pool = await db.get_pool()
     row = await pool.fetchrow(
@@ -226,6 +253,9 @@ async def measure() -> TableUsage:
     )
 
 
+# Chạy lại sau khi mất kết nối an toàn: VACUUM FULL cũ còn sống thì vẫn giữ khoá bảng,
+# lần chạy lại chờ quá lock_timeout 5 s là bỏ lượt (không chạy chồng 2 VACUUM).
+@db.with_reconnect
 async def vacuum_full() -> tuple[int, int]:
     """Chạy VACUUM FULL trên 1 connection riêng; trả (kích thước trước, sau)."""
     pool = await db.get_pool()
@@ -292,9 +322,15 @@ def _parse_count(status: str) -> int:
         return 0
 
 
+# Mỗi lô 1 lần thử lại riêng (DELETE theo hạn giữ chạy lại an toàn): bọc cả hàm thì lỗi
+# kết nối bị try/except từng bảng bên dưới nuốt mất, không bao giờ tới with_reconnect.
+@db.with_reconnect
+async def _delete_batch(sql: str, keep: timedelta) -> int:
+    return _parse_count(await (await db.get_pool()).execute(sql, keep, _RETENTION_BATCH))
+
+
 async def prune_retention() -> dict[str, int]:
     """Xoá dữ liệu quá hạn giữ của từng bảng (theo lô có trần); trả số dòng đã xoá."""
-    pool = await db.get_pool()
     deleted: dict[str, int] = {}
     for rule in RETENTION_RULES:
         days = env_int(rule.env, rule.default_days, 0, 3650)
@@ -303,9 +339,7 @@ async def prune_retention() -> dict[str, int]:
         total = 0
         try:
             for _ in range(_RETENTION_MAX_BATCHES):
-                count = _parse_count(
-                    await pool.execute(rule.sql, timedelta(days=days), _RETENTION_BATCH)
-                )
+                count = await _delete_batch(rule.sql, timedelta(days=days))
                 total += count
                 if count < _RETENTION_BATCH:
                     break
