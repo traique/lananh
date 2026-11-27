@@ -573,7 +573,8 @@ async def _post_streaming_text(
             call_log.note_openai_usage(completion)
             return ((completion.get("choices") or [{}])[0].get("message") or {}).get("content", "")
         lines: list[str] = []
-        pieces: list[str] = []
+        # Chữ đã gom giữ thành 1 chuỗi chạy: không nối lại cả danh sách mảnh mỗi delta.
+        partial = ""
         async for raw_line in response.aiter_lines():
             line = raw_line.strip()
             if not line.startswith("data:"):
@@ -581,8 +582,8 @@ async def _post_streaming_text(
             lines.append(line)
             delta = _delta_text(line)
             if delta:
-                pieces.append(delta)
-                drafts.push("".join(pieces))
+                partial += delta
+                drafts.push(partial)
     raw = "\n".join(lines)
     note_sse_usage(raw)
     return parse_sse_content(raw)
