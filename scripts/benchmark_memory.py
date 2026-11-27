@@ -227,7 +227,10 @@ async def _chat_turns(result: dict) -> None:
         return None
 
     _block_network()
-    db._pool = _FakePool()  # type: ignore[assignment]
+    # Pool thật nằm ở core/db/pool.py (core.database chỉ re-export): gán pool giả ở đó.
+    from core.db import pool as db_pool
+
+    db_pool._pool = _FakePool()  # type: ignore[assignment]
     db.ensure_migrations = no_migrations  # type: ignore[assignment]
     config.ROUTER9_API_KEY = "benchmark-key"
     config.ROUTER9_BASE_URL = "https://router9.benchmark.invalid/v1"
