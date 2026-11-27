@@ -1281,10 +1281,18 @@ async def utility_json(prompt: str) -> Optional[dict]:
                 data, latency_ms, usage = await _timed(
                     "groq", lambda: groq_client.generate_json(prompt)
                 )
+            with call_stage("utility"):
+                # Groq trả lời nhưng không ra object JSON: vẫn tốn 1 lượt + token -
+                # ghi riêng "bad_json" để thấy tỉ lệ rơi sang quota Gemini.
+                await _record_provider_call(
+                    "groq",
+                    outcome="ok" if isinstance(data, dict) else "bad_json",
+                    latency_ms=latency_ms,
+                    usage=usage,
+                )
             if isinstance(data, dict):
-                with call_stage("utility"):
-                    await _record_provider_call("groq", latency_ms=latency_ms, usage=usage)
                 return data
+            logger.info("utility_json: Groq không trả object JSON, dùng Gemini utility.")
         except TurnTimeoutError:
             raise
         except Exception as exc:

@@ -637,6 +637,31 @@ async def test_utility_json_uu_tien_groq_roi_fallback_gemini(fake_store, monkeyp
     assert await orchestrator.utility_json("trả JSON") == {"from": "gemini"}
 
 
+@pytest.mark.asyncio
+async def test_utility_json_groq_tra_json_hong_ghi_bad_json(fake_store, monkeypatch):
+    """Groq trả lời nhưng không parse ra object: lượt đó vẫn tốn quota - phải có dòng
+    provider_calls "bad_json" trước khi rơi sang Gemini."""
+    provider_state._loaded = True
+    monkeypatch.setattr(config, "GROQ_API_KEY", "k")
+    recorded = []
+
+    async def groq_bad(prompt, **kwargs):
+        return None
+
+    async def gemini(prompt):
+        return {"from": "gemini"}
+
+    async def fake_record(provider, **kwargs):
+        recorded.append((provider, kwargs.get("outcome"), orchestrator._call_stage.get()))
+
+    monkeypatch.setattr(orchestrator.groq_client, "generate_json", groq_bad)
+    monkeypatch.setattr(orchestrator.official_client, "generate_utility_json", gemini)
+    monkeypatch.setattr(orchestrator, "_record_provider_call", fake_record)
+    assert await orchestrator.utility_json("trả JSON") == {"from": "gemini"}
+    assert recorded == [("groq", "bad_json", "utility")]
+    assert not provider_state.api_in_cooldown("groq")
+
+
 # ─── Key Groq/OpenRouter đặt ở trang admin (provider_overrides) ──────────────
 
 
