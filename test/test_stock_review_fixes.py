@@ -627,7 +627,9 @@ async def test_channel_thanh_vien_nhan_ban_tham_khao_va_ban_so_lieu_truoc(monkey
     async def fake_find(text, limit=3):
         return ["FPT"]
 
-    async def fake_analyze(symbol, *, user_text, user_id, on_rule_report, full_access):
+    async def fake_analyze(
+        symbol, *, user_text, user_id, on_rule_report, full_access, with_debate=True
+    ):
         calls.append(full_access)
         await on_rule_report("BẢN SỐ LIỆU")
         return "DIỄN GIẢI"
