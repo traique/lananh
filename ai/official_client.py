@@ -19,7 +19,7 @@ from ai.timeouts import (
     bounded,
     with_timeout,
 )
-from ai import call_log, provider_overrides
+from ai import call_log, provider_overrides, structured
 from ai.provider_state import provider_state
 from core import config
 from core.text_utils import strip_json_fence
@@ -31,7 +31,6 @@ _VN_WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu"
 # nên luân phiên api1/api2 không tạo client mới mỗi lượt; đổi key qua trang
 # admin thì client cũ của ĐÚNG slot đó được đóng (giải phóng connection pool).
 _official_clients: dict[int, tuple[str, object]] = {}
-_PERSONA_TEMPERATURE = 0.95
 _PERSONA_TOP_P = 0.95
 
 
@@ -192,6 +191,68 @@ def is_quota_exhausted_error(exc: BaseException) -> bool:
     )
 
 
+# ─── Ngân sách suy luận (thinking) ───────────────────────────────────────────
+# Token suy luận của Gemini tính vào quota và độ trễ: lượt JSON/tiện ích luôn 0, lượt
+# chat theo GEMINI_CHAT_THINKING_BUDGET (None = mặc định của model). Model từ chối
+# tham số này (400, vd model chỉ chạy ở chế độ suy luận) thì gọi lại 1 lần không kèm
+# và nhớ model đó trong RAM (có trần) để lượt sau khỏi tốn request hỏng.
+UTILITY_THINKING_BUDGET = 0
+_THINKING_REJECTED: set[str] = set()
+_THINKING_REJECTED_MAX = 8
+_THINKING_ERROR_RE = re.compile(r"think", re.IGNORECASE)
+
+
+def _thinking_config(model: str, budget: Optional[int]) -> dict:
+    if budget is None or model in _THINKING_REJECTED:
+        return {}
+    from google.genai import types
+
+    return {"thinking_config": types.ThinkingConfig(thinking_budget=budget)}
+
+
+def _rejects_thinking(exc: BaseException) -> bool:
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    return code == 400 and bool(_THINKING_ERROR_RE.search(str(exc)))
+
+
+def _forget_thinking(model: str, exc: BaseException) -> None:
+    if len(_THINKING_REJECTED) < _THINKING_REJECTED_MAX:
+        _THINKING_REJECTED.add(model)
+    logger.warning("Model %s không nhận thinking_config (%s) - gọi lại không kèm.", model, exc)
+
+
+async def _generate_content(
+    client, model: str, contents, cfg_kwargs: dict, label: str, limit_sec: float
+):
+    """generate_content có trần ``limit_sec``. Tham số tuỳ chọn model từ chối (400):
+    thinking_config (_forget_thinking) và response_json_schema (ai/structured) - bỏ
+    đúng tham số đó, gọi lại; mỗi tham số tối đa 1 lần."""
+    from google.genai import types
+
+    async def _call(kwargs: dict):
+        return await with_timeout(
+            client.aio.models.generate_content(
+                model=model, contents=contents, config=types.GenerateContentConfig(**kwargs)
+            ),
+            limit_sec,
+            label,
+        )
+
+    kwargs = dict(cfg_kwargs)
+    while True:
+        try:
+            return await _call(kwargs)
+        except Exception as exc:
+            if "thinking_config" in kwargs and _rejects_thinking(exc):
+                _forget_thinking(model, exc)
+                kwargs.pop("thinking_config")
+            elif "response_json_schema" in kwargs and structured.rejected(exc):
+                structured.mark_unsupported("gemini", model, exc)
+                kwargs.pop("response_json_schema")
+            else:
+                raise
+
+
 async def generate(
     idx: int,
     prompt: str,
@@ -203,11 +264,17 @@ async def generate(
     model: Optional[str] = None,
     temperature: Optional[float] = None,
     require_search_evidence: bool = False,
+    max_output_tokens: Optional[int] = None,
+    json_mode: bool = False,
+    thinking_budget: Optional[int] = None,
 ) -> FallbackResponse:
     """``temperature``: ghi đè nhiệt độ persona (lượt có dữ liệu tra cứu dùng
     thấp hơn để giữ đúng số liệu). ``require_search_evidence``: lượt bắt buộc
     tự tra web - Gemini trả lời mà không có grounding metadata thì raise
-    NoSearchEvidenceError (provider-chain chuyển provider kế tiếp)."""
+    NoSearchEvidenceError (provider-chain chuyển provider kế tiếp).
+    ``max_output_tokens``/``json_mode`` (orchestrator.ask cho việc phụ ngắn): trần
+    token trả lời và JSON mode (response_mime_type) của Gemini.
+    ``thinking_budget``: token suy luận tối đa (0 = tắt; None = mặc định của model)."""
     from google.genai import types
 
     client = await _get_official_client(idx)
@@ -228,25 +295,32 @@ async def generate(
 
     cfg_kwargs = {"system_instruction": system_instruction or None}
     if persona_generation_config:
-        cfg_kwargs.update(temperature=_PERSONA_TEMPERATURE, top_p=_PERSONA_TOP_P)
+        cfg_kwargs.update(temperature=config.CHAT_TEMPERATURE, top_p=_PERSONA_TOP_P)
     if temperature is not None:
         cfg_kwargs["temperature"] = temperature
+    if max_output_tokens:
+        cfg_kwargs["max_output_tokens"] = max_output_tokens
+    if json_mode and not enable_search:
+        # Gemini không cho JSON mode cùng tool google_search.
+        cfg_kwargs["response_mime_type"] = "application/json"
     if enable_search:
         cfg_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
+
+    model_name = model or await _model_for(idx)
+    cfg_kwargs.update(_thinking_config(model_name, thinking_budget))
 
     call_log.note_prompt_chars(
         len(prompt_with_time)
         + len(system_instruction or "")
         + sum(len(content) for _role, content in history or ())
     )
-    response = await with_timeout(
-        client.aio.models.generate_content(
-            model=model or await _model_for(idx),
-            contents=contents,
-            config=types.GenerateContentConfig(**cfg_kwargs),
-        ),
-        OFFICIAL_CHAT_TIMEOUT_SEC,
+    response = await _generate_content(
+        client,
+        model_name,
+        contents,
+        cfg_kwargs,
         f"api{idx} generate_content",
+        OFFICIAL_CHAT_TIMEOUT_SEC,
     )
     call_log.note_gemini_usage(getattr(response, "usage_metadata", None))
     searched = bool(enable_search) and _used_google_search(response)
@@ -481,22 +555,31 @@ async def generate_utility_json(prompt: str) -> Optional[dict]:
     kèm độ trễ, kết quả và token như provider-chain."""
     if not config.HAS_ANY_AI_STUDIO_KEY:
         return None
-    from google.genai import types
-
     last_exc: Optional[BaseException] = None
     for idx in await usable_indices():
         try:
             client = await _get_official_client(idx)
             model_name = await _model_for(idx)
 
-            def _call(client=client, model_name=model_name):
-                return client.aio.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.1,
-                        response_mime_type="application/json",
-                    ),
+            cfg_kwargs: dict = {
+                "temperature": 0.1,
+                "response_mime_type": "application/json",
+                # Lượt JSON tiện ích: không tốn token/độ trễ cho suy luận.
+                **_thinking_config(model_name, UTILITY_THINKING_BUDGET),
+            }
+            schema = structured.for_model("gemini", model_name)
+            if schema is not None:
+                # Caller mở ai/structured.json_schema: Gemini trả đúng khuôn đó.
+                cfg_kwargs["response_json_schema"] = schema[1]
+
+            def _call(
+                client=client,
+                model_name=model_name,
+                cfg_kwargs=cfg_kwargs,
+                label=f"api{idx} utility JSON",
+            ):
+                return _generate_content(
+                    client, model_name, prompt, cfg_kwargs, label, OFFICIAL_UTILITY_TIMEOUT_SEC
                 )
 
             async def _attempt(_call=_call):

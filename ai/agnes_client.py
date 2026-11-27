@@ -13,17 +13,15 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
-import httpx
-
 from ai import call_log, provider_overrides
 from ai.timeouts import bounded
 from core import config, database as db
+from services import http_client
 
 logger = logging.getLogger(__name__)
 
 _SETTING_ENABLED = "agnes_enabled"
 
-_client: Optional[httpx.AsyncClient] = None
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024
 _MAX_GENERATION_JSON_BYTES = 12 * 1024 * 1024
 
@@ -44,18 +42,14 @@ class GeneratedImage:
     url: Optional[str] = None
 
 
-def _get_client() -> httpx.AsyncClient:
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(timeout=config.AGNES_CALL_TIMEOUT_SEC)
-    return _client
+def _get_client():
+    """Client HTTP dùng chung của app (services/http_client: keep-alive, có trần số
+    kết nối) - không giữ thêm 1 pool kết nối riêng cho /anh."""
+    return http_client.get_client()
 
 
 async def close() -> None:
-    global _client
-    if _client is not None:
-        await _client.aclose()
-        _client = None
+    """Giữ cho bot_app._post_shutdown: client dùng chung do http_client.close() đóng."""
 
 
 async def get_enabled() -> bool:
@@ -76,6 +70,8 @@ async def _model() -> str:
 
 
 async def _request_bytes(method: str, url: str, limit: int, **kwargs) -> bytes:
+    # Client dùng chung + timeout riêng của Agnes (client chung mặc định 30s).
+    kwargs.setdefault("timeout", config.AGNES_CALL_TIMEOUT_SEC)
     async with _get_client().stream(method, url, **kwargs) as response:
         if response.status_code != 200:
             raise AgnesError(f"Agnes AI trả lỗi HTTP {response.status_code}")

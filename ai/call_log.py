@@ -2,9 +2,11 @@
 
 Provider-chain (ai/orchestrator.py), Gemini utility dự phòng, /agent, Agnes và
 Tavily đều ghi qua ``record()``/``timed()`` ở đây: provider, model, kết quả (ok |
-error | timeout | rate_limited | contaminated...), độ trễ, giai đoạn (chat, search,
-utility, agent, image...), mã lượt (core/trace.py), số ký tự prompt và token do
-provider báo. Ghi lỗi DB không bao giờ văng lên lượt trả lời (chỉ là số liệu).
+error | timeout | rate_limited | too_large | skipped_budget | contaminated...), độ
+trễ, giai đoạn (chat, search, utility, agent, image...), mã lượt (core/trace.py), số
+ký tự prompt và token do provider báo. Ghi lỗi DB không bao giờ văng lên lượt trả
+lời (chỉ là số liệu). Lượt "skipped_budget" (bỏ qua TRƯỚC khi gửi request) vẫn ghi
+provider_calls để đo, nhưng không tính là 1 lượt gọi trong turn_metrics.
 
 Token đi qua 1 "kênh phụ" thay vì đổi kiểu trả về của client (post_chat_completion
 trả str, test và caller dựa vào đó): caller mở ``collect_usage()`` quanh 1 lượt gọi,
@@ -28,6 +30,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
+from ai import background_writes
 from core import database as db
 from core import trace
 
@@ -203,6 +206,9 @@ def _keep_ratelimit(provider: str, model: str, headers: dict[str, str]) -> None:
 
 # ─── Ghi provider_calls ─────────────────────────────────────────────────────
 
+# Kết quả KHÔNG phải 1 lượt gọi thật (chưa gửi request) - không cộng vào turn_metrics.
+_NOT_A_CALL = frozenset({"skipped_budget"})
+
 
 async def record(
     provider: str,
@@ -214,15 +220,17 @@ async def record(
     usage: CallUsage | None = None,
 ) -> None:
     """Ghi 1 lượt gọi. ``stage`` None -> giai đoạn đang đặt qua ``call_stage()``.
-    Không bao giờ raise."""
+    Không bao giờ raise. Số đo của lượt (core/trace) cập nhật ngay; dòng
+    provider_calls INSERT ở nền (ai/background_writes) - câu trả lời không chờ DB."""
     stage = stage if stage is not None else _call_stage.get()
-    trace.note_call(provider, outcome, latency_ms, stage)
+    if outcome not in _NOT_A_CALL:
+        trace.note_call(provider, outcome, latency_ms, stage)
     if usage is not None:
         trace.note_tokens(usage.prompt_tokens, usage.completion_tokens)
     if usage is not None and usage.ratelimit and provider in _RATELIMIT_PROVIDERS:
         _keep_ratelimit(provider, model or provider, usage.ratelimit)
-    try:
-        await db.record_provider_call(
+    background_writes.spawn(
+        _insert(
             provider,
             model or provider,
             outcome=outcome,
@@ -232,23 +240,40 @@ async def record(
             turn_id=trace.current(),
             prompt_tokens=usage.prompt_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
-        )
+        ),
+        "provider_calls",
+    )
+
+
+async def _insert(provider: str, model: str, **row: Any) -> None:
+    try:
+        await db.record_provider_call(provider, model, **row)
     except Exception:
         logger.warning("Không ghi được lượt gọi provider=%s vào DB.", provider, exc_info=True)
 
 
+# Chờ các dòng provider_calls còn đang ghi nền (lúc tắt app, test đọc lại).
+drain = background_writes.drain
+
+
 def classify(exc: BaseException) -> str:
-    """Phân loại lỗi cho cột outcome (không phụ thuộc orchestrator)."""
+    """Phân loại lỗi cho cột outcome (không phụ thuộc orchestrator). Lỗi tự mang
+    ``outcome`` (openai_compatible.BudgetExceededError: "skipped_budget") giữ nguyên."""
     from ai.timeouts import TurnTimeoutError
 
     if isinstance(exc, TurnTimeoutError):
         return "turn_timeout"
+    outcome = getattr(exc, "outcome", None)
+    if isinstance(outcome, str) and outcome:
+        return outcome
     if isinstance(exc, (TimeoutError,)):
         return "timeout"
     status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     text = str(exc)
     if status == 429 or "RESOURCE_EXHAUSTED" in text or "HTTP 429" in text:
         return "rate_limited"
+    if status == 413:
+        return "too_large"
     return "error"
 
 

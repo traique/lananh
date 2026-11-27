@@ -270,8 +270,21 @@ async def test_nhiet_do_thap_khi_co_grounding_cao_khi_chat_tu_do(monkeypatch):
     monkeypatch.setattr(config, "PROVIDER_ORDER", ["router9"])
     await orchestrator.chat(1, "chào em")
     await orchestrator.chat(1, "thời tiết sao?", grounding="[Kết quả tool] 30 độ")
-    assert calls.log[0][1]["temperature"] == orchestrator._FREE_CHAT_TEMPERATURE
+    assert calls.log[0][1]["temperature"] == config.CHAT_TEMPERATURE
     assert calls.log[1][1]["temperature"] == orchestrator._GROUNDED_TEMPERATURE
+    monkeypatch.setattr(config, "CHAT_TEMPERATURE", 0.6)
+    await orchestrator.chat(1, "chào em")
+    assert calls.log[2][1]["temperature"] == 0.6
+
+
+def test_nhiet_do_chat_tu_do_mac_dinh_0_8_va_kep_bien(monkeypatch):
+    """0.95 cũ làm Gemini flash-lite hay lẫn chữ CJK (bộ lọc bỏ cả lượt)."""
+    monkeypatch.delenv("CHAT_TEMPERATURE", raising=False)
+    assert config._env_temperature("CHAT_TEMPERATURE", 0.8) == 0.8
+    monkeypatch.setenv("CHAT_TEMPERATURE", "5")
+    assert config._env_temperature("CHAT_TEMPERATURE", 0.8) == 2.0
+    monkeypatch.setenv("CHAT_TEMPERATURE", "nóng")
+    assert config._env_temperature("CHAT_TEMPERATURE", 0.8) == 0.8
 
 
 @pytest.mark.asyncio
