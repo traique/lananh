@@ -87,7 +87,12 @@ Render Docker service (supervisord)
 GitHub Actions: CI (chặn deploy khi đỏ), Dependency audit, Backup DB, Evals (chạy tay)
 ```
 
-Zalo control server chỉ bind `127.0.0.1:9901`.
+Zalo control server chỉ bind `127.0.0.1:9901` và mọi route đòi header
+`x-zalo-bridge-secret` (cùng `ZALO_BRIDGE_SECRET` với bridge). Python ghi tin outbox xong
+thì `POST /outbox/kick` để gateway gửi ngay; gateway chỉ poll dự phòng mỗi 90 giây
+(`ZALO_OUTBOX_POLL_MS`) và nạp lại danh sách nhóm mỗi 5 phút (`ZALO_GROUP_REFRESH_MS`).
+Khi deploy (SIGTERM) gateway thôi nhận tin, gửi nốt bài Facebook đang gom, chờ tối đa 10
+giây cho việc dở và báo tiến độ outbox gửi dở để không gửi lặp. Gateway cần Node 22.
 
 ## Yêu cầu
 
@@ -218,7 +223,7 @@ bot_app.py           Telegram app factory và lifecycle
 
 - `zca-js`, DNSE, `vnstock`, VCI (lịch sự kiện quyền `/v1/events`) và các nguồn đời sống (SJC, Vietcombank, xskt.com.vn) là nguồn không chính thức hoặc không có SLA; parser lỗi thì báo lỗi/quay về tra web, không ghi dữ liệu sai.
 - Khối ngoại nhiều phiên (lịch sử mua/bán ròng theo chuỗi ngày) hiện KHÔNG có trong bot: `vnstock` chưa có provider nào implement thật endpoint này (chỉ là stub rỗng). Chỉ có khối ngoại phiên gần nhất (qua `price_board()`).
-- 1 lượt `/phantich` vẫn gọi tối đa 5 lệnh LLM tuần tự (news → bull → bear → manager → tổng hợp), có nghỉ `ROUTER9_STEP_DELAY_SEC` (mặc định 3s) giữa mỗi lệnh để giãn tải gateway 9Router. Bù lại bản số liệu rule-based giờ được gửi NGAY trước khi debate chạy (báo cáo AI gửi tiếp thành tin nhắn thứ hai), nên không phải chờ tới hơn 2 phút mới thấy tin đầu tiên; AI lỗi hoặc quá hạn chót thì có 1 câu báo kèm tên mã thay vì im lặng.
+- 1 lượt `/phantich` gọi tối đa 3 lệnh LLM tuần tự (tin → tranh luận bull+bear → tổng hợp); hỏi lại cùng mã trong 15 phút chỉ 1 lệnh. Chỉ nghỉ `ROUTER9_STEP_DELAY_SEC` (mặc định 3s) giữa các lệnh liên tiếp rơi về provider-chain (bước JSON qua Groq/Gemini không nghỉ). Bù lại bản số liệu rule-based giờ được gửi NGAY trước khi debate chạy (báo cáo AI gửi tiếp thành tin nhắn thứ hai), nên không phải chờ tới hơn 2 phút mới thấy tin đầu tiên; AI lỗi hoặc quá hạn chót thì có 1 câu báo kèm tên mã thay vì im lặng.
 - Stock module là research assistant, không phải broker hoặc tư vấn viên được cấp phép.
 - Backtest phụ thuộc độ phủ provider và không bảo đảm hiệu suất tương lai.
 - Dự án cố ý chỉ hỗ trợ một người dùng; không có tenant isolation, billing, roles hoặc horizontal scaling.

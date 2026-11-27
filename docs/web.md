@@ -111,6 +111,23 @@ Không mở `/docs`, `/openapi.json`. Khoá JSON camelCase; chỉ thêm trườn
 đổi/bỏ trường cũ (`/days` trả `weekday` là tên + `weekdayIndex` số; `/months` trả
 `weekday` số + `weekdayName`).
 
+### Tốc độ và bộ nhớ đệm
+
+- Nén gzip mọi phản hồi từ 1 KB (trừ `/internal/*` - gateway Zalo gọi qua loopback, và
+  luồng `text/event-stream` của avatar): `site.css` 64 KB còn 16 KB, `/lich/le-hoi` 120 KB
+  còn 26 KB.
+- Trang HTML và API lịch (`/api/v1/calendar/days|months`) có ETag yếu: xem lại trang
+  không đổi trả 304, thân rỗng. Trang chỉ phụ thuộc URL (tháng/ngày khác hôm nay, tuổi,
+  lễ hội theo năm...) gửi `Cache-Control: public, max-age=3600` cho người chưa đăng
+  nhập (không vượt quá nửa đêm giờ VN); trang "hôm nay" vẫn `no-cache`; có `Vary: Cookie`.
+- `/lich/le-hoi` giữ tối đa 32 bản đã nén sẵn theo (năm, tỉnh, đăng nhập): xem lại ~1 ms.
+- Phông Google Fonts nạp không chặn hiển thị (preload + đổi `media` bằng script, có
+  `<noscript>`). Tự host phông (woff2) là việc còn lại - cần tải file qua mạng.
+- Ba trang `/privacy`, `/terms`, `/data-deletion` đọc 1 lần, `max-age=86400`.
+- `Permissions-Policy` tắt camera, micro, định vị, thanh toán, USB; chỉ `/admin/avatar`
+  được dùng micro và `/thoi-tiet` được hỏi vị trí.
+- Nút "AI luận giải" chờ tối đa 20 giây khi bot đang trả lời việc khác rồi báo bận.
+
 ## App Android màn hình thông tin (`android/`)
 
 Điện thoại cũ (nhắm tới Samsung J2 Prime, Android 6) thành màn hình để bàn: giờ, lịch
@@ -141,10 +158,16 @@ máy, ký APK: [android/README.md](../android/README.md).
 ## Trang quản trị (Admin dashboard)
 
 `web.py` phục vụ 1 trang HTML tại `/admin` (đăng nhập bằng `ADMIN_USER`/`ADMIN_PASS`,
-phiên đăng nhập ký bằng HMAC dựa trên `ADMIN_PASS` kèm 1 "epoch" lưu trong bảng
-settings (`admin_session_epoch`) — đổi `ADMIN_PASS` hoặc bấm **Đăng xuất** sẽ vô
-hiệu MỌI phiên đang mở). Không đặt 2 biến này thì `/admin` luôn từ chối truy cập;
-DB không đọc được thì đăng nhập trả 503 (fail closed).
+phiên đăng nhập ký bằng HMAC với khoá dẫn xuất HKDF từ `ADMIN_PASS` + `SETTINGS_ENC_KEY`
+kèm 1 "epoch" lưu trong bảng settings (`admin_session_epoch`) — đổi `ADMIN_PASS`,
+`SETTINGS_ENC_KEY` hoặc bấm **Đăng xuất** sẽ vô hiệu MỌI phiên đang mở; cookie lộ ra
+cũng không dùng để dò ngược mật khẩu được). Không đặt các biến này thì `/admin` luôn từ
+chối truy cập; DB không đọc được thì đăng nhập trả 503 (fail closed).
+
+Chống CSRF: mọi request đổi dữ liệu của `/admin/api/*` phải là `Content-Type:
+application/json` (415 nếu không), và request (kể cả đăng nhập/đăng xuất) mang
+`Sec-Fetch-Site: cross-site`/`same-site` do trang khác gây ra bị từ chối. API quản trị
+trả `Cache-Control: no-store`.
 
 Chống dò mật khẩu: khoá theo IP sau 5 lần sai/15 phút (IP lấy từ phần tử
 `X-Forwarded-For` do proxy Render nối vào, xem `ADMIN_TRUSTED_PROXY_HOPS`); khi
@@ -185,7 +208,13 @@ hiển thị trên trang đều được escape HTML. Trang cho phép:
 Giao diện: dashboard responsive (sidebar/topbar, 360px không cuộn ngang), sáng/tối
 tự động + nút đổi, KPI tile (provider, lượt gọi, RAM, DB, Zalo), biểu đồ SVG
 inline không thư viện ngoài, bảng gập thành thẻ trên điện thoại, tự làm mới theo
-khoảng chọn. Không script/CDN ngoài; mọi giá trị server vẫn escape.
+khoảng chọn (mặc định 60 giây). Không script/CDN ngoài; mọi giá trị server vẫn escape.
+
+Trang tải mọi khối số liệu sống bằng **1 request** `GET /admin/api/overview` (trước đây
+12 request song song mỗi 30 giây): server giữ cache có trần (thống kê 60 giây; dung lượng
+DB, giám sát, việc nền 5 phút - phép đo dung lượng DB quét cả bảng nên không chạy mỗi
+lần mở trang), khối nào lỗi chỉ hiện trong `errors`. Nút **Làm mới** gửi `?fresh=1` để đo
+ngay. Các endpoint cũ vẫn dùng được.
 
 ## Meta App: Privacy Policy, Terms và Data Deletion
 
