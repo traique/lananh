@@ -261,7 +261,9 @@ class ClientPool:
 
     ``timeout_sec`` là timeout từng pha của httpx (connect, đọc từng chunk) -
     response stream nhỏ giọt không bao giờ chạm tới nó. ``total_timeout_sec``
-    chặn TỔNG thời gian 1 lượt gọi (kể cả chờ semaphore) qua ``bounded()``."""
+    chặn TỔNG thời gian 1 lượt gọi (kể cả chờ semaphore) qua ``bounded()``.
+    Số kết nối có trần (semaphore + 1 cho lượt ngoài semaphore như GET /models),
+    giữ tối đa 2 kết nối keep-alive - RAM Render 512 MB."""
 
     def __init__(
         self,
@@ -286,9 +288,14 @@ class ClientPool:
         except TimeoutError as exc:
             raise TimeoutError(f"{label}: quá {timeout:g}s (timeout tổng của lượt gọi)") from exc
 
+    def limits(self) -> httpx.Limits:
+        return httpx.Limits(
+            max_connections=max(1, self._max_concurrency) + 1, max_keepalive_connections=2
+        )
+
     def get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout_sec)
+            self._client = httpx.AsyncClient(timeout=self._timeout_sec, limits=self.limits())
         return self._client
 
     def get_semaphore(self) -> asyncio.Semaphore:

@@ -7,12 +7,14 @@ import asyncio
 import logging
 import re
 import time
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 
 import httpx
 
 from ai import orchestrator, tavily_client
 from ai.timeouts import turn_deadline
-from services import web_search
+from services import http_client, web_search
 from services.public_http import public_status
 
 logger = logging.getLogger(__name__)
@@ -53,9 +55,30 @@ def set_cached_price(product_name: str, text: str) -> None:
 
 _MD_LINK_RE = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+)\)")
 _LINK_CHECK_TIMEOUT = 6.0
+_LINK_CHECK_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; LanAnhBot/1.0)"}
+# Số link kiểm cùng lúc: client dùng chung có trần kết nối, không để 1 lượt /gia chiếm
+# hết chỗ của Facebook/DNSE/Zoom.
+_LINK_CHECK_CONCURRENCY = 4
 
 
-async def _check_url(client: httpx.AsyncClient, url: str) -> bool | None:
+class _LinkCheckClient:
+    """Client dùng chung (services/http_client - không tạo AsyncClient + TLS context mới
+    mỗi lượt /gia) kèm User-Agent riêng và trần số link kiểm cùng lúc. Chống SSRF vẫn
+    ở services/public_http.public_status: kiểm IP công khai ở MỌI bước chuyển hướng."""
+
+    def __init__(self, limit: int = _LINK_CHECK_CONCURRENCY) -> None:
+        self._client = http_client.get_client()
+        self._gate = asyncio.Semaphore(limit)
+
+    @asynccontextmanager
+    async def stream(self, method: str, url: str, **kwargs: Any) -> AsyncIterator[httpx.Response]:
+        headers = {**_LINK_CHECK_HEADERS, **(kwargs.pop("headers", None) or {})}
+        async with self._gate:
+            async with self._client.stream(method, url, headers=headers, **kwargs) as response:
+                yield response
+
+
+async def _check_url(client: httpx.AsyncClient | _LinkCheckClient, url: str) -> bool | None:
     """True = link sống. False = CHẮC CHẮN hỏng (404/410/không kết nối
     được). None = không chắc (403 bị chặn bot, timeout, lỗi 5xx tạm thời...)
     - những trường hợp này KHÔNG gắn cảnh báo để tránh báo nhầm link tốt
@@ -82,12 +105,11 @@ async def verify_links(text: str) -> str:
         return text
 
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; LanAnhBot/1.0)"}
-        async with httpx.AsyncClient(headers=headers) as client:
-            results = await asyncio.gather(
-                *(_check_url(client, m.group(2)) for m in matches),
-                return_exceptions=False,
-            )
+        client = _LinkCheckClient()
+        results = await asyncio.gather(
+            *(_check_url(client, m.group(2)) for m in matches),
+            return_exceptions=False,
+        )
     except Exception:
         logger.exception("Lỗi khi verify link giá sản phẩm, giữ nguyên text gốc")
         return text

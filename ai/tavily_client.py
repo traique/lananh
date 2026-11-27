@@ -10,18 +10,15 @@ from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
-import httpx
-
 from ai import call_log, provider_overrides
 from core import config, settings_cache, untrusted
+from services import http_client
 
 logger = logging.getLogger(__name__)
 
 _SETTING_ENABLED = "tavily_enabled"
 _DEFAULT_COUNTRY = "vietnam"
 _DEFAULT_LANGUAGE = "vi"
-
-_client: Optional[httpx.AsyncClient] = None
 
 
 class TavilyError(RuntimeError):
@@ -57,18 +54,16 @@ class TavilySearchResponse:
         return {item.domain for item in self.results if item.url}
 
 
-def _get_client() -> httpx.AsyncClient:
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(timeout=config.TAVILY_CALL_TIMEOUT_SEC)
-    return _client
+def _get_client() -> http_client.ScopedClient:
+    """Client HTTP dùng chung của app (services/http_client: keep-alive, có trần số
+    kết nối) với timeout riêng của Tavily - không giữ thêm 1 pool kết nối riêng."""
+    return http_client.ScopedClient(
+        http_client.get_client(), timeout=config.TAVILY_CALL_TIMEOUT_SEC
+    )
 
 
 async def close() -> None:
-    global _client
-    if _client is not None:
-        await _client.aclose()
-        _client = None
+    """Giữ cho bot_app._post_shutdown: client dùng chung do http_client.close() đóng."""
 
 
 async def get_enabled() -> bool:
