@@ -9,8 +9,9 @@ class Prefs(context: Context) {
     private val sp: SharedPreferences =
         context.getSharedPreferences("lananh_manhinh", Context.MODE_PRIVATE)
 
+    /** Luôn https (Api.normalizeServer): địa chỉ http:// lưu từ bản cũ được nâng lên. */
     var serverUrl: String
-        get() = sp.getString("server_url", "") ?: ""
+        get() = Api.normalizeServer(sp.getString("server_url", "") ?: "")
         set(v) = sp.edit().putString("server_url", v).apply()
 
     var token: String

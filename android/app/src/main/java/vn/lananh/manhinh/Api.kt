@@ -16,9 +16,14 @@ import javax.net.ssl.TrustManagerFactory
 
 class ApiException(val status: Int, val code: String, message: String) : Exception(message)
 
+/** Kết quả GET có ETag: [json] null = 304 (bản đang giữ vẫn đúng, không tải lại). */
+class Fetched(val json: JSONObject?, val etag: String)
+
 /**
  * Gọi API của bot (web_app_api.py) bằng HttpURLConnection có sẵn của Android - không
  * thư viện ngoài. HttpURLConnection tự gửi Accept-Encoding: gzip và tự giải nén.
+ * Chỉ HTTPS (manifest cấm cleartext); dashboard gửi If-None-Match tự tay (useCaches =
+ * false nên không có HTTP cache của hệ thống) để dữ liệu không đổi chỉ nhận 304.
  *
  * Android 6 có kho chứng chỉ gốc cũ, thiếu ISRG Root X1 (Let's Encrypt) và GTS Root
  * (Google Trust Services) mà Render dùng. App mang sẵn các gốc đó (res/raw) và tin
@@ -69,12 +74,16 @@ object Api {
         }
     }
 
-    /** "lananh.onrender.com/" -> "https://lananh.onrender.com". */
+    /**
+     * "lananh.onrender.com/" -> "https://lananh.onrender.com". Luôn HTTPS: "http://..."
+     * (gõ tay hoặc lưu từ bản cũ) đổi thành https - token thiết bị không đi qua mạng
+     * dạng chữ trần.
+     */
     fun normalizeServer(raw: String): String {
-        var url = raw.trim().trimEnd('/')
+        val url = raw.trim().trimEnd('/')
         if (url.isEmpty()) return ""
-        if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://$url"
-        return url
+        val scheme = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://").find(url)
+        return "https://" + if (scheme == null) url else url.substring(scheme.range.last + 1)
     }
 
     private fun request(
@@ -83,7 +92,8 @@ object Api {
         url: String,
         token: String? = null,
         body: JSONObject? = null,
-    ): JSONObject {
+        etag: String = "",
+    ): Fetched {
         val conn = URL(url).openConnection() as HttpURLConnection
         if (conn is HttpsURLConnection) conn.sslSocketFactory = factory(context)
         conn.connectTimeout = CONNECT_TIMEOUT_MS
@@ -96,6 +106,7 @@ object Api {
             "LananhManHinh/${BuildConfigCompat.versionName(context)} (Android ${Build.VERSION.RELEASE})",
         )
         if (token != null) conn.setRequestProperty("Authorization", "Bearer $token")
+        if (etag.isNotEmpty()) conn.setRequestProperty("If-None-Match", etag)
         try {
             if (body != null) {
                 conn.doOutput = true
@@ -103,6 +114,7 @@ object Api {
                 conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             }
             val status = conn.responseCode
+            if (status == HttpURLConnection.HTTP_NOT_MODIFIED) return Fetched(null, etag)
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
             if (status !in 200..299) {
@@ -117,7 +129,7 @@ object Api {
                     err?.optString("message").orEmpty().ifEmpty { "Máy chủ trả lỗi $status." },
                 )
             }
-            return JSONObject(text)
+            return Fetched(JSONObject(text), conn.getHeaderField("ETag").orEmpty())
         } finally {
             conn.disconnect()
         }
@@ -125,11 +137,13 @@ object Api {
 
     /** Đổi mã ghép (/app moi trên Telegram) lấy token. */
     fun pair(context: Context, server: String, code: String): JSONObject =
-        request(context, "POST", "$server/api/v1/app/pair", body = JSONObject().put("code", code))
+        request(context, "POST", "$server/api/v1/app/pair", body = JSONObject().put("code", code)).json
+            ?: throw ApiException(304, "HTTP_304", "Máy chủ trả lời không hợp lệ.")
 
-    fun dashboard(context: Context, server: String, token: String, place: String): JSONObject {
+    /** [etag]: ETag của bản đang giữ ("" = chưa có) - không đổi thì nhận Fetched.json null. */
+    fun dashboard(context: Context, server: String, token: String, place: String, etag: String): Fetched {
         val query = if (place.isBlank()) "" else "?place=" + URLEncoder.encode(place, "UTF-8")
-        return request(context, "GET", "$server/api/v1/app/dashboard$query", token = token)
+        return request(context, "GET", "$server/api/v1/app/dashboard$query", token = token, etag = etag)
     }
 }
 
