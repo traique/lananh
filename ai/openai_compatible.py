@@ -1126,17 +1126,21 @@ class OpenAICompatibleProvider:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        tool_choice: Optional[str] = None,
     ) -> ToolCallResponse:
         """1 bước function-calling chuẩn OpenAI cho agent (ai/agent_service.py): caller
         tự quản lý toàn bộ messages (kể cả assistant mang tool_calls, role "tool").
         KHÔNG đặt cooldown khi lỗi (429...): agent tự chuyển provider kế, utility_json
-        của chat không bị vạ lây."""
+        của chat không bị vạ lây. ``tool_choice`` ("none" ở bước cuối của agent): ép
+        model trả lời chữ thay vì gọi thêm tool."""
         api_key, base_url = await self.credentials()
         label = f"{self.label} tools"
         tokens = self._tools_max_tokens if max_tokens is None else max_tokens
         self.check_budget(messages, tokens, tools, label=label)
         model_name = model or await self.model_name()
         payload = self.payload_for(model_name, self._tools_payload)
+        if tool_choice:
+            payload["tool_choice"] = tool_choice
         return await self.run(
             label,
             lambda client: post_chat_completion_with_tools(
