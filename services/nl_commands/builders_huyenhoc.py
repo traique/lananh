@@ -12,12 +12,15 @@ from services.nl_commands.registry import Ask, _clean, _cmd, _truthy, _wants_det
 from services.nl_commands.turn import _turn_text
 
 _DATE_RE = re.compile(r"\b(\d{1,2})\s*[/.-]\s*(\d{1,2})n?\s*[/.-]\s*(\d{4})\b")
+_ISO_DATE_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
+_DIGIT_RE = re.compile(r"\d")
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 
 
 def _date_text(value: Any) -> str:
     """Ngày sinh "1990-03-15" | "15/3/1990" | câu có ngày -> "15/3/1990"; không có -> ""."""
     raw = _clean(value, 300)
-    iso = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", raw)
+    iso = _ISO_DATE_RE.fullmatch(raw)
     if iso:
         return f"{int(iso.group(3))}/{int(iso.group(2))}/{iso.group(1)}"
     m = _DATE_RE.search(raw)
@@ -111,7 +114,7 @@ _LOBAN_ASK = "{You} cho {me} xin số đo (vd 80cm) và món cần đo (cửa, g
 
 def _build_loban(args: dict[str, Any]) -> str | Ask:
     size, item = _clean(args.get("size"), 20), _clean(args.get("item"), 30)
-    if not re.search(r"\d", size):
+    if not _DIGIT_RE.search(size):
         return Ask(_LOBAN_ASK)
     return f"/loban {size} {item}".strip()
 
@@ -122,7 +125,7 @@ _CUNGPHI_ASK = "{You} cho {me} xin năm sinh (hoặc ngày sinh) và giới tín
 def _build_cungphi(args: dict[str, Any]) -> str | Ask:
     birth = _date_text(args.get("birth")) or _clean(args.get("birth"), 12)
     gender = _gender_word(args.get("gender"))
-    if not re.search(r"\b(?:19|20)\d{2}\b", birth) or not gender:
+    if not _YEAR_RE.search(birth) or not gender:
         return Ask(_CUNGPHI_ASK)
     return f"/cungphi {birth} {gender}"
 

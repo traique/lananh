@@ -95,8 +95,13 @@ _cmd(
 )
 
 
+_NON_DIGIT_RE = re.compile(r"\D")
+_NON_SYMBOL_RE = re.compile(r"[^A-Za-z0-9]")
+_NON_MONTH_RE = re.compile(r"[^0-9/]")
+
+
 def _build_viec(args: dict[str, Any]) -> str:
-    job = re.sub(r"\D", "", str(args.get("job_id") or ""))[:6]
+    job = _NON_DIGIT_RE.sub("", str(args.get("job_id") or ""))[:6]
     return f"/viec xem {job}" if job else "/viec"
 
 
@@ -168,7 +173,7 @@ _cmd(
 
 
 def _build_lichsucp(args: dict[str, Any]) -> str:
-    symbol = re.sub(r"[^A-Za-z0-9]", "", str(args.get("symbol") or ""))[:6].upper()
+    symbol = _NON_SYMBOL_RE.sub("", str(args.get("symbol") or ""))[:6].upper()
     return f"/lichsucp {symbol}".strip()
 
 
@@ -185,7 +190,7 @@ _cmd(
 
 
 def _build_laicp(args: dict[str, Any]) -> str:
-    month = re.sub(r"[^0-9/]", "", str(args.get("month") or ""))[:7]
+    month = _NON_MONTH_RE.sub("", str(args.get("month") or ""))[:7]
     return f"/laicp {month}".strip()
 
 

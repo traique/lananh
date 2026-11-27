@@ -28,6 +28,7 @@ kênh (test_command_table kiểm mọi lệnh có đủ handler và khoá bảng
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, field
 
@@ -764,21 +765,33 @@ def find_topic(query: str, role: str, channel: str = "telegram") -> Topic | None
 
 # ─── Tìm lệnh theo câu "làm sao để ..." ────────────────────────────────────
 
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+@functools.cache
+def _mention_re() -> re.Pattern[str]:
+    """ "/<tên lệnh>" + ranh giới từ, 1 regex cho mọi lệnh (trước đây 1 lần re.search mỗi
+    lệnh). Mỗi dấu "/" khớp tối đa 1 tên (tên ngắn là tiền tố tên dài thì ký tự kế tiếp
+    là chữ, không có ranh giới) nên findall ra đúng tập tên khớp. Dựng lúc dùng lần đầu."""
+    return re.compile(r"/(" + "|".join(entry.name for entry in ENTRIES) + r")\b")
+
 
 def search(query: str, role: str, channel: str, limit: int = 3) -> list[Entry]:
     """Lệnh khớp câu hỏi nhất: ưu tiên cụm từ khoá trùng nguyên cụm (dài hơn điểm
     cao hơn), rồi tới từ trong tên chủ đề/mô tả. Không khớp cụm nào -> []."""
-    q = " " + " ".join(re.findall(r"[a-z0-9]+", fold(query))) + " "
+    q = " " + " ".join(_WORD_RE.findall(fold(query))) + " "
     raw = (query or "").lower()
+    # Tên lệnh chỉ tính khi gõ kèm "/" ("/xoso là gì"): tên trùng chữ thường
+    # ("anh", "an", "gia", "nho", "lich") không được kéo theo lệnh. Câu không có "/"
+    # (gần như mọi tin chat - hàm này chạy mỗi lượt qua nl_commands.router_groups) bỏ qua.
+    mentioned = set(_mention_re().findall(raw)) if "/" in raw else ()
     scored: list[tuple[int, int, Entry]] = []
     for index, entry in enumerate(entries_for(role, channel)):
         score = 0
         for phrase in entry.keywords:
             if f" {phrase} " in q:
                 score = max(score, 10 * len(phrase.split()))
-        # Tên lệnh chỉ tính khi gõ kèm "/" ("/xoso là gì"): tên trùng chữ thường
-        # ("anh", "an", "gia", "nho", "lich") không được kéo theo lệnh.
-        if re.search(rf"/{entry.name}\b", raw):
+        if entry.name in mentioned:
             score = max(score, 30)
         if score:
             scored.append((-score, index, entry))

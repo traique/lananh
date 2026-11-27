@@ -26,8 +26,11 @@ _cmd(
 )
 
 
+_NON_DIGIT_RE = re.compile(r"\D")
+
+
 def _build_thongke(args: dict[str, Any]) -> str:
-    days = re.sub(r"\D", "", str(args.get("days") or ""))[:3]
+    days = _NON_DIGIT_RE.sub("", str(args.get("days") or ""))[:3]
     return f"/thongke {days}d" if days else "/thongke"
 
 

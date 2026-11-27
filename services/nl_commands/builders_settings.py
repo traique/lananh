@@ -108,9 +108,14 @@ def _wants_change(text: str) -> bool:
     return bool(pattern.search(low))
 
 
+# "22h tới 7h", "22-7": khung giờ yên lặng; "7h": giờ bản tin (trên chữ đã bỏ dấu).
+_HOUR_SPAN_RE = re.compile(r"\b(\d{1,2})(?:h|g|gio)?\s*(?:-|den|toi)\s*(\d{1,2})(?:h|g|gio)?\b")
+_HOUR_RE = re.compile(r"\b(\d{1,2})\s*(?:h|g|gio)\b")
+
+
 def _build_yenlang(args: dict[str, Any], mode: str) -> str | None:
     text = fold(_turn_text())
-    span = re.search(r"\b(\d{1,2})(?:h|g|gio)?\s*(?:-|den|toi)\s*(\d{1,2})(?:h|g|gio)?\b", text)
+    span = _HOUR_SPAN_RE.search(text)
     if span and (mode == "on" or (not mode and _wants_change(_turn_text()))):
         return f"/yenlang {int(span.group(1))}-{int(span.group(2))}"
     return f"/yenlang {mode}" if mode else None
@@ -130,7 +135,7 @@ _setting(
 
 def _build_bantin(args: dict[str, Any], mode: str) -> str | None:
     text = fold(_turn_text())
-    hour = re.search(r"\b(\d{1,2})\s*(?:h|g|gio)\b", text)
+    hour = _HOUR_RE.search(text)
     if hour and (mode == "on" or (not mode and _wants_change(_turn_text()))):
         return f"/bantin {int(hour.group(1))}"
     return f"/bantin {mode}" if mode else None

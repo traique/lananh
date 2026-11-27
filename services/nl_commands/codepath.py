@@ -55,11 +55,14 @@ _HOWTO_RE = (
 )
 
 
+# "em làm gì đấy" (hỏi đang làm gì) không phải hỏi tính năng.
+_FEATURE_WORD_RE = re.compile(r"\b(?:duoc|dc|giup|biet|tinh nang|chuc nang|lenh|su dung|dung)\b")
+
+
 def _capability_question(core: str) -> bool:
     if len(core) > 60 or not _CAPABILITY_RE.search(core):
         return False
-    # "em làm gì đấy" (hỏi đang làm gì) không phải hỏi tính năng.
-    return bool(re.search(r"\b(?:duoc|dc|giup|biet|tinh nang|chuc nang|lenh|su dung|dung)\b", core))
+    return bool(_FEATURE_WORD_RE.search(core))
 
 
 def _howto(core: str, role: str, channel: str, user_id: int) -> str | None:
@@ -196,6 +199,7 @@ _CUNGPHI_TRIGGER = re.compile(r"\b(?:cung phi|bat trach|huong nha)\b")
 _BIRTH_YEAR_RE = re.compile(r"\b(?:19\d{2}|20\d{2}|2100)\b")
 # Giới tính trên chữ CÓ dấu: bỏ dấu thì "năm 1990" cũng thành "nam".
 _GENDER_WORD_RE = re.compile(r"(?<!\w)(?:nam|nữ|nu)(?!\w)")
+_DIGIT_RE = re.compile(r"\d")
 
 
 async def _battu_phong_thuy(user_id: int, text: str, low: str) -> CommandRun | None:
@@ -204,7 +208,7 @@ async def _battu_phong_thuy(user_id: int, text: str, low: str) -> CommandRun | N
     if _KNOWLEDGE_RE.search(low):
         return None
     heavy = False
-    if _LOBAN_TRIGGER.search(low) and re.search(r"\d", low):
+    if _LOBAN_TRIGGER.search(low) and _DIGIT_RE.search(low):
         line = f"/loban {_clean(text, 120)}"
     elif (
         _CUNGPHI_TRIGGER.search(low)
@@ -221,6 +225,12 @@ async def _battu_phong_thuy(user_id: int, text: str, low: str) -> CommandRun | N
     return CommandRun(tuple(result.extra.get("messages") or [result.text]))
 
 
+# "lập bàn kỳ môn (lúc này)": không có thời điểm/việc cần xem -> chạy thẳng.
+_KYMON_NOW_RE = re.compile(
+    r"(?:lap |xem )?(?:ban )?ky mon(?: (?:luc nay|bay gio|gio nay|hom nay))?"
+)
+
+
 async def _kymon_or_lich(user_id: int, text: str, low: str) -> CommandRun | None:
     from services import calendar_query
 
@@ -228,9 +238,7 @@ async def _kymon_or_lich(user_id: int, text: str, low: str) -> CommandRun | None
         return None
     if _KYMON_TRIGGER.search(low):
         core = _core(text)
-        if re.fullmatch(
-            r"(?:lap |xem )?(?:ban )?ky mon(?: (?:luc nay|bay gio|gio nay|hom nay))?", core
-        ):
+        if _KYMON_NOW_RE.fullmatch(core):
             return await _run_spec("cmd_kymon", user_id, {})
         return None  # có thời điểm/việc cần xem: router tách tham số
     if _LICH_TRIGGER.search(low) and len(low) <= 100:
