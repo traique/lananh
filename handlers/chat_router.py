@@ -149,7 +149,7 @@ async def _quick_reply(
     if reply is None:
         return None
     if reply.command:
-        # Lệnh chạy từ câu tự nhiên (services/nl_commands.py): gửi như gõ lệnh, không
+        # Lệnh chạy từ câu tự nhiên (services/nl_commands/): gửi như gõ lệnh, không
         # đọc kèm /noi.
         await send_command_output(update.message, reply)
         return ""
@@ -278,7 +278,7 @@ async def _ai_reply(
         )
         return
     if turn.verbatim:
-        # Lệnh chạy từ câu tự nhiên (services/nl_commands.py): gửi nguyên văn như gõ lệnh.
+        # Lệnh chạy từ câu tự nhiên (services/nl_commands/): gửi nguyên văn như gõ lệnh.
         await send_command_output(update.message, turn, status_message)
         return
     reply_out = turn.text

@@ -78,7 +78,7 @@ class ChatTurn:
     # id 2 dòng chat_messages của lượt (rỗng = chưa lưu lịch sử) - 🔄/✂️ xoá
     # đúng cặp này sau khi làm lại xong (services/answer_feedback.py).
     history_ids: tuple[int, ...] = ()
-    # Lệnh chạy từ câu tự nhiên (services/nl_commands.py): ``messages`` là các tin gửi
+    # Lệnh chạy từ câu tự nhiên (services/nl_commands/): ``messages`` là các tin gửi
     # NGUYÊN VĂN (không qua AI viết lại, không nút 👍/👎/🔄), kèm ảnh /anh nếu có.
     verbatim: bool = False
     messages: tuple[str, ...] = ()
@@ -195,7 +195,7 @@ async def _command_turn(
     telemetry_kind: str,
     record_history: bool,
 ) -> ChatTurn:
-    """Lượt chat mà router đã chọn 1 lệnh (services/nl_commands.py): gửi nguyên văn
+    """Lượt chat mà router đã chọn 1 lệnh (services/nl_commands/): gửi nguyên văn
     kết quả lệnh, không gọi AI viết lại. Vào lịch sử (bản đã làm sạch) cho câu hỏi
     nối tiếp ("thế còn ngày mai?", người dùng trả lời câu em hỏi lại)."""
     reply = "\n\n".join(outputs)
@@ -264,7 +264,7 @@ async def run_chat_turn(
             excluded = ("read_link",) if (page_turn or not links_ok) else ()
             # Câu có thể là yêu cầu chạy lệnh ("xem tử vi...", "provider đang chạy cái
             # nào"): router chạy TRƯỚC - chọn lệnh thì gửi nguyên văn kết quả, khỏi tra
-            # web/trí nhớ và khỏi lượt chat AI (services/nl_commands.py).
+            # web/trí nhớ và khỏi lượt chat AI (services/nl_commands/).
             pre_tool = None
             if telemetry_kind == "chat" and tools.wants_command_router(user_id, text, is_admin):
                 with (

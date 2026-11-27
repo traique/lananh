@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 
 # Mô tả MỌI lệnh Telegram (tối đa 100 như giới hạn setMyCommands) - tài liệu/test. Menu
 # thật (COMMANDS bên dưới) chỉ còn ~18 lệnh hay dùng: người dùng cứ nhắn tự nhiên
-# (services/nl_commands.py), bỏ khỏi MENU không có nghĩa là bỏ lệnh - handler vẫn
+# (services/nl_commands/), bỏ khỏi MENU không có nghĩa là bỏ lệnh - handler vẫn
 # đăng ký đủ trong build_application(). /userouter9, /app và /tinhieu (đã chạm trần 100)
 # không có trong danh sách này.
 ALL_COMMANDS = [

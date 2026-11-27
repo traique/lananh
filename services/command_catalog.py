@@ -3,7 +3,7 @@
 Dùng cho:
 - trợ giúp ngắn ``/help``, ``/help <chủ đề>`` (``/help all`` vẫn là bản đầy đủ cũ),
 - câu hỏi tự nhiên "em làm được gì", "làm sao để dò vé số", "có lệnh nào xem vàng
-  không" (services/nl_commands.py trả lời bằng code, không gọi AI),
+  không" (services/nl_commands/ trả lời bằng code, không gọi AI),
 - bảng kiểm kê trong docs/nang-cap-jarvis.md (mục "Hỏi tự nhiên").
 
 Mỗi ``Entry``: tên lệnh (không có "/"), ``group`` (tra cứu / cá nhân / ghi dữ liệu /
@@ -14,7 +14,7 @@ nhiên hiện có:
 
 - ``code:<module>``: đường nhanh bằng code (không AI) đã có từ trước;
 - ``tool:<tên>``: tool router chat (services/tools.py, services/history_search.py);
-- ``cmd:<tên>``: ToolSpec "chạy lệnh" của services/nl_commands.py (kết quả nguyên văn);
+- ``cmd:<tên>``: ToolSpec "chạy lệnh" của services/nl_commands/ (kết quả nguyên văn);
 - ``set:<tên>``: ToolSpec bật/tắt cài đặt (câu phải nói rõ bật/tắt; bot nhắc lại lệnh);
 - ``suggest``: KHÔNG tự chạy từ câu tự nhiên - bot chỉ ra đúng lệnh cần gõ;
 - ``-``: không cần (lệnh điều khiển, nút bấm).

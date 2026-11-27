@@ -1,4 +1,4 @@
-"""Hỏi tự nhiên thay cho lệnh (services/nl_commands.py, services/command_catalog.py):
+"""Hỏi tự nhiên thay cho lệnh (services/nl_commands/, services/command_catalog.py):
 đường code (trợ giúp, mẫu câu rõ), ToolSpec "chạy lệnh" qua router chat (tham số ->
 đúng dòng lệnh), câu chat thường không bị bắt, quyền theo vai trò, lệnh nguy hiểm
 không bao giờ tự chạy, hỏi lại khi thiếu tham số, /help theo chủ đề, menu Telegram."""

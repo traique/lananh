@@ -12,7 +12,7 @@ Cổng chạy đúng thứ tự, cổng đầu tiên trả lời thì dừng (No
   chỉ Zalo/Zoom, Telegram có CommandHandler riêng), "hoãn 10p"/"xong" sau tin nhắc,
   tác vụ định kỳ, danh mục bằng lời, chi tiêu, bữa ăn.
 - Cổng ĐỌC: bài báo trong link, "có gì cần anh chú ý", lệnh từ câu tự nhiên
-  (services/nl_commands.py), vàng/tỷ giá/xổ số, thời tiết, âm lịch.
+  (services/nl_commands/), vàng/tỷ giá/xổ số, thời tiết, âm lịch.
 
 Câu trả lời nhanh vào lịch sử (services/conversation_log) theo ``kind`` của cổng để
 câu hỏi nối tiếp ("thế còn ngày mai?") có ngữ cảnh; ``kind=None`` không ghi.
