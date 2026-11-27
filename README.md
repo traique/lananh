@@ -184,7 +184,8 @@ ai/                 Provider routing (9Router + Groq + OpenRouter + AI Studio), 
 channels/           Channel contracts, Zalo và Zoom persistence; router.py (bridge
                     /internal/zalo/message), zalo_media.py (voice/file/notice),
                     zalo_onboarding.py (lời chào), zalo_text.py (styles zca-js)
-core/               Config, encryption, database (+ repositories/ chứa SQL), migrations
+core/               Config, encryption, database (facade `db.xxx`; pool + breaker +
+                    with_reconnect ở core/db/pool.py; SQL ở repositories/), migrations
                     (+ migrations.lock), untrusted.py (rào dữ liệu ngoài), urls.py
                     (lọc link lạ), trace.py (mã lượt), address.py (xưng hô), lunar_math.py
 handlers/           Telegram handlers mỏng (parse lệnh -> gọi service -> trả lời):

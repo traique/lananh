@@ -90,6 +90,10 @@ DB, bảo mật, lượt song song:
 |---|---|---|
 | `DB_CONNECT_TIMEOUT_SEC` | 8 | Trần thời gian mở 1 kết nối DB (2-60) |
 | `DB_BREAKER_OPEN_SEC` | 30 | Số giây báo lỗi nhanh khi DB vẫn mất sau reconnect (0 = tắt breaker) |
+| `DB_POOL_MAX_SIZE` / `DB_POOL_MIN_SIZE` | 8 / 2 | Số kết nối tối đa/mở sẵn của pool asyncpg (Session Pooler free cho 15; kết nối rảnh quá 60 s vẫn bị đóng). `/status` có dòng "DB pool" (đang dùng, số lần chờ > 1 s) để biết khi nào cần tăng |
+| `DB_STATEMENT_CACHE_SIZE` | (trống) | Cache prepared statement mỗi kết nối. Trống = tự chọn theo cổng `DATABASE_URL`: 6543 (transaction pooler) -> 0, cổng khác (Session Pooler 5432) -> 100, mỗi câu lệnh 1 vòng mạng thay vì 2 |
+| `WEBHOOK_INBOX_IDLE_SEC` | 30 | Worker inbox webhook ngủ tối đa chừng này khi rảnh (tin mới đánh thức ngay) |
+| `RETENTION_BACKUP_RUNS_DAYS` / `RETENTION_APP_DEVICES_DAYS` | 400 / 90 | Dọn nhịp tim sao lưu cũ và thiết bị app đã thu hồi / mã ghép hết hạn |
 | `SECURITY_HSTS` | 1 | Header HSTS (không preload) cho web và `/admin`; 0 khi tên miền riêng chưa có HTTPS |
 | `SETTINGS_AUTO_ROTATE` | 1 | Có `SETTINGS_ENC_KEY_OLD` thì lúc khởi động tự mã hoá lại giá trị còn ở khoá cũ; 0 = chỉ báo |
 | `MAX_CONCURRENT_TURNS` | 2 | Tổng lượt AI song song mọi kênh |
