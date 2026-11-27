@@ -403,7 +403,8 @@ def test_hop_dong_voice_khop_gateway():
     pattern = ZaloVoice.model_fields["path"].metadata[0].pattern
     ts = (ROOT / "zalo-gateway" / "src" / "voice.ts").read_text(encoding="utf-8")
     assert "/^tts\\/[A-Za-z0-9_.-]{1,200}$/" in ts and pattern == r"^tts/[A-Za-z0-9_.-]{1,200}$"
-    assert "reply.voice" in (ROOT / "zalo-gateway" / "src" / "index.ts").read_text("utf-8")
+    # Gửi tin thoại sau các tin chữ: zalo-gateway/src/dispatcher.ts (tách từ index.ts).
+    assert "reply.voice" in (ROOT / "zalo-gateway" / "src" / "dispatcher.ts").read_text("utf-8")
     parsed = ZaloMessageResponse.model_validate(
         {"messages": ["a"], "voice": {"path": "tts/x.m4a", "duration_ms": 5}}
     )

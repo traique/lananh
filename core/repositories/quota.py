@@ -12,7 +12,7 @@ from typing import Any
 async def count_since(
     pool: Any, channel: str, user_id: int, since: datetime, heavy_kinds: list[str]
 ) -> tuple[int, int]:
-    """(số lượt, số lượt "nặng") của 1 người từ ``since``."""
+    """(số lượt, số lượt "nặng") của 1 người từ ``since`` (bảng user_calls)."""
     row = await pool.fetchrow(
         """
         SELECT count(*) AS turns,
@@ -67,7 +67,7 @@ async def relabel_latest(
 
 
 async def counts_by_user_since(
-    pool: Any, channel: str, since: datetime, heavy_kinds: list[str], limit: int
+    pool: Any, channel: str, since: datetime, heavy_kinds: list[str], limit: int = 100
 ) -> list[dict]:
     """Số lượt/lượt nặng từ ``since`` của từng người trên kênh (trang /admin)."""
     rows = await pool.fetch(

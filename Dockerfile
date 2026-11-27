@@ -14,6 +14,8 @@ RUN npm run build \
 # Debian khi Docker Hub đổi mặc định; Dependabot (ecosystem docker) theo dõi.
 FROM python:3.12-slim-trixie
 
+# PYTHONDONTWRITEBYTECODE chỉ cấm GHI .pyc lúc chạy; .pyc của code app được biên
+# dịch sẵn lúc build (compileall bên dưới) và vẫn được ĐỌC.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -40,8 +42,14 @@ RUN python -m pip install -r requirements.txt \
 COPY . .
 COPY --from=gateway /gw/dist ./zalo-gateway/dist
 COPY --from=gateway /gw/node_modules ./zalo-gateway/node_modules
+# Biên dịch sẵn ~260 module app (.dockerignore bỏ __pycache__/test/docs): mỗi lần
+# supervisord chạy lại uvicorn không phải biên dịch lại từ đầu (import web nhanh gần
+# gấp đôi). checked-hash: .pyc khớp theo hash nội dung, không theo mtime (build ghi
+# lại mtime cũng không làm .pyc bị coi là cũ). Bỏ node_modules của gateway (không
+# phải code Python). File lỗi cú pháp làm build hỏng ngay tại đây.
 RUN chmod +x /app/scripts/run-zalo-gateway.sh \
-    && mkdir -p /app/media
+    && mkdir -p /app/media \
+    && python -m compileall -q -j 0 --invalidation-mode checked-hash -x '/zalo-gateway/' /app
 
 # Chạy root: xem ghi chú đầu supervisord.conf (Render không hỗ trợ đổi user trong
 # supervisord - HOME không đổi, root không được kill tiến trình khác uid).

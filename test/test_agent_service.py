@@ -598,14 +598,21 @@ async def test_groq_generate_with_tools_gui_tham_so_agent(monkeypatch):
     async def key():
         return "k"
 
+    async def gpt_oss():
+        return "openai/gpt-oss-20b"
+
     monkeypatch.setattr(openai_compatible, "post_chat_completion_with_tools", fake_post)
     monkeypatch.setattr(groq_client, "_api_key", key)
+    monkeypatch.setattr(groq_client, "_model", gpt_oss)
     monkeypatch.setattr(openrouter_client, "_api_key", key)
+    monkeypatch.setattr(openrouter_client, "_model", gpt_oss)
     await groq_client.generate_with_tools([{"role": "user", "content": "x"}], [])
     await openrouter_client.generate_with_tools([{"role": "user", "content": "x"}], [])
 
-    assert seen[0]["extra_payload"] == {"parallel_tool_calls": False}
+    # gpt-oss trên Groq: suy luận "low" (GROQ_REASONING_EFFORT) thay vì "medium" mặc định.
+    assert seen[0]["extra_payload"] == {"parallel_tool_calls": False, "reasoning_effort": "low"}
     assert seen[0]["max_tokens"] == groq_client.AGENT_MAX_TOKENS == 1024
+    # OpenRouter không nhận tham số riêng của Groq.
     assert seen[1]["extra_payload"] == {"provider": {"require_parameters": True}}
 
 
@@ -942,3 +949,105 @@ async def test_gemini_tran_so_lan_goi_tool_moi_buoc(monkeypatch):
     assert text == "Xong." and runs == ["G0", "G1", "G2"]
     responses = seen_contents[-1][-1].parts  # đủ 6 function_response cho 6 lời gọi
     assert len(responses) == 6
+
+
+@pytest.mark.asyncio
+async def test_buoc_cuoi_cam_goi_tool_de_tra_loi_tu_ket_qua_da_co(monkeypatch):
+    """Bước cuối gửi tool_choice="none": model trả lời từ kết quả tool đã chạy thay vì
+    đòi thêm tool rồi cả lượt bị bỏ với câu "quá bước"."""
+    from ai import groq_client
+
+    choices = []
+
+    async def fake_groq(messages, tools, **kwargs):
+        choices.append(kwargs.get("tool_choice"))
+        if kwargs.get("tool_choice") == "none":
+            return ToolCallResponse("Tổng hợp từ kết quả đã có.", [])
+        step = len(choices)
+        return ToolCallResponse(
+            "",
+            [{"id": f"c{step}", "name": "xem_gia_co_phieu", "arguments": {"ma_co_phieu": "FPT"}}],
+        )
+
+    async def quote(ma_co_phieu="", **_):
+        return "FPT 120"
+
+    monkeypatch.setattr(agent_service, "_tool_provider_usable", _usable("groq"))
+    monkeypatch.setattr(groq_client, "generate_with_tools", fake_groq)
+    _patch_tool(monkeypatch, "xem_gia_co_phieu", quote)
+
+    text, provider = await agent_service.ask_agent("giá FPT")
+
+    assert (text, provider) == ("Tổng hợp từ kết quả đã có.", "groq")
+    assert choices == [None] * (agent_service.MAX_AGENT_STEPS - 1) + ["none"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_buoc_cuoi_mode_none(monkeypatch):
+    from types import SimpleNamespace
+
+    modes = []
+
+    class Models:
+        async def generate_content(self, model, contents, config):
+            tool_config = config.tool_config
+            mode = tool_config.function_calling_config.mode if tool_config else None
+            modes.append(str(getattr(mode, "value", mode)) if mode else None)
+            if mode:
+                return SimpleNamespace(
+                    candidates=[SimpleNamespace(content=SimpleNamespace(parts=[]))],
+                    text="Trả lời từ kết quả đã có.",
+                    usage_metadata=None,
+                )
+            call = SimpleNamespace(
+                function_call=SimpleNamespace(name="xem_gia_co_phieu", args={"ma_co_phieu": "X"})
+            )
+            return SimpleNamespace(
+                candidates=[SimpleNamespace(content=SimpleNamespace(parts=[call]))],
+                text="",
+                usage_metadata=None,
+            )
+
+    client = SimpleNamespace(aio=SimpleNamespace(models=Models()))
+
+    async def get_client_and_model(idx):
+        return client, "gemini-test"
+
+    async def quote(ma_co_phieu="", **_):
+        return "ok"
+
+    monkeypatch.setattr(agent_service.official_client, "get_client_and_model", get_client_and_model)
+    _patch_tool(monkeypatch, "xem_gia_co_phieu", quote)
+    token = agent_service._turn.set(agent_service._Turn())
+    try:
+        text = await agent_service._run_one_provider(1, "giá X")
+    finally:
+        agent_service._turn.reset(token)
+
+    assert text == "Trả lời từ kết quả đã có."
+    assert modes == [None] * (agent_service.MAX_AGENT_STEPS - 1) + ["NONE"]
+
+
+@pytest.mark.asyncio
+async def test_tool_choice_gui_xuong_payload(monkeypatch):
+    from ai import groq_client, openai_compatible
+
+    seen = []
+
+    async def fake_post(client, **kwargs):
+        seen.append(kwargs["extra_payload"])
+        return ToolCallResponse("ok", [])
+
+    async def key():
+        return "k"
+
+    async def model():
+        return "llama-test"
+
+    monkeypatch.setattr(openai_compatible, "post_chat_completion_with_tools", fake_post)
+    monkeypatch.setattr(groq_client, "_api_key", key)
+    monkeypatch.setattr(groq_client, "_model", model)
+    await groq_client.generate_with_tools(
+        [{"role": "user", "content": "x"}], [], tool_choice="none"
+    )
+    assert seen == [{"parallel_tool_calls": False, "tool_choice": "none"}]

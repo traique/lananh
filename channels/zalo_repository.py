@@ -1,5 +1,6 @@
 """Supabase persistence for dynamically managed Zalo groups and summaries."""
 
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -37,6 +38,7 @@ async def ensure_schema() -> None:
     await db.ensure_migrations()
 
 
+@db.with_reconnect
 async def list_groups(account_id: str) -> list[tuple[str, str]]:
     await ensure_schema()
     rows = await (await db.get_pool()).fetch(
@@ -51,6 +53,7 @@ async def list_groups(account_id: str) -> list[tuple[str, str]]:
     return [(row["group_id"], row["alias"]) for row in rows]
 
 
+@db.with_reconnect
 async def list_groups_with_daily(account_id: str) -> list[tuple[str, str, bool]]:
     """Như list_groups nhưng kèm cờ tổng kết tự động hằng ngày (/tongket on|off)."""
     await ensure_schema()
@@ -66,6 +69,7 @@ async def list_groups_with_daily(account_id: str) -> list[tuple[str, str, bool]]
     return [(row["group_id"], row["alias"], row["daily_summary"]) for row in rows]
 
 
+@db.with_reconnect
 async def set_daily_summary(account_id: str, target: str | None, enabled: bool) -> int:
     """Bật/tắt tổng kết hằng ngày cho 1 nhóm (group_id hoặc alias), hoặc mọi nhóm
     khi target là None. Trả về số nhóm khớp."""
@@ -94,6 +98,7 @@ async def set_daily_summary(account_id: str, target: str | None, enabled: bool) 
     return int(result.split()[-1]) if result else 0
 
 
+@db.with_reconnect
 async def resolve_group(account_id: str, target: str) -> tuple[str, str] | None:
     await ensure_schema()
     row = await (await db.get_pool()).fetchrow(
@@ -109,6 +114,7 @@ async def resolve_group(account_id: str, target: str) -> tuple[str, str] | None:
     return (row["group_id"], row["alias"]) if row else None
 
 
+@db.with_reconnect
 async def add_group(account_id: str, group_id: str, alias: str) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
@@ -124,6 +130,7 @@ async def add_group(account_id: str, group_id: str, alias: str) -> None:
     )
 
 
+@db.with_reconnect
 async def remove_group(account_id: str, target: str) -> bool:
     await ensure_schema()
     result = await (await db.get_pool()).execute(
@@ -138,6 +145,7 @@ async def remove_group(account_id: str, target: str) -> bool:
     return result != "DELETE 0"
 
 
+@db.with_reconnect
 async def save_group_message(**values) -> bool:
     await ensure_schema()
     result = await (await db.get_pool()).execute(
@@ -165,6 +173,7 @@ async def save_group_message(**values) -> bool:
     return result == "INSERT 0 1"
 
 
+@db.with_reconnect
 async def get_group_messages(
     account_id: str,
     group_id: str,
@@ -190,6 +199,7 @@ async def get_group_messages(
     )
 
 
+@db.with_reconnect
 async def summary_exists(
     account_id: str,
     group_id: str,
@@ -215,6 +225,7 @@ async def summary_exists(
     )
 
 
+@db.with_reconnect
 async def save_summary(
     account_id: str,
     group_id: str,
@@ -242,6 +253,7 @@ async def save_summary(
     return result == "INSERT 0 1"
 
 
+@db.with_reconnect
 async def save_summary_and_enqueue(
     account_id: str,
     group_id: str,
@@ -288,9 +300,12 @@ async def save_summary_and_enqueue(
                 content,
                 summary_id,
             )
+    kick_gateway()
     return True
 
 
+# INSERT không có khoá chống trùng: chạy lại sau khi đã commit = gửi 2 lần.
+@db.with_reconnect(idempotent=False)
 async def enqueue_outbox(account_id: str, recipient_id: str, content: str) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
@@ -302,8 +317,10 @@ async def enqueue_outbox(account_id: str, recipient_id: str, content: str) -> No
         recipient_id,
         content,
     )
+    kick_gateway()
 
 
+@db.with_reconnect
 async def get_pending_outbox(
     account_id: str,
     recipient_id: str,
@@ -325,6 +342,7 @@ async def get_pending_outbox(
     )
 
 
+@db.with_reconnect
 async def enqueue_reminder(
     reminder_id: int, account_id: str, recipient_id: str, content: str
 ) -> None:
@@ -338,6 +356,7 @@ async def enqueue_reminder(
         content,
         reminder_id,
     )
+    kick_gateway()
 
 
 @db.with_reconnect
@@ -431,6 +450,7 @@ async def mark_outbox_failed(item_id: int, error: str, chunks_sent: int = 0):
     )
 
 
+@db.with_reconnect
 async def cleanup_old_messages(account_id: str) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
@@ -476,6 +496,7 @@ async def resolve_active_account_id() -> str:
     return resolved or env_id or DEFAULT_ACCOUNT_ID
 
 
+@db.with_reconnect
 async def resolve_default_account_id() -> str | None:
     """Bot Zalo B trong repo này chỉ có ĐÚNG 1 tài khoản đăng nhập (thiết kế
     1-chủ) - nhưng account_id THẬT (numeric, do zalo-gateway gửi lên) chỉ được
@@ -498,3 +519,35 @@ async def resolve_default_account_id() -> str | None:
         """
     )
     return row["account_id"] if row else None
+
+
+# Kick gateway sau khi ghi zalo_outbox: 1 lượt đang chạy + tối đa 1 lượt chờ (gộp).
+_kick_task: asyncio.Task | None = None
+_kick_again = False
+
+
+def kick_gateway() -> None:
+    """Đã ghi (và commit) tin vào zalo_outbox: báo gateway gửi NGAY (POST /outbox/kick)
+    thay vì chờ lượt poll dự phòng ZALO_OUTBOX_POLL_MS (90 s). Không chờ, không ném;
+    kick tới khi 1 kick khác đang bay thì gộp thành đúng 1 kick nữa sau đó (tin ghi
+    trong lúc gateway đang quét vẫn được quét). Gateway tắt/không trả lời: tin tới ở
+    lượt poll kế."""
+    global _kick_task, _kick_again
+    if _kick_task is not None and not _kick_task.done():
+        _kick_again = True
+        return
+    try:
+        _kick_task = asyncio.get_running_loop().create_task(_kick_loop())
+    except RuntimeError:
+        return  # không có event loop (script/CLI): vòng poll của gateway vẫn gửi
+
+
+async def _kick_loop() -> None:
+    global _kick_again
+    from channels import zalo_gateway_status
+
+    while True:
+        _kick_again = False
+        await zalo_gateway_status.kick_outbox()
+        if not _kick_again:
+            return

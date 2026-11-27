@@ -60,6 +60,23 @@ GOOGLE_AI_STUDIO_API_KEY_2 = os.getenv("GOOGLE_AI_STUDIO_API_KEY_2", "").strip()
 GOOGLE_AI_STUDIO_API_KEY = GOOGLE_AI_STUDIO_API_KEY_1
 GOOGLE_AI_STUDIO_MODEL = os.getenv("GOOGLE_AI_STUDIO_MODEL", "gemini-3.5-flash-lite").strip()
 
+
+def _thinking_budget(raw: str) -> int | None:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    try:
+        return max(-1, int(value))
+    except ValueError:
+        logger.warning("GEMINI_CHAT_THINKING_BUDGET=%r không phải số nguyên - bỏ qua.", raw)
+        return None
+
+
+# Token suy luận (thinking) tối đa của Gemini cho lượt CHAT: trống = mặc định của model;
+# 0 = tắt suy luận (nhanh, đỡ quota); -1 = model tự quyết. Lượt JSON/tiện ích (router
+# tool, trích trí nhớ, việc phụ ngắn) luôn 0. Model từ chối tham số thì tự bỏ.
+GEMINI_CHAT_THINKING_BUDGET = _thinking_budget(os.getenv("GEMINI_CHAT_THINKING_BUDGET", ""))
+
 HAS_ANY_AI_STUDIO_KEY = bool(GOOGLE_AI_STUDIO_API_KEY_1 or GOOGLE_AI_STUDIO_API_KEY_2)
 
 
@@ -153,6 +170,25 @@ GROQ_CALL_TIMEOUT_SEC = _env_int("GROQ_CALL_TIMEOUT_SEC", 30)
 # chắc chắn chuyển tiếp được.
 GROQ_TOTAL_TIMEOUT_SEC = _env_int("GROQ_TOTAL_TIMEOUT_SEC", 90)
 GROQ_MAX_CONCURRENCY = _env_int("GROQ_MAX_CONCURRENCY", 4)
+# Mức suy luận của gpt-oss trên Groq cho chat, JSON utility (router tool, trích trí
+# nhớ) và tools /agent: Groq mặc định "medium" - token suy luận tính vào max_tokens
+# và trần 8K token/phút, thêm độ trễ. "low" | "medium" | "high"; "off" = để Groq tự
+# chọn. Chỉ gửi cho model openai/gpt-oss-* (model khác không nhận tham số này). Lượt
+# tự tra web (browser_search) luôn "low" theo khuyến nghị của Groq.
+_GROQ_REASONING_EFFORTS = {"low", "medium", "high"}
+
+
+def _groq_reasoning_effort(raw: str) -> str:
+    value = (raw or "").strip().lower()
+    if value in ("", "off", "0", "none"):
+        return ""
+    if value not in _GROQ_REASONING_EFFORTS:
+        logger.warning("GROQ_REASONING_EFFORT=%r không hợp lệ - dùng 'low'.", raw)
+        return "low"
+    return value
+
+
+GROQ_REASONING_EFFORT = _groq_reasoning_effort(os.getenv("GROQ_REASONING_EFFORT", "low"))
 # Groq Whisper (console.groq.com/docs/speech-to-text): chép lời tin nhắn thoại
 # (services/voice_service.py), cùng GROQ_API_KEY nhưng bucket rate-limit audio
 # riêng (cooldown "groq_stt", không khoá Groq chat). Nhận flac/mp3/mp4/m4a/ogg/
@@ -242,6 +278,22 @@ WEB_READER_MAX_BYTES = max(64 * 1024, _env_int("WEB_READER_MAX_BYTES", 2 * 1024 
 # khi vượt ngân sách.
 CHAT_HISTORY_TURNS = _env_int("CHAT_HISTORY_TURNS", 10)
 CHAT_SESSION_TIMEOUT_SEC = _env_int("CHAT_SESSION_TIMEOUT_SEC", 21600)  # 6 giờ
+
+
+def _env_temperature(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        logger.warning("%s=%r không phải số - dùng %s.", name, raw, default)
+        value = default
+    return max(0.0, min(2.0, value))
+
+
+# Nhiệt độ lượt chat tự do (không dữ liệu tra cứu/tool/cổ phiếu - lượt đó dùng 0,55).
+# 0,95 cũ làm Gemini flash-lite hay lẫn chữ Trung/Nhật/Hàn (lượt bị bộ lọc CJK bỏ,
+# tốn thêm 1 provider); 0,8 vẫn giữ giọng tự nhiên.
+CHAT_TEMPERATURE = _env_temperature("CHAT_TEMPERATURE", 0.8)
 # Số dòng chat_messages giữ lại cho MỖI người (tin người dùng + câu trả lời,
 # xoay vòng): đủ cho tool search_history ("hôm trước em nói gì về ...") mà vẫn có
 # trần - mỗi thành viên Zalo cũng giữ chừng này dòng trên Supabase free 500 MB.
@@ -281,10 +333,12 @@ MONITOR_INTERVAL_SEC = _env_int("MONITOR_INTERVAL_SEC", 300)  # 5 phút
 # api2. Chi phí phụ thuộc provider/model/tool thực tế; Gemini official đứng cuối
 # làm lưới an toàn.
 _PROVIDER_ORDER_RAW = os.getenv("PROVIDER_ORDER", "router9,groq,openrouter,api1,api2").strip()
-# Gemini Live (ai/live_client.py) làm provider chat dự phòng CUỐI: "live" chưa có
-# trong PROVIDER_ORDER thì được thêm vào cuối chuỗi; 0 = bỏ "live" khỏi chuỗi kể cả
-# khi PROVIDER_ORDER có ghi. Chỉ dùng cho chat thường (không tra web/JSON/cổ phiếu).
-LIVE_CHAT_FALLBACK = _env_bool("LIVE_CHAT_FALLBACK", True)
+# Gemini Live (ai/live_client.py) làm provider chat dự phòng CUỐI khi
+# LIVE_CHAT_FALLBACK=1: "live" chưa có trong PROVIDER_ORDER thì được thêm vào cuối
+# chuỗi; 0 (mặc định) = bỏ "live" khỏi chuỗi kể cả khi PROVIDER_ORDER có ghi. Mặc định
+# TẮT: lượt chữ cuối cùng phải mở WebSocket âm thanh - chậm nhất và tốn RAM nhất trên
+# Render 512 MB. Chỉ dùng cho chat thường (không tra web/JSON/cổ phiếu).
+LIVE_CHAT_FALLBACK = _env_bool("LIVE_CHAT_FALLBACK", False)
 
 
 def _parse_provider_order(raw: str, *, live: bool = True) -> list[str]:
@@ -323,7 +377,10 @@ VISION_PROVIDER_ORDER = _parse_provider_order(
 )
 
 # ─── Scheduler: reminder + daily digest danh mục (Bước 6) ──────────────────
-REMINDER_CHECK_INTERVAL_SEC = _env_int("REMINDER_CHECK_INTERVAL_SEC", 30)
+# Giờ ngủ TỐI ĐA của vòng nhắc việc (scheduler.py): vòng ngủ đúng tới lần đến hạn kế tiếp
+# và được đánh thức khi đặt/hoãn nhắc, nên nhịp này chỉ là lưới an toàn (vd nhắc ghi từ
+# instance khác lúc deploy chồng) - đặt lớn để bớt truy vấn DB khi rảnh.
+REMINDER_CHECK_INTERVAL_SEC = _env_int("REMINDER_CHECK_INTERVAL_SEC", 120)
 ENABLE_DAILY_DIGEST = _env_bool("ENABLE_DAILY_DIGEST", True)
 # Cảnh báo danh mục cuối phiên (chạm stop/target, breakout Donchian) - services/portfolio_alerts.py.
 ENABLE_PORTFOLIO_ALERTS = _env_bool("ENABLE_PORTFOLIO_ALERTS", True)
@@ -439,13 +496,16 @@ _PROFILE_PLACEHOLDERS = {"", "...", "…"}
 
 # Cache theo (phần, biến thể persona, cách xưng hô riêng): cách xưng hô chỉ áp cho
 # biến thể Zalo và nằm trong danh sách đóng core/address.ADDRESS_FORMS, nên phần lõi
-# tối đa 1 + 2 * (len(ADDRESS_FORMS) + 1) chuỗi (~15 chuỗi x ~10 KB); phần cổ phiếu
-# không phụ thuộc biến thể hay cách xưng hô (1 chuỗi ~5 KB).
+# tối đa 1 + 2 * (len(ADDRESS_FORMS) + 1) chuỗi (~15 chuỗi x ~10 KB); bản rút gọn
+# (load_chat_skill_compact) cùng số chuỗi x ~2 KB; phần cổ phiếu không phụ thuộc
+# biến thể hay cách xưng hô (1 chuỗi ~5 KB).
 _PART_CORE = "core"
 _PART_STOCK = "stock"
+_PART_COMPACT = "compact"
 _PART_TEMPLATES = {
     _PART_CORE: _CHAT_SKILL_TEMPLATE_PATH.name,
     _PART_STOCK: _CHAT_SKILL_STOCK_TEMPLATE_PATH.name,
+    _PART_COMPACT: "chat_skill_compact.j2",
 }
 _chat_skill_cache: dict[tuple[str, str, str | None], str] = {}
 
@@ -575,12 +635,7 @@ def load_chat_skill(
     ~1/3 token persona. PERSONA_STOCK_SPLIT=0 thì luôn trả bản đầy đủ. Phần lõi
     đứng trước và không đổi giữa hai dạng (giữ đầu prompt ổn định cho cache).
     """
-    if variant is None:
-        variant = PERSONA_OWNER if include_owner_profile else PERSONA_MEMBER
-    elif variant not in PERSONA_VARIANTS:
-        # Giá trị lạ: KHÔNG bao giờ rơi về biến thể chủ bot (lộ hồ sơ).
-        logger.warning("Biến thể persona %r không hợp lệ, dùng 'member'.", variant)
-        variant = PERSONA_MEMBER
+    variant = _persona_variant(variant, include_owner_profile)
     form = None if variant == PERSONA_OWNER else address.normalize(address_form)
     if force_reload:
         _chat_skill_cache.clear()
@@ -591,6 +646,35 @@ def load_chat_skill(
         section = _cached_part(_PART_STOCK, PERSONA_OWNER, None)
         if section:
             persona = f"{persona}\n\n{section}"
+    hint = channel_style_hint(channel)
+    return f"{persona}\n\n{hint}" if persona and hint else persona
+
+
+def _persona_variant(variant: str | None, include_owner_profile: bool = True) -> str:
+    if variant is None:
+        return PERSONA_OWNER if include_owner_profile else PERSONA_MEMBER
+    if variant not in PERSONA_VARIANTS:
+        # Giá trị lạ: KHÔNG bao giờ rơi về biến thể chủ bot (lộ hồ sơ).
+        logger.warning("Biến thể persona %r không hợp lệ, dùng 'member'.", variant)
+        return PERSONA_MEMBER
+    return variant
+
+
+def load_chat_skill_compact(
+    *,
+    variant: str | None = None,
+    channel: str | None = None,
+    address_form: str | None = None,
+) -> str:
+    """Persona RÚT GỌN (~1,5-2k ký tự, templates/chat_skill_compact.j2, cùng nguồn
+    chat_skill.yaml): danh tính, xưng hô, giọng và luật an toàn theo biến thể, bỏ ví
+    dụ giọng/nét riêng/nhịp cảm xúc/phần cổ phiếu. Dùng cho provider có trần token
+    mỗi phút nhỏ (Groq free ~8K TPM) khi bản đầy đủ không vừa - xem
+    ai/prompt_budget.fit_groq_chat. Tham số như load_chat_skill; rỗng khi
+    CHAT_SKILL_PATH là file .txt cũ (caller dùng bản đầy đủ)."""
+    variant = _persona_variant(variant)
+    form = None if variant == PERSONA_OWNER else address.normalize(address_form)
+    persona = _cached_part(_PART_COMPACT, variant, form)
     hint = channel_style_hint(channel)
     return f"{persona}\n\n{hint}" if persona and hint else persona
 
@@ -713,6 +797,20 @@ DB_CONNECT_TIMEOUT_SEC = max(2, min(60, _env_int("DB_CONNECT_TIMEOUT_SEC", 8)))
 # chừng này giây - mọi lệnh DB báo lỗi ngay thay vì treo; hết hạn cho 1 lệnh
 # thăm dò đi qua. 0 = tắt breaker.
 DB_BREAKER_OPEN_SEC = max(0, min(600, _env_int("DB_BREAKER_OPEN_SEC", 30)))
+# Pool kết nối DB (asyncpg). Supabase free: Session Pooler cho tối đa 15 kết nối, giữ
+# 8 cho bot (~20 vòng nền + lượt chat dùng chung) để còn chỗ cho sao lưu/SQL editor.
+# MIN chỉ là số kết nối mở sẵn lúc tạo pool: kết nối rảnh quá 60 s vẫn bị đóng (xem
+# max_inactive_connection_lifetime ở core/database.py).
+DB_POOL_MAX_SIZE = max(1, min(50, _env_int("DB_POOL_MAX_SIZE", 8)))
+DB_POOL_MIN_SIZE = max(0, min(DB_POOL_MAX_SIZE, _env_int("DB_POOL_MIN_SIZE", 2)))
+# Số prepared statement cache trên mỗi kết nối. Trống = tự chọn theo cổng DATABASE_URL:
+# 6543 (Supabase transaction pooler, không giữ prepared statement giữa các lượt) -> 0;
+# cổng khác (Session Pooler 5432, kết nối trực tiếp) -> 100 như mặc định asyncpg - mỗi
+# câu lệnh 1 vòng mạng thay vì 2.
+_db_statement_cache = os.getenv("DB_STATEMENT_CACHE_SIZE", "").strip()
+DB_STATEMENT_CACHE_SIZE: int | None = (
+    max(0, min(1000, _env_int("DB_STATEMENT_CACHE_SIZE", 100))) if _db_statement_cache else None
+)
 
 # Secret riêng cho endpoint /diagnose (KHÔNG dùng chung với WEBHOOK_SECRET), truyền
 # qua header X-Diagnose-Token thay vì query string để tránh lộ qua access log.
@@ -763,7 +861,8 @@ def validate(require_webhook: bool = False) -> None:
     try:
         from cryptography.fernet import Fernet
 
-        Fernet(SETTINGS_ENC_KEY.encode())
+        # Thiếu khoá đã nằm trong ``missing`` ở trên; "" ở đây chỉ để Fernet báo không hợp lệ.
+        Fernet((SETTINGS_ENC_KEY or "").encode())
     except Exception as exc:
         raise RuntimeError(
             "SETTINGS_ENC_KEY không hợp lệ; cần Fernet key URL-safe base64 44 ký tự. "

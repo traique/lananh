@@ -4,14 +4,16 @@ This module is intentionally separate from zalo_repository so Facebook source
 configuration and queued posts cannot affect /tongket tracked groups.
 """
 
-import secrets
 import asyncio
 import hashlib
 import json
 import logging
 import os
+import secrets
 import time
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import timedelta
 
 from core import database as db
@@ -100,13 +102,30 @@ def history_days() -> int:
     return _env_int("FACEBOOK_HISTORY_DAYS", 30)
 
 
-_DEDUP_SCAN_LIMIT = 500
+# Trùng chính xác (cùng nội dung/sản phẩm) tra bằng index trên toàn cửa sổ chống trùng:
+# chừng này dòng là đủ để báo bài gốc.
+_DEDUP_EXACT_LIMIT = 20
+# Tối đa số nhóm ghi lại cho 1 bài bị đăng lại (dup_groups).
+_MAX_DUP_GROUPS = 20
+_FINGERPRINT_COLUMNS = (
+    "post_id, text_hash, product_keys, image_hashes, folded_text, group_id, sender_id"
+)
+
+
+@dataclass(frozen=True)
+class SourceGroup:
+    """Một nhóm nguồn Facebook: group ID, tên gợi nhớ, tên thật của nhóm Zalo ('' = chưa biết)."""
+
+    group_id: str
+    alias: str
+    name: str = ""
 
 
 async def ensure_schema() -> None:
     await db.ensure_migrations()
 
 
+@db.with_reconnect
 async def list_groups(account_id: str) -> list[tuple[str, str]]:
     await ensure_schema()
     rows = await (await db.get_pool()).fetch(
@@ -119,21 +138,66 @@ async def list_groups(account_id: str) -> list[tuple[str, str]]:
     return [(row["group_id"], row["alias"]) for row in rows]
 
 
-async def add_group(account_id: str, group_id: str, alias: str) -> None:
+@db.with_reconnect
+async def list_group_details(account_id: str) -> list[SourceGroup]:
+    """Nhóm nguồn kèm tên thật của nhóm Zalo (để hiện tên thay cho group ID)."""
+    await ensure_schema()
+    rows = await (await db.get_pool()).fetch(
+        """
+        SELECT group_id, alias, group_name FROM zalo_facebook_groups
+        WHERE account_id = $1 ORDER BY alias
+        """,
+        account_id,
+    )
+    return [SourceGroup(row["group_id"], row["alias"], row["group_name"] or "") for row in rows]
+
+
+@db.with_reconnect
+async def add_group(account_id: str, group_id: str, alias: str, group_name: str = "") -> None:
+    """Thêm/cập nhật nhóm nguồn; ``group_name`` rỗng thì giữ tên thật đã biết."""
     await ensure_schema()
     await (await db.get_pool()).execute(
         """
-        INSERT INTO zalo_facebook_groups (account_id, group_id, alias)
-        VALUES ($1, $2, $3)
+        INSERT INTO zalo_facebook_groups (account_id, group_id, alias, group_name)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (account_id, group_id)
-        DO UPDATE SET alias = EXCLUDED.alias, updated_at = now()
+        DO UPDATE SET alias = EXCLUDED.alias,
+            group_name = CASE WHEN EXCLUDED.group_name <> '' THEN EXCLUDED.group_name
+                              ELSE zalo_facebook_groups.group_name END,
+            updated_at = now()
         """,
         account_id,
         group_id,
         alias.lower(),
+        group_name.strip()[:200],
     )
 
 
+@db.with_reconnect
+async def update_group_names(account_id: str, names: Mapping[str, str]) -> int:
+    """Ghi tên thật mới của các nhóm nguồn (từ gateway); bỏ qua tên rỗng/không đổi.
+    Trả số nhóm được đổi tên."""
+    pairs = [(gid, name.strip()[:200]) for gid, name in names.items() if gid and name.strip()]
+    if not pairs:
+        return 0
+    await ensure_schema()
+    result = await (await db.get_pool()).execute(
+        """
+        UPDATE zalo_facebook_groups AS g SET group_name = v.name, updated_at = now()
+        FROM unnest($2::text[], $3::text[]) AS v(group_id, name)
+        WHERE g.account_id = $1 AND g.group_id = v.group_id AND g.group_name <> v.name
+        """,
+        account_id,
+        [gid for gid, _ in pairs],
+        [name for _, name in pairs],
+    )
+    try:
+        return int(str(result).split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
+@db.with_reconnect(idempotent=False)
 async def remove_group(account_id: str, target: str) -> bool:
     await ensure_schema()
     result = await (await db.get_pool()).execute(
@@ -148,6 +212,65 @@ async def remove_group(account_id: str, target: str) -> bool:
     return result != "DELETE 0"
 
 
+async def _dedup_rows(conn, account_id: str, fingerprint: "facebook_dedup.Fingerprint") -> list:
+    """Dòng để so trùng, mới nhất trước: (1) trùng chính xác nội dung/sản phẩm trên TOÀN
+    cửa sổ FACEBOOK_DEDUP_DAYS (index, mọi nhóm nguồn), (2) các bài gần nhất cho luật
+    gần giống (FACEBOOK_DEDUP_SCAN_LIMIT)."""
+    days = facebook_dedup.dedup_days()
+    exact = []
+    if fingerprint.text_hash or fingerprint.product_keys:
+        exact = await conn.fetch(
+            f"""
+            SELECT {_FINGERPRINT_COLUMNS} FROM facebook_post_fingerprints
+            WHERE account_id = $1 AND created_at > now() - make_interval(days => $2)
+              AND (text_hash = $3 OR product_keys && $4::text[])
+            ORDER BY created_at DESC
+            LIMIT $5
+            """,
+            account_id,
+            days,
+            fingerprint.text_hash,
+            list(fingerprint.product_keys),
+            _DEDUP_EXACT_LIMIT,
+        )
+    recent = await conn.fetch(
+        f"""
+        SELECT {_FINGERPRINT_COLUMNS} FROM facebook_post_fingerprints
+        WHERE account_id = $1 AND created_at > now() - make_interval(days => $2)
+        ORDER BY created_at DESC
+        LIMIT $3
+        """,
+        account_id,
+        days,
+        facebook_dedup.scan_limit(),
+    )
+    seen = {int(row["post_id"]) for row in exact}
+    return [*exact, *(row for row in recent if int(row["post_id"]) not in seen)]
+
+
+@db.with_reconnect(idempotent=False)
+async def record_duplicate(post_id: int, group_id: str) -> None:
+    """Bài #post_id vừa bị đăng lại (đã chặn) ở nhóm ``group_id``: tăng đếm, nhớ nhóm
+    (khác nhóm gốc, tối đa _MAX_DUP_GROUPS nhóm) để /fb_xem, /fb_boloc hiện ra."""
+    await (await db.get_pool()).execute(
+        """
+        UPDATE facebook_post_fingerprints
+        SET dup_count = dup_count + 1,
+            last_dup_at = now(),
+            dup_groups = CASE
+                WHEN $2 = '' OR $2 = ANY(dup_groups) OR group_id IS NOT DISTINCT FROM $2
+                     OR cardinality(dup_groups) >= $3 THEN dup_groups
+                ELSE array_append(dup_groups, $2)
+            END
+        WHERE post_id = $1
+        """,
+        post_id,
+        group_id or "",
+        _MAX_DUP_GROUPS,
+    )
+
+
+@db.with_reconnect
 async def create_post(
     *,
     account_id: str,
@@ -162,11 +285,13 @@ async def create_post(
     """Đưa bài vào hàng chờ. Trả về post_id (bài cũ nếu gateway gửi lại đúng sự
     kiện đã nhận), None nếu nhóm không còn là nguồn Facebook.
 
-    Có ``fingerprint`` thì so với các bài trong FACEBOOK_DEDUP_DAYS ngày; trùng
-    -> raise DuplicatePostError và KHÔNG ghi gì vào DB.
+    Có ``fingerprint`` thì so với các bài trong FACEBOOK_DEDUP_DAYS ngày của MỌI nhóm
+    nguồn; trùng -> ghi nhận lần đăng lại vào bài gốc, raise DuplicatePostError và
+    KHÔNG ghi bài mới. Idempotent theo source_event_key nên retry an toàn.
     """
     await ensure_schema()
     pool = await db.get_pool()
+    match = None
     async with pool.acquire() as conn:
         async with conn.transaction():
             allowed = await conn.fetchval(
@@ -191,86 +316,159 @@ async def create_post(
                 return int(existing)
             if fingerprint is not None:
                 # Khoá theo tài khoản trong transaction: 2 bài giống nhau tới cùng lúc
-                # không thể cùng lọt qua bước so trùng.
+                # (kể cả từ 2 nhóm khác nhau) không thể cùng lọt qua bước so trùng.
                 await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", account_id)
-                recent = await conn.fetch(
-                    """
-                    SELECT post_id, text_hash, product_keys, image_hashes, folded_text
-                    FROM facebook_post_fingerprints
-                    WHERE account_id = $1 AND created_at > now() - make_interval(days => $2)
-                    ORDER BY created_at DESC
-                    LIMIT $3
-                    """,
-                    account_id,
-                    facebook_dedup.dedup_days(),
-                    _DEDUP_SCAN_LIMIT,
+                rows = await _dedup_rows(conn, account_id, fingerprint)
+                # So gần giống là CPU thuần Python: chạy trong thread, không chặn event loop.
+                match = await asyncio.to_thread(facebook_dedup.find_duplicate, fingerprint, rows)
+            if match is None:
+                return await _insert_post(
+                    conn,
+                    account_id=account_id,
+                    group_id=group_id,
+                    sender_id=sender_id,
+                    sender_name=sender_name,
+                    source_message_ids=source_message_ids,
+                    content=content,
+                    media=media,
+                    fingerprint=fingerprint,
+                    event_key=event_key,
                 )
-                match = facebook_dedup.find_duplicate(fingerprint, recent)
-                if match is not None:
-                    raise DuplicatePostError(match)
-            post_id = await conn.fetchval(
-                """
-                INSERT INTO facebook_post_queue (
-                    account_id, group_id, sender_id, sender_name,
-                    source_message_ids, original_content, processed_content, source_event_key
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
-                ON CONFLICT (source_event_key) DO NOTHING
-                RETURNING id
-                """,
-                account_id,
-                group_id,
-                sender_id,
-                sender_name[:500],
-                source_message_ids,
-                content,
+    try:
+        await record_duplicate(match.post_id, group_id)
+    except Exception:
+        logger.warning("Không ghi được lần đăng lại của bài #%s.", match.post_id, exc_info=True)
+    raise DuplicatePostError(match)
+
+
+async def _insert_post(
+    conn,
+    *,
+    account_id: str,
+    group_id: str,
+    sender_id: str,
+    sender_name: str,
+    source_message_ids: list[str],
+    content: str,
+    media: list[tuple[str, bytes]],
+    fingerprint: "facebook_dedup.Fingerprint | None",
+    event_key: str,
+) -> int:
+    post_id = await conn.fetchval(
+        """
+        INSERT INTO facebook_post_queue (
+            account_id, group_id, sender_id, sender_name,
+            source_message_ids, original_content, processed_content, source_event_key
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
+        ON CONFLICT (source_event_key) DO NOTHING
+        RETURNING id
+        """,
+        account_id,
+        group_id,
+        sender_id,
+        sender_name[:500],
+        source_message_ids,
+        content,
+        event_key,
+    )
+    if post_id is None:
+        return int(
+            await conn.fetchval(
+                "SELECT id FROM facebook_post_queue WHERE source_event_key = $1",
                 event_key,
             )
-            if post_id is None:
-                return await conn.fetchval(
-                    "SELECT id FROM facebook_post_queue WHERE source_event_key = $1",
-                    event_key,
-                )
-            if media and not await _fit_media_budget(
-                conn, account_id, sum(len(body) for _, body in media)
-            ):
-                logger.warning(
-                    "Bài Facebook #%s lưu KHÔNG kèm %d ảnh: tổng ảnh đang lưu vượt trần %s MB.",
-                    post_id,
-                    len(media),
-                    max_media_mb(),
-                )
-                media = []
-            if media:
-                await conn.executemany(
-                    """
-                    INSERT INTO facebook_post_media (post_id, position, mime_type, content)
-                    VALUES ($1, $2, $3, $4)
-                    """,
-                    [
-                        (post_id, position, mime_type, body)
-                        for position, (mime_type, body) in enumerate(media)
-                    ],
-                )
-            if fingerprint is not None:
-                await conn.execute(
-                    """
-                    INSERT INTO facebook_post_fingerprints (
-                        post_id, account_id, text_hash, product_keys, image_hashes, folded_text
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6)
-                    ON CONFLICT (post_id) DO NOTHING
-                    """,
-                    post_id,
-                    account_id,
-                    fingerprint.text_hash,
-                    fingerprint.product_keys,
-                    fingerprint.image_hashes,
-                    fingerprint.folded_text,
-                )
-            return int(post_id)
+        )
+    if media and not await _fit_media_budget(conn, account_id, sum(len(body) for _, body in media)):
+        logger.warning(
+            "Bài Facebook #%s lưu KHÔNG kèm %d ảnh: tổng ảnh đang lưu vượt trần %s MB.",
+            post_id,
+            len(media),
+            max_media_mb(),
+        )
+        media = []
+    if media:
+        await conn.executemany(
+            """
+            INSERT INTO facebook_post_media (post_id, position, mime_type, content)
+            VALUES ($1, $2, $3, $4)
+            """,
+            [
+                (post_id, position, mime_type, body)
+                for position, (mime_type, body) in enumerate(media)
+            ],
+        )
+    if fingerprint is not None:
+        await conn.execute(
+            """
+            INSERT INTO facebook_post_fingerprints (
+                post_id, account_id, text_hash, product_keys, image_hashes, folded_text,
+                group_id, sender_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (post_id) DO NOTHING
+            """,
+            post_id,
+            account_id,
+            fingerprint.text_hash,
+            fingerprint.product_keys,
+            fingerprint.image_hashes,
+            fingerprint.folded_text,
+            group_id,
+            sender_id,
+        )
+    return int(post_id)
 
 
+# /fb_loclai: trần số dòng trùng chính xác lấy thêm cho cả hàng chờ (hàng chờ tối đa
+# FACEBOOK_MAX_PENDING bài, mỗi bài vài dòng trùng là đủ báo bài gốc).
+_REFILTER_EXACT_LIMIT = 2000
+
+
+@db.with_reconnect
+async def exact_fingerprints(
+    account_id: str, text_hashes: list[str], product_keys: list[str]
+) -> list:
+    """Dấu vân tay trùng CHÍNH XÁC nội dung (text_hash) hoặc sản phẩm (product_keys) với
+    bất kỳ giá trị nào cho trước, trên TOÀN cửa sổ chống trùng (index) - như lúc nhận bài,
+    không bị giới hạn FACEBOOK_DEDUP_SCAN_LIMIT bài gần nhất. Mới nhất trước."""
+    if not text_hashes and not product_keys:
+        return []
+    await ensure_schema()
+    return await (await db.get_pool()).fetch(
+        f"""
+        SELECT {_FINGERPRINT_COLUMNS} FROM facebook_post_fingerprints
+        WHERE account_id = $1 AND created_at > now() - make_interval(days => $2)
+          AND (text_hash = ANY($3::text[]) OR product_keys && $4::text[])
+        ORDER BY created_at DESC
+        LIMIT $5
+        """,
+        account_id,
+        facebook_dedup.dedup_days(),
+        text_hashes,
+        product_keys,
+        _REFILTER_EXACT_LIMIT,
+    )
+
+
+@db.with_reconnect
+async def recent_fingerprints(account_id: str) -> list:
+    """Dấu vân tay trong cửa sổ chống trùng (mới nhất trước) để /fb_loclai so lại."""
+    await ensure_schema()
+    return await (await db.get_pool()).fetch(
+        f"""
+        SELECT {_FINGERPRINT_COLUMNS} FROM facebook_post_fingerprints
+        WHERE account_id = $1 AND created_at > now() - make_interval(days => $2)
+        ORDER BY created_at DESC
+        LIMIT $3
+        """,
+        account_id,
+        facebook_dedup.dedup_days(),
+        facebook_dedup.scan_limit(),
+    )
+
+
+@db.with_reconnect(idempotent=False)
 async def enforce_pending_cap(account_id: str, limit: int | None = None) -> list[int]:
     """Giữ tối đa ``limit`` (mặc định FACEBOOK_MAX_PENDING=150) bài chờ duyệt.
 
@@ -301,6 +499,7 @@ async def enforce_pending_cap(account_id: str, limit: int | None = None) -> list
     return sorted(int(row["id"]) for row in rows)
 
 
+@db.with_reconnect
 async def count_pending(account_id: str) -> int:
     await ensure_schema()
     return int(
@@ -312,14 +511,18 @@ async def count_pending(account_id: str) -> int:
     )
 
 
+@db.with_reconnect
 async def list_pending_for_refilter(account_id: str):
-    """Bài đang chờ duyệt (chưa page nào đăng) kèm số ảnh, để chạy lại bộ lọc."""
+    """Bài đang chờ duyệt (chưa page nào đăng) kèm số ảnh, nhóm, người gửi và dấu vân
+    tay, để chạy lại bộ lọc và lọc trùng giữa các nhóm."""
     await ensure_schema()
     return await (await db.get_pool()).fetch(
         """
-        SELECT q.id, q.original_content,
-               (SELECT count(*) FROM facebook_post_media m WHERE m.post_id = q.id) AS media_count
+        SELECT q.id, q.group_id, q.sender_id, q.original_content,
+               (SELECT count(*) FROM facebook_post_media m WHERE m.post_id = q.id) AS media_count,
+               f.text_hash, f.product_keys, f.image_hashes, f.folded_text
         FROM facebook_post_queue q
+        LEFT JOIN facebook_post_fingerprints f ON f.post_id = q.id
         WHERE q.account_id = $1 AND q.status = 'PENDING_APPROVAL'
           AND NOT EXISTS (
               SELECT 1 FROM facebook_post_targets t
@@ -331,6 +534,7 @@ async def list_pending_for_refilter(account_id: str):
     )
 
 
+@db.with_reconnect
 async def delete_media(post_id: int) -> None:
     """Ảnh chỉ cần cho lúc đăng; bài đã đăng xong/bỏ qua thì xoá để nhẹ DB."""
     await (await db.get_pool()).execute(
@@ -397,15 +601,24 @@ async def prune_history(*, force: bool = False) -> dict[str, int]:
     return result
 
 
+@db.with_reconnect
 async def get_post(account_id: str, post_id: int):
+    """Bài trong hàng chờ kèm số lần bị đăng lại và các nhóm đã đăng lại nó."""
     await ensure_schema()
     return await (await db.get_pool()).fetchrow(
-        "SELECT * FROM facebook_post_queue WHERE account_id = $1 AND id = $2",
+        """
+        SELECT q.*, COALESCE(f.dup_count, 0) AS dup_count,
+               COALESCE(f.dup_groups, '{}'::text[]) AS dup_groups
+        FROM facebook_post_queue q
+        LEFT JOIN facebook_post_fingerprints f ON f.post_id = q.id
+        WHERE q.account_id = $1 AND q.id = $2
+        """,
         account_id,
         post_id,
     )
 
 
+@db.with_reconnect
 async def get_media(post_id: int):
     await ensure_schema()
     return await (await db.get_pool()).fetch(
@@ -417,6 +630,7 @@ async def get_media(post_id: int):
     )
 
 
+@db.with_reconnect
 async def update_content(account_id: str, post_id: int, content: str) -> bool:
     await ensure_schema()
     result = await (await db.get_pool()).execute(
@@ -431,6 +645,7 @@ async def update_content(account_id: str, post_id: int, content: str) -> bool:
     return result != "UPDATE 0"
 
 
+@db.with_reconnect(idempotent=False)
 async def reject_post(account_id: str, post_id: int) -> bool:
     await ensure_schema()
     result = await (await db.get_pool()).execute(
@@ -447,6 +662,7 @@ async def reject_post(account_id: str, post_id: int) -> bool:
     return True
 
 
+@db.with_reconnect
 async def ensure_targets(post_id: int, page_keys: list[str]) -> None:
     """Make sure every currently configured page has a target row for this
     post. Existing rows (any status) are left untouched — this is what lets a
@@ -465,6 +681,7 @@ async def ensure_targets(post_id: int, page_keys: list[str]) -> None:
     )
 
 
+@db.with_reconnect
 async def list_targets(post_id: int):
     await ensure_schema()
     return await (await db.get_pool()).fetch(
@@ -473,6 +690,7 @@ async def list_targets(post_id: int):
     )
 
 
+@db.with_reconnect
 async def record_target_posted(
     post_id: int,
     page_key: str,
@@ -502,6 +720,7 @@ async def record_target_posted(
         raise RuntimeError("Facebook publish claim no longer belongs to this worker")
 
 
+@db.with_reconnect
 async def record_target_comment(
     post_id: int,
     page_key: str,
@@ -524,6 +743,7 @@ async def record_target_comment(
         raise RuntimeError("Facebook publish claim no longer belongs to this worker")
 
 
+@db.with_reconnect
 async def record_target_error(
     post_id: int,
     page_key: str,
@@ -549,6 +769,7 @@ async def record_target_error(
     )
 
 
+@db.with_reconnect(idempotent=False)
 async def mark_target_creating(post_id: int, page_key: str, claim_token: str) -> None:
     result = await (await db.get_pool()).execute(
         """UPDATE facebook_post_targets SET status = 'POSTING', publish_started_at = now(),
@@ -565,6 +786,7 @@ async def mark_target_creating(post_id: int, page_key: str, claim_token: str) ->
         raise RuntimeError("Facebook publish claim no longer belongs to this worker")
 
 
+@db.with_reconnect
 async def record_target_unknown(
     post_id: int, page_key: str, message: str, claim_token: str
 ) -> None:
@@ -584,6 +806,7 @@ def _error_summary(posted: int, total: int, errored: int, uncommented: int) -> s
     return f"{text[:-1]}, {uncommented} page chưa bình luận link." if uncommented else text
 
 
+@db.with_reconnect(idempotent=False)
 async def finalize_post_status(
     account_id: str,
     post_id: int,
@@ -649,6 +872,7 @@ async def finalize_post_status(
     return "ERROR"
 
 
+@db.with_reconnect(idempotent=False)
 async def claim_post(account_id: str, post_id: int):
     await ensure_schema()
     pool = await db.get_pool()
@@ -679,6 +903,7 @@ async def claim_post(account_id: str, post_id: int):
             return row
 
 
+@db.with_reconnect
 async def release_post_claim(account_id: str, post_id: int, claim_token: str, message: str) -> None:
     await (await db.get_pool()).execute(
         """UPDATE facebook_post_queue SET status = 'ERROR', error_message = $4,
@@ -719,6 +944,7 @@ async def keep_post_claim(post_id: int, token: str):
         await asyncio.gather(heartbeat, return_exceptions=True)
 
 
+@db.with_reconnect(idempotent=False)
 async def reset_posts(account_id: str) -> tuple[int, bool]:
     """Delete every saved Facebook post for one account.
 
@@ -746,6 +972,7 @@ async def reset_posts(account_id: str) -> tuple[int, bool]:
             return len(rows), sequence_reset
 
 
+@db.with_reconnect
 async def set_affiliate_link(account_id: str, source_url: str, affiliate_url: str) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
@@ -764,6 +991,7 @@ async def set_affiliate_link(account_id: str, source_url: str, affiliate_url: st
     )
 
 
+@db.with_reconnect
 async def get_affiliate_links(account_id: str, source_urls: list[str]) -> dict[str, str]:
     if not source_urls:
         return {}

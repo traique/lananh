@@ -1,12 +1,9 @@
-"""Hỏi tự nhiên thay cho lệnh (services/nl_commands.py, services/command_catalog.py):
+"""Hỏi tự nhiên thay cho lệnh (services/nl_commands/, services/command_catalog.py):
 đường code (trợ giúp, mẫu câu rõ), ToolSpec "chạy lệnh" qua router chat (tham số ->
 đúng dòng lệnh), câu chat thường không bị bắt, quyền theo vai trò, lệnh nguy hiểm
 không bao giờ tự chạy, hỏi lại khi thiếu tham số, /help theo chủ đề, menu Telegram."""
 
 from __future__ import annotations
-
-import re
-from pathlib import Path
 
 import pytest
 
@@ -20,7 +17,6 @@ from services import tools, usage_quota, web_search
 OWNER = 42
 MEMBER = -5
 ADMIN = -6
-ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(autouse=True)
@@ -73,9 +69,10 @@ def _router(monkeypatch, data):
 
 
 def _telegram_handler_names() -> set[str]:
-    source = (ROOT / "bot_app.py").read_text(encoding="utf-8")
-    block = source.split("command_handlers = [", 1)[1].split("]\n", 1)[0]
-    return set(re.findall(r'\("([a-z_0-9]+)",', block))
+    # bot_app.build_application() đăng ký đúng bảng này (sinh từ danh bạ lệnh).
+    import bot_app
+
+    return {name for name, _ in bot_app.telegram_command_handlers()}
 
 
 def test_danh_ba_co_moi_lenh_telegram_va_zalo():

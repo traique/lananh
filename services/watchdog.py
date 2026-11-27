@@ -28,6 +28,9 @@ migration bị sửa. Module này lo những thứ hỏng từ từ mà không a
    Restart mà instance trước tắt êm (sửa env, Manual Deploy, Restart service: Render
    gửi SIGTERM) không tính; vì instance cũ chỉ tắt SAU khi instance mới healthy, phần
    đếm dồn dập chạy ở chu kỳ sau (_BURST_SETTLE_SEC), báo tối đa 1 lần/24 giờ.
+6. Vòng gửi nhắc việc (scheduler.py) còn sống: task đã start mà chết vì lỗi không
+   bắt được thì chạy lại ngay và báo chủ bot (nếu không, nhắc việc ngừng gửi âm thầm
+   tới lần deploy sau).
 
 Watchdog trong process không báo được khi chính process đã chết: cần thêm 1
 monitor UptimeRobot trỏ /healthz có liên hệ cảnh báo và bật email thông báo của
@@ -599,6 +602,25 @@ async def check_restart_burst(now: float | None = None) -> None:
         await db.set_setting(_BURST_KEY, json.dumps(round(now)))
 
 
+# ─── 6. Vòng gửi nhắc việc còn sống ─────────────────────────────────────────
+
+
+async def check_reminder_loop() -> None:
+    """Task vòng nhắc việc chết vì lỗi không bắt được -> chạy lại + báo chủ bot.
+    Nhắc đến hạn trong lúc dừng vẫn nằm trong DB, vòng mới gửi bù (nhãn nhắc trễ)."""
+    import scheduler
+
+    reason = scheduler.revive_reminder_loop()
+    if reason is None:
+        return
+    alerts.send(
+        f"🚨 Vòng gửi nhắc việc vừa dừng vì lỗi ({reason}) - watchdog đã chạy lại. Nhắc "
+        "đến hạn trong lúc dừng sẽ được gửi bù kèm nhãn nhắc trễ; chi tiết lỗi xem log Render.",
+        key="watchdog:reminder_loop",
+        cooldown=_HOUR,
+    )
+
+
 async def restart_summary(days: int = 7) -> dict:
     """Thống kê khởi động lại cho /admin và /loi."""
     now = time.time()
@@ -678,6 +700,7 @@ async def run_checks(now: datetime | None = None) -> None:
     now = now or datetime.now(VN_TZ)
     steps: tuple[tuple[str, Callable[[], Awaitable[object]]], ...] = (
         ("RAM", check_memory),
+        ("vòng nhắc việc", check_reminder_loop),
         ("dung lượng DB", lambda: check_db_size(now)),
         ("webhook inbox", check_inbox),
         ("job hằng ngày", lambda: check_missed_jobs(now)),

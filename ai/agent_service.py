@@ -525,13 +525,21 @@ async def _run_one_provider(idx: int, question: str) -> str:
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
     tools = _build_tool_declarations()
     gen_config = types.GenerateContentConfig(system_instruction=turn.system, tools=tools)
+    # Bước cuối: cấm gọi tool (mode NONE) - model PHẢI trả lời từ kết quả đã có, thay
+    # vì xin thêm tool rồi cả lượt bị bỏ với câu "quá bước".
+    final_config = types.GenerateContentConfig(
+        system_instruction=turn.system,
+        tools=tools,
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(mode="NONE")
+        ),
+    )
 
     async def _step(step: int):
+        config = final_config if step == MAX_AGENT_STEPS - 1 else gen_config
         response = await bounded(
             lambda: with_timeout(
-                client.aio.models.generate_content(
-                    model=model, contents=contents, config=gen_config
-                ),
+                client.aio.models.generate_content(model=model, contents=contents, config=config),
                 OFFICIAL_CHAT_TIMEOUT_SEC,
                 f"agent api{idx} step {step + 1}",
             )
@@ -555,7 +563,9 @@ async def _run_one_provider(idx: int, question: str) -> str:
         if not function_calls:
             return (response.text or "").strip() or "Xin lỗi, em chưa tìm được câu trả lời."
         if step == MAX_AGENT_STEPS - 1:
-            break  # bước cuối: không chạy thêm tool mà không còn bước dùng kết quả
+            # Model vẫn đòi tool dù đã cấm: dùng phần chữ nếu có, không chạy tool nữa.
+            text = "".join(getattr(p, "text", None) or "" for p in parts).strip()
+            return text or _STEP_LIMIT_REPLY
 
         # Model có thể yêu cầu nhiều tool cùng lúc trong 1 bước - chạy tuần tự, có
         # trần (đơn giản, đủ dùng cho quy mô 1 user; không cần asyncio.gather).
@@ -586,10 +596,14 @@ async def _run_openai_tools(
     tools = _build_openai_tools()
 
     for step in range(MAX_AGENT_STEPS):
+        # Bước cuối: tool_choice="none" - model PHẢI trả lời từ kết quả tool đã có,
+        # thay vì xin thêm tool rồi cả lượt bị bỏ với câu "quá bước".
+        last = step == MAX_AGENT_STEPS - 1
+        extra = {"tool_choice": "none"} if last else {}
         result = await call_log.timed(
             label,
             model,
-            lambda: bounded(lambda: call(conversation, tools), own_timeout),
+            lambda extra=extra: bounded(lambda: call(conversation, tools, **extra), own_timeout),
             stage=_STAGE,
         )
 
@@ -599,8 +613,9 @@ async def _run_openai_tools(
         logger.info(
             "Agent (%s) yêu cầu %d tool call(s) ở bước %d.", label, len(result.tool_calls), step + 1
         )
-        if step == MAX_AGENT_STEPS - 1:
-            break  # bước cuối: không chạy thêm tool mà không còn bước dùng kết quả
+        if last:
+            # Provider/model lờ tool_choice="none": dùng phần chữ nếu có, không chạy tool.
+            return result.text or _STEP_LIMIT_REPLY
         conversation.append(
             {
                 "role": "assistant",
@@ -636,7 +651,9 @@ async def _run_router9(question: str) -> str:
 
     return await _run_openai_tools(
         "router9",
-        lambda messages, tools: router9_client.generate_with_tools(messages, tools),
+        lambda messages, tools, **kwargs: router9_client.generate_with_tools(
+            messages, tools, **kwargs
+        ),
         question,
         config.ROUTER9_CALL_TIMEOUT_SEC,
         await _router9_model(),

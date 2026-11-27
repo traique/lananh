@@ -1,0 +1,788 @@
+{
+ "bad_quality": {
+  "action": "NO_TRADE",
+  "confidence": 0.0,
+  "data_quality": "bad",
+  "invalidation_reason": "dữ liệu chưa đủ tin cậy - chờ dữ liệu tốt hơn",
+  "market_regime": "unknown",
+  "reasons": [
+   "chỉ có 10 phiên"
+  ],
+  "risk_level": "high",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "none",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "breakout_buy": {
+  "action": "BUY",
+  "confidence": 0.91,
+  "data_quality": "ok",
+  "invalidation_reason": "nếu giá đóng cửa dưới 52.200 coi như setup thất bại. cần cắt lỗ",
+  "market_regime": "risk_on",
+  "reasons": [
+   "breakout khỏi kênh Donchian 20 phiên có volume xác nhận"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 2.95,
+  "scenarios": [
+   {
+    "action": "Nắm giữ theo kế hoạch. chờ chạm T1 60.500 để chốt 1/2 vị thế",
+    "name": "base",
+    "trigger": "Giá giữ trên vùng stop 52.200. tích lũy đi ngang trong vùng mua 53.500-54.300"
+   },
+   {
+    "action": "Không có T2 rõ ràng - trail stop theo MA10 cho phần còn lại thay vì chốt cứng",
+    "name": "bull",
+    "trigger": "Đóng cửa vượt T1 60.500 kèm volume > 130% trung bình 20 phiên"
+   },
+   {
+    "action": "Cắt toàn bộ vị thế theo stop đã định, không bình quân giá xuống",
+    "name": "bear",
+    "trigger": "Đóng cửa dưới stop 52.200"
+   }
+  ],
+  "setup_type": "breakout",
+  "stop_price": 52200,
+  "target_price": 60500,
+  "trade_plan": {
+   "entry_high": 54300,
+   "entry_low": 53500,
+   "plan_note": "Chốt 1/2 vị thế tại T1, dời stop về hoà vốn cho phần còn lại; T2 (nếu có) cho phần còn lại.",
+   "position_size_pct": 20.0,
+   "stop": 52200,
+   "target1": 60500,
+   "target2": null
+  }
+ },
+ "breakout_measured_move": {
+  "action": "WATCH",
+  "confidence": 0.91,
+  "data_quality": "ok",
+  "invalidation_reason": "chờ R:R cải thiện (hiện 0.29, cần >= 1.5)",
+  "market_regime": "risk_on",
+  "reasons": [
+   "breakout khỏi kênh Donchian 20 phiên có volume xác nhận",
+   "risk/reward 0.29 dưới ngưỡng tối thiểu 1.5 - chưa vào mới dù setup ổn"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 0.29,
+  "scenarios": [],
+  "setup_type": "breakout",
+  "stop_price": 52200,
+  "target_price": 54900,
+  "trade_plan": null
+ },
+ "breakout_near_ceiling": {
+  "action": "BUY",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": "nếu giá đóng cửa dưới 52.200 coi như setup thất bại. cần cắt lỗ",
+  "market_regime": "risk_on",
+  "reasons": [
+   "breakout khỏi kênh Donchian 20 phiên có volume xác nhận",
+   "mua đuổi phiên tăng sát trần: hàng về T+2.5, nếu breakout fail sẽ không kịp thoát"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 2.95,
+  "scenarios": [
+   {
+    "action": "Nắm giữ theo kế hoạch. chờ chạm T1 60.500 để chốt 1/2 vị thế",
+    "name": "base",
+    "trigger": "Giá giữ trên vùng stop 52.200. tích lũy đi ngang trong vùng mua 53.500-54.300"
+   },
+   {
+    "action": "Không có T2 rõ ràng - trail stop theo MA10 cho phần còn lại thay vì chốt cứng",
+    "name": "bull",
+    "trigger": "Đóng cửa vượt T1 60.500 kèm volume > 130% trung bình 20 phiên"
+   },
+   {
+    "action": "Cắt toàn bộ vị thế theo stop đã định, không bình quân giá xuống",
+    "name": "bear",
+    "trigger": "Đóng cửa dưới stop 52.200"
+   }
+  ],
+  "setup_type": "breakout",
+  "stop_price": 52200,
+  "target_price": 60500,
+  "trade_plan": {
+   "entry_high": 54300,
+   "entry_low": 53500,
+   "plan_note": "Chốt 1/2 vị thế tại T1, dời stop về hoà vốn cho phần còn lại; T2 (nếu có) cho phần còn lại.",
+   "position_size_pct": 19.7,
+   "stop": 52200,
+   "target1": 60500,
+   "target2": null
+  }
+ },
+ "breakout_no_resistance": {
+  "action": "WATCH",
+  "confidence": 0.91,
+  "data_quality": "ok",
+  "invalidation_reason": "chờ hình thành vùng kháng cự/hỗ trợ rõ để đo được R:R thật",
+  "market_regime": "risk_on",
+  "reasons": [
+   "breakout khỏi kênh Donchian 20 phiên có volume xác nhận",
+   "không có kháng cự thật phía trên để đo risk/reward - target chỉ là ước lượng, chưa vào mới"
+  ],
+  "risk_level": "low",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "breakout",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "degraded_short": {
+  "action": "WATCH",
+  "confidence": 0.56,
+  "data_quality": "degraded",
+  "invalidation_reason": null,
+  "market_regime": "risk_on",
+  "reasons": [
+   "dữ liệu cũ",
+   "không khớp mẫu setup rõ ràng nào (breakout/pullback/mean-reversion)"
+  ],
+  "risk_level": "medium",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "none",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "downtrend_riskoff": {
+  "action": "NO_TRADE",
+  "confidence": 0.75,
+  "data_quality": "ok",
+  "invalidation_reason": null,
+  "market_regime": "risk_off",
+  "reasons": [
+   "giá về sát dải Bollinger dưới / RSI vùng quá bán - mean reversion có kiểm soát",
+   "tín hiệu giảm rõ - không phải cơ hội mua mới"
+  ],
+  "risk_level": "low",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "mean_reversion",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "downtrend_riskoff_holding": {
+  "action": "SELL",
+  "confidence": 0.75,
+  "data_quality": "ok",
+  "invalidation_reason": "nếu giá vượt lên trên 59.600 thì tín hiệu SELL coi như vô hiệu. cần đánh giá lại",
+  "market_regime": "risk_off",
+  "reasons": [
+   "giá về sát dải Bollinger dưới / RSI vùng quá bán - mean reversion có kiểm soát"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 0.19,
+  "scenarios": [],
+  "setup_type": "mean_reversion",
+  "stop_price": 59600,
+  "target_price": 57400,
+  "trade_plan": null
+ },
+ "flat": {
+  "action": "NO_TRADE",
+  "confidence": 0.62,
+  "data_quality": "ok",
+  "invalidation_reason": null,
+  "market_regime": "risk_on",
+  "reasons": [
+   "không khớp mẫu setup rõ ràng nào (breakout/pullback/mean-reversion)",
+   "tín hiệu giảm chưa đủ rõ để kết luận - không mua mới"
+  ],
+  "risk_level": "low",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "none",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "flat_holding": {
+  "action": "WATCH",
+  "confidence": 0.62,
+  "data_quality": "ok",
+  "invalidation_reason": "nếu giá vượt lên trên 30.600 thì tín hiệu SELL coi như vô hiệu. cần đánh giá lại",
+  "market_regime": "risk_on",
+  "reasons": [
+   "không khớp mẫu setup rõ ràng nào (breakout/pullback/mean-reversion)",
+   "tín hiệu giảm đang hình thành - theo dõi sát, chưa đủ mạnh để cắt ngay"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 0.5,
+  "scenarios": [],
+  "setup_type": "none",
+  "stop_price": 30600,
+  "target_price": 29700,
+  "trade_plan": null
+ },
+ "pullback_buy_hnx_no_session": {
+  "action": "BUY",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": "nếu giá đóng cửa dưới 55.600 coi như setup thất bại. cần cắt lỗ",
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 3.47,
+  "scenarios": [
+   {
+    "action": "Nắm giữ theo kế hoạch. chờ chạm T1 64.100 để chốt 1/2 vị thế",
+    "name": "base",
+    "trigger": "Giá giữ trên vùng stop 55.600. tích lũy đi ngang trong vùng mua 56.700-57.500"
+   },
+   {
+    "action": "Không có T2 rõ ràng - trail stop theo MA10 cho phần còn lại thay vì chốt cứng",
+    "name": "bull",
+    "trigger": "Đóng cửa vượt T1 64.100 kèm volume > 130% trung bình 20 phiên"
+   },
+   {
+    "action": "Cắt toàn bộ vị thế theo stop đã định, không bình quân giá xuống",
+    "name": "bear",
+    "trigger": "Đóng cửa dưới stop 55.600"
+   }
+  ],
+  "setup_type": "pullback",
+  "stop_price": 55600,
+  "target_price": 64100,
+  "trade_plan": {
+   "entry_high": 57500,
+   "entry_low": 56700,
+   "plan_note": "Chốt 1/2 vị thế tại T1, dời stop về hoà vốn cho phần còn lại; T2 (nếu có) cho phần còn lại.",
+   "position_size_pct": 20.0,
+   "stop": 55600,
+   "target1": 64100,
+   "target2": null
+  }
+ },
+ "pullback_buy_holding": {
+  "action": "HOLD",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": "nếu giá đóng cửa dưới 55.600 nên cân nhắc cắt lỗ phần đang giữ",
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 3.47,
+  "scenarios": [
+   {
+    "action": "Nắm giữ theo kế hoạch. chờ chạm T1 64.100 để chốt 1/2 vị thế",
+    "name": "base",
+    "trigger": "Giá giữ trên vùng stop 55.600. tích lũy đi ngang trong vùng mua 56.700-57.500"
+   },
+   {
+    "action": "Không có T2 rõ ràng - trail stop theo MA10 cho phần còn lại thay vì chốt cứng",
+    "name": "bull",
+    "trigger": "Đóng cửa vượt T1 64.100 kèm volume > 130% trung bình 20 phiên"
+   },
+   {
+    "action": "Cắt toàn bộ vị thế theo stop đã định, không bình quân giá xuống",
+    "name": "bear",
+    "trigger": "Đóng cửa dưới stop 55.600"
+   }
+  ],
+  "setup_type": "pullback",
+  "stop_price": 55600,
+  "target_price": 64100,
+  "trade_plan": {
+   "entry_high": 57500,
+   "entry_low": 56700,
+   "plan_note": "Chốt 1/2 vị thế tại T1, dời stop về hoà vốn cho phần còn lại; T2 (nếu có) cho phần còn lại.",
+   "position_size_pct": 20.0,
+   "stop": 55600,
+   "target1": 64100,
+   "target2": null
+  }
+ },
+ "pullback_buy_hose": {
+  "action": "BUY",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": "nếu giá đóng cửa dưới 55.600 coi như setup thất bại. cần cắt lỗ",
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 3.47,
+  "scenarios": [
+   {
+    "action": "Nắm giữ theo kế hoạch. chờ chạm T1 64.100 để chốt 1/2 vị thế",
+    "name": "base",
+    "trigger": "Giá giữ trên vùng stop 55.600. tích lũy đi ngang trong vùng mua 56.700-57.500"
+   },
+   {
+    "action": "Không có T2 rõ ràng - trail stop theo MA10 cho phần còn lại thay vì chốt cứng",
+    "name": "bull",
+    "trigger": "Đóng cửa vượt T1 64.100 kèm volume > 130% trung bình 20 phiên"
+   },
+   {
+    "action": "Cắt toàn bộ vị thế theo stop đã định, không bình quân giá xuống",
+    "name": "bear",
+    "trigger": "Đóng cửa dưới stop 55.600"
+   }
+  ],
+  "setup_type": "pullback",
+  "stop_price": 55600,
+  "target_price": 64100,
+  "trade_plan": {
+   "entry_high": 57500,
+   "entry_low": 56700,
+   "plan_note": "Chốt 1/2 vị thế tại T1, dời stop về hoà vốn cho phần còn lại; T2 (nếu có) cho phần còn lại.",
+   "position_size_pct": 20.0,
+   "stop": 55600,
+   "target1": 64100,
+   "target2": null
+  }
+ },
+ "pullback_buy_news_neg": {
+  "action": "BUY",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": "nếu giá đóng cửa dưới 55.600 coi như setup thất bại. cần cắt lỗ",
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 3.47,
+  "scenarios": [
+   {
+    "action": "Nắm giữ theo kế hoạch. chờ chạm T1 64.100 để chốt 1/2 vị thế",
+    "name": "base",
+    "trigger": "Giá giữ trên vùng stop 55.600. tích lũy đi ngang trong vùng mua 56.700-57.500"
+   },
+   {
+    "action": "Không có T2 rõ ràng - trail stop theo MA10 cho phần còn lại thay vì chốt cứng",
+    "name": "bull",
+    "trigger": "Đóng cửa vượt T1 64.100 kèm volume > 130% trung bình 20 phiên"
+   },
+   {
+    "action": "Cắt toàn bộ vị thế theo stop đã định, không bình quân giá xuống",
+    "name": "bear",
+    "trigger": "Đóng cửa dưới stop 55.600"
+   }
+  ],
+  "setup_type": "pullback",
+  "stop_price": 55600,
+  "target_price": 64100,
+  "trade_plan": {
+   "entry_high": 57500,
+   "entry_low": 56700,
+   "plan_note": "Chốt 1/2 vị thế tại T1, dời stop về hoà vốn cho phần còn lại; T2 (nếu có) cho phần còn lại.",
+   "position_size_pct": 20.0,
+   "stop": 55600,
+   "target1": 64100,
+   "target2": null
+  }
+ },
+ "pullback_buy_news_pos": {
+  "action": "BUY",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": "nếu giá đóng cửa dưới 55.600 coi như setup thất bại. cần cắt lỗ",
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 3.47,
+  "scenarios": [
+   {
+    "action": "Nắm giữ theo kế hoạch. chờ chạm T1 64.100 để chốt 1/2 vị thế",
+    "name": "base",
+    "trigger": "Giá giữ trên vùng stop 55.600. tích lũy đi ngang trong vùng mua 56.700-57.500"
+   },
+   {
+    "action": "Không có T2 rõ ràng - trail stop theo MA10 cho phần còn lại thay vì chốt cứng",
+    "name": "bull",
+    "trigger": "Đóng cửa vượt T1 64.100 kèm volume > 130% trung bình 20 phiên"
+   },
+   {
+    "action": "Cắt toàn bộ vị thế theo stop đã định, không bình quân giá xuống",
+    "name": "bear",
+    "trigger": "Đóng cửa dưới stop 55.600"
+   }
+  ],
+  "setup_type": "pullback",
+  "stop_price": 55600,
+  "target_price": 64100,
+  "trade_plan": {
+   "entry_high": 57500,
+   "entry_low": 56700,
+   "plan_note": "Chốt 1/2 vị thế tại T1, dời stop về hoà vốn cho phần còn lại; T2 (nếu có) cho phần còn lại.",
+   "position_size_pct": 20.0,
+   "stop": 55600,
+   "target1": 64100,
+   "target2": null
+  }
+ },
+ "pullback_buy_unknown_exchange": {
+  "action": "BUY",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": "nếu giá đóng cửa dưới 55.600 coi như setup thất bại. cần cắt lỗ",
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 3.47,
+  "scenarios": [
+   {
+    "action": "Nắm giữ theo kế hoạch. chờ chạm T1 64.100 để chốt 1/2 vị thế",
+    "name": "base",
+    "trigger": "Giá giữ trên vùng stop 55.600. tích lũy đi ngang trong vùng mua 56.700-57.500"
+   },
+   {
+    "action": "Không có T2 rõ ràng - trail stop theo MA10 cho phần còn lại thay vì chốt cứng",
+    "name": "bull",
+    "trigger": "Đóng cửa vượt T1 64.100 kèm volume > 130% trung bình 20 phiên"
+   },
+   {
+    "action": "Cắt toàn bộ vị thế theo stop đã định, không bình quân giá xuống",
+    "name": "bear",
+    "trigger": "Đóng cửa dưới stop 55.600"
+   }
+  ],
+  "setup_type": "pullback",
+  "stop_price": 55600,
+  "target_price": 64100,
+  "trade_plan": {
+   "entry_high": 57500,
+   "entry_low": 56700,
+   "plan_note": "Chốt 1/2 vị thế tại T1, dời stop về hoà vốn cho phần còn lại; T2 (nếu có) cho phần còn lại.",
+   "position_size_pct": 20.0,
+   "stop": 55600,
+   "target1": 64100,
+   "target2": null
+  }
+ },
+ "pullback_close_resistance": {
+  "action": "WATCH",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": "chờ R:R cải thiện (hiện 0.79, cần >= 1.5)",
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend",
+   "risk/reward 0.79 dưới ngưỡng tối thiểu 1.5 - chưa vào mới dù setup ổn"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 0.79,
+  "scenarios": [],
+  "setup_type": "pullback",
+  "stop_price": 55600,
+  "target_price": 59000,
+  "trade_plan": null
+ },
+ "pullback_no_resistance": {
+  "action": "WATCH",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": "chờ hình thành vùng kháng cự/hỗ trợ rõ để đo được R:R thật",
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend",
+   "không có kháng cự thật phía trên để đo risk/reward - target chỉ là ước lượng, chưa vào mới"
+  ],
+  "risk_level": "low",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "pullback",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "pullback_rr_strict": {
+  "action": "WATCH",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": "chờ R:R cải thiện (hiện 3.47, cần >= 4.0)",
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend",
+   "risk/reward 3.47 dưới ngưỡng tối thiểu 4.0 - chưa vào mới dù setup ổn"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 3.47,
+  "scenarios": [],
+  "setup_type": "pullback",
+  "stop_price": 55600,
+  "target_price": 64100,
+  "trade_plan": null
+ },
+ "pullback_stale": {
+  "action": "WATCH",
+  "confidence": 0.72,
+  "data_quality": "degraded",
+  "invalidation_reason": null,
+  "market_regime": "risk_on",
+  "reasons": [
+   "dữ liệu cũ",
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend",
+   "dữ liệu giá đã cũ - không mở mua mới trên dữ liệu không còn cập nhật"
+  ],
+  "risk_level": "medium",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "pullback",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "pullback_stale_holding": {
+  "action": "HOLD",
+  "confidence": 0.72,
+  "data_quality": "degraded",
+  "invalidation_reason": null,
+  "market_regime": "risk_on",
+  "reasons": [
+   "dữ liệu cũ",
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend",
+   "dữ liệu giá đã cũ - không mở mua mới trên dữ liệu không còn cập nhật"
+  ],
+  "risk_level": "medium",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "pullback",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "pullback_thin": {
+  "action": "WATCH",
+  "confidence": 0.72,
+  "data_quality": "ok",
+  "invalidation_reason": null,
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend"
+  ],
+  "risk_level": "low",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "pullback",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "riskoff_uptrend": {
+  "action": "NO_TRADE",
+  "confidence": 0.46,
+  "data_quality": "ok",
+  "invalidation_reason": null,
+  "market_regime": "risk_off",
+  "reasons": [
+   "không khớp mẫu setup rõ ràng nào (breakout/pullback/mean-reversion)",
+   "confidence chưa đạt ngưỡng để hành động, tín hiệu tăng còn yếu"
+  ],
+  "risk_level": "low",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "none",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "session_distribution": {
+  "action": "WATCH",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": null,
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend",
+   "volume 160.0% so với TB20 trong phiên giảm — dấu hiệu phân phối",
+   "đóng cửa sát đáy phiên (vị trí close 20.0% biên độ ngày)",
+   "phiên gần nhất có rủi ro phân phối/breakdown - chưa mở mua mới"
+  ],
+  "risk_level": "medium",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "pullback",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "session_near_floor": {
+  "action": "WATCH",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": null,
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend",
+   "giảm rất mạnh -6.50% trong phiên (gần sàn/đạp mạnh)",
+   "phiên gần nhất có rủi ro phân phối/breakdown - chưa mở mua mới"
+  ],
+  "risk_level": "medium",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "pullback",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "session_selloff": {
+  "action": "BUY",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": "nếu giá đóng cửa dưới 55.600 coi như setup thất bại. cần cắt lỗ",
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend",
+   "giảm mạnh -4.50% trong phiên"
+  ],
+  "risk_level": "low",
+  "rr_ratio": 3.47,
+  "scenarios": [
+   {
+    "action": "Nắm giữ theo kế hoạch. chờ chạm T1 64.100 để chốt 1/2 vị thế",
+    "name": "base",
+    "trigger": "Giá giữ trên vùng stop 55.600. tích lũy đi ngang trong vùng mua 56.700-57.500"
+   },
+   {
+    "action": "Không có T2 rõ ràng - trail stop theo MA10 cho phần còn lại thay vì chốt cứng",
+    "name": "bull",
+    "trigger": "Đóng cửa vượt T1 64.100 kèm volume > 130% trung bình 20 phiên"
+   },
+   {
+    "action": "Cắt toàn bộ vị thế theo stop đã định, không bình quân giá xuống",
+    "name": "bear",
+    "trigger": "Đóng cửa dưới stop 55.600"
+   }
+  ],
+  "setup_type": "pullback",
+  "stop_price": 55600,
+  "target_price": 64100,
+  "trade_plan": {
+   "entry_high": 57500,
+   "entry_low": 56700,
+   "plan_note": "Chốt 1/2 vị thế tại T1, dời stop về hoà vốn cho phần còn lại; T2 (nếu có) cho phần còn lại.",
+   "position_size_pct": 20.0,
+   "stop": 55600,
+   "target1": 64100,
+   "target2": null
+  }
+ },
+ "session_selloff_distribution": {
+  "action": "WATCH",
+  "confidence": 0.85,
+  "data_quality": "ok",
+  "invalidation_reason": null,
+  "market_regime": "risk_on",
+  "reasons": [
+   "outperform VNINDEX, MA alignment bullish - setup pullback-to-trend",
+   "giảm mạnh -4.20% trong phiên",
+   "volume 170.0% so với TB20 trong phiên giảm — dấu hiệu phân phối",
+   "phiên gần nhất có rủi ro phân phối/breakdown - chưa mở mua mới"
+  ],
+  "risk_level": "medium",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "pullback",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "thin_liquidity_uptrend": {
+  "action": "WATCH",
+  "confidence": 0.56,
+  "data_quality": "ok",
+  "invalidation_reason": null,
+  "market_regime": "risk_on",
+  "reasons": [
+   "không khớp mẫu setup rõ ràng nào (breakout/pullback/mean-reversion)"
+  ],
+  "risk_level": "low",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "none",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "unadjusted_gap": {
+  "action": "NO_TRADE",
+  "confidence": 0.0,
+  "data_quality": "ok",
+  "invalidation_reason": "chờ chuỗi giá được điều chỉnh theo sự kiện quyền (hoặc đủ phiên sau gap) rồi đánh giá lại",
+  "market_regime": "risk_on",
+  "reasons": [
+   "chuỗi giá có gap nghi ngày giao dịch không hưởng quyền chưa được điều chỉnh",
+   "gap quyền chưa điều chỉnh nằm trong cửa sổ chỉ báo - không đánh giá breakout/breakdown/SELL/BUY trên chuỗi này"
+  ],
+  "risk_level": "high",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "none",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "unadjusted_gap_holding": {
+  "action": "HOLD",
+  "confidence": 0.0,
+  "data_quality": "ok",
+  "invalidation_reason": "chờ chuỗi giá được điều chỉnh theo sự kiện quyền (hoặc đủ phiên sau gap) rồi đánh giá lại",
+  "market_regime": "risk_on",
+  "reasons": [
+   "chuỗi giá có gap nghi ngày giao dịch không hưởng quyền chưa được điều chỉnh",
+   "gap quyền chưa điều chỉnh nằm trong cửa sổ chỉ báo - không đánh giá breakout/breakdown/SELL/BUY trên chuỗi này"
+  ],
+  "risk_level": "high",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "none",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "uptrend_riskon": {
+  "action": "WATCH",
+  "confidence": 0.66,
+  "data_quality": "ok",
+  "invalidation_reason": null,
+  "market_regime": "risk_on",
+  "reasons": [
+   "không khớp mẫu setup rõ ràng nào (breakout/pullback/mean-reversion)"
+  ],
+  "risk_level": "low",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "none",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ },
+ "uptrend_riskon_holding": {
+  "action": "HOLD",
+  "confidence": 0.66,
+  "data_quality": "ok",
+  "invalidation_reason": null,
+  "market_regime": "risk_on",
+  "reasons": [
+   "không khớp mẫu setup rõ ràng nào (breakout/pullback/mean-reversion)"
+  ],
+  "risk_level": "low",
+  "rr_ratio": null,
+  "scenarios": [],
+  "setup_type": "none",
+  "stop_price": null,
+  "target_price": null,
+  "trade_plan": null
+ }
+}

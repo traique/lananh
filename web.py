@@ -1,6 +1,7 @@
 """Entrypoint dùng để deploy lên Render bằng Telegram webhook."""
 
 import asyncio
+import functools
 import hmac
 import io
 import logging
@@ -11,6 +12,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 from telegram import Update
 from telegram.ext import Application
 
@@ -23,6 +26,7 @@ import web_site
 import logging_setup
 from channels import (
     facebook_commands,
+    facebook_intake,
     group_commands,
     zalo_repository,
     zalo_scheduler,
@@ -32,8 +36,9 @@ from channels import (
 from channels.router import router as zalo_router
 from channels.zalo_media import router as zalo_media_router
 from channels import tts_media
+from ai import background_writes
 from ai.timeouts import turn_deadline
-from core import config, database as db, idempotency, trace, webhook_inbox
+from core import config, database as db, idempotency, memtrim, trace, webhook_inbox
 from diagnose_router9 import main as diagnose_main
 from services import db_maintenance, market_page, morning_news, notify_hub, zalo_signals
 from services import action_buttons, channel_dispatch, turn_control, voice_reply
@@ -51,6 +56,32 @@ _diagnose_lock = asyncio.Lock()
 _PRIVACY_PATH = Path(__file__).resolve().parent / "templates" / "privacy.html"
 _TERMS_PATH = Path(__file__).resolve().parent / "templates" / "terms.html"
 _DATA_DELETION_PATH = Path(__file__).resolve().parent / "templates" / "data_deletion.html"
+# Trang chính sách/điều khoản chỉ đổi khi deploy: trình duyệt giữ 1 ngày.
+_LEGAL_HEADERS = {"Cache-Control": "public, max-age=86400"}
+# Nén gzip: dưới ngưỡng này nén không đáng (header gzip + CPU); mức 6 nhỏ hơn mức 9
+# chưa tới 1 % trên HTML/CSS của site mà tốn ít CPU hơn.
+_GZIP_MIN_BYTES = 1024
+_GZIP_LEVEL = 6
+
+
+class CompressionMiddleware:
+    """Nén gzip response cho trình duyệt, máy tìm kiếm và app (GZipMiddleware của
+    Starlette): HTML 120 KB còn khoảng 26 KB, site.css 64 KB còn 16 KB.
+
+    GZipMiddleware tự bỏ qua ``text/event-stream`` (luồng chat của /admin/avatar vẫn
+    chạy chữ dần), ảnh/âm thanh và response đã tự đặt Content-Encoding. Đường nội bộ
+    ``/internal/*`` (gateway Zalo gọi qua loopback) không nén: không tiết kiệm băng
+    thông nào, chỉ tốn CPU ở cả hai đầu."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=_GZIP_MIN_BYTES, compresslevel=_GZIP_LEVEL)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and not scope["path"].startswith("/internal/"):
+            await self.gzip(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
 
 
 def _diagnose_token_valid(request: Request) -> bool:
@@ -178,6 +209,9 @@ async def lifespan(_: FastAPI):
         morning_news.start()
         market_page.start()
         db_maintenance.start()
+        # Heap khởi động (module, bảng hằng...) sang thế hệ vĩnh viễn: gc.collect sau
+        # mỗi lượt (core/memtrim.py) không quét lại ~126 nghìn object này.
+        memtrim.freeze_startup_heap()
         yield
     finally:
         logger.info("Đang tắt bot...")
@@ -188,8 +222,13 @@ async def lifespan(_: FastAPI):
         await _safe_shutdown("DB maintenance", db_maintenance.stop())
         await _safe_shutdown("webhook inbox", webhook_inbox.stop())
         await _safe_shutdown("Telegram turn feedback", turn_feedback.stop())
+        # Bài Facebook đã vào hàng chờ nhưng chưa gửi xem trước (việc nền, AI viết lại):
+        # chờ xong trước khi đóng DB; quá hạn thì huỷ, admin xem lại bằng /fb_xem.
+        await _safe_shutdown("Facebook intake", facebook_intake.drain(grace_sec=10.0))
         # Dòng turn_metrics của các lượt vừa xong (ghi nền) trước khi đóng DB.
         await _safe_shutdown("turn metrics", trace.drain())
+        # provider_calls + trạng thái provider ghi ở nền (ai/background_writes.py).
+        await _safe_shutdown("provider calls", background_writes.drain())
         if app_started:
             await _safe_shutdown("Telegram application stop", application.stop())
         if app_resources_started:
@@ -206,6 +245,8 @@ async def lifespan(_: FastAPI):
 # rỗng (hợp đồng thật ở docstring web_site.py + README) và danh sách route
 # nội bộ (/internal/zalo/*, /webhook) không cần lộ cho người lạ.
 api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+# Thêm TRƯỚC (= trong cùng, sát app): chỉ nén body app trả, không đụng phần đọc body.
+api.add_middleware(CompressionMiddleware)
 api.add_middleware(RequestLimitsMiddleware)
 # Thêm SAU (= bọc NGOÀI cùng) để cả response 413/503 của RequestLimits cũng có header.
 api.add_middleware(SecurityHeadersMiddleware)
@@ -261,19 +302,25 @@ async def health(request: Request) -> Response:
     return JSONResponse({"status": "ok"})
 
 
+@functools.lru_cache(maxsize=3)
+def _legal_page(path: Path) -> str:
+    """Đọc 1 lần mỗi process: file chỉ đổi khi deploy (deploy luôn khởi động lại)."""
+    return path.read_text(encoding="utf-8")
+
+
 @api.get("/privacy", response_class=HTMLResponse, include_in_schema=False)
 async def privacy_policy() -> HTMLResponse:
-    return HTMLResponse(_PRIVACY_PATH.read_text(encoding="utf-8"))
+    return HTMLResponse(_legal_page(_PRIVACY_PATH), headers=_LEGAL_HEADERS)
 
 
 @api.get("/terms", response_class=HTMLResponse, include_in_schema=False)
 async def terms_of_service() -> HTMLResponse:
-    return HTMLResponse(_TERMS_PATH.read_text(encoding="utf-8"))
+    return HTMLResponse(_legal_page(_TERMS_PATH), headers=_LEGAL_HEADERS)
 
 
 @api.get("/data-deletion", response_class=HTMLResponse, include_in_schema=False)
 async def data_deletion_instructions() -> HTMLResponse:
-    return HTMLResponse(_DATA_DELETION_PATH.read_text(encoding="utf-8"))
+    return HTMLResponse(_legal_page(_DATA_DELETION_PATH), headers=_LEGAL_HEADERS)
 
 
 @api.get(config.DIAGNOSE_PATH)
@@ -341,9 +388,12 @@ async def telegram_webhook(request: Request) -> Response:
 
 # ─── Zoom Team Chat webhook ──────────────────────────────────────────────────
 def _zoom_chunks(outputs: list[str]) -> list[str]:
-    """Cắt tin theo cùng ngưỡng ký tự với Zalo; markdown->Zoom-dialect được
-    xử lý riêng trong channels.zoom.send_message (khác GFM Zalo lọc sạch)."""
-    return [chunk for message in outputs for chunk in split_for_zalo(message)]
+    """Cắt tin theo trần 4.096 ký tự của Zoom (không phải 1.800 của Zalo: câu trả lời
+    3.000 ký tự đi 1 tin thay vì 2). markdown->Zoom-dialect được xử lý riêng trong
+    channels.zoom.send_message (khác GFM Zalo lọc sạch); bản đã chuyển mà vẫn dài
+    hơn trần thì send_message tự cắt tiếp."""
+    limit = zoom._MAX_MESSAGE_CHARS
+    return [chunk for message in outputs for chunk in split_for_zalo(message, limit)]
 
 
 async def _zoom_chat(user_id: int, text: str):

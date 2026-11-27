@@ -210,6 +210,22 @@ async def test_nhac_hoan_doi_gio(fake):
 
 
 @pytest.mark.asyncio
+async def test_dat_va_hoan_nhac_danh_thuc_vong_nhac(fake, monkeypatch):
+    """Vòng nhắc ngủ tới lần đến hạn kế tiếp: đặt nhắc mới (1 lần/lặp) và dời giờ
+    phải đánh thức nó (SAU khi đã ghi DB) để nhắc "sau 1 phút" gửi đúng giờ."""
+    woke: list[int] = []
+    monkeypatch.setattr(scheduler, "wake", lambda: woke.append(len(fake.rows)))
+    await reminder_commands.nhac(1, "8h tối mai gọi mẹ")
+    assert woke == [1]  # dòng nhắc đã ghi trước khi đánh thức
+    await reminder_commands.nhac(1, "7h sáng mỗi ngày uống thuốc")
+    assert woke == [1, 2]
+    await reminder_commands.nhac(1, "hoan 1 30p")
+    assert len(woke) == 3
+    await reminder_commands.nhac(1, "hoan 99 30p")  # không tìm thấy: không đánh thức
+    assert len(woke) == 3
+
+
+@pytest.mark.asyncio
 async def test_nhac_chu_dau_trung_huy_hoan_khi_bo_dau_van_dat_nhac(fake):
     """bỏ/bố, Huy, đổi/đợi bỏ dấu trùng lệnh huỷ/hoãn: vẫn là đặt nhắc mới, không
     huỷ/dời nhầm 1 nhắc khác."""
@@ -475,3 +491,19 @@ async def test_ban_tin_sang_co_muc_ngay_nho(fake):
     assert text.startswith("🗓 Ngày nhớ: Sinh nhật mẹ còn 3 ngày")
     other = morning_brief.BriefContext(1, "telegram", ctx.now, ctx.settings, True)
     assert await section.build(other) is None  # dữ liệu Zalo không sang Telegram
+
+
+@pytest.mark.asyncio
+async def test_them_ngay_nho_danh_thuc_vong_nhac(fake, monkeypatch):
+    """Ngày nhớ mới ghi xong thì vòng nhắc (scheduler.py) tính lại giờ ngủ ngay."""
+    import scheduler
+
+    woken = []
+    monkeypatch.setattr(scheduler, "wake", lambda: woken.append(1))
+    soon = dt.datetime.now(VN).date() + dt.timedelta(days=2)
+    spec = ngay_nho.SpecialDate(
+        "Giỗ ông", "gio", {"type": "yearly", "month": soon.month, "day": soon.day, "at": "08:00"}, 0
+    )
+    with notification_target(NotificationTarget("zalo", "z-me", "acc")):
+        await ngay_nho.add(-6, spec)
+    assert woken == [1]

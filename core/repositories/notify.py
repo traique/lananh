@@ -61,7 +61,9 @@ async def enqueue(
     return int(new_id), len(dropped)
 
 
-async def pending_recipients(pool: Any, limit: int, priority_sources: list[str]) -> list[dict]:
+async def pending_recipients(
+    pool: Any, priority_sources: list[str], limit: int = 100
+) -> list[dict]:
     """Người nhận đang có tin chờ: tin cũ nhất, có tin ưu tiên (URGENT bị giữ trong
     giờ yên lặng, hoặc tin tổng hợp hẹn giờ thuộc ``priority_sources``) không."""
     rows = await pool.fetch(

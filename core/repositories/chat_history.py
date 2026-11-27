@@ -22,9 +22,11 @@ async def add_turn(
     retention: int,
     kind: str = "chat",
 ) -> list[int]:
-    """INSERT tin người dùng + câu trả lời của bot trong CÙNG 1 transaction rồi
-    cắt bảng về ``retention`` dòng gần nhất của người dùng đó. ``kind`` (cột của
-    migrations/017) ghi cho cả 2 dòng. Trả id 2 dòng vừa lưu."""
+    """INSERT tin người dùng + câu trả lời của bot trong CÙNG 1 transaction (không bao
+    giờ còn nửa lượt khi DB lỗi giữa 2 lệnh) rồi cắt bảng về ``retention`` dòng gần nhất
+    của người dùng đó. ``kind`` (cột của migrations/017, services/conversation_log.py):
+    trích nhớ chỉ đọc lượt chat/rag/agent, lượt "stock" giúp chặn câu chat sau mâu thuẫn
+    policy. Trả id 2 dòng vừa lưu (🔄/✂️ xoá đúng cặp này sau khi làm lại)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             inserted = await conn.fetch(
@@ -52,9 +54,76 @@ async def add_turn(
     return [int(row["id"]) for row in inserted]
 
 
-async def delete_rows(pool: Any, telegram_user_id: int, ids: list[int]) -> int:
+async def add_message(
+    pool: Any, telegram_user_id: int, role: str, content: str, *, retention: int
+) -> None:
+    """INSERT 1 tin rồi cắt bảng về ``retention`` dòng gần nhất của người đó (1 transaction)."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "INSERT INTO chat_messages (telegram_user_id, role, content) VALUES ($1, $2, $3)",
+                telegram_user_id,
+                role,
+                content,
+            )
+            await conn.execute(
+                """
+                DELETE FROM chat_messages
+                WHERE telegram_user_id = $1
+                  AND id NOT IN (
+                      SELECT id FROM chat_messages
+                      WHERE telegram_user_id = $1
+                      ORDER BY id DESC
+                      LIMIT $2
+                  )
+                """,
+                telegram_user_id,
+                retention,
+            )
+
+
+async def clear(pool: Any, telegram_user_id: int) -> None:
+    await pool.execute("DELETE FROM chat_messages WHERE telegram_user_id = $1", telegram_user_id)
+
+
+async def session_messages(
+    pool: Any, telegram_user_id: int, k: int, session_timeout_sec: int
+) -> list[Any]:
+    """Tối đa ``k`` dòng (role, content) của PHIÊN HIỆN TẠI, cũ -> mới.
+
+    Phiên dừng ở khoảng nghỉ đầu tiên (đi từ tin mới nhất ngược về) dài hơn
+    ``session_timeout_sec`` giữa 2 tin liên tiếp, hoặc giữa "bây giờ" và tin mới
+    nhất (khi đó trả rỗng). Khoảng nghỉ tính bằng LAG() trong SQL trên đúng ``k``
+    dòng gần nhất - điểm nghỉ xa hơn không đổi kết quả - nên mỗi lượt chat chỉ đọc
+    ``k`` dòng thay vì max(k*4, 40) dòng nguyên văn như trước."""
+    return await pool.fetch(
+        """
+        WITH recent AS (
+            SELECT id, role, content,
+                   COALESCE(lag(created_at) OVER (ORDER BY id DESC), now()) - created_at AS gap
+            FROM (
+                SELECT id, role, content, created_at FROM chat_messages
+                WHERE telegram_user_id = $1
+                ORDER BY id DESC
+                LIMIT $2
+            ) last_k
+        )
+        SELECT role, content FROM recent
+        WHERE id > COALESCE(
+            (SELECT max(id) FROM recent WHERE gap > $3::integer * interval '1 second'), 0
+        )
+        ORDER BY id
+        """,
+        telegram_user_id,
+        k,
+        session_timeout_sec,
+    )
+
+
+async def delete_rows(pool: Any, telegram_user_id: int, ids: list[int] | tuple[int, ...]) -> int:
     """Xoá các dòng ``ids`` CỦA ``telegram_user_id`` (id lạ/của người khác bỏ qua);
-    trả số dòng đã xoá."""
+    trả số dòng đã xoá. Nút 🔄 Thử lại/✂️ Ngắn hơn bỏ cặp cũ SAU khi lượt làm lại đã
+    lưu cặp mới; lặp lại an toàn (lần 2 không còn dòng nào để xoá)."""
     if not ids:
         return 0
     status = await pool.execute(

@@ -159,28 +159,35 @@ test("BoundedSerialQueue.pending đếm việc đang chờ/chạy", async () => 
 test("control server POST /groups/refresh: 200 khi nạp lại được, 409 khi Zalo chưa kết nối", async () => {
   let connected = true;
   let refreshed = 0;
-  const server = startControlServer(0, {
-    status: () => ({}),
-    startQr: async () => "idle",
-    startPairing: () => null,
-    logout: async () => undefined,
-    forgetSender: () => false,
-    groups: async () => null,
-    refreshGroups: async () => {
-      if (!connected) return false;
-      refreshed++;
-      return true;
+  const server = startControlServer(
+    0,
+    {
+      status: () => ({}),
+      startQr: async () => "idle",
+      startPairing: () => null,
+      logout: async () => undefined,
+      forgetSender: () => false,
+      groups: async () => null,
+      refreshGroups: async () => {
+        if (!connected) return false;
+        refreshed++;
+        return true;
+      },
+      kickOutbox: () => true,
     },
-  });
+    "s3cr3t",
+  );
   try {
     if (!server.listening) await new Promise((resolve) => server.once("listening", resolve));
     const url = `http://127.0.0.1:${server.address().port}/groups/refresh`;
-    const ok = await fetch(url, { method: "POST" });
+    const headers = { "x-zalo-bridge-secret": "s3cr3t" };
+    const ok = await fetch(url, { method: "POST", headers });
     assert.equal(ok.status, 200);
     assert.deepEqual(await ok.json(), { ok: true });
     connected = false;
-    assert.equal((await fetch(url, { method: "POST" })).status, 409);
-    assert.equal((await fetch(url)).status, 404, "chỉ nhận POST");
+    assert.equal((await fetch(url, { method: "POST", headers })).status, 409);
+    assert.equal((await fetch(url, { headers })).status, 404, "chỉ nhận POST");
+    assert.equal((await fetch(url, { method: "POST" })).status, 403, "thiếu secret");
     assert.equal(refreshed, 1);
   } finally {
     await new Promise((resolve) => server.close(resolve));

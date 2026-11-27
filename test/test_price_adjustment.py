@@ -9,6 +9,8 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from stock import analysis as stock_analysis
@@ -111,3 +113,115 @@ def test_prompt_template_renders_the_adjustment_note():
         adjustment_note="CANH-BAO-DIEU-CHINH-GIA",
     )
     assert "CANH-BAO-DIEU-CHINH-GIA" in rendered
+
+
+# ─── Ngưỡng gap theo biên độ của sàn (HOSE 7%, HNX 10%, UPCOM 15%) ──────────
+
+
+def _limit_day_series(move: float, bars: int = 80) -> list[float]:
+    closes = _calm_series(bars)
+    closes.append(round(closes[-1] * (1 + move), 2))
+    closes.extend(closes[-1] + 100 * i for i in range(1, 4))
+    return closes
+
+
+def test_suspect_threshold_follows_exchange_band():
+    assert price_adjust.suspect_gap_pct("HOSE") == 9.1
+    assert price_adjust.suspect_gap_pct("hsx") == 9.1
+    assert price_adjust.suspect_gap_pct("HNX") == 13.0
+    assert price_adjust.suspect_gap_pct("UPCOM") == 19.5
+    # Chưa rõ sàn: giữ mức chung cũ.
+    assert price_adjust.suspect_gap_pct(None) == price_adjust.SUSPECT_GAP_PCT == 12.0
+
+
+def test_upcom_limit_up_day_is_not_an_unadjusted_gap():
+    """Phiên trần UPCOM hợp lệ (+14,5%) trước đây vượt ngưỡng chung 12% nên bị coi là
+    gap quyền chưa điều chỉnh -> policy đứng ngoài, confidence 0 suốt ~3 tháng."""
+    closes = _limit_day_series(0.145)
+    dates = _dates(len(closes))
+    assert price_adjust.detect_price_gaps(closes, dates, exchange="UPCOM") == []
+    audit = price_adjust.audit_series("ABC", "dnse", closes, dates, exchange="UPCOM")
+    assert audit.gaps == [] and audit.note == ""
+    # Chưa rõ sàn thì vẫn cảnh báo như cũ (không đoán sàn).
+    unknown = price_adjust.detect_price_gaps(closes, dates)
+    assert len(unknown) == 1 and unknown[0].level == "suspect"
+    # Vượt biên độ UPCOM x 1,3 vẫn bị nghi; vượt 25% vẫn là chắc chắn.
+    above_band = price_adjust.detect_price_gaps(_limit_day_series(0.21), exchange="UPCOM")
+    assert [gap.level for gap in above_band] == ["suspect"]
+    split = price_adjust.detect_price_gaps(_limit_day_series(-0.30), exchange="UPCOM")
+    assert [gap.level for gap in split] == ["certain"]
+
+
+def test_hose_gap_beyond_band_is_suspect_even_below_old_threshold():
+    """HOSE biên độ 7%: phiên -10% không thể là giao dịch thường (trước đây lọt dưới 12%)."""
+    closes = _limit_day_series(-0.10)
+    assert len(price_adjust.detect_price_gaps(closes, exchange="HOSE")) == 1
+    assert price_adjust.detect_price_gaps(closes, exchange="HNX") == []
+    assert price_adjust.detect_price_gaps(closes) == []
+
+
+@pytest.mark.asyncio
+async def test_build_context_upcom_limit_day_keeps_policy_signal(monkeypatch):
+    from stock import corporate_actions, providers
+
+    n = 120
+    closes = [30_000.0 + i * 20 for i in range(n)]
+    closes[n - 3] = round(closes[n - 4] * 1.145, -1)  # phiên trần UPCOM 3 phiên trước
+    closes[n - 2] = closes[n - 3] + 50
+    closes[n - 1] = closes[n - 2] + 50
+    dates = _dates(n)
+    series = providers.OhlcvSeries(
+        "UPX",
+        closes,
+        [c * 1.01 for c in closes],
+        [c * 0.99 for c in closes],
+        [1e6] * n,
+        dates,
+        "dnse",
+    )
+    vn_closes = [1_000.0 + i for i in range(n)]
+    vnindex = providers.OhlcvSeries(
+        "VNINDEX",
+        vn_closes,
+        [c + 5 for c in vn_closes],
+        [c - 5 for c in vn_closes],
+        [1e6] * n,
+        dates,
+        "dnse",
+    )
+    exchange = {"value": "UPCOM"}
+
+    async def fake_ohlcv(symbol, days=90):
+        return vnindex if symbol == "VNINDEX" else series
+
+    async def none(*args, **kwargs):
+        return None
+
+    async def empty(*args, **kwargs):
+        return []
+
+    async def blank(*args, **kwargs):
+        return ""
+
+    async def no_events(symbol):
+        return [], []
+
+    async def fake_exchange(symbol):
+        return exchange["value"]
+
+    monkeypatch.setattr(providers, "fetch_ohlcv", fake_ohlcv)
+    monkeypatch.setattr(providers, "fetch_quote", none)
+    monkeypatch.setattr(providers, "fetch_news", empty)
+    monkeypatch.setattr(providers, "fetch_symbol_exchange", fake_exchange)
+    monkeypatch.setattr(stock_analysis, "_safe_sector_prompt", blank)
+    monkeypatch.setattr(stock_analysis, "_safe_fundamentals_prompt", blank)
+    monkeypatch.setattr(corporate_actions, "fetch_corporate_events_cached", no_events)
+
+    ctx = await stock_analysis.build_context("UPX", is_holding=False)
+    assert ctx.unadjusted_gap is False
+    assert ctx.adjustment_note == ""
+    assert ctx.decision.confidence > 0
+    # Cùng chuỗi nhưng không rõ sàn: giữ hành vi thận trọng cũ (gate gap).
+    exchange["value"] = None
+    ctx = await stock_analysis.build_context("UPX", is_holding=False)
+    assert ctx.unadjusted_gap is True and ctx.decision.confidence == 0.0

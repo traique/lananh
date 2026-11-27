@@ -50,7 +50,7 @@ from typing import Any, Awaitable, Callable, Iterable, Iterator
 
 CHAT = "chat"
 AGENT = "agent"
-# ToolSpec "chạy lệnh" (services/nl_commands.py): KHÔNG nằm sẵn trong danh bạ router
+# ToolSpec "chạy lệnh" (services/nl_commands/): KHÔNG nằm sẵn trong danh bạ router
 # chat - chỉ nhóm khớp câu hỏi mới được đưa vào prompt (giữ trần token).
 COMMAND = "command"
 
@@ -106,7 +106,7 @@ class ToolSpec:
     effect_label: str = ""
     # Kết quả gửi NGUYÊN VĂN cho người dùng (không qua AI viết lại) - tool "chạy lệnh".
     verbatim: bool = False
-    # Nhóm câu hỏi của tool "chạy lệnh" (services/nl_commands.py chọn nhóm theo câu).
+    # Nhóm câu hỏi của tool "chạy lệnh" (services/nl_commands/ chọn nhóm theo câu).
     group: str = ""
 
     def allowed_args(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -301,6 +301,22 @@ def router_tool_list(items: Iterable[ToolSpec]) -> str:
         )
         lines.append(f'- "{spec.name}": {spec.description} args {{{args_desc}}}')
     return "\n".join(lines)
+
+
+def router_schema(items: Iterable[ToolSpec]) -> dict[str, Any]:
+    """JSON Schema đầu ra của router JSON ({"tool": ..., "args": {...}}): "tool" chỉ
+    được là tên trong danh sách hoặc "none" - Groq/Gemini trả đúng khuôn (ai/structured)
+    thay vì bịa tên tool. "args" để mở: tham số từng tool vẫn do ToolSpec.allowed_args
+    và handler kiểm."""
+    names = [spec.name for spec in items]
+    return {
+        "type": "object",
+        "properties": {
+            "tool": {"type": "string", "enum": [*names, "none"]},
+            "args": {"type": "object"},
+        },
+        "required": ["tool"],
+    }
 
 
 def catalog_chars(items: Iterable[ToolSpec]) -> int:

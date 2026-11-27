@@ -4,8 +4,9 @@
   (tool/web search/trí nhớ -> orchestrator.chat -> lưu lịch sử, cập nhật trí
   nhớ chạy nền, telemetry). Telegram (handlers/chat_router.py) gọi thẳng hàm
   này sau nhánh cổ phiếu riêng của nó.
-- handle_channel_text(): điểm vào đầy đủ cho Zalo/Zoom (lệnh, danh mục, cổ
-  phiếu rồi tới run_chat_turn), trả ChannelResult thay vì tự gửi tin.
+- handle_channel_text(): điểm vào đầy đủ cho Zalo/Zoom (trả lời nhanh bằng code của
+  services/quick_reply.py - chung với Telegram, rồi cổ phiếu, rồi run_chat_turn), trả
+  ChannelResult thay vì tự gửi tin.
 """
 
 import asyncio
@@ -18,15 +19,10 @@ from ai import drafts, orchestrator
 from ai.timeouts import TurnTimeoutError, turn_deadline
 from core import config, trace, untrusted, urls
 from services import (
-    article_reader,
     chat_context,
     conversation_log,
-    expense_service,
-    lunar_chat,
-    weather_chat,
     memory_service,
-    portfolio_service,
-    reminder_service,
+    quick_reply,
     stock_turn,
     tool_registry,
     tools,
@@ -34,8 +30,19 @@ from services import (
     usage_quota,
     web_search,
 )
-from services import channel_command_service, nutrition_service, reply_audience, style_approval
-from services import attention, nl_commands, routines, vn_daily_chat
+from services import nl_commands, reply_audience, style_approval, vn_daily_chat
+
+# Các cổng trả lời nhanh nay ở services/quick_reply.py; giữ tên module ở đây cho test
+# đang monkeypatch qua ``channel_chat_service.<module>``.
+from services import (  # noqa: F401
+    article_reader,
+    channel_command_service,
+    expense_service,
+    lunar_chat,
+    portfolio_service,
+    reminder_service,
+    weather_chat,
+)
 from services.channel_result import ChannelResult
 from services.telemetry import telemetry
 from stock import analysis as stock_analysis
@@ -71,7 +78,7 @@ class ChatTurn:
     # id 2 dòng chat_messages của lượt (rỗng = chưa lưu lịch sử) - 🔄/✂️ xoá
     # đúng cặp này sau khi làm lại xong (services/answer_feedback.py).
     history_ids: tuple[int, ...] = ()
-    # Lệnh chạy từ câu tự nhiên (services/nl_commands.py): ``messages`` là các tin gửi
+    # Lệnh chạy từ câu tự nhiên (services/nl_commands/): ``messages`` là các tin gửi
     # NGUYÊN VĂN (không qua AI viết lại, không nút 👍/👎/🔄), kèm ảnh /anh nếu có.
     verbatim: bool = False
     messages: tuple[str, ...] = ()
@@ -188,7 +195,7 @@ async def _command_turn(
     telemetry_kind: str,
     record_history: bool,
 ) -> ChatTurn:
-    """Lượt chat mà router đã chọn 1 lệnh (services/nl_commands.py): gửi nguyên văn
+    """Lượt chat mà router đã chọn 1 lệnh (services/nl_commands/): gửi nguyên văn
     kết quả lệnh, không gọi AI viết lại. Vào lịch sử (bản đã làm sạch) cho câu hỏi
     nối tiếp ("thế còn ngày mai?", người dùng trả lời câu em hỏi lại)."""
     reply = "\n\n".join(outputs)
@@ -257,7 +264,7 @@ async def run_chat_turn(
             excluded = ("read_link",) if (page_turn or not links_ok) else ()
             # Câu có thể là yêu cầu chạy lệnh ("xem tử vi...", "provider đang chạy cái
             # nào"): router chạy TRƯỚC - chọn lệnh thì gửi nguyên văn kết quả, khỏi tra
-            # web/trí nhớ và khỏi lượt chat AI (services/nl_commands.py).
+            # web/trí nhớ và khỏi lượt chat AI (services/nl_commands/).
             pre_tool = None
             if telemetry_kind == "chat" and tools.wants_command_router(user_id, text, is_admin):
                 with (
@@ -636,7 +643,16 @@ async def _handle_stock(
         # Mã có bản số liệu nhưng không có phần diễn giải AI (LLM lỗi/hết hạn chót
         # lượt): 1 câu báo cuối thay cho lời hứa "⏳ ... sẽ gửi tiếp" rồi im lặng.
         skipped: list[str] = []
-        for symbol in symbols:
+        if len(symbols) > 1:
+            # "So sánh A B C" (như Telegram): lấy dữ liệu mọi mã SONG SONG trước (thuần
+            # I/O), vòng dưới đọc từ cache; lỗi ở đây không chặn - mã thiếu tự lấy lại.
+            try:
+                await stock_analysis.prefetch_contexts(
+                    symbols, user_id=user_id, full_access=is_admin
+                )
+            except Exception:
+                logger.warning("Không lấy trước được dữ liệu %s", ", ".join(symbols), exc_info=True)
+        for index, symbol in enumerate(symbols):
             # Giống Telegram: bản số liệu rule-based (nguồn số chuẩn) luôn là
             # tin đầu tiên, bản diễn giải LLM (đã kiểm hợp đồng policy) theo sau.
             reports_before = len(outputs)
@@ -651,6 +667,9 @@ async def _handle_stock(
                     user_id=user_id,
                     on_rule_report=collect_rule_report,
                     full_access=is_admin,
+                    # 2 mã đầu chạy đủ tóm tắt tin + tranh luận; mã sau 1 lượt tổng hợp
+                    # để cả lượt nằm trong hạn chót.
+                    with_debate=index < stock_analysis.MAX_DEBATE_SYMBOLS,
                 )
                 if result:
                     outputs.append(result)
@@ -678,59 +697,26 @@ async def _handle_stock(
     return None, await stock_analysis.build_price_grounding(symbols)
 
 
+def _quick_result(reply: quick_reply.QuickReply) -> ChannelResult:
+    return ChannelResult(
+        list(reply.messages),
+        reply.provider,
+        reply.image_b64,
+        reply.image_url,
+        market=reply.market,
+    )
+
+
 async def _side_effect_paths(
     user_id: int, text: str, is_admin: bool, channel: str
 ) -> ChannelResult | None:
-    """Các nhánh có thể GHI dữ liệu trước chat AI: lệnh /, danh mục bằng lời, lối
-    tắt "hoãn 10p"/"xong" của nhắc việc, ghi chi tiêu "cafe 45k". Câu trả lời nhanh
-    cũng vào lịch sử (services/conversation_log) cho câu hỏi nối tiếp."""
-    record = conversation_log.record_exchange
-    # "ghi nhớ"/"bỏ" ngay sau câu em hỏi duyệt cách trả lời (services/style_approval).
-    approval = await style_approval.maybe_handle_reply(user_id, text)
-    if approval is not None:
-        return ChannelResult([approval])
-    portfolio_command = await portfolio_service.handle_command(user_id, text)
-    if portfolio_command is not None:
-        return ChannelResult([portfolio_command], market=True)
-    command_result = await channel_command_service.maybe_handle_command(
-        user_id, text, is_admin, channel
+    """Nhóm cổng có thể GHI dữ liệu trước chat AI (services/quick_reply.py, stage
+    WRITE): lệnh /, danh mục bằng lời, lối tắt "hoãn 10p"/"xong" của nhắc việc, tác vụ
+    định kỳ, ghi chi tiêu "cafe 45k", bữa ăn."""
+    reply = await quick_reply.resolve(
+        user_id, text, channel, is_admin=is_admin, stage=quick_reply.WRITE
     )
-    if command_result is not None:
-        outputs, provider = command_result
-        return ChannelResult(
-            outputs,
-            provider,
-            channel_command_service.take_pending_image(),
-            channel_command_service.take_pending_image_url(),
-        )
-    # Mọi câu trả lời nhanh bên dưới cũng vào lịch sử (services/conversation_log):
-    # câu hỏi nối tiếp ("thế còn ngày mai?", "sao em bảo giữ?") mới có ngữ cảnh.
-    # "hoãn 10p" / "xong" ngay sau tin nhắc việc: code xử lý, không tốn lượt AI.
-    shortcut = await reminder_service.maybe_handle_shortcut(user_id, text)
-    if shortcut is not None:
-        await record(user_id, text, shortcut, conversation_log.KIND_REMINDER)
-        return ChannelResult([shortcut])
-    # "mỗi sáng thứ 2 8h tóm tắt tin VNM cho anh": tác vụ định kỳ (services/routines) -
-    # TRƯỚC router AI để không thành nhắc việc gửi câu cố định.
-    routine_reply = await routines.maybe_handle_chat(user_id, text, channel, is_admin=is_admin)
-    if routine_reply is not None:
-        await record(user_id, text, routine_reply, conversation_log.KIND_REMINDER)
-        return ChannelResult([routine_reply])
-    portfolio_result = await portfolio_service.maybe_handle_natural_language(user_id, text)
-    if portfolio_result is not None:
-        await record(user_id, text, portfolio_result, conversation_log.KIND_PORTFOLIO)
-        return ChannelResult([portfolio_result], market=True)
-    # "cafe 45k", "đổ xăng 1tr2" (hoặc "huỷ" ngay sau đó): ghi chi tiêu bằng code.
-    expense_reply = await expense_service.maybe_handle_chat(user_id, text)
-    if expense_reply is not None:
-        await record(user_id, text, expense_reply, conversation_log.KIND_EXPENSE)
-        return ChannelResult([expense_reply])
-    # "trưa nay anh ăn bún chả" (chỉ khi NUTRITION_NL=1): ghi bữa ăn bằng code.
-    meal_reply = await nutrition_service.maybe_handle_chat(user_id, text)
-    if meal_reply is not None:
-        await record(user_id, text, meal_reply, conversation_log.KIND_MEAL)
-        return ChannelResult([meal_reply])
-    return None
+    return None if reply is None else _quick_result(reply)
 
 
 async def handle_channel_text(
@@ -751,50 +737,24 @@ async def handle_channel_text(
         return ChannelResult([])
     record = conversation_log.record_exchange
 
+    # Trả lời nhanh bằng code, cùng chuỗi cổng với Telegram (services/quick_reply.py):
+    # nhóm cổng GHI qua _side_effect_paths, rồi nhóm cổng đọc (bài báo, "có gì cần chú
+    # ý", lệnh từ câu tự nhiên, vàng/tỷ giá/xổ số, thời tiết, âm lịch). Câu không chắc
+    # trả None và đi tiếp xuống nhánh cổ phiếu/chat AI.
     if allow_side_effects:
         side_effect_result = await _side_effect_paths(user_id, text, is_admin, channel)
         if side_effect_result is not None:
             return side_effect_result
-    article = await article_reader.maybe_handle(text)
-    if article is not None:
-        await record(user_id, text, article, conversation_log.KIND_ARTICLE)
-        # Giữ bài vừa đọc (đã rào) cho câu hỏi nối tiếp "bài này nói gì về...".
-        chat_context.remember_article(user_id, text, article)
-        return ChannelResult([article])
-    # "Có gì cần anh chú ý?" / "hôm nay có gì cần lo": tin /chuy tính bằng code.
-    if attention.is_attention_question(text):
-        reply = await channel_command_service.attention_text(user_id, channel, is_admin)
-        await record(user_id, text, reply, conversation_log.KIND_DAILY)
-        return ChannelResult([reply])
-    # "em làm được gì", "xem tử vi 15/3/1990 9h30 nam", "bật giọng nói"...: lệnh chạy
-    # từ câu tự nhiên bằng code (services/nl_commands.py), không tốn lượt AI router.
-    command_reply = await nl_commands.maybe_handle(
-        user_id, text, channel=channel, is_admin=is_admin, allow_side_effects=allow_side_effects
+    quick = await quick_reply.resolve(
+        user_id,
+        text,
+        channel,
+        is_admin=is_admin,
+        allow_side_effects=allow_side_effects,
+        stage=quick_reply.READ,
     )
-    if command_reply is not None:
-        await record(user_id, text, command_reply.text, conversation_log.KIND_COMMAND)
-        return ChannelResult(
-            list(command_reply.messages),
-            None,
-            command_reply.image_b64,
-            command_reply.image_url,
-        )
-    # Giá vàng/tỷ giá/xổ số, thời tiết (Open-Meteo) và âm lịch (offline): trả
-    # lời thẳng, không tốn lượt AI nào; câu không chắc trả None và đi tiếp
-    # xuống chat AI như cũ.
-    # Lượt chỉ đọc: không lưu thành phố thời tiết mặc định ("anh ở Đà Nẵng").
-    daily_reply = await vn_daily_chat.maybe_handle(text, user_id if allow_side_effects else None)
-    if daily_reply is not None:
-        await record(user_id, text, daily_reply, conversation_log.KIND_DAILY)
-        return ChannelResult([daily_reply])
-    weather_reply = await weather_chat.maybe_handle(text, user_id=user_id)
-    if weather_reply is not None:
-        await record(user_id, text, weather_reply, conversation_log.KIND_WEATHER)
-        return ChannelResult([weather_reply])
-    lunar_reply = await lunar_chat.maybe_handle(text)
-    if lunar_reply is not None:
-        await record(user_id, text, lunar_reply, conversation_log.KIND_LUNAR)
-        return ChannelResult([lunar_reply])
+    if quick is not None:
+        return _quick_result(quick)
 
     # MỘT hạn chót cho cả nhánh cổ phiếu (debate nhiều lượt gọi AI) LẪN lượt chat
     # theo sau: turn_deadline lồng nhau giữ hạn SỚM hơn, nên run_chat_turn không

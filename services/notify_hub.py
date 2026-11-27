@@ -477,6 +477,8 @@ async def _flush_zalo(user_id: int) -> int:
         sent += count
         if count < _BATCH_ROWS:
             break
+    if sent:
+        zalo_repository.kick_gateway()  # tin gom vừa vào zalo_outbox: gateway gửi ngay
     return sent
 
 

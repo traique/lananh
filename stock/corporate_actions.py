@@ -343,8 +343,10 @@ def apply_corporate_adjustment(
     dividends: list[DividendEvent],
     stock_events: list[StockEvent] | None = None,
     volumes: list[float] | None = None,
+    exchange: str | None = None,
 ) -> AdjustmentOutcome:
-    """Điều chỉnh ngược chuỗi giá cho các sự kiện được gap XÁC NHẬN."""
+    """Điều chỉnh ngược chuỗi giá cho các sự kiện được gap XÁC NHẬN. ``exchange``
+    chỉ dùng để đếm gap còn lại theo biên độ của sàn (price_adjust.suspect_gap_pct)."""
     from stock import price_adjust
 
     outcome = AdjustmentOutcome(
@@ -412,7 +414,7 @@ def apply_corporate_adjustment(
 
     # Chạy lại kiểm tra trên chuỗi ĐÃ điều chỉnh: gap còn lại là gap chưa
     # giải thích được (sự kiện nguồn không có/sai tỷ lệ).
-    remaining = price_adjust.detect_price_gaps(outcome.closes, dates)
+    remaining = price_adjust.detect_price_gaps(outcome.closes, dates, exchange=exchange)
     outcome.events_applied = len(applied)
     outcome.unexplained_gaps = len(remaining)
     if applied:
@@ -472,7 +474,7 @@ async def fetch_corporate_events_cached(
 
 
 async def adjust_with_corporate_actions(
-    symbol: str, closes, highs, lows, dates, volumes=None
+    symbol: str, closes, highs, lows, dates, volumes=None, exchange: str | None = None
 ) -> AdjustmentOutcome:
     """Fetch lịch sự kiện quyền (cache 24h) rồi điều chỉnh những sự kiện được
     gap giá xác nhận.
@@ -490,7 +492,9 @@ async def adjust_with_corporate_actions(
     dividends, stock_events = await fetch_corporate_events_cached(symbol)
     if not dividends and not stock_events:
         return unchanged
-    return apply_corporate_adjustment(closes, highs, lows, dates, dividends, stock_events, volumes)
+    return apply_corporate_adjustment(
+        closes, highs, lows, dates, dividends, stock_events, volumes, exchange=exchange
+    )
 
 
 async def adjust_with_dividends(symbol: str, closes, highs, lows, dates) -> AdjustmentOutcome:

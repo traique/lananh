@@ -177,13 +177,31 @@ def save_setup_stats(
     path.write_text(json.dumps(by_setup, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+# (đường dẫn, mtime_ns, nội dung): mỗi lượt phân tích đọc thống kê 1-2 lần - chỉ đọc
+# lại đĩa khi file đổi (chạy lại backtest/deploy bản mới).
+_setup_stats_cache: tuple[Path, int, dict] | None = None
+
+
 def load_setup_stats(path: Path = BACKTEST_STATS_PATH) -> dict:
     """Đọc thống kê đã lưu - không raise nếu file chưa tồn tại/hỏng (chưa
-    từng chạy backtest là trạng thái hợp lệ, không phải lỗi)."""
+    từng chạy backtest là trạng thái hợp lệ, không phải lỗi). Cache theo mtime;
+    trả bản sao nông, caller không sửa được cache."""
+    global _setup_stats_cache
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        return {}
+    cached = _setup_stats_cache
+    if cached is not None and cached[0] == path and cached[1] == mtime:
+        return dict(cached[2])
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    if not isinstance(data, dict):
+        return {}
+    _setup_stats_cache = (path, mtime, data)
+    return dict(data)
 
 
 def format_setup_stats_line(setup_type: str, stats: dict | None = None) -> str | None:

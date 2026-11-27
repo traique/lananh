@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OutboxDelivery } from "./dist/outbox.js";
+import {
+  OUTBOX_KICK_DEBOUNCE_MS,
+  OutboxDelivery,
+  OutboxPoller,
+  SHUTDOWN_OUTBOX_REASON,
+} from "./dist/outbox.js";
 import { splitForZalo } from "./dist/text.js";
 
 function harness(items, { sendFails = () => null, ackFails = () => false, pace, takeBudget } = {}) {
@@ -206,4 +211,167 @@ test("nghỉ giữa các đoạn và giữa các tin, không nghỉ trước l�
   await delivery.runOnce();
   assert.equal(calls.sent.length, chunks.length + 1);
   assert.equal(paces, calls.sent.length - 1);
+});
+
+const longContent = () =>
+  Array.from({ length: 400 }, (_, i) => `dòng số ${i} của bản tóm tắt`).join("\n");
+
+test("tắt giữa tin dài: dừng ở ranh giới đoạn, báo Python số đoạn đã gửi để lần sau gửi tiếp", async () => {
+  const content = longContent();
+  const chunks = splitForZalo(content);
+  assert.ok(chunks.length >= 3);
+  let delivery;
+  const item = { id: 11, recipient_id: "u", content };
+  const harnessed = harness([item, { id: 12, recipient_id: "v", content: "tin sau" }], {
+    // SIGTERM tới đúng lúc đang gửi đoạn thứ 2: đoạn đó vẫn gửi xong, không gửi thêm.
+    sendFails: (_recipient, chunk) => {
+      if (chunk === chunks[1]) delivery.stop();
+      return null;
+    },
+  });
+  delivery = harnessed.delivery;
+  const result = await delivery.runOnce();
+  assert.deepEqual(result, { sent: 0, failed: 0 });
+  assert.equal(harnessed.calls.sent.length, 2);
+  assert.deepEqual(harnessed.calls.acked, [], "tin chưa gửi đủ thì không ack");
+  assert.deepEqual(harnessed.calls.failed, []);
+  assert.equal(await delivery.flushProgress(), 1);
+  assert.deepEqual(harnessed.calls.failed, [
+    { id: 11, error: SHUTDOWN_OUTBOX_REASON, chunksSent: 2 },
+  ]);
+  assert.equal(delivery.tracked, 0);
+  assert.deepEqual(await delivery.runOnce(), { sent: 0, failed: 0 }, "đã dừng: không gửi nữa");
+});
+
+test("flushProgress: tin gửi đủ mà ack lỗi thì ack lại lúc tắt; Python vẫn lỗi thì giữ để báo sau", async () => {
+  let pythonDown = true;
+  const { calls, delivery } = harness([{ id: 5, recipient_id: "u", content: "nhắc việc" }], {
+    ackFails: () => pythonDown,
+  });
+  await delivery.runOnce();
+  assert.equal(delivery.tracked, 1);
+  assert.equal(await delivery.flushProgress(), 0, "Python vẫn lỗi");
+  assert.equal(delivery.tracked, 1);
+  pythonDown = false;
+  delivery.stop();
+  assert.equal(await delivery.flushProgress(), 1);
+  assert.deepEqual(calls.acked, [5]);
+  assert.deepEqual(calls.failed, [], "đã gửi đủ: ack, không báo lỗi");
+});
+
+/** Timer giả: advance(ms) chạy mọi timer đã tới hạn. */
+function fakeClock() {
+  let now = 0;
+  const timers = [];
+  return {
+    setTimer: (fn, ms) => {
+      const handle = { fn, at: now + ms, done: false };
+      timers.push(handle);
+      return handle;
+    },
+    clearTimer: (handle) => {
+      handle.done = true;
+    },
+    pending: () => timers.filter((t) => !t.done).map((t) => t.at - now),
+    async advance(ms) {
+      now += ms;
+      for (const timer of [...timers]) {
+        if (!timer.done && timer.at <= now) {
+          timer.done = true;
+          timer.fn();
+        }
+      }
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    },
+  };
+}
+
+test("OutboxPoller: kick gộp trong debounce thành 1 lượt; poll định kỳ vẫn chạy", async () => {
+  assert.equal(OUTBOX_KICK_DEBOUNCE_MS, 500);
+  const clock = fakeClock();
+  let runs = 0;
+  const poller = new OutboxPoller({
+    run: async () => void runs++,
+    intervalMs: 90000,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+  });
+  poller.start();
+  assert.deepEqual(clock.pending(), [90000]);
+  assert.equal(poller.kick(), true);
+  assert.equal(poller.kick(), true);
+  await clock.advance(100);
+  assert.equal(poller.kick(), true, "kick sau không lùi hẹn");
+  await clock.advance(400);
+  assert.equal(runs, 1);
+  await clock.advance(89500);
+  assert.equal(runs, 2, "lượt định kỳ");
+  assert.deepEqual(clock.pending(), [90000], "hẹn lượt định kỳ kế");
+  await poller.stop();
+});
+
+test("OutboxPoller: kick lúc đang chạy -> chạy thêm đúng 1 lượt; stop trả lượt đang chạy", async () => {
+  const clock = fakeClock();
+  let runs = 0;
+  let release;
+  const poller = new OutboxPoller({
+    run: () => {
+      runs++;
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    },
+    intervalMs: 90000,
+    debounceMs: 0,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+  });
+  poller.kick();
+  await clock.advance(0);
+  assert.equal(runs, 1);
+  assert.equal(poller.busy, true);
+  poller.kick();
+  await clock.advance(0);
+  poller.kick();
+  await clock.advance(0);
+  assert.equal(runs, 1, "chưa chạy chồng");
+  release();
+  await clock.advance(0);
+  assert.equal(runs, 2, "chạy thêm 1 lượt cho các kick trong lúc chạy");
+  let stopped = false;
+  const stopping = poller.stop().then(() => {
+    stopped = true;
+  });
+  await clock.advance(0);
+  assert.equal(stopped, false, "chờ lượt đang chạy");
+  release();
+  await stopping;
+  assert.equal(runs, 2);
+  assert.equal(poller.kick(), false, "đã dừng: không nhận kick");
+  assert.deepEqual(clock.pending(), []);
+});
+
+test("OutboxPoller: lượt lỗi chỉ log, lượt sau vẫn chạy", async () => {
+  const clock = fakeClock();
+  const logged = [];
+  let runs = 0;
+  const poller = new OutboxPoller({
+    run: async () => {
+      runs++;
+      throw new Error("python down");
+    },
+    intervalMs: 1000,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    log: (message, error) => logged.push(`${message}: ${error.message}`),
+  });
+  poller.start();
+  await clock.advance(1000);
+  await clock.advance(1000);
+  assert.equal(runs, 2);
+  assert.deepEqual(logged, [
+    "[zalo] outbox poll lỗi: python down",
+    "[zalo] outbox poll lỗi: python down",
+  ]);
+  await poller.stop();
 });

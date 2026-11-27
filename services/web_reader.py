@@ -35,6 +35,9 @@ _JINA_READER_BASE_URL = "https://r.jina.ai/"
 
 _BLOCKED_HOSTNAMES = {"localhost", "localhost.localdomain", "metadata.google.internal"}
 _ANTIBOT_SCAN_BYTES = 4096
+# URL tuỳ ý người dùng đưa (mỗi host 1 pool kết nối): trần nhỏ để vài link chậm/treo
+# không giữ hàng chục socket + bộ đệm TLS trên RAM 512 MB.
+_LIMITS = httpx.Limits(max_connections=4, max_keepalive_connections=2)
 
 _client: Optional[httpx.AsyncClient] = None
 
@@ -55,7 +58,10 @@ class FeedStaleError(WebReaderError):
 def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=config.WEB_READER_TIMEOUT_SEC, follow_redirects=False)
+        # follow_redirects=False: mỗi bước chuyển hướng tự kiểm tra lại SSRF (_get_public).
+        _client = httpx.AsyncClient(
+            timeout=config.WEB_READER_TIMEOUT_SEC, follow_redirects=False, limits=_LIMITS
+        )
     return _client
 
 

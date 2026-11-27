@@ -111,6 +111,16 @@ jobs:
       - name: Pytest
         run: pytest -q
 
+      # Chỉ để xem, KHÔNG chặn merge/deploy (continue-on-error): RAM sau import web và
+      # sau lượt chat giả (provider + DB giả, không mạng), 20 module import chậm nhất -
+      # so với run trước để bắt hồi quy RAM/khởi động (scripts/benchmark_memory.py).
+      - name: Benchmark RAM và thời gian import (thông tin)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          python scripts/benchmark_memory.py web luot_chat
+          python scripts/benchmark_memory.py --importtime
+
   python-typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -205,7 +215,9 @@ jobs:
       - name: SQL tests on PGlite
         env:
           TEST_PGLITE: "1"
-        run: pytest -q test/test_delivery_sql.py test/test_migrations.py test/test_zalo_outbox_sql.py test/test_ops_sql.py test/test_observability_sql.py test/test_avatar_sql.py test/test_zalo_signals_sql.py
+        # Mọi file test/*_sql.py (thêm test SQL mới không cần sửa danh sách ở đây; trước
+        # đây danh sách cứng bỏ sót 11 file) + test/test_migrations.py.
+        run: pytest -q test/*_sql.py test/test_migrations.py
 
   zalo-gateway:
     runs-on: ubuntu-latest

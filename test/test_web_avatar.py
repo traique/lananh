@@ -81,6 +81,7 @@ def store(monkeypatch):
 async def client(monkeypatch, store):
     monkeypatch.setattr(config, "ADMIN_USER", "admin")
     monkeypatch.setattr(config, "ADMIN_PASS", "pass")
+    monkeypatch.setattr(config, "SETTINGS_ENC_KEY", "dGVzdC1vbmx5LWtleS1mb3ItYXZhdGFyLXBhZ2UtMDA=")
     monkeypatch.setattr(config, "ALLOWED_USER_ID", OWNER)
     monkeypatch.setattr(web_admin, "_login_limiter", web_admin.LoginRateLimiter())
     monkeypatch.setattr(web_admin, "_login_slowdown", web_admin.LoginSlowdown())
@@ -189,6 +190,30 @@ async def test_chua_dang_nhap_api_403_trang_hien_form_dang_nhap(client):
     ]
     for method, url, kwargs in requests:
         assert (await client.request(method, url, **kwargs)).status_code == 403, url
+
+
+async def test_doi_du_lieu_tu_trang_khac_bi_chan_du_da_dang_nhap(client, store):
+    """require_admin chặn request đổi dữ liệu mang Sec-Fetch-Site của trang khác (chống
+    CSRF ngoài rào JSON/PUT riêng của avatar); trang avatar gửi same-origin vẫn chạy."""
+    await _login(client)
+    cross = {"Sec-Fetch-Site": "cross-site"}
+    for method, url, kwargs in (
+        ("PUT", "/admin/api/avatar/voice", {"json": {"voice": "Leda"}}),
+        (
+            "POST",
+            "/admin/api/avatar/stt",
+            {"content": b"OggS", "headers": {"content-type": "audio/ogg", **cross}},
+        ),
+        ("DELETE", "/admin/api/avatar/photo?kind=main", {}),
+    ):
+        kwargs = {"headers": cross, **kwargs}
+        assert (await client.request(method, url, **kwargs)).status_code == 403, url
+    ok = await client.put(
+        "/admin/api/avatar/voice", json={"voice": "Leda"}, headers={"Sec-Fetch-Site": "same-origin"}
+    )
+    assert ok.status_code == 200 and ok.json() == {"current": "Leda"}
+    # GET chỉ đọc (vd ảnh trong thẻ <img>) không bị ảnh hưởng.
+    assert (await client.get("/admin/api/avatar/voices", headers=cross)).status_code == 200
 
 
 async def test_trang_avatar_nhung_cau_hinh_khong_cache(client, store):

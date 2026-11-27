@@ -34,15 +34,12 @@
 <section class="sect" aria-labelledby="thang-{{ m.month }}">
   <header><h2 id="thang-{{ m.month }}">Tháng {{ m.month }}/{{ year }}</h2></header>
   <div class="table-wrap" tabindex="0" role="region" aria-labelledby="thang-{{ m.month }}">
-    <table>
+    <table class="fest">
       <thead><tr><th scope="col">Ngày</th><th scope="col">Lễ hội</th><th scope="col">Nơi tổ chức</th></tr></thead>
       <tbody>
+        {# ~220 dòng: mỗi dòng 1 dòng HTML, dòng phụ là <small> (site.css .fest) cho trang gọn. #}
         {% for r in m.rows %}
-        <tr>
-          <td class="nowrap"><a href="/lich?ngay={{ r.date.isoformat() }}">{{ r.weekday }}, {{ r.date.strftime('%d/%m') }}</a><span class="sub">{{ r.lunar }}</span></td>
-          <td>{{ r.name }}{% if r.holiday %} <span class="pill">Nghỉ lễ</span>{% endif %}{% if r.span %}<span class="sub">{{ r.span }}</span>{% endif %}{% if r.description %}<span class="sub">{{ r.description }}</span>{% endif %}</td>
-          <td>{{ r.place }}</td>
-        </tr>
+<tr><td><a href="/lich?ngay={{ r.date.isoformat() }}">{{ r.weekday }}, {{ r.date.strftime('%d/%m') }}</a><small>{{ r.lunar }}</small></td><td>{{ r.name }}{% if r.holiday %} <span class="pill">Nghỉ lễ</span>{% endif %}{% if r.span %}<small>{{ r.span }}</small>{% endif %}{% if r.description %}<small>{{ r.description }}</small>{% endif %}</td><td>{{ r.place }}</td></tr>
         {% endfor %}
       </tbody>
     </table>

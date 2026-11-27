@@ -53,7 +53,14 @@ def gateway(monkeypatch, store):
 
     monkeypatch.setattr(zalo_gateway_status, "list_groups", list_groups)
     monkeypatch.setattr(zalo_group_list.zalo_repository, "list_groups_with_daily", followed)
+
+    async def update_group_names(account_id, names):
+        return len(names)
+
     monkeypatch.setattr(zalo_group_list.facebook_repository, "list_groups", sources)
+    monkeypatch.setattr(
+        zalo_group_list.facebook_repository, "update_group_names", update_group_names
+    )
     return groups
 
 
@@ -153,14 +160,16 @@ async def test_so_thu_tu_can_danh_sach_con_han(store, monkeypatch):
 async def test_fb_themnhom_theo_so_thu_tu(gateway, monkeypatch):
     saved = []
 
-    async def add_group(account_id, group_id, alias):
-        saved.append((account_id, group_id, alias))
+    async def add_group(account_id, group_id, alias, group_name=""):
+        saved.append((account_id, group_id, alias, group_name))
 
     monkeypatch.setattr(facebook_commands.facebook_repository, "add_group", add_group)
     await group_commands.maybe_handle_group_command("B", "/nhomzalo")
     result = await facebook_commands.maybe_handle_facebook_command("B", "/fb_themnhom 1")
-    assert saved == [("B", G2, "gia-dinh-nho")]
-    assert "Gia Đình Nhỏ 🏠" in result.messages[0]
+    # Lưu luôn tên thật của nhóm để bài/lệnh /fb_* hiện TÊN nhóm thay cho group ID.
+    assert saved == [("B", G2, "gia-dinh-nho", "Gia Đình Nhỏ 🏠")]
+    assert "“Gia Đình Nhỏ 🏠” (gợi nhớ: gia-dinh-nho)" in result.messages[0]
+    assert G2 not in result.messages[0]
     # Đã là nguồn Facebook (G3, số 4), không kèm tên: giữ tên cũ.
     again = await facebook_commands.maybe_handle_facebook_command("B", "/fb_themnhom 4")
     assert "đã là nguồn Facebook với tên gợi nhớ “deal”" in again.messages[0]
@@ -242,14 +251,14 @@ async def test_list_groups_doc_route_groups_cua_gateway(monkeypatch):
         await zalo_gateway_status.list_groups()
 
     monkeypatch.setenv("ZALO_ENABLED", "1")
-    monkeypatch.setattr(zalo_gateway_status.httpx, "AsyncClient", _client(ok))
+    monkeypatch.setattr(zalo_gateway_status.http_client, "scoped", _client(ok))
     groups, total = await zalo_gateway_status.list_groups()
     assert urls == ["http://127.0.0.1:9911/groups"]
     assert groups == [ZaloGroup(G1, "Sale Team", 25), ZaloGroup(G2, "", None)]
     assert total == 250
 
     monkeypatch.setattr(
-        zalo_gateway_status.httpx, "AsyncClient", _client(lambda url: _Response(409, {}))
+        zalo_gateway_status.http_client, "scoped", _client(lambda url: _Response(409, {}))
     )
     with pytest.raises(zalo_gateway_status.GatewayGroupsError, match="chưa đăng nhập"):
         await zalo_gateway_status.list_groups()
@@ -257,7 +266,7 @@ async def test_list_groups_doc_route_groups_cua_gateway(monkeypatch):
     def refused(url):
         raise httpx.ConnectError("refused")
 
-    monkeypatch.setattr(zalo_gateway_status.httpx, "AsyncClient", _client(refused))
+    monkeypatch.setattr(zalo_gateway_status.http_client, "scoped", _client(refused))
     with pytest.raises(zalo_gateway_status.GatewayGroupsError, match="Không kết nối được"):
         await zalo_gateway_status.list_groups()
 

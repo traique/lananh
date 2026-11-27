@@ -18,8 +18,12 @@ Nguyên tắc chống leakage:
   runtime; căn theo chỉ số mảng cho look-ahead/lệch năm với mã thiếu phiên.
 - Không tuning tham số trên test: hyperparameter cố định, chỉ chạy 1 lần.
 - Model + thống kê out-of-sample lưu vào stock/data/ giống backtest_stats.json;
-  runtime CHỈ ĐỌC, không train trong đường dẫn chat, và CHỈ dùng output khi
-  file stats qua được model_quality_gate (xem bên dưới).
+  prob_up_for_series CHỈ ĐỌC, không train, và CHỈ dùng output khi file stats qua
+  được model_quality_gate (xem bên dưới).
+- Từ 11/2026 /phantich (stock/analysis.py) KHÔNG gọi model nữa: stats hiện tại
+  không qua gate, repo không kèm file model, Render không cài sklearn - nhánh
+  runtime chết theo thiết kế nên đã gỡ khỏi pipeline/prompt. Bật lại = nối lại
+  prob_up_for_series vào build_context sau khi model mới qua gate.
 
 Chạy train: `python -m scripts.train_trend_model` hoặc scripts/train_trend_model.py
 (CHỈ offline/CI - bị chặn trên Render bởi assert_backtest_runtime_allowed).

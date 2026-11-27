@@ -35,7 +35,13 @@
   {% if ld_json %}<script type="application/ld+json">{{ ld_json }}</script>{% endif %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&amp;family=Newsreader:opsz,wght@6..72,500&amp;display=swap">
+  {# Phông Google không chặn vẽ trang: tải sẵn CSS (preload), gắn media=print rồi script
+     đổi sang all khi tải xong; chữ hiện ngay bằng phông hệ thống rồi đổi (display=swap).
+     Tắt JavaScript thì <noscript> nạp như cũ. #}
+  {% set font_css = "https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500&display=swap" %}
+  <link rel="preload" as="style" href="{{ font_css }}">
+  <link rel="stylesheet" href="{{ font_css }}" media="print" id="font-css">
+  <noscript><link rel="stylesheet" href="{{ font_css }}"></noscript>
   <script>
     // Áp giao diện đã chọn TRƯỚC khi vẽ để không nháy màu; localStorage có thể bị
     // chặn (chế độ riêng tư) nên bọc try/catch, không có thì theo hệ điều hành.
@@ -44,6 +50,9 @@
         var t = localStorage.getItem('lcta.theme');
         if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
       } catch (e) {}
+      var css = document.getElementById('font-css');
+      function on() { css.media = 'all'; }
+      if (css.sheet) on(); else css.addEventListener('load', on);
     })();
   </script>
   <link rel="stylesheet" href="/static/site.css?v={{ css_v }}">

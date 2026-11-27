@@ -33,10 +33,6 @@ class Router9Error(RuntimeError):
     """Lỗi khi gọi 9Router (HTTP lỗi, payload rỗng/không hợp lệ...)."""
 
 
-async def close() -> None:
-    await _pool.close()
-
-
 async def _api_key() -> str:
     return await provider_overrides.get_api_key_override("router9") or config.ROUTER9_API_KEY
 
@@ -103,40 +99,33 @@ async def set_base_url_override(value: Optional[str]) -> bool:
     return True
 
 
-async def generate(
-    prompt: str,
-    *,
-    system_instruction: Optional[str] = None,
-    history: Optional[list[tuple[str, str]]] = None,
-    model: Optional[str] = None,
-    temperature: float = 0.7,
-    max_tokens: int = 4096,
-) -> Response:
-    """Gọi 1 lượt chat/completions. `history` là list (role, content) với role
-    "user"/"model" (giữ đúng quy ước của official_client.generate)."""
-    api_key = await _api_key()
-    if not api_key:
-        raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
-    messages = openai_compatible.build_messages(prompt, system_instruction, history)
-    base_url = await get_base_url()
+async def _default_model() -> str:
+    # Model chat do orchestrator truyền (preferred_model_name - /model); không truyền
+    # thì dùng ROUTER9_MODEL.
+    return config.ROUTER9_MODEL
 
-    async def _call() -> str:
-        async with _pool.get_semaphore():
-            try:
-                return await openai_compatible.post_chat_completion(
-                    _pool.get_client(),
-                    base_url=base_url,
-                    api_key=api_key,
-                    messages=messages,
-                    model=model or config.ROUTER9_MODEL,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    provider_label="9Router",
-                )
-            except openai_compatible.OpenAICompatibleError as exc:
-                raise Router9Error(str(exc)) from exc
 
-    return Response(await _pool.bounded("9Router", _call))
+_provider = openai_compatible.OpenAICompatibleProvider(
+    "9Router",
+    pool=_pool,
+    base_url=lambda: get_base_url(),
+    api_key=lambda: _api_key(),
+    default_model=_default_model,
+    vision_model=lambda: config.ROUTER9_MODEL,
+    missing_key="Chưa cấu hình ROUTER9_API_KEY",
+    # Agent qua router9 (_ROUTER9_NATIVE_TOOLS_ENABLED) giữ tham số cũ.
+    tools_temperature=0.7,
+    tools_max_tokens=4096,
+    error_cls=Router9Error,
+)
+
+close = _provider.close
+generate = _provider.generate
+# Function-calling chuẩn OpenAI cho ai/agent_service.py - xem cảnh báo ở docstring
+# openai_compatible.post_chat_completion_with_tools() về việc 9Router có thể âm
+# thầm bỏ qua `tools`.
+generate_with_tools = _provider.generate_with_tools
+generate_image_prompt = _provider.generate_image_prompt
 
 
 def supports_web_search() -> bool:
@@ -161,106 +150,31 @@ async def generate_search(
         raise Router9Error("9Router web search đang tắt") from (
             openai_compatible.NoSearchEvidenceError("9Router web search đang tắt")
         )
-    api_key = await _api_key()
-    if not api_key:
-        raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
+    await _provider.credentials()
     messages = openai_compatible.build_messages(prompt, system_instruction, history)
-    base_url = await get_base_url()
     model_name = (
         config.ROUTER9_WEB_SEARCH_MODEL
         or model
         or await get_preferred_model_name()
         or config.ROUTER9_MODEL
     )
-
-    async def _call() -> openai_compatible.CompletionResult:
-        async with _pool.get_semaphore():
-            try:
-                return await openai_compatible.post_chat_completion_full(
-                    _pool.get_client(),
-                    base_url=base_url,
-                    api_key=api_key,
-                    messages=messages,
-                    model=model_name,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    provider_label="9Router web search",
-                    extra_payload={"web_search_options": {"search_context_size": "low"}},
-                    # Qua proxy Render: phải stream để không bị cắt 504 (xem
-                    # openai_compatible.post_chat_completion).
-                    stream=True,
-                )
-            except openai_compatible.OpenAICompatibleError as exc:
-                raise Router9Error(str(exc)) from exc
-
-    result = await _pool.bounded("9Router web search", _call)
+    result = await _provider.complete_full(
+        messages,
+        label="9Router web search",
+        model=model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        extra_payload={"web_search_options": {"search_context_size": "low"}},
+        # Qua proxy Render: phải stream để không bị cắt 504 (xem
+        # openai_compatible.post_chat_completion).
+        stream=True,
+    )
     if not result.url_citations:
         evidence = openai_compatible.NoSearchEvidenceError(
             "9Router trả lời nhưng không kèm url_citation - không tin là đã tra web"
         )
         raise Router9Error(str(evidence)) from evidence
     return Response(result.text, searched=True, citations=result.source_urls)
-
-
-async def generate_with_tools(
-    messages: list[dict],
-    tools: list[dict],
-    *,
-    model: Optional[str] = None,
-    temperature: float = 0.7,
-    max_tokens: int = 4096,
-):
-    """Lượt gọi /chat/completions có kèm `tools` (function-calling chuẩn
-    OpenAI) - dùng cho ai/agent_service.py, KHÁC generate() ở trên (không
-    dùng build_messages()/prompt+history, vì agent loop cần tự quản lý toàn
-    bộ messages list, kể cả các message role "assistant" mang tool_calls và
-    role "tool" mang kết quả tool, qua nhiều bước).
-
-    Trả về openai_compatible.ToolCallResponse. Xem cảnh báo quan trọng ở
-    docstring openai_compatible.post_chat_completion_with_tools() về việc
-    9Router có thể âm thầm bỏ qua `tools`."""
-    api_key = await _api_key()
-    if not api_key:
-        raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
-    base_url = await get_base_url()
-
-    async def _call():
-        async with _pool.get_semaphore():
-            try:
-                return await openai_compatible.post_chat_completion_with_tools(
-                    _pool.get_client(),
-                    base_url=base_url,
-                    api_key=api_key,
-                    messages=messages,
-                    tools=tools,
-                    model=model or config.ROUTER9_MODEL,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    provider_label="9Router",
-                )
-            except openai_compatible.OpenAICompatibleError as exc:
-                raise Router9Error(str(exc)) from exc
-
-    return await _pool.bounded("9Router", _call)
-
-
-async def generate_image_prompt(instruction: str, image_path: str) -> Response:
-    api_key = await _api_key()
-    if not api_key:
-        raise Router9Error("Chưa cấu hình ROUTER9_API_KEY")
-    base_url = await get_base_url()
-    try:
-        return await openai_compatible.generate_image_prompt(
-            _pool,
-            base_url=base_url,
-            api_key=api_key,
-            vision_model=config.ROUTER9_MODEL,
-            provider_label="9Router",
-            instruction=instruction,
-            image_path=image_path,
-        )
-    except openai_compatible.OpenAICompatibleError as exc:
-        raise Router9Error(str(exc)) from exc
 
 
 async def list_models() -> list[str]:
@@ -301,13 +215,7 @@ async def set_preferred_model_name(name: Optional[str]) -> None:
     await settings_cache.set(_SETTING_PREFERRED_MODEL, name or "")
 
 
-async def check_status() -> tuple[bool, str]:
-    return await openai_compatible.check_status(
-        generate,
-        api_key=await _api_key(),
-        missing_key_msg="Chưa cấu hình ROUTER9_API_KEY",
-        expected_error=Router9Error,
-    )
+check_status = _provider.check_status
 
 
 # Public accessors (dùng bởi web_admin) - tránh module khác gọi hàm private.

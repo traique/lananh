@@ -482,7 +482,7 @@ async def was_closed(pool: Any, user_id: int, symbol: str) -> bool:
 # ─── Sổ giao dịch ────────────────────────────────────────────────────────────
 
 
-async def list_transactions(pool: Any, user_id: int, *, symbol: str | None, limit: int):
+async def list_transactions(pool: Any, user_id: int, *, symbol: str | None = None, limit: int = 15):
     return await pool.fetch(
         f"""
         SELECT {_TX_COLUMNS}
@@ -497,7 +497,7 @@ async def list_transactions(pool: Any, user_id: int, *, symbol: str | None, limi
     )
 
 
-async def transactions_between(pool: Any, user_id: int, start, end, *, limit: int):
+async def transactions_between(pool: Any, user_id: int, start, end, *, limit: int = 2000):
     """Dòng sổ trong [start, end) (timestamptz), cũ trước - để tổng hợp báo cáo."""
     return await pool.fetch(
         f"""
@@ -559,8 +559,8 @@ async def watchlist(pool: Any, user_id: int) -> list[str]:
 
 
 async def add_watch(pool: Any, user_id: int, symbols: list[str], max_symbols: int) -> list[str]:
-    """Thêm mã (bỏ qua mã đã có), không vượt trần; trả các mã thêm được."""
-    added: list[str] = []
+    """Thêm mã (bỏ qua mã đã có, mã lặp), không vượt trần; trả các mã thêm được theo
+    thứ tự nhập. 1 câu INSERT ... SELECT unnest() cho cả danh sách (trước: 1 câu/mã)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             current = {
@@ -569,18 +569,19 @@ async def add_watch(pool: Any, user_id: int, symbols: list[str], max_symbols: in
                     "SELECT symbol FROM stock_watchlist WHERE telegram_user_id = $1", user_id
                 )
             }
-            for symbol in symbols:
-                if symbol in current or len(current) >= max_symbols:
-                    continue
-                await conn.execute(
-                    "INSERT INTO stock_watchlist (telegram_user_id, symbol) VALUES ($1, $2) "
-                    "ON CONFLICT DO NOTHING",
-                    user_id,
-                    symbol,
-                )
-                current.add(symbol)
-                added.append(symbol)
-    return added
+            wanted = [s for s in dict.fromkeys(symbols) if s not in current]
+            wanted = wanted[: max(0, max_symbols - len(current))]
+            if not wanted:
+                return []
+            rows = await conn.fetch(
+                "INSERT INTO stock_watchlist (telegram_user_id, symbol) "
+                "SELECT $1, symbol FROM unnest($2::text[]) AS symbol "
+                "ON CONFLICT DO NOTHING RETURNING symbol",
+                user_id,
+                wanted,
+            )
+    inserted = {row["symbol"] for row in rows}
+    return [symbol for symbol in wanted if symbol in inserted]
 
 
 async def remove_watch(pool: Any, user_id: int, symbol: str) -> tuple[bool, int]:
@@ -691,7 +692,7 @@ async def set_price_alert_state(pool: Any, alert_id: int, state: str, *, notifie
 
 
 async def alert_logged(
-    pool: Any, user_id: int, kind: str, ref_key: str, sent_on: str | None
+    pool: Any, user_id: int, kind: str, ref_key: str, sent_on: str | None = None
 ) -> bool:
     """Đã gửi (kind, ref_key) cho user chưa - trong ngày sent_on, hoặc bất kỳ
     ngày nào nếu sent_on None."""
@@ -749,7 +750,7 @@ async def count_alerts_on(pool: Any, user_id: int, sent_on: str) -> int:
     )
 
 
-async def prune_alert_log(pool: Any, keep_days: int, batch: int) -> int:
+async def prune_alert_log(pool: Any, keep_days: int, batch: int = 5000) -> int:
     result = await pool.execute(
         "DELETE FROM stock_alert_log WHERE ctid IN (SELECT ctid FROM stock_alert_log "
         "WHERE created_at < now() - ($1::integer * INTERVAL '1 day') LIMIT $2)",

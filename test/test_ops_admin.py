@@ -36,7 +36,8 @@ async def test_watchdog_api_can_dang_nhap_va_tra_loi_va_restart(client, monkeypa
 def test_trang_admin_co_the_giam_sat():
     html = (_admin.ROOT / "templates" / "admin.html").read_text(encoding="utf-8")
     assert 'id="watchdog-box"' in html and "/admin/api/watchdog" in html
-    assert "['watchdog', loadWatchdog, 'watchdog-box']" in html
+    # Tự làm mới qua /admin/api/overview: phần "watchdog" vẽ vào watchdog-box.
+    assert "['watchdog', renderWatchdog, 'watchdog-box']" in html
 
 
 class _Message:

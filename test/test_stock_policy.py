@@ -4,6 +4,7 @@ risk-off, tín hiệu mâu thuẫn, R:R kém, thanh khoản thấp...) để ki�
 Decision cuối cùng có hợp lý không, thay vì chỉ test từng hàm biệt lập.
 """
 
+import math
 import sys
 from pathlib import Path
 
@@ -90,6 +91,71 @@ def _make_inputs(
         vnindex_multi_tf=vnindex_multi_tf,
         vnindex_adx=vnindex_adx,
     )
+
+
+def _closes_pullback(n=120, base=40_000.0, slope=150.0, dip_bars=2, dip=0.01, wiggle=900.0):
+    """Xu hướng tăng có nhịp lắc, 2 phiên cuối điều chỉnh nhẹ (setup pullback)."""
+    closes = [base + i * slope + wiggle * math.sin(i / 3.0) for i in range(n)]
+    for k in range(dip_bars):
+        closes[n - dip_bars + k] = closes[n - dip_bars - 1] * (1 - dip * (k + 1))
+    return closes
+
+
+def _closes_breakout(n=120):
+    """Đỉnh cũ ~60.000, tích luỹ quanh 51.000, phiên cuối vượt kênh Donchian."""
+    closes = []
+    for i in range(n):
+        if i < 60:
+            closes.append(45_000.0 + i * 250)
+        elif i < 75:
+            closes.append(60_000.0 - (i - 60) * 600)
+        else:
+            closes.append(51_000 + 800 * math.sin(i / 2.0))
+    closes[-1] = 54_000.0
+    return closes
+
+
+def _with_resistance(inputs, factor):
+    """Đặt kháng cự thật (đỉnh 30 phiên trước) ở price x factor; None = không có."""
+    p = inputs.price
+    sr = inputs.support_resistance
+    level = round(p * factor) if factor else None
+    inputs.support_resistance = feat.SupportResistance(
+        sr.support,
+        level,
+        sr.dist_to_support,
+        sr.dist_to_resistance,
+        resistance_prior=level,
+        support_prior=sr.support_prior,
+    )
+    return inputs
+
+
+VOLUME_CONFIRM = feat.Liquidity(
+    avg_volume_20=500_000,
+    current_volume=800_000,
+    liquidity_ratio_pct=160.0,
+    volume_percentile=90.0,
+    is_thin=False,
+)
+
+
+def _pullback_buy_inputs(exchange="HOSE", **kwargs):
+    """Setup pullback đủ điều kiện BUY (kháng cự thật cách giá 12%)."""
+    inputs = _with_resistance(
+        _make_inputs(_closes_pullback(), relative_strength=8.0, **kwargs), 1.12
+    )
+    inputs.exchange = exchange
+    return inputs
+
+
+def _breakout_inputs(factor=1.12, session=None, exchange="HOSE"):
+    """Breakout Donchian có volume xác nhận; factor=None: không có kháng cự thật."""
+    inputs = _make_inputs(
+        _closes_breakout(), relative_strength=8.0, liquidity=VOLUME_CONFIRM, session=session
+    )
+    inputs.exchange = exchange
+    return _with_resistance(inputs, factor)
 
 
 # ─── Gate B: data quality ────────────────────────────────────────────────────
@@ -397,7 +463,9 @@ def test_find_key_levels_clustering_gom_pivot_gan_nhau():
         assert 0.0 <= lv.strength <= 1.0
 
 
-def test_sell_target_positive_news_khong_duoc_bearish_hon():
+def test_moc_tham_chieu_sell_khong_doi_theo_tin_tuc():
+    """Cùng chuỗi giá -> cùng mốc tham chiếu SELL: news_impact (cảm xúc theo từ khoá
+    tiêu đề Google News) không được làm lệch mốc dự phóng của nhánh thoát hàng."""
     closes = _closes_downtrend(90)
     price = closes[-1]
     volumes = [500_000.0] * len(closes)
@@ -415,7 +483,7 @@ def test_sell_target_positive_news_khong_duoc_bearish_hon():
     _, target_positive, _, _ = pol._compute_stop_target(
         price, enhanced, stats, 1.0, "exit", None, "HOSE"
     )
-    assert target_negative < target_neutral < target_positive < price
+    assert target_negative == target_neutral == target_positive < price
 
 
 def test_trade_plan_entry_price_luon_dung_tick_hose():
@@ -499,3 +567,137 @@ def test_build_trade_plan_size_mult_giam_ty_trong():
     )
     assert full is not None and reduced is not None
     assert reduced.position_size_pct < full.position_size_pct
+
+
+# ─── Ngưỡng sát trần/gần sàn theo biên độ của sàn (HOSE 7%, HNX 10%, UPCOM 15%) ─
+
+
+def test_band_scale_giu_nguyen_muc_hose_va_quy_doi_hnx_upcom():
+    assert pol._band_scale("HOSE") == 1.0 and pol._band_scale(None) == 1.0
+    assert pol._band_scale("hsx") == 1.0
+    assert pol._band_scale("HNX") == 10.0 / 7.0
+    assert pol._band_scale("UPCOM") == 15.0 / 7.0
+
+
+def test_gan_san_tinh_theo_bien_do_cua_san():
+    drop = feat.SessionMetrics(
+        daily_change_pct=-6.5, close_position_pct=40.0, volume_ratio_pct=100.0
+    )
+    # HOSE (sàn -7%) và chưa rõ sàn: -6,5% là gần sàn -> chặn mua mới.
+    assert pol._evaluate_session(drop, None, "HOSE").is_near_floor_like
+    assert pol._evaluate_session(drop, None, None).hard_no_buy
+    # HNX (sàn -10%, ngưỡng ~-8,57%) / UPCOM (sàn -15%, ~-12,86%): chỉ là phiên giảm mạnh.
+    for exchange in ("HNX", "UPCOM"):
+        flags = pol._evaluate_session(drop, None, exchange)
+        assert not flags.is_near_floor_like and not flags.hard_no_buy
+        assert flags.is_selloff
+    deep = feat.SessionMetrics(
+        daily_change_pct=-9.0, close_position_pct=40.0, volume_ratio_pct=100.0
+    )
+    assert pol._evaluate_session(deep, None, "HNX").is_near_floor_like
+    assert not pol._evaluate_session(deep, None, "UPCOM").is_near_floor_like
+
+
+def test_phien_giam_manh_upcom_khong_bi_chan_mua_nhu_gan_san_hose():
+    drop = feat.SessionMetrics(
+        daily_change_pct=-6.5, close_position_pct=40.0, volume_ratio_pct=100.0
+    )
+    hose = pol.evaluate_policy(_pullback_buy_inputs("HOSE", session=drop))
+    upcom = pol.evaluate_policy(_pullback_buy_inputs("UPCOM", session=drop))
+    assert hose.action == "WATCH" and any("gần sàn" in r for r in hose.reasons)
+    assert upcom.action == "BUY" and not any("gần sàn" in r for r in upcom.reasons)
+
+
+def test_sat_tran_tinh_theo_bien_do_cua_san():
+    up6 = feat.SessionMetrics(daily_change_pct=6.0, close_position_pct=90.0, volume_ratio_pct=160.0)
+    hose = pol.evaluate_policy(_breakout_inputs(session=up6, exchange="HOSE"))
+    hnx = pol.evaluate_policy(_breakout_inputs(session=up6, exchange="HNX"))
+    plain = pol.evaluate_policy(_breakout_inputs(session=None, exchange="HNX"))
+    # +6% sát trần HOSE (5,5%) -> phạt strength; với HNX (~7,86%) thì chưa.
+    assert any("sát trần" in r for r in hose.reasons)
+    assert not any("sát trần" in r for r in hnx.reasons)
+    assert hose.confidence < hnx.confidence == plain.confidence
+    up12 = feat.SessionMetrics(
+        daily_change_pct=12.0, close_position_pct=90.0, volume_ratio_pct=160.0
+    )
+    upcom = pol.evaluate_policy(_breakout_inputs(session=up12, exchange="UPCOM"))
+    assert any("sát trần" in r for r in upcom.reasons)
+
+
+# ─── Gate B: gap quyền chưa điều chỉnh, dữ liệu cũ; mốc SELL khi đang giữ ────
+
+
+def test_gate_gap_chua_dieu_chinh_de_len_ca_setup_buy_dep():
+    """Setup BUY đủ điều kiện nhưng chuỗi còn gap quyền trong cửa sổ chỉ báo: không
+    ra tín hiệu định hướng nào - NO_TRADE (chưa giữ) / HOLD (đang giữ), confidence 0,
+    không stop/target/R:R/kế hoạch."""
+    assert pol.evaluate_policy(_pullback_buy_inputs()).action == "BUY"
+    for holding, expected in ((False, "NO_TRADE"), (True, "HOLD")):
+        inputs = _pullback_buy_inputs()
+        inputs.unadjusted_gap = True
+        inputs.is_holding = holding
+        d = pol.evaluate_policy(inputs)
+        assert d.action == expected
+        assert d.confidence == 0.0 and d.setup_type == "none" and d.risk_level == "high"
+        assert d.stop_price is None and d.target_price is None and d.rr_ratio is None
+        assert d.trade_plan is None and d.scenarios == []
+        assert d.market_regime == "risk_on"  # regime vẫn được đánh giá
+        assert any("gap quyền chưa điều chỉnh" in r for r in d.reasons)
+        assert "điều chỉnh theo sự kiện quyền" in d.invalidation_reason
+
+
+def test_gate_gap_cung_chan_sell_khi_dang_giu():
+    inputs = _make_inputs(_closes_downtrend(90), vnindex_bullish=False, relative_strength=-8.0)
+    inputs.is_holding = True
+    assert pol.evaluate_policy(inputs).action == "SELL"
+    inputs.unadjusted_gap = True
+    d = pol.evaluate_policy(inputs)
+    assert d.action == "HOLD" and d.setup_type == "none" and d.stop_price is None
+
+
+def test_gate_du_lieu_cu_chan_mo_mua_moi_nhung_giu_nguyen_so_lieu():
+    """is_stale (chất lượng vẫn ok): cùng confidence/setup nhưng không mở BUY, không
+    kế hoạch/tỷ trọng; người đang giữ nhận HOLD."""
+    fresh = pol.evaluate_policy(_pullback_buy_inputs())
+    assert fresh.action == "BUY" and fresh.trade_plan is not None
+    for holding, expected in ((False, "WATCH"), (True, "HOLD")):
+        inputs = _pullback_buy_inputs()
+        inputs.quality = DataQuality(status="ok", bars_available=120, is_stale=True)
+        inputs.is_holding = holding
+        d = pol.evaluate_policy(inputs)
+        assert d.action == expected
+        assert d.confidence == fresh.confidence and d.setup_type == fresh.setup_type
+        assert d.trade_plan is None and d.stop_price is None and d.rr_ratio is None
+        assert any("dữ liệu giá đã cũ" in r for r in d.reasons)
+
+
+def test_sell_khi_dang_giu_moc_vo_hieu_tren_gia_moc_ho_tro_duoi_gia():
+    inputs = _make_inputs(_closes_downtrend(90), vnindex_bullish=False, relative_strength=-8.0)
+    inputs.is_holding = True
+    inputs.exchange = "HOSE"
+    d = pol.evaluate_policy(inputs)
+    assert d.action == "SELL"
+    price = inputs.price
+    assert d.stop_price > price > d.target_price
+    assert d.stop_price % 100 == 0 and d.target_price % 100 == 0  # bước giá HOSE >= 50.000
+    assert d.rr_ratio == round((price - d.target_price) / (d.stop_price - price), 2)
+    assert d.trade_plan is None and d.scenarios == []
+    assert d.invalidation_reason == (
+        f"nếu giá vượt lên trên {d.stop_price:,.0f} thì tín hiệu SELL coi như vô hiệu, "
+        "cần đánh giá lại"
+    ).replace(",", ".")
+    # Không giữ hàng: cùng tín hiệu giảm chỉ là "đừng mua mới", không có số SELL.
+    inputs.is_holding = False
+    d = pol.evaluate_policy(inputs)
+    assert d.action == "NO_TRADE" and d.stop_price is None and d.target_price is None
+
+
+def test_watch_thoat_hang_khi_dang_giu_dung_khang_cu_va_ho_tro_that():
+    inputs = _make_inputs(_closes_flat(90), relative_strength=0.0)
+    inputs.is_holding = True
+    d = pol.evaluate_policy(inputs)
+    assert d.action == "WATCH"
+    # Kháng cự 30.300 (cách giá 1%) -> mốc vô hiệu = 30.300 x 1,01 làm tròn 100đ;
+    # hỗ trợ thật 29.700 là mốc tham chiếu phía dưới.
+    assert d.stop_price == 30_600 and d.target_price == 29_700
+    assert d.rr_ratio == round((30_000 - 29_700) / (30_600 - 30_000), 2)

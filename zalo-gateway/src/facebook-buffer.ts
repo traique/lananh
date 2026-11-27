@@ -14,8 +14,8 @@ const MAX_MEDIA_PER_POST = 10;
 const MAX_TEXT_CHARS = 20000;
 const MAX_BUFFERS = 64;
 /**
- * Tổng media giữ trong RAM cho TẤT CẢ bài đang gom. Heap Node bị chặn ~96 MB và
- * khi gửi sang Python, base64 + JSON.stringify nhân đôi dung lượng nên để 6 MiB.
+ * Tổng media giữ trong RAM cho TẤT CẢ bài đang gom. Heap Node bị chặn ~96 MB; lúc gửi
+ * sang Python mỗi ảnh còn 1 bản sao trong FormData (bridge.facebookPostForm) nên để 6 MiB.
  */
 export const MAX_BUFFERED_MEDIA_BYTES = 6 * 1024 * 1024;
 
@@ -188,6 +188,19 @@ export class FacebookPostBuffer {
       }
       return false;
     }
+  }
+
+  /**
+   * Tắt máy (SIGTERM, shutdown.ts): gửi ngay mọi bài đang gom thay vì chờ hết cửa sổ
+   * gộp - không thì bài của người vừa đăng trước lúc deploy bị mất. Gửi lỗi thì bài
+   * vẫn nằm trong bộ đệm (shutdown chỉ chờ có hạn). Không ném.
+   */
+  async flushAll(): Promise<void> {
+    await Promise.all(
+      [...this.buffers.keys()].map((key) =>
+        this.deps.enqueue(() => this.flush(key)).catch(() => undefined),
+      ),
+    );
   }
 
   private totalBufferedBytes(): number {

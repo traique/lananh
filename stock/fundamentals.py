@@ -17,8 +17,9 @@ Nguồn (đọc kỹ trước khi sửa):
   có thể lỗi hoặc đổi cấu trúc dữ liệu bất kỳ lúc nào mà không báo trước. Tên
   trường raw (pe, pb, isa20, foreignBuyVolume...) được gọi thẳng; thiếu trường
   thì trả None cho trường đó thay vì đoán liều.
-- Gọi nguồn ngoài là thao tác ĐỒNG BỘ (blocking, dùng requests) -> luôn
-  chạy qua asyncio.to_thread() để không chặn event loop, và luôn có timeout.
+- Gọi nguồn ngoài là thao tác ĐỒNG BỘ (blocking, httpx.Client đồng bộ của
+  stock.vci_direct) -> luôn chạy qua asyncio.to_thread() để không chặn event
+  loop, và luôn có timeout.
 
 🧪 GHI CHÚ ĐỘ TIN CẬY:
 - `_fetch_valuation_sync`: P/E, P/B, ROE (đã *100), D/E, current ratio lấy
@@ -51,7 +52,8 @@ logger = logging.getLogger(__name__)
 # 10s (vci_direct); các hàm caller đều catch và degrade nên trần rộng chỉ làm
 # chậm nhánh lỗi, không treo bot.
 _FETCH_TIMEOUT_SEC = 30
-_PE_HISTORY_QUARTERS = 20  # ~5 năm dữ liệu quý, dùng để tính percentile P/E
+# ~5 năm dữ liệu quý, dùng để tính percentile P/E - vci_direct chỉ cache đúng số quý này.
+_PE_HISTORY_QUARTERS = vci_direct.RATIO_HISTORY_QUARTERS
 
 
 @dataclass
@@ -340,13 +342,15 @@ class FundamentalsBundle:
 # ~12-13 request VCI (4 cho mã + 8 peer ngành) - với API free 20 req/phút, 2
 # lượt phân tích liên tiếp không cache là đủ bị rate-limit và toàn bundle rỗng.
 _FUNDAMENTALS_CACHE_TTL = 30 * 60
-_fundamentals_cache: dict[str, tuple[float, "FundamentalsBundle"]] = {}
+# Bundle RỖNG hoàn toàn (thường do VCI lỗi/rate-limit thoáng qua) chỉ cache 3 phút
+# (như TTL âm của danh sách sàn ở providers): trước đây 1 lần VCI chập chờn làm mã đó
+# mất định giá/khối ngoại/tăng trưởng suốt 30 phút dù nguồn hồi phục ngay sau đó.
+_FUNDAMENTALS_EMPTY_TTL = 3 * 60
+_fundamentals_cache: dict[str, tuple[float, float, "FundamentalsBundle"]] = {}  # (ts, ttl, bundle)
 
 
 def _evict_fundamentals_cache(now: float) -> None:
-    expired = [
-        k for k, (ts, _) in _fundamentals_cache.items() if now - ts >= _FUNDAMENTALS_CACHE_TTL
-    ]
+    expired = [k for k, (ts, ttl, _) in _fundamentals_cache.items() if now - ts >= ttl]
     for k in expired:
         _fundamentals_cache.pop(k, None)
     while len(_fundamentals_cache) >= 128:
@@ -355,17 +359,29 @@ def _evict_fundamentals_cache(now: float) -> None:
         )
 
 
+def _bundle_is_empty(bundle: FundamentalsBundle) -> bool:
+    """Không có số liệu nào dùng được (lịch sự kiện rỗng là bình thường, không tính)."""
+    benchmark = bundle.sector_benchmark
+    return (
+        bundle.valuation is None
+        and bundle.foreign is None
+        and bundle.growth is None
+        and (benchmark is None or benchmark.average is None)
+    )
+
+
 async def fetch_fundamentals(symbol: str) -> FundamentalsBundle:
     """Lấy song song toàn bộ dữ liệu cơ bản. Không bao giờ raise ra ngoài.
 
     Có cache 30 phút theo symbol (xem _FUNDAMENTALS_CACHE_TTL) - cùng 1 mã được
     phân tích lại trong nửa giờ thì tái dùng bundle, không bắn lại request VCI.
+    Bundle rỗng chỉ cache _FUNDAMENTALS_EMPTY_TTL.
     """
     sym = symbol.strip().upper()
     cached = _fundamentals_cache.get(sym)
     if cached:
-        ts, bundle = cached
-        if time.monotonic() - ts < _FUNDAMENTALS_CACHE_TTL:
+        ts, ttl, bundle = cached
+        if time.monotonic() - ts < ttl:
             return bundle
 
     async def _safe(fn, *args):
@@ -402,7 +418,8 @@ async def fetch_fundamentals(symbol: str) -> FundamentalsBundle:
     )
     now = time.monotonic()
     _evict_fundamentals_cache(now)
-    _fundamentals_cache[sym] = (now, bundle)
+    ttl = _FUNDAMENTALS_EMPTY_TTL if _bundle_is_empty(bundle) else _FUNDAMENTALS_CACHE_TTL
+    _fundamentals_cache[sym] = (now, ttl, bundle)
     return bundle
 
 

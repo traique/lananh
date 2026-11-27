@@ -789,7 +789,7 @@ def _chat_specs(role: str) -> list[reg.ToolSpec]:
 
 def _turn_specs(user_text: str, role: str) -> list[reg.ToolSpec]:
     """Tool router chat của lượt + ToolSpec "chạy lệnh" của nhóm khớp câu này
-    (services/nl_commands.py - chỉ nhóm khớp mới vào prompt, giữ trần token)."""
+    (services/nl_commands/ - chỉ nhóm khớp mới vào prompt, giữ trần token)."""
     extra = nl_commands.router_specs(_turn_user.get(), user_text, role)
     excluded = _turn_excluded.get()
     return _chat_specs(role) + [spec for spec in extra if spec.name not in excluded]
@@ -953,12 +953,21 @@ def _looks_like_tool_intent(user_text: str) -> bool:
     )
 
 
+# Đầu ra router chỉ là 1 object JSON (tối đa 5 nhắc việc) + token suy luận gpt-oss.
+_ROUTER_CHAIN_MAX_TOKENS = 768
+
+
 async def _route_with_chain(prompt: str) -> dict | None:
     """Router dự phòng qua provider-chain (bounded theo hạn chót lượt) khi mọi
-    đường utility JSON đều hỏng - chỉ dùng cho câu có ý định GHI dữ liệu."""
+    đường utility JSON (Groq, Gemini) đều hỏng - chỉ dùng cho câu có ý định GHI dữ
+    liệu. Chạy cả chuỗi (cái đáng thử thêm là 9Router/OpenRouter) nhưng là lượt phụ:
+    JSON mode, max_tokens nhỏ, giai đoạn "utility"."""
     from ai import orchestrator
 
-    response = await orchestrator.ask(prompt)
+    with orchestrator.call_stage("utility"):
+        response = await orchestrator.ask(
+            prompt, max_tokens=_ROUTER_CHAIN_MAX_TOKENS, temperature=0.1, json_mode=True
+        )
     data = json.loads(strip_json_fence(getattr(response, "text", "") or ""))
     return data if isinstance(data, dict) else None
 
@@ -1123,11 +1132,13 @@ async def _route_and_run(
     except Exception:
         history = ""
     prompt = _build_router_prompt(user_text, history, role)
-    from ai import orchestrator
+    from ai import orchestrator, structured
 
     # Provider chỉ thấy nhãn "[đã ẩn: mật khẩu]"; tham số tool (chạy trong bot, ghi DB
     # của chính người dùng) được đổi lại giá trị gốc - services/prompt_redaction.
-    with prompt_redaction.scope() as redactor:
+    # Groq/Gemini trả đúng khuôn {"tool": <tên trong danh sách|none>, "args": {...}}.
+    schema = reg.router_schema(_turn_specs(user_text, role))
+    with prompt_redaction.scope() as redactor, structured.json_schema(schema, "tool_router"):
         try:
             data = await orchestrator.utility_json(prompt)
         except Exception:

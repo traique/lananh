@@ -21,13 +21,27 @@ class FakeConn:
         # version -> checksum (None = áp từ trước khi có cột checksum)
         self.applied: dict[int, str | None] = dict(applied or {})
         self.executed: list[str] = []
-        self.locks: list[str] = []
+        self.timeouts: list[float | None] = []  # timeout của từng câu migration
+        self.locks: list[tuple[str, float | None]] = []
+        self.tx_settings: list[str] = []
+        self.in_tx = False
+        self.lock_free = True  # pg_try_advisory_lock thành công ngay?
         self.fail_on: str | None = None
 
-    async def execute(self, sql, *args):
+    async def fetchval(self, sql, *args):
+        assert sql.startswith("SELECT pg_try_advisory_lock")
+        self.locks.append((sql, None))
+        return self.lock_free
+
+    async def execute(self, sql, *args, **kwargs):
+        timeout = kwargs.get("timeout")  # như asyncpg: execute(sql, *args, timeout=None)
         if sql.startswith("SELECT pg_advisory"):
-            self.locks.append(sql)
+            self.locks.append((sql, timeout))
             return "SELECT 1"
+        if sql.startswith("SET LOCAL"):
+            assert self.in_tx, "SET LOCAL phải nằm trong transaction của migration"
+            self.tx_settings.append(sql)
+            return "SET"
         head = sql.lstrip()
         if head.startswith(
             ("CREATE TABLE IF NOT EXISTS schema_migrations", "ALTER TABLE schema_migrations")
@@ -45,6 +59,7 @@ class FakeConn:
         if self.fail_on and self.fail_on in sql:
             raise RuntimeError("migration lỗi mô phỏng")
         self.executed.append(sql)
+        self.timeouts.append(timeout)
         return "OK"
 
     async def fetch(self, sql, *args):
@@ -53,11 +68,14 @@ class FakeConn:
     @asynccontextmanager
     async def transaction(self):
         snapshot = dict(self.applied)
+        self.in_tx = True
         try:
             yield
         except BaseException:
             self.applied = snapshot
             raise
+        finally:
+            self.in_tx = False
 
 
 class FakePool:
@@ -86,9 +104,10 @@ def _files():
 
 
 @pytest.mark.asyncio
-async def test_fresh_db_applies_all_with_checksums(sent_alerts):
+async def test_fresh_db_applies_all_with_checksums(sent_alerts, caplog):
+    caplog.set_level("INFO", logger="core.migrations")
     conn = FakeConn()
-    await migrations.run(FakePool(conn))
+    assert await migrations.run(FakePool(conn)) == len(_files())
     files = _files()
     assert 3 not in files  # 003_vector.sql đã xoá: DB mới không còn tạo chat_embeddings
     expected = sorted(files)
@@ -96,8 +115,36 @@ async def test_fresh_db_applies_all_with_checksums(sent_alerts):
     for version in expected:
         assert conn.applied[version] == migrations.checksum(files[version].read_text("utf-8"))
     assert len(conn.executed) == len(expected)
-    assert conn.locks[0].startswith("SELECT pg_advisory_lock") and "unlock" in conn.locks[-1]
+    assert conn.locks[0][0].startswith("SELECT pg_try_advisory_lock")
+    assert "unlock" in conn.locks[-1][0] and len(conn.locks) == 2  # không phải chờ khoá
+    # Mỗi migration: DDL dài được tới 600 s (không phải command_timeout 30 s của pool),
+    # chờ khoá bảng tối đa 10 s - đặt trong CHÍNH transaction của migration.
+    assert conn.timeouts == [600] * len(expected)
+    assert len(conn.tx_settings) == len(expected)
+    assert all("lock_timeout = '10s'" in s for s in conn.tx_settings)
+    # Danh sách version sắp áp được log TRƯỚC khi áp (deploy treo thì biết file nào).
+    messages = [r.getMessage() for r in caplog.records]
+    pending = next(i for i, m in enumerate(messages) if m.startswith("Sắp áp"))
+    applied = next(i for i, m in enumerate(messages) if m.startswith("Applied DB migration"))
+    assert pending < applied and files[expected[-1]].name in messages[pending]
     assert not sent_alerts
+    assert await migrations.run(FakePool(conn)) == 0  # đã chạy trong process này
+
+
+@pytest.mark.asyncio
+async def test_instance_khac_dang_giu_khoa_thi_cho_co_han(sent_alerts, caplog):
+    caplog.set_level("INFO", logger="core.migrations")
+    files = _files()
+    conn = FakeConn({v: migrations.checksum(files[v].read_text("utf-8")) for v in files})
+    conn.lock_free = False
+    assert await migrations.run(FakePool(conn)) == 0
+    assert [sql.split("(")[0] for sql, _ in conn.locks] == [
+        "SELECT pg_try_advisory_lock",
+        "SELECT pg_advisory_lock",
+        "SELECT pg_advisory_unlock",
+    ]
+    assert conn.locks[1][1] == 600  # chờ instance kia áp xong, có trần
+    assert any("Instance khác" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -146,7 +193,7 @@ async def test_failed_migration_is_not_recorded_and_lock_is_released():
     with pytest.raises(RuntimeError):
         await migrations.run(FakePool(conn))
     assert 13 not in conn.applied and 11 in conn.applied
-    assert "unlock" in conn.locks[-1]
+    assert "unlock" in conn.locks[-1][0]
     assert migrations._ran is False  # lần sau còn thử lại
 
 

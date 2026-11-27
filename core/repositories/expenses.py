@@ -105,7 +105,7 @@ async def totals(pool: Any, user_id: int, start: str, end: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def recent(pool: Any, user_id: int, limit: int) -> list[dict]:
+async def recent(pool: Any, user_id: int, limit: int = 10) -> list[dict]:
     rows = await pool.fetch(
         f"""
         SELECT {_COLUMNS} FROM expenses

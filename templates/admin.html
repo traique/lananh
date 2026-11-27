@@ -7,7 +7,18 @@
 <title>Lan Anh Bot Admin</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&amp;display=swap">
+<!-- Phông Google không chặn vẽ trang: tải sẵn CSS (preload), gắn media=print rồi
+     script đổi sang all khi tải xong; tắt JavaScript thì <noscript> nạp như cũ. -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&amp;display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&amp;display=swap" media="print" id="font-css">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&amp;display=swap"></noscript>
+<script>
+  (function () {
+    var css = document.getElementById('font-css');
+    function on() { css.media = 'all'; }
+    if (css.sheet) on(); else css.addEventListener('load', on);
+  })();
+</script>
 <script>
   // Áp giao diện đã lưu TRƯỚC khi vẽ để không nháy màu. localStorage có thể bị
   // chặn (chế độ riêng tư) nên luôn bọc try/catch; không có thì theo hệ điều hành.
@@ -430,8 +441,8 @@
         <select id="auto-refresh" class="select auto" title="Tự làm mới">
           <option value="0">Không tự làm mới</option>
           <option value="10000">Làm mới mỗi 10s</option>
-          <option value="30000" selected>Làm mới mỗi 30s</option>
-          <option value="60000">Làm mới mỗi 60s</option>
+          <option value="30000">Làm mới mỗi 30s</option>
+          <option value="60000" selected>Làm mới mỗi 60s</option>
         </select>
         <button class="btn icon" id="refresh-btn" type="button" aria-label="Làm mới" title="Làm mới">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
@@ -809,8 +820,6 @@ function renderState(s) {
   });
 }
 
-async function loadState() { renderState(await api('/admin/api/state')); }
-
 async function resetCooldown(provider) {
   try {
     renderState(await post('/admin/api/cooldown/reset', { provider }));
@@ -1050,11 +1059,11 @@ function setMarketButtons(m) {
   });
 }
 
-async function loadMarket() {
-  const m = await api('/admin/api/market_page');
+function renderMarket(m) {
   $('market-box').innerHTML = marketBox(m);
   setMarketButtons(m);
 }
+async function loadMarket() { renderMarket(await api('/admin/api/market_page')); }
 
 document.querySelectorAll('.market-run').forEach(btn => {
   btn.addEventListener('click', async () => {
@@ -1290,8 +1299,7 @@ function renderZalo() {
 }
 
 /* ---------- Thống kê AI ---------- */
-async function loadUsage() {
-  const rows = await api(`/admin/api/usage?hours=${rangeHours()}`);
+function renderUsage(rows) {
   cache.usage = rows;
   const total = rows.reduce((sum, r) => sum + (Number(r.calls) || 0), 0);
   renderTable($('usage-table'), [
@@ -1307,8 +1315,7 @@ async function loadUsage() {
   renderZalo();
 }
 
-async function loadUsageModels() {
-  const rows = await api(`/admin/api/usage/models?hours=${rangeHours()}`);
+function renderUsageModels(rows) {
   cache.models = rows;
   const total = rows.reduce((sum, r) => sum + (Number(r.calls) || 0), 0);
   renderTable($('usage-models-table'), [
@@ -1332,8 +1339,7 @@ function fmtVnTime(iso) {
   return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
 }
 
-async function loadOutcomes() {
-  const rows = await api(`/admin/api/usage/outcomes?hours=${rangeHours()}`);
+function renderOutcomes(rows) {
   renderTable($('outcomes-table'), [
     { label: 'Provider', cell: o => `<span class="mono">${esc(o.provider)}</span>` },
     { label: 'Kết quả', cell: o => `<span class="pill ${o.outcome === 'ok' ? 'ok' : o.outcome === 'rate_limited' ? 'warn' : 'bad'}">${esc(OUTCOME_LABEL[o.outcome] || o.outcome)}</span>` },
@@ -1343,8 +1349,7 @@ async function loadOutcomes() {
   ], rows, 'Chưa có lượt gọi provider nào trong khoảng thời gian này.');
 }
 
-async function loadBurn() {
-  const d = await api('/admin/api/usage/burn');
+function renderBurn(d) {
   const warnAt = d.alert_pct || 80;
   $('burn-hint').textContent = d.alert_pct ? `cảnh báo khi dùng ${d.alert_pct}% hạn mức` : 'cảnh báo đang tắt (QUOTA_BURN_ALERT_PCT=0)';
   renderTable($('burn-table'), [
@@ -1356,8 +1361,7 @@ async function loadBurn() {
   ], d.providers, 'Chưa có số liệu quota.');
 }
 
-async function loadTurns() {
-  const d = await api('/admin/api/usage/turns?hours=24');
+function renderTurns(d) {
   $('turns-summary').innerHTML = d.summary.map(x => `<p><span class="pill neutral">${esc(x.channel)}</span> ${esc(fmtNum(x.turns))} lượt · tổng p50 ${esc(fmtMs(x.total_p50))}, p95 ${esc(fmtMs(x.total_p95))} · p95 chờ khoá ${esc(fmtMs(x.lock_p95))}, chờ slot ${esc(fmtMs(x.slot_p95))}, ngữ cảnh ${esc(fmtMs(x.context_p95))}, LLM ${esc(fmtMs(x.llm_p95))}, gửi ${esc(fmtMs(x.send_p95))} · lỗi ${esc(fmtNum(x.failed))} · đổi provider ${esc(fmtNum(x.fallback))}</p>`).join('');
   renderTable($('turns-table'), [
     { label: 'Lúc', cell: x => fmtRel(x.created_at) },
@@ -1498,10 +1502,6 @@ function renderChart(data) {
   host.append(svg, tip);
 }
 
-async function loadDaily() {
-  renderChart(await api(`/admin/api/usage/daily?hours=${rangeHours()}`));
-}
-
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
@@ -1513,8 +1513,7 @@ function meterClass(percent) {
   return percent == null ? '' : percent >= 90 ? 'danger' : percent >= 75 ? 'warn' : '';
 }
 
-async function loadMemoryUsage() {
-  const s = await api('/admin/api/memory-usage');
+function renderMemoryUsage(s) {
   const c = s.container || {}, py = s.python || {};
   const ws = c.working_set || {}, ev = c.events || {};
   // KPI theo working set (không tính page cache kernel thu hồi được) - cùng số
@@ -1555,8 +1554,7 @@ async function loadMemoryUsage() {
   ], procs, 'Không đọc được /proc.');
 }
 
-async function loadDbUsage() {
-  const d = await api('/admin/api/db-usage');
+function renderDbUsage(d) {
   $('kpi-db').textContent = fmtMib(d.database_mib);
   $('kpi-db-sub').textContent = `ảnh Facebook ${fmtMib(d.media_table_mib)} · lãng phí ${fmtMib(d.media_wasted_mib)}`;
   const wastedPct = d.media_table_mib ? Math.round(d.media_wasted_mib * 100 / d.media_table_mib) : 0;
@@ -1573,8 +1571,7 @@ async function loadDbUsage() {
 
 /* ---------- Việc nền + tác vụ định kỳ (services/background_jobs.py) ---------- */
 const JOB_STATUS = { queued: ['chờ', 'neutral'], running: ['đang chạy', 'warn'], succeeded: ['xong', 'ok'], failed: ['lỗi', 'bad'], cancelled: ['đã huỷ', 'neutral'], timed_out: ['quá giờ', 'bad'] };
-async function loadJobs() {
-  const d = await api('/admin/api/jobs');
+function renderJobs(d) {
   const box = $('jobs-box');
   box.innerHTML = `
     <div class="field-label">${d.enabled ? '' : '<span class="pill bad">đang tắt (BACKGROUND_JOBS_ENABLED=0)</span> '}Chạy cùng lúc tối đa ${esc(d.concurrency)} việc · hạn chót ${esc(Math.round(d.timeout_sec / 60))} phút/việc · đang chạy ở process này: ${esc(d.running_here)} · tác vụ định kỳ hôm nay ${esc(fmtNum(d.routine_runs_today))}/${esc(fmtNum(d.routine_max_runs_per_day))} lần</div>
@@ -1599,8 +1596,9 @@ async function loadJobs() {
 
 const RESTART_LABEL = { first: 'lần đầu', deploy: 'deploy', restart: 'khởi động lại', sleep: 'gián đoạn lâu', crash: 'tiến trình chết', oom: 'hết RAM (OOM)' };
 
-async function loadWatchdog() {
-  const d = await api('/admin/api/watchdog');
+async function loadWatchdog() { renderWatchdog(await api('/admin/api/watchdog')); }
+
+function renderWatchdog(d) {
   const e = d.errors || {}, r = d.restarts || {}, b = d.backup || {}, k = d.key_rotation || {};
   const counts = Object.entries(r.counts || {});
   const backupCell = b.error
@@ -1658,20 +1656,26 @@ async function rotateKeys() {
 }
 
 /* ---------- Làm mới & tự làm mới ---------- */
+// Mọi số liệu "sống" đi chung 1 request /admin/api/overview: [phần trong JSON, hàm vẽ,
+// ô báo lỗi]. Mỗi phần cùng dạng dữ liệu với endpoint lẻ ghi bên cạnh (mở thẳng để xem
+// số liệu thô). Server giữ cache theo phần (thống kê 60 giây; DB, giám sát, việc nền 5
+// phút) nên tự làm mới chỉ chiếm 1 chỗ của máy chủ thay vì 12 request song song.
 const LIVE_LOADERS = [
-  ['state', loadState, 'cooldown-table'],
-  ['market', loadMarket, 'market-box'],
-  ['usage', loadUsage, 'usage-table'],
-  ['models', loadUsageModels, 'usage-models-table'],
-  ['outcomes', loadOutcomes, 'outcomes-table'],
-  ['burn', loadBurn, 'burn-table'],
-  ['turns', loadTurns, 'turns-table'],
-  ['daily', loadDaily, 'chart'],
-  ['ram', loadMemoryUsage, 'ram-box'],
-  ['db', loadDbUsage, 'db-box'],
-  ['watchdog', loadWatchdog, 'watchdog-box'],
-  ['jobs', loadJobs, 'jobs-box'],
+  ['state', renderState, 'cooldown-table'], // /admin/api/state
+  ['market', renderMarket, 'market-box'], // /admin/api/market_page
+  ['usage', renderUsage, 'usage-table'], // /admin/api/usage?hours=
+  ['models', renderUsageModels, 'usage-models-table'], // /admin/api/usage/models?hours=
+  ['outcomes', renderOutcomes, 'outcomes-table'], // /admin/api/usage/outcomes?hours=
+  ['burn', renderBurn, 'burn-table'], // /admin/api/usage/burn
+  ['turns', renderTurns, 'turns-table'], // /admin/api/usage/turns?hours=24
+  ['daily', renderChart, 'chart'], // /admin/api/usage/daily?hours=
+  ['ram', renderMemoryUsage, 'ram-box'], // /admin/api/memory-usage
+  ['db', renderDbUsage, 'db-box'], // /admin/api/db-usage
+  ['watchdog', renderWatchdog, 'watchdog-box'], // /admin/api/watchdog
+  ['jobs', renderJobs, 'jobs-box'], // /admin/api/jobs
 ];
+// Phần server giữ cache 5 phút: ghi tuổi số liệu để không tưởng là vừa đo.
+const AGED_SECTIONS = ['db', 'watchdog', 'jobs'];
 const CONFIG_LOADERS = [
   ['providers', loadProviders, 'providers-list'],
   ['tavily', loadTavily, 'tavily-box'],
@@ -1681,28 +1685,60 @@ const CONFIG_LOADERS = [
 ];
 let refreshing = false;
 
+function showLoadError(id, reason) {
+  const target = $(id);
+  if (target && !target.querySelector('table, .provider-card, svg')) setState(target, 'error', `Không tải được: ${reason}`);
+}
+
 async function runLoaders(loaders) {
   const results = await Promise.allSettled(loaders.map(([, fn]) => fn()));
   let failed = 0;
   results.forEach((res, i) => {
     if (res.status === 'rejected') {
       failed += 1;
-      const target = $(loaders[i][2]);
-      if (target && !target.querySelector('table, .provider-card, svg')) setState(target, 'error', `Không tải được: ${res.reason && res.reason.message || res.reason}`);
+      showLoadError(loaders[i][2], res.reason && res.reason.message || res.reason);
     }
   });
-  if (failed < results.length) { lastUpdated = new Date(); tickRelative(); }
   return failed;
 }
 
-async function refreshAll(includeConfig) {
+// fresh: nút Làm mới - server đo lại mọi phần, không dùng cache. Trả số phần lỗi.
+async function loadOverview(fresh) {
+  let d;
+  try {
+    d = await api(`/admin/api/overview?hours=${rangeHours()}${fresh ? '&fresh=1' : ''}`);
+  } catch (e) {
+    LIVE_LOADERS.forEach(([, , id]) => showLoadError(id, e.message));
+    return LIVE_LOADERS.length;
+  }
+  const errors = d.errors || {}, ages = d.ages || {};
+  let failed = 0;
+  LIVE_LOADERS.forEach(([key, render, id]) => {
+    try {
+      if (errors[key] || d[key] == null) throw new Error(errors[key] || 'không có dữ liệu');
+      render(d[key]);
+      const minutes = Math.floor((ages[key] || 0) / 60);
+      if (AGED_SECTIONS.includes(key) && minutes > 0) {
+        $(id).insertAdjacentHTML('beforeend', `<p class="muted small">Số liệu đo cách đây ${esc(minutes)} phút (máy chủ đo lại 5 phút/lần; bấm Làm mới để đo ngay).</p>`);
+      }
+    } catch (e) {
+      failed += 1;
+      showLoadError(id, e.message);
+    }
+  });
+  if (failed < LIVE_LOADERS.length) { lastUpdated = new Date(); tickRelative(); }
+  return failed;
+}
+
+async function refreshAll(includeConfig, fresh) {
   if (refreshing) return;
   refreshing = true;
   const btn = $('refresh-btn');
   btn.setAttribute('aria-busy', 'true');
   updateRangeLabels();
   try {
-    const failed = await runLoaders(includeConfig ? [...LIVE_LOADERS, ...CONFIG_LOADERS] : LIVE_LOADERS);
+    const counts = await Promise.all([loadOverview(fresh), includeConfig ? runLoaders(CONFIG_LOADERS) : 0]);
+    const failed = counts[0] + counts[1];
     if (failed && includeConfig) msg(`${failed} mục không tải được.`, true);
   } finally {
     btn.removeAttribute('aria-busy');
@@ -1714,16 +1750,16 @@ function applyAutoRefresh() {
   clearInterval(autoTimer);
   const ms = parseInt($('auto-refresh').value, 10) || 0;
   savePref('admin.autoRefresh', String(ms));
-  if (ms > 0) autoTimer = setInterval(() => { if (!document.hidden) refreshAll(false); }, ms);
+  if (ms > 0) autoTimer = setInterval(() => { if (!document.hidden) refreshAll(false, false); }, ms);
 }
 
-$('refresh-btn').addEventListener('click', () => refreshAll(true));
+$('refresh-btn').addEventListener('click', () => refreshAll(true, true));
 $('auto-refresh').addEventListener('change', applyAutoRefresh);
 function onRangeChange() {
   savePref('admin.hours', String(rangeHours()));
   updateRangeLabels();
   ['usage-table', 'usage-models-table', 'outcomes-table', 'chart'].forEach(id => { $(id).innerHTML = '<div class="skeleton"><i></i><i></i><i></i></div>'; });
-  runLoaders([['usage', loadUsage, 'usage-table'], ['models', loadUsageModels, 'usage-models-table'], ['outcomes', loadOutcomes, 'outcomes-table'], ['daily', loadDaily, 'chart']]);
+  loadOverview(false);
 }
 $('range').addEventListener('click', ev => {
   const b = ev.target.closest('button');
@@ -1741,7 +1777,7 @@ $('range').addEventListener('keydown', ev => {
   next.focus();
   onRangeChange();
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden && parseInt($('auto-refresh').value, 10) > 0) refreshAll(false); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && parseInt($('auto-refresh').value, 10) > 0) refreshAll(false, false); });
 
 document.querySelectorAll('.logout-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
@@ -1810,11 +1846,11 @@ showTab(tabFromHash());
 (function init() {
   const hours = loadPref('admin.hours', '168');
   setRange(['24', '168', '720'].includes(hours) ? hours : '168');
-  const auto = loadPref('admin.autoRefresh', '30000');
+  const auto = loadPref('admin.autoRefresh', '60000');
   if (Array.from($('auto-refresh').options).some(o => o.value === auto)) $('auto-refresh').value = auto;
   updateRangeLabels();
   applyAutoRefresh();
-  refreshAll(true);
+  refreshAll(true, false);
 })();
 </script>
 </body>

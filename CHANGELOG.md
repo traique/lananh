@@ -11,6 +11,45 @@ Quy ước:
 - Tăng Y khi có tính năng mới, Z khi chỉ sửa lỗi, X khi thay đổi lớn làm đổi cách dùng cũ.
 - Các bản 0.x được đánh số lại sau, gom theo các PR đã merge (#1 - #46).
 
+## 1.6.0 - 2026-11-27
+
+- Zalo → Facebook: bài xem trước, /fb_nhom, /fb_boloc, /fb_loclai hiện tên nhóm Zalo thay cho
+  dãy số ID.
+- Lọc trùng so chung mọi nhóm nguồn: một deal chia sẻ ở nhiều nhóm chỉ vào hàng chờ 1 lần,
+  nhận ra cả bài đăng lại thêm/bớt vài dòng, người bán đăng lại ảnh cũ cùng giá, ảnh bị nén
+  lại. Cùng mẫu nhưng khác giá vẫn là deal mới.
+- /fb_xem cho biết bài bị đăng lại mấy lần, ở nhóm nào; /fb_boloc thống kê theo từng nhóm;
+  /fb_loclai bỏ luôn bài trùng giữa các nhóm đang nằm trong hàng chờ.
+- Bỏ bài hỏi xin link, tuyển CTV, vay tiền... khi bài không có giá và không có link Shopee
+  (tắt bằng FACEBOOK_SKIP_NON_SALE_POSTS=0).
+- Zalo: câu trả lời quá lâu (gateway đã báo lỗi) vẫn được gửi bù khi xong; tin nhắc, tổng
+  kết, thông báo tới gần như tức thì.
+- Zalo: Python bận hoặc vừa khởi động lại thì tin chữ/ảnh/thoại tự gửi lại thay vì báo lỗi
+  ngay; khi deploy, tin dài gửi dở không bị gửi lặp từ đầu, bài Facebook đang gom được gửi nốt.
+- Zalo: chưa khôi phục được phiên lúc khởi động thì báo anh và tự thử lại; phiên bị Zalo từ
+  chối thì báo ngay để /zalo quét QR.
+- /phantich nhanh hơn: phe lạc quan và thận trọng tranh luận trong 1 lượt, bớt 2 lượt AI và
+  các khoảng chờ 3 giây; hỏi lại cùng mã trong 15 phút chỉ viết lại phần diễn giải.
+- "So sánh A B C": lấy dữ liệu các mã cùng lúc, 2 mã đầu có tranh luận đầy đủ.
+- Mã UPCOM/HNX: phiên trần/sàn hợp lệ không còn bị coi là giá chưa điều chỉnh; ngưỡng sát
+  trần/gần sàn theo biên độ từng sàn. Bỏ dòng "xác suất model thống kê".
+- Nhắc việc gửi đúng giờ hẹn; vòng gửi nhắc tự chạy lại khi gặp lỗi bất ngờ và báo anh.
+- Lượt chat của anh không còn phải chờ khi có việc nền /viec và thành viên Zalo cùng chat.
+- Khi 9Router lỗi, Groq trả lời được nhiều lượt hơn; câu trả lời không còn bị cụt im lặng khi
+  nhà cung cấp lỗi giữa chừng; /agent tổng hợp từ dữ liệu đã tra thay vì báo quá bước.
+- /gia và tra web không còn số trích dẫn kiểu [1]; giọng chat ít lẫn chữ Trung/Nhật/Hàn.
+- Web nhẹ hơn: trang và CSS được nén (trang lễ hội 120 KB còn 26 KB), trang không đổi xem lại
+  gần như không tốn dữ liệu, phông chữ không làm chậm lúc mở.
+- Trang quản trị tự làm mới 1 lần/60 giây bằng 1 request; khoá phiên mới nên cần đăng nhập
+  lại 1 lần; chặn thao tác gửi từ trang web khác.
+- Zoom: câu trả lời tới 4.096 ký tự gửi 1 tin. App màn hình chỉ dùng HTTPS, dữ liệu không đổi
+  thì không tải lại.
+- Bot khởi động nhanh, nhẹ hơn (biên dịch sẵn, gỡ thư viện không dùng); log không ghi nội dung
+  tin thoại, khoá bí mật lỡ lọt vào chi tiết lỗi cũng được che.
+- DB: bot không còn treo khi DB đang chạy lệnh dài; mỗi lệnh 1 vòng mạng thay vì 2, ít truy
+  vấn khi rảnh; Zalo không còn lỗi lệnh đầu tiên sau khi Supabase cắt kết nối rảnh. /status có
+  thêm dòng pool kết nối DB.
+
 ## 1.5.0 - 2026-11-25
 
 - Tín hiệu cổ phiếu từ nhóm Zalo: em đọc các nhóm chứng khoán đang theo dõi, thấy ai gợi ý

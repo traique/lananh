@@ -1,7 +1,11 @@
-"""Text command implementation for non-Telegram channels."""
+"""Lệnh / trên Zalo/Zoom (kênh ngoài Telegram): bảng lệnh sinh từ danh bạ
+services/command_catalog.py (cùng nguồn với bảng lệnh Telegram của bot_app.py), mỗi
+bộ xử lý ở đây trả (tin gửi đi, "api" nếu dùng provider dự phòng)."""
 
 import base64
 import contextvars
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 import messages
 from ai import agnes_client, orchestrator, router9_client, tavily_client
@@ -9,6 +13,7 @@ from ai.timeouts import TurnTimeoutError
 from core import config, database as db, version
 from core.text_utils import parse_on_off
 from services import (
+    command_catalog,
     conversation_log,
     divination_commands,
     image_prompt,
@@ -33,7 +38,7 @@ from services import (
     routines,
     voice_reply,
 )
-from services import turn_control
+from services import runtime_status, turn_control
 from services.telemetry import telemetry
 
 # /help theo vai trò: thành viên Zalo chỉ thấy lệnh mình dùng được (không có
@@ -511,215 +516,352 @@ async def _generate_image(
     return [], None
 
 
+# ─── Bảng lệnh Zalo/Zoom ─────────────────────────────────────────────────────
+# Lệnh nào tới bộ xử lý nào, lệnh nào chỉ admin, tên phụ: khai báo ở
+# services/command_catalog.py (``chat``, ``chat_admin``, ``chat_aliases``) - cùng nguồn
+# với bảng lệnh Telegram của bot_app.py. Mỗi bộ xử lý đăng ký bằng @_handles("<tên>").
+
+UNSUPPORTED = "Lệnh chưa được hỗ trợ. Gõ /help để xem danh sách."
+ADMIN_ONLY = "Lệnh này chỉ dành cho admin."
+
+Reply = tuple[list[str], str | None]
+
+
+@dataclass(frozen=True, slots=True)
+class CommandCall:
+    user_id: int
+    command: str  # "/tuvi": chữ thường, đã bỏ "@tên_bot"
+    argument: str
+    is_admin: bool
+    channel: str
+
+
+Handler = Callable[[CommandCall], Awaitable[Reply | None]]
+_HANDLERS: dict[str, Handler] = {}
+
+
+def _handles(key: str) -> Callable[[Handler], Handler]:
+    def register(handler: Handler) -> Handler:
+        _HANDLERS[key] = handler
+        return handler
+
+    return register
+
+
+def handler_keys() -> frozenset[str]:
+    """Tên các bộ xử lý (test kiểm danh bạ lệnh chỉ trỏ tới tên có thật)."""
+    return frozenset(_HANDLERS)
+
+
+def _listed(outputs: list[str] | None) -> Reply | None:
+    return None if outputs is None else (outputs, None)
+
+
+@_handles("help")
+async def _help_cmd(call: CommandCall) -> Reply:
+    argument = call.argument if call.command == "/help" else ""
+    return [help_text(call.user_id, argument, call.is_admin, call.channel)], None
+
+
+@_handles("feedback")
+async def _feedback_cmd(call: CommandCall) -> Reply | None:
+    # /sai [lý do], /danhgia: đánh giá câu trả lời (services/answer_feedback.py).
+    return _listed(
+        await answer_feedback.handle_command(
+            call.command, call.argument, call.user_id, call.channel
+        )
+    )
+
+
+@_handles("chuy")
+async def _chuy_cmd(call: CommandCall) -> Reply:
+    # "Có gì cần chú ý" (code, không AI).
+    return [await attention_text(call.user_id, call.channel, call.is_admin)], None
+
+
+@_handles("yenlang")
+async def _yenlang_cmd(call: CommandCall) -> Reply:
+    # Giờ yên lặng của chính người gõ.
+    you = reply_audience.forms()[0]
+    return [await notify_hub.yenlang(call.user_id, call.argument, you=you)], None
+
+
+@_handles("viec")
+async def _viec_cmd(call: CommandCall) -> Reply | None:
+    # Giao việc chạy nền.
+    return _listed(
+        await background_jobs.handle_command(
+            call.command, call.argument, call.user_id, call.channel, is_admin=call.is_admin
+        )
+    )
+
+
+@_handles("lichtacvu")
+async def _lichtacvu_cmd(call: CommandCall) -> Reply | None:
+    # Tác vụ định kỳ chạy 1 yêu cầu AI theo lịch.
+    return _listed(
+        await routines.handle_command(
+            call.command, call.argument, call.user_id, call.channel, is_admin=call.is_admin
+        )
+    )
+
+
+@_handles("huy")
+async def _huy_cmd(call: CommandCall) -> Reply:
+    # /huy thật được xử lý TRƯỚC khoá lượt (bridge Zalo, webhook Zoom); tới
+    # được đây nghĩa là không còn việc gì đang chạy để dừng.
+    return [await turn_control.nothing_to_cancel_for(call.user_id)], None
+
+
+@_handles("divination")
+async def _divination_cmd(call: CommandCall) -> Reply | None:
+    # /lich, /tsh, /tuvi, /battu, /kymon...: tính bằng code (không AI); *_chitiet mới gọi AI.
+    return _listed(
+        await divination_commands.handle(call.command, call.argument, call.user_id, call.channel)
+    )
+
+
+@_handles("daily")
+async def _daily_cmd(call: CommandCall) -> Reply | None:
+    # /vang, /tygia, /xang, /xoso, /thoitiet, /bantin: số liệu thật tính bằng code.
+    return _listed(
+        await daily_commands.handle(call.command, call.argument, call.user_id, call.channel)
+    )
+
+
+@_handles("reminder")
+async def _reminder_cmd(call: CommandCall) -> Reply | None:
+    # /nhac, /ngaynho: nhắc việc + ngày nhớ (giờ tính bằng code).
+    return _listed(
+        await reminder_commands.handle(call.command, call.argument, call.user_id, call.channel)
+    )
+
+
+@_handles("expense")
+async def _expense_cmd(call: CommandCall) -> Reply | None:
+    # /chitieu, /chitieu_xoa: chi tiêu cá nhân (cộng bằng SQL).
+    return _listed(await expense_service.handle_command(call.command, call.argument, call.user_id))
+
+
+@_handles("nutrition")
+async def _nutrition_cmd(call: CommandCall) -> Reply | None:
+    # /an: nhật ký ăn uống (kcal ước lượng tra bảng soạn sẵn, không AI mặc định).
+    return _listed(
+        await nutrition_service.handle_command(call.command, call.argument, call.user_id)
+    )
+
+
+@_handles("noi")
+async def _noi_cmd(call: CommandCall) -> Reply:
+    # /noi on|off|auto: trả lời kèm tin thoại của CHÍNH người gõ.
+    return [await voice_reply.noi_command(call.user_id, call.argument, channel=call.channel)], None
+
+
+@_handles("prompt")
+async def _prompt_cmd(call: CommandCall) -> Reply:
+    return await _prompt(call.user_id, call.argument, call.channel)
+
+
+@_handles("gia")
+async def _gia_cmd(call: CommandCall) -> Reply:
+    return await _price(call.user_id, call.argument, call.channel)
+
+
+@_handles("dich")
+async def _dich_cmd(call: CommandCall) -> Reply:
+    return await _translate(call.user_id, call.argument, call.channel)
+
+
+@_handles("anh")
+async def _anh_cmd(call: CommandCall) -> Reply:
+    return await _generate_image(call.argument, call.is_admin, call.channel, call.user_id)
+
+
+@_handles("reset")
+async def _reset_cmd(call: CommandCall) -> Reply:
+    await memory_service.flush_before_reset(call.user_id)
+    await orchestrator.reset_chat()
+    await db.clear_chat(call.user_id)
+    return ["🔄 Đã xoá ngữ cảnh hội thoại."], None
+
+
+@_handles("memory")
+async def _memory_cmd(call: CommandCall) -> Reply | None:
+    # /memory, /forget, /quen, /nho, /ghim, /notes, /xoaghichu, /xuatdulieu,
+    # /xoadulieu: trí nhớ/dữ liệu của CHÍNH người gõ (services/memory_commands.py).
+    reply = await memory_commands.handle(
+        call.command, call.argument, call.user_id, channel=call.channel, about=_about(call.user_id)
+    )
+    return None if reply is None else (reply.messages, None)
+
+
+@_handles("history")
+async def _history_cmd(call: CommandCall) -> Reply:
+    rows = await db.get_history(call.user_id, limit=10)
+    return (
+        ["Chưa có lịch sử nào."]
+        if not rows
+        else [
+            "🕙 10 lượt gần nhất:\n"
+            + "\n".join(
+                f"• [{kind}] {prompt[:80]} ({created[:16].replace('T', ' ')})"
+                for kind, prompt, created, _ in rows
+            )
+        ]
+    ), None
+
+
+# Các lệnh dưới (trừ /loi) có chat_admin=True trong danh bạ: /status, /userouter9, /model
+# đổi CẤU HÌNH TOÀN CỤC (provider, model chat) - ảnh hưởng MỌI người dùng trên MỌI kênh;
+# /rag, /agent đụng kho kiến thức riêng của chủ bot. Chỉ admin (Zalo: role=admin; Zoom chỉ
+# có đúng 1 người pair nên is_admin mặc định True) mới tới được các bộ xử lý này.
+
+
+@_handles("agent")
+async def _agent_cmd(call: CommandCall) -> Reply:
+    return await _agent(call.user_id, call.argument, call.channel)
+
+
+@_handles("rag")
+async def _rag_cmd(call: CommandCall) -> Reply:
+    return await _rag(call.user_id, call.argument, call.channel)
+
+
+@_handles("ragxuly")
+async def _ragxuly_cmd(call: CommandCall) -> Reply:
+    return await _ragxuly(call.user_id, call.argument)
+
+
+@_handles("bangtinsang")
+async def _bangtinsang_cmd(call: CommandCall) -> Reply:
+    return await _morning_news_now(), None
+
+
+@_handles("tintuc")
+async def _tintuc_cmd(call: CommandCall) -> Reply:
+    return await _news_now(), None
+
+
+@_handles("phienban")
+async def _phienban_cmd(call: CommandCall) -> Reply:
+    return [release_notes.history_text(call.argument)], None
+
+
+@_handles("status")
+async def _status_cmd(call: CommandCall) -> Reply:
+    state = orchestrator.get_provider_state_snapshot()
+    latency = "\n".join(await provider_health.latency_lines())
+    live = "\n".join(await provider_health.live_lines())
+    return [
+        f"🏷️ Phiên bản: {version.label()} (/phienban)\n"
+        f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}\n"
+        f"{await search_status.search_mode_line()}\n"
+        f"{runtime_status.db_pool_line()}"
+        + (f"\n{live}" if live else "")
+        + (f"\n\n{latency}" if latency else "")
+    ], None
+
+
+@_handles("loi")
+async def _loi_cmd(call: CommandCall) -> Reply:
+    # Lỗi gom theo loại (services/error_digest.py) - chỉ chủ bot (Zoom; Telegram có
+    # handler riêng), admin Zalo không xem log hệ thống.
+    if not await reply_audience.is_owner(call.user_id):
+        return ["Lệnh này chỉ dành cho chủ bot."], None
+    from services import error_digest
+
+    return [await error_digest.build_report()], None
+
+
+@_handles("thongke")
+async def _thongke_cmd(call: CommandCall) -> Reply:
+    # Dùng chung logic/format với Telegram - xem services/usage_stats.py.
+    hours = usage_stats.parse_thongke_hours(call.argument)
+    return [await usage_stats.build_thongke_text(hours, use_html=False)], None
+
+
+@_handles("userouter9")
+async def _userouter9_cmd(call: CommandCall) -> Reply:
+    ok, detail = await orchestrator.try_router9_now()
+    return (
+        ["✅ 9Router hoạt động, đã chuyển về 9Router."]
+        if ok
+        else [f"❌ 9Router vẫn lỗi: {detail[:250]}"]
+    ), None
+
+
+@_handles("router9")
+async def _router9_cmd(call: CommandCall) -> Reply:
+    toggle = parse_on_off(call.argument)
+    if toggle is True:
+        await orchestrator.set_router9_enabled(True)
+        return ["✅ Đã bật 9Router."], None
+    if toggle is False:
+        await orchestrator.set_router9_enabled(False)
+        return ["🔴 Đã tắt 9Router cho tới khi bật lại bằng /router9 on."], None
+    enabled = orchestrator.get_provider_state_snapshot()["router9_enabled"]
+    return [
+        f"9Router đang {'BẬT' if enabled else 'TẮT'}. Dùng /router9 on hoặc /router9 off để đổi."
+    ], None
+
+
+@_handles("tavily")
+async def _tavily_cmd(call: CommandCall) -> Reply:
+    toggle = parse_on_off(call.argument)
+    if toggle is True:
+        await tavily_client.set_enabled(True)
+        return [
+            f"✅ Đã bật tra web Tavily trước khi trả lời.\n{await search_status.search_mode_line()}"
+        ], None
+    if toggle is False:
+        await tavily_client.set_enabled(False)
+        return [
+            "🔴 Đã tắt Tavily. Câu cần thông tin mới em sẽ dùng web search của chính "
+            f"provider đang trả lời.\n{await search_status.search_mode_line()}"
+        ], None
+    enabled = await tavily_client.get_enabled()
+    return [
+        f"Tavily đang {'BẬT' if enabled else 'TẮT'}.\n{await search_status.search_mode_line()}\n"
+        "Dùng /tavily on hoặc /tavily off để đổi."
+    ], None
+
+
+@_handles("model")
+async def _model_cmd(call: CommandCall) -> Reply:
+    argument = call.argument
+    if not argument:
+        current = await router9_client.get_preferred_model_name()
+        return [
+            f"🧠 Model hiện tại: {current or 'tự động'}\nĐổi bằng /model <tên>; mặc định bằng /model auto\n"
+            f"⚠️ Model này chỉ áp dụng khi dùng 9Router — nếu bot tự chuyển sang API dự "
+            f"phòng, API luôn dùng model mặc định ({config.GOOGLE_AI_STUDIO_MODEL})."
+        ], None
+    if argument.lower() in {"auto", "default", "reset"}:
+        await router9_client.set_preferred_model_name(None)
+        await orchestrator.reset_chat()
+        return ["🔄 Đã về model tự động."], None
+    name = await router9_client.find_model(argument)
+    if name is None:
+        return [f"Không tìm thấy model khớp “{argument}”."], None
+    await router9_client.set_preferred_model_name(name)
+    await orchestrator.reset_chat()
+    return [f"✅ Đã đổi model sang {name}."], None
+
+
 async def maybe_handle_command(
     user_id: int, text: str, is_admin: bool = True, channel: str = "zalo"
 ) -> tuple[list[str], str | None] | None:
+    """Lệnh / trên Zalo/Zoom theo bảng lệnh sinh từ services/command_catalog.py; None =
+    không phải lệnh. Lệnh danh mục, nhóm Zalo, Facebook (CHAT_UPSTREAM) đã được nhánh
+    trước nhận - tới đây thì như lệnh lạ."""
     if not text.startswith("/"):
         return None
     command = text.split(maxsplit=1)[0].lower().split("@", 1)[0]
-    argument = _arg(text)
-
-    if command in {"/start", "/help"}:
-        return [help_text(user_id, argument if command == "/help" else "", is_admin, channel)], None
-    # /sai [lý do], /danhgia: đánh giá câu trả lời (services/answer_feedback.py).
-    feedback = await answer_feedback.handle_command(command, argument, user_id, channel)
-    if feedback is not None:
-        return feedback, None
-    # /chuy: "có gì cần chú ý" (code, không AI); /yenlang: giờ yên lặng của chính mình.
-    if command == "/chuy":
-        return [await attention_text(user_id, channel, is_admin)], None
-    if command == "/yenlang":
-        you = reply_audience.forms()[0]
-        return [await notify_hub.yenlang(user_id, argument, you=you)], None
-    # /viec: giao việc chạy nền; /lichtacvu: tác vụ định kỳ chạy 1 yêu cầu AI theo lịch.
-    jobs_reply = await background_jobs.handle_command(
-        command, argument, user_id, channel, is_admin=is_admin
-    )
-    if jobs_reply is not None:
-        return jobs_reply, None
-    routine_reply = await routines.handle_command(
-        command, argument, user_id, channel, is_admin=is_admin
-    )
-    if routine_reply is not None:
-        return routine_reply, None
-    if command == "/huy":
-        # /huy thật được xử lý TRƯỚC khoá lượt (bridge Zalo, webhook Zoom); tới
-        # được đây nghĩa là không còn việc gì đang chạy để dừng.
-        return [await turn_control.nothing_to_cancel_for(user_id)], None
-    # /lich, /tsh, /tuvi, /kymon: tính bằng code (không AI); *_chitiet mới gọi AI.
-    divination = await divination_commands.handle(command, argument, user_id, channel)
-    if divination is not None:
-        return divination, None
-    # /vang, /tygia, /xang, /xoso, /thoitiet, /bantin: số liệu thật tính bằng code.
-    daily = await daily_commands.handle(command, argument, user_id, channel)
-    if daily is not None:
-        return daily, None
-    # /nhac, /ngaynho: nhắc việc + ngày nhớ (giờ tính bằng code).
-    reminder = await reminder_commands.handle(command, argument, user_id, channel)
-    if reminder is not None:
-        return reminder, None
-    # /chitieu, /chitieu_xoa: chi tiêu cá nhân (cộng bằng SQL).
-    expense = await expense_service.handle_command(command, argument, user_id)
-    if expense is not None:
-        return expense, None
-    # /an: nhật ký ăn uống (kcal ước lượng tra bảng soạn sẵn, không AI mặc định).
-    meals = await nutrition_service.handle_command(command, argument, user_id)
-    if meals is not None:
-        return meals, None
-    # /noi on|off|auto: trả lời kèm tin thoại của CHÍNH người gõ.
-    if command == "/noi":
-        return [await voice_reply.noi_command(user_id, argument, channel=channel)], None
-    if command == "/prompt":
-        return await _prompt(user_id, argument, channel)
-    if command == "/gia":
-        return await _price(user_id, argument, channel)
-    if command == "/dich":
-        return await _translate(user_id, argument, channel)
-    if command == "/anh":
-        return await _generate_image(argument, is_admin, channel, user_id)
-    if command == "/reset":
-        await memory_service.flush_before_reset(user_id)
-        await orchestrator.reset_chat()
-        await db.clear_chat(user_id)
-        return ["🔄 Đã xoá ngữ cảnh hội thoại."], None
-    # /memory, /forget, /quen, /nho, /ghim, /notes, /xoaghichu, /xuatdulieu,
-    # /xoadulieu: trí nhớ/dữ liệu của CHÍNH người gõ (services/memory_commands.py).
-    memory_reply = await memory_commands.handle(
-        command, argument, user_id, channel=channel, about=_about(user_id)
-    )
-    if memory_reply is not None:
-        return memory_reply.messages, None
-    if command == "/history":
-        rows = await db.get_history(user_id, limit=10)
-        return (
-            ["Chưa có lịch sử nào."]
-            if not rows
-            else [
-                "🕙 10 lượt gần nhất:\n"
-                + "\n".join(
-                    f"• [{kind}] {prompt[:80]} ({created[:16].replace('T', ' ')})"
-                    for kind, prompt, created, _ in rows
-                )
-            ]
-        ), None
-
-    # /status, /userouter9, /model đổi CẤU HÌNH TOÀN CỤC (provider đang dùng,
-    # model chat) - ảnh hưởng MỌI người dùng trên MỌI kênh, không riêng người
-    # gõ lệnh. Chỉ admin (Zalo: role=admin; Zoom/kênh khác chỉ có đúng 1 người
-    # pair nên is_admin mặc định True) mới được đổi, để 1 thành viên thường
-    # không thể vô tình/cố ý phá cấu hình chung của cả bot.
-    # /rag: kiến thức cá nhân trong rag/ nên cũng khóa admin như /agent - thành
-    # viên thường không được mổ xẻ kho kiến thức riêng của chủ bot.
-    if (
-        command
-        in {
-            "/status",
-            "/phienban",
-            "/userouter9",
-            "/router9",
-            "/tavily",
-            "/model",
-            "/thongke",
-            "/agent",
-            "/rag",
-            "/ragxuly",
-            "/bangtinsang",
-            "/bantinsang",
-            "/tintuc",
-            "/nhomzalo",
-        }
-        and not is_admin
-    ):
-        return ["Lệnh này chỉ dành cho admin."], None
-    if command == "/agent":
-        return await _agent(user_id, argument, channel)
-    if command == "/rag":
-        return await _rag(user_id, argument, channel)
-    if command == "/ragxuly":
-        return await _ragxuly(user_id, argument)
-    if command in {"/bangtinsang", "/bantinsang"}:
-        return await _morning_news_now(), None
-    if command == "/tintuc":
-        return await _news_now(), None
-    if command == "/phienban":
-        return [release_notes.history_text(argument)], None
-    if command == "/status":
-        state = orchestrator.get_provider_state_snapshot()
-        latency = "\n".join(await provider_health.latency_lines())
-        live = "\n".join(await provider_health.live_lines())
-        return [
-            f"🏷️ Phiên bản: {version.label()} (/phienban)\n"
-            f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}\n"
-            f"{await search_status.search_mode_line()}"
-            + (f"\n{live}" if live else "")
-            + (f"\n\n{latency}" if latency else "")
-        ], None
-    if command == "/loi":
-        # Lỗi gom theo loại (services/error_digest.py) - chỉ chủ bot (Zoom; Telegram có
-        # handler riêng), admin Zalo không xem log hệ thống.
-        if not await reply_audience.is_owner(user_id):
-            return ["Lệnh này chỉ dành cho chủ bot."], None
-        from services import error_digest
-
-        return [await error_digest.build_report()], None
-    if command == "/thongke":
-        # Dùng chung logic/format với Telegram - xem services/usage_stats.py.
-        hours = usage_stats.parse_thongke_hours(argument)
-        return [await usage_stats.build_thongke_text(hours, use_html=False)], None
-    if command == "/userouter9":
-        ok, detail = await orchestrator.try_router9_now()
-        return (
-            ["✅ 9Router hoạt động, đã chuyển về 9Router."]
-            if ok
-            else [f"❌ 9Router vẫn lỗi: {detail[:250]}"]
-        ), None
-    if command == "/router9":
-        toggle = parse_on_off(argument)
-        if toggle is True:
-            await orchestrator.set_router9_enabled(True)
-            return ["✅ Đã bật 9Router."], None
-        if toggle is False:
-            await orchestrator.set_router9_enabled(False)
-            return ["🔴 Đã tắt 9Router cho tới khi bật lại bằng /router9 on."], None
-        enabled = orchestrator.get_provider_state_snapshot()["router9_enabled"]
-        return [
-            f"9Router đang {'BẬT' if enabled else 'TẮT'}. Dùng /router9 on hoặc /router9 off để đổi."
-        ], None
-    if command == "/tavily":
-        toggle = parse_on_off(argument)
-        if toggle is True:
-            await tavily_client.set_enabled(True)
-            return [
-                "✅ Đã bật tra web Tavily trước khi trả lời.\n"
-                f"{await search_status.search_mode_line()}"
-            ], None
-        if toggle is False:
-            await tavily_client.set_enabled(False)
-            return [
-                "🔴 Đã tắt Tavily. Câu cần thông tin mới em sẽ dùng web search của chính "
-                f"provider đang trả lời.\n{await search_status.search_mode_line()}"
-            ], None
-        enabled = await tavily_client.get_enabled()
-        return [
-            f"Tavily đang {'BẬT' if enabled else 'TẮT'}.\n{await search_status.search_mode_line()}\n"
-            "Dùng /tavily on hoặc /tavily off để đổi."
-        ], None
-    if command == "/model":
-        if not argument:
-            current = await router9_client.get_preferred_model_name()
-            return [
-                f"🧠 Model hiện tại: {current or 'tự động'}\nĐổi bằng /model <tên>; mặc định bằng /model auto\n"
-                f"⚠️ Model này chỉ áp dụng khi dùng 9Router — nếu bot tự chuyển sang API dự "
-                f"phòng, API luôn dùng model mặc định ({config.GOOGLE_AI_STUDIO_MODEL})."
-            ], None
-        if argument.lower() in {"auto", "default", "reset"}:
-            await router9_client.set_preferred_model_name(None)
-            await orchestrator.reset_chat()
-            return ["🔄 Đã về model tự động."], None
-        name = await router9_client.find_model(argument)
-        if name is None:
-            return [f"Không tìm thấy model khớp “{argument}”."], None
-        await router9_client.set_preferred_model_name(name)
-        await orchestrator.reset_chat()
-        return [f"✅ Đã đổi model sang {name}."], None
-    return ["Lệnh chưa được hỗ trợ. Gõ /help để xem danh sách."], None
+    entry = command_catalog.chat_entry(command)
+    if entry is not None and entry.chat_admin and not is_admin:
+        return [ADMIN_ONLY], None
+    handler = _HANDLERS.get(entry.chat) if entry is not None else None
+    if handler is None:
+        return [UNSUPPORTED], None
+    result = await handler(CommandCall(user_id, command, _arg(text), is_admin, channel))
+    return result if result is not None else ([UNSUPPORTED], None)

@@ -44,8 +44,9 @@ class PolicyParams:
     min_rr_ratio: float = 1.5
     # >= N ngày phân phối / 25 phiên -> ép risk_off (chuẩn O'Neil)
     distribution_day_threshold: int = 4
-    # Ước lượng "sát trần" cho HOSE (trần 7%) - với HNX/UPCoM (trần 10%) ngưỡng
-    # này phạt sớm một chút; chấp nhận được vì chỉ là cảnh báo T+2.5.
+    # "Sát trần" tính theo HOSE (biên độ 7%); sàn khác quy đổi theo biên độ của
+    # sàn đó (HNX 10% -> ~7,86%, UPCOM 15% -> ~11,79%), xem _band_scale. Chưa rõ
+    # sàn thì dùng nguyên mức HOSE. near_floor_pct bên dưới quy đổi y hệt.
     near_ceiling_pct: float = 5.5
     near_ceiling_strength_penalty: float = 0.15
     # B2: sizing theo % NAV
@@ -73,6 +74,42 @@ class PolicyParams:
     pullback_rsi_max: float = 68.0
     mean_reversion_pct_b_max: float = 10.0
     mean_reversion_rsi_max: float = 30.0
+    # Gate C - rủi ro phiên gần nhất (_evaluate_session): % thay đổi trong phiên,
+    # vị trí close trong biên độ ngày, volume so với TB20.
+    selloff_pct: float = -4.0
+    near_floor_pct: float = -6.0
+    close_near_low_pct: float = 25.0
+    distribution_change_pct: float = -2.5
+    distribution_volume_ratio_pct: float = 150.0
+    # Confidence = setup x w_setup + đồng thuận x w_agreement + trend score x w_trend,
+    # cộng/trừ theo regime VNINDEX rồi nhân hệ số dữ liệu degraded/thanh khoản mỏng.
+    confidence_weight_setup: float = 0.40
+    confidence_weight_agreement: float = 0.30
+    confidence_weight_trend: float = 0.30
+    risk_off_bullish_penalty: float = 0.15
+    risk_on_bullish_bonus: float = 0.05
+    risk_off_bearish_bonus: float = 0.05
+    degraded_confidence_mult: float = 0.85
+    thin_liquidity_confidence_mult: float = 0.85
+    # Stop/target (_compute_stop_target): thiếu ATR thì rủi ro = biến động lịch sử
+    # kẹp trong [min%, max%]; target dự phóng = rủi ro x reward_mult (kẹp min..max),
+    # reward_mult chỉnh theo RSI quá mua/quá bán (và tin tức - CHỈ nhánh mua, mốc
+    # tham chiếu SELL không theo tin); ngược xu hướng 3 tháng dùng hệ số riêng.
+    volatility_stop_min_pct: float = 3.0
+    volatility_stop_max_pct: float = 8.0
+    reward_mult_base: float = 1.5
+    reward_mult_news_coef: float = 0.5
+    reward_mult_min: float = 0.8
+    reward_mult_max: float = 2.5
+    reward_mult_countertrend: float = 1.0
+    reward_rsi_overbought: float = 70.0
+    reward_rsi_oversold: float = 30.0
+    reward_rsi_adj: float = 0.3
+    # Stop đặt dưới hỗ trợ (mốc vô hiệu SELL đặt trên kháng cự) một chút để tránh
+    # bị quét nhiễu; chỉ dùng mốc đó khi nó cách giá không quá N lần rủi ro ATR.
+    support_stop_mult: float = 0.99
+    resistance_invalidation_mult: float = 1.01
+    level_max_risk_mult: float = 2.0
 
 
 def _default_params_path() -> Path:
@@ -238,15 +275,6 @@ def build_trade_plan(
     )
 
 
-# Ngưỡng session risk (port từ session-risk guardrail cũ, giờ là 1 phần của
-# Gate C thay vì hậu xử lý action sau khi đã quyết định).
-_SELLOFF_PCT = -4.0
-_NEAR_FLOOR_PCT = -6.0
-_CLOSE_NEAR_LOW_PCT = 25.0
-_DISTRIBUTION_CHANGE_PCT = -2.5
-_DISTRIBUTION_VOLUME_RATIO = 150.0
-
-
 @dataclass
 class Scenario:
     name: str  # base | bull | bear
@@ -347,8 +375,17 @@ class _SessionFlags:
     reasons: list[str]
 
 
+def _band_scale(exchange: str | None) -> float:
+    """Hệ số quy đổi ngưỡng tính theo biên độ HOSE (7%) sang sàn của mã: HNX
+    10/7, UPCOM 15/7. Chưa rõ sàn -> 1 (giữ mức HOSE như trước)."""
+    band = feat.price_band_pct(exchange)
+    return band / feat.HOSE_PRICE_BAND_PCT if band else 1.0
+
+
 def _evaluate_session(
-    session: feat.SessionMetrics | None, enhanced: feat.EnhancedIndicators | None
+    session: feat.SessionMetrics | None,
+    enhanced: feat.EnhancedIndicators | None,
+    exchange: str | None = None,
 ) -> _SessionFlags:
     """Nhận diện phiên rủi ro cao để chặn BUY sai. Với cổ phiếu Việt Nam,
     volume bùng nổ trong phiên giảm mạnh/đóng sát đáy thường là phân phối
@@ -358,14 +395,18 @@ def _evaluate_session(
     if session is None:
         return _SessionFlags(False, False, False, False, False, reasons)
 
-    is_selloff = session.daily_change_pct <= _SELLOFF_PCT
-    is_near_floor_like = session.daily_change_pct <= _NEAR_FLOOR_PCT
+    # Ngưỡng session risk (port từ session-risk guardrail cũ, giờ là 1 phần của
+    # Gate C thay vì hậu xử lý action sau khi đã quyết định) - xem PolicyParams.
+    # "Gần sàn" theo biên độ của chính sàn: -6% là gần sàn HOSE (7%) nhưng chỉ
+    # là phiên giảm mạnh với UPCOM (15%).
+    is_selloff = session.daily_change_pct <= PARAMS.selloff_pct
+    is_near_floor_like = session.daily_change_pct <= PARAMS.near_floor_pct * _band_scale(exchange)
     is_close_near_low = (
-        session.close_position_pct <= _CLOSE_NEAR_LOW_PCT and session.daily_change_pct < 0
+        session.close_position_pct <= PARAMS.close_near_low_pct and session.daily_change_pct < 0
     )
     is_distribution = (
-        session.daily_change_pct <= _DISTRIBUTION_CHANGE_PCT
-        and session.volume_ratio_pct >= _DISTRIBUTION_VOLUME_RATIO
+        session.daily_change_pct <= PARAMS.distribution_change_pct
+        and session.volume_ratio_pct >= PARAMS.distribution_volume_ratio_pct
     )
 
     if is_near_floor_like:
@@ -473,7 +514,8 @@ def _detect_setup(
             reasons.append("breakout khỏi kênh Donchian 20 phiên nhưng volume chưa xác nhận rõ")
         if bias.direction == "bullish":
             strength += 0.1
-        if inputs.session is not None and inputs.session.daily_change_pct > _NEAR_CEILING_PCT:
+        near_ceiling = _NEAR_CEILING_PCT * _band_scale(inputs.exchange)
+        if inputs.session is not None and inputs.session.daily_change_pct > near_ceiling:
             strength -= _NEAR_CEILING_STRENGTH_PENALTY
             reasons.append(
                 "mua đuổi phiên tăng sát trần: hàng về T+2.5, nếu breakout fail sẽ không kịp thoát"
@@ -541,20 +583,24 @@ def _compute_confidence(
         agreement_component = (agreement + 1) / 2  # -1..1 -> 0..1, càng bullish càng cao
         trend_component = (inputs.trend_score / 100) if inputs.trend_score is not None else 0.5
 
-    confidence = setup_strength * 0.40 + agreement_component * 0.30 + trend_component * 0.30
+    confidence = (
+        setup_strength * PARAMS.confidence_weight_setup
+        + agreement_component * PARAMS.confidence_weight_agreement
+        + trend_component * PARAMS.confidence_weight_trend
+    )
 
     if regime == "risk_off" and bias.direction == "bullish":
-        confidence -= 0.15
+        confidence -= PARAMS.risk_off_bullish_penalty
     elif regime == "risk_on" and bias.direction == "bullish":
-        confidence += 0.05
+        confidence += PARAMS.risk_on_bullish_bonus
     elif regime == "risk_off" and bias.direction == "bearish":
-        confidence += 0.05
+        confidence += PARAMS.risk_off_bearish_bonus
 
     if inputs.quality.status == "degraded":
-        confidence *= 0.85
+        confidence *= PARAMS.degraded_confidence_mult
 
     if inputs.liquidity and inputs.liquidity.is_thin:
-        confidence *= 0.85
+        confidence *= PARAMS.thin_liquidity_confidence_mult
 
     return round(feat.clamp(confidence, 0.0, 1.0), 2)
 
@@ -637,6 +683,10 @@ def _compute_stop_target(
     direction "exit" (SELL - tham khảo khi đang giữ): stop_price = mốc VÔ HIỆU
     tín hiệu SELL (phía trên giá), target_price = mốc hỗ trợ tham chiếu nếu giá
     giảm tiếp (phía dưới giá) - KHÔNG phải mức "chốt lời/cắt lỗ" để chờ bán.
+    Mốc dự phóng của nhánh này KHÔNG phụ thuộc tin tức: news_impact là điểm cảm
+    xúc theo từ khoá tiêu đề Google News, cùng một chuỗi giá mà mỗi lần tra lại
+    in ra một mốc tham chiếu khác. (Nhánh buy: target dự phóng không bao giờ
+    thành số BUY nên không cần chặn.)
     """
     if price <= 0 or direction == "watch":
         return None, None, None, "watch"
@@ -650,23 +700,36 @@ def _compute_stop_target(
         )
         basis = "atr"
     else:
-        risk_pct = feat.clamp(stats.volatility, 3, 8)
+        risk_pct = feat.clamp(
+            stats.volatility, PARAMS.volatility_stop_min_pct, PARAMS.volatility_stop_max_pct
+        )
         risk_amount = price * risk_pct / 100
         basis = "volatility_pct"
 
     rsi = stats.rsi14
-    rsi_adj = 0.0 if rsi is None else (-0.3 if rsi > 70 else (0.3 if rsi < 30 else 0.0))
-    news_boost = feat.clamp(news_impact, -1, 1)
+    rsi_adj = 0.0
+    if rsi is not None and rsi > PARAMS.reward_rsi_overbought:
+        rsi_adj = -PARAMS.reward_rsi_adj
+    elif rsi is not None and rsi < PARAMS.reward_rsi_oversold:
+        rsi_adj = PARAMS.reward_rsi_adj
     support = support_resistance.support if support_resistance else None
+    level_reach = risk_amount * PARAMS.level_max_risk_mult
 
     if direction == "buy":
+        news_boost = feat.clamp(news_impact, -1, 1)
         reward_mult = (
-            feat.clamp(1.5 + news_boost * 0.5 + rsi_adj, 0.8, 2.5) if stats.trend_3m >= 0 else 1.0
+            feat.clamp(
+                PARAMS.reward_mult_base + news_boost * PARAMS.reward_mult_news_coef + rsi_adj,
+                PARAMS.reward_mult_min,
+                PARAMS.reward_mult_max,
+            )
+            if stats.trend_3m >= 0
+            else PARAMS.reward_mult_countertrend
         )
 
-        if support is not None and 0 < support < price and (price - support) <= risk_amount * 2:
+        if support is not None and 0 < support < price and (price - support) <= level_reach:
             stop = feat.round_order_price(
-                support * 0.99, exchange
+                support * PARAMS.support_stop_mult, exchange
             )  # dưới support 1 chút, tránh bị quét nhiễu đúng vùng hỗ trợ
             basis = f"{basis}+support"
         else:
@@ -704,18 +767,27 @@ def _compute_stop_target(
         return stop, target, rr, basis
 
     # exit reference cho SELL: invalidation ở TRÊN giá (nếu giá vượt lên thì
-    # tín hiệu SELL bị vô hiệu), mốc hỗ trợ tham chiếu ở DƯỚI giá.
+    # tín hiệu SELL bị vô hiệu), mốc hỗ trợ tham chiếu ở DƯỚI giá. Không cộng
+    # tin tức (xem docstring): cùng chuỗi giá -> cùng mốc tham chiếu.
     reward_mult = (
-        feat.clamp(1.5 - news_boost * 0.5 - rsi_adj, 0.8, 2.5) if stats.trend_3m <= 0 else 1.0
+        feat.clamp(
+            PARAMS.reward_mult_base - rsi_adj,
+            PARAMS.reward_mult_min,
+            PARAMS.reward_mult_max,
+        )
+        if stats.trend_3m <= 0
+        else PARAMS.reward_mult_countertrend
     )
     resistance_level = support_resistance.resistance if support_resistance else None
 
     if (
         resistance_level is not None
         and resistance_level > price
-        and (resistance_level - price) <= risk_amount * 2
+        and (resistance_level - price) <= level_reach
     ):
-        invalidation = feat.round_order_price(resistance_level * 1.01, exchange)
+        invalidation = feat.round_order_price(
+            resistance_level * PARAMS.resistance_invalidation_mult, exchange
+        )
         basis = f"{basis}+resistance"
     else:
         invalidation = feat.round_order_price(price + risk_amount, exchange)
@@ -838,7 +910,7 @@ def evaluate_policy(inputs: PolicyInputs) -> Decision:
             data_quality=quality.status,
         )
 
-    session_flags = _evaluate_session(inputs.session, inputs.enhanced)
+    session_flags = _evaluate_session(inputs.session, inputs.enhanced, inputs.exchange)
     bias = _classify_bias(inputs)
     setup_type, setup_strength, setup_reasons = _detect_setup(inputs, bias, session_flags)
     confidence = _compute_confidence(inputs, bias, setup_strength, regime)

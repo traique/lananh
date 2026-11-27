@@ -309,9 +309,11 @@ async def _sync_cleaned_to_github(
     }
     encoded = base64.b64encode(cleaned.encode("utf-8")).decode("ascii")
 
-    import httpx
+    from services import http_client
 
-    async with httpx.AsyncClient(timeout=GITHUB_SYNC_TIMEOUT_SEC) as client:
+    # Client chung (keep-alive, có trần kết nối) thay vì mở client + TLS mới mỗi lần
+    # đồng bộ; token chỉ nằm trong header của từng request, không gắn vào client chung.
+    async with http_client.scoped(timeout=GITHUB_SYNC_TIMEOUT_SEC) as client:
         for attempt in range(2):
             current = await client.get(url, headers=headers, params={"ref": branch})
             sha: str | None = None
@@ -330,7 +332,7 @@ async def _sync_cleaned_to_github(
             if sha:
                 body["sha"] = sha
 
-            updated = await client.put(url, headers=headers, json=body)
+            updated = await client.request("PUT", url, headers=headers, json=body)
             if updated.status_code in {200, 201}:
                 commit = (updated.json().get("commit") or {}).get("sha", "")
                 short_sha = str(commit)[:7] if commit else ""

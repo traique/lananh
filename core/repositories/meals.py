@@ -67,7 +67,7 @@ async def count_since(pool: Any, user_id: int, within: timedelta) -> int:
     )
 
 
-async def day_rows(pool: Any, user_id: int, day: str, limit: int) -> list[dict]:
+async def day_rows(pool: Any, user_id: int, day: str, limit: int = 40) -> list[dict]:
     rows = await pool.fetch(
         f"""
         SELECT {_COLUMNS} FROM meals
@@ -115,7 +115,7 @@ async def delete(pool: Any, user_id: int, meal_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-async def recent(pool: Any, user_id: int, limit: int) -> list[dict]:
+async def recent(pool: Any, user_id: int, limit: int = 200) -> list[dict]:
     rows = await pool.fetch(
         f"""
         SELECT {_COLUMNS} FROM meals

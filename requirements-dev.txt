@@ -8,3 +8,9 @@ pip-audit>=2.10.1
 # Chỉ dùng cho job train model offline (scripts/train_trend_model.py) - runtime
 # Render KHÔNG cần sklearn: trend_model tự vô hiệu khi thiếu thư viện/model file.
 scikit-learn>=1.4
+# Không có trong image Render (gỡ khỏi requirements.txt 11/2026): numpy cho
+# scripts/benchmark_perf.py, scripts/make_site_logo.py và test/test_trend_model.py;
+# pandas chỉ cho 1 test DataFrame events() kiểu vnstock cũ
+# (test/test_stock_review_fixes.py::test_parse_events_frame_tach_co_tuc_tien_va_co_phieu).
+numpy==2.2.6
+pandas==2.2.3

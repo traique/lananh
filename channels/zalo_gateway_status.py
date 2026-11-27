@@ -13,6 +13,14 @@ list_groups(): mọi nhóm tài khoản bot đang tham gia (GET /groups) cho l�
 /nhomzalo (channels/zalo_group_list.py).
 
 refresh_groups(): báo gateway nạp lại danh sách nhóm theo dõi ngay (POST /groups/refresh).
+
+kick_outbox(): báo gateway có tin outbox mới để gửi ngay (POST /outbox/kick) thay vì
+chờ lượt poll dự phòng (ZALO_OUTBOX_POLL_MS).
+
+Mọi route của control server đòi header SECRET_HEADER = ZALO_BRIDGE_SECRET (cùng secret
+gateway dùng khi gọi /internal/zalo): /logout xoá phiên Zalo, /status trả mã QR đăng
+nhập, nên tiến trình khác trong container không được gọi tự do. control_json() dùng cho
+/zalo, /zalologout (handlers/zalo_login.py).
 """
 
 from __future__ import annotations
@@ -24,15 +32,24 @@ from typing import Any
 
 import httpx
 
+from services import http_client
+
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = httpx.Timeout(3.0, connect=1.0)
 # Trường /status được đưa lên /admin (không có qr, cookie hay nội dung tin).
 _FIELDS = ("state", "connected", "controllerPaired", "stats", "queue")
+# Header xác thực control server (zalo-gateway/src/control-server.ts CONTROL_SECRET_HEADER).
+SECRET_HEADER = "x-zalo-bridge-secret"
 # Route control server của gateway (zalo-gateway/src/control-server.ts).
 FORGET_PATH = "/known/forget"
 GROUPS_PATH = "/groups"
 REFRESH_GROUPS_PATH = "/groups/refresh"
+KICK_OUTBOX_PATH = "/outbox/kick"
+# Kick chạy ngay sau khi enqueue outbox: chờ tối đa ~1,5s, không làm chậm nơi gọi.
+_KICK_TIMEOUT = httpx.Timeout(1.5, connect=0.5)
+# /zalo, /zalologout: gateway trả lời ngay (QR do gateway tạo nền, Python tự hỏi lại).
+_CONTROL_TIMEOUT = httpx.Timeout(10.0)
 # Gateway gọi Zalo getAllGroups + getGroupInfo theo lô 20 nhóm (tối đa 200 nhóm, thường
 # vài giây) và tự bỏ chờ sau 25s. Trần ngắn vì lệnh chạy trong khoá lượt, và Telegram xử
 # lý tin tuần tự: chờ lâu chặn mọi lệnh khác của chủ bot.
@@ -65,11 +82,25 @@ def _control_url() -> str:
     return f"{_control_base()}/status"
 
 
-async def _fetch_status() -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        response = await client.get(_control_url())
+def control_headers() -> dict[str, str]:
+    """Header xác thực control server. Thiếu ZALO_BRIDGE_SECRET thì gửi rỗng - gateway
+    từ chối (403) chứ không bao giờ mở cửa (gateway cũng không chạy nếu thiếu secret)."""
+    return {SECRET_HEADER: os.getenv("ZALO_BRIDGE_SECRET", "").strip()}
+
+
+async def control_json(
+    method: str, path: str, *, request_timeout: httpx.Timeout = _CONTROL_TIMEOUT
+) -> Any:
+    """Gọi 1 route control server kèm secret qua client HTTP dùng chung; ném
+    httpx.HTTPError khi không kết nối được hoặc gateway trả lỗi, trả JSON."""
+    async with http_client.scoped(timeout=request_timeout, headers=control_headers()) as client:
+        response = await client.request(method, f"{_control_base()}{path}")
         response.raise_for_status()
         return response.json()
+
+
+async def _fetch_status() -> dict[str, Any]:
+    return await control_json("GET", "/status", request_timeout=_TIMEOUT)
 
 
 async def snapshot() -> dict[str, Any]:
@@ -94,7 +125,7 @@ async def forget_sender(external_id: str) -> bool:
     if not _enabled() or not external_id:
         return False
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with http_client.scoped(timeout=_TIMEOUT, headers=control_headers()) as client:
             response = await client.post(
                 f"{_control_base()}{FORGET_PATH}", json={"id": external_id}
             )
@@ -113,13 +144,30 @@ async def refresh_groups() -> bool:
     if not _enabled():
         return False
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with http_client.scoped(timeout=_TIMEOUT, headers=control_headers()) as client:
             response = await client.post(f"{_control_base()}{REFRESH_GROUPS_PATH}")
             response.raise_for_status()
     except httpx.HTTPError as exc:
         logger.info("Chưa báo được gateway Zalo nạp lại nhóm (tự nạp theo chu kỳ): %s", exc)
         return False
     return True
+
+
+async def kick_outbox() -> None:
+    """Báo gateway có tin outbox mới để gửi NGAY (POST /outbox/kick; gateway gộp các lần
+    kick sát nhau thành 1 lượt) thay vì chờ lượt poll dự phòng ZALO_OUTBOX_POLL_MS. Gọi
+    SAU khi tin đã ghi vào DB. Không bao giờ ném và chờ tối đa ~1,5s: gateway tắt hoặc
+    không trả lời thì chỉ log debug - tin vẫn nằm trong DB, tới ở lượt poll kế. An toàn
+    khi chạy không chờ (fire-and-forget)."""
+    if not _enabled():
+        return
+    try:
+        async with http_client.scoped(timeout=_KICK_TIMEOUT, headers=control_headers()) as client:
+            response = await client.post(f"{_control_base()}{KICK_OUTBOX_PATH}")
+            response.raise_for_status()
+    except Exception as exc:
+        # Kick chỉ là tối ưu độ trễ: mọi lỗi (mạng, 403 do lệch secret...) đều bỏ qua.
+        logger.debug("Chưa kick được outbox của gateway Zalo (tin tới ở lượt poll kế): %r", exc)
 
 
 def _parse_groups(data: Any) -> tuple[list[ZaloGroup], int]:
@@ -150,7 +198,7 @@ async def list_groups() -> tuple[list[ZaloGroup], int]:
     if not _enabled():
         raise GatewayGroupsError("Gateway Zalo đang tắt (ZALO_ENABLED) nên chưa xem được nhóm.")
     try:
-        async with httpx.AsyncClient(timeout=_GROUPS_TIMEOUT) as client:
+        async with http_client.scoped(timeout=_GROUPS_TIMEOUT, headers=control_headers()) as client:
             response = await client.get(f"{_control_base()}{GROUPS_PATH}")
     except httpx.HTTPError as exc:
         logger.warning("Không lấy được danh sách nhóm từ gateway Zalo: %r", exc)

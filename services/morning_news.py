@@ -346,7 +346,11 @@ async def _choose_items(items: list[_NewsItem]) -> list[_NewsItem]:
     fenced = untrusted.wrap_untrusted(_selection_list(items), "tin RSS")
     ids: list[str] = []
     try:
-        response = await orchestrator.ask(f"{_today_line(None)} {_SELECT_TASK}\n\n{fenced}")
+        # Việc phụ 1 dòng (danh sách ID): chuỗi tiện ích Groq -> Gemini, ít token, nhiệt độ
+        # thấp - không chạy cả provider-chain chat (9Router trước, 4096 token).
+        response = await orchestrator.ask_utility(
+            f"{_today_line(None)} {_SELECT_TASK}\n\n{fenced}", max_tokens=200
+        )
         _, ids = _extract_important_ids(getattr(response, "text", None) or "")
     except Exception:
         logger.warning("morning_news: lượt chọn tin lỗi, chọn tất định.", exc_info=True)
