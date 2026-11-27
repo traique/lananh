@@ -22,12 +22,17 @@ from core.db.pool import pool_stats as pool_stats
 from core.db.pool import reset_circuit_breaker as reset_circuit_breaker
 from core.db.pool import statement_cache_size as statement_cache_size
 from core.db.pool import with_reconnect as with_reconnect
+from core.repositories import avatar as _avatar
+from core.repositories import brief as _brief
 from core.repositories import chat_history as _chat_history
+from core.repositories import expenses as _expenses
 from core.repositories import feedback as _feedback
+from core.repositories import meals as _meals
 from core.repositories import memory as _memory
 from core.repositories import observability as _observability
 from core.repositories import prompts as _prompts
 from core.repositories import quota as _quota
+from core.repositories import reminders as _reminders
 
 logger = logging.getLogger(__name__)
 
@@ -343,300 +348,52 @@ clear_user_events = _bind(_memory.clear_events)
 # ─── Nhắc việc (services/reminder_service.py, scheduler.py, migrations/019) ──
 
 
-@_with_reconnect(idempotent=False)
-async def add_reminder(
-    telegram_user_id: int,
-    message: str,
-    due_at,
-    *,
-    channel: str = "telegram",
-    recipient_id: str | None = None,
-    account_id: str = "",
-    user_jid: str = "",
-    event_key: str | None = None,
-):
-    if channel not in {"telegram", "zalo", "zoom"}:
-        raise ValueError("Kênh nhắc việc không hợp lệ.")
-    recipient_id = recipient_id or str(telegram_user_id)
-    if channel == "zalo" and not account_id:
-        raise ValueError("Thiếu tài khoản Zalo nhận nhắc việc.")
-    pool = await get_pool()
-    return await pool.fetchval(
-        """INSERT INTO reminders
-        (telegram_user_id, message, due_at, channel, recipient_id, account_id, user_jid, event_key)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT (event_key) DO UPDATE SET event_key = EXCLUDED.event_key
-        RETURNING due_at""",
-        telegram_user_id,
-        message,
-        due_at,
-        channel,
-        recipient_id,
-        account_id,
-        user_jid,
-        event_key,
-    )
-
-
-@_with_reconnect
-async def mark_reminder_sent(reminder_id: int) -> None:
-    pool = await get_pool()
-    # fired_at: lúc nhắc thật - "hoãn 10p"/"xong" trong 30 phút tìm theo cột này.
-    await pool.execute(
-        "UPDATE reminders SET sent = true, fired_at = COALESCE(fired_at, now()) WHERE id = $1",
-        reminder_id,
-    )
-
-
-# ─── Nhắc việc v2: lặp lại, ngày nhớ, huỷ/hoãn (services/reminder_service.py) ──
-# SQL ở core/repositories/reminders.py. Tạo chuỗi INSERT nhiều dòng trong 1
-# transaction -> idempotent=False; chèn lần kế tiếp dùng ON CONFLICT nên thử lại an toàn.
-
-
-@_with_reconnect
-async def reminder_count_pending_once(telegram_user_id: int) -> int:
-    from core.repositories import reminders
-
-    return await reminders.count_pending_once(await get_pool(), telegram_user_id)
-
-
-@_with_reconnect
-async def reminder_count_series(telegram_user_id: int) -> int:
-    from core.repositories import reminders
-
-    return await reminders.count_series(await get_pool(), telegram_user_id)
-
-
-@_with_reconnect(idempotent=False)
-async def reminder_create_series(telegram_user_id: int, message: str, **kw) -> tuple[int, bool]:
-    from core.repositories import reminders
-
-    return await reminders.create_series(await get_pool(), telegram_user_id, message, **kw)
-
-
-@_with_reconnect
-async def reminder_get_series(series_id: int) -> dict | None:
-    from core.repositories import reminders
-
-    return await reminders.get_series(await get_pool(), series_id)
-
-
-@_with_reconnect
-async def reminder_add_occurrence(series: dict, due_at, message: str) -> bool:
-    from core.repositories import reminders
-
-    return await reminders.add_occurrence(await get_pool(), series, due_at, message)
-
-
-@_with_reconnect
-async def reminder_list_pending_once(telegram_user_id: int, limit: int = 20) -> list[dict]:
-    from core.repositories import reminders
-
-    return await reminders.list_pending_once(await get_pool(), telegram_user_id, limit)
-
-
-@_with_reconnect
-async def reminder_list_series(
-    telegram_user_id: int, kind: str = "reminder", limit: int = 50
-) -> list[dict]:
-    from core.repositories import reminders
-
-    return await reminders.list_series(await get_pool(), telegram_user_id, kind, limit)
-
-
-@_with_reconnect
-async def reminder_delete(telegram_user_id: int, reminder_id: int) -> bool:
-    from core.repositories import reminders
-
-    return await reminders.delete_reminder(await get_pool(), telegram_user_id, reminder_id)
-
-
-@_with_reconnect
-async def reminder_delete_series(telegram_user_id: int, series_id: int) -> bool:
-    from core.repositories import reminders
-
-    return await reminders.delete_series(await get_pool(), telegram_user_id, series_id)
-
-
-@_with_reconnect
-async def reminder_reschedule(telegram_user_id: int, reminder_id: int, due_at) -> bool:
-    from core.repositories import reminders
-
-    return await reminders.reschedule(await get_pool(), telegram_user_id, reminder_id, due_at)
-
-
-@_with_reconnect
-async def reminder_last_fired(telegram_user_id: int, within) -> dict | None:
-    from core.repositories import reminders
-
-    return await reminders.last_fired(await get_pool(), telegram_user_id, within)
-
-
-@_with_reconnect
-async def reminder_get(telegram_user_id: int, reminder_id: int) -> dict | None:
-    """1 nhắc việc của chính người đó (nút hoãn dưới tin nhắc Telegram)."""
-    from core.repositories import reminders
-
-    return await reminders.get_owned(await get_pool(), telegram_user_id, reminder_id)
-
-
-@_with_reconnect
-async def reminder_mark_done(reminder_id: int) -> None:
-    from core.repositories import reminders
-
-    await reminders.mark_done(await get_pool(), reminder_id)
-
-
-@_with_reconnect
-async def reminder_mark_fired(reminder_id: int) -> None:
-    from core.repositories import reminders
-
-    await reminders.mark_fired(await get_pool(), reminder_id)
-
-
-# ─── Chi tiêu cá nhân (services/expense_service.py) ─────────────────────────
-# SQL ở core/repositories/expenses.py; ngày truyền dạng text YYYY-MM-DD. Khoản chi
-# không có event_key (lệnh ngoài webhook) INSERT không idempotent -> không retry.
-
-
-@_with_reconnect(idempotent=False)
-async def expense_add(telegram_user_id: int, amount_vnd: int, **kw) -> tuple[int, bool]:
-    from core.repositories import expenses
-
-    return await expenses.insert(await get_pool(), telegram_user_id, amount_vnd, **kw)
-
-
-@_with_reconnect
-async def expense_count_since(telegram_user_id: int, within) -> int:
-    from core.repositories import expenses
-
-    return await expenses.count_since(await get_pool(), telegram_user_id, within)
-
-
-@_with_reconnect
-async def expense_delete(telegram_user_id: int, expense_id: int) -> dict | None:
-    from core.repositories import expenses
-
-    return await expenses.delete(await get_pool(), telegram_user_id, expense_id)
-
-
-@_with_reconnect
-async def expense_last(telegram_user_id: int, within) -> dict | None:
-    from core.repositories import expenses
-
-    return await expenses.last_created(await get_pool(), telegram_user_id, within)
-
-
-@_with_reconnect
-async def expense_totals(telegram_user_id: int, start: str, end: str) -> list[dict]:
-    from core.repositories import expenses
-
-    return await expenses.totals(await get_pool(), telegram_user_id, start, end)
-
-
-@_with_reconnect
-async def expense_recent(telegram_user_id: int, limit: int = 10) -> list[dict]:
-    from core.repositories import expenses
-
-    return await expenses.recent(await get_pool(), telegram_user_id, limit)
-
-
-# ─── Ảnh avatar (/admin/avatar, services/avatar_photo.py) ────────────────────
-# SQL ở core/repositories/avatar.py; UPSERT/DELETE theo khoá kind nên chạy lại an toàn.
-
-
-@_with_reconnect
-async def avatar_photo_meta() -> dict[str, dict]:
-    from core.repositories import avatar
-
-    return await avatar.meta(await get_pool())
-
-
-@_with_reconnect
-async def avatar_photo_get(kind: str) -> dict | None:
-    from core.repositories import avatar
-
-    return await avatar.photo(await get_pool(), kind)
-
-
-@_with_reconnect
-async def avatar_photo_put(kind: str, **kw) -> None:
-    from core.repositories import avatar
-
-    await avatar.put(await get_pool(), kind, **kw)
-
-
-@_with_reconnect
-async def avatar_photo_delete(kind: str) -> int:
-    from core.repositories import avatar
-
-    return await avatar.delete(await get_pool(), kind)
-
-
-# ─── Nhật ký ăn uống (services/nutrition_service.py) ────────────────────────
-# SQL ở core/repositories/meals.py; ngày truyền dạng text YYYY-MM-DD. Món không có
-# event_key (lệnh ngoài webhook) INSERT không idempotent -> không retry.
-
-
-@_with_reconnect(idempotent=False)
-async def meal_add(telegram_user_id: int, **kw) -> tuple[int, bool]:
-    from core.repositories import meals
-
-    return await meals.insert(await get_pool(), telegram_user_id, **kw)
-
-
-@_with_reconnect
-async def meal_count_since(telegram_user_id: int, within) -> int:
-    from core.repositories import meals
-
-    return await meals.count_since(await get_pool(), telegram_user_id, within)
-
-
-@_with_reconnect
-async def meal_day(telegram_user_id: int, day: str, limit: int = 40) -> list[dict]:
-    from core.repositories import meals
-
-    return await meals.day_rows(await get_pool(), telegram_user_id, day, limit)
-
-
-@_with_reconnect
-async def meal_day_totals(telegram_user_id: int, start: str, end: str) -> list[dict]:
-    from core.repositories import meals
-
-    return await meals.day_totals(await get_pool(), telegram_user_id, start, end)
-
-
-@_with_reconnect
-async def meal_delete(telegram_user_id: int, meal_id: int) -> dict | None:
-    from core.repositories import meals
-
-    return await meals.delete(await get_pool(), telegram_user_id, meal_id)
-
-
-@_with_reconnect
-async def meal_recent(telegram_user_id: int, limit: int = 200) -> list[dict]:
-    from core.repositories import meals
-
-    return await meals.recent(await get_pool(), telegram_user_id, limit)
-
-
-@_with_reconnect
-async def meal_clear(telegram_user_id: int) -> int:
-    from core.repositories import meals
-
-    return await meals.clear(await get_pool(), telegram_user_id)
-
-
-@_with_reconnect
-async def list_reminders_between(
-    telegram_user_id: int, start: datetime, end: datetime, limit: int = 10
-) -> list[tuple[datetime, str]]:
-    """Nhắc việc chưa gửi đến hạn trong [start, end) - mục nhắc việc của bản tin sáng."""
-    from core.repositories import brief as brief_repository
-
-    return await brief_repository.list_reminders_between(
-        await get_pool(), telegram_user_id, start, end, limit
-    )
+# Nhắc 1 lần: INSERT có thể đã commit -> idempotent=False (event_key chống trùng webhook).
+add_reminder = _bind(_reminders.insert_once, idempotent=False)
+mark_reminder_sent = _bind(_reminders.mark_sent)
+reminder_count_pending_once = _bind(_reminders.count_pending_once)
+reminder_count_series = _bind(_reminders.count_series)
+# Tạo chuỗi INSERT nhiều dòng trong 1 transaction -> idempotent=False; chèn lần kế tiếp
+# dùng ON CONFLICT nên thử lại an toàn.
+reminder_create_series = _bind(_reminders.create_series, idempotent=False)
+reminder_get_series = _bind(_reminders.get_series)
+reminder_add_occurrence = _bind(_reminders.add_occurrence)
+reminder_list_pending_once = _bind(_reminders.list_pending_once)
+reminder_list_series = _bind(_reminders.list_series)
+reminder_delete = _bind(_reminders.delete_reminder)
+reminder_delete_series = _bind(_reminders.delete_series)
+reminder_reschedule = _bind(_reminders.reschedule)
+reminder_last_fired = _bind(_reminders.last_fired)
+reminder_get = _bind(_reminders.get_owned)
+reminder_mark_done = _bind(_reminders.mark_done)
+reminder_mark_fired = _bind(_reminders.mark_fired)
+# Nhắc việc chưa gửi đến hạn trong [start, end) - mục nhắc việc của bản tin sáng.
+list_reminders_between = _bind(_brief.list_reminders_between)
+list_settings_with_prefix = _bind(_brief.list_settings_with_prefix)
+
+# ─── Chi tiêu, nhật ký ăn uống (core/repositories/expenses.py, meals.py) ─────
+# Ngày truyền dạng text YYYY-MM-DD. Khoản không có event_key (lệnh ngoài webhook)
+# INSERT không idempotent -> không retry.
+expense_add = _bind(_expenses.insert, idempotent=False)
+expense_count_since = _bind(_expenses.count_since)
+expense_delete = _bind(_expenses.delete)
+expense_last = _bind(_expenses.last_created)
+expense_totals = _bind(_expenses.totals)
+expense_recent = _bind(_expenses.recent)
+meal_add = _bind(_meals.insert, idempotent=False)
+meal_count_since = _bind(_meals.count_since)
+meal_day = _bind(_meals.day_rows)
+meal_day_totals = _bind(_meals.day_totals)
+meal_delete = _bind(_meals.delete)
+meal_recent = _bind(_meals.recent)
+meal_clear = _bind(_meals.clear)
+
+# ─── Ảnh avatar (/admin/avatar, core/repositories/avatar.py) ─────────────────
+# UPSERT/DELETE theo khoá kind nên chạy lại an toàn.
+avatar_photo_meta = _bind(_avatar.meta)
+avatar_photo_get = _bind(_avatar.photo)
+avatar_photo_put = _bind(_avatar.put)
+avatar_photo_delete = _bind(_avatar.delete)
 
 
 # ─── Settings (bảng key-value) ───────────────────────────────────────────────
@@ -661,13 +418,6 @@ async def get_setting(key: str) -> Optional[str]:
     from core.repositories import settings as settings_repository
 
     return await settings_repository.get(await get_pool(), key)
-
-
-@_with_reconnect
-async def list_settings_with_prefix(prefix: str, limit: int = 100) -> list[tuple[str, str]]:
-    from core.repositories import brief as brief_repository
-
-    return await brief_repository.list_settings_with_prefix(await get_pool(), prefix, limit)
 
 
 @_with_reconnect

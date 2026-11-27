@@ -4,7 +4,9 @@ from datetime import datetime
 from typing import Any
 
 
-async def list_settings_with_prefix(pool: Any, prefix: str, limit: int) -> list[tuple[str, str]]:
+async def list_settings_with_prefix(
+    pool: Any, prefix: str, limit: int = 100
+) -> list[tuple[str, str]]:
     """(key, value) các dòng settings có key bắt đầu bằng ``prefix`` (so khớp
     chính xác, không dùng LIKE nên ký tự % _ trong prefix không thành wildcard)."""
     rows = await pool.fetch(
@@ -21,7 +23,7 @@ async def list_settings_with_prefix(pool: Any, prefix: str, limit: int) -> list[
 
 
 async def list_reminders_between(
-    pool: Any, user_id: int, start: datetime, end: datetime, limit: int
+    pool: Any, user_id: int, start: datetime, end: datetime, limit: int = 10
 ) -> list[tuple[datetime, str]]:
     """Nhắc việc CHƯA gửi của 1 người, đến hạn trong [start, end). Lần nhắc của
     ngày nhớ không tính - bản tin đã có mục "ngay_nho" riêng (services/ngay_nho.py)."""
