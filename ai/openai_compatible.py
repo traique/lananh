@@ -364,11 +364,14 @@ def _parse_sse_stream(raw: str) -> tuple[str, list[dict[str, Any]]]:
     (text, tool_calls đã parse JSON). Tool_calls dạng delta: chunk đầu mang
     id + function.name (arguments rỗng), các chunk sau nối function.arguments
     theo index. Chunk `{"error": ...}` giữa stream (gateway forward lỗi
-    upstream) được trả về qua error_msg để caller raise với thông điệp thật
-    thay vì "trả kết quả rỗng"."""
+    upstream) -> raise với thông điệp thật thay vì "trả kết quả rỗng"; lỗi tới
+    SAU khi đã có chữ mà stream chưa kết thúc bình thường (finish_reason stop/
+    tool_calls) cũng raise - không trả câu trả lời bị cụt im lặng, provider-chain
+    thử provider kế."""
     pieces: list[str] = []
     error_msg: Optional[str] = None
     error_status: Optional[int] = None
+    finish_reason: Optional[str] = None
     calls_by_index: dict[int, dict[str, Any]] = {}
     for line in raw.splitlines():
         line = line.strip()
@@ -390,6 +393,8 @@ def _parse_sse_stream(raw: str) -> tuple[str, list[dict[str, Any]]]:
                 error_status = _sse_error_status(error)
             continue
         for choice in chunk.get("choices", []):
+            if choice.get("finish_reason"):
+                finish_reason = str(choice["finish_reason"])
             delta = choice.get("delta") or {}
             delta_content = delta.get("content")
             if delta_content:
@@ -421,15 +426,19 @@ def _parse_sse_stream(raw: str) -> tuple[str, list[dict[str, Any]]]:
         else []
     )
     text = "".join(pieces)
-    if not text and error_msg:
-        # Ném ở đây thay vì để caller nhận text rỗng: giữ nguyên thông điệp
-        # lỗi upstream (gateway đã gói trong chunk {"error": ...}).
+    if error_msg and (not text or finish_reason not in _COMPLETE_FINISH_REASONS):
+        # Giữ nguyên thông điệp lỗi upstream (gateway đã gói trong chunk {"error": ...}).
+        where = f" sau {len(text)} ký tự (câu trả lời bị cụt)" if text else ""
         raise OpenAICompatibleError(
-            f"SSE upstream error: {error_msg[:500]}",
+            f"SSE upstream error{where}: {error_msg[:500]}",
             status_code=error_status,
             retry_after_sec=_seconds_from_body(error_msg) if error_status == 429 else None,
         )
     return text, tool_calls
+
+
+# finish_reason của 1 lượt sinh xong bình thường (không bị cắt giữa chừng).
+_COMPLETE_FINISH_REASONS = frozenset({"stop", "tool_calls", "function_call"})
 
 
 def _sse_error_status(error: dict[str, Any]) -> Optional[int]:
