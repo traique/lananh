@@ -13,11 +13,12 @@ dùng httpx - KHÔNG nạp pandas. Không còn dùng thư viện vnstock (bản 
 """
 
 import asyncio
+import functools
 import logging
 import math
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
@@ -105,10 +106,18 @@ class OhlcvSeries:
 
 
 _OHLCV_CACHE_TTL = 90  # giây
-_ohlcv_cache: dict[tuple, tuple[float, "OhlcvSeries"]] = {}
+# Cache theo MÃ, giữ chuỗi DÀI NHẤT đã lấy còn hạn: cùng mã lấy 260/90/5 phiên trong
+# 1 lượt (build_context, bối cảnh ngành, quote) chỉ tốn 1 lượt DNSE - yêu cầu ngắn hơn
+# cắt đuôi chuỗi dài. Entry: (ts, số phiên đã xin, chuỗi).
+_ohlcv_cache: dict[str, tuple[float, int, "OhlcvSeries"]] = {}
+# Lượt lấy đang bay theo (mã, số phiên): người gọi cùng lúc với số phiên <= chờ chung
+# 1 request thay vì bắn N request giống hệt (danh mục N mã cùng lấy VNINDEX, ngành
+# cùng lấy mã chính). Entry tự xoá khi xong/lỗi; trần để không phình khi tải dồn.
+_ohlcv_inflight: dict[tuple[str, int], asyncio.Task] = {}
+_OHLCV_INFLIGHT_MAX = 64
 
 
-def _evict_expired(cache: dict, ttl: float) -> None:
+def _evict_expired(cache: dict, ttl: float, max_entries: int = 256) -> None:
     """Dọn entry hết hạn mỗi lần ghi - cache trước đó không có cơ chế dọn nên
     phình vô hạn theo số mã từng được tra cứu suốt vòng đời process (bot chạy
     liên tục, không restart theo lịch). Không cần lock/task nền riêng vì chỉ
@@ -117,19 +126,90 @@ def _evict_expired(cache: dict, ttl: float) -> None:
     expired = [k for k, entry in cache.items() if now - entry[0] >= ttl]
     for k in expired:
         cache.pop(k, None)
-    while len(cache) >= 256:
+    while len(cache) >= max_entries:
         cache.pop(min(cache, key=lambda key: cache[key][0]), None)
 
 
+def _tail(series: OhlcvSeries, days: int) -> OhlcvSeries:
+    """``days`` phiên cuối của chuỗi; cắt thì trả object MỚI (không mutate cache)."""
+    if len(series.closes) <= days:
+        return series
+    return replace(
+        series,
+        closes=series.closes[-days:],
+        highs=series.highs[-days:],
+        lows=series.lows[-days:],
+        volumes=series.volumes[-days:],
+        dates=series.dates[-days:],
+    )
+
+
+def _cached_ohlcv(sym: str, days: int) -> OhlcvSeries | None:
+    entry = _ohlcv_cache.get(sym)
+    if entry is None:
+        return None
+    ts, cached_days, series = entry
+    if time.monotonic() - ts >= _OHLCV_CACHE_TTL or cached_days < days:
+        return None
+    return _tail(series, days)
+
+
+def _store_ohlcv(sym: str, days: int, series: OhlcvSeries) -> None:
+    # Chỉ cache khi có dữ liệu THẬT - cache cả series rỗng "unavailable" sẽ
+    # khiến mọi lượt phân tích trong 90s kế tiếp nhận ngay kết quả fail của
+    # một lỗi mạng tạm thời mà không hề thử lại nguồn.
+    if not series.closes:
+        return
+    now = time.monotonic()
+    current = _ohlcv_cache.get(sym)
+    if current is not None and now - current[0] < _OHLCV_CACHE_TTL and current[1] > days:
+        return  # đang giữ chuỗi dài hơn còn hạn - không thay bằng chuỗi ngắn
+    _evict_expired(_ohlcv_cache, _OHLCV_CACHE_TTL)
+    _ohlcv_cache[sym] = (now, days, series)
+
+
+def _inflight_for(sym: str, days: int) -> asyncio.Task | None:
+    loop = asyncio.get_running_loop()
+    for (inflight_sym, inflight_days), task in _ohlcv_inflight.items():
+        if (
+            inflight_sym == sym
+            and inflight_days >= days
+            and not task.done()
+            and task.get_loop() is loop
+        ):
+            return task
+    return None
+
+
+def _inflight_done(key: tuple[str, int], task: asyncio.Task) -> None:
+    if _ohlcv_inflight.get(key) is task:
+        _ohlcv_inflight.pop(key, None)
+    if not task.cancelled():
+        task.exception()  # đánh dấu đã đọc: không log "exception was never retrieved"
+
+
 async def fetch_ohlcv(symbol: str, days: int = 90) -> OhlcvSeries:
-    """Cache ngắn hạn theo (symbol, days) để khử trùng lặp khi cùng 1 mã (vd
-    VNINDEX, hoặc 1 mã nằm trong nhiều ngành) được fetch nhiều lần trong
-    cùng 1 lượt phân tích (analyze_symbol + sector context chạy song song)."""
+    """OHLCV ngày, cache 90s theo mã (chuỗi dài nhất, cắt cho yêu cầu ngắn hơn) và
+    gộp các lượt gọi cùng lúc vào 1 request đang bay - cùng 1 mã (VNINDEX, mã nằm
+    trong nhiều ngành, mã chính + quote) không bị fetch lặp trong 1 lượt phân tích
+    hay khi phân tích danh mục nhiều mã song song."""
     sym = symbol.strip().upper()
-    key = (sym, days)
-    cached = _ohlcv_cache.get(key)
-    if cached and time.monotonic() - cached[0] < _OHLCV_CACHE_TTL:
-        return cached[1]
+    cached = _cached_ohlcv(sym, days)
+    if cached is not None:
+        return cached
+    task = _inflight_for(sym, days)
+    if task is None:
+        if len(_ohlcv_inflight) >= _OHLCV_INFLIGHT_MAX:
+            return await _fetch_ohlcv_fresh(sym, days)
+        key = (sym, days)
+        task = asyncio.ensure_future(_fetch_ohlcv_fresh(sym, days))
+        _ohlcv_inflight[key] = task
+        task.add_done_callback(functools.partial(_inflight_done, key))
+    # shield: 1 người chờ bị huỷ (hết hạn chót lượt) không huỷ request của người khác.
+    return _tail(await asyncio.shield(task), days)
+
+
+async def _fetch_ohlcv_fresh(sym: str, days: int) -> OhlcvSeries:
     primary = await _fetch_ohlcv_dnse(sym, days)
     from stock.validation import ohlcv_contract_errors
 
@@ -150,12 +230,7 @@ async def fetch_ohlcv(symbol: str, days: int = 90) -> OhlcvSeries:
         else:
             _provider_failures["vci"] += 1
             series = OhlcvSeries(symbol=sym, source="unavailable")
-    # Chỉ cache khi có dữ liệu THẬT - cache cả series rỗng "unavailable" sẽ
-    # khiến mọi lượt phân tích trong 90s kế tiếp nhận ngay kết quả fail của
-    # một lỗi mạng tạm thời mà không hề thử lại nguồn.
-    if series.closes:
-        _evict_expired(_ohlcv_cache, _OHLCV_CACHE_TTL)
-        _ohlcv_cache[key] = (time.monotonic(), series)
+    _store_ohlcv(sym, days, series)
     return series
 
 
@@ -180,6 +255,39 @@ def _merge_same_day_bars(bars: list[tuple]) -> list[tuple]:
     return merged
 
 
+# Lỗi thoáng qua của DNSE (mất kết nối, 429/5xx) thử lại 1 lần nhanh TRƯỚC khi rơi
+# sang VCI: VCI có thể khác chính sách điều chỉnh giá, đổi nguồn vì 1 lỗi mạng làm
+# chuỗi đổi hệ quy chiếu giữa 2 lần phân tích. Timeout thì không thử lại (đã tốn
+# trọn REQUEST_TIMEOUT, chuyển VCI luôn).
+_DNSE_RETRY_DELAY_SEC = 0.5
+_DNSE_RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
+async def _dnse_get(sym: str, endpoint: str, params: dict) -> httpx.Response | None:
+    for attempt in range(2):
+        last = attempt == 1
+        try:
+            res = await get_http_client().get(
+                endpoint,
+                params=params,
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            )
+        except httpx.TimeoutException as e:
+            logger.warning("fetch_ohlcv(%s) DNSE quá giờ: %s", sym, e)
+            return None
+        except httpx.HTTPError as e:
+            if last:
+                logger.warning("fetch_ohlcv(%s) lỗi: %s", sym, e)
+                return None
+            await asyncio.sleep(_DNSE_RETRY_DELAY_SEC)
+            continue
+        if res.status_code in _DNSE_RETRY_STATUS and not last:
+            await asyncio.sleep(_DNSE_RETRY_DELAY_SEC)
+            continue
+        return res
+    return None
+
+
 async def _fetch_ohlcv_dnse(symbol: str, days: int = 90) -> OhlcvSeries:
     sym = symbol.strip().upper()
     is_index = is_index_symbol(sym)
@@ -193,16 +301,12 @@ async def _fetch_ohlcv_dnse(symbol: str, days: int = 90) -> OhlcvSeries:
         "symbol": dnse_symbol(sym),
         "resolution": "1D",
     }
+    res = await _dnse_get(sym, endpoint, params)
+    if res is None or res.status_code != 200:
+        return OhlcvSeries(symbol=sym)
     try:
-        res = await get_http_client().get(
-            endpoint,
-            params=params,
-            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-        )
-        if res.status_code != 200:
-            return OhlcvSeries(symbol=sym)
         data = res.json()
-    except (httpx.HTTPError, ValueError, KeyError) as e:
+    except (ValueError, KeyError) as e:
         logger.warning("fetch_ohlcv(%s) lỗi: %s", sym, e)
         return OhlcvSeries(symbol=sym)
 
@@ -681,7 +785,19 @@ def _extract_tag(xml: str, tag: str) -> str:
     return re.sub(r"<!\[CDATA\[([\s\S]*?)\]\]>", r"\1", m.group(1)).strip()
 
 
+# Tin Google News theo mã: cache 10 phút (có trần) - mỗi build_context trước đây gọi
+# lại RSS dù tin đổi theo giờ. Chỉ cache lượt lấy thành công (HTTP 200, kể cả "không
+# có tin"); lỗi mạng/HTTP không cache để lượt sau thử lại.
+_NEWS_CACHE_TTL = 10 * 60
+_NEWS_CACHE_MAX = 64
+_news_cache: dict[str, tuple[float, list["NewsHeadline"]]] = {}
+
+
 async def fetch_news(symbol: str) -> list[NewsHeadline]:
+    key = symbol.strip().upper()
+    hit = _news_cache.get(key)
+    if hit is not None and time.monotonic() - hit[0] < _NEWS_CACHE_TTL:
+        return list(hit[1])
     query = f"{symbol} cổ phiếu"
     url = "https://news.google.com/rss/search"
     try:
@@ -697,6 +813,14 @@ async def fetch_news(symbol: str) -> list[NewsHeadline]:
         logger.warning("fetch_news(%s) lỗi: %s", symbol, e)
         return []
 
+    news = parse_news_rss(text)
+    _evict_expired(_news_cache, _NEWS_CACHE_TTL, _NEWS_CACHE_MAX)
+    _news_cache[key] = (time.monotonic(), news)
+    return list(news)
+
+
+def parse_news_rss(text: str) -> list[NewsHeadline]:
+    """Hàm thuần: RSS Google News -> tối đa NEWS_MAX_ITEMS tin trong NEWS_RECENT_DAYS ngày."""
     items = re.findall(r"<item>[\s\S]*?</item>", text, re.IGNORECASE)
     if not items:
         return []
