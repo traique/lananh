@@ -122,3 +122,38 @@ async def test_moi_luat_don_du_lieu_chay_duoc_va_giu_dong_can_thiet(delivery_db,
     assert keys == {"b-new", "d-latest-but-old"}
     names = {r["name"] for r in await pool.fetch("SELECT name FROM app_devices")}
     assert names == {"revoked-new", "active", "pending-new"}
+
+
+@pytest.mark.asyncio
+async def test_insert_nhieu_dong_1_cau_unnest(delivery_db):
+    from datetime import datetime, timedelta, timezone
+
+    vn = timezone(timedelta(hours=7))
+    due = datetime(2030, 1, 2, 7, 0, tzinfo=vn)
+    sid, created = await db.reminder_create_series(
+        42,
+        "uống thuốc",
+        kind="reminder",
+        category="",
+        recurrence={"type": "daily", "at": "07:00"},
+        lead_days=0,
+        channel="telegram",
+        recipient_id="42",
+        account_id="",
+        user_jid="",
+        event_key=None,
+        # Lần trùng giờ (cùng series_id, due_at) bị bỏ qua như trước.
+        first=[(due, "lần 1"), (due + timedelta(days=1), "lần 2"), (due, "trùng")],
+    )
+    assert created
+    rows = await delivery_db.fetch(
+        "SELECT message, due_at FROM reminders WHERE series_id = $1 ORDER BY due_at", sid
+    )
+    assert [r["message"] for r in rows] == ["lần 1", "lần 2"]
+    assert rows[0]["due_at"] == due  # giờ hẹn giữ đúng múi giờ khi đi qua chuỗi ISO
+
+    added = await db.portfolio_add_watch(7, ["FPT", "MWG", "FPT", "HPG"], 3)
+    assert added == ["FPT", "MWG", "HPG"]
+    # Đã có FPT: chỉ thêm mã mới, trong phần trần còn lại.
+    assert await db.portfolio_add_watch(7, ["FPT", "VNM", "SSI"], 4) == ["VNM"]
+    assert sorted(await db.portfolio_watchlist(7)) == ["FPT", "HPG", "MWG", "VNM"]

@@ -9,7 +9,7 @@ Telegram và ngược lại.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 # Tin nhắc đang chờ trong outbox Zalo: FK chỉ SET NULL khi xoá reminder, nên phải
@@ -83,25 +83,35 @@ async def create_series(
                     "SELECT id FROM reminder_series WHERE event_key = $1", event_key
                 )
                 return int(existing), False
-            for due_at, text in first:
+            if first:
+                # 1 câu cho mọi lần nhắc đầu (trước: 1 câu/lần). Giờ hẹn truyền dạng chuỗi
+                # ISO (có múi giờ) rồi ép kiểu trong SQL - mảng datetime không đi được qua
+                # mọi driver/test adapter.
                 await conn.execute(
                     """
                     INSERT INTO reminders (
                         telegram_user_id, message, due_at, channel, recipient_id,
                         account_id, user_jid, series_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    )
+                    SELECT $1, f.message, f.due_at::timestamptz, $2, $3, $4, $5, $6
+                    FROM unnest($7::text[], $8::text[]) AS f(due_at, message)
                     ON CONFLICT (series_id, due_at) WHERE series_id IS NOT NULL DO NOTHING
                     """,
                     user_id,
-                    text,
-                    due_at,
                     channel,
                     recipient_id,
                     account_id,
                     user_jid,
                     series_id,
+                    [_iso(due_at) for due_at, _ in first],
+                    [text for _, text in first],
                 )
             return int(series_id), True
+
+
+def _iso(moment: datetime) -> str:
+    """ISO 8601 kèm múi giờ; datetime không múi giờ hiểu như asyncpg (giờ máy chủ app)."""
+    return moment.astimezone(timezone.utc).isoformat()
 
 
 async def get_series(pool: Any, series_id: int) -> dict | None:

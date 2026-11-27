@@ -559,8 +559,8 @@ async def watchlist(pool: Any, user_id: int) -> list[str]:
 
 
 async def add_watch(pool: Any, user_id: int, symbols: list[str], max_symbols: int) -> list[str]:
-    """Thêm mã (bỏ qua mã đã có), không vượt trần; trả các mã thêm được."""
-    added: list[str] = []
+    """Thêm mã (bỏ qua mã đã có, mã lặp), không vượt trần; trả các mã thêm được theo
+    thứ tự nhập. 1 câu INSERT ... SELECT unnest() cho cả danh sách (trước: 1 câu/mã)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             current = {
@@ -569,18 +569,19 @@ async def add_watch(pool: Any, user_id: int, symbols: list[str], max_symbols: in
                     "SELECT symbol FROM stock_watchlist WHERE telegram_user_id = $1", user_id
                 )
             }
-            for symbol in symbols:
-                if symbol in current or len(current) >= max_symbols:
-                    continue
-                await conn.execute(
-                    "INSERT INTO stock_watchlist (telegram_user_id, symbol) VALUES ($1, $2) "
-                    "ON CONFLICT DO NOTHING",
-                    user_id,
-                    symbol,
-                )
-                current.add(symbol)
-                added.append(symbol)
-    return added
+            wanted = [s for s in dict.fromkeys(symbols) if s not in current]
+            wanted = wanted[: max(0, max_symbols - len(current))]
+            if not wanted:
+                return []
+            rows = await conn.fetch(
+                "INSERT INTO stock_watchlist (telegram_user_id, symbol) "
+                "SELECT $1, symbol FROM unnest($2::text[]) AS symbol "
+                "ON CONFLICT DO NOTHING RETURNING symbol",
+                user_id,
+                wanted,
+            )
+    inserted = {row["symbol"] for row in rows}
+    return [symbol for symbol in wanted if symbol in inserted]
 
 
 async def remove_watch(pool: Any, user_id: int, symbol: str) -> tuple[bool, int]:
