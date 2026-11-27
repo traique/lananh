@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 _STATE_ACTIVE_PROVIDER = "provider_active"
 _STATE_ROUTER9_DEAD_SINCE = "provider_router9_dead_since"
+# Loại lỗi khai tử 9Router ("auth" | "timeout" | "health"): lượt cứu cánh cuối không
+# gọi lại router9 chết vì key bị từ chối (401/403) - gọi lại chỉ nhận đúng lỗi đó.
+_STATE_ROUTER9_DEAD_KIND = "provider_router9_dead_kind"
 _STATE_ROUTER9_ENABLED = "provider_router9_enabled"
 _STATE_API_EXHAUSTED_PREFIX = "provider_api_exhausted_until_"
 # Lý do cooldown/chết gần nhất (hiện ở /status): "rate limit theo phút...",
@@ -94,6 +97,8 @@ class ProviderChainState:
     def __init__(self) -> None:
         self.active_provider: str = "router9"
         self.router9_dead_since: Optional[float] = None  # epoch seconds, None = sống/chưa biết
+        # (mốc router9_dead_since, loại lỗi) của lần khai tử - xem router9_dead_kind.
+        self._router9_death: Optional[tuple[float, str]] = None
         self.router9_enabled: bool = True  # tắt thủ công qua /router9 off, độc lập với dead_since
         # key: "groq"|"openrouter"|"api1"|"api2"|"router9", value: epoch seconds
         self.api_exhausted_until: dict[str, float] = {name: 0.0 for name in _COOLDOWN_PROVIDERS}
@@ -130,6 +135,9 @@ class ProviderChainState:
                 self.router9_dead_since = float(raw_dead) if raw_dead else None
             except ValueError:
                 self.router9_dead_since = None
+            if self.router9_dead_since is not None:
+                kind = await db.get_setting(_STATE_ROUTER9_DEAD_KIND)
+                self._router9_death = (self.router9_dead_since, kind) if kind else None
 
             for name in _COOLDOWN_PROVIDERS:
                 raw = await db.get_setting(f"{_STATE_API_EXHAUSTED_PREFIX}{name}")
@@ -192,17 +200,21 @@ class ProviderChainState:
         self.active_provider = name
         self._persist_soon(_STATE_ACTIVE_PROVIDER, name)
 
-    async def mark_router9_dead(self, reason: str = "") -> None:
+    async def mark_router9_dead(self, reason: str = "", kind: Optional[str] = None) -> None:
+        """``kind`` ("auth" | "timeout" | "health"): loại lỗi, quyết định lượt cứu cánh
+        cuối của provider-chain có được gọi lại router9 không (auth thì không)."""
         just_died = self.router9_dead_since is None
         if not just_died:
             return
         now = time.time()
         self.router9_dead_since = now
+        self._router9_death = (now, kind) if kind else None
         self._router9_strikes.clear()
         if reason:
             self.cooldown_reasons["router9_dead"] = reason
         logger.warning("Provider-chain: khai tử 9Router (%s).", reason or "lỗi")
         self._persist_soon(_STATE_ROUTER9_DEAD_SINCE, str(now))
+        self._persist_soon(_STATE_ROUTER9_DEAD_KIND, kind or "")
         send_alert(messages.ROUTER9_DEAD_ALERT)
 
     async def mark_router9_alive(self) -> None:
@@ -210,9 +222,20 @@ class ProviderChainState:
         if self.router9_dead_since is None:
             return  # đang sống -> không ghi DB mỗi lượt gọi
         self.router9_dead_since = None
+        self._router9_death = None
         self.cooldown_reasons.pop("router9_dead", None)
         self._persist_soon(_STATE_ROUTER9_DEAD_SINCE, "")
+        self._persist_soon(_STATE_ROUTER9_DEAD_KIND, "")
         send_alert(messages.ROUTER9_ALIVE_ALERT)
+
+    @property
+    def router9_dead_kind(self) -> Optional[str]:
+        """Loại lỗi ("auth" | "timeout" | "health") của lần khai tử HIỆN TẠI - gắn với
+        đúng mốc router9_dead_since (đổi mốc là thôi tính); None = sống/không rõ."""
+        death = self._router9_death
+        if death is None or self.router9_dead_since != death[0]:
+            return None
+        return death[1]
 
     def note_router9_health_failure(self) -> bool:
         """Ghi 1 lỗi sức khoẻ (5xx, mất kết nối, lỗi lạ) của router9; True nếu

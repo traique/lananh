@@ -703,7 +703,8 @@ async def _run_provider_chain_within_deadline(
                         else "từ chối key",
                     )
                     await provider_state.mark_router9_dead(
-                        "timeout" if kind == "timeout" else "API key bị từ chối (401/403)"
+                        "timeout" if kind == "timeout" else "API key bị từ chối (401/403)",
+                        kind=kind,
                     )
                     raise
                 should_die = provider_state.note_router9_health_failure()
@@ -711,7 +712,9 @@ async def _run_provider_chain_within_deadline(
                     if not has_fallback:
                         raise
                     logger.warning("9Router vẫn lỗi (%s); chuyển provider.", _short_error(exc))
-                    await provider_state.mark_router9_dead("lỗi máy chủ/kết nối 2 lần liên tiếp")
+                    await provider_state.mark_router9_dead(
+                        "lỗi máy chủ/kết nối 2 lần liên tiếp", kind="health"
+                    )
                     raise
                 logger.warning("Gọi 9Router lỗi lần 1 (%s), thử lại 1 lần.", _short_error(exc))
         raise RuntimeError("unreachable")  # pragma: no cover
@@ -802,8 +805,9 @@ async def _run_provider_chain_within_deadline(
 
     # Cứu cánh cuối: chỉ router9 (chết vì timeout/lỗi tạm, không phải quota).
     # Provider đang cooldown 429 bị bỏ qua thật sự - gọi lại chỉ tốn thời gian
-    # của lượt và thêm 1 lỗi 429 vào quota đang cạn.
-    if "router9" in known_bad_skipped:
+    # của lượt và thêm 1 lỗi 429 vào quota đang cạn. Chết vì key bị từ chối
+    # (401/403) thì gọi lại chỉ nhận đúng lỗi đó - bỏ qua tới khi probe/đổi key.
+    if "router9" in known_bad_skipped and provider_state.router9_dead_kind != "auth":
         try:
             return await _attempt_router9()
         except TurnTimeoutError:

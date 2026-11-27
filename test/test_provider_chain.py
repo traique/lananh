@@ -559,6 +559,42 @@ async def test_provider_dang_cooldown_429_khong_duoc_goi_lai_o_luot_cuu_canh(fak
 
 
 @pytest.mark.asyncio
+async def test_router9_chet_vi_key_bi_tu_choi_khong_goi_lai_o_luot_cuu_canh(fake_store):
+    """Chết vì 401/403: gọi lại ở lượt cứu cánh cuối chỉ nhận đúng lỗi đó - bỏ qua,
+    kể cả sau restart (loại lỗi lưu cùng mốc khai tử)."""
+    from ai.openai_compatible import OpenAICompatibleError
+
+    provider_state._loaded = True
+    calls = []
+
+    async def router9_401():
+        calls.append("router9")
+        raise OpenAICompatibleError("9Router HTTP 401: bad key", status_code=401)
+
+    async def api_down(idx):
+        calls.append(f"api{idx}")
+        raise RuntimeError("api lỗi")
+
+    with pytest.raises(RuntimeError, match="api lỗi"):
+        await orchestrator._run_provider_chain(router9_call=router9_401, api_call=api_down)
+    assert calls == ["router9", "api1", "api2"]
+    assert provider_state.router9_dead_kind == "auth"
+    calls.clear()
+    with pytest.raises(RuntimeError, match="api lỗi"):
+        await orchestrator._run_provider_chain(router9_call=router9_401, api_call=api_down)
+    assert calls == ["api1", "api2"]  # không có lượt cứu cánh router9
+
+    # Restart: nạp lại từ DB vẫn biết là chết vì key.
+    provider_state._loaded = False
+    provider_state._router9_death = None
+    await provider_state.ensure_loaded()
+    assert provider_state.router9_dead_kind == "auth"
+    # Mốc khai tử khác (khai tử mới vì lý do khác) thì không còn tính "auth".
+    provider_state.router9_dead_since = time.time()
+    assert provider_state.router9_dead_kind is None
+
+
+@pytest.mark.asyncio
 async def test_utility_json_uu_tien_groq_roi_fallback_gemini(fake_store, monkeypatch):
     provider_state._loaded = True
     monkeypatch.setattr(config, "GROQ_API_KEY", "k")
