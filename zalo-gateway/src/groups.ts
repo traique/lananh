@@ -61,6 +61,58 @@ export async function collectGroups(
   return { total: ids.length, groups };
 }
 
+export type TrackedGroupsDeps = {
+  /** Nhóm /tongket + tín hiệu cổ phiếu (bridge.fetchAllowedGroups). */
+  fetchSummary(): Promise<Set<string>>;
+  /** Nhóm nguồn Facebook (bridge.fetchFacebookGroups). */
+  fetchFacebook(): Promise<Set<string>>;
+  /** Zalo còn đăng nhập không (chưa đăng nhập thì không nạp). */
+  connected(): boolean;
+  /** Sau khi nạp xong nhóm /tongket (vd bỏ cache vai trò của nhóm đã gỡ). */
+  onSummary?(groupIds: Set<string>): void;
+  log?(message: string, error?: unknown): void;
+};
+
+/**
+ * Nhóm Zalo đang theo dõi theo Python. Tin của nhóm KHÁC bị bỏ ngay ở cửa vào (không
+ * parse, không ghi SeenIds). Nạp lỗi thì giữ danh sách cũ. RAM: 2 Set id nhóm.
+ */
+export class TrackedGroups {
+  private summary = new Set<string>();
+  private facebook = new Set<string>();
+
+  constructor(private readonly deps: TrackedGroupsDeps) {}
+
+  isSummary(groupId: string): boolean {
+    return this.summary.has(groupId);
+  }
+
+  isFacebook(groupId: string): boolean {
+    return this.facebook.has(groupId);
+  }
+
+  /** Có cần xử lý tin của nhóm này không (/tongket, tín hiệu hoặc nguồn Facebook). */
+  isTracked(groupId: string): boolean {
+    return this.summary.has(groupId) || this.facebook.has(groupId);
+  }
+
+  async refresh(): Promise<void> {
+    if (!this.deps.connected()) return;
+    const log = this.deps.log ?? console.error;
+    try {
+      this.summary = await this.deps.fetchSummary();
+      this.deps.onSummary?.(this.summary);
+    } catch (error) {
+      log("[zalo] summary group refresh failed", error);
+    }
+    try {
+      this.facebook = await this.deps.fetchFacebook();
+    } catch (error) {
+      log("[zalo] Facebook group refresh failed", error);
+    }
+  }
+}
+
 /**
  * Chỉ 1 lượt quét tại 1 thời điểm: gõ lại sau khi hết giờ chờ hay nhiều admin cùng gõ
  * đều dùng chung lượt đang chạy, không chồng nhiều loạt gọi Zalo (rate limit, heap).

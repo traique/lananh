@@ -26,7 +26,7 @@ import {
   isPermanentPostError,
 } from "./dist/facebook-buffer.js";
 import { BridgeHttpError, callFileBridge, callImageBridge } from "./dist/bridge.js";
-import { startControlServer } from "./dist/control-server.js";
+import { CONTROL_SECRET_HEADER, secretMatches, startControlServer } from "./dist/control-server.js";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
@@ -337,25 +337,99 @@ test("KnownSenders: Python báo paired=false (người lạ, đã bị /zaloxoa)
   assert.equal(known.has("b"), true, "không có tin hiệu thì giữ nguyên");
 });
 
+test("secretMatches: so khớp hằng thời gian, thiếu/rỗng/lặp header hoặc chưa cấu hình -> false", () => {
+  assert.equal(secretMatches("s3cr3t", "s3cr3t"), true);
+  assert.equal(secretMatches("s3cr3", "s3cr3t"), false);
+  assert.equal(secretMatches("s3cr3t-dài-hơn", "s3cr3t"), false);
+  assert.equal(secretMatches(undefined, "s3cr3t"), false);
+  assert.equal(secretMatches("", "s3cr3t"), false);
+  assert.equal(secretMatches(["s3cr3t", "s3cr3t"], "s3cr3t"), false);
+  assert.equal(secretMatches("", ""), false, "fail closed khi chưa có secret");
+});
+
+test("control server: mọi route cần x-zalo-bridge-secret; POST /outbox/kick hẹn gửi outbox", async () => {
+  const calls = [];
+  const server = startControlServer(
+    0,
+    {
+      status: () => ({ state: "connected", qr: "QR-BÍ-MẬT" }),
+      startQr: async () => "idle",
+      startPairing: () => ({ code: "123456", expiresAt: 1 }),
+      logout: async () => void calls.push("logout"),
+      forgetSender: () => false,
+      groups: async () => null,
+      refreshGroups: async () => true,
+      kickOutbox: () => {
+        calls.push("kick");
+        return calls.length < 2;
+      },
+    },
+    "s3cr3t",
+  );
+  try {
+    if (!server.listening) await new Promise((resolve) => server.once("listening", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const call = (method, path, secret) =>
+      fetch(`${base}${path}`, {
+        method,
+        headers: secret === undefined ? {} : { [CONTROL_SECRET_HEADER]: secret },
+      });
+    for (const [method, path] of [
+      ["GET", "/status"],
+      ["POST", "/logout"],
+      ["POST", "/pairing/start"],
+      ["POST", "/outbox/kick"],
+      ["GET", "/khong-co"],
+    ]) {
+      for (const secret of [undefined, "sai", ""]) {
+        const response = await call(method, path, secret);
+        assert.equal(response.status, 403, `${method} ${path} secret=${secret}`);
+        assert.deepEqual(await response.json(), { error: "forbidden" });
+      }
+    }
+    assert.deepEqual(calls, [], "không handler nào chạy khi sai secret");
+    const status = await call("GET", "/status", "s3cr3t");
+    assert.equal((await status.json()).qr, "QR-BÍ-MẬT");
+    const kick = await call("POST", "/outbox/kick", "s3cr3t");
+    assert.equal(kick.status, 200);
+    assert.deepEqual(await kick.json(), { ok: true, scheduled: true });
+    assert.deepEqual(await (await call("POST", "/outbox/kick", "s3cr3t")).json(), {
+      ok: true,
+      scheduled: false,
+    });
+    assert.equal((await call("GET", "/outbox/kick", "s3cr3t")).status, 404, "chỉ nhận POST");
+    assert.deepEqual(calls, ["kick", "kick"]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("control server: POST /known/forget {id} gọi forgetSender, body sai/quá lớn bị từ chối", async () => {
   const forgotten = [];
-  const server = startControlServer(0, {
-    status: () => ({}),
-    startQr: async () => "idle",
-    startPairing: () => null,
-    logout: async () => undefined,
-    forgetSender: (id) => {
-      forgotten.push(id);
-      return id === "z-member";
+  const server = startControlServer(
+    0,
+    {
+      status: () => ({}),
+      startQr: async () => "idle",
+      startPairing: () => null,
+      logout: async () => undefined,
+      forgetSender: (id) => {
+        forgotten.push(id);
+        return id === "z-member";
+      },
+      groups: async () => null,
+      refreshGroups: async () => false,
+      kickOutbox: () => true,
     },
-  });
+    "s3cr3t",
+  );
   try {
     if (!server.listening) await new Promise((resolve) => server.once("listening", resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
     const post = (body) =>
       fetch(`${base}/known/forget`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-zalo-bridge-secret": "s3cr3t" },
         body,
       });
     const ok = await post(JSON.stringify({ id: "z-member" }));

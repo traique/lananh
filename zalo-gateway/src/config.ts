@@ -79,8 +79,11 @@ export function loadConfig(): GatewayConfig {
     accountId: process.env.ZALO_BOT_ACCOUNT_ID?.trim() || "zalo-bot",
     bridgeBaseUrl: base.replace(/\/$/, ""),
     bridgeSecret: required("ZALO_BRIDGE_SECRET"),
-    groupRefreshMs: number("ZALO_GROUP_REFRESH_MS", 60000),
-    outboxPollMs: number("ZALO_OUTBOX_POLL_MS", 15000),
+    // Nạp lại nhóm theo dõi định kỳ chỉ là dự phòng: Python gọi POST /groups/refresh
+    // ngay khi /themnhom, /xoanhom, /fb_* đổi danh sách (channels/group_commands.py).
+    groupRefreshMs: number("ZALO_GROUP_REFRESH_MS", 300000),
+    // Poll outbox dự phòng: Python gọi POST /outbox/kick ngay khi thêm tin vào outbox.
+    outboxPollMs: number("ZALO_OUTBOX_POLL_MS", 90000),
     controlPort: number("ZALO_CONTROL_PORT", 9901, 1024),
     // Chờ tối đa bao lâu (tính từ tin cuối) để gộp ảnh + caption cùng người gửi.
     facebookMergeWindowMs: Math.min(120000, number("ZALO_FB_MERGE_WINDOW_MS", 30000, 3000)),
