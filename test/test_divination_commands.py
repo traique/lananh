@@ -149,6 +149,7 @@ def test_help_co_bat_tu_lo_ban_cung_phi():
     for cmd in ("/battu", "/loban", "/cungphi"):
         assert cmd in commands.HELP_TEXT and cmd in ccs.HELP
     # Menu "/" đã đủ 100 lệnh: lệnh mới chỉ đăng ký handler.
-    source = open(bot_app.__file__, encoding="utf-8").read()
+    handlers = dict(bot_app.telegram_command_handlers())
+    menu = {c.command for c in bot_app.ALL_COMMANDS}
     for name in ("battu", "battu_chitiet", "loban", "cungphi"):
-        assert f'("{name}", commands.{name}_cmd)' in source
+        assert handlers[name] is getattr(commands, f"{name}_cmd") and name not in menu
