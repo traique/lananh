@@ -83,7 +83,9 @@ async def _handle_full_analysis(
     # hết giờ - các mã sau vẫn gửi bản số liệu (không tốn lượt AI nào).
     skipped: list[str] = []
     sent: list[str] = []
-    for symbol in symbols:
+    if len(symbols) > 1:
+        await _prefetch(update, user_id, symbols)
+    for index, symbol in enumerate(symbols):
         prompt_id = await telemetry.start(user_id, "stock_analysis", symbol)
         status = await update.message.reply_text(f"🔍 Đang phân tích {symbol}...")
         try:
@@ -101,6 +103,9 @@ async def _handle_full_analysis(
                 user_id=user_id,
                 on_rule_report=send_rule_report,
                 full_access=True,
+                # 2 mã đầu chạy đủ tóm tắt tin + debate; mã sau chỉ 1 lượt tổng hợp
+                # để cả lượt "so sánh A B C" nằm trong hạn chót.
+                with_debate=index < stock_analysis.MAX_DEBATE_SYMBOLS,
             )
             if result_text:
                 await telemetry.success(prompt_id, "stock_analysis", result_text)
@@ -124,6 +129,23 @@ async def _handle_full_analysis(
     if skipped:
         await update.message.reply_text(stock_turn.commentary_skipped_note(skipped))
     return sent
+
+
+async def _prefetch(update, user_id: int, symbols: list[str]) -> None:
+    """Lượt "so sánh HPG HSG NKG": lấy dữ liệu (thuần I/O, không LLM) của mọi mã SONG SONG
+    trước vòng phân tích tuần tự - mỗi analyze_symbol sau đó đọc từ cache thay vì
+    chờ mạng nối tiếp từng mã. Lỗi ở đây không chặn gì: mã nào thiếu thì
+    analyze_symbol tự lấy lại và báo lỗi như thường."""
+    status = await update.message.reply_text(f"🔍 Đang lấy dữ liệu {', '.join(symbols)}...")
+    try:
+        await stock_analysis.prefetch_contexts(symbols, user_id=user_id, full_access=True)
+    except Exception:
+        logger.warning("Không lấy trước được dữ liệu %s", ", ".join(symbols), exc_info=True)
+    finally:
+        try:
+            await status.delete()
+        except Exception:
+            logger.debug("Không xóa được status lấy dữ liệu", exc_info=True)
 
 
 async def _handle_persona_view(
