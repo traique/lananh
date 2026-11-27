@@ -38,9 +38,11 @@ Repository được thiết kế cho **một chủ sở hữu**:
   `ai.timeouts.bounded()`; sự kiện webhook lỗi thử lại tối đa
   `WEBHOOK_MAX_ATTEMPTS` lần rồi chuyển DEAD và báo chủ bot 1 lần (lỗi chắc chắn
   lặp như hết hạn chót, Telegram BadRequest thì kết thúc ngay ở lần đầu).
-- Prompt gửi provider có ngân sách (`PROMPT_BUDGET_CHARS`, mặc định 40k ký tự):
-  cắt lịch sử cũ → grounding → trí nhớ, không bao giờ cắt câu hỏi/persona
-  (`ai/prompt_budget.py`).
+- Prompt gửi provider có ngân sách (`PROMPT_BUDGET_CHARS`, mặc định 28k ký tự ≈ 10k
+  token - tiếng Việt có dấu ~2,8 ký tự/token): cắt lịch sử cũ → grounding → trí nhớ,
+  không bao giờ cắt câu hỏi/persona (`ai/prompt_budget.py`). Groq (free ~8K token/phút)
+  được ước lượng trước khi gửi (`GROQ_TPM_BUDGET`): quá ngân sách thì dùng persona rút
+  gọn, vẫn quá thì bỏ qua Groq ở lượt đó mà không tốn request.
 - Zalo và Zoom đi chung 1 dispatcher (`services/channel_dispatch.py`): cache
   idempotency → `/fb_*` ngoài khoá lượt → lệnh chỉ đọc ngoài khoá lượt → trần
   lượt của thành viên Zalo → khoá lượt → lệnh nhóm → chat (huỷ được bằng `/huy`).

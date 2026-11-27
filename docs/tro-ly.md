@@ -9,7 +9,8 @@ Tài liệu chính: [README.md](../README.md).
 - Provider chain theo `PROVIDER_ORDER` (mặc định `router9,groq,openrouter,api1,api2`):
   9Router (gateway OpenAI-compatible) → Groq (miễn phí, chat mặc định
   `openai/gpt-oss-20b`) → OpenRouter (model `:free`) → AI Studio key 1 → key 2 →
-  Gemini Live (`live`, tự thêm vào cuối khi `LIVE_CHAT_FALLBACK=1`).
+  Gemini Live (`live`, chỉ thêm vào cuối khi đặt `LIVE_CHAT_FALLBACK=1`; mặc định tắt từ
+  11/2026 vì là đường chậm và tốn RAM nhất cho lượt chữ).
 - Ảnh (viết prompt từ ảnh, hỏi đáp về ảnh, đọc hoá đơn) đi chuỗi riêng
   `VISION_PROVIDER_ORDER` (mặc định `api1,api2,openrouter,groq,router9`): 9Router gửi
   ảnh cho model chat chung, gateway có thể lặng lẽ bỏ ảnh với model không đọc ảnh và
@@ -261,7 +262,13 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
   thành viên Zalo chỉ lưu phần tham khảo. Câu chat ngay sau báo cáo mà nói ngược
   action (hoặc đưa vùng mua/stop cho thành viên) bị thay bằng câu "đã lược bỏ".
 - `CHAT_HISTORY_TURNS` tính theo LƯỢT hỏi-đáp (mặc định 10 lượt = 20 dòng);
-  `GROQ_HISTORY_MAX_CHARS` (3.500) là trần lịch sử riêng cho Groq. Lịch sử giữ
+  `GROQ_HISTORY_MAX_CHARS` (3.500 ≈ 1.250 token) là trần lịch sử riêng cho Groq; lượt
+  không vừa `GROQ_TPM_BUDGET` thì Groq nhận persona rút gọn
+  (`templates/chat_skill_compact.j2`, giữ danh tính + quy tắc an toàn của Lan Anh) với
+  `max_tokens` 1024, vẫn không vừa thì bỏ qua Groq (provider_calls ghi
+  `skipped_budget`). Groq chạy `GROQ_REASONING_EFFORT=low` cho gpt-oss. Việc phụ một
+  dòng (viết lại câu tìm kiếm, router dự phòng, chọn tin bản tin sáng) đi chuỗi tiện ích
+  Groq → Gemini (`orchestrator.ask_utility`) thay vì cả chuỗi chat. Lịch sử giữ
   `CHAT_MESSAGES_RETENTION_LIMIT` dòng mỗi người (mặc định 1.000, 200-2.000).
 - Trả lời tin được trích dẫn: trên Telegram, reply hoặc trích 1 đoạn thì Lan Anh
   hiểu câu hỏi theo tin đó; trên Zalo, gateway gửi `quote_text` (tối đa 600 ký tự).

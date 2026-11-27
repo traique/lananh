@@ -32,7 +32,7 @@ bền/bảo mật (đều có mặc định an toàn, chỉ đặt khi cần đ�
 |---|---|---|
 | `CHAT_TURN_TIMEOUT_SEC` | 200 | Hạn chót tổng cho 1 lượt trả lời (30-230) |
 | `MEMORY_UPDATE_TIMEOUT_SEC` / `RAG_CLEAN_TOTAL_TIMEOUT_SEC` | 90 / 900 | Trần 1 lượt trích trí nhớ nền (theo lô); trần TỔNG 1 lượt `/ragxuly` (chạy nền ngoài khoá chat) |
-| `PROMPT_BUDGET_CHARS` / `HISTORY_MESSAGE_MAX_CHARS` / `GROUNDING_MAX_CHARS` / `MEMORY_MAX_CHARS` | 40000 / 1500 / 9000 / 3000 | Ngân sách ký tự prompt gửi provider và trần từng khối |
+| `PROMPT_BUDGET_CHARS` / `HISTORY_MESSAGE_MAX_CHARS` / `GROUNDING_MAX_CHARS` / `MEMORY_MAX_CHARS` | 28000 / 1500 / 9000 / 3000 | Ngân sách ký tự prompt gửi provider (~2,8 ký tự/token tiếng Việt: 28000 ≈ 10k token) và trần từng khối |
 | `PERSONA_STOCK_SPLIT` | 1 | Lượt chat không liên quan cổ phiếu/đầu tư chỉ gửi phần lõi của persona; 0 = luôn gửi cả phần phân tích cổ phiếu |
 | `DATABASE_SSL_MODE` / `DATABASE_SSL_CA` | `require` / (trống) | `verify-full` xác thực chứng chỉ + hostname Postgres (cần CA Supabase); `disable` chỉ cho DB local |
 | `SETTINGS_ENC_KEY_OLD` / `SETTINGS_REJECT_PLAINTEXT` | (trống) / 0 | Khoá Fernet cũ khi xoay khoá (MultiFernet); từ chối giá trị settings chưa mã hoá |
@@ -68,13 +68,17 @@ Provider, tra web, quota:
 | `REPLY_URL_FILTER` | `untrusted` | Vô hiệu link lạ trong câu trả lời: `untrusted` / `all` / `off` |
 | `API_QUOTA_COOLDOWN_SEC` | 3600 | Nay chỉ là cooldown cho hết quota THEO NGÀY; 429 theo phút dùng gợi ý của provider (30 giây-15 phút) |
 | `GROQ_HISTORY_MAX_CHARS` | 3500 | Trần ký tự lịch sử riêng cho Groq (gpt-oss-20b free khoảng 8K token/phút) |
+| `GROQ_TPM_BUDGET` | 7000 | Ngân sách token ước lượng cho 1 lượt Groq (prompt + max_tokens); quá thì persona gọn, vẫn quá thì bỏ qua Groq không tốn request. 0 = tắt |
+| `GROQ_REASONING_EFFORT` | low | Mức suy luận gửi cho model `openai/gpt-oss-*` (low/medium/high) |
+| `CHAT_TEMPERATURE` | 0.8 | Nhiệt độ chat thường (trước 0,95 - cao làm lẫn chữ Trung/Nhật/Hàn nhiều hơn) |
+| `GEMINI_CHAT_THINKING_BUDGET` | (trống) | Ngân sách "thinking" của Gemini khi chat; trống = mặc định model. Việc JSON/tiện ích luôn 0 |
 | `GROQ_STREAM_USAGE` | 1 | Xin token trong stream Groq (`stream_options.include_usage`) cho thống kê; 0 nếu Groq từ chối |
 | `QUOTA_BURN_ALERT_PCT` | 80 | Báo chủ bot khi provider dùng từ N% hạn mức trong cửa sổ quota (0 = tắt) |
 | `GEMINI_KEYS_SAME_PROJECT` | 0 | 1 = API 1 và API 2 cùng project Google Cloud (cộng chung quota) |
 | `FREE_TIER_RPD_GEMINI` / `FREE_TIER_RPD_GROQ` | 0 / 0 | Hạn mức lượt/ngày (0 = chưa đặt, chỉ hiển thị); Groq ưu tiên số từ header response |
 | `FREE_TIER_RPD_OPENROUTER` / `FREE_TIER_TAVILY_MONTHLY` | 50 / 1000 | OpenRouter `:free` 50 lượt/ngày (1000 khi đã nạp từ 10 USD); Tavily credit/tháng (tìm advanced = 2) |
 | `VISION_PROVIDER_ORDER` | `api1,api2,openrouter,groq,router9` | Thứ tự provider cho ảnh (prompt từ ảnh, hỏi đáp ảnh, hoá đơn); provider thiếu tự thêm vào cuối |
-| `LIVE_CHAT_FALLBACK` | 1 | Gemini Live làm provider chat dự phòng cuối (tự thêm `live` vào cuối `PROVIDER_ORDER`); 0 = bỏ `live` khỏi chuỗi |
+| `LIVE_CHAT_FALLBACK` | 0 | 1 = Gemini Live làm provider chat dự phòng cuối (thêm `live` vào cuối `PROVIDER_ORDER`); mặc định tắt (đường chậm, tốn RAM nhất) |
 | `LIVE_MODEL` | `gemini-3.8-live` | Model Gemini Live (đổi được ở `/admin` → Provider → `live`) |
 | `LIVE_MAX_SESSIONS` / `LIVE_CALL_TIMEOUT_SEC` / `LIVE_MAX_AUDIO_MB` | 1 / 60 / 8 | Số phiên Live cùng lúc (1-4), trần giây 1 lượt (10-180, không vượt hạn chót lượt), trần MB âm thanh 1 lượt (1-32) |
 | `LIVE_HISTORY_MESSAGES` | 6 | Số tin lịch sử gần nhất gửi kèm lượt chat qua Live (0-20) |
