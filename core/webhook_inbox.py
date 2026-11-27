@@ -332,7 +332,8 @@ async def deliver(row, processor: Callable[[str, dict], Awaitable[None]]) -> Non
         # Giữ payload để chạy lại; nếu là shutdown (task này bị cancel) thì trả
         # lease ngay cho instance mới. Mất quyền sở hữu (heartbeat cancel) thì
         # không đụng lease - nó đã thuộc về người khác.
-        if asyncio.current_task().cancelling():
+        current = asyncio.current_task()
+        if current is not None and current.cancelling():
             await asyncio.shield(release(row))
             raise
     except Exception as exc:

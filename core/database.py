@@ -64,7 +64,7 @@ def _bind(
 ) -> Callable[_P, Awaitable[_T]]: ...
 
 
-def _bind(fn, *, idempotent=True, post=None):
+def _bind(fn: Any, *, idempotent: bool = True, post: Callable[[Any], Any] | None = None) -> Any:
     """``db.xxx = _bind(repo.fn)``: hàm gọi ``repo.fn(await get_pool(), *args, **kwargs)``
     có with_reconnect (``idempotent=False``: lệnh có thể đã commit thì không chạy lại).
     Hàm repository và ``get_pool`` được tra theo tên LÚC GỌI - test thay ``db.get_pool``

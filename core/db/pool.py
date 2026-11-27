@@ -11,7 +11,8 @@ import contextvars
 import functools
 import logging
 import time
-from typing import Optional
+from collections.abc import Awaitable, Callable
+from typing import Any, Optional, ParamSpec, TypeVar, cast, overload
 from urllib.parse import urlsplit
 
 import asyncpg
@@ -153,13 +154,29 @@ def _safe_to_retry(exc: BaseException, idempotent: bool) -> bool:
     return not isinstance(exc, asyncpg.ConnectionDoesNotExistError)
 
 
-def _with_reconnect(func=None, *, idempotent: bool = True):
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+@overload
+def _with_reconnect(
+    func: Callable[_P, Awaitable[_R]], *, idempotent: bool = True
+) -> Callable[_P, Awaitable[_R]]: ...
+
+
+@overload
+def _with_reconnect(
+    func: None = None, *, idempotent: bool = True
+) -> Callable[[Callable[_P, Awaitable[_R]]], Callable[_P, Awaitable[_R]]]: ...
+
+
+def _with_reconnect(func: Any = None, *, idempotent: bool = True) -> Any:
     # Supabase free tier tự pause DB sau ~1 tuần không hoạt động, khiến pool
     # cũ giữ connection đã chết -> raise lỗi kết nối. Bắt lỗi, reset ĐÚNG pool
     # vừa lỗi rồi thử lại đúng 1 lần (nếu an toàn) để tự phục hồi.
-    def decorate(fn):
+    def decorate(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         @functools.wraps(fn)
-        async def wrapper(*args, **kwargs):
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
             # Lệnh lồng trong 1 lệnh DB khác (vd enqueue -> ensure_migrations) đi
             # theo quyết định breaker của lệnh ngoài, không tự kiểm lại (nếu
             # không, lệnh thăm dò sẽ tự chặn chính lệnh con của nó).
@@ -214,7 +231,7 @@ def _with_reconnect(func=None, *, idempotent: bool = True):
                 _breaker_ok()
             return result
 
-        return wrapper
+        return cast(Callable[..., Awaitable[Any]], wrapper)
 
     return decorate(func) if func is not None else decorate
 
@@ -350,9 +367,10 @@ def pool_stats() -> dict:
       > 1 s gần nhất (None nếu chưa có).
     """
     pool = _pool
-    sized = pool is not None and hasattr(pool, "get_size") and not _is_closing(pool)
-    size = pool.get_size() if sized else None
-    idle = pool.get_idle_size() if sized else None
+    size: Optional[int] = None
+    idle: Optional[int] = None
+    if pool is not None and hasattr(pool, "get_size") and not _is_closing(pool):
+        size, idle = pool.get_size(), pool.get_idle_size()
     stats = _acquire_stats
     return {
         "ready": pool is not None,
@@ -378,12 +396,14 @@ async def get_pool() -> asyncpg.pool.Pool:
 
 async def _get_or_create_pool() -> asyncpg.pool.Pool:
     global _pool
-    if _pool is not None:
-        return _pool
+    pool = _pool
+    if pool is not None:
+        return pool
     async with _pool_lock:
-        if _pool is None:
+        pool = _pool
+        if pool is None:
             try:
-                _pool = await _create_pool()
+                pool = _pool = await _create_pool()
             except TimeoutError as exc:
                 # Mở kết nối quá DB_CONNECT_TIMEOUT_SEC: DB treo/mất mạng ->
                 # mở breaker ngay (không đợi thêm 1 lần timeout nữa).
@@ -391,7 +411,7 @@ async def _get_or_create_pool() -> asyncpg.pool.Pool:
                 raise DatabaseUnavailableError(
                     f"Không mở được kết nối DB trong {config.DB_CONNECT_TIMEOUT_SEC}s"
                 ) from exc
-    return _pool
+    return pool
 
 
 async def _create_pool() -> asyncpg.pool.Pool:
@@ -413,7 +433,8 @@ async def _create_pool() -> asyncpg.pool.Pool:
         # Cùng bố cục bộ nhớ (__slots__ rỗng) nên đổi lớp tại chỗ được: giữ nguyên
         # asyncpg.create_pool (test thay được) mà vẫn đo được thời gian mượn kết nối.
         pool.__class__ = _MeteredPool
-    return pool
+    # Stub của asyncpg khai báo await Pool -> "Pool | None"; create_pool luôn trả pool.
+    return cast(asyncpg.pool.Pool, pool)
 
 
 async def close_pool(grace_sec: float = _CLOSE_TIMEOUT_SEC) -> None:
