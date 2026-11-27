@@ -421,6 +421,82 @@ async def test_flush_khoa_theo_user_khong_chay_chong_nhau(mem, monkeypatch):
     assert order == ["bat_dau_cham", "ket_thuc_cham", "bat_dau_nhanh"]
 
 
+def _count_reads(mem, monkeypatch) -> list[tuple[int, int]]:
+    reads: list[tuple[int, int]] = []
+    real = mem.get_recent_chat_rows
+
+    async def counting(uid, limit=40, max_chars=1500):
+        reads.append((limit, max_chars))
+        return await real(uid, limit, max_chars)
+
+    monkeypatch.setattr(db, "get_recent_chat_rows", counting)
+    return reads
+
+
+@pytest.mark.asyncio
+async def test_kiem_tra_nguong_khong_giu_cho_trich_nho(mem, monkeypatch):
+    """Kiểm tra ngưỡng (sau mỗi lượt chat, vòng quét nền) chạy NGOÀI semaphore: mọi
+    chỗ trích nhớ đang bận gọi AI thì lượt chưa tới ngưỡng vẫn xong ngay."""
+    slots = asyncio.Semaphore(1)
+    monkeypatch.setattr(memory_service, "_slots", slots)
+    mem.add_turn(UID, "anh làm kỹ sư phần mềm", "dạ")
+    await slots.acquire()  # lượt trích nhớ của người khác đang gọi AI
+    try:
+        async with asyncio.timeout(1):
+            assert await memory_service.maybe_flush(UID) is False
+            assert await memory_service.maybe_flush(UID, idle=True) is False
+    finally:
+        slots.release()
+    assert mem.prompts == [] and _wm(mem) == 0
+
+
+@pytest.mark.asyncio
+async def test_toi_nguong_doc_lich_su_1_lan_va_nha_khoa_khi_cho_cho(mem, monkeypatch):
+    slots = asyncio.Semaphore(1)
+    monkeypatch.setattr(memory_service, "_slots", slots)
+    reads = _count_reads(mem, monkeypatch)
+    for text in ("anh làm kỹ sư phần mềm", "vợ anh tên Lan", "anh thích chạy bộ"):
+        mem.add_turn(UID, text, "dạ")
+    await slots.acquire()
+    task = asyncio.create_task(memory_service.maybe_flush(UID))
+    await asyncio.sleep(0.01)
+    # Đang chờ chỗ trích nhớ: không giữ khoá trí nhớ của người đó (/nho vẫn chạy).
+    async with asyncio.timeout(1):
+        async with memory_service.interactive_lock(UID):
+            pass
+    slots.release()
+    assert await asyncio.wait_for(task, 1) is True
+    assert len(mem.prompts) == 1 and "chạy bộ" in mem.prompts[0]
+    # Dòng đọc lúc kiểm tra được truyền vào flush - không đọc lại lần 2.
+    assert reads == [(memory_service._SCAN_ROWS, memory_service._ROW_MAX_CHARS)]
+    assert _wm(mem) == mem.chat[-1]["id"]
+
+
+@pytest.mark.asyncio
+async def test_quet_nen_khong_co_luot_moi_chi_doc_1_dong(mem, monkeypatch):
+    reads = _count_reads(mem, monkeypatch)
+    mem.add_turn(UID, "ok em", "dạ", minutes_ago=45)
+    assert await memory_service.maybe_flush(UID, idle=True) is False
+    assert _wm(mem) == mem.chat[-1]["id"]  # lượt tầm thường: tiến watermark
+    reads.clear()
+    assert await memory_service.maybe_flush(UID, idle=True) is False
+    assert reads == [(1, 0)]  # không kéo 60 dòng về chỉ để biết không có gì mới
+    assert mem.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_flush_dung_watermark_moi_nhat_khi_dong_da_doc_cu(mem):
+    """Dòng truyền vào flush đọc TRƯỚC lúc chờ chỗ; trong lúc đó lượt khác đã xử lý
+    xong: flush đọc lại watermark dưới khoá, không trích lại, không lùi watermark."""
+    mem.add_turn(UID, "anh tên Trai", "dạ")
+    recent = await db.get_recent_chat_rows(UID, memory_service._SCAN_ROWS, 800)
+    later = mem.chat[-1]["id"] + 5
+    await db.set_setting(personal_settings.memory_watermark_key(UID), str(later))
+    async with memory_service.user_lock(UID):
+        assert await memory_service.flush(UID, recent) is True
+    assert mem.prompts == [] and _wm(mem) == later
+
+
 @pytest.mark.asyncio
 async def test_flush_khac_user_khong_bi_chan_nhau(mem, monkeypatch):
     release = asyncio.Event()

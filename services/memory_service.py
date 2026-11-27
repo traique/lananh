@@ -844,13 +844,18 @@ def _memory_user_rows(rows: list[dict]) -> list[dict]:
     ]
 
 
-async def flush(user_id: int) -> bool:
+async def flush(user_id: int, recent: list[dict] | None = None) -> bool:
     """Xử lý cửa sổ chưa trích nhớ của 1 người (gọi khi đã giữ khoá user). Trả
-    True nếu watermark đã tiến (xử lý xong hoặc không có gì đáng xử lý)."""
+    True nếu watermark đã tiến (xử lý xong hoặc không có gì đáng xử lý).
+
+    ``recent``: các dòng maybe_flush vừa đọc lúc kiểm tra ngưỡng (mới -> cũ, cắt
+    _ROW_MAX_CHARS) - dùng lại, không đọc lần 2. Watermark vẫn đọc lại dưới khoá
+    nên dòng đã được lượt khác xử lý trong lúc chờ chỗ không bị trích lại."""
     if not await is_enabled(user_id):
         await _skip_to_latest(user_id)
         return True
-    recent = await db.get_recent_chat_rows(user_id, _SCAN_ROWS, _ROW_MAX_CHARS)
+    if recent is None:
+        recent = await db.get_recent_chat_rows(user_id, _SCAN_ROWS, _ROW_MAX_CHARS)
     if not recent:
         return True
     watermark = await _get_watermark(user_id)
@@ -903,45 +908,65 @@ async def _skip_to_latest(user_id: int) -> None:
         await _set_watermark(user_id, int(recent[0]["id"]))
 
 
-async def _should_flush(user_id: int, *, idle: bool) -> bool:
-    recent = await db.get_recent_chat_rows(user_id, _SCAN_ROWS, 60)
-    if not recent:
-        return False
+async def _rows_to_flush(user_id: int, *, idle: bool) -> list[dict] | None:
+    """Kiểm tra ngưỡng flush (chỉ đọc DB, không gọi AI; gọi khi giữ khoá user). None
+    = chưa tới ngưỡng; ngược lại trả các dòng chat vừa đọc (mới -> cũ, đủ nội dung)
+    để flush dùng lại."""
     watermark = await _get_watermark(user_id)
+    if idle:
+        # Quét nền: phần lớn người không có lượt mới - so id tin mới nhất với
+        # watermark trước, không kéo 60 dòng kèm nội dung về mỗi 10 phút.
+        latest = await db.get_recent_chat_rows(user_id, 1, 0)
+        if not latest or int(latest[0]["id"]) <= watermark:
+            return None
+    recent = await db.get_recent_chat_rows(user_id, _SCAN_ROWS, _ROW_MAX_CHARS)
+    if not recent:
+        return None
     pending = [r for r in reversed(recent) if int(r["id"]) > watermark]
     if not pending:
-        return False
+        return None
     meaningful = _memory_user_rows(pending)
     if not meaningful:
         # Chỉ toàn "ok"/lượt cổ phiếu, thời tiết...: tiến watermark, không gọi AI.
         await _set_watermark(user_id, int(pending[-1]["id"]))
-        return False
+        return None
     if len(meaningful) >= FLUSH_EXCHANGES:
-        return True
+        return recent
     starts = _session_starts(recent)
     first_start = starts[int(meaningful[0]["id"])][0]
     if first_start != starts[int(recent[0]["id"])][0] or _session_expired(recent):
-        return True  # phiên chứa lượt chưa xử lý đã kết thúc
+        return recent  # phiên chứa lượt chưa xử lý đã kết thúc
     # Lượt chưa xử lý cũ nhất sắp trôi khỏi cửa sổ lịch sử của prompt.
     window_rows = max(2, config.CHAT_HISTORY_TURNS * 2)
     newer = sum(1 for r in recent if int(r["id"]) >= int(meaningful[0]["id"]))
     if newer >= window_rows - 2:
-        return True
+        return recent
     if idle:
         age = (datetime.now(timezone.utc) - _as_utc(recent[0]["created_at"])).total_seconds()
-        return age >= IDLE_FLUSH_SEC
-    return False
+        if age >= IDLE_FLUSH_SEC:
+            return recent
+    return None
 
 
 async def maybe_flush(user_id: int, *, explicit: bool = False, idle: bool = False) -> bool:
-    """Flush nếu tới ngưỡng. Không raise (tác vụ nền)."""
+    """Flush nếu tới ngưỡng. Không raise (tác vụ nền).
+
+    Kiểm tra ngưỡng (vài lượt đọc DB) chạy NGOÀI semaphore ``_slots``: phần lớn lượt
+    kiểm tra (sau mỗi lượt chat, vòng quét nền) không tới ngưỡng và không được giữ
+    chỗ của lượt trích nhớ đang chờ gọi AI. Kiểm tra dưới khoá user (watermark đọc-
+    rồi-ghi khi tiến qua lượt tầm thường) rồi NHẢ khoá trong lúc chờ chỗ - lệnh
+    /nho, /quen... của người đó không phải chờ theo. Dòng đã đọc truyền vào flush."""
     try:
+        recent = None
+        if not explicit:
+            async with user_lock(user_id):
+                recent = await _rows_to_flush(user_id, idle=idle)
+            if recent is None:
+                return False
         async with _slots:
             with turn_deadline(config.MEMORY_UPDATE_TIMEOUT_SEC):
                 async with user_lock(user_id):
-                    if not explicit and not await _should_flush(user_id, idle=idle):
-                        return False
-                    return await flush(user_id)
+                    return await flush(user_id, recent)
     except TurnTimeoutError as exc:
         logger.warning("Trích nhớ nền hết hạn chót user_id=%s: %s", user_id, exc)
     except Exception:
