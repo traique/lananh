@@ -37,6 +37,7 @@ async def ensure_schema() -> None:
     await db.ensure_migrations()
 
 
+@db.with_reconnect
 async def list_groups(account_id: str) -> list[tuple[str, str]]:
     await ensure_schema()
     rows = await (await db.get_pool()).fetch(
@@ -51,6 +52,7 @@ async def list_groups(account_id: str) -> list[tuple[str, str]]:
     return [(row["group_id"], row["alias"]) for row in rows]
 
 
+@db.with_reconnect
 async def list_groups_with_daily(account_id: str) -> list[tuple[str, str, bool]]:
     """Như list_groups nhưng kèm cờ tổng kết tự động hằng ngày (/tongket on|off)."""
     await ensure_schema()
@@ -66,6 +68,7 @@ async def list_groups_with_daily(account_id: str) -> list[tuple[str, str, bool]]
     return [(row["group_id"], row["alias"], row["daily_summary"]) for row in rows]
 
 
+@db.with_reconnect
 async def set_daily_summary(account_id: str, target: str | None, enabled: bool) -> int:
     """Bật/tắt tổng kết hằng ngày cho 1 nhóm (group_id hoặc alias), hoặc mọi nhóm
     khi target là None. Trả về số nhóm khớp."""
@@ -94,6 +97,7 @@ async def set_daily_summary(account_id: str, target: str | None, enabled: bool) 
     return int(result.split()[-1]) if result else 0
 
 
+@db.with_reconnect
 async def resolve_group(account_id: str, target: str) -> tuple[str, str] | None:
     await ensure_schema()
     row = await (await db.get_pool()).fetchrow(
@@ -109,6 +113,7 @@ async def resolve_group(account_id: str, target: str) -> tuple[str, str] | None:
     return (row["group_id"], row["alias"]) if row else None
 
 
+@db.with_reconnect
 async def add_group(account_id: str, group_id: str, alias: str) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
@@ -124,6 +129,7 @@ async def add_group(account_id: str, group_id: str, alias: str) -> None:
     )
 
 
+@db.with_reconnect
 async def remove_group(account_id: str, target: str) -> bool:
     await ensure_schema()
     result = await (await db.get_pool()).execute(
@@ -138,6 +144,7 @@ async def remove_group(account_id: str, target: str) -> bool:
     return result != "DELETE 0"
 
 
+@db.with_reconnect
 async def save_group_message(**values) -> bool:
     await ensure_schema()
     result = await (await db.get_pool()).execute(
@@ -165,6 +172,7 @@ async def save_group_message(**values) -> bool:
     return result == "INSERT 0 1"
 
 
+@db.with_reconnect
 async def get_group_messages(
     account_id: str,
     group_id: str,
@@ -190,6 +198,7 @@ async def get_group_messages(
     )
 
 
+@db.with_reconnect
 async def summary_exists(
     account_id: str,
     group_id: str,
@@ -215,6 +224,7 @@ async def summary_exists(
     )
 
 
+@db.with_reconnect
 async def save_summary(
     account_id: str,
     group_id: str,
@@ -242,6 +252,7 @@ async def save_summary(
     return result == "INSERT 0 1"
 
 
+@db.with_reconnect
 async def save_summary_and_enqueue(
     account_id: str,
     group_id: str,
@@ -291,6 +302,8 @@ async def save_summary_and_enqueue(
     return True
 
 
+# INSERT không có khoá chống trùng: chạy lại sau khi đã commit = gửi 2 lần.
+@db.with_reconnect(idempotent=False)
 async def enqueue_outbox(account_id: str, recipient_id: str, content: str) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
@@ -304,6 +317,7 @@ async def enqueue_outbox(account_id: str, recipient_id: str, content: str) -> No
     )
 
 
+@db.with_reconnect
 async def get_pending_outbox(
     account_id: str,
     recipient_id: str,
@@ -325,6 +339,7 @@ async def get_pending_outbox(
     )
 
 
+@db.with_reconnect
 async def enqueue_reminder(
     reminder_id: int, account_id: str, recipient_id: str, content: str
 ) -> None:
@@ -431,6 +446,7 @@ async def mark_outbox_failed(item_id: int, error: str, chunks_sent: int = 0):
     )
 
 
+@db.with_reconnect
 async def cleanup_old_messages(account_id: str) -> None:
     await ensure_schema()
     await (await db.get_pool()).execute(
@@ -476,6 +492,7 @@ async def resolve_active_account_id() -> str:
     return resolved or env_id or DEFAULT_ACCOUNT_ID
 
 
+@db.with_reconnect
 async def resolve_default_account_id() -> str | None:
     """Bot Zalo B trong repo này chỉ có ĐÚNG 1 tài khoản đăng nhập (thiết kế
     1-chủ) - nhưng account_id THẬT (numeric, do zalo-gateway gửi lên) chỉ được

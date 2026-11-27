@@ -1,4 +1,5 @@
 """Encrypted persistence for the personal Zalo session and controller pairing."""
+
 import json
 
 from core import crypto, database as db
@@ -8,6 +9,7 @@ _SESSION_KEY = "zalo:session:v1"
 _CONTROLLER_KEY = "zalo:controller:v1"
 
 
+@db.with_reconnect
 async def load_session() -> dict | None:
     pool = await db.get_pool()
     raw = crypto.decrypt(await settings_repository.get(pool, _SESSION_KEY))
@@ -27,6 +29,7 @@ async def load_account_id() -> str:
     return str(session.get("accountId") or session.get("account_id") or "").strip()
 
 
+@db.with_reconnect
 async def save_session(value: dict) -> None:
     pool = await db.get_pool()
     await settings_repository.set(
@@ -36,20 +39,24 @@ async def save_session(value: dict) -> None:
     )
 
 
+@db.with_reconnect
 async def clear_session() -> None:
     await settings_repository.set(await db.get_pool(), _SESSION_KEY, "")
 
 
+@db.with_reconnect
 async def load_controller() -> str:
     raw = await settings_repository.get(await db.get_pool(), _CONTROLLER_KEY)
     return (crypto.decrypt(raw) or "").strip()
 
 
+@db.with_reconnect
 async def save_controller(controller_id: str) -> None:
     await settings_repository.set(
         await db.get_pool(), _CONTROLLER_KEY, crypto.encrypt(controller_id.strip())
     )
 
 
+@db.with_reconnect
 async def clear_controller() -> None:
     await settings_repository.set(await db.get_pool(), _CONTROLLER_KEY, "")

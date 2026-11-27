@@ -72,6 +72,7 @@ async def _pool():
 # ─── Chế độ quét theo nhóm ──────────────────────────────────────────────────
 
 
+@db.with_reconnect
 async def list_groups(account_id: str) -> list[tuple[str, str, str]]:
     """(group_id, alias, signal_mode) của mọi nhóm đang theo dõi /tongket."""
     rows = await (await _pool()).fetch(
@@ -81,6 +82,7 @@ async def list_groups(account_id: str) -> list[tuple[str, str, str]]:
     return [(row["group_id"], row["alias"], row["signal_mode"]) for row in rows]
 
 
+@db.with_reconnect
 async def set_mode(account_id: str, target: str | None, mode: str) -> int:
     """Đặt chế độ cho 1 nhóm (alias hoặc group_id) hoặc mọi nhóm (target=None)."""
     if mode not in MODES:
@@ -106,6 +108,7 @@ async def set_mode(account_id: str, target: str | None, mode: str) -> int:
 # ─── Người theo dõi thêm ────────────────────────────────────────────────────
 
 
+@db.with_reconnect
 async def add_person(account_id: str, group_id: str, sender_id: str, sender_name: str) -> None:
     await (await _pool()).execute(
         """
@@ -121,6 +124,7 @@ async def add_person(account_id: str, group_id: str, sender_id: str, sender_name
     )
 
 
+@db.with_reconnect
 async def remove_person(account_id: str, group_id: str, sender_id: str) -> bool:
     result = await (await _pool()).execute(
         "DELETE FROM zalo_signal_people WHERE account_id = $1 AND group_id = $2 AND sender_id = $3",
@@ -131,6 +135,7 @@ async def remove_person(account_id: str, group_id: str, sender_id: str) -> bool:
     return result == "DELETE 1"
 
 
+@db.with_reconnect
 async def list_people(account_id: str) -> dict[str, dict[str, str]]:
     """group_id -> {sender_id: tên}."""
     rows = await (await _pool()).fetch(
@@ -144,6 +149,7 @@ async def list_people(account_id: str) -> dict[str, dict[str, str]]:
     return people
 
 
+@db.with_reconnect
 async def recent_senders(account_id: str, group_id: str, days: int = 30, limit: int = 300):
     """Người đã nhắn trong nhóm gần đây, nhắn nhiều trước:
     (sender_id, tên mới nhất, vai trò mới nhất, số tin)."""
@@ -186,6 +192,7 @@ async def save_cursor(account_id: str, row_id: int) -> None:
     await db.set_setting(_CURSOR_KEY.format(account_id), str(int(row_id)))
 
 
+@db.with_reconnect
 async def settled_max_id(account_id: str) -> int:
     """id lớn nhất của tin nhóm đã lưu xong (0 nếu chưa có tin nào)."""
     value = await (await _pool()).fetchval(
@@ -196,6 +203,7 @@ async def settled_max_id(account_id: str) -> int:
     return int(value or 0)
 
 
+@db.with_reconnect
 async def messages_between(
     account_id: str, after_id: int, upto_id: int, limit: int
 ) -> list[GroupMessage]:
@@ -236,6 +244,7 @@ async def messages_between(
 # ─── Tín hiệu ───────────────────────────────────────────────────────────────
 
 
+@db.with_reconnect
 async def save_signal(
     account_id: str,
     message: GroupMessage,
@@ -315,6 +324,9 @@ def _sent_column(channel: str) -> str:
     return f"{channel}_sent_at"
 
 
+# Không idempotent: chạy lại sau khi đã commit thì lô vừa nhận đã bị đánh dấu đã giao
+# mà không ai gửi (mất tín hiệu) - chỉ thử lại khi chắc chắn lệnh chưa tới server.
+@db.with_reconnect(idempotent=False)
 async def claim_pending(
     account_id: str, channel: str, max_age_hours: int, limit: int
 ) -> list[Signal]:
@@ -350,6 +362,7 @@ async def claim_pending(
     return [_signal(row) for row in rows]
 
 
+@db.with_reconnect
 async def already_delivered(account_id: str, channel: str, ids: list[int]) -> set[int]:
     """Trong ``ids``, các tín hiệu mà CÙNG người - mã - hướng - loại - ngày đã được giao
     cho ``channel`` từ một dòng khác (thường là cùng người nói ở nhóm khác): không báo lại."""
@@ -373,6 +386,7 @@ async def already_delivered(account_id: str, channel: str, ids: list[int]) -> se
     return {row["id"] for row in rows}
 
 
+@db.with_reconnect
 async def release(ids: list[int], channel: str) -> None:
     """Trả tín hiệu đã nhận nhưng gửi lỗi về trạng thái chưa giao."""
     if not ids:
@@ -384,6 +398,7 @@ async def release(ids: list[int], channel: str) -> None:
     )
 
 
+@db.with_reconnect
 async def signals_since(
     account_id: str,
     start: datetime,
@@ -411,6 +426,7 @@ async def signals_since(
     return [_signal(row) for row in rows]
 
 
+@db.with_reconnect
 async def top_symbols(
     account_id: str, start: datetime, end: datetime | None = None, limit: int = 10
 ):
@@ -438,6 +454,7 @@ async def top_symbols(
     ]
 
 
+@db.with_reconnect
 async def consensus(account_id: str, signal_date: date, symbols: list[str]):
     """{(mã, hướng): (số người, số nhóm)} trong ngày ``signal_date`` (giờ VN)."""
     if not symbols:
@@ -459,6 +476,7 @@ async def consensus(account_id: str, signal_date: date, symbols: list[str]):
     }
 
 
+@db.with_reconnect
 async def cleanup(account_id: str) -> None:
     await (await _pool()).execute(
         "DELETE FROM zalo_stock_signals "
