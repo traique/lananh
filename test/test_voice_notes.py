@@ -84,9 +84,12 @@ def test_tran_kich_thuoc_va_thoi_luong(monkeypatch):
     assert voice_service.limit_error(6 * 1024 * 1024, None) == "too_big"
 
 
-def test_loc_cau_ao_giac_cua_whisper():
+def test_loc_cau_ao_giac_cua_whisper(caplog):
     classic = "Hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn"
-    assert voice_service.clean_transcript(classic) == ""
+    with caplog.at_level("INFO", logger=voice_service.logger.name):
+        assert voice_service.clean_transcript(classic) == ""
+    # Log chỉ có độ dài, không chép lời nói của người dùng vào log Render.
+    assert f"({len(classic)} ký tự)" in caplog.text and "Ghiền" not in caplog.text
     assert voice_service.clean_transcript("Cảm ơn các bạn đã theo dõi!") == ""
     # Câu thật có từ trùng vẫn giữ.
     assert voice_service.clean_transcript("huỷ subscribe Netflix giúp anh") != ""
