@@ -861,7 +861,8 @@ def validate(require_webhook: bool = False) -> None:
     try:
         from cryptography.fernet import Fernet
 
-        Fernet(SETTINGS_ENC_KEY.encode())
+        # Thiếu khoá đã nằm trong ``missing`` ở trên; "" ở đây chỉ để Fernet báo không hợp lệ.
+        Fernet((SETTINGS_ENC_KEY or "").encode())
     except Exception as exc:
         raise RuntimeError(
             "SETTINGS_ENC_KEY không hợp lệ; cần Fernet key URL-safe base64 44 ký tự. "

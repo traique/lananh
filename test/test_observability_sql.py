@@ -55,9 +55,11 @@ async def test_do_tre_theo_provider_bo_turn_timeout_khoi_ty_le_loi(delivery_db):
             ('groq', 'm', 'rate_limited', 50, now()),
             ('groq', 'm', 'turn_timeout', 9000, now()),
             ('groq', 'm', 'ok', 99999, now() - interval '3 days'),
+            ('groq', 'm', 'skipped_budget', 0, now()),
             ('api1', 'g', 'error', 400, now())
         """
     )
+    # skipped_budget: Groq vượt GROQ_TPM_BUDGET, không gửi request - không tính là lượt gọi.
     rows = {row["provider"]: row for row in await db.provider_latency_summary(24)}
     assert rows["groq"]["calls"] == 4 and rows["groq"]["failed"] == 1
     assert rows["groq"]["p50_ms"] == 2000
@@ -103,7 +105,8 @@ async def test_burn_tu_moc_quota_bo_luot_429_va_tinh_credit_tavily(delivery_db):
             ('api1', 'g', 'ok', 1, 1, now() - interval '5 hours'),
             ('tavily', 'advanced', 'ok', NULL, NULL, now()),
             ('tavily', 'basic', 'ok', NULL, NULL, now()),
-            ('groq', 'm', 'ok', 5, 5, now())
+            ('groq', 'm', 'ok', 5, 5, now()),
+            ('api1', 'g', 'skipped_budget', NULL, NULL, now())
         """
     )
     rows = {r["provider"]: r for r in await db.provider_burn_since(["api1", "tavily"], since)}

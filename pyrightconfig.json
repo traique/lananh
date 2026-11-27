@@ -1,6 +1,25 @@
 {
-  "include": ["ai", "channels", "core", "handlers", "services", "stock", "web.py", "web_admin.py", "bot_app.py", "scheduler.py", "main.py"],
-  "exclude": ["**/node_modules", "**/__pycache__", "zalo-gateway", "test", "tools", "scripts"],
+  "include": [
+    "ai",
+    "channels",
+    "core",
+    "handlers",
+    "services",
+    "stock",
+    "web.py",
+    "web_admin.py",
+    "bot_app.py",
+    "scheduler.py",
+    "main.py"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "zalo-gateway",
+    "test",
+    "tools",
+    "scripts"
+  ],
   "pythonVersion": "3.12",
   "pythonPlatform": "Linux",
   "typeCheckingMode": "basic",
@@ -18,5 +37,14 @@
   "reportPossiblyUnbound": "warning",
   "reportGeneralTypeIssues": "warning",
   "reportUnusedCoroutine": "error",
-  "reportUnusedExpression": "warning"
+  "reportUnusedExpression": "warning",
+  "executionEnvironments": [
+    {
+      "root": "core",
+      "reportOptionalMemberAccess": "error"
+    },
+    {
+      "root": "."
+    }
+  ]
 }

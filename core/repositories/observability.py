@@ -16,6 +16,9 @@ from typing import Any
 # Lượt chờ/hết hạn chót của CẢ lượt không phải lỗi của provider - không tính vào
 # tỉ lệ lỗi /status.
 _NOT_PROVIDER_FAULT = ("turn_timeout",)
+# Lượt KHÔNG gửi request nào (vd Groq vượt GROQ_TPM_BUDGET, ai/orchestrator.py): không
+# tính là lượt gọi, lỗi hay quota đã dùng.
+_NOT_SENT = ("skipped_budget",)
 
 
 async def latency_by_provider(pool: Any, since_hours: int = 24) -> list[dict]:
@@ -31,12 +34,14 @@ async def latency_by_provider(pool: Any, since_hours: int = 24) -> list[dict]:
                    FILTER (WHERE outcome = 'ok') AS p95_ms
         FROM provider_calls
         WHERE created_at >= now() - make_interval(hours => $1)
+          AND outcome <> ALL($3::text[])
         GROUP BY provider
         ORDER BY calls DESC
         LIMIT 20
         """,
         since_hours,
         list(_NOT_PROVIDER_FAULT),
+        list(_NOT_SENT),
     )
     return [dict(row) for row in rows]
 
@@ -137,10 +142,12 @@ async def burn_since(pool: Any, providers: list[str], since: datetime) -> list[d
                                  WHEN model = 'advanced' THEN 2 ELSE 1 END), 0) AS credits
         FROM provider_calls
         WHERE provider = ANY($1::text[]) AND created_at >= $2
+          AND outcome <> ALL($3::text[])
         GROUP BY provider
         """,
         providers,
         since,
+        list(_NOT_SENT),
     )
     return [dict(row) for row in rows]
 

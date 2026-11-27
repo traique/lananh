@@ -13,13 +13,13 @@ có thể đặt lớn (vd 300 s) để bớt lượt DB khi rảnh mà không l
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Awaitable, Callable, Optional
 from zoneinfo import ZoneInfo
 
-from core import config
+from core import config, idempotency, trace
 from core import database as db
-from core import idempotency, trace
 
 logger = logging.getLogger(__name__)
 _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -102,7 +102,7 @@ def _item_id(item) -> object:
         return "?"
 
 
-async def _process_due_reminders(due: list[tuple]) -> int:
+async def _process_due_reminders(due: Sequence[tuple]) -> int:
     """Giao các nhắc đã claim. Trả số nhắc giao lỗi đã NHẢ claim (claim được lại
     ngay - vòng nhắc chờ 1 nhịp rồi mới thử, không quay vòng gấp)."""
     from services import reminder_service

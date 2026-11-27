@@ -15,7 +15,7 @@ from ai import agnes_client, orchestrator, router9_client, tavily_client
 from core import config, version
 from core.text_utils import parse_on_off
 from handlers import common
-from services import error_digest, provider_health, release_notes, search_status
+from services import error_digest, provider_health, release_notes, runtime_status, search_status
 
 
 @common.restricted
@@ -294,6 +294,7 @@ async def _build_status_text() -> str:
         *await provider_health.live_lines(use_html=True),
         "",
         model_line,
+        html.escape(runtime_status.db_pool_line()),
     ]
     latency = await provider_health.latency_lines(use_html=True)
     if latency:

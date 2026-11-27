@@ -38,7 +38,7 @@ from services import (
     routines,
     voice_reply,
 )
-from services import turn_control
+from services import runtime_status, turn_control
 from services.telemetry import telemetry
 
 # /help theo vai trò: thành viên Zalo chỉ thấy lệnh mình dùng được (không có
@@ -755,7 +755,8 @@ async def _status_cmd(call: CommandCall) -> Reply:
     return [
         f"🏷️ Phiên bản: {version.label()} (/phienban)\n"
         f"📡 Provider: {state['active_provider']}\nThứ tự: {' → '.join(config.PROVIDER_ORDER)}\nModel API: {config.GOOGLE_AI_STUDIO_MODEL}\n"
-        f"{await search_status.search_mode_line()}"
+        f"{await search_status.search_mode_line()}\n"
+        f"{runtime_status.db_pool_line()}"
         + (f"\n{live}" if live else "")
         + (f"\n\n{latency}" if latency else "")
     ], None
