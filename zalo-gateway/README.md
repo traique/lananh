@@ -1,10 +1,23 @@
 # Zalo gateway
 
 Node adapter dùng `zca-js` cho tài khoản B, chạy cùng container với FastAPI.
+Cần Node 22 (`engines >=22`, `.nvmrc`; Dockerfile và CI build bằng Node 22).
+
+## Mã nguồn
+
+- `src/index.ts`: chỉ nối dây (config, hàng đợi, control server, lịch outbox, tín hiệu tắt).
+- `src/dispatcher.ts`: xử lý tin (lọc trùng, phân luồng, gộp, làn nhanh, ảnh/thoại/file,
+  `/pair`, tin nhóm, gửi trả lời); nhận `{api, bridge, queues, config, groups}` tiêm
+  vào - `test-dispatcher.mjs` test bằng fake.
+- `src/session.ts`: khôi phục phiên, QR, listener, tự đăng nhập lại, đăng xuất.
+- `src/shutdown.ts`: tắt êm khi SIGTERM/SIGINT. `src/outbox.ts`: gửi outbox + lịch poll/kick.
 
 ## Luồng chính
 
 - QR login được điều khiển từ Telegram qua local control server `127.0.0.1:9901`.
+  Mọi route của control server đòi header `x-zalo-bridge-secret` = `ZALO_BRIDGE_SECRET`
+  (so khớp hằng thời gian; thiếu/sai -> 403): bind loopback chưa đủ vì `/logout` xoá phiên
+  và `/status` trả mã QR. Python gọi kèm header qua `channels/zalo_gateway_status.py`.
 - A ghép đôi bằng `/pair <mã>`; không cần cấu hình UID thủ công.
 - Private text dùng chung Gemini/stock/memory/tools với Telegram. Tin trả lời
   (trích dẫn) gửi kèm `quote_text` (chữ tin được trích, tối đa 600 ký tự).
@@ -25,11 +38,26 @@ Node adapter dùng `zca-js` cho tài khoản B, chạy cùng container với Fas
   là người Python đã trả lời hoặc chủ bot. Python trả `paired: false` cho người
   lạ (mọi endpoint tin riêng và `/notice`) thì gateway quên người đó; `/zaloxoa`
   còn báo thẳng control server `POST /known/forget {"id": ...}` để từ tin kế
-  tiếp người bị gỡ pairing không còn thấy dấu hiệu bot đang đọc.
-- Group text chỉ được forward khi group ID nằm trong allowlist Supabase.
+  tiếp người bị gỡ pairing không còn thấy dấu hiệu bot đang đọc. Lúc gắn phiên,
+  gateway nạp sẵn người đã pair đang hoạt động (`GET /internal/zalo/known-senders/{account_id}`
+  -> `{"sender_ids": [...]}`, tối đa 500, lỗi thì bỏ qua) để ngay sau khi khởi động
+  lại, Python sập thì người quen vẫn nhận câu báo sự cố thay vì im lặng.
+- Group text chỉ được forward khi group ID nằm trong allowlist Supabase. Tin của nhóm
+  không theo dõi (kể cả nhóm nguồn Facebook) bị bỏ ngay ở cửa vào, không ghi vào bộ
+  nhớ chống trùng 5.000 id (trước đây đẩy id tin riêng ra khỏi bộ nhớ). Danh sách nhóm
+  nạp lại khi Python gọi `POST /groups/refresh` (sau `/themnhom`, `/xoanhom`, `/fb_*`),
+  dự phòng mỗi `ZALO_GROUP_REFRESH_MS` (mặc định 5 phút).
 - Summary outbox được gửi riêng từ B sang A. Tin gửi lỗi được báo về Python
   (`POST /internal/zalo/outbox/{id}/failed`), thử lại theo backoff và bỏ cuộc sau
   `ZALO_OUTBOX_MAX_ATTEMPTS` lần (báo chủ bot) - không chặn các tin phía sau.
+  Python gọi `POST /outbox/kick` (control server) ngay khi thêm tin: gateway gộp các
+  kick trong 0,5s thành 1 lượt gửi; poll `ZALO_OUTBOX_POLL_MS` (mặc định 90s) chỉ là
+  dự phòng khi kick bị lỡ.
+- Python bận (`503`, kèm `Retry-After` - media worker đang đọc body khác) hoặc đang
+  khởi động lại (`ECONNREFUSED`): `/message`, `/image-prompt`, `/voice`, `/file` thử
+  lại tối đa 3 lần, chờ theo `Retry-After` (trần 10s, mặc định 2s/4s), trong cùng hạn
+  chót của lượt; Python idempotent theo message_id nên gửi lại an toàn. Ảnh/thoại/file
+  gửi dạng Blob chép 1 lần và bản tải về được thả ngay khi gọi, không giữ suốt lượt.
 - Tin riêng xử lý tuần tự theo từng người gửi, song song tối đa
   `ZALO_DIRECT_CONCURRENCY` người (mặc định 1 = số chỗ thành viên bên Python,
   `MAX_CONCURRENT_TURNS - OWNER_RESERVED_SLOTS`); hàng đợi đầy thì báo "đang bận"
@@ -70,6 +98,14 @@ Node adapter dùng `zca-js` cho tài khoản B, chạy cùng container với Fas
   server; Python hiện ở mục "Giám sát" trên `/admin`.
 - Listener Zalo đóng hẳn: gateway tự đăng nhập lại từ phiên đã lưu với backoff
   5s/15s/60s/5 phút (tối đa 10 lần) rồi chuyển sang `login_required` (quét QR lại).
+- Khởi động: khôi phục phiên đã lưu; Python/Zalo chưa sẵn sàng thì thử lại ~4,5 phút
+  rồi báo chủ bot (`closed`) và giao cho lịch đăng nhập lại ở trên thay vì đứng yên;
+  Zalo từ chối phiên đã lưu thì báo `login_required` ngay.
+- Tắt (SIGTERM từ supervisord, `stopwaitsecs=15`, hoặc Ctrl+C): dừng listener và lịch
+  outbox, tin chữ đang chờ gộp được đẩy vào hàng đợi, chờ hàng đợi tin riêng/làn
+  nhanh/việc gửi đang dở tối đa 10s, báo Python số đoạn đã gửi của tin outbox gửi dở
+  (`/outbox/{id}/failed` kèm `chunks_sent`, lần sau gửi tiếp từ đoạn kế thay vì đoạn 0),
+  rồi thoát. Tín hiệu lần hai thoát ngay.
 - Trạng thái gateway được báo về Python qua `POST /internal/zalo/gateway-state`
   với body `{account_id, state, detail?}`; `state` là một trong `connected`,
   `reconnecting`, `closed`, `login_required`, `send_failed` để chủ bot được báo.
@@ -82,8 +118,8 @@ ZALO_BRIDGE_SECRET=
 ZALO_CONTROL_PORT=9901
 ZALO_BOT_ACCOUNT_ID=zalo-bot
 ZALO_CONTROLLER_ID=
-ZALO_GROUP_REFRESH_MS=60000
-ZALO_OUTBOX_POLL_MS=15000
+ZALO_GROUP_REFRESH_MS=300000
+ZALO_OUTBOX_POLL_MS=90000
 ZALO_GROUP_RETENTION_DAYS=30
 ZALO_DAILY_SUMMARY_HOUR=9
 ZALO_IMAGE_MAX_BYTES=8388608
@@ -119,7 +155,9 @@ ZALO_BRIDGE_ALLOW_FORWARDED=0
 
 ## Bảo mật
 
-- Không public control port.
+- Không public control port. Control server chỉ bind `127.0.0.1` và mọi route đòi
+  header `x-zalo-bridge-secret` (cùng `ZALO_BRIDGE_SECRET`); không có route health
+  không khoá (supervisord và `scripts/run-zalo-gateway.sh` không gọi HTTP).
 - `/internal/zalo/*` chỉ nhận request từ `ZALO_BRIDGE_ALLOWED_HOSTS` (mặc định
   loopback) và từ chối request đi qua proxy (`X-Forwarded-For`...) trừ khi
   `ZALO_BRIDGE_ALLOW_FORWARDED=1`; vẫn bắt buộc `ZALO_BRIDGE_SECRET`.
@@ -128,3 +166,30 @@ ZALO_BRIDGE_ALLOW_FORWARDED=0
 - Session/controller phải được mã hóa bằng `SETTINGS_ENC_KEY`.
 - Chỉ chạy một listener và không mở Zalo Web bằng B.
 - `zca-js` không chính thức; sử dụng có rủi ro tài khoản.
+
+## Nâng cấp zca-js
+
+`zca-js` là thư viện không chính thức, gói npm không xuất kiểu dùng được với NodeNext nên
+gateway tự khai báo phần mình dùng (`src/zca-js-compat.d.ts`, `src/types.ts` - phần lớn
+là `any`): TypeScript KHÔNG bắt được khi zca-js đổi tên hàm hay giá trị enum. Mỗi lần
+nâng bản:
+
+1. Đọc changelog/commit của zca-js giữa 2 bản; chú ý `login`, `loginQR`, listener
+   (`start`/`stop`, sự kiện `message`, `group_event`, `closed`, `disconnected`, mã
+   đóng `retryOnClose`), `sendMessage` (styles, attachments), `sendSeenEvent`,
+   `sendTypingEvent`, `addReaction`, `uploadAttachment`, `sendVoice`, `getGroupInfo`
+   (`creatorId`, `adminIds`, `gridInfoMap`), `getAllGroups` (`gridVerMap`), `ZaloApiError`.
+2. Ghim đúng bản trong `package.json` (không dùng `^`), `npm install` để cập nhật
+   `package-lock.json`, chạy `npm audit --omit=dev`.
+3. `npm run check && npm test`: `test-zca-js.mjs` nạp zca-js thật (không mạng) và
+   khẳng định mọi method/enum gateway dùng còn nguyên và khớp hằng số của gateway
+   (`ThreadType`, `LoginQRCallbackEventType`, `DestType.User`, `Reactions.OK`,
+   `TextStyle`, `GroupEventType`, `ZaloApiError`). Đỏ thì sửa shim/hằng số trước.
+4. Đối chiếu kiểu trong `node_modules/zca-js/dist/**/*.d.ts` với `src/types.ts`
+   (`ZaloMessage`, `ZaloSeenParams`, `ZaloReactionTarget`, `ZaloGroupDetail`) và
+   `src/msgtype.ts` (`msgType`: `chat.photo`, `chat.voice`, `share.file`...).
+5. Đo RAM sau khi nạp (`node --max-old-space-size=96 dist/index.js`, gateway chia 512 MB
+   với Python): bản mới phình heap thì cân nhắc ở lại bản cũ.
+6. Thử thật trên tài khoản phụ trước khi deploy: đăng nhập QR, khôi phục phiên đã lưu
+   (restart gateway), tin chữ/ảnh/thoại/file, `/nhomzalo`, tin nhóm đang theo dõi,
+   typing/đã xem/reaction, outbox, rồi `/zalologout`.
