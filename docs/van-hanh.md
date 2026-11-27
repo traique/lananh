@@ -30,8 +30,19 @@ Tài liệu chính: [README.md](../README.md).
   Telegram/Zoom kẹt trong inbox quá 10 phút; digest danh mục (ngày giao dịch), bản
   tin RSS 8h, cảnh báo danh mục, job sự kiện quyền hoặc một slot Page chứng khoán
   quá hạn mà chưa chạy (bản tin sáng cá nhân `/bantin` chưa được kiểm); bot khởi động lại vì crash, OOM, gián đoạn hơn 20 phút, hoặc restart
-  bất thường dồn dập (deploy và restart do sửa env/Restart service không tính).
-  Phần nhịp tim/khởi động lại chỉ chạy khi `RENDER=true`.
+  bất thường dồn dập (deploy và restart do sửa env/Restart service không tính);
+  vòng gửi nhắc việc chết vì lỗi bất ngờ (watchdog chạy lại ngay và báo, nhắc đến hạn
+  trong lúc dừng được gửi bù kèm nhãn nhắc trễ). Phần nhịp tim/khởi động lại chỉ chạy
+  khi `RENDER=true`.
+- **Nhắc việc đúng giờ.** Vòng nhắc (`scheduler.py`) hỏi DB còn bao lâu tới nhắc kế tiếp
+  rồi ngủ đúng chừng đó, thức ngay khi đặt/hoãn nhắc hoặc thêm ngày nhớ;
+  `REMINDER_CHECK_INTERVAL_SEC` (mặc định 120) chỉ là giờ ngủ tối đa.
+- **Log.** Ghi stderr qua hàng đợi có trần (1000 dòng; luồng riêng, event loop không chờ
+  pipe log); secret bị che trên chuỗi đã format, kể cả traceback, trước khi vào hàng đợi;
+  không ghi nội dung lời nói trong tin thoại. Heap khởi động được `gc.freeze()` để mỗi lần
+  dọn RAM sau lượt không quét lại; image Docker biên dịch sẵn `.pyc`. Thư viện pandas,
+  numpy, matplotlib... đã gỡ khỏi image (chỉ còn trong `requirements-dev.txt` cho script
+  offline và test).
 - **Phiên bản và báo bản mới.** Số phiên bản và lịch sử cập nhật nằm ở `CHANGELOG.md`
   (mục đầu tiên là bản đang chạy, `core/version.py` đọc). `/phienban [số bản|all]` (chủ
   bot, admin Zalo) xem lịch sử; `/status` có dòng phiên bản kèm mã commit. Khoảng 5 phút

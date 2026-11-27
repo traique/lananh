@@ -480,9 +480,11 @@ lời "chay" khi `/tavily off` (hoặc tắt trong `/admin`), khi chưa có
 - `/viec <yêu cầu>`: em trả lời ngay "em làm rồi báo anh", chạy yêu cầu ở NỀN rồi gửi
   kết quả (`services/background_jobs.py`, bảng `bg_jobs` migration 027). Việc chạy
   ngoài khoá lượt (người dùng vẫn chat bình thường) nhưng vẫn chiếm 1 chỗ
-  `MAX_CONCURRENT_TURNS` (việc của thành viên Zalo dùng chỗ thành viên, không đụng
-  chỗ dành riêng cho chủ bot); hạn chót riêng `BACKGROUND_JOB_TIMEOUT_SEC` (600 giây);
-  tối đa `BACKGROUND_JOBS_CONCURRENCY` (1) việc chạy cùng lúc toàn bot, mỗi người
+  `MAX_CONCURRENT_TURNS` (việc của MỌI người, kể cả chủ bot, dùng chỗ thành viên, không
+  đụng chỗ dành riêng cho lượt chat của chủ bot - việc nền xếp hàng chung với lượt chat
+  của thành viên Zalo); hạn chót riêng `BACKGROUND_JOB_TIMEOUT_SEC` (600 giây);
+  tối đa `BACKGROUND_JOBS_CONCURRENCY` (1, không vượt
+  `MAX_CONCURRENT_TURNS - OWNER_RESERVED_SLOTS`) việc chạy cùng lúc toàn bot, mỗi người
   `BACKGROUND_JOBS_MAX_PER_USER` (3) việc chờ/chạy. Lượt AI giống chat thường của đúng
   người đó (persona, trí nhớ, tra web, số liệu vàng/tỷ giá, đọc danh mục/chi tiêu, giá
   cổ phiếu nhắc tới) nhưng KHÔNG ghi dữ liệu. `/viec` xem danh sách, `/viec xem <số>`

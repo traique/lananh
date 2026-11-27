@@ -29,7 +29,9 @@ Repository được thiết kế cho **một chủ sở hữu**:
   Render chỉ deploy khi mọi check của commit xanh (`autoDeployTrigger: checksPass`).
 - Mỗi người dùng có hàng đợi riêng; tổng lượt AI song song bị chặn bởi
   `MAX_CONCURRENT_TURNS` (mặc định 2) để vừa RAM 512 MB, trong đó
-  `OWNER_RESERVED_SLOTS` (mặc định 1) chỗ luôn dành cho chủ bot (Telegram/Zoom/web).
+  `OWNER_RESERVED_SLOTS` (mặc định 1) chỗ luôn dành cho lượt chat của chủ bot
+  (Telegram/Zoom/web). Việc nền (`/viec`, tác vụ định kỳ) của mọi người, kể cả chủ bot,
+  dùng chỗ thành viên nên không bao giờ chiếm chỗ dành riêng này.
 - Mỗi lượt trả lời có hạn chót tổng `CHAT_TURN_TIMEOUT_SEC` (mặc định 200s, luôn
   dưới 240s gateway Zalo chờ) - MỘT hạn chót cho cả nhánh cổ phiếu lẫn chat, mọi
   lời gọi AI (kể cả cập nhật trí nhớ nền, tạo ảnh, /ragxuly) đi qua
@@ -202,9 +204,11 @@ services/           Logic dùng chung cho mọi kênh: channel_chat_service.run_
 stock/              Market data, validation, policy, lịch giao dịch, danh mục và backtest
 assets/             Ý nghĩa soạn sẵn: tu_vi.yaml, than_so_hoc.yaml, ky_mon.yaml; tts_viet_tat.yaml (đọc giọng /noi)
 rag/                Kho kiến thức .md cho lệnh /rag (mỗi heading 1 mẩu kiến thức)
-migrations/         NNN_*.sql (001-030), checksum ghim trong migrations.lock
+migrations/         NNN_*.sql (001-033), checksum ghim trong migrations.lock
 scripts/            backup_drill.py, run_evals.py, train_trend_model.py, run-zalo-gateway.sh,
-                    benchmark_memory.py (đo RSS theo kịch bản tải, offline)
+                    benchmark_memory.py (đo RSS theo kịch bản tải, offline; kịch bản
+                    `luot_chat` = 5 lượt chat trọn đường với provider/DB giả;
+                    `--importtime` in 20 module nạp chậm nhất)
 test/evals/         Golden set đánh giá (YAML + harness.py)
 zalo-gateway/        Node.js Zalo listener
 web.py               FastAPI webhook entrypoint (Telegram + Zoom), /healthz
