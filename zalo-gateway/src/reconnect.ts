@@ -13,7 +13,7 @@ export function reconnectDelayMs(
   maxAttempts = MAX_RECONNECT_ATTEMPTS,
 ): number | null {
   if (attempt >= maxAttempts || !delaysMs.length) return null;
-  return delaysMs[Math.min(attempt, delaysMs.length - 1)];
+  return delaysMs[Math.min(attempt, delaysMs.length - 1)] ?? null;
 }
 
 /**

@@ -215,7 +215,9 @@ export class SlidingWindowBudget {
   ) {}
 
   private prune(now: number): void {
-    while (this.stamps.length && now - this.stamps[0] >= this.windowMs) this.stamps.shift();
+    // Mốc tăng dần: bỏ 1 lần cả đoạn đầu đã ra khỏi cửa sổ.
+    const firstLive = this.stamps.findIndex((stamp) => now - stamp < this.windowMs);
+    this.stamps.splice(0, firstLive < 0 ? this.stamps.length : firstLive);
   }
 
   /** Lấy 1 lượt nếu còn; false = đã hết ngân sách trong cửa sổ hiện tại. */
@@ -243,7 +245,10 @@ export class BodyTooLargeError extends Error {
   }
 }
 
-export async function readLimitedBody(response: Response, maxBytes: number): Promise<Uint8Array> {
+export async function readLimitedBody(
+  response: Response,
+  maxBytes: number,
+): Promise<Uint8Array<ArrayBuffer>> {
   if (!response.body) throw new Error("Empty media response");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];

@@ -154,4 +154,5 @@ export type ZaloApi = {
   }>;
 };
 
-export type MediaItem = { mime: string; bytes: Uint8Array };
+/** Media tải từ Zalo; bytes nằm trên ArrayBuffer thường (đưa thẳng vào Blob/fetch, không chép). */
+export type MediaItem = { mime: string; bytes: Uint8Array<ArrayBuffer> };

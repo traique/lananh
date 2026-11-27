@@ -621,6 +621,21 @@ async def groups(
     ]
 
 
+@router.get("/known-senders/{account_id}")
+async def known_senders(
+    account_id: str,
+    x_zalo_bridge_secret: str | None = Header(default=None),
+):
+    """Id Zalo đã pair và đang hoạt động (admin trước, tối đa 500 - khớp MAX_KNOWN_SENDERS
+    của zalo-gateway/src/bridge.ts) để gateway nhận ra người quen ngay sau khi khởi động
+    lại: Python sập lúc đó thì họ nhận câu báo sự cố thay vì im lặng. Chỉ đọc.
+    ``account_id`` giữ cho đối xứng với /groups: pairing (bảng zalo_users) dùng chung cho
+    đúng 1 bot Zalo, không tách theo tài khoản."""
+    _auth(x_zalo_bridge_secret)
+    users = await zalo_users.list_users()
+    return {"sender_ids": [user.external_id for user in users if user.is_active][:500]}
+
+
 @router.post("/group-message", status_code=204)
 async def group_message(
     payload: ZaloGroupMessageRequest,

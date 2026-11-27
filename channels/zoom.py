@@ -82,9 +82,13 @@ def verify_webhook_token(authorization_header: str) -> bool:
     'General App + Chatbot' đời cũ. App tạo mới trên Marketplace (mục Access > Token >
     Secret Token, đi cùng Event Subscriptions) PHẢI dùng verify_webhook_signature() bên
     dưới thay vì hàm này."""
-    if not config.ZOOM_VERIFICATION_TOKEN:
+    if not config.ZOOM_VERIFICATION_TOKEN or not authorization_header:
         return False
-    return hmac.compare_digest(authorization_header, config.ZOOM_VERIFICATION_TOKEN)
+    # So sánh bytes như verify_webhook_signature: compare_digest với str chỉ nhận ASCII,
+    # header non-ASCII làm nó ném TypeError (500 thay vì 403).
+    return hmac.compare_digest(
+        authorization_header.encode(), config.ZOOM_VERIFICATION_TOKEN.encode()
+    )
 
 
 # Chống replay: chữ ký hợp lệ nhưng timestamp lệch quá 5 phút so với giờ server

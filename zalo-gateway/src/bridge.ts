@@ -1,5 +1,6 @@
 import type { GatewayConfig } from "./config.js";
 import { clipChars } from "./msgtype.js";
+import { isConnectionRefused, sleep } from "./text.js";
 import type { ZaloTextStyle } from "./types.js";
 export type IncomingDirectMessage = {
   senderId: string;
@@ -72,6 +73,16 @@ const SHORT_TIMEOUT_MS = 30000;
 export const FAST_LANE_TIMEOUT_MS = 30000;
 /** Câu báo dựng sẵn (POST /notice): chỉ đọc DB, không được làm chậm lượt. */
 const NOTICE_TIMEOUT_MS = 5000;
+/** Danh sách người quen lúc gắn phiên: chỉ đọc DB, không được treo lâu. */
+const KNOWN_SENDERS_TIMEOUT_MS = 10000;
+/** Trần số người quen nhận từ Python (khớp trần của GET /known-senders bên channels/router.py). */
+export const MAX_KNOWN_SENDERS = 500;
+/** Python bận (503) / đang khởi động lại (ECONNREFUSED): số lần thử tối đa, tính cả lần đầu. */
+export const BRIDGE_ATTEMPTS = 3;
+/** Trần chờ giữa 2 lần thử (Retry-After của services/request_limits.py là 5s). */
+export const BRIDGE_RETRY_MAX_DELAY_MS = 10000;
+/** Chờ khi Python không gửi Retry-After (nhân theo số lần đã thử: 2s, 4s). */
+const BRIDGE_RETRY_BASE_DELAY_MS = 2000;
 /** Lỗi HTTP từ Python, giữ mã trạng thái để nơi gọi phân loại (4xx bỏ / 5xx thử lại). */
 export class BridgeHttpError extends Error {
   constructor(
@@ -83,6 +94,73 @@ export class BridgeHttpError extends Error {
     this.name = "BridgeHttpError";
   }
 }
+export type BridgeRetryOptions = {
+  attempts?: number;
+  maxDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  fetchImpl?: typeof fetch;
+  log?: (message: string) => void;
+};
+
+/** Retry-After (số giây hoặc HTTP-date) -> ms; null nếu thiếu hoặc hỏng. */
+export function retryAfterMs(value: string | null, now = Date.now()): number | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) return Number(raw) * 1000;
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? Math.max(0, at - now) : null;
+}
+
+/**
+ * fetch tới Python, thử lại (tối đa BRIDGE_ATTEMPTS lần) khi Python trả 503 (media
+ * worker bận - services/request_limits.py, hoặc uvicorn quá --limit-concurrency) hoặc
+ * từ chối kết nối (uvicorn đang khởi động lại). Cả hai trường hợp Python CHƯA xử lý
+ * tin, và Python idempotent theo message_id nên gửi lại an toàn. Chờ theo Retry-After
+ * (trần BRIDGE_RETRY_MAX_DELAY_MS). Mọi lần thử dùng chung 1 hạn chót `timeoutMs`:
+ * không thử lại nếu lần chờ vượt hạn chót. Lần cuối vẫn 503 thì trả đúng response đó
+ * (nơi gọi ném BridgeHttpError như trước); lỗi khác ném ngay, không thử lại.
+ */
+export async function fetchBridge(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  label: string,
+  options: BridgeRetryOptions = {},
+): Promise<Response> {
+  const attempts = Math.max(1, Math.floor(options.attempts ?? BRIDGE_ATTEMPTS));
+  const maxDelayMs = options.maxDelayMs ?? BRIDGE_RETRY_MAX_DELAY_MS;
+  const doFetch = options.fetchImpl ?? fetch;
+  const now = options.now ?? Date.now;
+  const deadline = now() + timeoutMs;
+  const signal = AbortSignal.timeout(timeoutMs);
+  for (let attempt = 1; ; attempt++) {
+    let response: Response | null = null;
+    let refused: unknown = null;
+    try {
+      response = await doFetch(url, { ...init, signal });
+    } catch (error) {
+      if (!isConnectionRefused(error)) throw error;
+      refused = error;
+    }
+    if (response && response.status !== 503) return response;
+    const fallbackMs = BRIDGE_RETRY_BASE_DELAY_MS * attempt;
+    const hinted = response ? retryAfterMs(response.headers.get("retry-after"), now()) : null;
+    const delayMs = Math.min(maxDelayMs, hinted ?? fallbackMs);
+    if (attempt >= attempts || now() + delayMs >= deadline) {
+      if (response) return response;
+      throw refused;
+    }
+    // Bỏ body 503 để trả kết nối về pool trước khi chờ.
+    if (response) await response.body?.cancel().catch(() => undefined);
+    (options.log ?? console.warn)(
+      `[zalo] ${label}: Python ${response ? "bận (503)" : "chưa nhận kết nối"}; ` +
+        `thử lại sau ${delayMs}ms (lần ${attempt + 1}/${attempts})`,
+    );
+    await (options.sleep ?? sleep)(delayMs);
+  }
+}
+
 const h = (c: GatewayConfig) => ({
   "content-type": "application/json",
   "x-zalo-bridge-secret": c.bridgeSecret,
@@ -165,56 +243,69 @@ export async function callBridge(
   m: IncomingDirectMessage,
   timeoutMs = BRIDGE_TIMEOUT_MS,
 ) {
-  return (await (
-    await ok(
-      await fetch(`${c.bridgeBaseUrl}/message`, {
-        method: "POST",
-        headers: h(c),
-        body: JSON.stringify({
-          account_id: c.accountId,
-          sender_id: m.senderId,
-          sender_name: m.senderName,
-          conversation_id: m.conversationId,
-          message_id: m.messageId,
-          text: m.text,
-          ...(m.quoteText ? { quote_text: m.quoteText } : {}),
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
+  const r = await fetchBridge(
+    `${c.bridgeBaseUrl}/message`,
+    {
+      method: "POST",
+      headers: h(c),
+      body: JSON.stringify({
+        account_id: c.accountId,
+        sender_id: m.senderId,
+        sender_name: m.senderName,
+        conversation_id: m.conversationId,
+        message_id: m.messageId,
+        text: m.text,
+        ...(m.quoteText ? { quote_text: m.quoteText } : {}),
       }),
-      "Bridge",
-    )
-  ).json()) as BridgeResponse;
+    },
+    timeoutMs,
+    "Bridge",
+  );
+  return (await (await ok(r, "Bridge")).json()) as BridgeResponse;
 }
-/** Gửi raw bytes (không base64) kèm header x-zalo-* tới 1 endpoint media của Python. */
-async function callMediaBridge(
+/**
+ * Gửi raw bytes (không base64) kèm header x-zalo-* tới 1 endpoint media của Python.
+ * Body là Blob chép 1 lần: undici không chép thêm và gửi lại được khi Python bận.
+ * Cố ý KHÔNG async: khung async bên dưới chỉ giữ Blob, nên nơi gọi thả được bản bytes
+ * tải về ngay sau khi gọi - không giữ ảnh tới 8 MB suốt lượt Python (tới 240s).
+ */
+function callMediaBridge(
   c: GatewayConfig,
   path: string,
   label: string,
   mime: string,
-  data: Uint8Array,
+  data: Uint8Array<ArrayBuffer>,
   headers: Record<string, string>,
-) {
-  const body = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
-  const r = await fetch(`${c.bridgeBaseUrl}${path}`, {
-    method: "POST",
-    headers: {
-      "content-type": mime,
-      "x-zalo-bridge-secret": c.bridgeSecret,
-      "x-zalo-account-id": c.accountId,
-      ...headers,
-    },
-    body,
-    signal: AbortSignal.timeout(BRIDGE_TIMEOUT_MS),
+): Promise<BridgeResponse> {
+  return postMedia(c, path, label, new Blob([data], { type: mime }), {
+    "content-type": mime,
+    "x-zalo-bridge-secret": c.bridgeSecret,
+    "x-zalo-account-id": c.accountId,
+    ...headers,
   });
+}
+async function postMedia(
+  c: GatewayConfig,
+  path: string,
+  label: string,
+  body: Blob,
+  headers: Record<string, string>,
+): Promise<BridgeResponse> {
+  const r = await fetchBridge(
+    `${c.bridgeBaseUrl}${path}`,
+    { method: "POST", headers, body },
+    BRIDGE_TIMEOUT_MS,
+    label,
+  );
   return (await (await ok(r, label)).json()) as BridgeResponse;
 }
-export async function callImageBridge(
+export function callImageBridge(
   c: GatewayConfig,
   senderId: string,
   messageId: string,
   caption: string,
   mime: string,
-  image: Uint8Array,
+  image: Uint8Array<ArrayBuffer>,
 ) {
   return callMediaBridge(c, "/image-prompt", "Image bridge", mime, image, {
     "x-zalo-sender-id": senderId,
@@ -223,12 +314,12 @@ export async function callImageBridge(
   });
 }
 /** POST /voice (channels/zalo_media.py): messages[0] là câu "Em nghe là: ...". */
-export async function callVoiceBridge(
+export function callVoiceBridge(
   c: GatewayConfig,
   senderId: string,
   messageId: string,
   mime: string,
-  audio: Uint8Array,
+  audio: Uint8Array<ArrayBuffer>,
   durationMs: number | null,
 ) {
   return callMediaBridge(c, "/voice", "Voice bridge", mime, audio, {
@@ -238,14 +329,14 @@ export async function callVoiceBridge(
   });
 }
 /** POST /file (channels/zalo_media.py): PDF/DOCX/TXT, không caption = tóm tắt. */
-export async function callFileBridge(
+export function callFileBridge(
   c: GatewayConfig,
   senderId: string,
   messageId: string,
   fileName: string,
   caption: string,
   mime: string,
-  data: Uint8Array,
+  data: Uint8Array<ArrayBuffer>,
 ) {
   return callMediaBridge(c, "/file", "File bridge", mime, data, {
     "x-zalo-sender-id": senderId,
@@ -295,6 +386,31 @@ export async function fetchNotice(
     text: typeof r.text === "string" && r.text.trim() ? r.text : null,
     paired: typeof r.paired === "boolean" ? r.paired : null,
   };
+}
+/**
+ * GET /known-senders/{account_id}: id Zalo đã pair và đang hoạt động, để gateway nhận
+ * ra người quen ngay sau khi khởi động lại (trước đây KnownSenders trống tới khi Python
+ * trả lời lại từng người - Python sập lúc đó thì người quen bị im lặng thay vì nhận câu
+ * báo sự cố). Bỏ phần tử không phải chuỗi/số, tối đa MAX_KNOWN_SENDERS id.
+ */
+export async function fetchKnownSenders(c: GatewayConfig): Promise<string[]> {
+  const r = (await (
+    await ok(
+      await fetch(`${c.bridgeBaseUrl}/known-senders/${encodeURIComponent(c.accountId)}`, {
+        headers: h(c),
+        signal: AbortSignal.timeout(KNOWN_SENDERS_TIMEOUT_MS),
+      }),
+      "Known senders",
+    )
+  ).json()) as { sender_ids?: unknown } | null;
+  const raw: unknown[] = Array.isArray(r?.sender_ids) ? r.sender_ids : [];
+  const ids: string[] = [];
+  for (const item of raw) {
+    if (ids.length >= MAX_KNOWN_SENDERS) break;
+    const id = typeof item === "string" || typeof item === "number" ? String(item).trim() : "";
+    if (id) ids.push(id);
+  }
+  return ids;
 }
 export async function fetchAllowedGroups(c: GatewayConfig) {
   const g = (await (

@@ -129,6 +129,17 @@ export class DirectTextBatcher<T> {
     return true;
   }
 
+  /** Lúc tắt: đưa MỌI lô đang debounce vào hàng đợi ngay (tin đã nhận vẫn tới Python). */
+  flushAll(): number {
+    let flushed = 0;
+    for (const [sender, batch] of [...this.open]) {
+      if (batch.state !== "buffering") continue;
+      this.dispatch(sender, batch);
+      flushed++;
+    }
+    return flushed;
+  }
+
   /**
    * Có tin khác loại sắp xếp hàng sau: đưa lô đang debounce đi ngay và đóng lô
    * (tin chữ tới sau mở lô mới, đứng sau tin khác loại đó).

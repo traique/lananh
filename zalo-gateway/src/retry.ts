@@ -34,7 +34,8 @@ export async function retry<T>(
       if (attempt >= maxAttempts || (options.shouldRetry && !options.shouldRetry(error, attempt))) {
         throw error;
       }
-      const delayMs = options.delaysMs[attempt - 1];
+      // attempt < maxAttempts = delaysMs.length + 1 nên luôn có mốc chờ tương ứng.
+      const delayMs = options.delaysMs[attempt - 1] ?? 0;
       options.onRetry?.(error, attempt, delayMs);
       await sleep(delayMs);
     }

@@ -167,7 +167,7 @@ async function downloadMedia(
       }
       const declared = Number(response.headers.get("content-length") || 0);
       if (declared > spec.maxBytes) throw new TooLargeError(limitText);
-      let bytes: Uint8Array;
+      let bytes: Uint8Array<ArrayBuffer>;
       try {
         bytes = await readLimitedBody(response, spec.maxBytes);
       } catch (error) {
@@ -178,9 +178,8 @@ async function downloadMedia(
       }
       if (!bytes.length)
         throw new Error(`${capitalize(spec.label)} trống hoặc lớn hơn ${mbText(spec.maxBytes)}`);
-      const headerMime = (response.headers.get("content-type") || "")
-        .split(";", 1)[0]
-        .toLowerCase();
+      const [contentType = ""] = (response.headers.get("content-type") || "").split(";", 1);
+      const headerMime = contentType.toLowerCase();
       const mime = spec.detect(bytes, headerMime);
       if (!mime) {
         reasons.push(`${host}: MIME ${headerMime || "không rõ"}`);
@@ -229,10 +228,11 @@ export function sniffAudio(bytes: Uint8Array): string | null {
   ) {
     return "audio/webm";
   }
-  if (bytes.length >= 2 && bytes[0] === 0xff) {
+  const second = bytes[1];
+  if (bytes[0] === 0xff && second !== undefined) {
     // ADTS (AAC): 12 bit đồng bộ 0xFFF + 2 bit layer luôn 00; MP3: 11 bit đồng bộ + layer khác 00.
-    if ((bytes[1] & 0xf6) === 0xf0) return "audio/aac";
-    if ((bytes[1] & 0xe0) === 0xe0 && bytes[1] & 0x06) return "audio/mpeg";
+    if ((second & 0xf6) === 0xf0) return "audio/aac";
+    if ((second & 0xe0) === 0xe0 && second & 0x06) return "audio/mpeg";
   }
   return null;
 }

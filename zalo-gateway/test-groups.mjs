@@ -4,6 +4,7 @@ import {
   INFO_BATCH,
   MAX_GROUPS,
   SCAN_TIMEOUT_MS,
+  TrackedGroups,
   collectGroups,
   sharedScan,
 } from "./dist/groups.js";
@@ -61,6 +62,40 @@ test("collectGroups có trần số nhóm, total vẫn là số nhóm thật", a
   assert.deepEqual(empty, { total: 0, groups: [] });
 });
 
+test("TrackedGroups: nạp nhóm /tongket + nguồn Facebook; lỗi giữ danh sách cũ; chưa kết nối thì không nạp", async () => {
+  let connected = false;
+  let failSummary = false;
+  const retained = [];
+  const logged = [];
+  let fetches = 0;
+  const groups = new TrackedGroups({
+    fetchSummary: async () => {
+      fetches++;
+      if (failSummary) throw new Error("python down");
+      return new Set(["g-stock"]);
+    },
+    fetchFacebook: async () => new Set(["g-shop"]),
+    connected: () => connected,
+    onSummary: (ids) => retained.push([...ids]),
+    log: (message) => logged.push(message),
+  });
+  await groups.refresh();
+  assert.equal(fetches, 0, "Zalo chưa kết nối: không gọi Python");
+  assert.equal(groups.isTracked("g-stock"), false);
+  connected = true;
+  await groups.refresh();
+  assert.equal(groups.isSummary("g-stock"), true);
+  assert.equal(groups.isFacebook("g-shop"), true);
+  assert.equal(groups.isSummary("g-shop"), false);
+  assert.equal(groups.isTracked("g-shop"), true);
+  assert.equal(groups.isTracked("g-khac"), false);
+  assert.deepEqual(retained, [["g-stock"]]);
+  failSummary = true;
+  await groups.refresh();
+  assert.equal(groups.isSummary("g-stock"), true, "lỗi: giữ danh sách cũ");
+  assert.deepEqual(logged, ["[zalo] summary group refresh failed"]);
+});
+
 test("sharedScan: 1 lượt quét tại 1 thời điểm; người gọi tự hết giờ chờ, lượt quét vẫn chạy tiếp", async () => {
   assert.equal(SCAN_TIMEOUT_MS, 25000);
   // withTimeout dùng timer.unref() (không giữ tiến trình gateway sống); trong test không
@@ -101,29 +136,36 @@ test("sharedScan: 1 lượt quét tại 1 thời điểm; người gọi tự h�
 
 test("control server GET /groups: 200 kèm danh sách, 409 khi Zalo chưa kết nối", async () => {
   let connected = true;
-  const server = startControlServer(0, {
-    status: () => ({}),
-    startQr: async () => "idle",
-    startPairing: () => null,
-    logout: async () => undefined,
-    forgetSender: () => false,
-    groups: async () =>
-      connected ? { total: 1, groups: [{ id: groupId(1), name: "Gia đình", members: 5 }] } : null,
-  });
+  const server = startControlServer(
+    0,
+    {
+      status: () => ({}),
+      startQr: async () => "idle",
+      startPairing: () => null,
+      logout: async () => undefined,
+      forgetSender: () => false,
+      groups: async () =>
+        connected ? { total: 1, groups: [{ id: groupId(1), name: "Gia đình", members: 5 }] } : null,
+      refreshGroups: async () => false,
+      kickOutbox: () => true,
+    },
+    "s3cr3t",
+  );
   try {
     if (!server.listening) await new Promise((resolve) => server.once("listening", resolve));
     const url = `http://127.0.0.1:${server.address().port}/groups`;
-    const ok = await fetch(url);
+    const headers = { "x-zalo-bridge-secret": "s3cr3t" };
+    const ok = await fetch(url, { headers });
     assert.equal(ok.status, 200);
     assert.deepEqual(await ok.json(), {
       total: 1,
       groups: [{ id: groupId(1), name: "Gia đình", members: 5 }],
     });
     connected = false;
-    const offline = await fetch(url);
+    const offline = await fetch(url, { headers });
     assert.equal(offline.status, 409);
     assert.deepEqual(await offline.json(), { error: "Zalo is not connected" });
-    assert.equal((await fetch(url, { method: "POST" })).status, 404);
+    assert.equal((await fetch(url, { method: "POST", headers })).status, 404);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

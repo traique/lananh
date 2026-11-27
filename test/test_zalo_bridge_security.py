@@ -213,3 +213,61 @@ async def test_gateway_state_rejects_unknown_state_and_bad_secret(bridge):
         json={"account_id": "acc", "state": "closed"},
     )
     assert response.status_code == 403
+
+
+# ─── /known-senders: gateway nhận ra người quen ngay sau khi khởi động lại ──────
+
+
+def _zalo_user(external_id: str, *, role: str = "user", status: str = "active"):
+    return zalo_router.zalo_users.ZaloUser(
+        external_id=external_id,
+        internal_user_id=-1,
+        display_name=external_id,
+        role=role,
+        status=status,
+    )
+
+
+@pytest.mark.asyncio
+async def test_known_senders_lists_active_paired_users_only(bridge, monkeypatch):
+    calls = []
+
+    async def list_users():
+        calls.append(True)
+        return [
+            _zalo_user("z-admin", role="admin"),
+            _zalo_user("z-locked", status="suspended"),
+            _zalo_user("z-member"),
+        ]
+
+    monkeypatch.setattr(zalo_router.zalo_users, "list_users", list_users)
+    response = await _call("GET", "/internal/zalo/known-senders/acc")
+    assert response.status_code == 200
+    # Người bị khoá không được gateway coi là người quen (không typing, không câu báo).
+    assert response.json() == {"sender_ids": ["z-admin", "z-member"]}
+    assert calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_known_senders_is_capped(bridge, monkeypatch):
+    async def list_users():
+        return [_zalo_user(f"z{i}") for i in range(620)]
+
+    monkeypatch.setattr(zalo_router.zalo_users, "list_users", list_users)
+    response = await _call("GET", "/internal/zalo/known-senders/acc")
+    ids = response.json()["sender_ids"]
+    assert len(ids) == 500 and ids[0] == "z0"
+
+
+@pytest.mark.asyncio
+async def test_known_senders_needs_secret_and_loopback(bridge, monkeypatch):
+    async def list_users():
+        raise AssertionError("không được đọc DB khi chưa xác thực")
+
+    monkeypatch.setattr(zalo_router.zalo_users, "list_users", list_users)
+    bad_secret = await _call(
+        "GET", "/internal/zalo/known-senders/acc", headers={"x-zalo-bridge-secret": "sai"}
+    )
+    assert bad_secret.status_code == 403
+    outside = await _call("GET", "/internal/zalo/known-senders/acc", host="203.0.113.7")
+    assert outside.status_code == 403
