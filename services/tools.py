@@ -789,7 +789,7 @@ def _chat_specs(role: str) -> list[reg.ToolSpec]:
 
 def _turn_specs(user_text: str, role: str) -> list[reg.ToolSpec]:
     """Tool router chat của lượt + ToolSpec "chạy lệnh" của nhóm khớp câu này
-    (services/nl_commands.py - chỉ nhóm khớp mới vào prompt, giữ trần token)."""
+    (services/nl_commands/ - chỉ nhóm khớp mới vào prompt, giữ trần token)."""
     extra = nl_commands.router_specs(_turn_user.get(), user_text, role)
     excluded = _turn_excluded.get()
     return _chat_specs(role) + [spec for spec in extra if spec.name not in excluded]

@@ -36,6 +36,7 @@ from channels import (
 from channels.router import router as zalo_router
 from channels.zalo_media import router as zalo_media_router
 from channels import tts_media
+from ai import background_writes
 from ai.timeouts import turn_deadline
 from core import config, database as db, idempotency, memtrim, trace, webhook_inbox
 from diagnose_router9 import main as diagnose_main
@@ -226,6 +227,8 @@ async def lifespan(_: FastAPI):
         await _safe_shutdown("Facebook intake", facebook_intake.drain(grace_sec=10.0))
         # Dòng turn_metrics của các lượt vừa xong (ghi nền) trước khi đóng DB.
         await _safe_shutdown("turn metrics", trace.drain())
+        # provider_calls + trạng thái provider ghi ở nền (ai/background_writes.py).
+        await _safe_shutdown("provider calls", background_writes.drain())
         if app_started:
             await _safe_shutdown("Telegram application stop", application.stop())
         if app_resources_started:

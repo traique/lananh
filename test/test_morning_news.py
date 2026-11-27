@@ -53,7 +53,7 @@ async def test_build_digest_goi_ai_tong_hop_tu_rss(monkeypatch):
     async def fake_read_rss(url: str, **_) -> str:
         return "[Feed: Kinh doanh]\n1. Tin A\n2. Tin B"
 
-    async def fake_ask(prompt: str):
+    async def fake_ask(prompt: str, **_):
         assert "Tin A" in prompt
         return SimpleNamespace(
             text="Thị trường sáng nay có 2 tin đáng chú ý: Tin A và Tin B, cả hai đều liên quan tới kinh doanh."
@@ -78,7 +78,7 @@ async def test_build_digest_danh_so_link_va_luu_de_doc_bai(monkeypatch):
             "2. Tin B\nTóm tắt B\nhttps://vnexpress.net/b.html"
         )
 
-    async def fake_ask(prompt: str):
+    async def fake_ask(prompt: str, **_):
         return SimpleNamespace(
             text="Sáng nay có hai tin đáng chú ý về kinh doanh và thị trường trong nước, "
             "anh xem nhanh bên dưới nhé.\n"
@@ -108,7 +108,7 @@ async def test_build_digest_bo_qua_feed_loi_van_tong_hop_feed_con_lai(monkeypatc
             raise web_reader.WebReaderError("feed lỗi")
         return "[Feed: B]\n1. Tin B"
 
-    async def fake_ask(prompt: str):
+    async def fake_ask(prompt: str, **_):
         return SimpleNamespace(
             text="Bản tin sáng nay chỉ có 1 tin từ nguồn B: cập nhật tình hình kinh doanh mới nhất."
         )
@@ -139,7 +139,7 @@ async def test_build_digest_bo_qua_khi_model_tra_loi_qua_ngan(monkeypatch):
     async def fake_read_rss(url: str, **_) -> str:
         return "[Feed: Kinh doanh]\n1. Tin A thật sự tồn tại\nTóm tắt A\nhttps://a"
 
-    async def fake_ask(prompt: str):
+    async def fake_ask(prompt: str, **_):
         return SimpleNamespace(text="Không có tin nào hết")
 
     monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
@@ -276,7 +276,7 @@ async def test_headlines_tat_dinh_khong_goi_ai_khong_ghi_de_doc_bai(monkeypatch)
         reads.append(url)
         return _TWO_ITEMS
 
-    async def no_ai(prompt):
+    async def no_ai(prompt, **_):
         raise AssertionError("tin cho bản tin cá nhân không được gọi AI")
 
     monkeypatch.setattr(web_reader, "read_rss", fake_read_rss)
@@ -297,7 +297,7 @@ async def test_headlines_dung_lai_danh_sach_doc_bai_cua_ban_tin_ai(monkeypatch):
     async def fake_read_rss(url, **_):
         return _TWO_ITEMS
 
-    async def fake_ask(prompt):
+    async def fake_ask(prompt, **_):
         return SimpleNamespace(
             text="Sáng nay có hai tin đáng chú ý về kinh doanh và thị trường trong nước, "
             "anh xem nhanh bên dưới nhé.\nIMPORTANT_IDS: F1I2"
@@ -343,7 +343,7 @@ async def test_bo_so_va_chuc_danh_khong_co_trong_rss(monkeypatch):
     async def fake_read_rss(url: str, **_) -> str:
         return feed
 
-    async def fake_ask(prompt: str):
+    async def fake_ask(prompt: str, **_):
         prompts.append(prompt)
         return SimpleNamespace(
             text=(
@@ -421,7 +421,7 @@ async def test_tom_tat_tu_noi_dung_bai_khong_chi_tieu_de(monkeypatch):
             paragraphs=["Doanh thu thuần đạt 1.020 tỷ đồng.", "Đoạn dài " * 400],
         )
 
-    async def fake_ask(prompt: str):
+    async def fake_ask(prompt: str, **_):
         prompts.append(prompt)
         if len(prompts) == 1:
             return SimpleNamespace(text="IMPORTANT_IDS: F1I1,F1I2")
@@ -458,7 +458,7 @@ async def test_luot_chon_tin_loi_thi_chon_tat_dinh(monkeypatch):
 
     calls = []
 
-    async def fake_ask(prompt: str):
+    async def fake_ask(prompt: str, **_):
         calls.append(prompt)
         if len(calls) == 1:
             raise RuntimeError("provider lỗi")
@@ -518,7 +518,7 @@ async def test_bo_tin_trung_giua_feed_va_tin_da_gui_hom_truoc(monkeypatch):
         rss_kwargs.append(kwargs)
         return feeds[url]
 
-    async def fake_ask(prompt):
+    async def fake_ask(prompt, **_):
         prompts.append(prompt)
         if len(prompts) == 1:
             return SimpleNamespace(text="IMPORTANT_IDS: F1I2,F2I2")
@@ -636,7 +636,7 @@ async def test_build_digest_ghi_nhan_feed_loi(monkeypatch):
             raise feeds[url]
         return "[Feed: B]\n1. Tin B"
 
-    async def fake_ask(prompt):
+    async def fake_ask(prompt, **_):
         return SimpleNamespace(
             text="Bản tin sáng nay chỉ có 1 tin từ nguồn B: cập nhật tình hình kinh doanh mới nhất."
         )

@@ -84,7 +84,7 @@ KIND_CHAT_READONLY = "chat_readonly"
 # bản đã làm sạch cho câu hỏi nối tiếp, KHÔNG trích trí nhớ (yêu cầu lặp lại hằng
 # tuần không được thành "sở thích").
 KIND_BACKGROUND = "background"
-# Kết quả lệnh chạy từ câu tự nhiên (services/nl_commands.py: "xem tử vi 15/3/1990 9h30
+# Kết quả lệnh chạy từ câu tự nhiên (services/nl_commands/: "xem tử vi 15/3/1990 9h30
 # nam", "em làm được gì"...): vào lịch sử cho câu hỏi nối tiếp, có thể chép nội dung
 # ngoài (điểm tin RSS, tìm giá) -> lưu bản đã làm sạch, KHÔNG trích trí nhớ.
 KIND_COMMAND = "command"

@@ -95,7 +95,7 @@
   expect:
     tool: list_reminders
 
-# Hỏi tự nhiên thay cho lệnh (services/nl_commands.py): ToolSpec "chạy lệnh" chỉ vào
+# Hỏi tự nhiên thay cho lệnh (services/nl_commands/): ToolSpec "chạy lệnh" chỉ vào
 # prompt khi câu khớp nhóm từ khoá; kết quả lệnh gửi nguyên văn.
 - id: router-lenh-tu-vi-chi-tiet
   category: router

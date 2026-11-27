@@ -74,6 +74,11 @@ _ADMIN_COOLDOWN_PROVIDERS = (
     "router9",
     "live_api1",
     "live_api2",
+    # Chép lời tin thoại (Whisper/Groq) và đọc /noi (Gemini TTS): cooldown cũng được
+    # lưu/nạp lại sau restart (ai/provider_state.py) nên admin cần xoá tay được.
+    "groq_stt",
+    "tts_api1",
+    "tts_api2",
 )
 _ADMIN_SESSION_COOKIE = "admin_session"
 _CHANNEL_LABELS = {"telegram": "Telegram", "zoom": "Zoom", "zalo": "Zalo"}
