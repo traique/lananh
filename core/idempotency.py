@@ -13,11 +13,45 @@ logger = logging.getLogger(__name__)
 
 RETENTION = timedelta(days=2)
 _CLEANUP_INTERVAL_SEC = 60 * 60
+# Xoá theo lô như services/db_maintenance.py: mỗi câu DELETE tối đa _CLEANUP_BATCH dòng,
+# mỗi bảng tối đa _CLEANUP_MAX_BATCHES lô/lượt (phần còn lại để lượt sau, 1 giờ nữa) -
+# không giữ khoá lâu và không đẩy cả núi WAL một lúc sau khi bot tắt lâu.
+_CLEANUP_BATCH = 5000
+_CLEANUP_MAX_BATCHES = 20
 _cleanup_task: asyncio.Task | None = None
+
+# (câu DELETE theo lô: $1 = hạn giữ, $2 = cỡ lô)
+_DELETE_ZALO_RESPONSES = (
+    "DELETE FROM zalo_direct_responses WHERE (account_id, message_id, message_kind) IN ("
+    "SELECT account_id, message_id, message_kind FROM zalo_direct_responses "
+    "WHERE created_at < now() - $1::interval LIMIT $2)"
+)
+_DELETE_INBOX = (
+    "DELETE FROM webhook_inbox WHERE (channel, event_id) IN ("
+    "SELECT channel, event_id FROM webhook_inbox "
+    "WHERE status = '{status}' AND completed_at < now() - $1::interval LIMIT $2)"
+)
 
 
 async def ensure_schema() -> None:
     await db.ensure_migrations()
+
+
+def _deleted(status: str) -> int:
+    try:
+        return int(str(status).rsplit(" ", 1)[-1])
+    except ValueError:
+        return 0
+
+
+async def _delete_in_batches(pool, sql: str, keep: timedelta) -> int:
+    total = 0
+    for _ in range(_CLEANUP_MAX_BATCHES):
+        count = _deleted(await pool.execute(sql, keep, _CLEANUP_BATCH))
+        total += count
+        if count < _CLEANUP_BATCH:
+            break
+    return total
 
 
 @db.with_reconnect
@@ -27,17 +61,12 @@ async def cleanup_expired(retention: timedelta = RETENTION) -> None:
     pool = await db.get_pool()
     # response_json may contain large base64 images, so this table is especially
     # important to prune on schedule.
-    await pool.execute(
-        "DELETE FROM zalo_direct_responses WHERE created_at < now() - $1::interval",
-        retention,
-    )
-    await pool.execute(
-        "DELETE FROM webhook_inbox WHERE status = 'DONE' AND completed_at < now() - $1::interval",
-        retention,
-    )
+    await _delete_in_batches(pool, _DELETE_ZALO_RESPONSES, retention)
+    await _delete_in_batches(pool, _DELETE_INBOX.format(status="DONE"), retention)
     # Dòng DEAD giữ lâu hơn (tra cứu sự cố) rồi mới xoá - kèm payload.
-    await pool.execute(
-        "DELETE FROM webhook_inbox WHERE status = 'DEAD' AND completed_at < now() - $1::interval",
+    await _delete_in_batches(
+        pool,
+        _DELETE_INBOX.format(status="DEAD"),
         timedelta(days=config.WEBHOOK_DEAD_RETENTION_DAYS),
     )
 

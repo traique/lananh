@@ -125,6 +125,33 @@ async def test_moi_luat_don_du_lieu_chay_duoc_va_giu_dong_can_thiet(delivery_db,
 
 
 @pytest.mark.asyncio
+async def test_don_cache_idempotency_theo_lo(delivery_db):
+    from core import idempotency
+
+    pool = delivery_db
+    await pool.execute(
+        """INSERT INTO zalo_direct_responses
+        (account_id, message_id, message_kind, response_json, created_at) VALUES
+        ('a', 'cu', 'text', '{}', now() - interval '3 days'),
+        ('a', 'moi', 'text', '{}', now())"""
+    )
+    await pool.execute(
+        """INSERT INTO webhook_inbox (channel, event_id, status, completed_at) VALUES
+        ('telegram', 'done-cu', 'DONE', now() - interval '3 days'),
+        ('telegram', 'done-moi', 'DONE', now()),
+        ('telegram', 'dead-3-ngay', 'DEAD', now() - interval '3 days'),
+        ('telegram', 'dead-rat-cu', 'DEAD', now() - interval '60 days')"""
+    )
+    await idempotency.cleanup_expired()
+    left = {
+        r["message_id"] for r in await pool.fetch("SELECT message_id FROM zalo_direct_responses")
+    }
+    assert left == {"moi"}
+    events = {r["event_id"] for r in await pool.fetch("SELECT event_id FROM webhook_inbox")}
+    assert events == {"done-moi", "dead-3-ngay"}  # DEAD giữ lâu hơn để tra cứu
+
+
+@pytest.mark.asyncio
 async def test_insert_nhieu_dong_1_cau_unnest(delivery_db):
     from datetime import datetime, timedelta, timezone
 
