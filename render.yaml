@@ -90,9 +90,9 @@ services:
       - key: ZALO_CONTROL_PORT
         value: "9901"
       - key: ZALO_GROUP_REFRESH_MS
-        value: "60000"
+        value: "300000"
       - key: ZALO_OUTBOX_POLL_MS
-        value: "15000"
+        value: "90000"
       - key: ZALO_GROUP_RETENTION_DAYS
         value: "30"
       - key: ZALO_DAILY_SUMMARY_HOUR

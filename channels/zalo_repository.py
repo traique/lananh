@@ -1,5 +1,6 @@
 """Supabase persistence for dynamically managed Zalo groups and summaries."""
 
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -288,6 +289,7 @@ async def save_summary_and_enqueue(
                 content,
                 summary_id,
             )
+    kick_gateway()
     return True
 
 
@@ -302,6 +304,7 @@ async def enqueue_outbox(account_id: str, recipient_id: str, content: str) -> No
         recipient_id,
         content,
     )
+    kick_gateway()
 
 
 async def get_pending_outbox(
@@ -338,6 +341,7 @@ async def enqueue_reminder(
         content,
         reminder_id,
     )
+    kick_gateway()
 
 
 @db.with_reconnect
@@ -498,3 +502,35 @@ async def resolve_default_account_id() -> str | None:
         """
     )
     return row["account_id"] if row else None
+
+
+# Kick gateway sau khi ghi zalo_outbox: 1 lượt đang chạy + tối đa 1 lượt chờ (gộp).
+_kick_task: asyncio.Task | None = None
+_kick_again = False
+
+
+def kick_gateway() -> None:
+    """Đã ghi (và commit) tin vào zalo_outbox: báo gateway gửi NGAY (POST /outbox/kick)
+    thay vì chờ lượt poll dự phòng ZALO_OUTBOX_POLL_MS (90 s). Không chờ, không ném;
+    kick tới khi 1 kick khác đang bay thì gộp thành đúng 1 kick nữa sau đó (tin ghi
+    trong lúc gateway đang quét vẫn được quét). Gateway tắt/không trả lời: tin tới ở
+    lượt poll kế."""
+    global _kick_task, _kick_again
+    if _kick_task is not None and not _kick_task.done():
+        _kick_again = True
+        return
+    try:
+        _kick_task = asyncio.get_running_loop().create_task(_kick_loop())
+    except RuntimeError:
+        return  # không có event loop (script/CLI): vòng poll của gateway vẫn gửi
+
+
+async def _kick_loop() -> None:
+    global _kick_again
+    from channels import zalo_gateway_status
+
+    while True:
+        _kick_again = False
+        await zalo_gateway_status.kick_outbox()
+        if not _kick_again:
+            return
