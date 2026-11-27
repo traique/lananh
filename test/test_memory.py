@@ -686,3 +686,45 @@ async def test_task_trich_nho_nen_khong_thua_huong_han_chot_cua_luot_chat(mem, m
         memory_service.after_exchange(UID)
     await memory_service.stop_background_tasks()
     assert seen == [None]
+
+
+# ─── Facade: memory_service = memory_extract (GHI) + memory_context (ĐỌC) ──────
+
+
+def test_facade_giu_ten_cu_va_chuyen_phep_gan_toi_module_con(monkeypatch):
+    """Tách file không đổi gì cho nơi gọi/test: mọi tên cũ (kể cả tên riêng) còn ở
+    memory_service; vá qua facade thì code trong CẢ 2 module con thấy bản vá (tên
+    dùng chung như is_enabled có ở cả 2), trả lại thì về đúng bản gốc."""
+    from services import memory_context, memory_extract
+
+    original = memory_extract.is_enabled
+    assert memory_service._pending is memory_extract._pending
+    assert memory_service.TurnMemory is memory_context.TurnMemory
+    assert memory_service.build_turn_memory is memory_context.build_turn_memory
+    assert memory_service.maybe_flush is memory_extract.maybe_flush
+    assert memory_context.is_enabled is original
+
+    async def disabled(user_id):
+        return False
+
+    with monkeypatch.context() as patch:
+        patch.setattr(memory_service, "is_enabled", disabled)
+        assert memory_extract.is_enabled is disabled and memory_context.is_enabled is disabled
+        patch.setattr(memory_service, "MAX_FACTS_PER_USER", 7)
+        assert memory_extract.MAX_FACTS_PER_USER == 7 == memory_service.MAX_FACTS_PER_USER
+    assert memory_service.is_enabled is original is memory_context.is_enabled
+    assert memory_extract.MAX_FACTS_PER_USER == 40
+    with pytest.raises(AttributeError):
+        del memory_service.maybe_flush  # xoá tên của module con qua facade: từ chối
+    assert memory_extract.maybe_flush is memory_service.maybe_flush
+
+
+@pytest.mark.asyncio
+async def test_facade_va_utility_json_den_bo_trich_nho_that(mem):
+    """Fixture ``mem`` vá memory_service._utility_json: bộ trích nhớ (memory_extract)
+    phải gọi đúng bản vá, như khi còn chung 1 file."""
+    mem.add_turn(UID, "nhớ giúp anh là anh dị ứng tôm", "dạ")
+    mem.responses.append({"facts": [{"op": "add", "key": "di_ung", "value": "tôm"}]})
+    assert await memory_service.maybe_flush(UID, explicit=True) is True
+    assert len(mem.prompts) == 1 and "dị ứng tôm" in mem.prompts[0]
+    assert [f["value"] for f in mem.current(UID)] == ["tôm"]
