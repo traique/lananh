@@ -2,7 +2,7 @@
 
 CHỈ chạy offline/CI - bị chặn trên Render (assert_backtest_runtime_allowed,
 giống backtest). Kết quả ghi vào:
-- stock/data/trend_model.joblib   (model; deploy kèm nếu muốn bật runtime)
+- stock/data/trend_model.joblib   (model; /phantich hiện KHÔNG gọi - xem stock/trend_model.py)
 - stock/data/trend_model_stats.json (thống kê out-of-sample, luôn ghi)
 
 Chọn mã: KHÔNG lấy N mã đầu theo bảng chữ cái (lệch hẳn về mã nhỏ bắt đầu bằng

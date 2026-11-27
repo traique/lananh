@@ -149,7 +149,6 @@ def _ctx_for(decision, price=50_000.0):
         decision=decision,
         stats=SimpleNamespace(rsi14=40.0, trend_3m=-10.0),
         last_bar_date="2026-10-09",
-        ml_prob_up=None,
         realtime_quote_line=None,
         liquidity=None,
         adjustment_note="",
@@ -662,9 +661,10 @@ async def test_channel_thanh_vien_danh_muc_khong_co_tin_hieu(monkeypatch):
 
 def test_cache_tach_ban_day_du_va_ban_tham_khao():
     sa._cache.clear()
-    sa._cache_set("FPT", False, "FULL", True)
+    entry = sa._AnalysisEntry(ctx=None, report="FULL")
+    sa._cache_set("FPT", False, entry, True)
     assert sa._cache_get("FPT", False, False) is None
-    assert sa._cache_get("FPT", False, True) == "FULL"
+    assert sa._cache_get("FPT", False, True) is entry
     sa._cache.clear()
 
 

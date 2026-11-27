@@ -2,6 +2,7 @@
 
 from datetime import date
 
+import httpx
 import pytest
 
 from services import portfolio_events as pe
@@ -30,26 +31,20 @@ def test_parse_events_do_truong_theo_tu_khoa_va_epoch_ms():
 
 def test_fetch_upcoming_events_cua_so_rong_loc_tai_cho_va_cache(monkeypatch):
     calls = []
+    payload = {
+        "data": {
+            "content": [
+                {"eventCode": "DIV", "exrightDate": "2030-01-02", "valuePerShare": 1000},
+                {"eventCode": "DIV", "exrightDate": "2000-01-02", "valuePerShare": 1000},
+            ]
+        }
+    }
 
-    class _Resp:
-        def raise_for_status(self):
-            return None
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(dict(request.url.params))
+        return httpx.Response(200, json=payload)
 
-        def json(self):
-            return {
-                "data": {
-                    "content": [
-                        {"eventCode": "DIV", "exrightDate": "2030-01-02", "valuePerShare": 1000},
-                        {"eventCode": "DIV", "exrightDate": "2000-01-02", "valuePerShare": 1000},
-                    ]
-                }
-            }
-
-    def fake_get(url, params=None, headers=None, timeout=None):
-        calls.append(params)
-        return _Resp()
-
-    monkeypatch.setattr(vci_direct.requests, "get", fake_get)
+    monkeypatch.setattr(vci_direct, "_client", httpx.Client(transport=httpx.MockTransport(handler)))
     monkeypatch.setattr(vci_direct, "_events_cache", {})
     events = vci_direct.fetch_upcoming_events("vnm", days_ahead=365 * 10)
     assert [e.key_date for e in events] == ["2030-01-02"]  # sự kiện quá khứ bị lọc

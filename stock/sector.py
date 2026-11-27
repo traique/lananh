@@ -152,7 +152,11 @@ class SectorContext:
     rotation_signal: str
 
 
-_SECTOR_CACHE_TTL = 180  # giây
+# Bối cảnh ngành đo xu hướng 1-3 tháng (nến đang dở trong phiên đã bị bỏ) nên 20
+# phút vẫn đủ tươi - trước đây 180s, gần như lượt /phantich nào cũng lấy lại 8 mã
+# mỗi ngành. Kết quả None (thiếu dữ liệu, thường do nguồn lỗi thoáng qua) chỉ giữ 3 phút.
+_SECTOR_CACHE_TTL = 20 * 60  # giây
+_SECTOR_NEGATIVE_TTL = 180  # giây
 _sector_cache: dict[tuple, tuple[float, "SectorContext | None"]] = {}
 
 
@@ -161,8 +165,10 @@ async def build_sector_context(sector_keys: list[str]) -> SectorContext | None:
         return None
     cache_key = tuple(sorted(sector_keys))
     cached = _sector_cache.get(cache_key)
-    if cached and time.monotonic() - cached[0] < _SECTOR_CACHE_TTL:
-        return cached[1]
+    if cached:
+        ttl = _SECTOR_CACHE_TTL if cached[1] is not None else _SECTOR_NEGATIVE_TTL
+        if time.monotonic() - cached[0] < ttl:
+            return cached[1]
     ctx = await _build_sector_context_uncached(sector_keys)
     now = time.monotonic()
     for key in [key for key, (ts, _) in _sector_cache.items() if now - ts >= _SECTOR_CACHE_TTL]:
